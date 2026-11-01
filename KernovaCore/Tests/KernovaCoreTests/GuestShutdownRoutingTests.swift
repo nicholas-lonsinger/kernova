@@ -30,9 +30,13 @@ struct GuestShutdownRoutingTests {
     /// A running Linux VM whose hub's connections `probe` stands in for, with a
     /// console session's peer answering each power request with `answering`'s
     /// results — or, without `answering`, waiting for the test to answer — and
-    /// none at all when `peer` is false.
+    /// none at all when `peer` is false. With `skipping`, a system peer too,
+    /// offering only to shut down past blocking apps, as a Linux system
+    /// service does while a desktop session runs, and answering with
+    /// `skipping`'s results.
     private func makeFixture(
-        peer: Bool = true, answering: (@Sendable (PowerAction) -> [PowerRequestResult])? = nil
+        peer: Bool = true, answering: (@Sendable (AgentHubProbe.PowerRequest) -> [PowerRequestResult])? = nil,
+        skipping: (@Sendable (AgentHubProbe.PowerRequest) -> [PowerRequestResult])? = nil
     ) async throws -> Fixture {
         let virtualization = MockVirtualizationService()
         let harness = WiredCommandCore.Scripted<MockVirtualizationService>(
@@ -48,12 +52,28 @@ struct GuestShutdownRoutingTests {
             #expect(probe.connectPowerPeer(answering: answering) != nil)
             try await waitForChange { instance.agentHubSnapshot.power == .agent(.sessionPeer) }
         }
+        if let skipping {
+            #expect(
+                probe.connectPowerPeer(
+                    claim: PeerClaim(role: .systemPeer, scope: .system, os: .linux, architecture: .arm64),
+                    state: PeerSessionState(
+                        console: .on, consoleSessionID: AgentHubProbe.consoleSessionPeer.state.sessionID),
+                    offer: Self.skipOnly, answering: skipping) != nil)
+            try await waitForChange { instance.agentHubSnapshot.peers.count == 2 }
+        }
         return Fixture(harness: harness, instance: instance, session: session, probe: probe)
     }
 
-    private func stop(_ fixture: Fixture) async throws {
-        try await fixture.harness.core.stop(.id(fixture.instance.id), disposition: .graceful, consent: .none)
+    private func stop(_ fixture: Fixture, consent: Consent = .none) async throws {
+        try await fixture.harness.core.stop(.id(fixture.instance.id), disposition: .graceful, consent: consent)
     }
+
+    /// A Linux system service's offer while a desktop session runs.
+    nonisolated private static let skipOnly = PowerOffer(
+        actions: [], skippingBlockers: [.shutdown, .restart], actionsAbsence: .unsavedWorkUnseen)
+    nonisolated private static let blockedOutcome: [PowerRequestResult] = [.accepted, .finished(.blocked(blocking))]
+    nonisolated private static let handedOff: [PowerRequestResult] = [.accepted, .finished(.handedOff)]
+    private static let skipConsent = Consent([.skipBlockingApps])
 
     // MARK: - Which way the request goes
 
@@ -145,6 +165,112 @@ struct GuestShutdownRoutingTests {
         #expect(fixture.instance.status == .running)
     }
 
+    // MARK: - Past the apps blocking it
+
+    @Test("A Stop apps block, where an agent can shut down past them, asks first, and asks nothing of that agent")
+    func blockedStopAsks() async throws {
+        let fixture = try await makeFixture(answering: { _ in Self.blockedOutcome }, skipping: { _ in Self.handedOff })
+        let error = try await #require(throws: CommandError.self) { try await stop(fixture) }
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .skipBlockingApps)
+        #expect(prompt.title == "\u{201C}Routed\u{201D} Didn\u{2019}t Shut Down")
+        #expect(
+            prompt.message
+                == "Text Editor and Terminal are blocking it. If you shut it down anyway, the guest\u{2019}s services "
+                + "stop and its disks unmount as in any shutdown, but the apps blocking it close without being asked "
+                + "to save.")
+        #expect(prompt.confirmTitle == "Shut Down Anyway")
+        #expect(prompt.confirmIsDestructive)
+        #expect(prompt.dismissTitle == "Cancel")
+        #expect(fixture.probe.powerRequests.map(\.skippingBlockers) == [false])
+        #expect(fixture.instance.status == .running)
+    }
+
+    @Test("Where no agent can shut down past them, a blocked Stop names Force Stop and asks nothing")
+    func blockedStopWithoutSkip() async throws {
+        let fixture = try await makeFixture { _ in Self.blockedOutcome }
+        let error = try await #require(throws: CommandError.self) { try await stop(fixture) }
+        #expect(error.confirmationPrompt == nil)
+        #expect(
+            error.message.hasSuffix(
+                "To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."))
+    }
+
+    @Test("With the consent, a blocked Stop asks the agent that offers it to shut down past them")
+    func consentedStopSkips() async throws {
+        let fixture = try await makeFixture(answering: { _ in Self.blockedOutcome }, skipping: { _ in Self.handedOff })
+        try await stop(fixture, consent: Self.skipConsent)
+        #expect(
+            fixture.probe.powerRequests.map { [$0.action == .shutdown, $0.skippingBlockers] } == [
+                [true, false], [true, true],
+            ])
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
+    }
+
+    @Test("With the consent, a Stop no app blocks shuts down as any Stop does, asking nothing more")
+    func consentedStopUnblocked() async throws {
+        let fixture = try await makeFixture(answering: { _ in Self.handedOff }, skipping: { _ in Self.handedOff })
+        try await stop(fixture, consent: Self.skipConsent)
+        #expect(fixture.probe.powerRequests.map(\.skippingBlockers) == [false])
+    }
+
+    @Test("A skip the agent refuses leaves the block standing, naming Force Stop, and presses no ACPI button")
+    func refusedSkip() async throws {
+        let fixture = try await makeFixture(
+            answering: { _ in Self.blockedOutcome }, skipping: { _ in [.refused(WireError(.powerNotPermitted))] })
+        let error = try await #require(throws: CommandError.self) {
+            try await stop(fixture, consent: Self.skipConsent)
+        }
+        #expect(error.confirmationPrompt == nil)
+        #expect(
+            error.message.hasPrefix("Text Editor and Terminal are blocking it. To shut it down anyway, use Force Stop"))
+        #expect(fixture.probe.powerRequests.map(\.skippingBlockers) == [false, true])
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
+    }
+
+    @Test("A Restart apps block asks in a Restart's words; with the consent it shuts down past them and boots")
+    func blockedRestart() async throws {
+        let fixture = try await makeFixture(answering: { _ in Self.blockedOutcome }, skipping: { _ in Self.handedOff })
+        let error = try await #require(throws: CommandError.self) {
+            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+        }
+        let prompt = try #require(error.confirmationPrompt)
+        #expect(prompt.kind == .skipBlockingApps)
+        #expect(prompt.title == "\u{201C}Routed\u{201D} Didn\u{2019}t Restart")
+        #expect(
+            prompt.message
+                == "Text Editor and Terminal are blocking it. If you restart it anyway, the guest\u{2019}s services "
+                + "stop and its disks unmount as in any restart, but the apps blocking it close without being asked "
+                + "to save.")
+        #expect(prompt.confirmTitle == "Restart Anyway")
+        #expect(!fixture.instance.activity.liveSessionContinues)
+
+        let restart = Task { @MainActor in
+            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: Self.skipConsent)
+        }
+        try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 3 }
+        try await waitForChange {
+            !fixture.instance.activity.isRequestingStop && fixture.instance.activity.liveSessionContinues
+        }
+        fixture.instance.activity.deliverSessionEvent(.guestDidStop, from: fixture.session)
+        try await restart.value
+
+        #expect(fixture.probe.powerRequests.map(\.skippingBlockers) == [false, false, true])
+        #expect(fixture.harness.virtualization.startCallCount == 1)
+        #expect(fixture.instance.status == .running)
+    }
+
+    @Test("A door that asks through the consent policy answers the question and runs the Stop again, skipping them")
+    func consentPolicyAnswers() async throws {
+        let fixture = try await makeFixture(answering: { _ in Self.blockedOutcome }, skipping: { _ in Self.handedOff })
+        var asked: [ConfirmationKind] = []
+        try await VMConsentPolicy.run(prompting: { asked.append($0.kind) }) { consent in
+            try await stop(fixture, consent: consent)
+        }
+        #expect(asked == [.skipBlockingApps])
+        #expect(fixture.probe.powerRequests.map(\.skippingBlockers) == [false, false, true])
+    }
+
     // MARK: - Restart All
 
     /// The routed VM and a stopped one, in a folder in that order.
@@ -207,6 +333,22 @@ struct GuestShutdownRoutingTests {
     @MainActor
     private final class ReportBox {
         var report: VMGroupActionReport?
+    }
+
+    @Test("Restart All asks nothing of a guest whose blocking apps an agent could skip: it reports the question")
+    func restartAllPassesTheQuestion() async throws {
+        let fixture = try await makeFixture(answering: { _ in Self.blockedOutcome }, skipping: { _ in Self.handedOff })
+        let (folder, _) = try makeFolder(fixture)
+
+        let report = try await fixture.harness.core.groupAction(.restart, on: folder)
+
+        guard case .needsAnswer(.restart, .confirmationRequired(let prompt)) = report.results.first?.outcome else {
+            Issue.record("not the question: \(String(describing: report.results.first?.outcome))")
+            return
+        }
+        #expect(prompt.kind == .skipBlockingApps)
+        #expect(fixture.probe.powerRequests.map(\.skippingBlockers) == [false])
+        #expect(fixture.instance.activity.liveSessionID == fixture.session)
     }
 
     @Test("Restart All reports a shutdown the guest's apps blocked as undone, naming them")
@@ -290,13 +432,17 @@ struct GuestShutdownRoutingTests {
     @Test("Apps blocking the shutdown are named, and Force Stop is how to shut it down anyway")
     func blockedCopy() {
         let forceStop = " To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."
-        let one = Self.copy(.blocked([AppValue(displayName: "Text Editor")]))
+        let one = Self.copy(.blocked([AppValue(displayName: "Text Editor")], skippable: false))
         #expect(one.title == "\u{201C}Fedora\u{201D} Didn\u{2019}t Shut Down")
         #expect(one.message == "Text Editor is blocking it." + forceStop)
-        #expect(Self.copy(.blocked(Self.blocking)).message == "Text Editor and Terminal are blocking it." + forceStop)
+        #expect(
+            Self.copy(.blocked(Self.blocking, skippable: false)).message
+                == "Text Editor and Terminal are blocking it." + forceStop)
         let three = Self.blocking + [AppValue(displayName: "", identifier: "firefox")]
-        #expect(Self.copy(.blocked(three)).message == "Text Editor, Terminal, and firefox are blocking it." + forceStop)
-        #expect(Self.copy(.blocked([])).message == "An app is blocking it." + forceStop)
+        #expect(
+            Self.copy(.blocked(three, skippable: false)).message
+                == "Text Editor, Terminal, and firefox are blocking it." + forceStop)
+        #expect(Self.copy(.blocked([], skippable: false)).message == "An app is blocking it." + forceStop)
     }
 
     @Test("A cancel inside the guest, an OS failure, and an outcome Kernova can't tell each read as what is known")

@@ -35,8 +35,9 @@ public protocol PowerAdapter: Sendable {
     func start(reporter: PowerReporter)
     /// Ends in exactly one terminal report — `.refused`, `.cancelled`, `.unconfirmed`, `.handedOff`,
     /// `.blocked`, `.cancelledInGuest` or `.failed` — after `.accepted` and the stages it reaches, if any.
-    /// Until then the process performs no other request.
-    func perform(_ id: PowerRequestID, _ action: PowerAction)
+    /// Until then the process performs no other request. With `skippingBlockers` the OS does not wait for
+    /// the apps that block `action`; the request is one the adapter's offer lists in that mode.
+    func perform(_ id: PowerRequestID, _ action: PowerAction, skippingBlockers: Bool)
     /// Reports `.cancelled` when the OS confirms the request did not start, `.accepted` when the OS took
     /// it first, and `.unconfirmed` when it cannot tell.
     func cancel(_ id: PowerRequestID)

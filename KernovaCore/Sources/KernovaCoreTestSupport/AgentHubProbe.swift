@@ -22,7 +22,7 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         var bundles: [[BundledPayload]] = []
         var handlers: [(queue: DispatchQueue, handler: @Sendable (HostEvent) -> Void)] = []
         /// How each power peer answers a power request, by connection index.
-        var powerAnswers: [Int: @Sendable (PowerAction) -> [PowerRequestResult]] = [:]
+        var powerAnswers: [Int: @Sendable (PowerRequest) -> [PowerRequestResult]] = [:]
         var shutdowns = 0
     }
 
@@ -57,20 +57,29 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         queue.async { handler(event) }
     }
 
-    /// The console session's peer a ``connectPowerPeer(claim:state:answering:)`` says Hello as by default.
+    /// One power request the hub sent.
+    package struct PowerRequest: Sendable, Equatable {
+        package let id: PowerRequestID
+        package let action: PowerAction
+        /// Whether it asks the peer not to wait for the apps that block it.
+        package let skippingBlockers: Bool
+    }
+
+    /// The console session's peer a ``connectPowerPeer(claim:state:offer:answering:)`` says Hello as by default.
     package static let consoleSessionPeer = (
         claim: PeerClaim(role: .sessionPeer, scope: .user, os: .linux, architecture: .arm64),
         state: PeerSessionState(console: .on, sessionID: "2", userName: "pbear")
     )
 
-    /// Opens a connection that says Hello as `claim` in `state` and offers POWER for shutdown and restart,
+    /// Opens a connection that says Hello as `claim` in `state` and offers POWER as `offer` does,
     /// answering its index (from 0, in accept order), or `nil` when the hub refused it.
     ///
-    /// Each power request the hub sends it is answered with `answering`'s results for its action, in order;
-    /// with no `answering`, the test answers through ``deliver(_:fromConnection:)``.
+    /// Each power request the hub sends it is answered with `answering`'s results for it, in order; with no
+    /// `answering`, the test answers through ``deliver(_:fromConnection:)``.
     package func connectPowerPeer(
         claim: PeerClaim = consoleSessionPeer.claim, state peerState: PeerSessionState = consoleSessionPeer.state,
-        answering: (@Sendable (PowerAction) -> [PowerRequestResult])? = nil
+        offer: PowerOffer = PowerOffer(actions: [.shutdown, .restart]),
+        answering: (@Sendable (PowerRequest) -> [PowerRequestResult])? = nil
     ) -> Int? {
         guard connect() else { return nil }
         let index = state.withLock { state in
@@ -78,17 +87,16 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
             state.powerAnswers[index] = answering
             return index
         }
-        let offer = PowerOffer(actions: [.shutdown, .restart]).encoded
         deliver(.helloReceived(claim, peerState), fromConnection: index)
-        deliver(.featuresChanged(FeatureStatusTable([(.power, .available(offer))])), fromConnection: index)
+        deliver(.featuresChanged(FeatureStatusTable([(.power, .available(offer.encoded))])), fromConnection: index)
         return index
     }
 
     /// Every power request sent to any connection, in order.
-    package var powerRequests: [(id: PowerRequestID, action: PowerAction)] {
+    package var powerRequests: [PowerRequest] {
         commands.compactMap { command in
-            guard case .requestPower(let id, let action) = command else { return nil }
-            return (id, action)
+            guard case .requestPower(let id, let action, let skippingBlockers) = command else { return nil }
+            return PowerRequest(id: id, action: action, skippingBlockers: skippingBlockers)
         }
     }
 
@@ -129,8 +137,9 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
                 state.commands.append(command)
                 return state.powerAnswers[Int(generation.rawValue) - 1]
             }
-            if case .requestPower(let id, let action) = command, let answer {
-                for result in answer(action) {
+            if case .requestPower(let id, let action, let skippingBlockers) = command, let answer {
+                let request = PowerRequest(id: id, action: action, skippingBlockers: skippingBlockers)
+                for result in answer(request) {
                     probe.deliver(.power(id, result), fromConnection: Int(generation.rawValue) - 1)
                 }
             }

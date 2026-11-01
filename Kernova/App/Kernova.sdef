@@ -185,7 +185,7 @@
 			<parameter name="by" code="by  " type="VM stop method" optional="yes" description="How to reach a powered-off guest. Shut down by default.">
 				<cocoa key="StopMethod"/>
 			</parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a destructive stop refuses without.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a destructive stop refuses without: discarding a suspended session, or shutting down without waiting for the apps blocking it, which close without being asked to save.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and leaving it as it was.">
@@ -199,7 +199,7 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway, and shut it down without waiting for the apps blocking it, which close without being asked to save.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">

@@ -100,20 +100,23 @@ struct AgentHubState: Sendable {
         let ordered = peers.values.filter { $0.features != nil }.sorted { $0.connectedOrder > $1.connectedOrder }
         let features = FeatureStatus.merge(ordered.compactMap(\.features))
         return AgentHubSnapshot(
-            peers: ordered.map(summary), features: features, power: provision(features: features),
-            routing: power.progress)
+            peers: ordered.map(summary), features: features, power: provision(ordered), routing: power.progress)
     }
 
-    /// The merged POWER entry: the first candidate a shutdown would ask, else the merged absence — with
-    /// `NOT_ON_CONSOLE` for a peer that offers POWER but serves no console session.
-    private func provision(features: FeatureStatusTable) -> PowerProvision {
+    /// The merged POWER entry for a shutdown that waits for blocking apps: the first candidate it would
+    /// ask, else the merged absence of `ordered`'s offers of it — with `NOT_ON_CONSOLE` for a peer that
+    /// offers it but serves no console session.
+    private func provision(_ ordered: [PeerRecord]) -> PowerProvision {
         let candidates = routingPeers
         if let first = PowerRouting.candidates(for: .shutdown, peers: candidates, excluding: []).first,
             let role = peers[first]?.claim.role
         {
             return .agent(role)
         }
-        switch features[.power] {
+        let waiting = ordered.compactMap(\.features).map { table in
+            FeatureStatusTable([(.power, PowerOffer.waitingStatus(table[.power]))])
+        }
+        switch FeatureStatus.merge(waiting)[.power] {
         case .absent(let reason, _): return .absent(reason)
         case .available: return .absent(.notOnConsole)
         }

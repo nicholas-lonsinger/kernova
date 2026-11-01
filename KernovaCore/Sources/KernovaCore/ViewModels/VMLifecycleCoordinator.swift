@@ -99,25 +99,32 @@ final class VMLifecycleCoordinator {
 
     /// Requests a graceful stop — a session action, which takes no admission
     /// of its own, so an operation that tolerates it keeps holding the VM —
-    /// sent as ``shutDownGuest(_:)`` sends it.
-    func requestStop(_ instance: VMInstance) async throws {
+    /// sent as ``shutDownGuest(_:skippingBlockers:)`` sends it.
+    func requestStop(_ instance: VMInstance, skippingBlockers: Bool) async throws {
         try await instance.activity.requestStop {
-            try await shutDownGuest(instance)
+            try await shutDownGuest(instance, skippingBlockers: skippingBlockers)
         }
     }
 
     /// A Restart's graceful stop, owing `boot` to the end of the session it
     /// asks to go down — see ``VMActivity/requestStop(continuingWith:_:)`` —
-    /// sent as ``shutDownGuest(_:)`` sends it.
-    func requestRestartStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
+    /// sent as ``shutDownGuest(_:skippingBlockers:)`` sends it.
+    func requestRestartStop(
+        _ instance: VMInstance, skippingBlockers: Bool, continuingWith boot: VMFollowUp
+    ) async throws {
         try await instance.activity.requestStop(continuingWith: boot) {
-            try await shutDownGuest(instance)
+            try await shutDownGuest(instance, skippingBlockers: skippingBlockers)
         }
     }
 
     /// Asks the guest to shut down through its agents, pressing the ACPI
     /// button when none takes it. A Restart's stop is a shutdown too: its
     /// boot is owed to the session's end.
+    ///
+    /// Apps that block it end it, unless `skippingBlockers` and an agent
+    /// offers to shut down without waiting for them: it is then asked to. The
+    /// user consents to that only once they know apps block it, so a shutdown
+    /// that waits for them always goes first.
     ///
     /// Returns once the request is sent; the session's end is what follows it.
     /// Throws ``GuestShutdownNotCarriedOut`` when an agent took the request
@@ -126,11 +133,30 @@ final class VMLifecycleCoordinator {
     /// Runs in the turn the stop was admitted in, so the session it reads is
     /// the one the stop was asked of; the ACPI press goes to that session
     /// only.
-    private func shutDownGuest(_ instance: VMInstance) async throws {
+    private func shutDownGuest(_ instance: VMInstance, skippingBlockers: Bool) async throws {
         let session = instance.liveSessionID
+        var outcome = await instance.agentHub.requestPower(.shutdown)
+        // What stands in when no agent takes it: the ACPI button for the
+        // shutdown that waits for blocking apps; for one skipping them, those
+        // apps blocking it still.
+        var unserved = GuestShutdownNotCarriedOut.Reason?.none
+        if skippingBlockers, case .blocked(let apps, skippable: true) = outcome {
+            // A session that ended while the agents were asked has nothing
+            // left to shut down.
+            guard instance.liveSessionID == session else { return }
+            Self.logger.log(
+                .notice,
+                "Shutting '\(instance.name, privacy: .public)' down without waiting for the apps blocking it")
+            outcome = await instance.agentHub.requestPower(.shutdown, skippingBlockers: true)
+            unserved = .blocked(apps, skippable: false)
+        }
         let failure: GuestShutdownNotCarriedOut.Reason
-        switch await instance.agentHub.requestPower(.shutdown) {
-        case .useACPI:
+        switch outcome {
+        case .unserved:
+            if let unserved {
+                failure = unserved
+                break
+            }
             // The session that ended while the agents were asked has nothing
             // left to press the button on.
             guard instance.liveSessionID == session else { return }
@@ -142,7 +168,7 @@ final class VMLifecycleCoordinator {
                 .notice,
                 "A shutdown of '\(instance.name, privacy: .public)' was still being routed")
             throw VMAdmissionRefusal(refusal: .stopRequestInFlight)
-        case .blocked(let apps): failure = .blocked(apps)
+        case .blocked(let apps, let skippable): failure = .blocked(apps, skippable: skippable)
         case .cancelledInGuest: failure = .cancelledInGuest
         case .failed(let error): failure = .failed(error)
         case .indeterminate: failure = .indeterminate

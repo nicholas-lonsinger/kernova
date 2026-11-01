@@ -23,12 +23,12 @@ extension CoreUnits {
 
         static func system(
             _ handle: UInt64, console: ConsoleState = .on, consoleSessionID: String = "", usable: Bool = true,
-            actions: [PowerAction] = [.shutdown, .restart]
+            actions: [PowerAction] = [.shutdown, .restart], skippingBlockers: [PowerAction] = []
         ) -> RoutingPeer {
             RoutingPeer(
                 handle: PeerHandle(rawValue: handle), role: .systemPeer,
                 state: PeerSessionState(console: console, consoleSessionID: consoleSessionID),
-                connectedOrder: handle, powerUsable: usable, actions: actions)
+                connectedOrder: handle, powerUsable: usable, actions: actions, skippingBlockers: skippingBlockers)
         }
 
         static func handles(_ raw: [UInt64]) -> [PeerHandle] {
@@ -103,7 +103,7 @@ extension CoreUnits {
 
         // MARK: Routing
 
-        @Test("refused → recompute and ask the next; every peer refused → .acpi with the refusals")
+        @Test("refused → recompute and ask the next; every peer refused → .unserved with the refusals")
         func refusedToAcpi() {
             let peers = [Self.session(1, "a"), Self.system(9, consoleSessionID: "a")]
             var routing = PowerRouting()
@@ -116,8 +116,7 @@ extension CoreUnits {
             routing.handle(.refused(second), from: PeerHandle(rawValue: 9), peers: peers)
             #expect(
                 Self.outputs(&routing) == [
-                    .acpi(
-                        .shutdown,
+                    .unserved(
                         refusals: [
                             PeerRefusal(peer: PeerHandle(rawValue: 1), error: first),
                             PeerRefusal(peer: PeerHandle(rawValue: 9), error: second),
@@ -126,11 +125,11 @@ extension CoreUnits {
             #expect(!routing.isRouting)
         }
 
-        @Test("No candidate at all → .acpi at once with no refusals")
+        @Test("No candidate at all → .unserved at once with no refusals")
         func noCandidates() {
             var routing = PowerRouting()
             routing.begin(.restart, peers: [])
-            #expect(Self.outputs(&routing) == [.acpi(.restart, refusals: [])])
+            #expect(Self.outputs(&routing) == [.unserved(refusals: [])])
         }
 
         @Test("Candidates are recomputed after each refusal from the current peer views")
@@ -157,9 +156,55 @@ extension CoreUnits {
             #expect(
                 Self.outputs(&routing) == [
                     .progress(peer, .waitingOnApps, [AppValue(displayName: "Editor")]),
-                    .blocked(peer, [AppValue(displayName: "Editor")]),
+                    .blocked(peer, [AppValue(displayName: "Editor")], skippable: false),
                 ])
             #expect(!routing.isRouting)
+        }
+
+        @Test("A blocked routing is skippable while a peer offers its action skipping blockers, and only then")
+        func blockedSkippable() {
+            let session = PeerHandle(rawValue: 1)
+            let editor = [AppValue(displayName: "Editor")]
+            for (offered, skippable) in [([PowerAction.shutdown], true), ([.restart], false), ([], false)] {
+                let peers = [
+                    Self.session(1, "a"), Self.system(9, consoleSessionID: "a", actions: [], skippingBlockers: offered),
+                ]
+                var routing = PowerRouting()
+                routing.begin(.shutdown, peers: peers)
+                _ = Self.outputs(&routing)
+                routing.handle(.accepted, from: session, peers: peers)
+                routing.handle(.finished(.blocked(editor)), from: session, peers: peers)
+                #expect(Self.outputs(&routing) == [.blocked(session, editor, skippable: skippable)])
+            }
+        }
+
+        @Test("A routing skipping blockers asks only the peers offering that")
+        func skippingBlockers() {
+            let system = PeerHandle(rawValue: 9)
+            let peers = [
+                Self.session(1, "a"), Self.system(9, consoleSessionID: "a", actions: [], skippingBlockers: [.shutdown]),
+            ]
+            #expect(
+                PowerRouting.candidates(for: .shutdown, skippingBlockers: true, peers: peers, excluding: [])
+                    == [system])
+            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([1]))
+
+            var routing = PowerRouting()
+            routing.begin(.shutdown, skippingBlockers: true, peers: peers)
+            #expect(Self.outputs(&routing) == [.ask(system, .shutdown, skippingBlockers: true)])
+            let refusal = WireError(.powerNotPermitted)
+            routing.handle(.refused(refusal), from: system, peers: peers)
+            #expect(Self.outputs(&routing) == [.unserved(refusals: [PeerRefusal(peer: system, error: refusal)])])
+            #expect(!routing.isRouting)
+
+            routing.begin(.restart, skippingBlockers: true, peers: peers)
+            #expect(Self.outputs(&routing) == [.unserved(refusals: [])])
+
+            routing.begin(.shutdown, skippingBlockers: true, peers: peers)
+            _ = Self.outputs(&routing)
+            routing.handle(.accepted, from: system, peers: peers)
+            routing.handle(.finished(.blocked([])), from: system, peers: peers)
+            #expect(Self.outputs(&routing) == [.blocked(system, [], skippable: false)])
         }
 
         @Test("Each final result after acceptance maps to its routing output")

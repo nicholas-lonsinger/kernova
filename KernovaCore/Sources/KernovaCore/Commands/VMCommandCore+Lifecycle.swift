@@ -724,7 +724,10 @@ extension VMCommandCore {
     ///
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
     /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume.
-    /// `.force` always asks: it discards unsaved guest state.
+    /// `.force` always asks: it discards unsaved guest state. A `.graceful`
+    /// stop apps in the guest block asks
+    /// ``ConfirmationKind/skipBlockingApps`` where an agent can shut down past
+    /// them, and with that consent does; restart asks and does the same.
     ///
     /// `timeout` seconds bounds a wait for the guest to actually power off,
     /// refusing with ``CommandError/timedOut(vm:verb:seconds:)`` and touching
@@ -783,9 +786,9 @@ extension VMCommandCore {
             }
             guard let discard = instance.savedStateDiscard else {
                 do {
-                    try await lifecycle.requestStop(instance)
+                    try await lifecycle.requestStop(instance, skippingBlockers: consent.covers(.skipBlockingApps))
                 } catch {
-                    throw failure(error, verb: .stop, on: instance)
+                    throw shutdownFailure(error, on: instance, restarting: false)
                 }
                 return
             }
@@ -862,12 +865,26 @@ extension VMCommandCore {
 
     /// Requests restart's graceful shutdown, owing `boot` to the end of the
     /// session it asks to go down.
-    private func shutDown(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
+    private func shutDown(
+        _ instance: VMInstance, consent: Consent, continuingWith boot: VMFollowUp
+    ) async throws {
         do {
-            try await lifecycle.requestRestartStop(instance, continuingWith: boot)
+            try await lifecycle.requestRestartStop(
+                instance, skippingBlockers: consent.covers(.skipBlockingApps), continuingWith: boot)
         } catch {
-            throw failure(error, verb: .stop, on: instance)
+            throw shutdownFailure(error, on: instance, restarting: true)
         }
+    }
+
+    /// What a graceful shutdown that did not happen refuses with: the
+    /// question whether to shut down past the apps that blocked it, where an
+    /// agent can — a shutdown that skips them runs only with that consent —
+    /// else ``failure(_:verb:on:)``'s mapping.
+    private func shutdownFailure(_ error: any Error, on instance: VMInstance, restarting: Bool) -> CommandError {
+        if let prompt = (error as? GuestShutdownNotCarriedOut)?.skipBlockingAppsPrompt(restarting: restarting) {
+            return .confirmationRequired(prompt)
+        }
+        return failure(error, verb: .stop, on: instance)
     }
 
     /// What discarding an Ephemeral Mode VM's saved state does — a revert to
@@ -1128,7 +1145,7 @@ extension VMCommandCore {
             try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
         do {
-            try await shutDown(instance, continuingWith: boot)
+            try await shutDown(instance, consent: consent, continuingWith: boot)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has

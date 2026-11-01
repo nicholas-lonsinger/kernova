@@ -1,8 +1,11 @@
 import Cocoa
 import CoreServices
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -146,6 +149,45 @@ struct VMLifecycleScriptCommandsTests {
         #expect(virtualization.stopCallCount == 1)
         #expect(virtualization.forceStopCallCount == 0)
         #expect(alpha.status == .stopped)
+    }
+
+    @Test(
+        "stop and restart with confirmation shut down past the apps blocking them, where an agent can; without, they refuse with the question",
+        arguments: ["Stop", "Rstr"])
+    func confirmationSkipsBlockingApps(code: String) async throws {
+        let wired = WiredCommandCore(virtualization: MockVirtualizationService())
+        let probe = AgentHubProbe()
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()), agentConnector: probe)
+        alpha.agentHub.attach(probe, policy: PolicySnapshot(), republisher: GuestLogRepublisher(vmLabel: "Alpha"))
+        try await probe.changed.wait { probe.isStarted }
+        _ = probe.connectPowerPeer { _ in [.accepted, .finished(.blocked([AppValue(displayName: "Text Editor")]))] }
+        _ = probe.connectPowerPeer(
+            claim: PeerClaim(role: .systemPeer, scope: .system, os: .linux, architecture: .arm64),
+            state: PeerSessionState(console: .on, consoleSessionID: AgentHubProbe.consoleSessionPeer.state.sessionID),
+            offer: PowerOffer(actions: [], skippingBlockers: [.shutdown], actionsAbsence: .unsavedWorkUnseen),
+            answering: { _ in [.accepted, .finished(.handedOff)] })
+        try await waitForChange { alpha.agentHubSnapshot.peers.count == 2 }
+        let make: (NSScriptCommandDescription) -> VMScriptCommand =
+            code == "Stop"
+            ? { VMStopScriptCommand(commandDescription: $0) } : { VMRestartScriptCommand(commandDescription: $0) }
+        let unconfirmed = try makeCommand(make, code: code)
+        let confirmed = try makeCommand(make, code: code, arguments: ["Confirmation": true])
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await unconfirmed.run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(refusal.confirmationPrompt?.kind == .skipBlockingApps)
+        #expect(probe.powerRequests.map(\.skippingBlockers) == [false])
+
+        let restarting = code == "Rstr"
+        let run = Task { @MainActor in try await confirmed.run(makeGateway(wired), on: [.name("Alpha")]) }
+        try await probe.changed.wait { probe.powerRequests.count == 3 }
+        if restarting {
+            try await waitForChange { !alpha.activity.isRequestingStop && alpha.activity.liveSessionContinues }
+            alpha.activity.deliverSessionEvent(.guestDidStop, from: try #require(alpha.activity.liveSessionID))
+        }
+        try await run.value
+        #expect(probe.powerRequests.map(\.skippingBlockers) == [false, false, true])
     }
 
     @Test("A stop method from no vocabulary this app writes is a type error, and stops nothing")

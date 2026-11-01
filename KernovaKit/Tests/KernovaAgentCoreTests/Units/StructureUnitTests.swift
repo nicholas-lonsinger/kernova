@@ -290,7 +290,7 @@ extension CoreUnits {
         }
 
         static func performed(_ run: HostileRun) -> [PowerRequestID] {
-            run.peerEffects.compactMap { if case .power(.perform(let id, _)) = $0 { id } else { nil } }
+            run.peerEffects.compactMap { if case .power(.perform(let id, _, _)) = $0 { id } else { nil } }
         }
 
         static func localFaults(_ run: HostileRun) -> Int {
@@ -433,6 +433,20 @@ extension CoreUnits {
             let params = Unit.encode(capability)
             #expect(PowerOffer(params: params) == PowerOffer(actions: [.restart], asksAppsToQuit: true))
             #expect(PowerOffer(params: Data([0xFF])) == nil)
+            let skipping = PowerOffer(actions: [], skippingBlockers: [.shutdown], actionsAbsence: .unsavedWorkUnseen)
+            #expect(PowerOffer(params: skipping.encoded) == skipping)
+            let both = PowerOffer(actions: [.shutdown, .restart], skippingBlockers: [.shutdown, .restart])
+            #expect(PowerOffer(params: both.encoded) == both)
+            // An absence beside listed actions, or outside 1-99, reads as none.
+            capability.actionsAbsence = .unsavedWorkUnseen
+            #expect(PowerOffer(params: Unit.encode(capability))?.actionsAbsence == nil)
+            capability.actions = []
+            capability.actionsAbsence = .noAgent
+            #expect(PowerOffer(params: Unit.encode(capability))?.actionsAbsence == nil)
+            #expect(
+                PowerOffer.waitingStatus(.available(skipping.encoded))
+                    == .absent(.unsavedWorkUnseen, debugDetail: ""))
+            #expect(PowerOffer.waitingStatus(.available(both.encoded)) == .available(both.encoded))
             let state = PeerSessionState(console: .on, sessionID: "c1")
             let usable = RoutingPeer(
                 handle: PeerHandle(rawValue: 1), role: .sessionPeer, state: state, connectedOrder: 1,

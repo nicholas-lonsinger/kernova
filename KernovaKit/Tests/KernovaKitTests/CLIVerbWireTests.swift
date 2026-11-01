@@ -221,6 +221,33 @@ struct CLIVerbWireTests {
             ])
     }
 
+    @Test(
+        "A stop or restart apps in the guest blocked exits 5 with the question, and --yes is the consent that skips them",
+        arguments: ["stop", "restart"])
+    func blockedShutdownAsksForYes(verb: String) throws {
+        let prompt = ConfirmationPrompt(
+            kind: .skipBlockingApps, title: "\u{201C}Alpha\u{201D} Didn\u{2019}t Shut Down",
+            message: "Text Editor is blocking it.", confirmTitle: "Shut Down Anyway", dismissTitle: "Cancel")
+        let blocked = try CLIWire.exchange(
+            [verb, "Alpha"], answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
+        do {
+            _ = try blocked.answer.payload()
+            Issue.record("expected the question")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .refusedByState)
+            #expect(failure.message == "Text Editor is blocking it.\n\nPass --yes to do it anyway.")
+        }
+
+        let anyway = try CLIWire.exchange([verb, "Alpha", "--yes"], answering: accepted)
+        let consent: Consent? =
+            switch anyway.sent.first {
+            case .stop(_, .graceful, let consent, nil)?: consent
+            case .restart(_, nil, let consent)?: consent
+            default: nil
+            }
+        #expect(consent?.covers(.skipBlockingApps) == true)
+    }
+
     @Test("stop --yes on a paused guest exits 5, naming the resume as a command line")
     func stopOfAPausedGuestNamesTheResume() throws {
         let vm = VMSummary(

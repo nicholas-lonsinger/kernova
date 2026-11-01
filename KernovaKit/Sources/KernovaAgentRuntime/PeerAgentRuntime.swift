@@ -212,7 +212,8 @@ public final class PeerAgentRuntime: Sendable {
                 case .power(let effect):
                     ledger.withLock { $0.record(effect) }
                     switch effect {
-                    case .perform(let id, let action): registry.power?.perform(id, action)
+                    case .perform(let id, let action, let skippingBlockers):
+                        registry.power?.perform(id, action, skippingBlockers: skippingBlockers)
                     case .cancel(let id): registry.power?.cancel(id)
                     }
                 case .update(.payload(let id, let bytes)): registry.update?.write(id, bytes)

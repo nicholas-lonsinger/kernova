@@ -209,13 +209,21 @@ extension PowerOffer {
         var capability = Kernova_V2_PowerCapability()
         capability.actions = actions
         capability.asksAppsToQuit = asksAppsToQuit
+        capability.skipBlockersActions = skippingBlockers
+        if actions.isEmpty, let actionsAbsence { capability.actionsAbsence = actionsAbsence }
         return capability.encoded
     }
 
-    /// Decodes a far side's `PowerCapability` params; nil when they do not decode.
+    /// Decodes a far side's `PowerCapability` params; nil when they do not decode. An `actions_absence`
+    /// outside 1-99, or beside listed actions, reads as none.
     public init?(params: Data) {
         guard let capability = try? Kernova_V2_PowerCapability(serializedBytes: params) else { return nil }
-        self.init(actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit)
+        let absence: AbsenceReason? =
+            capability.actions.isEmpty && (1...99).contains(capability.actionsAbsence.rawValue)
+            ? capability.actionsAbsence : nil
+        self.init(
+            actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit,
+            skippingBlockers: capability.skipBlockersActions, actionsAbsence: absence)
     }
 }
 

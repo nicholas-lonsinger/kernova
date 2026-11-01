@@ -39,9 +39,12 @@ public struct Logind: Sendable {
     /// systemd 257 a `block-weak` lock passes its own user and root, and before
     /// 257 a `block` lock passes its own user too (org.freedesktop.login1(5)).
     /// gnome-session holds its lock as the session's user — `block` through
-    /// GNOME 50, `block-weak` from 51 (gsm-systemd.c). So a session's own
-    /// power-off can pass its apps' unsaved work, and a caller that must not
-    /// checks `shutdownBlockers()` first.
+    /// GNOME 50, `block-weak` from 51 (gsm-systemd.c). It also lets a caller
+    /// polkit authorizes for `power-off-ignore-inhibit` through any lock before
+    /// 257, and through a `block-weak` one from 257 (`verify_shutdown_creds`),
+    /// as the system peer's polkit rule does. So a power-off can pass its apps'
+    /// unsaved work, and a caller that must not checks `shutdownBlockers()`
+    /// first.
     public func powerOff(timeout: Duration = DBusBusConnection.defaultTimeout) throws(DBusServiceError) {
         _ = try call(
             Self.managerPath, Self.managerInterface, "PowerOff", [.boolean(false)], expecting: .empty, timeout: timeout)
@@ -51,6 +54,44 @@ public struct Logind: Sendable {
     public func reboot(timeout: Duration = DBusBusConnection.defaultTimeout) throws(DBusServiceError) {
         _ = try call(
             Self.managerPath, Self.managerInterface, "Reboot", [.boolean(false)], expecting: .empty, timeout: timeout)
+    }
+
+    /// `SD_LOGIND_SKIP_INHIBITORS`, the `PowerOffWithFlags` and `RebootWithFlags` flag that passes `block`
+    /// and `block-weak` locks (org.freedesktop.login1(5), systemd 257 on).
+    static let skipInhibitorsFlag: UInt64 = 0x10
+
+    /// `PowerOffWithFlags(SD_LOGIND_SKIP_INHIBITORS)`: powers the machine off without waiting for the
+    /// apps holding block inhibitors, with no interactive polkit authorization, waiting `timeout` for each
+    /// of logind's replies. logind lets a caller past a lock only when polkit authorizes it for
+    /// `power-off-ignore-inhibit`.
+    ///
+    /// logind before 257 knows no such flag and answers `InvalidArgs` before acting; the call then goes
+    /// again with no flags, which there passes a lock for a caller polkit authorizes for
+    /// `power-off-ignore-inhibit` (logind-dbus.c's `verify_shutdown_creds`). systemctl's own
+    /// `--ignore-inhibitors` falls back the same way (systemctl-logind.c).
+    public func powerOffSkippingInhibitors(timeout: Duration = DBusBusConnection.defaultTimeout)
+        throws(DBusServiceError)
+    {
+        try skippingInhibitors("PowerOffWithFlags", timeout: timeout)
+    }
+
+    /// `RebootWithFlags(SD_LOGIND_SKIP_INHIBITORS)`, as `powerOffSkippingInhibitors(timeout:)`, against
+    /// `reboot-ignore-inhibit`.
+    public func rebootSkippingInhibitors(timeout: Duration = DBusBusConnection.defaultTimeout)
+        throws(DBusServiceError)
+    {
+        try skippingInhibitors("RebootWithFlags", timeout: timeout)
+    }
+
+    private func skippingInhibitors(_ method: String, timeout: Duration) throws(DBusServiceError) {
+        do throws(DBusServiceError) {
+            _ = try call(
+                Self.managerPath, Self.managerInterface, method, [.uint64(Self.skipInhibitorsFlag)],
+                expecting: .empty, timeout: timeout)
+        } catch  where error.remoteError?.name == "org.freedesktop.DBus.Error.InvalidArgs" {
+            _ = try call(
+                Self.managerPath, Self.managerInterface, method, [.uint64(0)], expecting: .empty, timeout: timeout)
+        }
     }
 
     /// `ListInhibitors()`: every inhibitor lock held now.

@@ -154,16 +154,20 @@ enum UnitFiles {
         #"u \#(InstallLayout.systemAccount) - "Kernova guest agent" \#(layout.root) -"#
     }
 
-    /// The polkit rule granting the system peer's account the four power actions and nothing else: no
-    /// `*-ignore-inhibit`, so a block inhibitor still stops it.
+    /// The polkit rule granting the system peer's account the power actions and nothing else. The
+    /// `*-ignore-inhibit` pair, which polkit's defaults ask even an active user to authenticate for, is
+    /// what lets it shut down past the apps blocking it; its requests that wait for them check logind's
+    /// locks themselves first (`Logind.powerOff(timeout:)`).
     static let polkitRule = """
         // Written by kernova-agent install --system.
         polkit.addRule(function(action, subject) {
             if (subject.user == "\(InstallLayout.systemAccount)" &&
                 (action.id == "org.freedesktop.login1.power-off" ||
                  action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+                 action.id == "org.freedesktop.login1.power-off-ignore-inhibit" ||
                  action.id == "org.freedesktop.login1.reboot" ||
-                 action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
+                 action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+                 action.id == "org.freedesktop.login1.reboot-ignore-inhibit")) {
                 return polkit.Result.YES;
             }
         });

@@ -155,7 +155,7 @@ package final class SimPeerProcess {
         powerLedger.record(effect)
         let starts = self.starts
         switch effect {
-        case .perform(let id, let action):
+        case .perform(let id, let action, _):
             performed.append((world.now, id, action))
             var delay: SimTime = 0
             for step in spec.power.steps {

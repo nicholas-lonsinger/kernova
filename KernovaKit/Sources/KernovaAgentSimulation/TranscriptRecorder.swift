@@ -43,8 +43,9 @@ package enum TranscriptInput: Sendable, Equatable {
         switch self {
         case .host(let command):
             switch command {
-            case .requestPower(let id, let action):
-                return "host requestPower id=\(id.rawValue) action=\(action.rawValue)"
+            case .requestPower(let id, let action, let skippingBlockers):
+                return
+                    "host requestPower id=\(id.rawValue) action=\(action.rawValue)\(skippingBlockers ? " skip=1" : "")"
             case .cancelPower(let id): return "host cancelPower id=\(id.rawValue)"
             case .close(let code, let retry):
                 return "host close code=\(code.rawValue) retry=\(retry?.milliseconds ?? 0)"
@@ -105,7 +106,10 @@ package enum TranscriptInput: Sendable, Equatable {
         let apps = (fields["apps"] ?? "").split(separator: ",").map { AppValue(displayName: String($0)) }
         switch (words[0], words[1]) {
         case ("host", "requestPower"):
-            self = .host(.requestPower(powerID, PowerAction(rawValue: number("action")) ?? .unspecified))
+            self = .host(
+                .requestPower(
+                    powerID, PowerAction(rawValue: number("action")) ?? .unspecified,
+                    skippingBlockers: number("skip") == 1))
         case ("host", "cancelPower"): self = .host(.cancelPower(powerID))
         case ("host", "close"):
             let retry = number("retry")
@@ -616,7 +620,8 @@ package enum TranscriptEvents {
 
     package static func describe(_ effect: PeerEffect) -> String? {
         switch effect {
-        case .power(.perform(let id, let action)): "peer power perform id=\(id.rawValue) action=\(action.rawValue)"
+        case .power(.perform(let id, let action, let skippingBlockers)):
+            "peer power perform id=\(id.rawValue) action=\(action.rawValue)\(skippingBlockers ? " skip=1" : "")"
         case .power(.cancel(let id)): "peer power cancel id=\(id.rawValue)"
         case .update(.complete(let id, let manifest)):
             "peer update complete id=\(id.stream.rawValue) size=\(manifest.payloadSize)"

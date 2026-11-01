@@ -33,8 +33,8 @@ public struct HostConfiguration: Sendable {
 public enum HostCommand: Sendable, Equatable {
     /// The VM was live-paused (`true`) or resumed.
     case setPeerFrozen(Bool)
-    /// Ask the peer to perform `action`.
-    case requestPower(PowerRequestID, PowerAction)
+    /// Ask the peer to perform `action`, without waiting for the apps that block it when `skippingBlockers`.
+    case requestPower(PowerRequestID, PowerAction, skippingBlockers: Bool = false)
     /// Cancel a request still waiting for acceptance.
     case cancelPower(PowerRequestID)
     /// The VM's policy changed.
@@ -162,8 +162,8 @@ public struct HostEndpoint: Sendable {
         switch command {
         case .setPeerFrozen(let frozen):
             connection.setPeerFrozen(frozen, now: now)
-        case .requestPower(let id, let action):
-            power.request(id, action, connection: &connection)
+        case .requestPower(let id, let action, let skippingBlockers):
+            power.request(id, action, skippingBlockers: skippingBlockers, connection: &connection)
         case .cancelPower(let id):
             power.cancel(id, connection: &connection)
         case .setPolicy(let policy):

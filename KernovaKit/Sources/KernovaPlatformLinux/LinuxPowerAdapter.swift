@@ -16,6 +16,11 @@ import KernovaWire
 /// So a session peer offers power only while a session manager serves `org.gnome.SessionManager`, and the
 /// system peer, which cannot read a session bus, only while no desktop session runs.
 ///
+/// Skipping the apps that block it is a separate offer, made whenever polkit authorizes the action's
+/// `-ignore-inhibit` variant: a caller that skips them has accepted losing what they hold, so what the
+/// peer can see of it does not matter. polkit asks an active user to authenticate for it, so in practice
+/// the system peer, which the install's polkit rule authorizes, is the one that offers it.
+///
 /// Every D-Bus call runs on the adapter's own serial queue.
 public final class LinuxPowerAdapter: PowerAdapter {
     /// The peer an adapter serves, with what that peer reads unsaved work from.
@@ -30,10 +35,12 @@ public final class LinuxPowerAdapter: PowerAdapter {
     /// logind never answers ends `.unconfirmed` while the host still waits on it.
     public static let defaultPowerCallTimeout: Duration = .seconds(8)
 
-    /// The polkit actions logind checks for each power action, without the `-multiple-sessions` and
-    /// `-ignore-inhibit` variants it checks when other users are logged in or a lock is held.
-    private static let polkitActions: [(action: PowerAction, id: String)] = [
-        (.shutdown, "org.freedesktop.login1.power-off"), (.restart, "org.freedesktop.login1.reboot"),
+    /// The polkit actions logind checks for each power action: the plain one, without the
+    /// `-multiple-sessions` variant it checks when other users are logged in, and the `-ignore-inhibit`
+    /// one it checks against a lock it lets the caller past.
+    private static let polkitActions: [(action: PowerAction, id: String, skipping: String)] = [
+        (.shutdown, "org.freedesktop.login1.power-off", "org.freedesktop.login1.power-off-ignore-inhibit"),
+        (.restart, "org.freedesktop.login1.reboot", "org.freedesktop.login1.reboot-ignore-inhibit"),
     ]
 
     private let peer: Peer
@@ -123,10 +130,11 @@ public final class LinuxPowerAdapter: PowerAdapter {
         if changed { queueRefresh() }
     }
 
-    /// Rechecks the availability, reports `.blocked` while any app holds unsaved work, then asks logind.
-    public func perform(_ id: PowerRequestID, _ action: PowerAction) {
+    /// Rechecks the availability and asks logind; a request that waits for blocking apps first reports
+    /// `.blocked` while any app holds unsaved work.
+    public func perform(_ id: PowerRequestID, _ action: PowerAction, skippingBlockers: Bool) {
         state.withLock { _ = $0.unclaimed.insert(id) }
-        queue.async { [self] in run(id, action) }
+        queue.async { [self] in run(id, action, skippingBlockers: skippingBlockers) }
     }
 
     /// Reports `.cancelled` while logind has not been asked; otherwise the request's own report follows.
@@ -141,16 +149,67 @@ public final class LinuxPowerAdapter: PowerAdapter {
     /// What the adapter offers now, and how it refuses an action it does not offer.
     private struct Verdict {
         var availability: Availability<PowerOffer>
+        /// The refusal of a request that waits for blocking apps.
+        var refusal: WireError
+        /// The refusal of a request that skips them.
+        var skippingRefusal: WireError
+        var level: KernovaLogLevel = .notice
+        /// Why requests that wait for blocking apps are not offered, while those skipping them are.
+        var waitingAbsenceDetail: String?
+    }
+
+    /// The offer of the actions that wait for blocking apps, and the refusal of one not offered.
+    private struct WaitingVerdict {
+        var availability: Availability<[PowerAction]>
         var refusal: WireError
         var level: KernovaLogLevel = .notice
     }
 
     private func evaluate() -> Verdict {
+        let waiting = evaluateWaiting()
+        let (skipping, skippingRefusal) = evaluateSkipping()
+        switch waiting.availability {
+        case .available(let actions):
+            return Verdict(
+                availability: .available(PowerOffer(actions: actions, skippingBlockers: skipping)),
+                refusal: waiting.refusal, skippingRefusal: skippingRefusal, level: waiting.level)
+        case .absent(let reason, let detail) where !skipping.isEmpty:
+            return Verdict(
+                availability: .available(PowerOffer(actions: [], skippingBlockers: skipping, actionsAbsence: reason)),
+                refusal: waiting.refusal, skippingRefusal: skippingRefusal, level: waiting.level,
+                waitingAbsenceDetail: "\(reason): \(detail)")
+        case .absent(let reason, let detail):
+            return Verdict(
+                availability: .absent(reason, debugDetail: detail), refusal: waiting.refusal,
+                skippingRefusal: skippingRefusal, level: waiting.level)
+        }
+    }
+
+    /// The actions polkit authorizes past the apps that block them, and the refusal of one it does not.
+    private func evaluateSkipping() -> (actions: [PowerAction], refusal: WireError) {
+        var actions: [PowerAction] = []
+        for (action, _, actionID) in Self.polkitActions {
+            do throws(DBusServiceError) {
+                if try polkit.isAuthorized(actionID) { actions.append(action) }
+            } catch {
+                return (
+                    [],
+                    WireError(
+                        .powerNotPermitted, debugDetail: "polkit's CheckAuthorization of \(actionID) failed: \(error)")
+                )
+            }
+        }
+        return (
+            actions, WireError(.powerNotPermitted, debugDetail: "polkit does not authorize skipping the inhibitors")
+        )
+    }
+
+    private func evaluateWaiting() -> WaitingVerdict {
         switch peer {
         case .session(let manager):
             if let unseen = sessionManagerAbsence(manager) { return unseen }
             if !state.withLock(\.onConsole) {
-                return Verdict(
+                return WaitingVerdict(
                     availability: .absent(.notOnConsole, debugDetail: "the session does not hold the console"),
                     refusal: WireError(.powerNotOnConsole))
             }
@@ -158,36 +217,36 @@ public final class LinuxPowerAdapter: PowerAdapter {
             if let unseen = desktopSessionAbsence() { return unseen }
         }
         var actions: [PowerAction] = []
-        for (action, actionID) in Self.polkitActions {
+        for (action, actionID, _) in Self.polkitActions {
             do throws(DBusServiceError) {
                 if try polkit.isAuthorized(actionID) { actions.append(action) }
             } catch {
                 if PolkitAuthority.isAbsent(error) {
                     let detail = "polkit is not on the system bus: \(error)"
-                    return Verdict(
+                    return WaitingVerdict(
                         availability: .absent(.missingOsComponent, debugDetail: detail),
                         refusal: WireError(.powerNotPermitted, debugDetail: detail))
                 }
                 let detail = "polkit's CheckAuthorization of \(actionID) failed: \(error)"
-                return Verdict(
+                return WaitingVerdict(
                     availability: .absent(.notPermitted, debugDetail: detail),
                     refusal: WireError(.powerNotPermitted, debugDetail: detail), level: .error)
             }
         }
         guard !actions.isEmpty else {
             let detail = "polkit authorizes neither power-off nor reboot"
-            return Verdict(
+            return WaitingVerdict(
                 availability: .absent(.notPermitted, debugDetail: detail),
                 refusal: WireError(.powerNotPermitted, debugDetail: detail))
         }
-        return Verdict(
-            availability: .available(PowerOffer(actions: actions, asksAppsToQuit: false)),
+        return WaitingVerdict(
+            availability: .available(actions),
             refusal: WireError(.powerNotPermitted, debugDetail: "polkit does not authorize this action"))
     }
 
     /// `UNSAVED_WORK_UNSEEN` unless a session manager serves `org.gnome.SessionManager`, whose inhibitor list
     /// is the session's unsaved work.
-    private func sessionManagerAbsence(_ manager: GnomeSessionManager) -> Verdict? {
+    private func sessionManagerAbsence(_ manager: GnomeSessionManager) -> WaitingVerdict? {
         do throws(GnomeSessionError) {
             guard try !manager.hasOwner() else { return nil }
             return Self.unseen(
@@ -199,7 +258,7 @@ public final class LinuxPowerAdapter: PowerAdapter {
     }
 
     /// `UNSAVED_WORK_UNSEEN` while any desktop session runs: a system service cannot read its session bus.
-    private func desktopSessionAbsence() -> Verdict? {
+    private func desktopSessionAbsence() -> WaitingVerdict? {
         do throws(DBusServiceError) {
             let desktops = try logind.desktopSessions()
             guard !desktops.isEmpty else { return nil }
@@ -210,8 +269,8 @@ public final class LinuxPowerAdapter: PowerAdapter {
         }
     }
 
-    private static func unseen(_ detail: String, _ level: KernovaLogLevel = .notice) -> Verdict {
-        Verdict(
+    private static func unseen(_ detail: String, _ level: KernovaLogLevel = .notice) -> WaitingVerdict {
+        WaitingVerdict(
             availability: .absent(.unsavedWorkUnseen, debugDetail: detail),
             refusal: WireError(.featureUnavailable, absence: .unsavedWorkUnseen, debugDetail: detail), level: level)
     }
@@ -230,7 +289,13 @@ public final class LinuxPowerAdapter: PowerAdapter {
         guard let reporter else { return verdict }
         switch verdict.availability {
         case .available(let offer):
-            logger.log(.notice, "Power is available: \(String(describing: offer.actions), privacy: .public)")
+            logger.log(
+                .notice,
+                """
+                Power is available: \(String(describing: offer.actions), privacy: .public), and skipping the \
+                apps that block it: \(String(describing: offer.skippingBlockers), privacy: .public)\
+                \(verdict.waitingAbsenceDetail.map { "; waiting for them is absent, \($0)" } ?? "", privacy: .public)
+                """)
         case .absent(let reason, let detail):
             logger.log(
                 verdict.level,
@@ -262,20 +327,22 @@ public final class LinuxPowerAdapter: PowerAdapter {
         report(reporter)
     }
 
-    private func run(_ id: PowerRequestID, _ action: PowerAction) {
-        let name = String(describing: action)
+    private func run(_ id: PowerRequestID, _ action: PowerAction, skippingBlockers: Bool) {
+        let name = String(describing: action) + (skippingBlockers ? " skipping the apps that block it" : "")
         let verdict = refreshAvailability()
-        guard verdict.availability.params?.actions.contains(action) == true else {
+        guard verdict.availability.params?.actions(skippingBlockers: skippingBlockers).contains(action) == true else {
+            let refusal = skippingBlockers ? verdict.skippingRefusal : verdict.refusal
             return conclude(id) { reporter in
                 logger.log(
                     .notice,
                     """
                     Power request \(id.rawValue) to \(name, privacy: .public) is refused: \
-                    \(verdict.refusal.debugDetail, privacy: .public)
+                    \(refusal.debugDetail, privacy: .public)
                     """)
-                reporter.report(.refused(id, verdict.refusal))
+                reporter.report(.refused(id, refusal))
             }
         }
+        if skippingBlockers { return ask(id, action, name, skippingBlockers: true) }
 
         // The only guard against unsaved work where logind lets this caller through the lock: see
         // `Logind.powerOff(timeout:)`.
@@ -299,13 +366,18 @@ public final class LinuxPowerAdapter: PowerAdapter {
                 reportBlocked(id, name, blocking, reporter)
             }
         }
+        ask(id, action, name, skippingBlockers: false)
+    }
 
+    /// Asks logind for `action`, reporting how it answered.
+    private func ask(_ id: PowerRequestID, _ action: PowerAction, _ name: String, skippingBlockers: Bool) {
         guard claim(id), let reporter = state.withLock(\.reporter) else { return }
         do throws(DBusServiceError) {
-            if action == .restart {
-                try logind.reboot(timeout: powerCallTimeout)
-            } else {
-                try logind.powerOff(timeout: powerCallTimeout)
+            switch (action, skippingBlockers) {
+            case (.restart, false): try logind.reboot(timeout: powerCallTimeout)
+            case (.restart, true): try logind.rebootSkippingInhibitors(timeout: powerCallTimeout)
+            case (_, false): try logind.powerOff(timeout: powerCallTimeout)
+            case (_, true): try logind.powerOffSkippingInhibitors(timeout: powerCallTimeout)
             }
             logger.log(.notice, "Power request \(id.rawValue): logind took the \(name, privacy: .public)")
             reporter.report(.accepted(id))

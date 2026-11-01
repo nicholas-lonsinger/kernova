@@ -396,16 +396,42 @@ public struct AppValue: Sendable, Equatable {
 }
 
 /// What a peer's power adapter can do now: the `PowerCapability` it advertises.
+///
+/// Two offers in one: `actions` wait for the apps that block them, `skippingBlockers` do not. A peer
+/// offering only the second advertises POWER available with no `actions`, and `actionsAbsence` says why.
 public struct PowerOffer: Sendable, Equatable {
     /// The actions it can perform now.
     public var actions: [PowerAction]
     /// Whether it asks running apps to quit.
     public var asksAppsToQuit: Bool
+    /// The actions it can perform now without waiting for the apps that block them.
+    public var skippingBlockers: [PowerAction]
+    /// Why `actions` is empty; `nil` while it is not.
+    public var actionsAbsence: AbsenceReason?
 
     /// Creates an offer.
-    public init(actions: [PowerAction], asksAppsToQuit: Bool = false) {
+    public init(
+        actions: [PowerAction], asksAppsToQuit: Bool = false, skippingBlockers: [PowerAction] = [],
+        actionsAbsence: AbsenceReason? = nil
+    ) {
         self.actions = actions
         self.asksAppsToQuit = asksAppsToQuit
+        self.skippingBlockers = skippingBlockers
+        self.actionsAbsence = actionsAbsence
+    }
+
+    /// The actions offered in `skippingBlockers` mode: that list, or `actions`.
+    public func actions(skippingBlockers skipping: Bool) -> [PowerAction] {
+        skipping ? skippingBlockers : actions
+    }
+
+    /// POWER's `status` as the actions that wait for blocking apps see it: absent for the offer's
+    /// `actionsAbsence` when it lists none of them, else `status` itself.
+    public static func waitingStatus(_ status: Availability<Data>) -> Availability<Data> {
+        guard let params = status.params, let offer = PowerOffer(params: params), offer.actions.isEmpty else {
+            return status
+        }
+        return .absent(offer.actionsAbsence ?? .unspecified, debugDetail: "")
     }
 }
 

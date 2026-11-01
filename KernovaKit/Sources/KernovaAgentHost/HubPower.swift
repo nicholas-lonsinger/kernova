@@ -11,8 +11,9 @@ import KernovaWire
 public enum PowerRoutingOutcome: Sendable, Equatable {
     /// A peer took it, and the guest is going down.
     case handedOff
-    /// These apps stopped it; the guest keeps running.
-    case blocked([AppValue])
+    /// These apps stopped it; the guest keeps running. `skippable` when a peer offers the action without
+    /// waiting for them, as ``AgentHub/requestPower(_:skippingBlockers:_:)`` asks it.
+    case blocked([AppValue], skippable: Bool)
     /// A user in the guest cancelled it.
     case cancelledInGuest
     /// The guest's OS gave up after accepting it.
@@ -21,9 +22,9 @@ public enum PowerRoutingOutcome: Sendable, Equatable {
     case indeterminate
     /// The peer's connection ended after it accepted, as it does when the guest goes down.
     case lostAfterAcceptance
-    /// No peer took it, and nothing was done: the caller presses the ACPI button. `refusals` say why each
-    /// peer asked declined.
-    case useACPI(refusals: [PeerRefusal])
+    /// No peer took it, and nothing was done. `refusals` say why each peer asked declined. For a shutdown
+    /// that waits for blocking apps, the caller presses the ACPI button.
+    case unserved(refusals: [PeerRefusal])
     /// Another routing is running for this VM.
     case busy
 }
@@ -91,12 +92,12 @@ extension PowerRoutingOutcome {
         case .ask, .progress:
             return nil
         case .handedOff: self = .handedOff
-        case .blocked(_, let apps): self = .blocked(apps)
+        case .blocked(_, let apps, let skippable): self = .blocked(apps, skippable: skippable)
         case .cancelledInGuest: self = .cancelledInGuest
         case .failed(_, let error): self = .failed(error)
         case .indeterminate: self = .indeterminate
         case .lostAfterAcceptance: self = .lostAfterAcceptance
-        case .acpi(_, let refusals): self = .useACPI(refusals: refusals)
+        case .unserved(let refusals): self = .unserved(refusals: refusals)
         case .busy: self = .busy
         }
     }

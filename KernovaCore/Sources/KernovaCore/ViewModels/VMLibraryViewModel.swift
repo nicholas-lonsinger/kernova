@@ -948,6 +948,10 @@ package final class VMLibraryViewModel {
     /// What a user declining a confirmation raises, for the same reason.
     private struct ConfirmationDeclined: Error {}
 
+    /// What a confirmation gathered on a sheet of its own raises: the sheet
+    /// runs the verb it answers, so the verb that raised it ends here.
+    private struct ConfirmationOnItsOwnSheet: Error {}
+
     /// Runs a bring-up through
     /// ``VMConsentPolicy/run(prompting:choosingRoute:taking:_:)`` and, inside
     /// it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``, asking
@@ -1000,6 +1004,7 @@ package final class VMLibraryViewModel {
                 .notice,
                 "'\(instance.name, privacy: .public)': the user declined the confirmation it asked for"
             )
+        } catch is ConfirmationOnItsOwnSheet {
         } catch {
             present(error, about: .vm(instance))
         }
@@ -1009,10 +1014,18 @@ package final class VMLibraryViewModel {
     /// Puts a confirmation a verb on `instance` raised on screen and waits for
     /// the user's answer.
     ///
-    /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
+    /// A Force Stop's — a suspended VM's Stop discarding its saved state — goes
+    /// to the Force Stop sheet, whose buttons run the stop they choose.
+    ///
+    /// - Throws: ``ConfirmationDeclined`` when the user walked away,
+    ///   ``ConfirmationOnItsOwnSheet`` for the Force Stop sheet, and the
     ///   refusal itself when it could not be asked.
     private func askToConfirm(_ prompt: ConfirmationPrompt, about instance: VMInstance) async throws {
         guard let presenter else { throw CommandError.confirmationRequired(prompt) }
+        if prompt.kind == .forceStop {
+            presenter.presentForceStop(for: instance)
+            throw ConfirmationOnItsOwnSheet()
+        }
         let answer = await withCheckedContinuation { continuation in
             presenter.presentConfirmationRequest(
                 ConfirmationRequest(
@@ -1073,7 +1086,9 @@ package final class VMLibraryViewModel {
     }
 
     /// A graceful stop, or — for a live-paused guest, which cannot take one —
-    /// the sheet offering Resume and Shut Down or Force Stop.
+    /// the sheet offering Resume and Shut Down or Force Stop. Asks on screen
+    /// for what it refuses without: discarding a suspended session's saved
+    /// state, and shutting down past the apps that blocked it.
     ///
     /// The pause is read in the same main-actor turn the core reads it in
     /// before refusing, so the two cannot disagree.
@@ -1082,10 +1097,7 @@ package final class VMLibraryViewModel {
             presenter?.presentStopPaused(for: instance)
             return
         }
-        await run(on: instance) {
-            try await self.commands.stop(
-                .id(instance.id), disposition: .graceful, consent: .none)
-        }
+        await gracefulStop(instance)
     }
 
     /// Resumes a paused VM, then requests a graceful shutdown — the stop-paused
@@ -1096,9 +1108,14 @@ package final class VMLibraryViewModel {
             try await self.commands.resume(.id(instance.id), consent: consent)
         }
         guard resumed else { return }
-        await run(on: instance) {
-            try await self.commands.stop(
-                .id(instance.id), disposition: .graceful, consent: .none)
+        await gracefulStop(instance)
+    }
+
+    /// The graceful stop verb every other door runs, asking on screen for
+    /// what it refuses without.
+    private func gracefulStop(_ instance: VMInstance) async {
+        await runAsking(on: instance, then: "Stop") { consent in
+            try await self.commands.stop(.id(instance.id), disposition: .graceful, consent: consent)
         }
     }
 
@@ -1729,9 +1746,12 @@ package final class VMLibraryViewModel {
     /// Opens the sheet that gathers the consent a refusal is asking for.
     ///
     /// A Stop the user asked for that only the core can tell is destructive
-    /// opens one: a suspended VM whose stop discards its saved state. A start beside a VM sharing its machine identity
-    /// arrives here only when it could not be asked (``runAsking(on:then:_:)``),
-    /// and is shown as the refusal it stands for. Every other confirmation is
+    /// opens one: a suspended VM whose stop discards its saved state, from a
+    /// door that runs the verb without asking. A start beside a VM sharing its
+    /// machine identity, and a shutdown past the apps that blocked it, arrive
+    /// here only when they could not be asked (``runAsking(on:then:_:)``), and
+    /// are shown as the refusal they stand for.
+    /// Every other confirmation is
     /// raised by the `request…` method that opens its own sheet and knows the
     /// arguments — which VM, which snapshot, Trash or immediate — that the
     /// prompt alone does not carry.
@@ -1742,6 +1762,9 @@ package final class VMLibraryViewModel {
         case .startBesideSharedMachineIdentity:
             // Raised where it could not be asked: the refusal it stands for.
             surfaceError(prompt.message, title: ConflictReason.machineIdentity.title, about: .vm(instance))
+        case .skipBlockingApps:
+            // Raised where it could not be asked: the blocked shutdown it stands for.
+            surfaceError(prompt.message, title: prompt.title, about: .vm(instance))
         default:
             Self.logger.log(
                 .debug,
