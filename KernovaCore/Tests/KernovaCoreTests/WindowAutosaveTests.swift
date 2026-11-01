@@ -19,6 +19,8 @@ struct WindowAutosaveTests {
         #expect(app.displayToolbar == "KernovaVMDisplayToolbar")
         #expect(app.displayFrame(for: vmID) == "VMDisplay-5E00A1A0-0000-4000-8000-000000000001")
         #expect(app.clipboardFrame(for: vmID) == "Clipboard-5E00A1A0-0000-4000-8000-000000000001")
+        #expect(
+            app.guestAgentStatusFrame(for: vmID) == "GuestAgentStatus-5E00A1A0-0000-4000-8000-000000000001")
     }
 
     @Test("Unsaved names hand out no name AppKit saves under")
@@ -32,6 +34,7 @@ struct WindowAutosaveTests {
         #expect(unsaved.settingsFrame.isEmpty)
         #expect(unsaved.displayFrame(for: vmID).isEmpty)
         #expect(unsaved.clipboardFrame(for: vmID).isEmpty)
+        #expect(unsaved.guestAgentStatusFrame(for: vmID).isEmpty)
     }
 
     @Test("Each set of unsaved names shares its toolbar identifiers with no other")
