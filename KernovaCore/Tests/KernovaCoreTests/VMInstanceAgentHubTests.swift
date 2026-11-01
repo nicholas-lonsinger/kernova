@@ -128,10 +128,97 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.hub?.peers.first?.title == "Session agent — pbear")
     }
 
-    private static func peer(_ handle: UInt64, standing: PeerSummary.Standing) -> PeerSummary {
+    private static func peer(
+        _ handle: UInt64, role: PeerRole = .sessionPeer, version: String = "1.0", standing: PeerSummary.Standing
+    ) -> PeerSummary {
         PeerSummary(
-            handle: PeerHandle(rawValue: handle), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
-            userName: "pbear", console: .on, versionLabel: "1.0", standing: standing, isResponsive: true)
+            handle: PeerHandle(rawValue: handle), role: role, scope: role == .systemPeer ? .system : .user,
+            os: .linux, sessionID: "2", userName: role == .systemPeer ? "" : "pbear", console: .on,
+            versionLabel: version, standing: standing, isResponsive: true)
+    }
+
+    /// The snapshot of `peers` connected and `away` gone, the newest gone first.
+    private static func snapshot(
+        _ peers: [PeerSummary], away: [(PeerSummary, relaunching: Bool)] = [], lastSeen: String = "1.0"
+    ) -> AgentHubSnapshot {
+        let count = UInt64(away.count)
+        return AgentHubSnapshot(
+            peers: peers, features: FeatureStatus.merge([]),
+            away: away.enumerated().map {
+                AwayPeer(summary: $0.element.0, relaunching: $0.element.relaunching, order: count - UInt64($0.offset))
+            },
+            lastSeenVersionLabel: lastSeen)
+    }
+
+    /// A running Linux instance with its hub attached.
+    private static func linuxInstance() -> VMInstance {
+        let probe = AgentHubProbe()
+        let instance = VMInstanceFixture.make(
+            guestOS: .linux, phase: .running(sessionID: UUID()), agentConnector: probe)
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(probe)
+        return instance
+    }
+
+    @Test("A guest shutting down shows its agents reconnecting, never not installed, and arms the watchdog")
+    func shutdownIsNotUninstalled() {
+        let instance = Self.linuxInstance()
+        let session = Self.peer(1, standing: .current)
+        let system = Self.peer(2, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session, system]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([system], away: [(session, false)]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(system, false), (session, false)]))
+        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
+        #expect(instance.agentPostStartTaskForTesting != nil)
+    }
+
+    @Test("A guest rebooting reads reconnecting until its agents return, then current, the watchdog disarmed")
+    func rebootReturns() {
+        let instance = Self.linuxInstance()
+        let session = Self.peer(1, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session]))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(session, false)]))
+        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(3, standing: .current)]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        #expect(instance.agentPostStartTaskForTesting == nil)
+    }
+
+    @Test("A peer relaunching into an update reads Updating… through the relaunch, waited for past the rollback")
+    func updateRelaunchKeepsUpdating() {
+        let instance = Self.linuxInstance()
+        let updating = Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([updating], lastSeen: "0.9"))
+        #expect(instance.agentPresentation?.status == .updating(installed: "0.9", bundled: "1.0"))
+        let relaunching = Self.snapshot([], away: [(updating, true)], lastSeen: "0.9")
+        instance.publishAgentHubSnapshotForTesting(relaunching)
+        #expect(instance.agentPresentation?.status == .updating(installed: "0.9", bundled: "1.0"))
+        #expect(instance.agentPresentation?.hub?.peers.map(\.state) == ["Updating\u{2026}"])
+        #expect(instance.agentPostStartTaskForTesting != nil)
+        #expect(
+            VMInstance.agentArrivalGrace(base: .seconds(120), for: relaunching)
+                == .seconds(120 + UpdateRollbackPolicy.latestRevertSeconds))
+        #expect(
+            VMInstance.agentArrivalGrace(base: .seconds(120), for: Self.snapshot([], away: [(updating, false)]))
+                == .seconds(120))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(2, standing: .current)]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+    }
+
+    @Test("Away peers that never return within the grace escalate to didn't reconnect")
+    func awayEscalates() async {
+        let instance = Self.linuxInstance()
+        let session = Self.peer(1, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(session, false)]))
+        instance.cancelAgentPostStartWatchdog()
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
+        // An agent arriving clears it, as the macOS agent's Hello does.
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
     }
 
     @Test(

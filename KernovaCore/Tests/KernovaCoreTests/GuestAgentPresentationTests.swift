@@ -163,6 +163,59 @@ struct GuestAgentPresentationTests {
         #expect(mixed.hub?.peers.map(\.state) == ["Up to date", "Not responding"])
     }
 
+    // MARK: Away peers
+
+    private static func away(_ peer: PeerSummary, relaunching: Bool = false, order: UInt64 = 1) -> AwayPeer {
+        AwayPeer(summary: peer, relaunching: relaunching, order: order)
+    }
+
+    @Test("With only away peers the session is connecting to the agent it saw, never waiting for an install")
+    func awayIsConnecting() {
+        let presentation = GuestAgentPresentation(
+            hub: AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]), away: [Self.away(Self.peer(1))],
+                lastSeenVersionLabel: "1.0"))
+        #expect(presentation.status == .connecting(expected: "1.0"))
+        #expect(presentation.hub?.peers == [.init(title: "Session agent — pbear", state: "Reconnecting\u{2026}")])
+    }
+
+    @Test("Once the watchdog finds them gone, the session's agents didn't reconnect")
+    func awayEscalates() {
+        let presentation = GuestAgentPresentation(
+            hub: AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), lastSeenVersionLabel: "1.0"),
+            agentExpectedButMissing: true)
+        #expect(presentation.status == .expectedMissing(expected: "1.0"))
+    }
+
+    @Test("A peer relaunching into an update keeps reading Updating…, and the status stays updating")
+    func relaunchingKeepsUpdating() {
+        let updating = Self.peer(
+            1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
+        let alone = GuestAgentPresentation(
+            hub: AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]), away: [Self.away(updating, relaunching: true)],
+                lastSeenVersionLabel: "0.9"))
+        #expect(alone.status == .updating(installed: "0.9", bundled: "1.0"))
+        #expect(alone.hub?.peers.map(\.state) == ["Updating\u{2026}"])
+        // Beside a peer already current again, the relaunching one still decides the status.
+        let mixed = GuestAgentPresentation(
+            hub: AgentHubSnapshot(
+                peers: [Self.peer(2, role: .systemPeer, version: "1.0")], features: FeatureStatus.merge([]),
+                away: [Self.away(updating, relaunching: true)], lastSeenVersionLabel: "1.0"))
+        #expect(mixed.status == .updating(installed: "0.9", bundled: "1.0"))
+        #expect(mixed.hub?.peers.map(\.state) == ["Up to date", "Updating\u{2026}"])
+    }
+
+    @Test("An away peer beside a connected one leaves the status to the connected one")
+    func awayBesideConnected() {
+        let presentation = GuestAgentPresentation(
+            hub: AgentHubSnapshot(
+                peers: [Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([]),
+                away: [Self.away(Self.peer(1))], lastSeenVersionLabel: "1.0"))
+        #expect(presentation.status == .current(version: "1.0"))
+        #expect(presentation.hub?.peers.map(\.state) == ["Up to date", "Reconnecting\u{2026}"])
+    }
+
     @Test("A session agent with no user name is named by its role")
     func sessionPeerWithoutUserName() {
         let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, userName: "")]))

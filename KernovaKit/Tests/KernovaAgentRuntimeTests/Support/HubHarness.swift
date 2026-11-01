@@ -211,15 +211,16 @@ final class HubPeer: Sendable {
 
     convenience init(
         _ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
-        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: "")
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false
     ) {
-        self.init(harness.transport, claim: claim, state: state, update: update)
+        self.init(harness.transport, claim: claim, state: state, update: update, installs: installs)
     }
 
-    /// A peer whose installer — which never answers — is `update`.
+    /// A peer whose installer is `update`: with `installs`, it reports every pull's bytes consumed and the
+    /// payload installed; otherwise it never answers.
     init(
         _ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
-        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: "")
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false
     ) {
         guard let stream = transport.connect() else { preconditionFailure("the transport refused a connection") }
         self.stream = stream
@@ -232,7 +233,16 @@ final class HubPeer: Sendable {
                     logs: .absent(.notImplemented, debugDetail: ""), update: update),
                 generation: ConnectionGeneration(rawValue: 1), now: scheduler.now),
             stream: stream, scheduler: scheduler, logger: Fixture.logger,
-            handlers: ConnectionDriver<PeerEndpoint>.Handlers(event: { event, _ in events.record(event) }))
+            handlers: ConnectionDriver<PeerEndpoint>.Handlers(
+                effect: { effect, driver in
+                    guard installs, case .update(let update) = effect else { return }
+                    switch update {
+                    case .payload(let id, let bytes): driver.handle(.update(.consumed(id, bytes.count)))
+                    case .complete(let id, _): driver.handle(.update(.installed(id)))
+                    default: break
+                    }
+                },
+                event: { event, _ in events.record(event) }))
         driver.start()
     }
 

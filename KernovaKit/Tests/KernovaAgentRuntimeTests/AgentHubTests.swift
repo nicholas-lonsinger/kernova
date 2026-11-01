@@ -146,6 +146,91 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
+    // MARK: Away peers
+
+    @Test("A peer that disconnects is remembered away with its standing until one of its identity says Hello")
+    func awayUntilItReturns() async {
+        let harness = HubHarness(bundles: [Self.offered])
+        await harness.attached()
+        let first = HubPeer(harness, claim: .session(.user, instance: 1))
+        _ = await harness.snapshot { $0.peers.count == 1 }
+        first.driver.close(.shuttingDown)
+        let gone = await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
+        #expect(gone.away.count == 1)
+        #expect(gone.away[0].summary.userName == Fixture.peerState.userName)
+        #expect(gone.away[0].summary.standing == .outdated(offeredVersionLabel: "next", update: .unavailable))
+        #expect(!gone.away[0].relaunching)
+        #expect(gone.lastSeenVersionLabel == "peer")
+
+        // The same user's agent in a new process and a new session — a reboot — is the one that went away.
+        var rebooted = Fixture.peerState
+        rebooted.sessionID = "rebooted"
+        var later = harness.snapshots.waiterFromNow()
+        let second = HubPeer(harness, claim: .session(.user, instance: 2), state: rebooted)
+        let back = await later.next { $0.peers.count == 1 && $0.away.isEmpty }
+        #expect(back.peers[0].sessionID == "rebooted")
+        second.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test("A peer that closes after installing an update is away relaunching, still updating")
+    func relaunching() async {
+        let small = BundledPayload(
+            os: .linux, architecture: .arm64, scope: .user,
+            manifest: UpdateManifestValue(
+                payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 1000, format: .executable,
+                versionLabel: "next"))
+        let harness = HubHarness(bundles: [small], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])),
+            installs: true)
+        var events = harness.connector.events.waiter()
+        _ = await events.next {
+            if case .update(.result(_, let result)) = $0.event { result.kind == .staged } else { false }
+        }
+        peer.driver.close(.shuttingDown)
+        let gone = await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
+        #expect(gone.away[0].relaunching)
+        #expect(gone.away[0].summary.standing == .outdated(offeredVersionLabel: "next", update: .updating))
+        harness.hub.close()
+    }
+
+    @Test("forgetAway drops the peers that went away up to an order, and keeps the later ones")
+    func forgetsAway() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let session = HubPeer(harness, claim: .session(.user, instance: 1))
+        let system = HubPeer(
+            harness,
+            claim: PeerClaim(role: .systemPeer, scope: .system, os: .linux, instanceID: Data(repeating: 9, count: 16)))
+        _ = await harness.snapshot { $0.peers.count == 2 }
+        session.driver.close(.shuttingDown)
+        let first = await harness.snapshot { $0.away.count == 1 }
+        system.driver.close(.shuttingDown)
+        _ = await harness.snapshot { $0.away.count == 2 }
+        var later = harness.snapshots.waiterFromNow()
+        harness.hub.forgetAway(through: first.away[0].order)
+        let left = await later.next { $0.away.count == 1 }
+        #expect(left.away[0].summary.role == .systemPeer)
+        harness.hub.close()
+    }
+
+    @Test("Detaching forgets the away peers and the last version: the next attachment serves a new guest session")
+    func detachForgets() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let peer = HubPeer(harness, claim: .session(.user, instance: 1))
+        _ = await harness.snapshot { $0.peers.count == 1 }
+        peer.driver.close(.shuttingDown)
+        _ = await harness.snapshot { $0.away.count == 1 }
+        var later = harness.snapshots.waiterFromNow()
+        harness.hub.detach()
+        let reset = await later.next { $0.away.isEmpty && $0.lastSeenVersionLabel == nil }
+        #expect(reset.peers.isEmpty)
+        harness.hub.close()
+    }
+
     // MARK: Identity conflicts (spec §4.5)
 
     @Test("Row 1: the same process's new connection supersedes its old one")

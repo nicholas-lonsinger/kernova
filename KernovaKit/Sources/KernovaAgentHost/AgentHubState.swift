@@ -25,10 +25,24 @@ struct PeerRecord: Sendable {
     /// The payload hash whose pull on this connection ended without installing it. The peer pulls no hash
     /// twice on one connection, so it will not update itself to this one before it reconnects.
     var failedPullHash: Data?
+    /// The peer installed an update on this connection, so its close is the relaunch into it.
+    var stagedUpdate = false
+
+    /// Who the peer is across its connections: a reboot or a relaunch gives a session peer a new session, so
+    /// its user, not its session, names it.
+    var awayKey: AwayKey {
+        AwayKey(isSystemPeer: claim.role == .systemPeer, userName: claim.role == .systemPeer ? "" : state.userName)
+    }
 
     var conflictParty: ConflictParty {
         ConflictParty(claim: claim, state: state, isUnresponsive: !isResponsive)
     }
+}
+
+/// A peer's identity across its connections, for the away memory.
+struct AwayKey: Hashable, Sendable {
+    var isSystemPeer: Bool
+    var userName: String
 }
 
 /// What a newly read Hello does to the peer set.
@@ -49,6 +63,11 @@ struct AgentHubState: Sendable {
     var peers: [PeerHandle: PeerRecord] = [:]
     /// The attached transport, and the acceptor admitting its connections.
     var attachment: (transport: any GuestStreamTransport, acceptor: GuestStreamAcceptor)?
+    /// Counts attaches: which transport accepted a connection, so one an earlier attachment accepted, ending
+    /// after a later one began, is never remembered as away from the later one.
+    var attachmentGeneration: UInt64 = 0
+    /// The attachment that accepted each live connection.
+    var connectionAttachments: [PeerHandle: UInt64] = [:]
     var republisher: GuestLogRepublisher?
     var bundles: [BundledPayload] = []
     var isFrozen = false
@@ -56,6 +75,11 @@ struct AgentHubState: Sendable {
     var power = HubPowerRouting()
     var lastPublished = AgentHubSnapshot.empty
     private var nextConnectedOrder: UInt64 = 0
+    /// The peers seen on this attachment that are disconnected now, by who they are.
+    var away: [AwayKey: AwayPeer] = [:]
+    private var nextAwayOrder: UInt64 = 0
+    /// The version the newest peer seen on this attachment reported.
+    var lastSeenVersionLabel: String?
 
     /// Adds the peer whose Hello `handle`'s connection read, resolving it against the one peer that can
     /// already hold its identity (spec §4.5): every Hello is resolved as it arrives, so no two peers in
@@ -81,10 +105,34 @@ struct AgentHubState: Sendable {
         return .joined
     }
 
-    /// The connection ended: it leaves the hub.
+    /// A peer joined the set: it is no longer away, and its version is the last seen.
+    mutating func joined(_ handle: PeerHandle) {
+        guard let record = peers[handle] else { return }
+        away[record.awayKey] = nil
+        lastSeenVersionLabel = record.claim.versionLabel
+    }
+
+    /// The connection ended: it leaves the hub. A peer the snapshot showed is remembered as away while the
+    /// transport that accepted it is attached, with the standing it left with.
     mutating func closed(_ handle: PeerHandle) {
         connections[handle] = nil
-        peers[handle] = nil
+        let accepted = connectionAttachments.removeValue(forKey: handle)
+        guard let record = peers.removeValue(forKey: handle) else { return }
+        guard attachment != nil, accepted == attachmentGeneration, record.features != nil else { return }
+        nextAwayOrder += 1
+        away[record.awayKey] = AwayPeer(
+            summary: summary(record), relaunching: record.stagedUpdate, order: nextAwayOrder)
+    }
+
+    /// Forgets the away peers that went away at or before `order`.
+    mutating func forgetAway(through order: UInt64) {
+        away = away.filter { $0.value.order > order }
+    }
+
+    /// Forgets everything an attachment saw: the next one serves a new session of the guest.
+    mutating func resetAttachmentMemory() {
+        away = [:]
+        lastSeenVersionLabel = nil
     }
 
     /// The routing view of every peer whose features are known. An unresponsive peer's POWER is not
@@ -106,7 +154,8 @@ struct AgentHubState: Sendable {
         let features = FeatureStatus.merge(ordered.compactMap(\.features))
         return AgentHubSnapshot(
             peers: ordered.map(summary), features: features, power: provision(features: features),
-            routing: power.progress)
+            routing: power.progress, away: away.values.sorted { $0.order > $1.order },
+            lastSeenVersionLabel: lastSeenVersionLabel)
     }
 
     /// The merged POWER entry: the first candidate a shutdown would ask, else the merged absence — with
@@ -158,7 +207,7 @@ struct AgentHubState: Sendable {
         case .result(let id, let result):
             guard let pull = record.pull, pull.id == id else { return }
             record.pull = nil
-            if result.kind == .rejected { record.failedPullHash = pull.hash }
+            if result.kind == .rejected { record.failedPullHash = pull.hash } else { record.stagedUpdate = true }
         case .closed(let id, _):
             guard let pull = record.pull, pull.id == id else { return }
             record.pull = nil

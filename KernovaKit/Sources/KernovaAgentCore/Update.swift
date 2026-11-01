@@ -7,6 +7,20 @@ import Foundation
 import KernovaWire
 import SwiftProtobuf
 
+/// When an installed update that has not connected is reverted: the guest's rollback check runs every
+/// ``checkIntervalSeconds`` while a switch is unconfirmed, and its ``checksToRevert``th run reverts it. The
+/// first run comes anywhere up to one interval after the switch, so the reverting one comes 120–150 s after
+/// it: never before the 120 s spec §8.4 gives the new version. Installer policy, so it can grow with no
+/// protocol change; the host waits out ``latestRevertSeconds`` before it stops expecting a relaunching peer.
+public enum UpdateRollbackPolicy {
+    /// The rollback timer's period.
+    public static let checkIntervalSeconds = 30
+    /// The run that reverts a switch still unconfirmed.
+    public static let checksToRevert = 5
+    /// The latest a switch the new version never confirms is reverted.
+    public static var latestRevertSeconds: Int { checkIntervalSeconds * checksToRevert }
+}
+
 /// What a peer's installer adapter reports.
 public enum UpdateInput: Sendable, Equatable {
     /// The formats it installs and the install's rejected hash, now and on change.

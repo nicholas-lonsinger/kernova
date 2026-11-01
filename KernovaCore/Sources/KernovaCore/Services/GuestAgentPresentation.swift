@@ -48,11 +48,26 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         hub = nil
     }
 
-    /// The presentation of the agents in `snapshot`.
-    package init(hub snapshot: AgentHubSnapshot) {
-        status = Self.status(of: snapshot.peers)
+    /// The presentation of the agents in `snapshot`, on the macOS agent's terms
+    /// (``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``):
+    /// with no agent connected, the session that has seen one is connecting
+    /// to it — or, once `agentExpectedButMissing`, finds it didn't reconnect —
+    /// never waiting for an install. An away peer keeps its line: one
+    /// relaunching into an update keeps the standing it left with, counted in
+    /// the status as though connected; any other reads as reconnecting.
+    package init(hub snapshot: AgentHubSnapshot, agentExpectedButMissing: Bool = false) {
+        let relaunching = snapshot.away.filter(\.relaunching).map(\.summary)
+        status = AgentStatus.synthesize(
+            upstream: Self.status(of: snapshot.peers + relaunching),
+            lastSeenAgentVersion: snapshot.lastSeenVersionLabel, agentExpectedButMissing: agentExpectedButMissing)
+        let away = snapshot.away.map { away in
+            PeerLine(
+                title: Self.title(of: away.summary),
+                state: away.relaunching ? Self.state(of: away.summary) : "Reconnecting\u{2026}")
+        }
         hub = Hub(
-            peers: snapshot.peers.map { peer in PeerLine(title: Self.title(of: peer), state: Self.state(of: peer)) },
+            peers: snapshot.peers.map { peer in PeerLine(title: Self.title(of: peer), state: Self.state(of: peer)) }
+                + away,
             capabilities: [
                 snapshot.peers.isEmpty
                     ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))

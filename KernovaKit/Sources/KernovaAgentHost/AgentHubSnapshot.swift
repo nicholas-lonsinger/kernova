@@ -18,20 +18,46 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     public var power: PowerProvision
     /// The power routing running now, if any.
     public var routing: PowerRoutingProgress?
+    /// The peers seen while this transport is attached that are disconnected now, the most recently gone
+    /// first; each leaves when a peer of its identity says Hello again, or ``AgentHub/forgetAway(through:)``
+    /// drops it.
+    public var away: [AwayPeer]
+    /// The version the newest peer seen while this transport is attached reported; nil before any.
+    public var lastSeenVersionLabel: String?
 
     /// A snapshot of these peers and merged features.
     public init(
         peers: [PeerSummary], features: FeatureStatusTable, power: PowerProvision = .absent(.noAgent),
-        routing: PowerRoutingProgress? = nil
+        routing: PowerRoutingProgress? = nil, away: [AwayPeer] = [], lastSeenVersionLabel: String? = nil
     ) {
         self.peers = peers
         self.features = features
         self.power = power
         self.routing = routing
+        self.away = away
+        self.lastSeenVersionLabel = lastSeenVersionLabel
     }
 
     /// No peer: every feature `NO_AGENT`.
     public static let empty = AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]))
+}
+
+/// A peer that disconnected, as it was when it did.
+public struct AwayPeer: Sendable, Equatable {
+    /// The peer as the snapshot last showed it.
+    public var summary: PeerSummary
+    /// It closed after installing an update: it is relaunching into it, and returns once the new version
+    /// connects or the rollback check restores the old one.
+    public var relaunching: Bool
+    /// Higher went away later; what ``AgentHub/forgetAway(through:)`` takes.
+    public var order: UInt64
+
+    /// Creates an away peer.
+    public init(summary: PeerSummary, relaunching: Bool, order: UInt64) {
+        self.summary = summary
+        self.relaunching = relaunching
+        self.order = order
+    }
 }
 
 /// One connected peer, as the UI shows it.

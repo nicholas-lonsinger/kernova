@@ -252,7 +252,10 @@ package final class VMInstance {
                     lastSeenAgentVersion: lastSeenAgentVersion,
                     agentExpectedButMissing: context.agentExpectedButMissing))
         case .linux:
-            return reachesGuestAgent ? GuestAgentPresentation(hub: agentHubSnapshot) : nil
+            return reachesGuestAgent
+                ? GuestAgentPresentation(
+                    hub: agentHubSnapshot, agentExpectedButMissing: context.agentExpectedButMissing)
+                : nil
         }
     }
 
@@ -288,6 +291,19 @@ package final class VMInstance {
     package private(set) var agentHubSnapshot = AgentHubSnapshot.empty {
         didSet {
             if Self.connectsCurrentPeer(from: oldValue, to: agentHubSnapshot) { onAgentBecameCurrent?() }
+            agentHubSnapshotDidChange()
+        }
+    }
+
+    /// The hub's agents changed: a connected one is the arrival the watchdog
+    /// waits for, as the macOS agent's Hello is, and an away one arms it.
+    private func agentHubSnapshotDidChange() {
+        guard configuration.guestOS == .linux, let context = sessionContext else { return }
+        if !agentHubSnapshot.peers.isEmpty { context.agentExpectedButMissing = false }
+        if agentHubSnapshot.away.isEmpty {
+            cancelAgentPostStartWatchdog()
+        } else {
+            startAgentPostStartWatchdog()
         }
     }
 
@@ -1133,24 +1149,37 @@ package final class VMInstance {
     /// Starts a one-shot timer that flips `agentExpectedButMissing = true` if
     /// the guest agent doesn't say Hello within `grace`.
     ///
-    /// Armed after a start, a hot resume, or an accepted control channel, and
-    /// again whenever the control channel dies under us, so a mid-session
-    /// disappearance escalates the same way a no-show after boot does. A no-op
-    /// unless the guest is macOS, the VM is running (a paused guest isn't
-    /// executing, so its silence proves nothing), the session didn't boot into
-    /// Recovery (which never runs the agent), an agent has been seen before on
-    /// this VM, the agent isn't already connected, no install is in progress,
-    /// and no watchdog is already armed. Cancelled by any inbound Hello, by a
-    /// pause, and by the session's teardown.
+    /// A macOS guest arms it after a start, a hot resume, or an accepted control
+    /// channel, and again whenever the control channel dies under us, so a
+    /// mid-session disappearance escalates the same way a no-show after boot
+    /// does; it needs an agent seen before on this VM and none connected now. A
+    /// Linux guest arms it while the hub has an away peer — one this session saw
+    /// that is disconnected now — and its firing forgets the away peers it
+    /// waited for, escalating only when no peer is connected; one relaunching
+    /// into an update is waited for through the rollback window as well
+    /// (``agentArrivalGrace(base:for:)``). Either way a no-op unless the VM is
+    /// running (a paused guest isn't executing, so its silence proves nothing),
+    /// the session didn't boot into Recovery (which never runs the agent), no
+    /// install is in progress, and no watchdog is already armed. Cancelled by
+    /// any arrival, by a pause, and by the session's teardown.
     func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
         guard let context = sessionContext else { return }
-        guard configuration.guestOS == .macOS else { return }
         guard !context.bootedIntoRecovery else { return }
         guard status == .running else { return }
-        guard lastSeenAgentVersion != nil else { return }
-        guard context.vsock.control?.agentVersion == nil else { return }
         guard setupState == nil else { return }
         guard context.agentPostStartTask == nil else { return }
+        let awaited: AwaitedAgent
+        var grace = grace
+        switch configuration.guestOS {
+        case .macOS:
+            guard lastSeenAgentVersion != nil else { return }
+            guard context.vsock.control?.agentVersion == nil else { return }
+            awaited = .macOSAgent
+        case .linux:
+            guard let newest = agentHubSnapshot.away.first else { return }
+            awaited = .awayPeers(through: newest.order)
+            grace = Self.agentArrivalGrace(base: grace, for: agentHubSnapshot)
+        }
 
         context.agentPostStartGeneration &+= 1
         let generation = context.agentPostStartGeneration
@@ -1177,37 +1206,78 @@ package final class VMInstance {
             guard let self, let armed = context, armed === self.sessionContext,
                 armed.agentPostStartGeneration == generation
             else { return }
-            if armed.vsock.control?.agentVersion == nil {
-                Self.logger.log(
-                    .notice,
-                    "Guest agent expected (last seen \(self.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
-                )
-                // Set first: it is also what ``reportedGuestOSVersion`` reads
-                // as unknown for the rest of the session, whether or not the
-                // write below lands — and a write that fails is attempted
-                // again by the next session's watchdog.
-                armed.agentExpectedButMissing = true
-                // An agent that never showed up at all outranks the nudge the
-                // user silenced — reset the dismissal so a future `.waiting`
-                // surfaces normally. The reported guest OS version goes with
-                // it: nothing vouched for it this session, and "Unknown" beats
-                // a stale value. Both stay untouched when the agent did say
-                // Hello earlier in this session: it demonstrably exists, and
-                // reversing a preference nothing restores needs better evidence
-                // than one dropped channel.
-                if !armed.hasSeenAgentThisSession,
-                    self.hostState.agentInstallNudgeDismissed
-                        || self.configuration.lastSeenGuestOSVersion != nil
-                {
-                    self.recordObservation("the agent's absence") {
-                        _ = $0.updateSettings(
-                            configuration: { $0.lastSeenGuestOSVersion = nil },
-                            hostState: { $0.agentInstallNudgeDismissed = false })
-                    }
-                }
+            switch awaited {
+            case .macOSAgent:
+                self.macOSAgentMissed(armed)
+                armed.agentPostStartTask = nil
+            case .awayPeers(let order):
+                armed.agentPostStartTask = nil
+                self.awayPeersMissed(armed, through: order)
             }
-            armed.agentPostStartTask = nil
         }
+    }
+
+    /// What an armed watchdog waits for.
+    private enum AwaitedAgent {
+        /// The macOS agent's Hello.
+        case macOSAgent
+        /// The hub's away peers that went away at or before this order.
+        case awayPeers(through: UInt64)
+    }
+
+    /// How long the watchdog waits for `snapshot`'s away peers: `base`, and for
+    /// a peer relaunching into an update the rollback window on top, since the
+    /// guest reverts a new version that never connects only that late
+    /// (`UpdateRollbackPolicy`), and the previous version connects after that.
+    static func agentArrivalGrace(base: Duration, for snapshot: AgentHubSnapshot) -> Duration {
+        guard snapshot.away.contains(where: \.relaunching) else { return base }
+        return base + .seconds(UpdateRollbackPolicy.latestRevertSeconds)
+    }
+
+    /// The macOS agent never said Hello within the grace.
+    private func macOSAgentMissed(_ armed: VMSessionContext) {
+        guard armed.vsock.control?.agentVersion == nil else { return }
+        Self.logger.log(
+            .notice,
+            "Guest agent expected (last seen \(self.lastSeenAgentVersion ?? "?", privacy: .public)) but never reconnected for '\(self.name, privacy: .public)' — surfacing reinstall affordance"
+        )
+        // Set first: it is also what ``reportedGuestOSVersion`` reads
+        // as unknown for the rest of the session, whether or not the
+        // write below lands — and a write that fails is attempted
+        // again by the next session's watchdog.
+        armed.agentExpectedButMissing = true
+        // An agent that never showed up at all outranks the nudge the
+        // user silenced — reset the dismissal so a future `.waiting`
+        // surfaces normally. The reported guest OS version goes with
+        // it: nothing vouched for it this session, and "Unknown" beats
+        // a stale value. Both stay untouched when the agent did say
+        // Hello earlier in this session: it demonstrably exists, and
+        // reversing a preference nothing restores needs better evidence
+        // than one dropped channel.
+        if !armed.hasSeenAgentThisSession,
+            hostState.agentInstallNudgeDismissed || configuration.lastSeenGuestOSVersion != nil
+        {
+            recordObservation("the agent's absence") {
+                _ = $0.updateSettings(
+                    configuration: { $0.lastSeenGuestOSVersion = nil },
+                    hostState: { $0.agentInstallNudgeDismissed = false })
+            }
+        }
+    }
+
+    /// The hub's peers that went away at or before `order` did not return
+    /// within the grace: the hub stops showing them, and with no peer connected
+    /// the session's agents didn't reconnect. A peer that went away since is
+    /// waited for in turn.
+    private func awayPeersMissed(_ armed: VMSessionContext, through order: UInt64) {
+        let missed = agentHubSnapshot.away.filter { $0.order <= order }
+        guard !missed.isEmpty else { return startAgentPostStartWatchdog() }
+        Self.logger.log(
+            .notice,
+            "\(missed.count) guest agent(s) of '\(self.name, privacy: .public)' didn't reconnect within the grace")
+        agentHub.forgetAway(through: order)
+        if agentHubSnapshot.peers.isEmpty { armed.agentExpectedButMissing = true }
+        if agentHubSnapshot.away.contains(where: { $0.order > order }) { startAgentPostStartWatchdog() }
     }
 
     /// Cancels the agent-arrival watchdog if armed.

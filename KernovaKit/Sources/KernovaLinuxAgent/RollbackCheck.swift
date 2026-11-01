@@ -5,6 +5,8 @@ import Glibc
 import Musl
 #endif
 
+import KernovaAgentCore
+
 /// `kernova-agent rollback-check`: one run of the check that reverts an update the new version does not
 /// confirm (spec §8.4). The rollback timer runs it every 30 s while `switch-pending` exists, from the
 /// previous slot's binary, so it never runs inside the version it judges.
@@ -12,10 +14,8 @@ import Musl
 /// It counts its own runs rather than reading a clock (decision M2): a guest powered off, or a VM paused,
 /// mid-switch spends no runs, so no wall-clock leap reverts a good update.
 struct RollbackCheck {
-    /// The run that reverts a switch still unconfirmed. The first run comes anywhere up to 30 s after the
-    /// switch and the rest 30 s apart, so the fifth comes 120–150 s after it: never before the 120 s spec
-    /// §8.4 gives the new version. The budget is installer policy, so it can grow with no protocol change.
-    static let runsToRevert = 5
+    /// The run that reverts a switch still unconfirmed (`UpdateRollbackPolicy`).
+    static let runsToRevert = UpdateRollbackPolicy.checksToRevert
 
     /// What a run did.
     enum Outcome: Equatable {
