@@ -201,7 +201,7 @@ struct AgentStatusPopoverContentViewControllerTests {
             visibleTexts(in: vc.view) == [
                 "Guest agent connected", "Session agent — pbear", "Up to date", "Status", "Connected",
                 "Guest logs in Console", "Turned off in Settings.", "Shut down and restart from Kernova",
-                "Through the session agent",
+                "Through the session agent", "Automatic agent updates", "This agent doesn't offer it.",
             ])
 
         vc.update(
