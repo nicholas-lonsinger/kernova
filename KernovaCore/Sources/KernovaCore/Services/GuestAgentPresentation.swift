@@ -85,7 +85,11 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             let detail =
                 switch reason {
                 case .notOnConsole:
-                    "Available while someone is logged in at the guest\u{2019}s screen, or with the system service installed."
+                    """
+                    Available while the session agent\u{2019}s user is at the guest\u{2019}s screen, or with the system \
+                    service installed while no one is logged in to a desktop.
+                    """
+                case .unsavedWorkUnseen: "Kernova\u{2019}s agents can\u{2019}t see this desktop\u{2019}s unsaved work."
                 case .notPermitted: "The guest doesn\u{2019}t permit its agents to shut it down."
                 case .missingOsComponent: "This guest has no polkit."
                 default: Self.reason(reason)

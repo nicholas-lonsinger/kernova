@@ -9,10 +9,23 @@ import KernovaSynchronization
 import KernovaWire
 
 /// A Linux peer's power: logind's `PowerOff` and `Reboot`, offered while polkit authorizes this agent for
-/// them and, for a session peer, while its session holds the console.
+/// them and the peer can see every app's unsaved work that the desktop's own logout would ask about.
+///
+/// logind's power-off asks no desktop to save, and only the gnome-session family lists its apps' unsaved
+/// work where another process can read it (docs/research/2026-11-01-linux-desktop-unsaved-work-at-power-off.md).
+/// So a session peer offers power only while a session manager serves `org.gnome.SessionManager`, and the
+/// system peer, which cannot read a session bus, only while no desktop session runs.
 ///
 /// Every D-Bus call runs on the adapter's own serial queue.
 public final class LinuxPowerAdapter: PowerAdapter {
+    /// The peer an adapter serves, with what that peer reads unsaved work from.
+    public enum Peer: Sendable {
+        /// The session peer, whose session's unsaved work the session manager lists.
+        case session(GnomeSessionManager)
+        /// The system peer.
+        case system
+    }
+
     /// How long a power call waits for logind: under the host's 10 s acceptance deadline, so a call
     /// logind never answers ends `.unconfirmed` while the host still waits on it.
     public static let defaultPowerCallTimeout: Duration = .seconds(8)
@@ -23,11 +36,9 @@ public final class LinuxPowerAdapter: PowerAdapter {
         (.shutdown, "org.freedesktop.login1.power-off"), (.restart, "org.freedesktop.login1.reboot"),
     ]
 
-    private let role: PeerRole
+    private let peer: Peer
     private let logind: Logind
     private let polkit: PolkitAuthority
-    /// The session peer's app names; nil on the system peer, which names logind's holders.
-    private let gnomeSession: GnomeSessionInhibitors?
     private let powerCallTimeout: Duration
     private let logger = KernovaLogger(subsystem: "app.kernova.agent", category: "Power")
     private let queue = DispatchQueue(label: "app.kernova.agent.power")
@@ -40,53 +51,70 @@ public final class LinuxPowerAdapter: PowerAdapter {
         /// The availability last reported; nil before the first report.
         var reported: Availability<PowerOffer>?
         var refreshQueued = false
-        var polkitChanges: DBusSubscription?
+        /// The changes followed: polkit's, and the session manager's owner or logind's session list.
+        var subscriptions: [DBusSubscription] = []
         /// Requests performed whose terminal report nobody has yet claimed. Whoever removes one reports
         /// its end: `cancel(_:)` while nothing has been asked of logind, the request's own run otherwise.
         var unclaimed: Set<PowerRequestID> = []
     }
 
-    /// The adapter for `role`, calling logind and polkit over `systemBus`. A session peer names the apps
-    /// that block a request from `gnomeSession`, or from logind where that names none.
+    /// The adapter for `peer`, calling logind and polkit over `systemBus`.
     public init(
-        role: PeerRole, systemBus: DBusBusConnection, gnomeSession: GnomeSessionInhibitors = GnomeSessionInhibitors(),
+        peer: Peer, systemBus: DBusBusConnection,
         powerCallTimeout: Duration = LinuxPowerAdapter.defaultPowerCallTimeout
     ) {
-        self.role = role
+        self.peer = peer
         logind = Logind(connection: systemBus)
         polkit = PolkitAuthority(connection: systemBus)
-        self.gnomeSession = role == .sessionPeer ? gnomeSession : nil
         self.powerCallTimeout = powerCallTimeout
     }
 
     deinit {
-        state.withLock { $0.polkitChanges }?.cancel()
+        state.withLock { $0.subscriptions }.forEach { $0.cancel() }
     }
 
-    /// Follows polkit's changes and reports the first availability, on the adapter's queue.
+    /// Follows the changes that move the availability and reports the first one, on the adapter's queue.
     public func start(reporter: PowerReporter) {
         state.withLock { $0.reporter = reporter }
         queue.async { [self] in
             // Before the first check, so no change falls between the two.
-            do throws(DBusServiceError) {
-                let subscription = try polkit.observeChanges { [weak self] in self?.queueRefresh() }
-                state.withLock { $0.polkitChanges = subscription }
-            } catch {
-                logger.log(
-                    .error,
-                    """
-                    Power cannot follow polkit's changes; it rechecks on each request: \
-                    \(String(describing: error), privacy: .public)
-                    """)
+            follow("polkit's changes") { () throws(DBusServiceError) in
+                [try polkit.observeChanges { [weak self] in self?.queueRefresh() }]
+            }
+            switch peer {
+            case .session(let manager):
+                follow("the session manager's owner") { () throws(GnomeSessionError) in
+                    [try manager.observeOwner { [weak self] in self?.queueRefresh() }]
+                }
+            case .system:
+                follow("logind's sessions") { () throws(DBusServiceError) in
+                    try logind.observeSessionList { [weak self] in self?.queueRefresh() }
+                }
             }
             refreshAvailability()
+        }
+    }
+
+    /// Keeps the subscriptions `subscribe` makes; when it fails, availability is rechecked only on each
+    /// request.
+    private func follow<Failure: Error>(_ what: String, _ subscribe: () throws(Failure) -> [DBusSubscription]) {
+        do throws(Failure) {
+            let subscriptions = try subscribe()
+            state.withLock { $0.subscriptions += subscriptions }
+        } catch {
+            logger.log(
+                .error,
+                """
+                Power cannot follow \(what, privacy: .public); it rechecks on each request: \
+                \(String(describing: error), privacy: .public)
+                """)
         }
     }
 
     /// The peer's session state, as the logind watcher delivers it; nil while it has no session. A session
     /// peer offers power only while its session holds the console; the system peer ignores it.
     public func setPeerState(_ peerState: PeerSessionState?) {
-        guard role == .sessionPeer else { return }
+        guard case .session = peer else { return }
         let onConsole = peerState?.console == .on
         let changed = state.withLock { state in
             defer { state.onConsole = onConsole }
@@ -95,7 +123,7 @@ public final class LinuxPowerAdapter: PowerAdapter {
         if changed { queueRefresh() }
     }
 
-    /// Rechecks polkit, reports `.blocked` while any app holds a shutdown block, then asks logind.
+    /// Rechecks the availability, reports `.blocked` while any app holds unsaved work, then asks logind.
     public func perform(_ id: PowerRequestID, _ action: PowerAction) {
         state.withLock { _ = $0.unclaimed.insert(id) }
         queue.async { [self] in run(id, action) }
@@ -118,10 +146,16 @@ public final class LinuxPowerAdapter: PowerAdapter {
     }
 
     private func evaluate() -> Verdict {
-        if role == .sessionPeer, !state.withLock(\.onConsole) {
-            return Verdict(
-                availability: .absent(.notOnConsole, debugDetail: "the session does not hold the console"),
-                refusal: WireError(.powerNotOnConsole))
+        switch peer {
+        case .session(let manager):
+            if let unseen = sessionManagerAbsence(manager) { return unseen }
+            if !state.withLock(\.onConsole) {
+                return Verdict(
+                    availability: .absent(.notOnConsole, debugDetail: "the session does not hold the console"),
+                    refusal: WireError(.powerNotOnConsole))
+            }
+        case .system:
+            if let unseen = desktopSessionAbsence() { return unseen }
         }
         var actions: [PowerAction] = []
         for (action, actionID) in Self.polkitActions {
@@ -149,6 +183,37 @@ public final class LinuxPowerAdapter: PowerAdapter {
         return Verdict(
             availability: .available(PowerOffer(actions: actions, asksAppsToQuit: false)),
             refusal: WireError(.powerNotPermitted, debugDetail: "polkit does not authorize this action"))
+    }
+
+    /// `UNSAVED_WORK_UNSEEN` unless a session manager serves `org.gnome.SessionManager`, whose inhibitor list
+    /// is the session's unsaved work.
+    private func sessionManagerAbsence(_ manager: GnomeSessionManager) -> Verdict? {
+        do throws(GnomeSessionError) {
+            guard try !manager.hasOwner() else { return nil }
+            return Self.unseen(
+                "nothing owns \(GnomeSessionManager.busName), so nothing lists the session's unsaved work")
+        } catch {
+            return Self.unseen(
+                "the session bus cannot say whether \(GnomeSessionManager.busName) has an owner: \(error)", .error)
+        }
+    }
+
+    /// `UNSAVED_WORK_UNSEEN` while any desktop session runs: a system service cannot read its session bus.
+    private func desktopSessionAbsence() -> Verdict? {
+        do throws(DBusServiceError) {
+            let desktops = try logind.desktopSessions()
+            guard !desktops.isEmpty else { return nil }
+            let ids = desktops.map(\.id).joined(separator: ", ")
+            return Self.unseen("desktop session \(ids) runs, and the system peer cannot see its unsaved work")
+        } catch {
+            return Self.unseen("logind's sessions cannot be read: \(error)", .error)
+        }
+    }
+
+    private static func unseen(_ detail: String, _ level: KernovaLogLevel = .notice) -> Verdict {
+        Verdict(
+            availability: .absent(.unsavedWorkUnseen, debugDetail: detail),
+            refusal: WireError(.featureUnavailable, absence: .unsavedWorkUnseen, debugDetail: detail), level: level)
     }
 
     /// Evaluates the availability, reporting it when it differs from the last report.
@@ -214,25 +279,24 @@ public final class LinuxPowerAdapter: PowerAdapter {
 
         // The only guard against unsaved work where logind lets this caller through the lock: see
         // `Logind.powerOff(timeout:)`.
-        let blockers: [LogindInhibitor]
-        do throws(DBusServiceError) {
-            blockers = try logind.shutdownBlockers()
+        let blocking: [AppValue]
+        do throws(PreCheckFailure) {
+            blocking = try blockingApps()
         } catch {
             return conclude(id) { reporter in
                 logger.log(
                     .error,
                     """
-                    Power request \(id.rawValue) to \(name, privacy: .public) is refused: logind's inhibitors \
-                    cannot be read: \(String(describing: error), privacy: .public)
+                    Power request \(id.rawValue) to \(name, privacy: .public) is refused: \
+                    \(error.detail, privacy: .public)
                     """)
-                reporter.report(
-                    .refused(id, WireError(.powerOsFailed, debugDetail: "ListInhibitors failed: \(error)")))
+                reporter.report(.refused(id, WireError(.powerOsFailed, debugDetail: error.detail)))
             }
         }
-        guard blockers.isEmpty else {
+        guard blocking.isEmpty else {
             return conclude(id) { reporter in
                 reporter.report(.accepted(id))
-                reportBlocked(id, name, apps(holding: blockers), reporter)
+                reportBlocked(id, name, blocking, reporter)
             }
         }
 
@@ -257,14 +321,14 @@ public final class LinuxPowerAdapter: PowerAdapter {
         switch error {
         case .call(.remote(let remote)) where remote.name == "org.freedesktop.login1.BlockedByInhibitorLock":
             reporter.report(.accepted(id))
-            let blockers: [LogindInhibitor]
-            do throws(DBusServiceError) {
-                blockers = try logind.shutdownBlockers()
+            let blocking: [AppValue]
+            do throws(PreCheckFailure) {
+                blocking = try blockingApps()
             } catch {
-                logger.log(.error, "logind's inhibitors cannot be read: \(String(describing: error), privacy: .public)")
-                blockers = []
+                logger.log(.error, "The blocking apps cannot be named: \(error.detail, privacy: .public)")
+                blocking = []
             }
-            reportBlocked(id, name, apps(holding: blockers), reporter)
+            reportBlocked(id, name, blocking, reporter)
         case .call(.remote(let remote))
         where remote.name == "org.freedesktop.DBus.Error.AccessDenied"
             || remote.name == "org.freedesktop.DBus.Error.InteractiveAuthorizationRequired":
@@ -301,27 +365,36 @@ public final class LinuxPowerAdapter: PowerAdapter {
         reporter.report(.blocked(id, apps))
     }
 
-    /// The apps that hold `blockers`: gnome-session's logout inhibitors on a session peer, else logind's
-    /// holders, by `who` and their process's command name.
-    private func apps(holding blockers: [LogindInhibitor]) -> [AppValue] {
-        if let gnomeSession {
-            do throws(GnomeSessionError) {
-                let apps = try gnomeSession.logoutInhibitors()
-                if !apps.isEmpty { return apps }
-            } catch {
-                logger.log(
-                    .notice,
-                    """
-                    gnome-session's inhibitors cannot be read; the blocking apps are logind's holders: \
-                    \(String(describing: error), privacy: .public)
-                    """)
-            }
+    /// Why the apps holding unsaved work could not be read.
+    private struct PreCheckFailure: Error {
+        var detail: String
+    }
+
+    /// The apps holding unsaved work. On a session peer: the session manager's logout inhibitors, then
+    /// logind's shutdown blockers outside the session manager's own process — a package upgrade, say. On
+    /// the system peer: logind's shutdown blockers.
+    private func blockingApps() throws(PreCheckFailure) -> [AppValue] {
+        let blockers: [LogindInhibitor]
+        do throws(DBusServiceError) {
+            blockers = try logind.shutdownBlockers()
+        } catch {
+            throw PreCheckFailure(detail: "logind's ListInhibitors failed: \(error)")
         }
-        return blockers.map { blocker in
-            let command = LinuxIdentity.readText("/proc/\(blocker.pid)/comm").map { String($0.prefix { $0 != "\n" }) }
-            return AppValue(
-                displayName: blocker.who, identifier: command ?? "", processID: Int32(truncatingIfNeeded: blocker.pid))
+        guard case .session(let manager) = peer else { return blockers.map(Self.app(holding:)) }
+        do throws(GnomeSessionError) {
+            let sessionApps = try manager.logoutInhibitors()
+            let managerPID = try manager.ownerProcessID()
+            return sessionApps + blockers.filter { $0.pid != managerPID }.map(Self.app(holding:))
+        } catch {
+            throw PreCheckFailure(detail: "the session manager's inhibitors cannot be read: \(error)")
         }
+    }
+
+    /// The app holding `blocker`, by its `who` and its process's command name.
+    private static func app(holding blocker: LogindInhibitor) -> AppValue {
+        let command = LinuxIdentity.readText("/proc/\(blocker.pid)/comm").map { String($0.prefix { $0 != "\n" }) }
+        return AppValue(
+            displayName: blocker.who, identifier: command ?? "", processID: Int32(truncatingIfNeeded: blocker.pid))
     }
 }
 #endif

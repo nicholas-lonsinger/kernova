@@ -9,11 +9,13 @@ import KernovaAgentCore
 import KernovaDBus
 import KernovaSynchronization
 
-/// gnome-session's inhibitors on the session bus: the apps holding the session's logout, by name.
+/// The session manager at `org.gnome.SessionManager` on the session bus — gnome-session, or a desktop's
+/// session manager that serves its interface: whether one runs, its process, and the apps holding the
+/// session's logout, by name.
 ///
-/// logind lists only gnome-session as the holder of the session's shutdown lock; gnome-session's own list
+/// logind lists only the session manager as the holder of the session's shutdown lock; its own list
 /// names each app (docs/research/2026-10-28-linux-logind-polkit-user-service-and-inhibitors.md, finding 3).
-public final class GnomeSessionInhibitors: Sendable {
+public final class GnomeSessionManager: Sendable {
     /// `org.gnome.SessionManager`.
     public static let busName = "org.gnome.SessionManager"
     /// `/org/gnome/SessionManager`.
@@ -29,24 +31,52 @@ public final class GnomeSessionInhibitors: Sendable {
 
     private let applicationDirectories: [String]
     private let readFile: @Sendable (String) -> String?
-    private let connect: @Sendable () throws(DBusConnectError) -> DBusBusConnection
-    /// The session-bus connection, made on first use and dropped after a failed call.
-    private let connection = Locked<DBusBusConnection?>(nil)
+    /// The session bus, connected once, for the process's life.
+    private let connection: Result<DBusBusConnection, DBusConnectError>
 
-    /// gnome-session as reached by `connect`, naming apps from the `.desktop` files in
-    /// `applicationDirectories`, searched in order and read by `readFile` (nil for a file it cannot read;
-    /// by default the file system).
+    /// The session manager as reached by `connect`, which runs once, now, naming apps from the `.desktop`
+    /// files in `applicationDirectories`, searched in order and read by `readFile` (nil for a file it
+    /// cannot read; by default the file system).
     public init(
-        applicationDirectories: [String] = GnomeSessionInhibitors.applicationDirectories(
+        applicationDirectories: [String] = GnomeSessionManager.applicationDirectories(
             environment: ProcessInfo.processInfo.environment),
         readFile: (@Sendable (String) -> String?)? = nil,
-        connect: @escaping @Sendable () throws(DBusConnectError) -> DBusBusConnection = {
+        connect: @Sendable () throws(DBusConnectError) -> DBusBusConnection = {
             () throws(DBusConnectError) in try DBusBusConnection(bus: .session)
         }
     ) {
         self.applicationDirectories = applicationDirectories
         self.readFile = readFile ?? { LinuxIdentity.readText($0) }
-        self.connect = connect
+        connection = Result { () throws(DBusConnectError) in try connect() }
+    }
+
+    /// Calls `onChange`, on the connection's reader thread, each time the bus name changes owner, until
+    /// the subscription is cancelled. Subscribe before reading `hasOwner()`.
+    public func observeOwner(_ onChange: @escaping @Sendable () -> Void) throws(GnomeSessionError)
+        -> DBusSubscription
+    {
+        let rule = DBusMatchRule(
+            sender: DBusBus.name, path: DBusBus.path, interface: DBusBus.interface, member: "NameOwnerChanged",
+            arg0: Self.busName)
+        let connection = try connected()
+        do throws(DBusCallError) {
+            return try connection.subscribe(rule) { _ in onChange() }
+        } catch {
+            throw .call(.call(error))
+        }
+    }
+
+    /// Whether a process owns the bus name now: `NameHasOwner`.
+    public func hasOwner() throws(GnomeSessionError) -> Bool {
+        let body = try busCall("NameHasOwner", expecting: "b")
+        return try Self.read { () throws(DBusValueMismatch) in try body[0].boolean() }
+    }
+
+    /// The process that owns the bus name: `GetConnectionUnixProcessID`, which the bus answers with an
+    /// ERROR when nothing owns it.
+    public func ownerProcessID() throws(GnomeSessionError) -> UInt32 {
+        let body = try busCall("GetConnectionUnixProcessID", expecting: "u")
+        return try Self.read { () throws(DBusValueMismatch) in try body[0].uint32() }
     }
 
     /// The `applications` directories the XDG Base Directory specification searches for `.desktop` files:
@@ -85,8 +115,6 @@ public final class GnomeSessionInhibitors: Sendable {
             }
             return apps
         } catch {
-            self.connection.withLock { if $0 === connection { $0 = nil } }
-            connection.close()
             throw .call(error)
         }
     }
@@ -126,13 +154,32 @@ public final class GnomeSessionInhibitors: Sendable {
     }
 
     private func connected() throws(GnomeSessionError) -> DBusBusConnection {
-        if let existing = connection.withLock({ $0 }) { return existing }
         do throws(DBusConnectError) {
-            let made = try connect()
-            connection.withLock { $0 = made }
-            return made
+            return try connection.get()
         } catch {
             throw .connect(error)
+        }
+    }
+
+    /// Calls `member` on the bus itself with the session manager's bus name.
+    private func busCall(_ member: String, expecting signature: DBusSignature) throws(GnomeSessionError)
+        -> [DBusValue]
+    {
+        let connection = try connected()
+        do throws(DBusServiceError) {
+            return try connection.callMethod(
+                destination: DBusBus.name, path: DBusBus.path, interface: DBusBus.interface, member: member,
+                body: [.string(Self.busName)], expecting: signature, timeout: Self.callTimeout)
+        } catch {
+            throw .call(error)
+        }
+    }
+
+    private static func read<T>(_ body: () throws(DBusValueMismatch) -> T) throws(GnomeSessionError) -> T {
+        do throws(DBusServiceError) {
+            return try DBusServiceError.read(body)
+        } catch {
+            throw .call(error)
         }
     }
 
@@ -146,11 +193,11 @@ public final class GnomeSessionInhibitors: Sendable {
     }
 }
 
-/// Why gnome-session's inhibitors could not be read.
+/// Why the session manager could not be asked.
 public enum GnomeSessionError: Error, Hashable, Sendable {
     /// The session bus could not be reached.
     case connect(DBusConnectError)
-    /// A call to gnome-session failed, as one does where gnome-session is not running.
+    /// A call failed, as one to the session manager does where none runs.
     case call(DBusServiceError)
 }
 #endif
