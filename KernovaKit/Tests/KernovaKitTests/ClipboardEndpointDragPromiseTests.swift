@@ -2,6 +2,7 @@ import Foundation
 import KernovaSynchronization
 import KernovaTestSupport
 import Testing
+import UniformTypeIdentifiers
 
 @testable import KernovaKit
 

@@ -3614,6 +3614,9 @@ struct VMCommandCoreTests {
         let first = Task { @MainActor in
             try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
         }
+        // The second asks once the first's shutdown request is sent, which a
+        // stop request in flight would refuse.
+        try await clock.sleepRequested.wait { clock.parked.count == 1 }
         let second = Task { @MainActor in
             try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
         }

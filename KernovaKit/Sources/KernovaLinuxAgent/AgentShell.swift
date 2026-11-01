@@ -28,6 +28,7 @@ enum AgentShell {
         var runtime: PeerAgentRuntime?
         var bus: DBusBusConnection?
         var watcher: LogindPeerStateWatcher?
+        var power: LinuxPowerAdapter?
         var termination: (any DispatchSourceSignal)?
     }
 
@@ -104,9 +105,13 @@ enum AgentShell {
         }
         held.withLock { $0.bus = bus }
         let logind = Logind(connection: bus)
+        let power = LinuxPowerAdapter(
+            peer: role == .sessionPeer ? .session(GnomeSessionManager()) : .system, systemBus: bus)
+        held.withLock { $0.power = power }
         // Dials nothing until the watcher's first state.
         let runtime = PeerAgentRuntime(
-            claim: claim, state: nil, registry: PeerFeatureRegistry(logs: logs), dialer: LinuxVsockDialer(),
+            claim: claim, state: nil, registry: PeerFeatureRegistry(power: power, logs: logs),
+            dialer: LinuxVsockDialer(),
             scheduler: SystemScheduler(), logger: logger,
             handlers: PeerAgentRuntime.Handlers { reason in
                 logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
@@ -119,11 +124,12 @@ enum AgentShell {
         // Its own queue: a logind read can block for the bus's reply timeout, and SIGTERM must not wait on it.
         let watchQueue = DispatchQueue(label: "app.kernova.agent.logind")
         let hasState = Locked(false)
-        let apply: @Sendable (Result<PeerSessionState?, LogindError>) -> Void = { result in
+        let apply: @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void = { result in
             switch result {
             case .success(let state):
                 hasState.withLock { $0 = true }
                 logState(state, role: role)
+                power.setPeerState(state)
                 runtime.setPeerState(state)
             case .failure(let error) where !hasState.withLock({ $0 }):
                 // Nothing to keep, and a change that would reread may never come — a headless guest's
@@ -141,7 +147,7 @@ enum AgentShell {
             }
         }
         let watcher: LogindPeerStateWatcher
-        do throws(LogindError) {
+        do throws(DBusServiceError) {
             watcher =
                 role == .sessionPeer
                 ? try LogindPeerStateWatcher.sessionPeer(logind, uid: getuid(), on: watchQueue, apply)

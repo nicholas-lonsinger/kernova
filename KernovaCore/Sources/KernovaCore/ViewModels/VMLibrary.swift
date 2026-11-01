@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
@@ -137,14 +138,17 @@ package final class VMLibrary: VMAdmissionPeers {
     #if DEBUG
     /// Adds the VM `read` describes to the library as it stands, unwired — a
     /// test's stand-in for a VM a load would have adopted, its bundle built by
-    /// ``bundleFactory`` as every VM's is.
+    /// ``bundleFactory`` as every VM's is, and its agent hub's connections by
+    /// `agentConnector` when one is given.
     @discardableResult
     func admitForTesting(
-        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences
+        _ read: VMBundleRead, phase: VMLifecyclePhase, preferences: AppPreferences,
+        agentConnector: (any HostConnectionMaking)? = nil
     ) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink,
+            agentConnector: agentConnector)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
         entries.append(.vm(instance))

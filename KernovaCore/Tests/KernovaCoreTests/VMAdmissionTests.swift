@@ -69,7 +69,7 @@ struct VMAdmissionTests {
             hasPendingGuestSetup: variant.pendingSetup, usbPassthroughGap: variant.usbPassthroughGap,
             writesOutsideBundle: variant.writesOutsideBundle, identityConflict: nil,
             accessoryHolder: nil, terminating: terminating,
-            heldByAnotherCopy: heldByAnotherCopy)
+            heldByAnotherCopy: heldByAnotherCopy, stopRequestInFlight: false)
     }
 
     private static func facts(slot: Bool = false, pendingSetup: Bool = false) -> VMAdmission.Facts {
@@ -98,6 +98,7 @@ struct VMAdmissionTests {
         case .refuse(.heldByAnotherCopy): "O"
         case .refuse(.takesStoppedVM): "S"
         case .refuse(.ephemeralBaselineUnreadable): "E"
+        case .refuse(.stopRequestInFlight): "G"
         }
     }
 
@@ -897,6 +898,25 @@ struct VMAdmissionTests {
             VMAdmission.decide(
                 .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
                 posture: .commit, phase: .stopped, facts: facts) == .admit)
+    }
+
+    @Test("A graceful stop is refused while one is being sent where the VM would take it; Force Stop is not")
+    func stopRequestInFlightRefusesOnlyTheGracefulStop() {
+        var facts = Self.facts()
+        facts.stopRequestInFlight = true
+        let running = VMLifecyclePhase.running(sessionID: Self.session)
+        for posture in [VMAdmission.Posture.offer, .commit] {
+            #expect(
+                VMAdmission.decide(.sessionAction(.requestStop), posture: posture, phase: running, facts: facts)
+                    == .refuse(.stopRequestInFlight))
+            #expect(
+                VMAdmission.decide(.sessionAction(.forceStop), posture: posture, phase: running, facts: facts)
+                    == .admit)
+            // A VM that takes no stop says so, as without the fact.
+            #expect(
+                VMAdmission.decide(.sessionAction(.requestStop), posture: posture, phase: .stopped, facts: facts)
+                    == .refuse(.invalidState))
+        }
     }
 
     @Test("A bring-up from rest is refused while the Ephemeral baseline can't be read; a revert is not")

@@ -11,6 +11,8 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaAgentCore
+
 extension AgentShell {
     /// Installs or uninstalls `request`'s scope from this binary, printing each step as it takes it, then
     /// exits: 0 when every step succeeded, 1 with the failure on standard error otherwise. A dry run prints

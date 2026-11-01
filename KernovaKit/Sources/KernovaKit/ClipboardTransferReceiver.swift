@@ -1,6 +1,7 @@
 import Foundation
 import KernovaLogging
 import KernovaSynchronization
+import os
 
 /// Reassembles one clipboard representation off its own vsock data connection.
 ///

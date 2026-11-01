@@ -1,3 +1,4 @@
+import SwiftProtobuf
 import Testing
 import Foundation
 import KernovaTestSupport

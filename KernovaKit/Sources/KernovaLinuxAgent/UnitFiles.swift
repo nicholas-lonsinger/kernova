@@ -1,3 +1,5 @@
+import KernovaAgentCore
+
 /// The text of every file `kernova-agent install` writes besides the binary and its metadata: the binary
 /// writes its own units, so they can never drift from it.
 ///

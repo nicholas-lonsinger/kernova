@@ -18,7 +18,7 @@ public final class LogindPeerStateWatcher: Sendable {
     private let logind: Logind
     private let queue: DispatchQueue
     private let source: Source
-    private let deliver: @Sendable (Result<PeerSessionState?, LogindError>) -> Void
+    private let deliver: @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void
     private let state = Locked(State())
 
     private enum Source: Sendable {
@@ -49,8 +49,8 @@ public final class LogindPeerStateWatcher: Sendable {
     /// the next change rereads. Throws when logind does not know the user or refuses the subscription.
     public static func sessionPeer(
         _ logind: Logind, uid: UInt32, on queue: DispatchQueue,
-        _ deliver: @escaping @Sendable (Result<PeerSessionState?, LogindError>) -> Void
-    ) throws(LogindError) -> LogindPeerStateWatcher {
+        _ deliver: @escaping @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void
+    ) throws(DBusServiceError) -> LogindPeerStateWatcher {
         let watcher = LogindPeerStateWatcher(logind, .user(try logind.user(uid)), queue, deliver)
         try watcher.start()
         return watcher
@@ -64,10 +64,10 @@ public final class LogindPeerStateWatcher: Sendable {
     /// Delivers as `sessionPeer(_:uid:on:_:)` does.
     public static func systemPeer(
         _ logind: Logind, on queue: DispatchQueue,
-        _ deliver: @escaping @Sendable (Result<PeerSessionState?, LogindError>) -> Void
-    ) throws(LogindError) -> LogindPeerStateWatcher {
+        _ deliver: @escaping @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void
+    ) throws(DBusServiceError) -> LogindPeerStateWatcher {
         let source: Source
-        do throws(LogindError) {
+        do throws(DBusServiceError) {
             source = .seat(try logind.seat("seat0"))
         } catch .call(.remote(let error)) where error.name == noSuchSeat {
             source = .noSeat
@@ -79,7 +79,7 @@ public final class LogindPeerStateWatcher: Sendable {
 
     private init(
         _ logind: Logind, _ source: Source, _ queue: DispatchQueue,
-        _ deliver: @escaping @Sendable (Result<PeerSessionState?, LogindError>) -> Void
+        _ deliver: @escaping @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void
     ) {
         self.logind = logind
         self.source = source
@@ -102,7 +102,7 @@ public final class LogindPeerStateWatcher: Sendable {
     }
 
     /// Subscribes to the fixed object, before the first read, so no change falls between the two.
-    private func start() throws(LogindError) {
+    private func start() throws(DBusServiceError) {
         let fixed: DBusSubscription?
         switch source {
         case .user(let user): fixed = try logind.observeUser(user) { [weak self] _ in self?.queueRefresh() }
@@ -127,7 +127,7 @@ public final class LogindPeerStateWatcher: Sendable {
     private func refresh() {
         dispatchPrecondition(condition: .onQueue(queue))
         state.withLock { $0.refreshQueued = false }
-        do throws(LogindError) {
+        do throws(DBusServiceError) {
             while true {
                 guard !state.withLock(\.isCancelled) else { return }
                 let reading = try read()
@@ -141,7 +141,7 @@ public final class LogindPeerStateWatcher: Sendable {
     }
 
     /// Moves the session subscription to `path`; the next read follows it.
-    private func watch(_ path: DBusObjectPath?) throws(LogindError) {
+    private func watch(_ path: DBusObjectPath?) throws(DBusServiceError) {
         let old = state.withLock { state in
             defer { state.session = nil }
             return state.session?.subscription
@@ -156,7 +156,7 @@ public final class LogindPeerStateWatcher: Sendable {
         if cancelled { subscription.cancel() }
     }
 
-    private func deliverIfChanged(_ result: Result<PeerSessionState?, LogindError>) {
+    private func deliverIfChanged(_ result: Result<PeerSessionState?, DBusServiceError>) {
         let changed = state.withLock { state -> Bool in
             guard !state.isCancelled else { return false }
             guard case .success(let peerState) = result else { return true }
@@ -168,7 +168,7 @@ public final class LogindPeerStateWatcher: Sendable {
     }
 
     /// The state now, and the session it names.
-    private func read() throws(LogindError) -> (state: PeerSessionState?, session: DBusObjectPath?) {
+    private func read() throws(DBusServiceError) -> (state: PeerSessionState?, session: DBusObjectPath?) {
         switch source {
         case .user(let user):
             guard let display = try logind.displaySession(ofUser: user) else { return (nil, nil) }

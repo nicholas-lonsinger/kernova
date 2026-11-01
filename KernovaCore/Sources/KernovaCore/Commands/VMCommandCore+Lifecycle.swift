@@ -745,7 +745,7 @@ extension VMCommandCore {
     /// Takes the guest down, waiting out the power-off only for a caller that
     /// asked to be told whether it happened.
     ///
-    /// Without a `timeout` the verb is the shutdown *request*: VZ accepts it and
+    /// Without a `timeout` the verb is the shutdown *request*: once it is sent
     /// the guest goes down in its own time, which is what every in-app Stop
     /// means. With one, the wait is the verb — and a guest that ignores the
     /// request refuses rather than escalating, because terminating it is a
