@@ -133,7 +133,52 @@ public struct Logind: Sendable {
         try LogindSessionReference(try property("ActiveSession", of: seat, Self.seatInterface))
     }
 
-    /// The session's `Id`, `Active`, `State`, `Class` and `Seat`.
+    /// `ListSessions()`: every session's object.
+    public func sessions() throws(DBusServiceError) -> [DBusObjectPath] {
+        let body = try call(Self.managerPath, Self.managerInterface, "ListSessions", [], expecting: "a(susso)")
+        return try DBusServiceError.read { () throws(DBusValueMismatch) in
+            try body[0].arrayElements().map { element throws(DBusValueMismatch) in
+                try element.structFields()[4].objectPath()
+            }
+        }
+    }
+
+    /// The sessions running a desktop: each not `closing`, of a class other than `greeter`, and of type
+    /// `x11`, `wayland` or `mir`. A session finalized between the listing and the read is left out.
+    public func desktopSessions() throws(DBusServiceError) -> [LogindSessionProperties] {
+        var desktops: [LogindSessionProperties] = []
+        for path in try sessions() {
+            let properties: LogindSessionProperties
+            do throws(DBusServiceError) {
+                properties = try sessionProperties(path)
+            } catch let error where error.remoteError?.name == "org.freedesktop.DBus.Error.UnknownObject" {
+                continue
+            }
+            if properties.runsDesktop { desktops.append(properties) }
+        }
+        return desktops
+    }
+
+    /// Calls `onChange`, on the connection's reader thread, for each `SessionNew` and `SessionRemoved`
+    /// logind emits, until both subscriptions are cancelled. Subscribe before reading `desktopSessions()`.
+    public func observeSessionList(_ onChange: @escaping @Sendable () -> Void) throws(DBusServiceError)
+        -> [DBusSubscription]
+    {
+        var subscriptions: [DBusSubscription] = []
+        for member in ["SessionNew", "SessionRemoved"] {
+            let rule = DBusMatchRule(
+                sender: Self.busName, path: Self.managerPath, interface: Self.managerInterface, member: member)
+            do throws(DBusCallError) {
+                subscriptions.append(try connection.subscribe(rule) { _ in onChange() })
+            } catch {
+                subscriptions.forEach { $0.cancel() }
+                throw .call(error)
+            }
+        }
+        return subscriptions
+    }
+
+    /// The session's `Id`, `Active`, `State`, `Class`, `Type` and `Seat`.
     public func sessionProperties(_ session: DBusObjectPath) throws(DBusServiceError) -> LogindSessionProperties {
         let body = try call(
             session, Self.propertiesInterface, "GetAll", [.string(Self.sessionInterface)], expecting: "a{sv}")
@@ -153,7 +198,7 @@ public struct Logind: Sendable {
             try DBusServiceError.read { () throws(DBusValueMismatch) in try seat.variantContent() })
         return LogindSessionProperties(
             id: try string("Id"), active: active, state: LogindSessionState(rawValue: try string("State")),
-            sessionClass: sessionClass, seat: seatReference?.id)
+            sessionClass: sessionClass, type: LogindSessionType(rawValue: try string("Type")), seat: seatReference?.id)
     }
 
     /// Calls `onChange` for each `PropertiesChanged` logind emits for the
@@ -319,6 +364,26 @@ public struct LogindSessionState: RawRepresentable, Sendable, Hashable {
     public static let closing = LogindSessionState(rawValue: "closing")
 }
 
+/// A session's type: `x11`, `wayland`, `mir`, `tty` or `unspecified`.
+public struct LogindSessionType: RawRepresentable, Sendable, Hashable {
+    /// The type as logind spells it.
+    public var rawValue: String
+
+    /// The type logind spells `rawValue`.
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    /// `x11`.
+    public static let x11 = LogindSessionType(rawValue: "x11")
+    /// `wayland`.
+    public static let wayland = LogindSessionType(rawValue: "wayland")
+    /// `mir`.
+    public static let mir = LogindSessionType(rawValue: "mir")
+    /// `tty`: a text console or SSH login.
+    public static let tty = LogindSessionType(rawValue: "tty")
+}
+
 /// A session's class: `user`, `greeter`, `lock-screen`, among others.
 public struct LogindSessionClass: RawRepresentable, Sendable, Hashable {
     /// The class as logind spells it.
@@ -354,7 +419,7 @@ public enum LogindSessionProperty: Sendable, Hashable, CaseIterable {
     }
 }
 
-/// A session's `Id`, `Active`, `State` and `Class`.
+/// A session's `Id`, `Active`, `State`, `Class`, `Type` and `Seat`.
 public struct LogindSessionProperties: Sendable, Hashable {
     /// The session's ID.
     public var id: String
@@ -364,19 +429,29 @@ public struct LogindSessionProperties: Sendable, Hashable {
     public var state: LogindSessionState
     /// The session's class.
     public var sessionClass: LogindSessionClass
+    /// The session's type.
+    public var type: LogindSessionType
     /// The seat the session is attached to, as `seat0`; nil for a session on no seat, as one over SSH is.
     /// logind reports a seatless session as always active.
     public var seat: String?
 
     /// Properties of these values.
     public init(
-        id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass, seat: String?
+        id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass,
+        type: LogindSessionType, seat: String?
     ) {
         self.id = id
         self.active = active
         self.state = state
         self.sessionClass = sessionClass
+        self.type = type
         self.seat = seat
+    }
+
+    /// Whether the session runs a desktop someone logged in to: graphical, not a greeter's, and not
+    /// `closing`, whose desktop has already ended.
+    public var runsDesktop: Bool {
+        [.x11, .wayland, .mir].contains(type) && sessionClass != .greeter && state != .closing
     }
 }
 

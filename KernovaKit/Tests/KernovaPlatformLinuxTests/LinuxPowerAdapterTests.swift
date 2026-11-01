@@ -1,4 +1,10 @@
 #if os(Linux)
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
 import Foundation
 import KernovaAgentCore
 @testable import KernovaAgentRuntime
@@ -94,17 +100,37 @@ final class FakeGnomeSession: Sendable {
     static let editorID = "org.example.Editor"
 
     let connection: DBusBusConnection
+    let state: State
 
-    init(on bus: PrivateBus) throws {
-        connection = try bus.connect { call in FakeGnomeSession.answer(call) }
-        try requestName(GnomeSessionInhibitors.busName, on: connection)
+    final class State: Sendable {
+        /// Whether the editor's logout inhibitor is held.
+        let editorInhibits = Mutex(true)
+        /// Whether GetInhibitors answers with an error.
+        let failsInhibitors = Mutex(false)
     }
 
-    private static func answer(_ call: DBusReceivedMessage) -> DBusMessage? {
+    init(on bus: PrivateBus) throws {
+        let state = State()
+        self.state = state
+        connection = try bus.connect { call in FakeGnomeSession.answer(call, state: state) }
+        try requestName(GnomeSessionManager.busName, on: connection)
+    }
+
+    /// gnome-session's logind lock, as gsm-systemd.c takes it while an app inhibits logout: held by the
+    /// process that owns the bus name, which is this test's.
+    static var logindLock: DBusValue {
+        FakeLogind.inhibitor("shutdown", "user", "user session inhibited", "block", 1000, UInt32(getpid()))
+    }
+
+    private static func answer(_ call: DBusReceivedMessage, state: State) -> DBusMessage? {
         let value: DBusValue
         switch (call.header.path, call.header.member) {
-        case (GnomeSessionInhibitors.path?, "GetInhibitors"?):
-            value = .array(elementType: .objectPath, [.objectPath(editorPath), .objectPath(playerPath)])
+        case (GnomeSessionManager.path?, "GetInhibitors"?):
+            if state.failsInhibitors.withLock({ $0 }) {
+                return .error(replyingTo: call, name: "org.freedesktop.DBus.Error.Failed", message: "failed")
+            }
+            let editor = state.editorInhibits.withLock { $0 } ? [DBusValue.objectPath(editorPath)] : []
+            value = .array(elementType: .objectPath, editor + [.objectPath(playerPath)])
         case (editorPath?, "GetFlags"?): value = .uint32(1)
         case (editorPath?, "GetAppId"?): value = .string(editorID)
         case (playerPath?, "GetFlags"?): value = .uint32(4)
@@ -125,18 +151,22 @@ final class PowerHarness {
     let bus: PrivateBus
     let logind: FakeLogind
     let polkit: FakePolkit?
-    let gnomeSession: FakeGnomeSession
+    private(set) var gnomeSession: FakeGnomeSession?
     let systemBus: DBusBusConnection
     let adapter: LinuxPowerAdapter
     let reports = Inbox<PowerInput>()
 
+    /// A session peer's logind lists gnome-session's own lock; the system peer's lists `FakeLogind`'s
+    /// inhibitors, and the greeter as its only session.
     init(
-        _ role: PeerRole, onConsole: Bool = true, withPolkit: Bool = true, powerCallTimeout: Duration = .seconds(8),
+        _ role: PeerRole, onConsole: Bool = true, withPolkit: Bool = true, withGnomeSession: Bool = true,
+        powerCallTimeout: Duration = .seconds(8),
         prepare: (FakeLogind.Recorder, FakePolkit.State?) -> Void = { _, _ in }
     ) throws {
         let bus = try PrivateBus()
         let logind = try FakeLogind(on: bus)
         let polkit = try withPolkit ? FakePolkit(on: bus) : nil
+        if role == .sessionPeer { logind.recorder.inhibitors.withLock { $0 = [FakeGnomeSession.logindLock] } }
         prepare(logind.recorder, polkit?.state)
         let desktopFile = "/applications/\(FakeGnomeSession.editorID).desktop"
         let desktopEntry =
@@ -147,16 +177,29 @@ final class PowerHarness {
         self.logind = logind
         self.polkit = polkit
         self.systemBus = systemBus
-        gnomeSession = try FakeGnomeSession(on: bus)
-        adapter = LinuxPowerAdapter(
-            role: role, systemBus: systemBus,
-            gnomeSession: GnomeSessionInhibitors(
-                applicationDirectories: ["/applications"], readFile: { $0 == desktopFile ? desktopEntry : nil }
-            ) { () throws(DBusConnectError) in try DBusBusConnection(address: address) },
-            powerCallTimeout: powerCallTimeout)
+        gnomeSession = try withGnomeSession ? FakeGnomeSession(on: bus) : nil
+        let peer: LinuxPowerAdapter.Peer =
+            role == .sessionPeer
+            ? .session(
+                GnomeSessionManager(
+                    applicationDirectories: ["/applications"], readFile: { $0 == desktopFile ? desktopEntry : nil }
+                ) { () throws(DBusConnectError) in try DBusBusConnection(address: address) })
+            : .system
+        adapter = LinuxPowerAdapter(peer: peer, systemBus: systemBus, powerCallTimeout: powerCallTimeout)
         adapter.setPeerState(PeerSessionState(console: onConsole ? .on : .off, sessionID: "2", userName: "user"))
         let reports = reports
         adapter.start(reporter: PowerReporter { reports.put($0) })
+    }
+
+    /// Starts gnome-session, which takes its bus name.
+    func startGnomeSession() throws {
+        gnomeSession = try FakeGnomeSession(on: bus)
+    }
+
+    /// Stops gnome-session, which gives up its bus name.
+    func stopGnomeSession() {
+        gnomeSession?.connection.close()
+        gnomeSession = nil
     }
 
     func next() throws -> PowerInput {
@@ -182,7 +225,7 @@ struct LinuxPowerAdapterTests {
         PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: number)
     }
 
-    @Test("A blocker the pre-check finds reports accepted, then blocked by the app gnome-session names")
+    @Test("gnome-session's logout inhibitor reports accepted, then blocked by the app it names, not by its own lock")
     func preCheckBlocked() throws {
         let harness = try PowerHarness(.sessionPeer)
         #expect(try harness.next() == PowerHarness.offer)
@@ -193,6 +236,88 @@ struct LinuxPowerAdapterTests {
         #expect(harness.logind.callCount("PowerOff") == 0)
         let subjects = try #require(harness.polkit).state.subjectNames.withLock { $0 }
         #expect(!subjects.isEmpty && subjects.allSatisfy { $0 == harness.systemBus.uniqueName })
+    }
+
+    @Test("A session peer counts logind's blockers outside gnome-session, and not gnome-session's own lock")
+    func outsideBlocker() throws {
+        let harness = try PowerHarness(.sessionPeer) { recorder, _ in
+            recorder.inhibitors.withLock {
+                $0 = [
+                    FakeGnomeSession.logindLock,
+                    FakeLogind.inhibitor("shutdown", "Updater", "upgrading", "block", 0, 103),
+                ]
+            }
+        }
+        try #require(harness.gnomeSession).state.editorInhibits.withLock { $0 = false }
+        #expect(try harness.next() == PowerHarness.offer)
+        let blocked = Self.request(1)
+        harness.adapter.perform(blocked, .shutdown)
+        #expect(try harness.next() == .accepted(blocked))
+        guard case .blocked(blocked, let apps) = try harness.next() else {
+            Issue.record("The request was not blocked")
+            return
+        }
+        #expect(apps.map(\.displayName) == ["Updater"])
+        #expect(apps.map(\.processID) == [103])
+
+        // gnome-session's lock alone, which it can hold a moment after its last inhibitor ends, blocks nothing.
+        harness.logind.recorder.inhibitors.withLock { $0 = [FakeGnomeSession.logindLock] }
+        let next = Self.request(2)
+        harness.adapter.perform(next, .shutdown)
+        #expect(try harness.next() == .accepted(next))
+        #expect(try harness.next() == .handedOff(next))
+        #expect(harness.logind.callCount("PowerOff") == 1)
+    }
+
+    @Test("gnome-session's GetInhibitors failing refuses POWER_OS_FAILED, and logind is never asked")
+    func inhibitorsUnreadable() throws {
+        let harness = try PowerHarness(.sessionPeer)
+        #expect(try harness.next() == PowerHarness.offer)
+        try #require(harness.gnomeSession).state.failsInhibitors.withLock { $0 = true }
+        let id = Self.request(1)
+        harness.adapter.perform(id, .shutdown)
+        #expect(try harness.nextRefusal(id) == .powerOsFailed)
+        #expect(harness.logind.callCount("PowerOff") == 0)
+    }
+
+    @Test("A session peer offers power only while org.gnome.SessionManager has an owner, following its changes")
+    func sessionManagerOwner() throws {
+        let harness = try PowerHarness(.sessionPeer, withGnomeSession: false)
+        #expect(try harness.nextAbsence() == .unsavedWorkUnseen)
+        let refused = Self.request(1)
+        harness.adapter.perform(refused, .shutdown)
+        #expect(try harness.nextRefusal(refused) == .featureUnavailable)
+
+        try harness.startGnomeSession()
+        #expect(try harness.next() == PowerHarness.offer)
+        harness.stopGnomeSession()
+        #expect(try harness.nextAbsence() == .unsavedWorkUnseen)
+        #expect(harness.logind.callCount("PowerOff") == 0)
+    }
+
+    @Test("The system peer is absent while a desktop session runs, following logind's SessionNew and SessionRemoved")
+    func systemPeerDesktopSessions() throws {
+        let harness = try PowerHarness(.systemPeer) { recorder, _ in
+            recorder.inhibitors.withLock { $0 = [] }
+            recorder.sessions.withLock { $0 = [FakeLogind.greeterSession, FakeLogind.ttySession] }
+        }
+        #expect(try harness.next() == PowerHarness.offer)
+
+        harness.logind.recorder.sessions.withLock { $0.append(FakeLogind.userSession) }
+        try harness.logind.emitSessionList("SessionNew", FakeLogind.userSession)
+        #expect(try harness.nextAbsence() == .unsavedWorkUnseen)
+        let refused = Self.request(1)
+        harness.adapter.perform(refused, .shutdown)
+        #expect(try harness.nextRefusal(refused) == .featureUnavailable)
+
+        harness.logind.recorder.sessions.withLock { $0 = [FakeLogind.greeterSession] }
+        try harness.logind.emitSessionList("SessionRemoved", FakeLogind.userSession)
+        #expect(try harness.next() == PowerHarness.offer)
+        let taken = Self.request(2)
+        harness.adapter.perform(taken, .shutdown)
+        #expect(try harness.next() == .accepted(taken))
+        #expect(try harness.next() == .handedOff(taken))
+        #expect(harness.logind.callCount("PowerOff") == 1)
     }
 
     @Test("logind's BlockedByInhibitorLock reports accepted, then blocked")
@@ -337,7 +462,7 @@ struct LinuxPowerAdapterTests {
 }
 
 @Suite("gnome-session's app names")
-struct GnomeSessionInhibitorsTests {
+struct GnomeSessionManagerTests {
     @Test("A desktop entry's name is its first unlocalized Name in [Desktop Entry]")
     func desktopEntryName() {
         let text = """
@@ -349,19 +474,19 @@ struct GnomeSessionInhibitorsTests {
             [Desktop Action new-window]
             Name=New Window
             """
-        #expect(GnomeSessionInhibitors.desktopEntryName(parsing: text) == "Text Editor")
-        #expect(GnomeSessionInhibitors.desktopEntryName(parsing: "[Desktop Action x]\nName=Action\n") == nil)
+        #expect(GnomeSessionManager.desktopEntryName(parsing: text) == "Text Editor")
+        #expect(GnomeSessionManager.desktopEntryName(parsing: "[Desktop Action x]\nName=Action\n") == nil)
     }
 
     @Test("The application directories follow XDG's variables and defaults, then Flatpak's exports")
     func applicationDirectories() {
         #expect(
-            GnomeSessionInhibitors.applicationDirectories(environment: ["HOME": "/home/user"]) == [
+            GnomeSessionManager.applicationDirectories(environment: ["HOME": "/home/user"]) == [
                 "/home/user/.local/share/applications", "/usr/local/share/applications", "/usr/share/applications",
                 "/var/lib/flatpak/exports/share/applications",
             ])
         #expect(
-            GnomeSessionInhibitors.applicationDirectories(environment: [
+            GnomeSessionManager.applicationDirectories(environment: [
                 "HOME": "/home/user", "XDG_DATA_HOME": "/data", "XDG_DATA_DIRS": "/a:relative:/b",
             ]) == [
                 "/data/applications", "/a/applications", "/b/applications",
