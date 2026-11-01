@@ -320,7 +320,7 @@ struct LinuxPowerAdapterTests {
         #expect(harness.logind.callCount("PowerOff") == 1)
     }
 
-    @Test("logind's BlockedByInhibitorLock reports accepted, then blocked")
+    @Test("logind's BlockedByInhibitorLock past a clear pre-check reports accepted, then blocked")
     func blockedByLogind() throws {
         let harness = try PowerHarness(.sessionPeer) { recorder, _ in
             recorder.inhibitors.withLock { $0 = [] }
@@ -330,11 +330,12 @@ struct LinuxPowerAdapterTests {
                     message: "Operation denied due to active block inhibitor")
             }
         }
+        try #require(harness.gnomeSession).state.editorInhibits.withLock { $0 = false }
         #expect(try harness.next() == PowerHarness.offer)
         let id = Self.request(1)
         harness.adapter.perform(id, .shutdown)
         #expect(try harness.next() == .accepted(id))
-        #expect(try harness.next() == .blocked(id, [PowerHarness.editor]))
+        #expect(try harness.next() == .blocked(id, []))
         #expect(harness.logind.callCount("PowerOff") == 1)
     }
 
