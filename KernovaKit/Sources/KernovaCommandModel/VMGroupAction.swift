@@ -1,7 +1,8 @@
 import Foundation
 
 /// One lifecycle action taken on every virtual machine in a smart group or a
-/// folder — the header menu's Start All, Suspend All and Stop All, the
+/// folder — the header menu's Start All, Suspend All, Stop All and Restart
+/// All, the
 /// `kernova` lifecycle verbs given a group, and the Shortcuts group action —
 /// and, as ``start``, the app's launch pass over the VMs marked to start
 /// automatically.
@@ -13,6 +14,8 @@ public enum VMGroupAction: String, Codable, Sendable, Hashable, CaseIterable {
     case suspend
     /// Asks each running guest to shut down.
     case stop
+    /// Shuts each running guest down and starts it again, waiting for each.
+    case restart
 
     /// The verb a refusal of the whole group names.
     public var verb: VMVerb {
@@ -20,6 +23,7 @@ public enum VMGroupAction: String, Codable, Sendable, Hashable, CaseIterable {
         case .start: .start
         case .suspend: .suspend
         case .stop: .stop
+        case .restart: .restart
         }
     }
 }
@@ -59,6 +63,7 @@ public struct VMGroupActionReport: Codable, Sendable, Hashable {
             case .start: "Start"
             case .suspend: "Suspend"
             case .stop: "Stop"
+            case .restart: "Restart"
             }
         return "Couldn\u{2019}t \(verb) Every VM in \u{201C}\(groupName)\u{201D}"
     }
@@ -101,6 +106,8 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
             return "Suspended \(name)"
         case .done(.stop):
             return "Asked \(name) to shut down"
+        case .done(.restart):
+            return "Restarted \(name)"
         case .done:
             return "Started \(name)"
         case .passedOver(.state):
@@ -133,8 +140,8 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
 
 /// What happened to one VM in a group action.
 public enum VMGroupActionOutcome: Codable, Sendable, Hashable {
-    /// `verb` ran to completion on the VM: a start, a resume, a suspend, or a
-    /// request to shut down.
+    /// `verb` ran to completion on the VM: a start, a resume, a suspend, a
+    /// request to shut down, or a restart.
     case done(verb: VMVerb)
     /// The action does not concern the VM, for `reason`, and asked nothing of
     /// it.

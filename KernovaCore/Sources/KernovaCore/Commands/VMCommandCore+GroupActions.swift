@@ -2,10 +2,10 @@ import Foundation
 import KernovaCommandModel
 import KernovaLogging
 
-/// Start, suspend or stop every VM in a set — the one executor behind the
-/// group header menus, the `kernova` lifecycle verbs given a group, the
-/// Shortcuts group action, and the launch pass that starts the VMs marked to
-/// start automatically.
+/// Start, suspend, stop or restart every VM in a set — the one executor
+/// behind the group header menus, the `kernova` lifecycle verbs given a group,
+/// the Shortcuts group action, and the launch pass that starts the VMs marked
+/// to start automatically.
 extension VMCommandCore {
     /// How many of the VMs in `group` each action acts on — what the actions'
     /// menu items count, by the rule the actions themselves act by
@@ -106,6 +106,7 @@ extension VMCommandCore {
         case start(waitsOutBusyVMs: Bool)
         case suspend
         case stop
+        case restart
 
         /// A group's action, which passes over a VM other work holds.
         init(_ action: VMGroupAction) {
@@ -113,6 +114,7 @@ extension VMCommandCore {
             case .start: self = .start(waitsOutBusyVMs: false)
             case .suspend: self = .suspend
             case .stop: self = .stop
+            case .restart: self = .restart
             }
         }
 
@@ -121,6 +123,7 @@ extension VMCommandCore {
             case .start: .start
             case .suspend: .suspend
             case .stop: .stop
+            case .restart: .restart
             }
         }
     }
@@ -202,6 +205,12 @@ extension VMCommandCore {
             outcome = await settle(.stop, on: instance, in: set) {
                 try await self.stop(instance, disposition: .graceful, consent: .none)
             }
+        case .restart:
+            // The single-VM verb, asking nothing: a question it raises is
+            // reported, and a shutdown the guest did not carry out fails.
+            outcome = await settle(.restart, on: instance, in: set) {
+                try await self.restart(.id(instance.id), timeout: nil, consent: .none)
+            }
         }
         return VMGroupActionResult(vm: summary(instance), outcome: outcome)
     }
@@ -244,8 +253,8 @@ extension VMCommandCore {
         return turn(of: action, on: instance)
     }
 
-    /// What a suspend or a stop, `action`, does to `instance`, decided now:
-    /// `act` — the plain suspend or graceful stop, with no consent — when the
+    /// What a suspend, a stop or a restart, `action`, does to `instance`,
+    /// decided now: `act` — the plain verb, with no consent — when the
     /// turn takes the VM, which it does by the action's one step.
     private func settle(
         _ action: VMGroupAction, on instance: VMInstance, in set: MemberSet,

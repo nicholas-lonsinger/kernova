@@ -145,6 +145,51 @@ struct GuestShutdownRoutingTests {
         #expect(fixture.instance.status == .running)
     }
 
+    // MARK: - Restart All
+
+    /// The routed VM and a stopped one, in a folder in that order.
+    private func makeFolder(_ fixture: Fixture) throws -> (folder: VMGroupReference, idle: VMInstance) {
+        let idle = fixture.harness.wired.register(name: "Idle")
+        let folder = try fixture.harness.library.organization.createFolder(
+            named: "Lab", members: [fixture.instance.id, idle.id])
+        return (VMGroupReference(.folder, named: folder.id.uuidString), idle)
+    }
+
+    @Test("Restart All restarts the running VM through the single-VM restart and skips the stopped one")
+    func restartAllRestartsTheRunningVM() async throws {
+        let fixture = try await makeFixture(peer: false)
+        let (folder, idle) = try makeFolder(fixture)
+
+        let report = try await fixture.harness.core.groupAction(.restart, on: folder)
+
+        #expect(report.results.map(\.outcome) == [.done(verb: .restart), .passedOver(reason: .state)])
+        #expect(report.results.map { $0.line(for: .restart) } == ["Restarted Routed", "Skipped Idle: it is stopped."])
+        #expect(report.undone.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 1)
+        #expect(fixture.harness.virtualization.startCallCount == 1)
+        #expect(fixture.instance.status == .running)
+        #expect(fixture.instance.activity.liveSessionID != fixture.session)
+        #expect(idle.status == .stopped)
+    }
+
+    @Test("Restart All reports a shutdown the guest's apps blocked as undone, naming them")
+    func restartAllReportsABlockedShutdown() async throws {
+        let fixture = try await makeFixture { _ in [.accepted, .finished(.blocked(Self.blocking))] }
+        let (folder, _) = try makeFolder(fixture)
+
+        let report = try await fixture.harness.core.groupAction(.restart, on: folder)
+
+        #expect(report.results.last?.outcome == .passedOver(reason: .state))
+        #expect(report.undone.map(\.vm.name) == ["Routed"])
+        #expect(report.undoneTitle == "Couldn\u{2019}t Restart Every VM in \u{201C}Lab\u{201D}")
+        #expect(
+            report.undoneMessage.hasPrefix(
+                "Couldn\u{2019}t restart Routed: Text Editor and Terminal are blocking it."))
+        #expect(fixture.harness.virtualization.startCallCount == 0)
+        #expect(fixture.instance.status == .running)
+        #expect(fixture.instance.activity.liveSessionID == fixture.session)
+    }
+
     @Test("A Stop routed through an agent while a Restart waits cancels the Restart")
     func stopWithdrawsAWaitingRestart() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
