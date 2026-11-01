@@ -427,6 +427,9 @@ public nonisolated enum Kernova_V2_AbsenceReason: SwiftProtobuf.Enum, Swift.Case
   /// the guest user switched it off in the agent
   case turnedOffInGuest // = 7
 
+  /// power: the peer cannot see the desktop session's unsaved work
+  case unsavedWorkUnseen // = 8
+
   /// both sides have it, at different versions
   case versionMismatch // = 100
 
@@ -454,6 +457,7 @@ public nonisolated enum Kernova_V2_AbsenceReason: SwiftProtobuf.Enum, Swift.Case
     case 5: self = .notPermitted
     case 6: self = .missingOsComponent
     case 7: self = .turnedOffInGuest
+    case 8: self = .unsavedWorkUnseen
     case 100: self = .versionMismatch
     case 101: self = .disabledByPolicy
     case 102: self = .protocolMismatch
@@ -472,6 +476,7 @@ public nonisolated enum Kernova_V2_AbsenceReason: SwiftProtobuf.Enum, Swift.Case
     case .notPermitted: return 5
     case .missingOsComponent: return 6
     case .turnedOffInGuest: return 7
+    case .unsavedWorkUnseen: return 8
     case .versionMismatch: return 100
     case .disabledByPolicy: return 101
     case .protocolMismatch: return 102
@@ -490,6 +495,7 @@ public nonisolated enum Kernova_V2_AbsenceReason: SwiftProtobuf.Enum, Swift.Case
     .notPermitted,
     .missingOsComponent,
     .turnedOffInGuest,
+    .unsavedWorkUnseen,
     .versionMismatch,
     .disabledByPolicy,
     .protocolMismatch,
@@ -1755,7 +1761,7 @@ nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Kernova_V2_AbsenceReason: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ABSENCE_REASON_UNSPECIFIED\0\u{1}ABSENCE_REASON_NOT_IMPLEMENTED\0\u{1}ABSENCE_REASON_NOT_SERVED_BY_ROLE\0\u{1}ABSENCE_REASON_NOT_ON_CONSOLE\0\u{1}ABSENCE_REASON_NO_USER_SESSION\0\u{1}ABSENCE_REASON_NOT_PERMITTED\0\u{1}ABSENCE_REASON_MISSING_OS_COMPONENT\0\u{1}ABSENCE_REASON_TURNED_OFF_IN_GUEST\0\u{2}]\u{1}ABSENCE_REASON_VERSION_MISMATCH\0\u{1}ABSENCE_REASON_DISABLED_BY_POLICY\0\u{1}ABSENCE_REASON_PROTOCOL_MISMATCH\0\u{1}ABSENCE_REASON_NO_AGENT\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ABSENCE_REASON_UNSPECIFIED\0\u{1}ABSENCE_REASON_NOT_IMPLEMENTED\0\u{1}ABSENCE_REASON_NOT_SERVED_BY_ROLE\0\u{1}ABSENCE_REASON_NOT_ON_CONSOLE\0\u{1}ABSENCE_REASON_NO_USER_SESSION\0\u{1}ABSENCE_REASON_NOT_PERMITTED\0\u{1}ABSENCE_REASON_MISSING_OS_COMPONENT\0\u{1}ABSENCE_REASON_TURNED_OFF_IN_GUEST\0\u{1}ABSENCE_REASON_UNSAVED_WORK_UNSEEN\0\u{2}\\\u{1}ABSENCE_REASON_VERSION_MISMATCH\0\u{1}ABSENCE_REASON_DISABLED_BY_POLICY\0\u{1}ABSENCE_REASON_PROTOCOL_MISMATCH\0\u{1}ABSENCE_REASON_NO_AGENT\0")
 }
 
 nonisolated extension Kernova_V2_PowerAction: SwiftProtobuf._ProtoNameProviding {

@@ -116,7 +116,8 @@ enum AgentShell {
         }
         held.withLock { $0.bus = bus }
         let logind = Logind(connection: bus)
-        let power = LinuxPowerAdapter(role: role, systemBus: bus)
+        let power = LinuxPowerAdapter(
+            peer: role == .sessionPeer ? .session(GnomeSessionManager()) : .system, systemBus: bus)
         held.withLock { $0.power = power }
         let update = updateInstaller(scope: claim.scope, label: label)
         // Dials nothing until the watcher's first state.

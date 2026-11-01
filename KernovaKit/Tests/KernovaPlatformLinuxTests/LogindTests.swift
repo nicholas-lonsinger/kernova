@@ -12,6 +12,8 @@ final class FakeLogind: Sendable {
     /// The display user's next graphical session: active, of class `user`, on seat0.
     static let nextUserSession = LogindSessionReference(id: "3", path: "/org/freedesktop/login1/session/_33")
     static let greeterSession = LogindSessionReference(id: "c1", path: "/org/freedesktop/login1/session/c1")
+    /// A text-console login of the display user.
+    static let ttySession = LogindSessionReference(id: "4", path: "/org/freedesktop/login1/session/_34")
     static let seatPath: DBusObjectPath = "/org/freedesktop/login1/seat/seat0"
     /// Logged in with a graphical session.
     static let displayUID: UInt32 = 1000
@@ -45,6 +47,8 @@ final class FakeLogind: Sendable {
         let inhibitors = Mutex(FakeLogind.inhibitors)
         /// Whether PowerOff and Reboot are answered at all.
         let answersPower = Mutex(true)
+        /// What ListSessions lists.
+        let sessions = Mutex([FakeLogind.greeterSession])
     }
 
     static let inhibitors: [DBusValue] = [
@@ -127,12 +131,17 @@ final class FakeLogind: Sendable {
         case (nextUserSession.path, .string(Logind.sessionInterface)?):
             [
                 "Id": .string("3"), "Active": .boolean(true), "State": .string("active"),
-                "Class": .string("user"), "Seat": seatReference("seat0"),
+                "Class": .string("user"), "Seat": seatReference("seat0"), "Type": .string("x11"),
             ]
         case (greeterSession.path, .string(Logind.sessionInterface)?):
             [
                 "Id": .string("c1"), "Active": .boolean(true), "State": .string("active"),
-                "Class": .string("greeter"), "Seat": seatReference("seat0"),
+                "Class": .string("greeter"), "Seat": seatReference("seat0"), "Type": .string("wayland"),
+            ]
+        case (ttySession.path, .string(Logind.sessionInterface)?):
+            [
+                "Id": .string("4"), "Active": .boolean(false), "State": .string("online"),
+                "Class": .string("user"), "Seat": seatReference("seat0"), "Type": .string("tty"),
             ]
         default:
             nil
@@ -148,6 +157,14 @@ final class FakeLogind: Sendable {
                 return .error(replyingTo: call, name: error.name, message: error.message)
             }
             return .methodReturn(replyingTo: call)
+        case ("ListSessions", ""):
+            let element = DBusType.struct([.string, .uint32, .string, .string, .objectPath])
+            let sessions = recorder.sessions.withLock { $0 }.map { session -> DBusValue in
+                .struct([
+                    .string(session.id), .uint32(1000), .string("user"), .string("seat0"), .objectPath(session.path),
+                ])
+            }
+            return .methodReturn(replyingTo: call, body: [.array(elementType: element, sessions)])
         case ("ListInhibitors", ""):
             let element = DBusType.struct([.string, .string, .string, .string, .uint32, .uint32])
             return .methodReturn(
@@ -173,6 +190,14 @@ final class FakeLogind: Sendable {
     /// How many times `member` was called on the manager.
     func callCount(_ member: String) -> Int {
         recorder.calls.withLock { $0.filter { $0.0 == member }.count }
+    }
+
+    /// Emits the manager's `SessionNew` or `SessionRemoved` for `session`.
+    func emitSessionList(_ member: String, _ session: LogindSessionReference) throws {
+        try connection.send(
+            .signal(
+                path: Logind.managerPath, interface: Logind.managerInterface, member: member,
+                body: [.string(session.id), .objectPath(session.path)]))
     }
 
     /// Emits `PropertiesChanged` for `interface` on `path`.
@@ -247,7 +272,23 @@ struct LogindTests {
         #expect(session == FakeLogind.userSession)
         #expect(
             try logind.sessionProperties(session.path)
-                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user, seat: "seat0"))
+                == LogindSessionProperties(
+                    id: "2", active: false, state: .online, sessionClass: .user, type: .wayland, seat: "seat0"))
+    }
+
+    @Test("The desktop sessions are the graphical ones that are not a greeter's, leaving out a finalized one")
+    func desktopSessions() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        fake.recorder.sessions.withLock {
+            $0 = [FakeLogind.greeterSession, FakeLogind.ttySession, FakeLogind.userSession, FakeLogind.nextUserSession]
+        }
+        fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.nextUserSession.path] }
+        #expect(try logind.sessions().count == 4)
+        #expect(try logind.desktopSessions().map(\.id) == ["2"])
+        fake.recorder.vanishedSessions.withLock { $0 = [] }
+        #expect(try logind.desktopSessions().map(\.id) == ["2", "3"])
     }
 
     @Test("A user in no graphical session has no display session, and a user not logged in is an error")
@@ -278,7 +319,7 @@ struct LogindTests {
         #expect(
             try logind.sessionProperties(greeter.path)
                 == LogindSessionProperties(
-                    id: "c1", active: true, state: .active, sessionClass: .greeter, seat: "seat0"))
+                    id: "c1", active: true, state: .active, sessionClass: .greeter, type: .wayland, seat: "seat0"))
 
         fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
         #expect(try logind.activeSession(onSeat: seat) == FakeLogind.userSession)

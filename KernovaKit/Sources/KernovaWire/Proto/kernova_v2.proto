@@ -178,7 +178,8 @@ enum AbsenceReason {
   ABSENCE_REASON_NOT_PERMITTED = 5;        // the guest OS denies this peer
   ABSENCE_REASON_MISSING_OS_COMPONENT = 6; // e.g. no logind, no data-control protocol
   ABSENCE_REASON_TURNED_OFF_IN_GUEST = 7;  // the guest user switched it off in the agent
-  reserved 8 to 99;
+  ABSENCE_REASON_UNSAVED_WORK_UNSEEN = 8;  // power: the peer cannot see the desktop session's unsaved work
+  reserved 9 to 99;
 
   ABSENCE_REASON_VERSION_MISMATCH = 100;   // both sides have it, at different versions
   ABSENCE_REASON_DISABLED_BY_POLICY = 101; // the VM's settings turn it off
