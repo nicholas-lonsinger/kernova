@@ -55,7 +55,7 @@ struct AgentHubTests {
         #expect(summary.userName == Fixture.peerState.userName)
         #expect(summary.console == .on)
         #expect(summary.versionLabel == "peer")
-        #expect(summary.standing == .outdated(offeredVersionLabel: "next"))
+        #expect(summary.standing == .outdated(offeredVersionLabel: "next", update: .unavailable))
         #expect(summary.isResponsive)
         driver.close(.shuttingDown)
         _ = await waiter.next { $0.peers.isEmpty }
@@ -67,7 +67,10 @@ struct AgentHubTests {
         "A peer stands current, outdated, or — offered nothing — not judged at all",
         arguments: [
             (hash: UInt8(0xA1), scope: InstallScope.user, standing: PeerSummary.Standing.current),
-            (hash: UInt8(0xA2), scope: InstallScope.user, standing: .outdated(offeredVersionLabel: "next")),
+            (
+                hash: UInt8(0xA2), scope: InstallScope.user,
+                standing: .outdated(offeredVersionLabel: "next", update: .unavailable)
+            ),
             (hash: UInt8(0xA1), scope: InstallScope.unspecified, standing: .notOffered),
         ])
     func standing(_ expected: (hash: UInt8, scope: InstallScope, standing: PeerSummary.Standing)) async {
@@ -83,6 +86,62 @@ struct AgentHubTests {
         let peer = HubPeer(harness, claim: claim)
         let snapshot = await harness.snapshot { $0.peers.count == 1 }
         #expect(snapshot.peers[0].standing == expected.standing)
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    // MARK: In-band update
+
+    static let offered = BundledPayload(
+        os: .linux, architecture: .arm64, scope: .user,
+        manifest: UpdateManifestValue(
+            payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 100_000, format: .executable,
+            versionLabel: "next"))
+
+    static func inBandUpdate(_ snapshot: AgentHubSnapshot) -> PeerSummary.InBandUpdate? {
+        guard case .outdated(_, let update)? = snapshot.peers.first?.standing else { return nil }
+        return update
+    }
+
+    @Test("An outdated peer that pulls the offered payload reads updating, and the UPDATE row merges its offer")
+    func updatingWhilePulling() async {
+        let harness = HubHarness(bundles: [Self.offered], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])))
+        let snapshot = await harness.snapshot { Self.inBandUpdate($0) == .updating }
+        #expect(snapshot.features[.update].isAvailable)
+        var events = harness.connector.events.waiter()
+        let pulled = await events.next { if case .update(.pullRequested) = $0.event { true } else { false } }
+        #expect(pulled.connection == 1)
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test("An outdated peer whose pull of the offered payload ends without installing it reads failed")
+    func failedPull() async {
+        // FixedPayloads fails every read, so the host resets the pull READ_FAILED.
+        let harness = HubHarness(bundles: [Self.offered])
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])))
+        _ = await harness.snapshot { Self.inBandUpdate($0) == .failed }
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test(
+        "An outdated peer that refuses the offered hash reads failed; one that cannot take its format, unavailable",
+        arguments: [
+            (UpdateOffer(formats: [.executable], rejectedHash: Data(repeating: 0xB2, count: 32)), .failed),
+            (UpdateOffer(formats: [.paxTree]), PeerSummary.InBandUpdate.unavailable),
+        ])
+    func refusedOffer(offer: UpdateOffer, expected: PeerSummary.InBandUpdate) async {
+        let harness = HubHarness(bundles: [Self.offered], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(harness, claim: .session(.user, instance: 1), update: .available(offer))
+        _ = await harness.snapshot { Self.inBandUpdate($0) == expected }
+        #expect(!harness.connector.events.elements.contains { if case .update = $0.event { true } else { false } })
         peer.driver.close(.shuttingDown)
         harness.hub.close()
     }

@@ -59,6 +59,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                     : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
                 Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
                 Self.powerRow(snapshot),
+                Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
             ])
     }
 
@@ -126,22 +127,26 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         guard peer.isResponsive else { return "Not responding" }
         switch peer.standing {
         case .current: return "Up to date"
-        case .outdated: return "Out of date"
+        case .outdated(_, .updating): return "Updating\u{2026}"
+        case .outdated(_, .failed): return "Update failed"
+        case .outdated(_, .unavailable): return "Out of date; this agent can\u{2019}t update itself"
         case .notOffered: return peer.versionLabel.isEmpty ? "Connected" : "Version \(peer.versionLabel)"
         }
     }
 
-    /// The agents' state as one value: an outdated agent first, then an
-    /// unresponsive one, else the newest — current only when every agent is,
-    /// and connected when the host offers any of them nothing to judge it
-    /// against.
+    /// The agents' state as one value: an outdated agent that is not updating
+    /// itself first, then one that is, then an unresponsive one, else the
+    /// newest — current only when every agent is, and connected when the host
+    /// offers any of them nothing to judge it against.
     package static func status(of peers: [PeerSummary]) -> AgentStatus {
         guard let newest = peers.first else { return .waiting }
+        var updating: AgentStatus?
         for peer in peers {
-            if case .outdated(let offered) = peer.standing {
-                return .outdated(installed: peer.versionLabel, bundled: offered)
-            }
+            guard case .outdated(let offered, let update) = peer.standing else { continue }
+            if update != .updating { return .outdated(installed: peer.versionLabel, bundled: offered) }
+            if updating == nil { updating = .updating(installed: peer.versionLabel, bundled: offered) }
         }
+        if let updating { return updating }
         if let silent = peers.first(where: { !$0.isResponsive }) { return .unresponsive(version: silent.versionLabel) }
         return peers.allSatisfy { $0.standing == .current }
             ? .current(version: newest.versionLabel) : .connected(version: newest.versionLabel)

@@ -20,6 +20,11 @@ struct PeerRecord: Sendable {
     var isResponsive = true
     /// Higher is newer.
     var connectedOrder: UInt64
+    /// The pull open on the connection, and the hash it pulls.
+    var pull: (id: UpdatePullID, hash: Data)?
+    /// The payload hash whose pull on this connection ended without installing it. The peer pulls no hash
+    /// twice on one connection, so it will not update itself to this one before it reconnects.
+    var failedPullHash: Data?
 
     var conflictParty: ConflictParty {
         ConflictParty(claim: claim, state: state, isUnresponsive: !isResponsive)
@@ -124,12 +129,41 @@ struct AgentHubState: Sendable {
             switch BundledPayload.offer(from: bundles, for: record.claim) {
             case nil: .notOffered
             case let offered? where offered.payloadHash == record.claim.payloadHash: .current
-            case let offered?: .outdated(offeredVersionLabel: offered.versionLabel)
+            case let offered?:
+                .outdated(offeredVersionLabel: offered.versionLabel, update: Self.inBandUpdate(record, to: offered))
             }
         return PeerSummary(
             handle: record.handle, role: record.claim.role, scope: record.claim.scope,
             os: record.claim.os, sessionID: record.state.sessionID, userName: record.state.userName,
             console: record.state.console, versionLabel: record.claim.versionLabel,
             standing: standing, isResponsive: record.isResponsive)
+    }
+
+    /// Whether `record`'s peer is updating itself to `offered`.
+    private static func inBandUpdate(_ record: PeerRecord, to offered: UpdateManifestValue) -> PeerSummary.InBandUpdate
+    {
+        guard case .available(let params)? = record.features?[.update], let offer = UpdateOffer(params: params),
+            offer.formats.contains(offered.format)
+        else { return .unavailable }
+        if offer.rejectedHash == offered.payloadHash || record.failedPullHash == offered.payloadHash { return .failed }
+        return .updating
+    }
+
+    /// `handle`'s connection reported `event` of a pull: what the peer's standing reads of it.
+    mutating func updateServed(_ event: UpdateServeEvent, from handle: PeerHandle) {
+        guard var record = peers[handle] else { return }
+        switch event {
+        case .pullRequested(let id, let manifest):
+            record.pull = (id, manifest.payloadHash)
+        case .result(let id, let result):
+            guard let pull = record.pull, pull.id == id else { return }
+            record.pull = nil
+            if result.kind == .rejected { record.failedPullHash = pull.hash }
+        case .closed(let id, _):
+            guard let pull = record.pull, pull.id == id else { return }
+            record.pull = nil
+            record.failedPullHash = pull.hash
+        }
+        peers[handle] = record
     }
 }

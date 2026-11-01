@@ -129,7 +129,9 @@ struct SidebarViewControllerTests {
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(
                 peers: [
-                    Self.peer(1), Self.peer(3, role: .systemPeer, standing: .outdated(offeredVersionLabel: "2.0")),
+                    Self.peer(1),
+                    Self.peer(
+                        3, role: .systemPeer, standing: .outdated(offeredVersionLabel: "2.0", update: .unavailable)),
                 ],
                 features: FeatureStatus.merge([])))
         #expect(visibleAgentStatus(for: instance) == .outdated(installed: "1.0", bundled: "2.0"))

@@ -368,11 +368,31 @@ public final class AgentHub: Sendable {
             return republish(delivery, from: handle)
         case .power(let id, let result):
             return powerResult(id, result)
-        case .update, .diagnostic:
-            // Nothing serves a pull's progress yet, and the driver logs diagnostics itself.
+        case .update(let event):
+            logUpdate(event, from: handle)
+            state.withLock { $0.updateServed(event, from: handle) }
+        case .diagnostic:
+            // The driver logs diagnostics itself.
             return
         }
         publishIfChanged()
+    }
+
+    private func logUpdate(_ event: UpdateServeEvent, from handle: PeerHandle) {
+        guard let record = state.withLock({ $0.peers[handle] }) else { return }
+        let peer = Self.name(record)
+        switch event {
+        case .pullRequested(_, let manifest):
+            logger.log(.notice, "The \(peer, privacy: .public) pulls update \(manifest.versionLabel, privacy: .public)")
+        case .result(_, let result) where result.kind == .staged:
+            logger.log(.notice, "The \(peer, privacy: .public) installed the update and relaunches")
+        case .result(_, let result):
+            let code = String(describing: result.error?.code)
+            logger.log(.error, "The \(peer, privacy: .public) refused the update: \(code, privacy: .public)")
+        case .closed(_, let closure):
+            let detail = String(describing: closure)
+            logger.log(.error, "The \(peer, privacy: .public)'s update pull ended early: \(detail, privacy: .public)")
+        }
     }
 
     private func resolve(_ outcome: HelloOutcome?, incoming: PeerHandle) {

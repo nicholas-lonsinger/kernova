@@ -74,7 +74,11 @@ struct InstallLayout: Equatable, Sendable {
     static let polkitRuleFile = "/etc/polkit-1/rules.d/50-kernova-agent.rules"
 
     /// The service that runs the peer.
-    var serviceName: String { scope == .system ? "kernova-agent-system.service" : "kernova-agent.service" }
+    var serviceName: String { Self.serviceName(scope) }
+    /// The service that runs the peer of `scope`.
+    static func serviceName(_ scope: InstallScope) -> String {
+        scope == .system ? "kernova-agent-system.service" : "kernova-agent.service"
+    }
     static let rollbackTimerName = "kernova-agent-rollback.timer"
     static let rollbackServiceName = "kernova-agent-rollback.service"
     /// The user scope's autostart entry's file name.
@@ -83,15 +87,25 @@ struct InstallLayout: Equatable, Sendable {
     /// The slot a fresh install fills.
     var installSlot: String { root + "/slots/a" }
     /// The link the units run the agent through, to the slot in use.
-    var current: String { root + "/current" }
+    var current: String { root + "/" + Self.currentLinkName }
     /// What `current` points at after a fresh install, relative to ``root``.
     static let installSlotLink = "slots/a"
     /// The slot metadata.
-    var state: String { root + "/state.json" }
+    var state: String { root + "/" + Self.stateName }
     /// Present exactly while an update's switch is unconfirmed; the rollback service runs only then.
-    var switchPending: String { root + "/switch-pending" }
+    var switchPending: String { root + "/" + Self.switchPendingName }
+    static let switchPendingName = "switch-pending"
+    /// Present from the moment the rollback check reverts a switch until the agent it restarts records the
+    /// switch's payload as rejected.
+    var switchRejected: String { root + "/" + Self.switchRejectedName }
+    static let switchRejectedName = "switch-rejected"
     /// The link to the previous slot, whose binary the rollback service runs.
-    var rollback: String { root + "/rollback" }
+    var rollback: String { root + "/" + Self.rollbackLinkName }
+    static let rollbackLinkName = "rollback"
+    /// `current`'s name in the root.
+    static let currentLinkName = "current"
+    /// `state.json`'s name in the root.
+    static let stateName = "state.json"
     /// The binary's name in every slot.
     static let binaryName = "kernova-agent"
 }

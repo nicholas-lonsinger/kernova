@@ -16,8 +16,12 @@ package enum AgentStatus: Equatable, Sendable {
     case connected(version: String)
 
     /// The guest agent is connected but reports a version older than what the
-    /// host bundles.
+    /// host bundles, and is not updating itself to it.
     case outdated(installed: String, bundled: String)
+
+    /// The guest agent is connected, reports a version older than what the
+    /// host bundles, and is updating itself to it in-band.
+    case updating(installed: String, bundled: String)
 
     /// The guest agent completed a handshake but has stopped responding to
     /// heartbeats.
@@ -86,6 +90,7 @@ package enum AgentStatus: Equatable, Sendable {
         case .current: "current"
         case .connected: "connected"
         case .outdated: "outdated"
+        case .updating: "updating"
         case .unresponsive: "unresponsive"
         case .expectedMissing: "expectedMissing"
         case .connecting: "connecting"

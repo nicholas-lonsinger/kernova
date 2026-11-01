@@ -140,7 +140,7 @@ struct VMInstanceAgentHubTests {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
         var fired = 0
         instance.onAgentBecameCurrent = { fired += 1 }
-        let outdated = Self.peer(1, standing: .outdated(offeredVersionLabel: "2.0"))
+        let outdated = Self.peer(1, standing: .outdated(offeredVersionLabel: "2.0", update: .unavailable))
         let current = Self.peer(2, standing: .current)
 
         instance.publishAgentHubSnapshotForTesting(

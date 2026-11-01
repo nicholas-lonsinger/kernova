@@ -38,6 +38,7 @@ struct AgentStatusPopoverContentViewControllerTests {
         let cases: [(status: AgentStatus, title: String, bodyContains: String)] = [
             (.waiting, "Set up the Kernova guest agent", "clipboard sync"),
             (.outdated(installed: "0.9.1", bundled: "0.9.2"), "Update available", "0.9.1"),
+            (.updating(installed: "0.9.1", bundled: "0.9.2"), "Updating guest agent", "updating guest agent 0.9.1"),
             (.current(version: "0.9.2"), "Guest agent connected", "0.9.2"),
             (.unresponsive(version: "0.9.2"), "Guest agent unresponsive", "stopped responding"),
             (.connecting(expected: "0.9.2"), "Connecting to guest agent", "Waiting for guest agent"),

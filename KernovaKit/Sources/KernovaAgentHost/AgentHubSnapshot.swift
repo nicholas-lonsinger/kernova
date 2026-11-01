@@ -63,8 +63,22 @@ public struct PeerSummary: Sendable, Equatable {
         case notOffered
         /// Its payload hash is the offered payload's.
         case current
-        /// The host offers it the payload `offeredVersionLabel` names, which it does not run.
-        case outdated(offeredVersionLabel: String)
+        /// The host offers it the payload `offeredVersionLabel` names, which it does not run; `update` says
+        /// whether it is updating itself to it.
+        case outdated(offeredVersionLabel: String, update: InBandUpdate)
+    }
+
+    /// Whether an outdated peer is updating itself to the offered payload.
+    public enum InBandUpdate: Sendable, Equatable {
+        /// It offers UPDATE in the payload's format and has not refused it: it pulls the payload, or has
+        /// installed it and is relaunching.
+        case updating
+        /// It refused the payload: its install records the payload's hash as rejected, as a rollback or a
+        /// failed install does, or its pull of it on this connection ended without installing it, and the
+        /// peer pulls no hash twice on one connection.
+        case failed
+        /// It cannot update itself to the payload: it offers no UPDATE, or none in the payload's format.
+        case unavailable
     }
 
     /// Creates a summary.
