@@ -154,7 +154,7 @@ struct UnitFilesTests {
                 """)
     }
 
-    @Test("polkit grants the account the four power actions and no ignore-inhibit")
+    @Test("polkit grants the account power-off and reboot, across sessions and past inhibitors, and nothing else")
     func polkit() {
         #expect(
             UnitFiles.polkitRule == """
@@ -163,14 +163,15 @@ struct UnitFilesTests {
                     if (subject.user == "kernova-agent" &&
                         (action.id == "org.freedesktop.login1.power-off" ||
                          action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
+                         action.id == "org.freedesktop.login1.power-off-ignore-inhibit" ||
                          action.id == "org.freedesktop.login1.reboot" ||
-                         action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
+                         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+                         action.id == "org.freedesktop.login1.reboot-ignore-inhibit")) {
                         return polkit.Result.YES;
                     }
                 });
 
                 """)
-        #expect(!UnitFiles.polkitRule.contains("ignore-inhibit"))
     }
 
     @Test("A home with a space, a quote or a percent sign stays one ExecStart word")

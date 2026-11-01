@@ -117,6 +117,8 @@ final class ScriptedDialer: TransportDialer {
 final class FakePowerAdapter: PowerAdapter {
     private let reporter = Locked<PowerReporter?>(nil)
     let performed = Recorder<PowerRequestID>()
+    /// Each request performed skipping the apps that block it.
+    let skippedBlockers = Recorder<PowerRequestID>()
     let cancelled = Recorder<PowerRequestID>()
     let accepts: Bool
     let handsOff: Bool
@@ -136,7 +138,8 @@ final class FakePowerAdapter: PowerAdapter {
         reporter.report(.availability(initial))
     }
 
-    func perform(_ id: PowerRequestID, _ action: PowerAction) {
+    func perform(_ id: PowerRequestID, _ action: PowerAction, skippingBlockers: Bool) {
+        if skippingBlockers { skippedBlockers.record(id) }
         performed.record(id)
         guard accepts else { return }
         let reporter = reporter.withLock { $0 }

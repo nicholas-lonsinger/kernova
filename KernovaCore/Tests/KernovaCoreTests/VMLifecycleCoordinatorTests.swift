@@ -143,7 +143,7 @@ struct VMLifecycleCoordinatorTests {
         let pause = Task { @MainActor in try await coordinator.pause(instance) }
         await suspendingService.waitUntilSuspended()
 
-        try await coordinator.requestStop(instance)
+        try await coordinator.requestStop(instance, skippingBlockers: false)
 
         #expect(instance.phase.operation?.kind == .pausing)
         #expect(instance.phase.operation?.sessionEnd == .poweredOff)
@@ -189,7 +189,7 @@ struct VMLifecycleCoordinatorTests {
             if forced {
                 try await coordinator.forceStop(instance)
             } else {
-                try await coordinator.requestStop(instance)
+                try await coordinator.requestStop(instance, skippingBlockers: false)
             }
             // The guest is gone; the reconcile still holds the VM until its
             // own pass ends.
@@ -286,7 +286,7 @@ struct VMLifecycleCoordinatorTests {
             if forced {
                 try await coordinator.forceStop(instance)
             } else {
-                try await coordinator.requestStop(instance)
+                try await coordinator.requestStop(instance, skippingBlockers: false)
             }
         }
         #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
@@ -302,7 +302,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
-        try await coordinator.requestStop(instance)
+        try await coordinator.requestStop(instance, skippingBlockers: false)
         #expect(instance.phase.operation == nil)
         #expect(virtService.stopCallCount == 1)
     }
@@ -316,7 +316,7 @@ struct VMLifecycleCoordinatorTests {
         instance.activity.placeForTesting(.running(sessionID: sessionID))
 
         await #expect(throws: VirtualizationError.self) {
-            try await coordinator.requestStop(instance)
+            try await coordinator.requestStop(instance, skippingBlockers: false)
         }
 
         #expect(instance.phase == .running(sessionID: sessionID))

@@ -452,6 +452,9 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     /// Starting a VM while another one with the same machine identity is
     /// active.
     case startBesideSharedMachineIdentity
+    /// Shutting a guest down without waiting for the apps blocking it, which
+    /// close without being asked to save.
+    case skipBlockingApps
 }
 
 /// The confirmations a caller has given for one call of a verb.

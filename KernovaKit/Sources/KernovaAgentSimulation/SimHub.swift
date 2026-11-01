@@ -119,7 +119,7 @@ package final class SimHub {
             routingOutputs.append((world.now, output))
             routingLog.append(.output(output))
             world.log("routing: \(output)")
-            guard case .ask(let handle, let action) = output,
+            guard case .ask(let handle, let action, _) = output,
                 let peer = connected.first(where: { $0.link.hubHandle == handle })
             else { continue }
             let expected = Self.expectedCandidates(action, peers: routingPeers, asked: asks.map(\.peer)).first

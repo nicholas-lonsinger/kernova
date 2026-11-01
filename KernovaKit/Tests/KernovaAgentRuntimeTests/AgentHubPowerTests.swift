@@ -40,7 +40,7 @@ struct AgentHubPowerTests {
     func noAgentUsesACPI() async {
         let harness = HubHarness()
         await harness.attached()
-        #expect(await harness.hub.requestPower(.shutdown) == .useACPI(refusals: []))
+        #expect(await harness.hub.requestPower(.shutdown) == .unserved(refusals: []))
         #expect(harness.connector.commands.elements.isEmpty)
         harness.hub.close()
     }
@@ -94,7 +94,7 @@ struct AgentHubPowerTests {
         let id = await performed.next { _ in true }
         power.report(.refused(id, WireError(.powerNotPermitted)))
 
-        guard case .useACPI(let refusals) = await outcome else {
+        guard case .unserved(let refusals) = await outcome else {
             Issue.record("not the ACPI press")
             return
         }
@@ -122,9 +122,56 @@ struct AgentHubPowerTests {
         _ = await harness.snapshot { $0.routing?.stage == .waitingOnApps(Self.blocking) }
         power.report(.blocked(id, Self.blocking))
 
-        #expect(await outcome == .blocked(Self.blocking))
+        #expect(await outcome == .blocked(Self.blocking, skippable: false))
         _ = await harness.snapshot { $0.routing == nil }
         await close([session], harness)
+    }
+
+    @Test(
+        "A system peer offering only to skip blockers leaves the merged entry its absence, makes a block skippable, and takes the skip"
+    )
+    func skippingBlockers() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let sessionPower = FakePowerAdapter(handsOff: false)
+        let systemPower = FakePowerAdapter(
+            initial: .available(
+                PowerOffer(actions: [], skippingBlockers: [.shutdown], actionsAbsence: .unsavedWorkUnseen)))
+        let session = await connect(harness, sessionPower)
+        let system = await connect(
+            harness, systemPower, claim: Self.systemClaim,
+            state: PeerSessionState(console: .on, consoleSessionID: "1"), peers: 2)
+        _ = await harness.snapshot { $0.power == .agent(.sessionPeer) }
+
+        async let blocked = harness.hub.requestPower(.shutdown)
+        var performed = sessionPower.performed.waiter()
+        let id = await performed.next { _ in true }
+        sessionPower.report(.blocked(id, Self.blocking))
+        #expect(await blocked == .blocked(Self.blocking, skippable: true))
+        #expect(systemPower.performed.elements.isEmpty)
+
+        #expect(await harness.hub.requestPower(.shutdown, skippingBlockers: true) == .handedOff)
+        #expect(sessionPower.performed.elements.count == 1)
+        #expect(systemPower.skippedBlockers.elements.count == 1)
+        await close([session, system], harness)
+    }
+
+    @Test("Without the session peer, the merged entry carries the system peer's reason for offering only the skip")
+    func skipOnlyAbsence() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let systemPower = FakePowerAdapter(
+            initial: .available(
+                PowerOffer(actions: [], skippingBlockers: [.shutdown], actionsAbsence: .unsavedWorkUnseen)))
+        let system = await connect(
+            harness, systemPower, claim: Self.systemClaim, state: PeerSessionState(console: .on, consoleSessionID: "1"))
+
+        let snapshot = await harness.snapshot { $0.features[.power].isAvailable }
+        #expect(snapshot.power == .absent(.unsavedWorkUnseen))
+        #expect(await harness.hub.requestPower(.shutdown) == .unserved(refusals: []))
+        #expect(await harness.hub.requestPower(.restart, skippingBlockers: true) == .unserved(refusals: []))
+        #expect(systemPower.performed.elements.isEmpty)
+        await close([system], harness)
     }
 
     @Test("A detach after acceptance ends the routing as lost after acceptance")
@@ -153,7 +200,7 @@ struct AgentHubPowerTests {
 
         let snapshot = await harness.snapshot { $0.peers.count == 2 && $0.features[.power].isAvailable }
         #expect(snapshot.power == .absent(.notOnConsole))
-        #expect(await harness.hub.requestPower(.shutdown) == .useACPI(refusals: []))
+        #expect(await harness.hub.requestPower(.shutdown) == .unserved(refusals: []))
         await close([session, system], harness)
     }
 }

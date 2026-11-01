@@ -67,10 +67,13 @@ enum Unit {
         return encode(outcome)
     }
 
-    static func powerRequest(_ action: PowerAction, deadlineMs: UInt32 = 10_000) -> Kernova_V2_PowerRequest {
+    static func powerRequest(
+        _ action: PowerAction, deadlineMs: UInt32 = 10_000, skipBlockers: Bool = false
+    ) -> Kernova_V2_PowerRequest {
         var request = Kernova_V2_PowerRequest()
         request.action = action
         request.acceptanceDeadlineMs = deadlineMs
+        request.skipBlockers = skipBlockers
         return request
     }
 

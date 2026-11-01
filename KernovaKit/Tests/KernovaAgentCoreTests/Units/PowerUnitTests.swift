@@ -24,10 +24,13 @@ extension CoreUnits {
 
         /// The host's OPEN of POWER_REQUEST on `stream`, END at once.
         static func request(
-            _ run: HostileRun, _ action: PowerAction = .shutdown, deadlineMs: UInt32 = 10_000, stream: UInt32 = 2
+            _ run: HostileRun, _ action: PowerAction = .shutdown, deadlineMs: UInt32 = 10_000, stream: UInt32 = 2,
+            skipBlockers: Bool = false
         ) {
             run.feed([
-                WireFrames.open(stream, .powerRequest, body: Unit.powerRequest(action, deadlineMs: deadlineMs)),
+                WireFrames.open(
+                    stream, .powerRequest,
+                    body: Unit.powerRequest(action, deadlineMs: deadlineMs, skipBlockers: skipBlockers)),
                 Unit.end(stream),
             ])
         }
@@ -62,6 +65,34 @@ extension CoreUnits {
             let outcomes = Self.outcomes(run.written)
             #expect(outcomes.map(\.kind) == [.refused])
             #expect(outcomes.first?.error.code == .powerActionUnsupported)
+            #expect(Self.powerEffects(run).isEmpty)
+        }
+
+        @Test("new + OPEN skipping blockers reads the advert's skipping list, not its actions")
+        func skippingBlockers() {
+            let run = Self.peer()
+            run.input(.power(.availability(.available(PowerOffer(actions: [.shutdown], skippingBlockers: [.restart])))))
+            Self.request(run, .shutdown, skipBlockers: true)
+            #expect(Self.outcomes(run.written).first?.error.code == .powerActionUnsupported)
+            Self.request(run, .restart, stream: 4, skipBlockers: true)
+            #expect(
+                Self.powerEffects(run) == [
+                    .perform(
+                        PowerRequestID(generation: Self.id.generation, rawValue: 4), .restart, skippingBlockers: true)
+                ])
+        }
+
+        @Test("new + OPEN waiting for blockers to an offer only skipping them → END REFUSED POWER_ACTION_UNSUPPORTED")
+        func waitingRefusedBySkipOnlyOffer() {
+            let run = Self.peer()
+            run.input(
+                .power(
+                    .availability(
+                        .available(
+                            PowerOffer(actions: [], skippingBlockers: [.shutdown], actionsAbsence: .unsavedWorkUnseen)))
+                ))
+            Self.request(run, .shutdown)
+            #expect(Self.outcomes(run.written).first?.error.code == .powerActionUnsupported)
             #expect(Self.powerEffects(run).isEmpty)
         }
 
@@ -407,6 +438,18 @@ extension CoreUnits {
             let body = open.flatMap { try? Kernova_V2_PowerRequest(serializedBytes: $0.body) }
             #expect(body?.action == .shutdown)
             #expect(body?.acceptanceDeadlineMs == 10_000)
+            #expect(body?.skipBlockers == false)
+        }
+
+        @Test("A request skipping blockers carries skip_blockers in its OPEN")
+        func requestSkippingFrames() {
+            let run = HostileRun(local: .host, seed: 11)
+            run.feed([WireFrames.hello(role: .sessionPeer)], preamble: true)
+            run.command(.requestPower(Self.id, .shutdown, skippingBlockers: true))
+            let open = run.written.on(2).first.flatMap { try? Kernova_V2_Open(serializedBytes: $0.payload) }
+            let body = open.flatMap { try? Kernova_V2_PowerRequest(serializedBytes: $0.body) }
+            #expect(body?.action == .shutdown)
+            #expect(body?.skipBlockers == true)
         }
 
         struct Row: Sendable, CustomTestStringConvertible {

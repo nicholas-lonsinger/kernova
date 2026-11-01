@@ -418,6 +418,13 @@ message PowerCapability {
   // The peer asks running apps to quit (macOS loginwindow, logind delay
   // inhibitors), so apps can save, and may block.
   bool asks_apps_to_quit = 2;
+  // The actions this peer can perform right now without waiting for the apps
+  // that block them (logind's block inhibitors): the apps close without being
+  // asked to save. At most one entry each; independent of `actions`.
+  repeated PowerAction skip_blockers_actions = 3;
+  // Why `actions` is empty while `skip_blockers_actions` is not: the absence
+  // the peer would advertise for POWER without them. 1-99 only.
+  AbsenceReason actions_absence = 4;
 }
 
 // FROZEN. OPEN body of POWER_REQUEST (host -> peer).
@@ -428,6 +435,11 @@ message PowerRequest {
   // once the OS confirms nothing was started, ENDs REFUSED with
   // ERROR_CODE_TIMEOUT. The host waits longer, for that refusal to arrive.
   uint32 acceptance_deadline_ms = 2;
+  // Perform `action` without waiting for the apps that block it. Set only
+  // toward a peer whose PowerCapability lists `action` in
+  // skip_blockers_actions; a peer refuses it with POWER_ACTION_UNSUPPORTED
+  // otherwise.
+  bool skip_blockers = 3;
 }
 
 // FROZEN. Peer -> host on POWER_REQUEST, zero or more, before the peer's END.

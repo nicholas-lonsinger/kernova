@@ -165,25 +165,34 @@ public final class AgentHub: Sendable {
 
     /// Routes `action` across the peers (spec §6.4) — the console session's peers newest first, then the
     /// system peer — and calls `completion` once, on the hub's queue, with how it ended. The hub never
-    /// presses the ACPI button: `.useACPI` hands that back to the caller.
-    public func requestPower(_ action: PowerAction, _ completion: @escaping @Sendable (PowerRoutingOutcome) -> Void) {
+    /// presses the ACPI button: `.unserved` hands that back to the caller.
+    ///
+    /// `skippingBlockers` asks only the peers offering `action` without waiting for the apps that block
+    /// it.
+    public func requestPower(
+        _ action: PowerAction, skippingBlockers: Bool = false,
+        _ completion: @escaping @Sendable (PowerRoutingOutcome) -> Void
+    ) {
         queue.async { [self] in
             let begun = state.withLock { state -> Bool in
                 guard !state.power.routing.isRouting else { return false }
                 state.power.completion = completion
-                state.power.routing.begin(action, peers: state.routingPeers)
+                state.power.routing.begin(action, skippingBlockers: skippingBlockers, peers: state.routingPeers)
                 return true
             }
             guard begun else { return completion(.busy) }
-            logger.log(.notice, "Routing \(Self.name(action), privacy: .public) across the guest's agents")
+            let mode = skippingBlockers ? ", skipping the apps that block it," : ""
+            logger.log(
+                .notice,
+                "Routing \(Self.name(action), privacy: .public)\(mode, privacy: .public) across the guest's agents")
             drainRouting()
         }
     }
 
-    /// ``requestPower(_:_:)``, awaited.
-    public func requestPower(_ action: PowerAction) async -> PowerRoutingOutcome {
+    /// ``requestPower(_:skippingBlockers:_:)``, awaited.
+    public func requestPower(_ action: PowerAction, skippingBlockers: Bool = false) async -> PowerRoutingOutcome {
         await withCheckedContinuation { continuation in
-            requestPower(action) { continuation.resume(returning: $0) }
+            requestPower(action, skippingBlockers: skippingBlockers) { continuation.resume(returning: $0) }
         }
     }
 
@@ -193,8 +202,8 @@ public final class AgentHub: Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         while let output = state.withLock({ $0.power.routing.pollOutput() }) {
             switch output {
-            case .ask(let handle, let action):
-                ask(handle, action)
+            case .ask(let handle, let action, let skippingBlockers):
+                ask(handle, action, skippingBlockers: skippingBlockers)
             case .progress(_, let stage, let apps):
                 state.withLock { state in
                     state.power.progress?.stage =
@@ -219,7 +228,7 @@ public final class AgentHub: Sendable {
         publishIfChanged()
     }
 
-    private func ask(_ handle: PeerHandle, _ action: PowerAction) {
+    private func ask(_ handle: PeerHandle, _ action: PowerAction, skippingBlockers: Bool) {
         let asked = state.withLock { state -> (PowerRequestID, PeerRecord)? in
             // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in this turn, so the
             // record is present; a miss is answered as a refusal, so the routing moves on either way.
@@ -238,7 +247,7 @@ public final class AgentHub: Sendable {
         let connection = record.connection
         logger.log(
             .notice, "Asking the \(Self.name(record), privacy: .public) to \(Self.name(action), privacy: .public)")
-        connection.send(.requestPower(id, action))
+        connection.send(.requestPower(id, action, skippingBlockers: skippingBlockers))
     }
 
     /// A power request's result, from the connection it was asked of.

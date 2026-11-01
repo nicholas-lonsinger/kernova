@@ -230,7 +230,7 @@ struct LinuxPowerAdapterTests {
         let harness = try PowerHarness(.sessionPeer)
         #expect(try harness.next() == PowerHarness.offer)
         let id = Self.request(1)
-        harness.adapter.perform(id, .shutdown)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(id))
         #expect(try harness.next() == .blocked(id, [PowerHarness.editor]))
         #expect(harness.logind.callCount("PowerOff") == 0)
@@ -251,7 +251,7 @@ struct LinuxPowerAdapterTests {
         try #require(harness.gnomeSession).state.editorInhibits.withLock { $0 = false }
         #expect(try harness.next() == PowerHarness.offer)
         let blocked = Self.request(1)
-        harness.adapter.perform(blocked, .shutdown)
+        harness.adapter.perform(blocked, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(blocked))
         guard case .blocked(blocked, let apps) = try harness.next() else {
             Issue.record("The request was not blocked")
@@ -263,7 +263,7 @@ struct LinuxPowerAdapterTests {
         // gnome-session's lock alone, which it can hold a moment after its last inhibitor ends, blocks nothing.
         harness.logind.recorder.inhibitors.withLock { $0 = [FakeGnomeSession.logindLock] }
         let next = Self.request(2)
-        harness.adapter.perform(next, .shutdown)
+        harness.adapter.perform(next, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(next))
         #expect(try harness.next() == .handedOff(next))
         #expect(harness.logind.callCount("PowerOff") == 1)
@@ -275,7 +275,7 @@ struct LinuxPowerAdapterTests {
         #expect(try harness.next() == PowerHarness.offer)
         try #require(harness.gnomeSession).state.failsInhibitors.withLock { $0 = true }
         let id = Self.request(1)
-        harness.adapter.perform(id, .shutdown)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: false)
         #expect(try harness.nextRefusal(id) == .powerOsFailed)
         #expect(harness.logind.callCount("PowerOff") == 0)
     }
@@ -285,7 +285,7 @@ struct LinuxPowerAdapterTests {
         let harness = try PowerHarness(.sessionPeer, withGnomeSession: false)
         #expect(try harness.nextAbsence() == .unsavedWorkUnseen)
         let refused = Self.request(1)
-        harness.adapter.perform(refused, .shutdown)
+        harness.adapter.perform(refused, .shutdown, skippingBlockers: false)
         #expect(try harness.nextRefusal(refused) == .featureUnavailable)
 
         try harness.startGnomeSession()
@@ -307,17 +307,90 @@ struct LinuxPowerAdapterTests {
         try harness.logind.emitSessionList("SessionNew", FakeLogind.userSession)
         #expect(try harness.nextAbsence() == .unsavedWorkUnseen)
         let refused = Self.request(1)
-        harness.adapter.perform(refused, .shutdown)
+        harness.adapter.perform(refused, .shutdown, skippingBlockers: false)
         #expect(try harness.nextRefusal(refused) == .featureUnavailable)
 
         harness.logind.recorder.sessions.withLock { $0 = [FakeLogind.greeterSession] }
         try harness.logind.emitSessionList("SessionRemoved", FakeLogind.userSession)
         #expect(try harness.next() == PowerHarness.offer)
         let taken = Self.request(2)
-        harness.adapter.perform(taken, .shutdown)
+        harness.adapter.perform(taken, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(taken))
         #expect(try harness.next() == .handedOff(taken))
         #expect(harness.logind.callCount("PowerOff") == 1)
+    }
+
+    static let ignoreInhibit: Set<String> = [
+        "org.freedesktop.login1.power-off", "org.freedesktop.login1.reboot",
+        "org.freedesktop.login1.power-off-ignore-inhibit", "org.freedesktop.login1.reboot-ignore-inhibit",
+    ]
+
+    @Test(
+        "Where polkit authorizes ignore-inhibit, the system peer offers skipping blockers through a desktop session, and skips them past logind's locks"
+    )
+    func systemPeerSkipsBlockers() throws {
+        let harness = try PowerHarness(.systemPeer) { recorder, polkit in
+            recorder.sessions.withLock { $0 = [FakeLogind.greeterSession, FakeLogind.userSession] }
+            polkit?.authorized.withLock { $0 = Self.ignoreInhibit }
+        }
+        #expect(
+            try harness.next()
+                == .availability(
+                    .available(
+                        PowerOffer(
+                            actions: [], skippingBlockers: [.shutdown, .restart], actionsAbsence: .unsavedWorkUnseen))))
+        let waiting = Self.request(1)
+        harness.adapter.perform(waiting, .shutdown, skippingBlockers: false)
+        #expect(try harness.nextRefusal(waiting) == .featureUnavailable)
+
+        // logind lists gnome-session's and the editor's locks; a request that skips them checks none.
+        let skipping = Self.request(2)
+        harness.adapter.perform(skipping, .shutdown, skippingBlockers: true)
+        #expect(try harness.next() == .accepted(skipping))
+        #expect(try harness.next() == .handedOff(skipping))
+        let calls = harness.logind.recorder.calls.withLock { $0 }
+        #expect(calls.filter { $0.0 == "PowerOffWithFlags" }.map(\.1) == [[.uint64(0x10)]])
+        #expect(harness.logind.callCount("ListInhibitors") == 0)
+        #expect(harness.logind.callCount("PowerOff") == 0)
+
+        // With no desktop session it offers both, each way.
+        harness.logind.recorder.sessions.withLock { $0 = [FakeLogind.greeterSession] }
+        try harness.logind.emitSessionList("SessionRemoved", FakeLogind.userSession)
+        #expect(
+            try harness.next()
+                == .availability(
+                    .available(PowerOffer(actions: [.shutdown, .restart], skippingBlockers: [.shutdown, .restart]))))
+    }
+
+    @Test("A restart skipping blockers on systemd 255 goes again with no flags, which logind there passes")
+    func skipsBlockersBefore257() throws {
+        let harness = try PowerHarness(.systemPeer) { recorder, polkit in
+            recorder.knownFlags.withLock { $0 = FakeLogind.flagsOf255 }
+            polkit?.authorized.withLock { $0 = Self.ignoreInhibit }
+        }
+        _ = try harness.next()
+        let id = Self.request(1)
+        harness.adapter.perform(id, .restart, skippingBlockers: true)
+        #expect(try harness.next() == .accepted(id))
+        #expect(try harness.next() == .handedOff(id))
+        let calls = harness.logind.recorder.calls.withLock { $0 }
+        #expect(calls.filter { $0.0 == "RebootWithFlags" }.map(\.1) == [[.uint64(0x10)], [.uint64(0)]])
+    }
+
+    @Test(
+        "Without polkit's ignore-inhibit, nothing offers skipping blockers, and a request to is refused POWER_NOT_PERMITTED"
+    )
+    func skipNotPermitted() throws {
+        let harness = try PowerHarness(.systemPeer) { recorder, _ in recorder.inhibitors.withLock { $0 = [] } }
+        #expect(try harness.next() == PowerHarness.offer)
+        let id = Self.request(1)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: true)
+        #expect(try harness.nextRefusal(id) == .powerNotPermitted)
+        #expect(harness.logind.callCount("PowerOffWithFlags") == 0)
+
+        // A session peer, whose user polkit asks to authenticate, offers waiting only.
+        let session = try PowerHarness(.sessionPeer)
+        #expect(try session.next() == PowerHarness.offer)
     }
 
     @Test("logind's BlockedByInhibitorLock past a clear pre-check reports accepted, then blocked")
@@ -333,7 +406,7 @@ struct LinuxPowerAdapterTests {
         try #require(harness.gnomeSession).state.editorInhibits.withLock { $0 = false }
         #expect(try harness.next() == PowerHarness.offer)
         let id = Self.request(1)
-        harness.adapter.perform(id, .shutdown)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(id))
         #expect(try harness.next() == .blocked(id, []))
         #expect(harness.logind.callCount("PowerOff") == 1)
@@ -349,14 +422,14 @@ struct LinuxPowerAdapterTests {
         }
         #expect(try harness.next() == PowerHarness.offer)
         let denied = Self.request(1)
-        harness.adapter.perform(denied, .shutdown)
+        harness.adapter.perform(denied, .shutdown, skippingBlockers: false)
         #expect(try harness.nextRefusal(denied) == .powerNotPermitted)
 
         harness.logind.recorder.refusal.withLock {
             $0 = DBusRemoteError(name: "org.freedesktop.systemd1.UnitMasked", message: "Unit is masked")
         }
         let failed = Self.request(2)
-        harness.adapter.perform(failed, .shutdown)
+        harness.adapter.perform(failed, .shutdown, skippingBlockers: false)
         #expect(try harness.nextRefusal(failed) == .powerOsFailed)
     }
 
@@ -365,7 +438,7 @@ struct LinuxPowerAdapterTests {
         let harness = try PowerHarness(.systemPeer) { recorder, _ in recorder.inhibitors.withLock { $0 = [] } }
         #expect(try harness.next() == PowerHarness.offer)
         let id = Self.request(1)
-        harness.adapter.perform(id, .restart)
+        harness.adapter.perform(id, .restart, skippingBlockers: false)
         #expect(try harness.next() == .accepted(id))
         #expect(try harness.next() == .handedOff(id))
         let calls = harness.logind.recorder.calls.withLock { $0 }
@@ -381,12 +454,12 @@ struct LinuxPowerAdapterTests {
         }
         #expect(try harness.next() == PowerHarness.offer)
         let lost = Self.request(1)
-        harness.adapter.perform(lost, .shutdown)
+        harness.adapter.perform(lost, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .unconfirmed(lost))
 
         harness.logind.recorder.answersPower.withLock { $0 = true }
         let next = Self.request(2)
-        harness.adapter.perform(next, .shutdown)
+        harness.adapter.perform(next, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(next))
         #expect(try harness.next() == .handedOff(next))
         #expect(harness.logind.callCount("PowerOff") == 2)
@@ -397,7 +470,7 @@ struct LinuxPowerAdapterTests {
         let harness = try PowerHarness(.systemPeer) { _, polkit in polkit?.authorized.withLock { $0 = [] } }
         #expect(try harness.nextAbsence() == .notPermitted)
         let id = Self.request(1)
-        harness.adapter.perform(id, .shutdown)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: false)
         #expect(try harness.nextRefusal(id) == .powerNotPermitted)
 
         let polkit = try #require(harness.polkit)
@@ -432,7 +505,7 @@ struct LinuxPowerAdapterTests {
         let polkit = try #require(harness.polkit)
         polkit.holdAnswers()
         let id = Self.request(1)
-        harness.adapter.perform(id, .shutdown)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: false)
         _ = try polkit.state.heldCalls.next()
         harness.adapter.cancel(id)
         #expect(try harness.next() == .cancelled(id))
@@ -440,7 +513,7 @@ struct LinuxPowerAdapterTests {
 
         // The adapter's queue runs one request at a time, so this one starts once the cancelled one is done.
         let next = Self.request(2)
-        harness.adapter.perform(next, .shutdown)
+        harness.adapter.perform(next, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(next))
         #expect(try harness.next() == .handedOff(next))
         #expect(harness.logind.callCount("PowerOff") == 1)
@@ -451,7 +524,7 @@ struct LinuxPowerAdapterTests {
         let harness = try PowerHarness(.systemPeer)
         #expect(try harness.next() == PowerHarness.offer)
         let id = Self.request(1)
-        harness.adapter.perform(id, .shutdown)
+        harness.adapter.perform(id, .shutdown, skippingBlockers: false)
         #expect(try harness.next() == .accepted(id))
         guard case .blocked(id, let apps) = try harness.next() else {
             Issue.record("The request was not blocked")

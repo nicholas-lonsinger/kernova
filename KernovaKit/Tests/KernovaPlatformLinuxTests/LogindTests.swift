@@ -49,7 +49,15 @@ final class FakeLogind: Sendable {
         let answersPower = Mutex(true)
         /// What ListSessions lists.
         let sessions = Mutex([FakeLogind.greeterSession])
+        /// The `*WithFlags` flags logind knows, as systemd 257 on does; a call with another answers
+        /// `InvalidArgs`, as logind does.
+        let knownFlags = Mutex(FakeLogind.flagsSince257)
     }
+
+    /// The flags systemd 257 on knows, `SD_LOGIND_SKIP_INHIBITORS` among them.
+    static let flagsSince257: UInt64 = 0x1F
+    /// The flags systemd 255 knows, which have no `SD_LOGIND_SKIP_INHIBITORS`.
+    static let flagsOf255: UInt64 = 0x0F
 
     static let inhibitors: [DBusValue] = [
         inhibitor("shutdown", "GNOME Session", "user session inhibited", "block", 1000, 101),
@@ -88,7 +96,11 @@ final class FakeLogind: Sendable {
             replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownMethod", message: "")
         if header.path == Logind.managerPath, header.interface == Logind.managerInterface, let member = header.member {
             recorder.calls.withLock { $0.append((member, body)) }
-            if member == "PowerOff" || member == "Reboot", !recorder.answersPower.withLock({ $0 }) { return nil }
+            if ["PowerOff", "Reboot", "PowerOffWithFlags", "RebootWithFlags"].contains(member),
+                !recorder.answersPower.withLock({ $0 })
+            {
+                return nil
+            }
             return manager(call, member: member, body: body, recorder: recorder) ?? unknown
         }
         if let path = header.path, recorder.vanishedSessions.withLock({ $0.contains(path) }) {
@@ -153,6 +165,16 @@ final class FakeLogind: Sendable {
     ) -> DBusMessage? {
         switch (member, call.signature.description) {
         case ("PowerOff", "b"), ("Reboot", "b"):
+            if let error = recorder.refusal.withLock({ $0 }) {
+                return .error(replyingTo: call, name: error.name, message: error.message)
+            }
+            return .methodReturn(replyingTo: call)
+        case ("PowerOffWithFlags", "t"), ("RebootWithFlags", "t"):
+            guard case .uint64(let flags) = body[0], flags & ~recorder.knownFlags.withLock({ $0 }) == 0 else {
+                return .error(
+                    replyingTo: call, name: "org.freedesktop.DBus.Error.InvalidArgs", message: "Invalid flags parameter"
+                )
+            }
             if let error = recorder.refusal.withLock({ $0 }) {
                 return .error(replyingTo: call, name: error.name, message: error.message)
             }
@@ -227,6 +249,30 @@ struct LogindTests {
         let calls = fake.recorder.calls.withLock { $0 }
         #expect(calls.map(\.0) == ["PowerOff", "Reboot"])
         #expect(calls.map(\.1) == [[.boolean(false)], [.boolean(false)]])
+    }
+
+    @Test("Skipping inhibitors sends SD_LOGIND_SKIP_INHIBITORS, once where logind knows it")
+    func skippingInhibitors() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        let logind = Logind(connection: try bus.connect())
+        try logind.powerOffSkippingInhibitors()
+        try logind.rebootSkippingInhibitors()
+        let calls = fake.recorder.calls.withLock { $0 }
+        #expect(calls.map(\.0) == ["PowerOffWithFlags", "RebootWithFlags"])
+        #expect(calls.map(\.1) == [[.uint64(0x10)], [.uint64(0x10)]])
+    }
+
+    @Test("Where logind answers the flag InvalidArgs, as systemd 255 does, the call goes again with no flags")
+    func skippingInhibitorsBefore257() throws {
+        let bus = try PrivateBus()
+        let fake = try FakeLogind(on: bus)
+        fake.recorder.knownFlags.withLock { $0 = FakeLogind.flagsOf255 }
+        let logind = Logind(connection: try bus.connect())
+        try logind.powerOffSkippingInhibitors()
+        let calls = fake.recorder.calls.withLock { $0 }
+        #expect(calls.map(\.0) == ["PowerOffWithFlags", "PowerOffWithFlags"])
+        #expect(calls.map(\.1) == [[.uint64(0x10)], [.uint64(0)]])
     }
 
     @Test("A refused PowerOff throws logind's error")

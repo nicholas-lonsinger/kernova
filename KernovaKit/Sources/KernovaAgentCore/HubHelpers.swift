@@ -149,6 +149,8 @@ public struct RoutingPeer: Sendable, Equatable {
     public var powerUsable: Bool
     /// The actions its `PowerCapability` lists.
     public var actions: [PowerAction]
+    /// The actions its `PowerCapability` lists as performed without waiting for the apps that block them.
+    public var skippingBlockers: [PowerAction]
 
     /// The view of a peer from its latest `featuresChanged` table: POWER usable
     /// when the table says so, the actions its `PowerCapability` lists.
@@ -157,15 +159,16 @@ public struct RoutingPeer: Sendable, Equatable {
         features: FeatureStatusTable
     ) {
         let power = features[.power]
+        let offer = power.params.flatMap(PowerOffer.init(params:))
         self.init(
             handle: handle, role: role, state: state, connectedOrder: connectedOrder, powerUsable: power.isAvailable,
-            actions: power.params.flatMap(PowerOffer.init(params:))?.actions ?? [])
+            actions: offer?.actions ?? [], skippingBlockers: offer?.skippingBlockers ?? [])
     }
 
     /// Creates a view.
     public init(
         handle: PeerHandle, role: PeerRole, state: PeerSessionState, connectedOrder: UInt64, powerUsable: Bool,
-        actions: [PowerAction]
+        actions: [PowerAction], skippingBlockers: [PowerAction] = []
     ) {
         self.handle = handle
         self.role = role
@@ -173,19 +176,21 @@ public struct RoutingPeer: Sendable, Equatable {
         self.connectedOrder = connectedOrder
         self.powerUsable = powerUsable
         self.actions = actions
+        self.skippingBlockers = skippingBlockers
     }
 }
 
 /// What routing asks the hub to do, or reports.
 public enum RoutingOutput: Sendable, Equatable {
-    /// Send `action` to this peer as a power request.
-    case ask(PeerHandle, PowerAction)
+    /// Send `action` to this peer as a power request, skipping the apps that block it when
+    /// `skippingBlockers`.
+    case ask(PeerHandle, PowerAction, skippingBlockers: Bool = false)
     /// Progress after acceptance.
     case progress(PeerHandle, PowerStage, [AppValue])
     /// The guest is going down.
     case handedOff(PeerHandle)
-    /// Apps blocked it.
-    case blocked(PeerHandle, [AppValue])
+    /// Apps blocked it. `skippable` when a peer offers the action without waiting for them.
+    case blocked(PeerHandle, [AppValue], skippable: Bool)
     /// A user in the guest cancelled it.
     case cancelledInGuest(PeerHandle)
     /// The OS failed after accepting.
@@ -194,8 +199,9 @@ public enum RoutingOutput: Sendable, Equatable {
     case indeterminate(PeerHandle)
     /// The connection ended after acceptance.
     case lostAfterAcceptance(PeerHandle)
-    /// Every peer candidate refused: use ACPI.
-    case acpi(PowerAction, refusals: [PeerRefusal])
+    /// No peer candidate took it, `refusals` saying why each one asked declined: nothing was done. For a
+    /// routing that waits for blocking apps the ACPI button stands in; for one skipping them, nothing does.
+    case unserved(refusals: [PeerRefusal])
     /// A routing is already running for this VM.
     case busy
 }
@@ -218,6 +224,7 @@ public struct PeerRefusal: Sendable, Equatable {
 public struct PowerRouting: Sendable {
     private struct Active: Sendable {
         var action: PowerAction
+        var skippingBlockers: Bool
         var asked: [PeerHandle] = []
         var refusals: [PeerRefusal] = []
         var current: PeerHandle?
@@ -233,10 +240,11 @@ public struct PowerRouting: Sendable {
     /// Whether a routing is running.
     public var isRouting: Bool { active != nil }
 
-    /// Starts routing `action`, or reports `.busy`.
-    public mutating func begin(_ action: PowerAction, peers: [RoutingPeer]) {
+    /// Starts routing `action`, or reports `.busy`. A routing `skippingBlockers` asks only the peers
+    /// offering `action` that way.
+    public mutating func begin(_ action: PowerAction, skippingBlockers: Bool = false, peers: [RoutingPeer]) {
         guard active == nil else { return outputs.append(.busy) }
-        active = Active(action: action)
+        active = Active(action: action, skippingBlockers: skippingBlockers)
         askNext(peers)
     }
 
@@ -262,7 +270,12 @@ public struct PowerRouting: Sendable {
         case .finished(let finish):
             switch finish {
             case .handedOff: end(.handedOff(peer))
-            case .blocked(let apps): end(.blocked(peer, apps))
+            case .blocked(let apps):
+                let skippable =
+                    !routing.skippingBlockers
+                    && !Self.candidates(for: routing.action, skippingBlockers: true, peers: peers, excluding: [])
+                        .isEmpty
+                end(.blocked(peer, apps, skippable: skippable))
             case .cancelledInGuest: end(.cancelledInGuest(peer))
             case .failed(let error): end(.failed(peer, error))
             }
@@ -274,11 +287,14 @@ public struct PowerRouting: Sendable {
         outputs.isEmpty ? nil : outputs.removeFirst()
     }
 
-    /// The candidates for `action` in order, excluding `asked`.
-    public static func candidates(for action: PowerAction, peers: [RoutingPeer], excluding asked: [PeerHandle])
-        -> [PeerHandle]
-    {
-        let eligible = peers.filter { $0.powerUsable && $0.actions.contains(action) && !asked.contains($0.handle) }
+    /// The candidates for `action` in order, excluding `asked`: those offering it `skippingBlockers` or not.
+    public static func candidates(
+        for action: PowerAction, skippingBlockers: Bool = false, peers: [RoutingPeer], excluding asked: [PeerHandle]
+    ) -> [PeerHandle] {
+        let eligible = peers.filter { peer in
+            peer.powerUsable && (skippingBlockers ? peer.skippingBlockers : peer.actions).contains(action)
+                && !asked.contains(peer.handle)
+        }
         let sessions = peers.filter { $0.role == .sessionPeer }
         let consoleOwners: [RoutingPeer]
         switch peers.first(where: { $0.role == .systemPeer })?.state {
@@ -298,13 +314,18 @@ public struct PowerRouting: Sendable {
 
     private mutating func askNext(_ peers: [RoutingPeer]) {
         guard var routing = active else { return }
-        guard let next = Self.candidates(for: routing.action, peers: peers, excluding: routing.asked).first else {
-            return end(.acpi(routing.action, refusals: routing.refusals))
+        guard
+            let next = Self.candidates(
+                for: routing.action, skippingBlockers: routing.skippingBlockers, peers: peers,
+                excluding: routing.asked
+            ).first
+        else {
+            return end(.unserved(refusals: routing.refusals))
         }
         routing.asked.append(next)
         routing.current = next
         active = routing
-        outputs.append(.ask(next, routing.action))
+        outputs.append(.ask(next, routing.action, skippingBlockers: routing.skippingBlockers))
     }
 
     private mutating func end(_ output: RoutingOutput) {
