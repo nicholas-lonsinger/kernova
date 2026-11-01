@@ -181,13 +181,14 @@ struct VMLifecycleScriptCommandsTests {
 
         let restarting = code == "Rstr"
         let run = Task { @MainActor in try await confirmed.run(makeGateway(wired), on: [.name("Alpha")]) }
-        try await probe.changed.wait { probe.powerRequests.count == 3 }
+        // `with confirmation` answers the question the verb asks, so the verb runs once without it first.
+        try await probe.changed.wait { probe.powerRequests.count == 4 }
         if restarting {
             try await waitForChange { !alpha.activity.isRequestingStop && alpha.activity.liveSessionContinues }
             alpha.activity.deliverSessionEvent(.guestDidStop, from: try #require(alpha.activity.liveSessionID))
         }
         try await run.value
-        #expect(probe.powerRequests.map(\.skippingBlockers) == [false, false, true])
+        #expect(probe.powerRequests.map(\.skippingBlockers) == [false, false, false, true])
     }
 
     @Test("A stop method from no vocabulary this app writes is a type error, and stops nothing")
