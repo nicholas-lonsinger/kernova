@@ -1049,7 +1049,8 @@ struct SidebarViewControllerTests {
 
     /// The lifecycle items, in the order each expectation lists them.
     private static let lifecycleItems = [
-        "Start", "Start in Recovery Mode…", "Pause", "Resume", "Stop", "Force Stop…", "Suspend",
+        "Start", "Start in Recovery Mode…", "Pause", "Resume", "Stop", "Force Stop…", "Restart",
+        "Suspend",
     ]
 
     /// Each lifecycle item's state in a macOS guest's menu: `E` listed and
@@ -1058,31 +1059,31 @@ struct SidebarViewControllerTests {
     @Test(
         "Each lifecycle item is listed and enabled as the VM's state decides",
         arguments: [
-            (PhaseFixture.settled(.stopped), "EE-----"),
-            (.settled(.failed(message: "Boot failed.")), "E------"),
-            (.settled(.suspended), "---E---"),
-            (.settled(.running(sessionID: UUID())), "--E-EEE"),
-            (.settled(.livePaused(sessionID: UUID())), "---EEEE"),
+            (PhaseFixture.settled(.stopped), "EE------"),
+            (.settled(.failed(message: "Boot failed.")), "E-------"),
+            (.settled(.suspended), "---E----"),
+            (.settled(.running(sessionID: UUID())), "--E-EEEE"),
+            (.settled(.livePaused(sessionID: UUID())), "---EEEEE"),
             (
                 .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
-                "DD-----"
+                "DD------"
             ),
             (
                 .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
-                "---D---"
+                "---D----"
             ),
             // A base-status operation from rest dims what the VM takes once it ends.
-            (.operating(.deletingSnapshot, from: .stopped), "DD-----"),
-            (.operating(.saving, from: .running(sessionID: UUID())), "--D-DDD"),
-            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), "--D-DDD"),
+            (.operating(.deletingSnapshot, from: .stopped), "DD------"),
+            (.operating(.saving, from: .running(sessionID: UUID())), "--D-DDDD"),
+            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), "--D-DDDD"),
             // Operations that tolerate a stop leave both stops enabled.
-            (.operating(.pausing, from: .running(sessionID: UUID())), "--D-EED"),
-            (.operating(.attachingUSB(registryID: 1), from: .running(sessionID: UUID())), "--D-EED"),
+            (.operating(.pausing, from: .running(sessionID: UUID())), "--D-EEED"),
+            (.operating(.attachingUSB(registryID: 1), from: .running(sessionID: UUID())), "--D-EEED"),
             // A live-paused VM's Stop resumes it first, which the resume in
             // flight holds; its Force Stop is tolerated.
-            (.operating(.resuming, from: .livePaused(sessionID: UUID())), "---DDED"),
+            (.operating(.resuming, from: .livePaused(sessionID: UUID())), "---DDEDD"),
             // A Force Stop in flight answers as the powered-off VM will.
-            (.operating(.forceStopping, from: .running(sessionID: UUID())), "DD-----"),
+            (.operating(.forceStopping, from: .running(sessionID: UUID())), "DD------"),
         ])
     func lifecycleItemsFollowTheVMsState(phase: PhaseFixture, expected: String) throws {
         preferences.alwaysShowAdvancedOptions = false
@@ -1104,6 +1105,28 @@ struct SidebarViewControllerTests {
                 return item.isEnabled ? "E" : "D"
             })
         #expect(actual == expected, "\(phase)")
+        // Restart stands wherever Stop does, enabled alike.
+        let column = Array(actual)
+        #expect(column[6] == column[4], "\(phase)")
+    }
+
+    @Test("Restart in a running VM's menu restarts it")
+    func restartItemRestartsTheVM() async throws {
+        let viewModel = makeViewModel()
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        let instance = viewModel.library.admitFixture(phase: .running(sessionID: UUID()))
+        let firstSession = try #require(instance.activity.liveSessionID)
+        let controller = SidebarViewController(viewModel: viewModel)
+        let restart = try #require(menuItem("Restart", in: controller.buildContextMenu(for: instance)))
+
+        _ = NSApp.sendAction(try #require(restart.action), to: restart.target, from: restart)
+        try await waitForChange {
+            instance.status == .running
+                && instance.activity.liveSessionID.map { $0 != firstSession } == true
+        }
+
+        #expect(presenter.errors.isEmpty)
     }
 
     @Test("A running VM whose guest can write an external disk lists Take Snapshot dimmed")
