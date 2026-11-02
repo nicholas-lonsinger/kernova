@@ -97,6 +97,12 @@ package final class VMSessionContext {
     /// What this session's latest Hello reported, `nil` before one arrives.
     var observedAgentInfo: ObservedAgentInfo?
 
+    /// The versions a Linux guest's session and system peers reported this
+    /// session, `nil` before each connects: what the session knows whether or
+    /// not the write recording them landed.
+    var observedSessionAgentVersion: String?
+    var observedSystemAgentVersion: String?
+
     /// The external file references this session's boot found moved, and
     /// where to — what its configuration build reads
     /// (`VMInstance.effectiveConfiguration`).

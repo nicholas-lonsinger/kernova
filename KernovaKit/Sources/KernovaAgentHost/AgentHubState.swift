@@ -78,8 +78,6 @@ struct AgentHubState: Sendable {
     /// The peers seen on this attachment that are disconnected now, by who they are.
     var away: [AwayKey: AwayPeer] = [:]
     private var nextAwayOrder: UInt64 = 0
-    /// The version the newest peer seen on this attachment reported.
-    var lastSeenVersionLabel: String?
 
     /// Adds the peer whose Hello `handle`'s connection read, resolving it against the one peer that can
     /// already hold its identity (spec §4.5): every Hello is resolved as it arrives, so no two peers in
@@ -105,11 +103,10 @@ struct AgentHubState: Sendable {
         return .joined
     }
 
-    /// A peer joined the set: it is no longer away, and its version is the last seen.
+    /// A peer joined the set: it is no longer away.
     mutating func joined(_ handle: PeerHandle) {
         guard let record = peers[handle] else { return }
         away[record.awayKey] = nil
-        lastSeenVersionLabel = record.claim.versionLabel
     }
 
     /// The connection ended: it leaves the hub. A peer the snapshot showed is remembered as away while the
@@ -132,7 +129,6 @@ struct AgentHubState: Sendable {
     /// Forgets everything an attachment saw: the next one serves a new session of the guest.
     mutating func resetAttachmentMemory() {
         away = [:]
-        lastSeenVersionLabel = nil
     }
 
     /// The routing view of every peer whose features are known. An unresponsive peer's POWER is not
@@ -154,8 +150,7 @@ struct AgentHubState: Sendable {
         let features = FeatureStatus.merge(ordered.compactMap(\.features))
         return AgentHubSnapshot(
             peers: ordered.map(summary), features: features, power: provision(features: features),
-            routing: power.progress, away: away.values.sorted { $0.order > $1.order },
-            lastSeenVersionLabel: lastSeenVersionLabel)
+            routing: power.progress, away: away.values.sorted { $0.order > $1.order })
     }
 
     /// The merged POWER entry: the first candidate a shutdown would ask, else the merged absence — with

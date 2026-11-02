@@ -173,16 +173,23 @@ struct GuestAgentPresentationTests {
     func awayIsConnecting() {
         let presentation = GuestAgentPresentation(
             hub: AgentHubSnapshot(
-                peers: [], features: FeatureStatus.merge([]), away: [Self.away(Self.peer(1))],
-                lastSeenVersionLabel: "1.0"))
+                peers: [], features: FeatureStatus.merge([]), away: [Self.away(Self.peer(1))]),
+            lastSeenAgentVersion: "1.0")
         #expect(presentation.status == .connecting(expected: "1.0"))
         #expect(presentation.hub?.peers == [.init(title: "Session agent — pbear", state: "Reconnecting\u{2026}")])
+    }
+
+    @Test("A VM that has had an agent and has none connected yet — a cold boot — is connecting to it")
+    func coldBootIsConnecting() {
+        let presentation = GuestAgentPresentation(hub: .empty, lastSeenAgentVersion: "1.0")
+        #expect(presentation.status == .connecting(expected: "1.0"))
+        #expect(GuestAgentPresentation(hub: .empty).status == .waiting)
     }
 
     @Test("Once the watchdog finds them gone, the session's agents didn't reconnect")
     func awayEscalates() {
         let presentation = GuestAgentPresentation(
-            hub: AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), lastSeenVersionLabel: "1.0"),
+            hub: AgentHubSnapshot(peers: [], features: FeatureStatus.merge([])), lastSeenAgentVersion: "1.0",
             agentExpectedButMissing: true)
         #expect(presentation.status == .expectedMissing(expected: "1.0"))
     }
@@ -193,15 +200,15 @@ struct GuestAgentPresentationTests {
             1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
         let alone = GuestAgentPresentation(
             hub: AgentHubSnapshot(
-                peers: [], features: FeatureStatus.merge([]), away: [Self.away(updating, relaunching: true)],
-                lastSeenVersionLabel: "0.9"))
+                peers: [], features: FeatureStatus.merge([]), away: [Self.away(updating, relaunching: true)]),
+            lastSeenAgentVersion: "0.9")
         #expect(alone.status == .updating(installed: "0.9", bundled: "1.0"))
         #expect(alone.hub?.peers.map(\.state) == ["Updating\u{2026}"])
         // Beside a peer already current again, the relaunching one still decides the status.
         let mixed = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(2, role: .systemPeer, version: "1.0")], features: FeatureStatus.merge([]),
-                away: [Self.away(updating, relaunching: true)], lastSeenVersionLabel: "1.0"))
+                away: [Self.away(updating, relaunching: true)]), lastSeenAgentVersion: "1.0")
         #expect(mixed.status == .updating(installed: "0.9", bundled: "1.0"))
         #expect(mixed.hub?.peers.map(\.state) == ["Up to date", "Updating\u{2026}"])
     }
@@ -211,7 +218,7 @@ struct GuestAgentPresentationTests {
         let presentation = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([]),
-                away: [Self.away(Self.peer(1))], lastSeenVersionLabel: "1.0"))
+                away: [Self.away(Self.peer(1))]), lastSeenAgentVersion: "1.0")
         #expect(presentation.status == .current(version: "1.0"))
         #expect(presentation.hub?.peers.map(\.state) == ["Up to date", "Reconnecting\u{2026}"])
     }

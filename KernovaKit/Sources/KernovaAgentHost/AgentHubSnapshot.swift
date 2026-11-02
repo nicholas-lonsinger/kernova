@@ -22,20 +22,17 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// first; each leaves when a peer of its identity says Hello again, or ``AgentHub/forgetAway(through:)``
     /// drops it.
     public var away: [AwayPeer]
-    /// The version the newest peer seen while this transport is attached reported; nil before any.
-    public var lastSeenVersionLabel: String?
 
     /// A snapshot of these peers and merged features.
     public init(
         peers: [PeerSummary], features: FeatureStatusTable, power: PowerProvision = .absent(.noAgent),
-        routing: PowerRoutingProgress? = nil, away: [AwayPeer] = [], lastSeenVersionLabel: String? = nil
+        routing: PowerRoutingProgress? = nil, away: [AwayPeer] = []
     ) {
         self.peers = peers
         self.features = features
         self.power = power
         self.routing = routing
         self.away = away
-        self.lastSeenVersionLabel = lastSeenVersionLabel
     }
 
     /// No peer: every feature `NO_AGENT`.

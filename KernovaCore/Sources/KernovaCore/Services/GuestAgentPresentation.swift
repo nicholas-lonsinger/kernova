@@ -50,16 +50,19 @@ package struct GuestAgentPresentation: Equatable, Sendable {
 
     /// The presentation of the agents in `snapshot`, on the macOS agent's terms
     /// (``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``):
-    /// with no agent connected, the session that has seen one is connecting
-    /// to it — or, once `agentExpectedButMissing`, finds it didn't reconnect —
-    /// never waiting for an install. An away peer keeps its line: one
-    /// relaunching into an update keeps the standing it left with, counted in
-    /// the status as though connected; any other reads as reconnecting.
-    package init(hub snapshot: AgentHubSnapshot, agentExpectedButMissing: Bool = false) {
+    /// with no agent connected, a VM that has had one — `lastSeenAgentVersion`
+    /// — is connecting to it, or, once `agentExpectedButMissing`, finds it
+    /// didn't reconnect; never waiting for an install. An away peer keeps its
+    /// line: one relaunching into an update keeps the standing it left with,
+    /// counted in the status as though connected; any other reads as
+    /// reconnecting.
+    package init(
+        hub snapshot: AgentHubSnapshot, lastSeenAgentVersion: String? = nil, agentExpectedButMissing: Bool = false
+    ) {
         let relaunching = snapshot.away.filter(\.relaunching).map(\.summary)
         status = AgentStatus.synthesize(
             upstream: Self.status(of: snapshot.peers + relaunching),
-            lastSeenAgentVersion: snapshot.lastSeenVersionLabel, agentExpectedButMissing: agentExpectedButMissing)
+            lastSeenAgentVersion: lastSeenAgentVersion, agentExpectedButMissing: agentExpectedButMissing)
         let away = snapshot.away.map { away in
             PeerLine(
                 title: Self.title(of: away.summary),

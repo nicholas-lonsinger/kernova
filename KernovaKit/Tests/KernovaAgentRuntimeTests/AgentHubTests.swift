@@ -160,7 +160,6 @@ struct AgentHubTests {
         #expect(gone.away[0].summary.userName == Fixture.peerState.userName)
         #expect(gone.away[0].summary.standing == .outdated(offeredVersionLabel: "next", update: .unavailable))
         #expect(!gone.away[0].relaunching)
-        #expect(gone.lastSeenVersionLabel == "peer")
 
         // The same user's agent in a new process and a new session — a reboot — is the one that went away.
         var rebooted = Fixture.peerState
@@ -216,7 +215,7 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("Detaching forgets the away peers and the last version: the next attachment serves a new guest session")
+    @Test("Detaching forgets the away peers: the next attachment serves a new guest session")
     func detachForgets() async {
         let harness = HubHarness()
         await harness.attached()
@@ -226,7 +225,7 @@ struct AgentHubTests {
         _ = await harness.snapshot { $0.away.count == 1 }
         var later = harness.snapshots.waiterFromNow()
         harness.hub.detach()
-        let reset = await later.next { $0.away.isEmpty && $0.lastSeenVersionLabel == nil }
+        let reset = await later.next { $0.away.isEmpty }
         #expect(reset.peers.isEmpty)
         harness.hub.close()
     }

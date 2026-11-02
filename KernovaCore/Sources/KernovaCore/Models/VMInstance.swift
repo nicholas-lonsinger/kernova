@@ -203,7 +203,14 @@ package final class VMInstance {
     /// one arrived, the committed record otherwise.
     package var lastSeenAgentVersion: String? {
         if let observed = sessionContext?.observedAgentInfo { return observed.agentVersion }
+        if let observed = sessionContext?.observedSessionAgentVersion { return observed }
         return configuration.lastSeenAgentVersion
+    }
+
+    /// The version a Linux guest's system peer last reported, on the same terms
+    /// as ``lastSeenAgentVersion``.
+    package var lastSeenSystemAgentVersion: String? {
+        sessionContext?.observedSystemAgentVersion ?? configuration.lastSeenSystemAgentVersion
     }
 
     /// The guest OS version this VM last reported, on the same terms as
@@ -229,6 +236,7 @@ package final class VMInstance {
             config.healExternalReference(heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
         }
         config.lastSeenAgentVersion = lastSeenAgentVersion
+        config.lastSeenSystemAgentVersion = lastSeenSystemAgentVersion
         config.lastSeenGuestOSVersion = reportedGuestOSVersion
         return config
     }
@@ -254,7 +262,8 @@ package final class VMInstance {
         case .linux:
             return reachesGuestAgent
                 ? GuestAgentPresentation(
-                    hub: agentHubSnapshot, agentExpectedButMissing: context.agentExpectedButMissing)
+                    hub: agentHubSnapshot, lastSeenAgentVersion: lastSeenSystemAgentVersion ?? lastSeenAgentVersion,
+                    agentExpectedButMissing: context.agentExpectedButMissing)
                 : nil
         }
     }
@@ -295,15 +304,36 @@ package final class VMInstance {
         }
     }
 
-    /// The hub's agents changed: a connected one is the arrival the watchdog
-    /// waits for, as the macOS agent's Hello is, and an away one arms it.
+    /// The hub's agents changed: each connected one is recorded by its scope,
+    /// as the macOS agent's Hello is, and is the arrival the watchdog waits
+    /// for; an away one arms it.
     private func agentHubSnapshotDidChange() {
         guard configuration.guestOS == .linux, let context = sessionContext else { return }
+        recordHubPeers(context)
         if !agentHubSnapshot.peers.isEmpty { context.agentExpectedButMissing = false }
-        if agentHubSnapshot.away.isEmpty {
-            cancelAgentPostStartWatchdog()
-        } else {
+        if !agentHubSnapshot.away.isEmpty {
             startAgentPostStartWatchdog()
+        } else if !agentHubSnapshot.peers.isEmpty {
+            cancelAgentPostStartWatchdog()
+        }
+    }
+
+    /// Records the version each scope's connected peer reports, the newest
+    /// session peer's for the session agent: in the session at once, and in the
+    /// configuration whenever it differs from the committed record.
+    private func recordHubPeers(_ context: VMSessionContext) {
+        let session = agentHubSnapshot.peers.first { $0.role == .sessionPeer }?.versionLabel
+        let system = agentHubSnapshot.peers.first { $0.role == .systemPeer }?.versionLabel
+        if let session { context.observedSessionAgentVersion = session }
+        if let system { context.observedSystemAgentVersion = system }
+        let recordsSession = session.map { $0 != configuration.lastSeenAgentVersion } ?? false
+        let recordsSystem = system.map { $0 != configuration.lastSeenSystemAgentVersion } ?? false
+        guard recordsSession || recordsSystem else { return }
+        recordObservation("the agents' Hello") {
+            _ = $0.updateConfiguration { config in
+                if let session { config.lastSeenAgentVersion = session }
+                if let system { config.lastSeenSystemAgentVersion = system }
+            }
         }
     }
 
@@ -1152,12 +1182,17 @@ package final class VMInstance {
     /// A macOS guest arms it after a start, a hot resume, or an accepted control
     /// channel, and again whenever the control channel dies under us, so a
     /// mid-session disappearance escalates the same way a no-show after boot
-    /// does; it needs an agent seen before on this VM and none connected now. A
-    /// Linux guest arms it while the hub has an away peer — one this session saw
-    /// that is disconnected now — and its firing forgets the away peers it
-    /// waited for, escalating only when no peer is connected; one relaunching
-    /// into an update is waited for through the rollback window as well
-    /// (``agentArrivalGrace(base:for:)``). Either way a no-op unless the VM is
+    /// does; it needs an agent seen before on this VM and none connected now.
+    ///
+    /// A Linux guest arms it after a start when its system peer has been seen
+    /// before (``lastSeenSystemAgentVersion``) and no peer is connected: the
+    /// system peer starts at boot, while a session peer connects only once its
+    /// user logs in, so a session peer alone arms nothing. It also arms while
+    /// the hub has an away peer — one this session saw that is disconnected
+    /// now — and its firing forgets the away peers it waited for; one
+    /// relaunching into an update is waited for through the rollback window as
+    /// well (``agentArrivalGrace(base:for:)``). Either Linux firing escalates
+    /// only with no peer connected and a system peer expected. Either way a no-op unless the VM is
     /// running (a paused guest isn't executing, so its silence proves nothing),
     /// the session didn't boot into Recovery (which never runs the agent), no
     /// install is in progress, and no watchdog is already armed. Cancelled by
@@ -1176,9 +1211,16 @@ package final class VMInstance {
             guard context.vsock.control?.agentVersion == nil else { return }
             awaited = .macOSAgent
         case .linux:
-            guard let newest = agentHubSnapshot.away.first else { return }
-            awaited = .awayPeers(through: newest.order)
-            grace = Self.agentArrivalGrace(base: grace, for: agentHubSnapshot)
+            if let newest = agentHubSnapshot.away.first {
+                awaited = .awayPeers(through: newest.order)
+                grace = Self.agentArrivalGrace(base: grace, for: agentHubSnapshot)
+            } else {
+                // Only the system peer is expected at boot: a session peer
+                // connects once its user logs in, and a guest at its login
+                // screen is not missing it.
+                guard agentHubSnapshot.peers.isEmpty, lastSeenSystemAgentVersion != nil else { return }
+                awaited = .systemAgent
+            }
         }
 
         context.agentPostStartGeneration &+= 1
@@ -1213,6 +1255,9 @@ package final class VMInstance {
             case .awayPeers(let order):
                 armed.agentPostStartTask = nil
                 self.awayPeersMissed(armed, through: order)
+            case .systemAgent:
+                armed.agentPostStartTask = nil
+                self.systemAgentMissed(armed)
             }
         }
     }
@@ -1223,6 +1268,8 @@ package final class VMInstance {
         case macOSAgent
         /// The hub's away peers that went away at or before this order.
         case awayPeers(through: UInt64)
+        /// A Linux guest's system peer, after a start.
+        case systemAgent
     }
 
     /// How long the watchdog waits for `snapshot`'s away peers: `base`, and for
@@ -1232,6 +1279,18 @@ package final class VMInstance {
     static func agentArrivalGrace(base: Duration, for snapshot: AgentHubSnapshot) -> Duration {
         guard snapshot.away.contains(where: \.relaunching) else { return base }
         return base + .seconds(UpdateRollbackPolicy.latestRevertSeconds)
+    }
+
+    /// A Linux guest's system peer did not connect within the grace of a start.
+    private func systemAgentMissed(_ armed: VMSessionContext) {
+        if agentHubSnapshot.peers.isEmpty {
+            Self.logger.log(
+                .notice,
+                "The system agent of '\(self.name, privacy: .public)' (last seen \(self.lastSeenSystemAgentVersion ?? "?", privacy: .public)) didn't connect within the grace"
+            )
+            armed.agentExpectedButMissing = true
+        }
+        if !agentHubSnapshot.away.isEmpty { startAgentPostStartWatchdog() }
     }
 
     /// The macOS agent never said Hello within the grace.
@@ -1267,8 +1326,9 @@ package final class VMInstance {
 
     /// The hub's peers that went away at or before `order` did not return
     /// within the grace: the hub stops showing them, and with no peer connected
-    /// the session's agents didn't reconnect. A peer that went away since is
-    /// waited for in turn.
+    /// the session's agents didn't reconnect — when a system peer is expected;
+    /// a session peer alone is away whenever its user is logged out. A peer
+    /// that went away since is waited for in turn.
     private func awayPeersMissed(_ armed: VMSessionContext, through order: UInt64) {
         let missed = agentHubSnapshot.away.filter { $0.order <= order }
         guard !missed.isEmpty else { return startAgentPostStartWatchdog() }
@@ -1276,7 +1336,7 @@ package final class VMInstance {
             .notice,
             "\(missed.count) guest agent(s) of '\(self.name, privacy: .public)' didn't reconnect within the grace")
         agentHub.forgetAway(through: order)
-        if agentHubSnapshot.peers.isEmpty { armed.agentExpectedButMissing = true }
+        if agentHubSnapshot.peers.isEmpty, lastSeenSystemAgentVersion != nil { armed.agentExpectedButMissing = true }
         if agentHubSnapshot.away.contains(where: { $0.order > order }) { startAgentPostStartWatchdog() }
     }
 
