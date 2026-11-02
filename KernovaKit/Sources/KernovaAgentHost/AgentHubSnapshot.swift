@@ -14,8 +14,7 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// `FeatureStatus.merge` of the peers' tables, newest first; every feature `NO_AGENT` with none.
     public var features: FeatureStatusTable
     /// The peers seen while this transport is attached that are disconnected now, the most recently gone
-    /// first; each leaves when a peer of its identity says Hello again, or ``AgentHub/forgetAway(through:)``
-    /// drops it.
+    /// first; each leaves when a peer of its identity says Hello again, or the transport detaches.
     public var away: [AwayPeer]
 
     /// A snapshot of these peers and merged features.
@@ -36,14 +35,17 @@ public struct AwayPeer: Sendable, Equatable {
     /// It closed after installing an update: it is relaunching into it, and returns once the new version
     /// connects or the rollback check restores the old one.
     public var relaunching: Bool
-    /// Higher went away later; what ``AgentHub/forgetAway(through:)`` takes.
+    /// Higher went away later; unique across the hub's life.
     public var order: UInt64
+    /// When its connection closed, on the platform's monotonic timeline (`SystemScheduler`).
+    public var since: CoreInstant
 
     /// Creates an away peer.
-    public init(summary: PeerSummary, relaunching: Bool, order: UInt64) {
+    public init(summary: PeerSummary, relaunching: Bool, order: UInt64, since: CoreInstant) {
         self.summary = summary
         self.relaunching = relaunching
         self.order = order
+        self.since = since
     }
 }
 

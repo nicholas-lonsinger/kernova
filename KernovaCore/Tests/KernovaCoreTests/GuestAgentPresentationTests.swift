@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaAgentRuntime
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -160,7 +161,7 @@ struct GuestAgentPresentationTests {
     // MARK: Away peers
 
     private static func away(_ peer: PeerSummary, relaunching: Bool = false, order: UInt64 = 1) -> AwayPeer {
-        AwayPeer(summary: peer, relaunching: relaunching, order: order)
+        AwayPeer(summary: peer, relaunching: relaunching, order: order, since: SystemScheduler().now)
     }
 
     @Test("With only away peers the session is connecting to the agent it saw, never waiting for an install")
@@ -206,7 +207,11 @@ struct GuestAgentPresentationTests {
         let presentation = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(1, version: "0.10.0 (1147)")], features: FeatureStatus.merge([]),
-                away: [AwayPeer(summary: Self.peer(2, role: .systemPeer), relaunching: false, order: 3)]),
+                away: [
+                    AwayPeer(
+                        summary: Self.peer(2, role: .systemPeer), relaunching: false, order: 3,
+                        since: SystemScheduler().now)
+                ]),
             lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSystem])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(

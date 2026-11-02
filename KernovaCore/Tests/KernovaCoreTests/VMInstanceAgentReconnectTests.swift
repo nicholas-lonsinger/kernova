@@ -79,7 +79,7 @@ struct VMInstanceAgentReconnectTests {
         let instance = makeInstance(agentVersion: version)
         let guest = try attachControlService(to: instance)
         defer {
-            instance.cancelAgentPostStartWatchdog()
+            instance.cancelAgentAbsenceWatchdog()
             instance.stopVsockServices()
             guest.close()
         }
@@ -89,7 +89,7 @@ struct VMInstanceAgentReconnectTests {
         #expect(instance.agentPresentation?.status == .current(version: version))
         #expect(instance.hasSeenAgentThisSession)
         // A connected agent is nothing to wait for.
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
 
         // The guest agent quits — its user logged out, or it crashed. It
         // connected this session, so its absence is not a missing install.
@@ -98,7 +98,7 @@ struct VMInstanceAgentReconnectTests {
 
         // `onChannelLost` runs inside the settle, so the rule has read it by
         // the time the settle is observable.
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
         #expect(instance.agentPresentation?.status == .connecting(expected: version))
     }
 
@@ -111,23 +111,24 @@ struct VMInstanceAgentReconnectTests {
         let instance = makeInstance(agentVersion: version)
         let first = try attachControlService(to: instance)
         defer {
-            instance.cancelAgentPostStartWatchdog()
+            instance.cancelAgentAbsenceWatchdog()
             instance.stopVsockServices()
             first.close()
         }
 
         try first.send(makeGuestHello(agentVersion: version))
         try await waitForChange { instance.vsockControlService?.agentVersion != nil }
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
 
         // A second connection arrives while the first is still healthy, then
         // wedges: open, but never a valid Hello.
         let second = try attachControlService(to: instance)
         defer { second.close() }
         #expect(instance.agentPresentation?.status == .connecting(expected: version))
-        #expect(instance.agentPostStartTaskForTesting == nil)
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        instance.agentAbsenceGrace = .milliseconds(200)
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("An owner teardown of the control service arms nothing")
@@ -136,7 +137,7 @@ struct VMInstanceAgentReconnectTests {
         let instance = makeInstance(agentVersion: version)
         let guest = try attachControlService(to: instance)
         defer {
-            instance.cancelAgentPostStartWatchdog()
+            instance.cancelAgentAbsenceWatchdog()
             guest.close()
         }
 
@@ -146,7 +147,7 @@ struct VMInstanceAgentReconnectTests {
         // `stopVsockServices()` is the session teardown path; arming a grace
         // clock against a VM being shut down would be pure noise.
         instance.stopVsockServices()
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("Pausing a VM disturbs neither the control channel nor the agent badge")
@@ -159,7 +160,7 @@ struct VMInstanceAgentReconnectTests {
         let instance = makeInstance(agentVersion: version)
         let guest = try attachControlService(to: instance)
         defer {
-            instance.cancelAgentPostStartWatchdog()
+            instance.cancelAgentAbsenceWatchdog()
             instance.stopVsockServices()
             guest.close()
         }
@@ -170,7 +171,7 @@ struct VMInstanceAgentReconnectTests {
         instance.activity.placeForTesting(.livePaused(sessionID: try #require(instance.liveSessionID)))
         #expect(instance.isLivePaused)
         #expect(instance.vsockControlService?.isConnected == true)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.agentPresentation?.status == .current(version: version))
     }
@@ -184,7 +185,7 @@ struct VMInstanceAgentReconnectTests {
         let instance = makeInstance(agentVersion: version)
         let guest = try attachControlService(to: instance)
         defer {
-            instance.cancelAgentPostStartWatchdog()
+            instance.cancelAgentAbsenceWatchdog()
             instance.stopVsockServices()
             guest.close()
         }
@@ -196,13 +197,14 @@ struct VMInstanceAgentReconnectTests {
         guest.close()
         try await waitForChange { instance.vsockControlService?.isConnected == false }
 
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
 
         // Resuming within the session arms nothing either: the agent
         // connected this session.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = .milliseconds(200)
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
         #expect(instance.agentPresentation?.status == .connecting(expected: version))
     }
 }

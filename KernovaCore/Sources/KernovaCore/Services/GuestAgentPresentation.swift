@@ -67,7 +67,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             lastSeenAgentVersion: missing.first?.lastSeenVersion ?? lastSeenAgentVersion,
             agentExpectedButMissing: !missing.isEmpty)
         let missingScopes = missing.map(\.scope)
-        let away = snapshot.away.filter { !missingScopes.contains(Self.scope(of: $0.summary)) }.map { away in
+        let away = snapshot.away.filter { !missingScopes.contains(AgentScopePresence.Scope(of: $0.summary)) }.map {
+            away in
             PeerLine(
                 title: Self.title(of: away.summary),
                 state: away.relaunching ? Self.state(of: away.summary) : "Reconnecting\u{2026}")
@@ -110,11 +111,6 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         case .login:
             PeerLine(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in")
         }
-    }
-
-    /// The scope `peer` is an agent of.
-    private static func scope(of peer: PeerSummary) -> AgentScopePresence.Scope {
-        peer.role == .systemPeer ? .system : .login
     }
 
     private static func title(of peer: PeerSummary) -> String {

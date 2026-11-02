@@ -2,7 +2,7 @@
 /// one VM session (from Start until the VM stops).
 package struct AgentScopePresence: Equatable, Sendable {
     /// When an agent of the scope starts.
-    package enum Scope: Equatable, Sendable {
+    package enum Scope: Hashable, Sendable {
         /// At a user's login: the macOS agent, a Linux session peer.
         case login
         /// At boot: a Linux system peer.

@@ -214,8 +214,8 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("forgetAway drops the peers that went away up to an order, and keeps the later ones")
-    func forgetsAway() async {
+    @Test("An away peer carries the instant its connection closed, and keeps it while later peers leave")
+    func awayCarriesItsClose() async {
         let harness = HubHarness()
         await harness.attached()
         let session = HubPeer(harness, claim: .session(.user, instance: 1))
@@ -223,14 +223,16 @@ struct AgentHubTests {
             harness,
             claim: PeerClaim(role: .systemPeer, scope: .system, os: .linux, instanceID: Data(repeating: 9, count: 16)))
         _ = await harness.snapshot { $0.peers.count == 2 }
+        let beforeClose = SystemScheduler().now
         session.driver.close(.shuttingDown)
         let first = await harness.snapshot { $0.away.count == 1 }
+        #expect(first.away[0].since >= beforeClose)
+        #expect(first.away[0].since <= SystemScheduler().now)
         system.driver.close(.shuttingDown)
-        _ = await harness.snapshot { $0.away.count == 2 }
-        var later = harness.snapshots.waiterFromNow()
-        harness.hub.forgetAway(through: first.away[0].order)
-        let left = await later.next { $0.away.count == 1 }
-        #expect(left.away[0].summary.role == .systemPeer)
+        let both = await harness.snapshot { $0.away.count == 2 }
+        #expect(both.away.map(\.summary.role) == [.systemPeer, .sessionPeer])
+        #expect(both.away[1].since == first.away[0].since)
+        #expect(both.away[0].since >= first.away[0].since)
         harness.hub.close()
     }
 

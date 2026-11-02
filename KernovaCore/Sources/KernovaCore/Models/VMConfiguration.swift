@@ -248,7 +248,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// The most recent guest-reported OS version observed on this VM's control
     /// channel (`Hello.agent_info.os_version`), or `nil` when no agent has
     /// vouched for one — a fresh VM, an agent that reported no version, or the
-    /// post-start watchdog concluding a previously-seen agent is gone.
+    /// absence watchdog concluding a previously-seen agent is gone.
     var lastSeenGuestOSVersion: String?
 
     // MARK: - macOS-specific

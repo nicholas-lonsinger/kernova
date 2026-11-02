@@ -141,11 +141,9 @@ package final class VMInstance {
     /// pointed at the live `VsockDropService`.
     @ObservationIgnored let dropDataSink = VsockDataConnectionSink()
 
-    /// `true` when this VM has reached `.running`, the host previously saw a
-    /// guest agent connect (``lastSeenAgentVersion`` is not `nil`), and a
-    /// grace period has elapsed without a `Hello` arriving over the control
-    /// channel.
-    var agentExpectedButMissing: Bool { sessionContext?.agentExpectedButMissing ?? false }
+    /// `true` while the absence watchdog warns about some agent scope
+    /// (``warnedMissingAgents``).
+    var agentExpectedButMissing: Bool { !warnedMissingAgents.isEmpty }
 
     /// `true` once a `Hello` has arrived on this VM session.
     ///
@@ -218,7 +216,7 @@ package final class VMInstance {
     /// found no agent, since nothing vouched for the recorded one.
     var reportedGuestOSVersion: String? {
         if let observed = sessionContext?.observedAgentInfo { return observed.osVersion }
-        if sessionContext?.agentExpectedButMissing == true { return nil }
+        if agentExpectedButMissing { return nil }
         return configuration.lastSeenGuestOSVersion
     }
 
@@ -258,7 +256,7 @@ package final class VMInstance {
                 macOSAgent: AgentStatus.synthesize(
                     upstream: context.vsock.control?.agentStatus ?? .waiting,
                     lastSeenAgentVersion: lastSeenAgentVersion,
-                    agentExpectedButMissing: context.agentExpectedButMissing))
+                    agentExpectedButMissing: agentExpectedButMissing))
         case .linux:
             return reachesGuestAgent
                 ? GuestAgentPresentation(
@@ -298,11 +296,21 @@ package final class VMInstance {
     /// A peer arriving whose payload is the one the host bundles for it fires
     /// ``onAgentBecameCurrent``, as the macOS agent's Hello of a new current
     /// version does.
-    package private(set) var agentHubSnapshot = AgentHubSnapshot.empty {
+    private var publishedAgentHubSnapshot = AgentHubSnapshot.empty {
         didSet {
-            if Self.connectsCurrentPeer(from: oldValue, to: agentHubSnapshot) { onAgentBecameCurrent?() }
+            if Self.connectsCurrentPeer(from: oldValue, to: publishedAgentHubSnapshot) { onAgentBecameCurrent?() }
             agentHubSnapshotDidChange()
         }
+    }
+
+    /// The hub's agents as every surface reads them: its latest snapshot,
+    /// less the away peers this session's absence watchdog stopped waiting for.
+    package var agentHubSnapshot: AgentHubSnapshot {
+        var snapshot = publishedAgentHubSnapshot
+        if let expired = sessionContext?.expiredAwayOrders, !expired.isEmpty {
+            snapshot.away.removeAll { expired.contains($0.order) }
+        }
+        return snapshot
     }
 
     /// The hub's agents changed: each connected one is recorded by its scope,
@@ -318,8 +326,8 @@ package final class VMInstance {
     /// session peer's for the session agent: in the session at once, and in the
     /// configuration whenever it differs from the committed record.
     private func recordHubPeers(_ context: VMSessionContext) {
-        let session = agentHubSnapshot.peers.first { $0.role == .sessionPeer }?.versionLabel
-        let system = agentHubSnapshot.peers.first { $0.role == .systemPeer }?.versionLabel
+        let session = publishedAgentHubSnapshot.peers.first { $0.role == .sessionPeer }?.versionLabel
+        let system = publishedAgentHubSnapshot.peers.first { $0.role == .systemPeer }?.versionLabel
         if let session { context.observedSessionAgentVersion = session }
         if let system { context.observedSystemAgentVersion = system }
         let recordsSession = session.map { $0 != configuration.lastSeenAgentVersion } ?? false
@@ -343,7 +351,7 @@ package final class VMInstance {
     #if DEBUG
     /// Lands `snapshot` as the hub's publish does; tests only.
     func publishAgentHubSnapshotForTesting(_ snapshot: AgentHubSnapshot) {
-        agentHubSnapshot = snapshot
+        publishedAgentHubSnapshot = snapshot
     }
     #endif
 
@@ -427,7 +435,7 @@ package final class VMInstance {
             policy: Self.agentHubPolicy(for: bundle.configuration), payloads: payloads, logger: hubLogger,
             publishingOn: .main
         ) { snapshot in
-            MainActor.assumeIsolated { snapshots.instance?.agentHubSnapshot = snapshot }
+            MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
         }
         activity.owner = self
         snapshots.instance = self
@@ -924,12 +932,13 @@ package final class VMInstance {
         switch kind {
         case .bringUp(.guestStart(.starting)), .resuming:
             activateNetworkAttachment()
-            startAgentPostStartWatchdog()
+            startAgentAbsenceWatch()
         case .bringUp(.guestStart(.restoringSavedState)), .bringUp(.reverting):
-            // Arms no watchdog: a restore resumes whatever guest state was
-            // frozen, which may be a Recovery session that never runs the
+            // Starts no absence watch: a restore resumes whatever guest state
+            // was frozen, which may be a Recovery session that never runs the
             // agent, and no host-side flag survives the save to say which.
-            // The accept path arms once a control channel actually shows up.
+            // The first presence change — a control channel showing up, the
+            // hub publishing — starts it.
             activateNetworkAttachment()
         case .bringUp(.settingUp), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
             .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping,
@@ -1166,10 +1175,18 @@ package final class VMInstance {
             admissionGate: vsockAdmissionGate)
     }
 
-    // MARK: - Agent Post-Start Watchdog
+    // MARK: - Agent Absence Watchdog
 
-    /// Default grace period before the post-start watchdog fires.
-    static let defaultAgentPostStartGrace: Duration = .seconds(120)
+    /// The allowance an absence gets before the absence watchdog acts on it,
+    /// before any rollback window (``AgentAbsenceDeadlines``).
+    static let defaultAgentAbsenceGrace: Duration = .seconds(120)
+
+    /// The grace every evaluation of the absence watchdog reads.
+    @ObservationIgnored var agentAbsenceGrace: Duration = VMInstance.defaultAgentAbsenceGrace
+
+    /// The clock the agent hub stamps away peers on, which the absence
+    /// watchdog's floor and deadlines share.
+    private static var agentAbsenceNow: CoreInstant { SystemScheduler().now }
 
     /// This VM's agent scopes as ``MissingAgentRule`` reads them: the macOS
     /// agent alone, or a Linux guest's session and system peers. Gathering
@@ -1185,7 +1202,7 @@ package final class VMInstance {
                     isConnected: context.vsock.control?.agentVersion != nil)
             ]
         case .linux:
-            let peers = agentHubSnapshot.peers
+            let peers = publishedAgentHubSnapshot.peers
             return [
                 AgentScopePresence(
                     scope: .login, lastSeenVersion: lastSeenAgentVersion,
@@ -1200,66 +1217,79 @@ package final class VMInstance {
     }
 
     /// The scopes the session warns about: ``MissingAgentRule``'s missing
-    /// ones once the watchdog has found them past the grace
-    /// (`agentExpectedButMissing`), none otherwise — what every surface names.
+    /// ones the absence watchdog has warned about — what every surface names.
     var warnedMissingAgents: [AgentScopePresence] {
-        guard sessionContext?.agentExpectedButMissing == true else { return [] }
-        return MissingAgentRule.missing(agentScopePresences)
+        guard let warned = sessionContext?.warnedAgentScopes, !warned.isEmpty else { return [] }
+        return MissingAgentRule.missing(agentScopePresences).filter { warned.contains($0.scope) }
     }
 
-    /// Reads ``MissingAgentRule`` against the agents now: with no scope
-    /// missing the warning clears, and the watchdog is armed while a scope
-    /// would warn past the grace — or, on Linux, while away peers wait to be
-    /// forgotten — and cancelled otherwise.
+    /// The guest began running under the absence watchdog — a start or a hot
+    /// resume: no absence counts from before now, so every pending allowance
+    /// restarts here.
+    func startAgentAbsenceWatch() {
+        guard let context = sessionContext else { return }
+        context.agentAbsenceFloor = Self.agentAbsenceNow
+        agentPresenceChanged()
+    }
+
+    /// Reads the agents again: a scope ``MissingAgentRule`` no longer finds
+    /// missing stops warning, the expired away peers the hub no longer lists
+    /// are dropped, and the absence watchdog's timer is armed for the earliest
+    /// deadline ``AgentAbsenceDeadlines`` gives — re-armed when that moves,
+    /// cancelled with nothing pending.
+    ///
+    /// The watchdog waits only while the VM is running (a paused guest isn't
+    /// executing, so its silence proves nothing), the session didn't boot into
+    /// Recovery (which never runs the agent), and no install is in progress.
+    /// The first call it can act on in a session with no floor yet — after a
+    /// restore — sets the floor (``startAgentAbsenceWatch()`` sets it
+    /// otherwise).
     func agentPresenceChanged() {
         guard let context = sessionContext else { return }
-        let missing = MissingAgentRule.missing(agentScopePresences)
-        if missing.isEmpty { context.agentExpectedButMissing = false }
-        let awaitsWarning = !missing.isEmpty && !context.agentExpectedButMissing
-        if awaitsWarning || unforgottenAwayOrder(context) != nil {
-            startAgentPostStartWatchdog()
-        } else {
-            cancelAgentPostStartWatchdog()
+        let missing = Set(MissingAgentRule.missing(agentScopePresences).map(\.scope))
+        if !context.warnedAgentScopes.isSubset(of: missing) { context.warnedAgentScopes.formIntersection(missing) }
+        let awayOrders = Set(publishedAgentHubSnapshot.away.map(\.order))
+        if !context.expiredAwayOrders.isSubset(of: awayOrders) {
+            context.expiredAwayOrders.formIntersection(awayOrders)
         }
+        guard !context.bootedIntoRecovery, status == .running, setupState == nil else {
+            context.cancelAgentAbsenceWatchdog()
+            return
+        }
+        if context.agentAbsenceFloor == nil { context.agentAbsenceFloor = Self.agentAbsenceNow }
+        guard let earliest = pendingAgentAbsences(context).map(\.deadline).min() else {
+            context.cancelAgentAbsenceWatchdog()
+            return
+        }
+        guard earliest != context.agentAbsenceTimerDeadline else { return }
+        armAgentAbsenceTimer(context, until: earliest)
     }
 
-    /// Starts a one-shot timer that, after `grace`, warns for each agent scope
-    /// ``MissingAgentRule`` still finds missing — flips `agentExpectedButMissing`
-    /// and logs the one notice that says so — and forgets the hub's away peers
-    /// it waited for, so their lines go.
-    ///
-    /// Armed by ``agentPresenceChanged()`` and after a start or a hot resume: a
-    /// no-op unless a scope would warn and none does yet, or away peers wait;
-    /// unless the VM is running (a paused guest isn't executing, so its silence
-    /// proves nothing), the session didn't boot into Recovery (which never runs
-    /// the agent), no install is in progress, and no watchdog is already armed.
-    /// A peer relaunching into an update is waited for through the rollback
-    /// window as well (``agentArrivalGrace(base:for:)``). Cancelled once nothing
-    /// is missing, by a pause, and by the session's teardown.
-    func startAgentPostStartWatchdog(grace: Duration = VMInstance.defaultAgentPostStartGrace) {
-        guard let context = sessionContext else { return }
-        guard !context.bootedIntoRecovery else { return }
-        guard status == .running else { return }
-        guard setupState == nil else { return }
-        guard context.agentPostStartTask == nil else { return }
-        let warnsAfterGrace =
-            !context.agentExpectedButMissing && !MissingAgentRule.missing(agentScopePresences).isEmpty
-        let away = unforgottenAwayOrder(context)
-        guard warnsAfterGrace || away != nil else { return }
-        let grace = Self.agentArrivalGrace(base: grace, for: agentHubSnapshot)
+    /// What the absence watchdog waits for in `context` now.
+    private func pendingAgentAbsences(_ context: VMSessionContext) -> [AgentAbsence] {
+        guard let floor = context.agentAbsenceFloor else { return [] }
+        return AgentAbsenceDeadlines.pending(
+            presences: agentScopePresences, away: publishedAgentHubSnapshot.away, floor: floor,
+            grace: agentAbsenceGrace, warned: context.warnedAgentScopes, expired: context.expiredAwayOrders)
+    }
 
-        context.agentPostStartGeneration &+= 1
-        let generation = context.agentPostStartGeneration
+    /// Arms the absence watchdog's one timer to fire at `deadline`, replacing
+    /// any armed one.
+    private func armAgentAbsenceTimer(_ context: VMSessionContext, until deadline: CoreInstant) {
+        context.cancelAgentAbsenceWatchdog()
+        let generation = context.agentAbsenceTimerGeneration
+        context.agentAbsenceTimerDeadline = deadline
+        let delay = Duration.nanoseconds(max(0, Self.agentAbsenceNow.duration(to: deadline).nanoseconds))
         Self.logger.log(
             .debug,
-            "Agent arrival watchdog armed for '\(self.name, privacy: .public)' (grace=\(grace, privacy: .public))"
+            "Agent absence watchdog armed for '\(self.name, privacy: .public)' (in \(delay, privacy: .public))"
         )
         // The context is captured weakly: a strong hold would keep this
-        // session's `VZVirtualMachine`, pipes and services alive for the whole
-        // grace period after a teardown.
-        context.agentPostStartTask = Task { [weak self, weak context] in
+        // session's `VZVirtualMachine`, pipes and services alive until the
+        // deadline after a teardown.
+        context.agentAbsenceTimer = Task { [weak self, weak context] in
             do {
-                try await Task.sleep(for: grace)
+                try await Task.sleep(for: delay)
             } catch {
                 return
             }
@@ -1268,22 +1298,15 @@ package final class VMInstance {
             // one armed here. Generation alone is an ABA test across sessions —
             // each context counts from zero — and identity alone is one within a
             // session, so either on its own lets a stale task fire
-            // `.expectedMissing` before a successor's grace elapsed and clear
-            // that successor's slot on the way out.
+            // `.expectedMissing` before a successor's deadline and clear that
+            // successor's slot on the way out.
             guard let self, let armed = context, armed === self.sessionContext,
-                armed.agentPostStartGeneration == generation
+                armed.agentAbsenceTimerGeneration == generation
             else { return }
-            armed.agentPostStartTask = nil
-            self.agentArrivalGraceElapsed(armed, warns: warnsAfterGrace, forgettingAwayThrough: away)
+            armed.agentAbsenceTimer = nil
+            armed.agentAbsenceTimerDeadline = nil
+            self.agentAbsenceDeadlinesPassed(armed)
         }
-    }
-
-    /// The newest away peer the watchdog has not forgotten yet; nil with none.
-    private func unforgottenAwayOrder(_ context: VMSessionContext) -> UInt64? {
-        guard let newest = agentHubSnapshot.away.first?.order, newest > context.awayForgottenThrough else {
-            return nil
-        }
-        return newest
     }
 
     #if DEBUG
@@ -1291,36 +1314,33 @@ package final class VMInstance {
     @ObservationIgnored var missingAgentNoticesForTesting: [String] = []
     #endif
 
-    /// How long the watchdog waits for `snapshot`'s away peers: `base`, and for
-    /// a peer relaunching into an update the rollback window on top, since the
-    /// guest reverts a new version that never connects only that late
-    /// (`UpdateRollbackPolicy`), and the previous version connects after that.
-    static func agentArrivalGrace(base: Duration, for snapshot: AgentHubSnapshot) -> Duration {
-        guard snapshot.away.contains(where: \.relaunching) else { return base }
-        return base + .seconds(UpdateRollbackPolicy.latestRevertSeconds)
-    }
-
-    /// A grace armed when a scope would warn (`warns`), and for the away peers
-    /// up to `order`, has passed: the away peers are forgotten, and every scope
-    /// the rule still finds missing warns. A scope that went missing after the
-    /// arm gets a grace of its own.
-    private func agentArrivalGraceElapsed(
-        _ armed: VMSessionContext, warns: Bool, forgettingAwayThrough order: UInt64?
-    ) {
-        if let order {
-            let forgotten = agentHubSnapshot.away.filter { $0.order <= order }.count
-            armed.awayForgottenThrough = max(armed.awayForgottenThrough, order)
-            agentHub.forgetAway(through: order)
-            Self.logger.log(
-                .info, "Stopped showing \(forgotten) away agent(s) of '\(self.name, privacy: .public)'")
+    /// The timer reached a deadline: every away peer past its deadline expires,
+    /// so its line goes; every scope past its deadline warns, in one notice;
+    /// and the agents are read again for what remains.
+    private func agentAbsenceDeadlinesPassed(_ armed: VMSessionContext) {
+        let now = Self.agentAbsenceNow
+        var expired: Set<UInt64> = []
+        var warned: Set<AgentScopePresence.Scope> = []
+        for absence in pendingAgentAbsences(armed) where absence.deadline <= now {
+            switch absence.subject {
+            case .away(let order): expired.insert(order)
+            case .scope(let scope): warned.insert(scope)
+            }
         }
-        let missing = MissingAgentRule.missing(agentScopePresences)
-        if warns, !missing.isEmpty, !armed.agentExpectedButMissing { warnAgentsMissing(missing, armed) }
+        if !expired.isEmpty {
+            armed.expiredAwayOrders.formUnion(expired)
+            Self.logger.log(
+                .info, "Stopped showing \(expired.count) away agent(s) of '\(self.name, privacy: .public)'")
+        }
+        if !warned.isEmpty {
+            warnAgentsMissing(
+                MissingAgentRule.missing(agentScopePresences).filter { warned.contains($0.scope) }, armed)
+        }
         agentPresenceChanged()
     }
 
-    /// Warns for `missing`: the status reads "didn't reconnect", and the log
-    /// says so once, in the same words for every scope.
+    /// Warns for `missing`, the newly warned scopes: the status reads "didn't
+    /// reconnect", and the log says so once, in the same words for every scope.
     private func warnAgentsMissing(_ missing: [AgentScopePresence], _ armed: VMSessionContext) {
         let named = missing.map { presence in
             let scope = presence.scope == .system ? "system" : "login"
@@ -1333,10 +1353,10 @@ package final class VMInstance {
         missingAgentNoticesForTesting.append(notice)
         #endif
         // Set first: it is also what ``reportedGuestOSVersion`` reads
-        // as unknown for the rest of the session, whether or not the
+        // as unknown for the rest of the absence, whether or not the
         // write below lands — and a write that fails is attempted
-        // again by the next session's watchdog.
-        armed.agentExpectedButMissing = true
+        // again by the next absence's warning.
+        armed.warnedAgentScopes.formUnion(missing.map(\.scope))
         // A login agent that never showed up this session outranks the nudge
         // the user silenced — reset the dismissal so a future `.waiting`
         // surfaces normally. The reported guest OS version goes with it:
@@ -1353,19 +1373,19 @@ package final class VMInstance {
         }
     }
 
-    /// Cancels the agent-arrival watchdog if armed.
+    /// Cancels the absence watchdog's timer if armed.
     ///
-    /// Does not clear `agentExpectedButMissing` — callers do that explicitly.
-    package func cancelAgentPostStartWatchdog() {
-        sessionContext?.cancelAgentPostStartWatchdog()
+    /// Leaves the warned scopes and expired away peers as they are.
+    package func cancelAgentAbsenceWatchdog() {
+        sessionContext?.cancelAgentAbsenceWatchdog()
     }
 
     #if DEBUG
-    /// The in-flight post-start watchdog task, or `nil` when none is armed.
+    /// The absence watchdog's in-flight timer, or `nil` when none is armed.
     ///
     /// Test-only seam: tests await its completion rather than polling
     /// `agentExpectedButMissing`.
-    var agentPostStartTaskForTesting: Task<Void, Never>? { sessionContext?.agentPostStartTask }
+    var agentAbsenceTimerForTesting: Task<Void, Never>? { sessionContext?.agentAbsenceTimer }
     #endif
 
     /// Reacts to a `Hello` whose `agent_version` is non-empty.

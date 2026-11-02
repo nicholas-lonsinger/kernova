@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaTestSupport
 import KernovaWire
@@ -137,17 +138,32 @@ struct VMInstanceAgentHubTests {
             versionLabel: version, standing: standing, isResponsive: true)
     }
 
-    /// The snapshot of `peers` connected and `away` gone, the newest gone first.
+    /// The snapshot of `peers` connected and `away` gone, the newest gone first, each gone now.
     private static func snapshot(
         _ peers: [PeerSummary], away: [(PeerSummary, relaunching: Bool)] = []
     ) -> AgentHubSnapshot {
         let count = UInt64(away.count)
-        return AgentHubSnapshot(
-            peers: peers, features: FeatureStatus.merge([]),
+        return snapshot(
+            peers,
             away: away.enumerated().map {
-                AwayPeer(summary: $0.element.0, relaunching: $0.element.relaunching, order: count - UInt64($0.offset))
+                Self.away($0.element.0, relaunching: $0.element.relaunching, order: count - UInt64($0.offset))
             })
     }
+
+    /// The snapshot of `peers` connected and `away` gone.
+    private static func snapshot(_ peers: [PeerSummary], away: [AwayPeer]) -> AgentHubSnapshot {
+        AgentHubSnapshot(peers: peers, features: FeatureStatus.merge([]), away: away)
+    }
+
+    /// `peer`, gone at `since`.
+    private static func away(
+        _ peer: PeerSummary, relaunching: Bool = false, order: UInt64, since: CoreInstant = SystemScheduler().now
+    ) -> AwayPeer {
+        AwayPeer(summary: peer, relaunching: relaunching, order: order, since: since)
+    }
+
+    /// The rollback window a peer relaunching into an update is waited for on top of the grace.
+    private static let rollback: Duration = .seconds(UpdateRollbackPolicy.latestRevertSeconds)
 
     /// A running Linux instance with its hub attached, whose configuration remembers `session` and `system`
     /// agent versions.
@@ -178,18 +194,18 @@ struct VMInstanceAgentHubTests {
     func neverHadAnAgent() {
         let instance = Self.linuxInstance()
         #expect(instance.agentPresentation?.status == .waiting)
-        instance.startAgentPostStartWatchdog()
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("Row 4, Linux: a remembered system peer missing past the grace warns, with the notice saying so once")
     func systemPeerEscalates() async {
         let instance = Self.linuxInstance(system: "1.0")
-        instance.startAgentPostStartWatchdog()
-        #expect(instance.agentPostStartTaskForTesting != nil)
-        instance.cancelAgentPostStartWatchdog()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
-        await instance.agentPostStartTaskForTesting?.value
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting != nil)
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent, last seen 1.0") == true)
@@ -205,8 +221,9 @@ struct VMInstanceAgentHubTests {
     @Test("(c) Both agents missing past the grace: the popover and `kernova info` name each")
     func bothMissingNamedEverywhere() async {
         let instance = Self.linuxInstance(session: "0.9", system: "1.0")
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
-        await instance.agentPostStartTaskForTesting?.value
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
         #expect(
             instance.agentPresentation?.hub?.peers == [
@@ -226,10 +243,10 @@ struct VMInstanceAgentHubTests {
         instance.publishAgentHubSnapshotForTesting(
             Self.snapshot([Self.peer(2, role: .systemPeer, standing: .current)]))
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
-        #expect(instance.agentPostStartTaskForTesting != nil)
-        instance.cancelAgentPostStartWatchdog()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
-        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentAbsenceTimerForTesting != nil)
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9") == true)
@@ -248,7 +265,7 @@ struct VMInstanceAgentHubTests {
                 Self.peer(1, version: "0.9", standing: .current), Self.peer(2, role: .systemPeer, standing: .current),
             ]))
         #expect(instance.agentPresentation?.status == .current(version: "0.9"))
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("Row 3, Linux: a session agent that connected this session never warns once its user logs out")
@@ -259,9 +276,9 @@ struct VMInstanceAgentHubTests {
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([session, system]))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([system], away: [(session, false)]))
         // Armed only to forget the away line.
-        instance.cancelAgentPostStartWatchdog()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
-        await instance.agentPostStartTaskForTesting?.value
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.agentExpectedButMissing == false)
@@ -291,7 +308,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(system, false), (session, false)]))
         #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
-        #expect(instance.agentPostStartTaskForTesting != nil)
+        #expect(instance.agentAbsenceTimerForTesting != nil)
     }
 
     @Test("A guest rebooting reads reconnecting until its agents return, then current, the watchdog disarmed")
@@ -303,28 +320,185 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(3, standing: .current)]))
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
-    @Test("A peer relaunching into an update reads Updating… through the relaunch, waited for past the rollback")
+    @Test("A peer relaunching into an update reads Updating… through the relaunch")
     func updateRelaunchKeepsUpdating() {
         let instance = Self.linuxInstance()
         let updating = Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([updating]))
         #expect(instance.agentPresentation?.status == .updating(installed: "0.9", bundled: "1.0"))
-        let relaunching = Self.snapshot([], away: [(updating, true)])
-        instance.publishAgentHubSnapshotForTesting(relaunching)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(updating, true)]))
         #expect(instance.agentPresentation?.status == .updating(installed: "0.9", bundled: "1.0"))
         #expect(instance.agentPresentation?.hub?.peers.map(\.state) == ["Updating\u{2026}"])
-        #expect(instance.agentPostStartTaskForTesting != nil)
-        #expect(
-            VMInstance.agentArrivalGrace(base: .seconds(120), for: relaunching)
-                == .seconds(120 + UpdateRollbackPolicy.latestRevertSeconds))
-        #expect(
-            VMInstance.agentArrivalGrace(base: .seconds(120), for: Self.snapshot([], away: [(updating, false)]))
-                == .seconds(120))
+        #expect(instance.agentAbsenceTimerForTesting != nil)
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(2, standing: .current)]))
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+    }
+
+    // MARK: Each absence's own allowance
+
+    @Test("A system peer relaunching into an update is waited for through its rollback, past the Start's grace")
+    func relaunchOutlastsTheStartGrace() throws {
+        let instance = Self.linuxInstance(session: "0.9", system: "0.9")
+        let grace = instance.agentAbsenceGrace
+        instance.startAgentAbsenceWatch()
+        let context = try #require(instance.sessionContext)
+        let floor = try #require(context.agentAbsenceFloor)
+        // Start: the session agent has not connected yet, so the login scope is waited for from the floor.
+        #expect(context.agentAbsenceTimerDeadline == floor + grace)
+
+        // The system peer connects, then leaves relaunching into an update.
+        let updating = Self.peer(
+            2, role: .systemPeer, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([updating]))
+        #expect(context.agentAbsenceTimerDeadline == floor + grace)
+        let relaunching = Self.away(updating, relaunching: true, order: 1)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [relaunching]))
+        #expect(context.agentAbsenceTimerDeadline == floor + grace)
+
+        // The session peer connects: nothing waits for the floor's grace any more, so nothing warns then; the
+        // timer waits for the system peer's own rollback.
+        let session = Self.peer(1, version: "0.9", standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session], away: [relaunching]))
+        #expect(context.agentAbsenceTimerDeadline == relaunching.since + grace + Self.rollback)
+        #expect(relaunching.since + grace + Self.rollback > floor + grace)
+        #expect(instance.warnedMissingAgents.isEmpty)
+        #expect(instance.agentPresentation?.hub?.peers.map(\.state) == ["Up to date", "Updating\u{2026}"])
+
+        // The rollback brings the system peer back: the timer is cancelled, and nothing warned.
+        instance.publishAgentHubSnapshotForTesting(
+            Self.snapshot([Self.peer(3, role: .systemPeer, version: "0.9", standing: .current), session]))
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
+        #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("A scope that goes missing after another armed the timer warns only at its own deadline")
+    func laterScopeGetsItsOwnDeadline() async throws {
+        let instance = Self.linuxInstance(session: "0.9", system: "1.0")
+        let grace = Duration.milliseconds(50)
+        instance.agentAbsenceGrace = grace
+        instance.startAgentAbsenceWatch()
+        let context = try #require(instance.sessionContext)
+        let floor = try #require(context.agentAbsenceFloor)
+        let system = Self.peer(2, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([system]))
+        // The system peer leaves well after the floor, and not into an update.
+        let left = Self.away(system, order: 1, since: floor + .seconds(3_600))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [left]))
+        #expect(context.agentAbsenceTimerDeadline == floor + grace)
+        defer { instance.cancelAgentAbsenceWatchdog() }
+
+        // The floor's deadline warns the login scope alone; the system scope waits for its own.
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent") == true)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent") == false)
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
+        #expect(context.agentAbsenceTimerDeadline == left.since + grace)
+
+        // A later absence of the system peer whose own deadline has passed warns it, in a notice of its own.
+        let leftAgain = Self.away(
+            system, order: 2, since: SystemScheduler().now.advanced(by: CoreDuration(.zero - grace)))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [leftAgain]))
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.missingAgentNoticesForTesting.count == 2)
+        #expect(instance.missingAgentNoticesForTesting.last?.contains("system agent") == true)
+        #expect(instance.missingAgentNoticesForTesting.last?.contains("login agent") == false)
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.login, .system])
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+    }
+
+    @Test("Once one scope has warned, another that goes missing is not shown as warned before its own deadline")
+    func warningStaysPerScope() async throws {
+        let instance = Self.linuxInstance(session: "0.9", system: "1.0")
+        let grace = Duration.milliseconds(50)
+        instance.agentAbsenceGrace = grace
+        let system = Self.peer(2, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([system]))
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
+        defer { instance.cancelAgentAbsenceWatchdog() }
+
+        instance.agentAbsenceGrace = .seconds(60)
+        let left = Self.away(system, order: 1)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [left]))
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
+        #expect(
+            instance.agentPresentation?.hub?.peers == [
+                .init(title: "System service", state: "Reconnecting\u{2026}"),
+                .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
+            ])
+        #expect(instance.sessionContext?.agentAbsenceTimerDeadline == left.since + .seconds(60))
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+    }
+
+    @Test("Each away line expires at its own deadline: a relaunching peer that left first outlives a plain one")
+    func awayLinesExpireSeparately() async throws {
+        let instance = Self.linuxInstance()
+        let grace = Duration.milliseconds(100)
+        instance.agentAbsenceGrace = grace
+        var alice = Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
+        alice.userName = "alice"
+        var bob = Self.peer(2, standing: .current)
+        bob.userName = "bob"
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([bob, alice]))
+        instance.startAgentAbsenceWatch()
+        let aliceAway = Self.away(alice, relaunching: true, order: 1)
+        let bobAway = Self.away(bob, order: 2)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [bobAway, aliceAway]))
+        let context = try #require(instance.sessionContext)
+        #expect(context.agentAbsenceTimerDeadline == bobAway.since + grace)
+        defer { instance.cancelAgentAbsenceWatchdog() }
+
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.agentHubSnapshot.away == [aliceAway])
+        #expect(
+            instance.agentPresentation?.hub?.peers == [.init(title: "Session agent — alice", state: "Updating\u{2026}")]
+        )
+        #expect(context.agentAbsenceTimerDeadline == aliceAway.since + grace + Self.rollback)
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
+
+        // The hub no longer listing the expired peer drops it from what the session remembers.
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [aliceAway]))
+        #expect(context.expiredAwayOrders.isEmpty)
+    }
+
+    @Test("A resume restarts every pending allowance from the resume")
+    func resumeRestartsAllowances() async throws {
+        let instance = Self.linuxInstance(session: "0.9", system: "1.0")
+        let grace = Duration.seconds(60)
+        instance.agentAbsenceGrace = grace
+        instance.startAgentAbsenceWatch()
+        let context = try #require(instance.sessionContext)
+        let floor = try #require(context.agentAbsenceFloor)
+        let system = Self.peer(2, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([system]))
+        let left = Self.away(system, order: 1)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [left]))
+        #expect(context.agentAbsenceTimerDeadline == floor + grace)
+        defer { instance.cancelAgentAbsenceWatchdog() }
+
+        // A pause cancels the timer, as the pause operation does.
+        let sessionID = try #require(instance.liveSessionID)
+        instance.activity.placeForTesting(.livePaused(sessionID: sessionID))
+        instance.cancelAgentAbsenceWatchdog()
+        instance.agentPresenceChanged()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+
+        let beforeResume = SystemScheduler().now
+        try await instance.activity.perform(.resuming) { _ in .rest(.live(.running), ()) }
+        let resumed = try #require(context.agentAbsenceFloor)
+        #expect(resumed >= beforeResume)
+        let pending = AgentAbsenceDeadlines.pending(
+            presences: instance.agentScopePresences, away: [left], floor: resumed, grace: grace, warned: [],
+            expired: [])
+        #expect(Set(pending.map(\.subject)) == [.scope(.login), .scope(.system), .away(order: 1)])
+        #expect(pending.allSatisfy { $0.deadline == resumed + grace })
+        #expect(context.agentAbsenceTimerDeadline == resumed + grace)
     }
 
     @Test("Rows 3 and 4 together: after a shutdown only the system peer warns, and its return clears it")
@@ -334,9 +508,9 @@ struct VMInstanceAgentHubTests {
         let session = Self.peer(1, standing: .current)
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([session, system]))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(system, false), (session, false)]))
-        instance.cancelAgentPostStartWatchdog()
-        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
-        await instance.agentPostStartTaskForTesting?.value
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent") == true)

@@ -70,6 +70,7 @@ public final class AgentHub: Sendable {
     /// The hub's queue: serial, every input to its state runs on it.
     package let queue = DispatchQueue(label: "app.kernova.agent-hub")
     private let connector: any HostConnectionMaking
+    private let scheduler: any RuntimeScheduler
     private let template: Locked<HostConfigurationTemplate>
     private let handles = Locked<UInt64>(0)
     private let state = Locked(AgentHubState())
@@ -88,16 +89,18 @@ public final class AgentHub: Sendable {
         self.init(
             connector: HostConnectionRuntime(
                 claim: claim, scheduler: scheduler, payloadSource: payloads, logger: logger),
-            policy: policy, payloads: payloads, logger: logger, publishingOn: publishQueue, publish)
+            policy: policy, payloads: payloads, scheduler: scheduler, logger: logger, publishingOn: publishQueue,
+            publish)
     }
 
-    /// A hub whose connections `connector` builds.
+    /// A hub whose connections `connector` builds, stamping when each peer goes away on `scheduler`'s clock.
     public init(
         connector: any HostConnectionMaking, policy: PolicySnapshot, payloads: any BundledPayloadProvider,
-        logger: KernovaLogger, publishingOn publishQueue: DispatchQueue,
-        _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
+        scheduler: any RuntimeScheduler = SystemScheduler(), logger: KernovaLogger,
+        publishingOn publishQueue: DispatchQueue, _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
     ) {
         self.connector = connector
+        self.scheduler = scheduler
         self.logger = logger
         template = Locked(HostConfigurationTemplate(policy: policy))
         publisher = SnapshotPublisher(queue: publishQueue, deliver: publish)
@@ -152,15 +155,6 @@ public final class AgentHub: Sendable {
         template.withLock { template in
             template.policy = policy
             queue.async { [self] in broadcast(.setPolicy(policy)) { _ in } }
-        }
-    }
-
-    /// Forgets the away peers that went away at or before `order` (``AwayPeer/order``): the host stopped
-    /// waiting for them.
-    public func forgetAway(through order: UInt64) {
-        queue.async { [self] in
-            state.withLock { $0.forgetAway(through: order) }
-            publishIfChanged()
         }
     }
 
@@ -261,7 +255,7 @@ public final class AgentHub: Sendable {
                     .notice,
                     "The \(Self.name(record), privacy: .public) left: \(String(describing: closure), privacy: .public)")
             }
-            state.withLock { $0.closed(handle) }
+            state.withLock { [now = scheduler.now] in $0.closed(handle, at: now) }
         case .log(let delivery):
             // Records change no peer state, so the snapshot is not rebuilt.
             return republish(delivery, from: handle)

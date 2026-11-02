@@ -105,21 +105,16 @@ struct AgentHubState: Sendable {
         away[record.awayKey] = nil
     }
 
-    /// The connection ended: it leaves the hub. A peer the snapshot showed is remembered as away while the
-    /// transport that accepted it is attached, with the standing it left with.
-    mutating func closed(_ handle: PeerHandle) {
+    /// The connection ended `at` that instant: it leaves the hub. A peer the snapshot showed is remembered as
+    /// away while the transport that accepted it is attached, with the standing it left with.
+    mutating func closed(_ handle: PeerHandle, at instant: CoreInstant) {
         connections[handle] = nil
         let accepted = connectionAttachments.removeValue(forKey: handle)
         guard let record = peers.removeValue(forKey: handle) else { return }
         guard attachment != nil, accepted == attachmentGeneration, record.features != nil else { return }
         nextAwayOrder += 1
         away[record.awayKey] = AwayPeer(
-            summary: summary(record), relaunching: record.stagedUpdate, order: nextAwayOrder)
-    }
-
-    /// Forgets the away peers that went away at or before `order`.
-    mutating func forgetAway(through order: UInt64) {
-        away = away.filter { $0.value.order > order }
+            summary: summary(record), relaunching: record.stagedUpdate, order: nextAwayOrder, since: instant)
     }
 
     /// Forgets everything an attachment saw: the next one serves a new session of the guest.

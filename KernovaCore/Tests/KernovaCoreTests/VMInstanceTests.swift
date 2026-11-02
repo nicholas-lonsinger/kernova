@@ -1,6 +1,7 @@
 import Foundation
 import KernovaCommandModel
 import KernovaAgentHost
+import KernovaAgentRuntime
 import KernovaKit
 import KernovaTestSupport
 import SwiftProtobuf
@@ -977,7 +978,7 @@ struct VMInstanceTests {
             $0.networkMode = .bridged
             $0.lastSeenAgentVersion = "0.9.2"
         }
-        defer { instance.cancelAgentPostStartWatchdog() }
+        defer { instance.cancelAgentAbsenceWatchdog() }
         if row.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
         let observer = MockNetworkLinkObserver()
 
@@ -1004,7 +1005,7 @@ struct VMInstanceTests {
 
         #expect(instance.status == .running)
         #expect(observer.isObserving == row.activatesNetwork)
-        #expect((instance.agentPostStartTaskForTesting != nil) == row.armsWatchdog)
+        #expect((instance.agentAbsenceTimerForTesting != nil) == row.armsWatchdog)
     }
 
     // MARK: - Session Events
@@ -1037,9 +1038,9 @@ struct VMInstanceTests {
         #expect(device.currentPlan == .nat)
     }
 
-    // MARK: - Agent Post-Start Watchdog
+    // MARK: - Agent Absence Watchdog
     //
-    // The watchdog flips `agentExpectedButMissing` after a grace period when:
+    // The watchdog warns (`agentExpectedButMissing`) after a grace period when:
     //   - The guest is macOS,
     //   - The VM is `.running` (a frozen guest can't answer),
     //   - `lastSeenAgentVersion` is set (so we have a baseline expectation),
@@ -1104,12 +1105,46 @@ struct VMInstanceTests {
     @Test("Cancelling the watchdog before grace prevents firing")
     func watchdogCancelledStaysQuiet() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        let watchdog = try #require(instance.agentPostStartTaskForTesting)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        let watchdog = try #require(instance.agentAbsenceTimerForTesting)
 
-        instance.cancelAgentPostStartWatchdog()
+        instance.cancelAgentAbsenceWatchdog()
         await watchdog.value
         #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("macOS: an agent that never connects this session warns once, at the floor plus the grace")
+    func macOSNeverConnectedWarnsAtFloorPlusGrace() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        let context = try #require(instance.sessionContext)
+        let floor = try #require(context.agentAbsenceFloor)
+        #expect(context.agentAbsenceTimerDeadline == floor + Self.testWatchdogGrace)
+
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(SystemScheduler().now >= floor + Self.testWatchdogGrace)
+        #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9.2") == true)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+    }
+
+    @Test("macOS: an agent that connected this session and is then lost never warns")
+    func macOSConnectedThenLostNeverWarns() {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting != nil)
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        // The channel goes away, and the guest is resumed later: nothing waits.
+        instance.agentPresenceChanged()
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
     }
 
     @Test("Watchdog is a no-op when lastSeenAgentVersion is nil")
@@ -1121,8 +1156,10 @@ struct VMInstanceTests {
             name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("A Linux session agent seen before arms the watchdog on the same rule as the macOS agent")
@@ -1132,9 +1169,11 @@ struct VMInstanceTests {
         ) { $0.lastSeenAgentVersion = "1.0" }
         instance.beginSessionContextForTesting()
 
-        instance.startAgentPostStartWatchdog(grace: .seconds(60))
-        #expect(instance.agentPostStartTaskForTesting != nil)
-        instance.cancelAgentPostStartWatchdog()
+        instance.agentAbsenceGrace = .seconds(60)
+
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting != nil)
+        instance.cancelAgentAbsenceWatchdog()
     }
 
     @Test("Watchdog is a no-op for the whole of a recovery-booted session")
@@ -1148,8 +1187,10 @@ struct VMInstanceTests {
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)",
             bootedIntoRecovery: true)
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("Each boot attempt's context carries its own recovery-boot flag")
@@ -1176,8 +1217,10 @@ struct VMInstanceTests {
         let setupState = GuestSetupState.macOSInstall(hasDownloadStep: true)
         let instance = makeMacOSInstanceWithAgentInstalled(setupState: setupState)
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test(
@@ -1196,8 +1239,10 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled()
         instance.activity.placeForTesting(fixture.phase)
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("Watchdog is a no-op while the agent is connected")
@@ -1223,19 +1268,25 @@ struct VMInstanceTests {
         try guest.send(makeGuestHelloFrame(agentVersion: "0.9.2"))
         try await waitForChange { control.agentVersion != nil }
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
-    @Test("startAgentPostStartWatchdog is idempotent when already armed")
-    func watchdogIdempotent() async throws {
+    @Test("Reading the agents again with nothing changed keeps the armed timer and its deadline")
+    func watchdogReevaluationKeepsTheTimer() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        defer { instance.cancelAgentPostStartWatchdog() }
-        instance.startAgentPostStartWatchdog(grace: .seconds(30))
-        let armed = try #require(instance.agentPostStartTaskForTesting)
+        defer { instance.cancelAgentAbsenceWatchdog() }
+        instance.agentAbsenceGrace = .seconds(30)
+        instance.startAgentAbsenceWatch()
+        let armed = try #require(instance.agentAbsenceTimerForTesting)
+        let deadline = instance.sessionContext?.agentAbsenceTimerDeadline
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == armed)
+        instance.agentPresenceChanged()
+        instance.agentPresenceChanged()
+        #expect(instance.agentAbsenceTimerForTesting == armed)
+        #expect(instance.sessionContext?.agentAbsenceTimerDeadline == deadline)
     }
 
     @Test("Watchdog firing also clears a previously-dismissed install nudge and persists the change")
@@ -1251,9 +1302,11 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, agentInstallNudgeDismissed: true)
         defer { withExtendedLifetime(library) {} }
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
 
-        await instance.agentPostStartTaskForTesting?.value
+        instance.startAgentAbsenceWatch()
+
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.hostState.agentInstallNudgeDismissed == false)
         #expect(storage.saveHostStateCallCount == 1)
@@ -1272,9 +1325,11 @@ struct VMInstanceTests {
             lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
         defer { withExtendedLifetime(library) {} }
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
 
-        await instance.agentPostStartTaskForTesting?.value
+        instance.startAgentAbsenceWatch()
+
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == nil)
         #expect(storage.saveConfigurationCallCount == 1)
@@ -1288,9 +1343,11 @@ struct VMInstanceTests {
         // Default: agentInstallNudgeDismissed == false
         defer { withExtendedLifetime(library) {} }
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
 
-        await instance.agentPostStartTaskForTesting?.value
+        instance.startAgentAbsenceWatch()
+
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(storage.saveConfigurationCallCount == 0)
@@ -1310,9 +1367,11 @@ struct VMInstanceTests {
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let held = instance.settings
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
 
-        await instance.agentPostStartTaskForTesting?.value
+        instance.startAgentAbsenceWatch()
+
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.settings == held)
         #expect(storage.bundles[instance.bundleURL] == held.configuration)
@@ -1340,8 +1399,9 @@ struct VMInstanceTests {
         let hostStatePersistsAfterHello = storage.saveHostStateCallCount
 
         // The agent goes away mid-session and never comes back.
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.hostState.agentInstallNudgeDismissed == true)
@@ -1367,19 +1427,21 @@ struct VMInstanceTests {
     func sessionEndResetsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
         // Drive the flag manually to simulate the watchdog having fired.
-        instance.sessionContext?.agentExpectedButMissing = true
-        instance.startAgentPostStartWatchdog(grace: .seconds(60))
+        instance.sessionContext?.warnedAgentScopes = [.login]
+        instance.agentAbsenceGrace = .seconds(60)
+        instance.startAgentAbsenceWatch()
         let context = try #require(instance.sessionContext)
 
         instance.handleSessionEvent(.guestDidStop)
 
-        #expect(context.agentExpectedButMissing == false)
+        #expect(context.warnedAgentScopes.isEmpty)
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        await instance.agentPostStartTaskForTesting?.value
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentExpectedButMissing == true)
     }
 
@@ -1395,8 +1457,9 @@ struct VMInstanceTests {
         // deallocates and the task's weak capture answers the question before
         // the identity check is reached, which is not what is under test.
         let staleContext = instance.sessionContext
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        let stale = instance.agentPostStartTaskForTesting
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        let stale = instance.agentAbsenceTimerForTesting
         #expect(stale != nil)
 
         // Teardown, then a fresh session arming its own watchdog on a grace
@@ -1404,8 +1467,9 @@ struct VMInstanceTests {
         instance.handleSessionEvent(.guestDidStop)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        instance.startAgentPostStartWatchdog(grace: .seconds(60))
-        #expect(instance.agentPostStartTaskForTesting != nil)
+        instance.agentAbsenceGrace = .seconds(60)
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting != nil)
 
         // The stale task's sleep elapses here; it must disown itself.
         await stale?.value
@@ -1414,8 +1478,8 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status != .expectedMissing(expected: "0.9.2"))
         // And it must not have cleared the successor's slot on the way out —
         // an emptied slot is what would let the next arm site double-arm.
-        #expect(instance.agentPostStartTaskForTesting != nil)
-        instance.cancelAgentPostStartWatchdog()
+        #expect(instance.agentAbsenceTimerForTesting != nil)
+        instance.cancelAgentAbsenceWatchdog()
         #expect(staleContext !== instance.sessionContext)
     }
 
@@ -1424,7 +1488,7 @@ struct VMInstanceTests {
         let library = makeWiredLibrary()
         let instance = makeMacOSInstanceWithAgentInstalled(in: library)
         // Flag alone but version present → .expectedMissing
-        instance.sessionContext?.agentExpectedButMissing = true
+        instance.sessionContext?.warnedAgentScopes = [.login]
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
 
         // Wipe the persisted version: the synthesizer guard falls back to
@@ -1610,17 +1674,19 @@ struct VMInstanceTests {
     @Test("recordObservedAgentInfo cancels the watchdog and clears expected-missing, for the rest of the session")
     func recordObservedClearsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: .seconds(10))
-        #expect(instance.agentPostStartTaskForTesting != nil)
-        instance.sessionContext?.agentExpectedButMissing = true
+        instance.agentAbsenceGrace = .seconds(10)
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting != nil)
+        instance.sessionContext?.warnedAgentScopes = [.login]
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
         #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
         // The agent connected this session, so nothing arms again.
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
     @Test("Row 1, macOS: an agent never seen arms nothing and the VM reads not installed")
@@ -1628,18 +1694,20 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(
             name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
         #expect(instance.agentPresentation?.status == .waiting)
     }
 
     @Test("Row 2, macOS: an agent seen before but not this session warns after the grace, and the notice says so once")
     func macOSRowTwoWarnsWithItsNotice() async {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
         #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
-        await instance.agentPostStartTaskForTesting?.value
+        await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9.2") == true)

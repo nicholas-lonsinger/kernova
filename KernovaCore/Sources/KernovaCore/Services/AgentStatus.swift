@@ -45,7 +45,7 @@ package enum AgentStatus: Equatable, Sendable {
     /// then went away.
     ///
     /// Resolves to `.current` once a handshake completes, or to
-    /// `.expectedMissing` if the agent-arrival watchdog fires. Synthesized only
+    /// `.expectedMissing` if the agent absence watchdog fires. Synthesized only
     /// at `VMInstance.agentPresentation`; `VsockControlService` never returns it.
     case connecting(expected: String)
 
