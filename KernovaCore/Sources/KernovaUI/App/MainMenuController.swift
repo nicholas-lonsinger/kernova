@@ -317,6 +317,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // State…") is the one surface for that action, and two enabled items
         // must not alias one action under two names.
         case #selector(AppDelegate.forceStopVM(_:)): .forceStop
+        case #selector(AppDelegate.restartVM(_:)): .restart
         case #selector(AppDelegate.saveVM(_:)): .suspend
         case #selector(AppDelegate.takeSnapshot(_:)): .takeSnapshot
         case #selector(AppDelegate.renameVM(_:)): .rename
@@ -543,6 +544,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         vmMenu.addItem(
             withTitle: "Force Stop…", action: #selector(AppDelegate.forceStopVM(_:)),
             keyEquivalent: "")
+        vmMenu.addItem(
+            withTitle: "Restart", action: #selector(AppDelegate.restartVM(_:)), keyEquivalent: "")
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(
             withTitle: "Suspend", action: #selector(AppDelegate.saveVM(_:)), keyEquivalent: "s")

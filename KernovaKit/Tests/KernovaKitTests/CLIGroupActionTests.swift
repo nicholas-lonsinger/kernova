@@ -45,7 +45,7 @@ struct CLIGroupActionTests {
 
     // MARK: - Parsing
 
-    @Test("start, suspend and stop take a group in place of a VM, and send one group action")
+    @Test("start, suspend, stop and restart take a group in place of a VM, and send one group action")
     func groupTargetsParse() throws {
         let cases: [([String], VMCommandRequest.Verb)] = [
             (["start", "--folder", "Lab"], .groupAction(.start, group: VMGroupReference(.folder, named: "Lab"))),
@@ -54,6 +54,10 @@ struct CLIGroupActionTests {
                 .groupAction(.suspend, group: VMGroupReference(.smartGroup, named: "Linux Lab"))
             ),
             (["stop", "--folder", "Lab"], .groupAction(.stop, group: VMGroupReference(.folder, named: "Lab"))),
+            (
+                ["restart", "--smart-group", "Linux Lab"],
+                .groupAction(.restart, group: VMGroupReference(.smartGroup, named: "Linux Lab"))
+            ),
         ]
         for (line, expected) in cases {
             let command = try #require(try parse(line) as? any VerbCommand)
@@ -63,7 +67,7 @@ struct CLIGroupActionTests {
 
     @Test("A group is mutually exclusive with <vm>, and one of the two is required")
     func groupAndVMAreExclusive() throws {
-        for verb in ["start", "suspend", "stop"] {
+        for verb in ["start", "suspend", "stop", "restart"] {
             #expect(throws: (any Error).self, "\(verb)") { try parse([verb, "Alpha", "--folder", "Lab"]) }
             #expect(throws: (any Error).self, "\(verb)") { try parse([verb]) }
             #expect(throws: (any Error).self, "\(verb)") {
@@ -81,6 +85,8 @@ struct CLIGroupActionTests {
             ["stop", "--folder", "Lab", "--force"],
             ["stop", "--folder", "Lab", "--timeout", "5"],
             ["suspend", "--folder", "Lab", "--yes"],
+            ["restart", "--folder", "Lab", "--timeout", "5"],
+            ["restart", "--folder", "Lab", "--yes"],
         ]
         for line in refused {
             #expect(throws: (any Error).self, "\(line)") { try parse(line) }
@@ -170,9 +176,16 @@ struct CLIGroupActionTests {
                 + #""ipAddress":{"address":"192.168.64.4","state":"observed"},"name":"Web","status":"stopped"}}]}"#)
     }
 
-    @Test("Stop and suspend word what they did in their own terms")
+    @Test("Stop, suspend and restart word what they did in their own terms")
     func stopAndSuspendLines() {
         let vm = summary("Web")
+        #expect(VMGroupActionResult(vm: vm, outcome: .done(verb: .restart)).line(for: .restart) == "Restarted Web")
+        #expect(
+            VMGroupActionResult(
+                vm: vm,
+                outcome: .failed(
+                    error: .operationFailed(verb: .restart, title: nil, message: "Blocked.", recovery: nil))
+            ).line(for: .restart) == "Couldn\u{2019}t restart Web: Blocked.")
         #expect(VMGroupActionResult(vm: vm, outcome: .done(verb: .stop)).line(for: .stop) == "Asked Web to shut down")
         #expect(VMGroupActionResult(vm: vm, outcome: .done(verb: .suspend)).line(for: .suspend) == "Suspended Web")
         let paused = VMSummary(

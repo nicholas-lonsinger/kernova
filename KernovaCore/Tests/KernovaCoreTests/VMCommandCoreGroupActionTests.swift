@@ -97,6 +97,10 @@ struct VMCommandCoreGroupActionTests {
         #expect(acts(.stop) == ["Running"])
         #expect(catalog.isAvailable(.stop, on: library.paused))
         #expect(catalog.isAvailable(.discardSavedState, on: library.suspended))
+        // Restart takes exactly what Stop takes: a paused guest is skipped
+        // as Stop All skips it, and a suspended one has no guest to restart.
+        #expect(acts(.restart) == acts(.stop))
+        #expect(catalog.groupAction(.restart, on: library.running) == .acts(.restart))
 
         let counts = try harness.core.concernedCounts(in: library.folder)
         for action in VMGroupAction.allCases {

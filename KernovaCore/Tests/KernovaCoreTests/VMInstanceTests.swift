@@ -146,12 +146,33 @@ struct VMInstanceTests {
         #expect(context.serialOutputPipe == nil)
     }
 
-    @Test("A session's end resets a hidden (headless) displayMode to inline")
+    @Test("A hidden (headless) display reads inline once its session ends")
     func sessionEndResetsHiddenDisplayMode() {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         instance.displayMode = .hidden
 
         instance.handleSessionEvent(.guestDidStop)
+
+        #expect(instance.displayMode == .inline)
+    }
+
+    /// Only the close of the display window moves the mode, since the window
+    /// can outlive the session — across a Restart, it shows the next one.
+    @Test("A session's end leaves a display window's mode alone", arguments: [VMDisplayMode.popOut, .fullscreen])
+    func sessionEndKeepsWindowDisplayMode(mode: VMDisplayMode) {
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
+        instance.displayMode = mode
+
+        instance.handleSessionEvent(.guestDidStop)
+
+        #expect(instance.displayMode == mode)
+    }
+
+    @Test("Hiding the display of a VM with no session leaves it inline")
+    func hidingWithoutASessionStaysInline() {
+        let instance = VMInstanceFixture.make(phase: .stopped)
+
+        instance.displayMode = .hidden
 
         #expect(instance.displayMode == .inline)
     }

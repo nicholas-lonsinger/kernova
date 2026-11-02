@@ -1102,6 +1102,15 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// The restart verb every other door runs, asking on screen for what it
+    /// refuses without — the account a guest is still owed, a shared machine
+    /// identity. A live-paused guest is resumed by the verb itself.
+    package func restart(_ instance: VMInstance) async {
+        await runAsking(on: instance, then: "Restart") { consent in
+            try await self.commands.restart(.id(instance.id), timeout: nil, consent: consent)
+        }
+    }
+
     package func forceStop(_ instance: VMInstance) async {
         await run(on: instance) {
             try await self.commands.stop(

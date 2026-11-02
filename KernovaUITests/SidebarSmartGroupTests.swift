@@ -378,7 +378,8 @@ struct SidebarSmartGroupTests {
         #expect(
             menu.items.map(\.title) == [
                 "Show VMs in \u{201C}Picked\u{201D} where", "Guest OS", "State", "Network", "Guest Agent", "Other", "",
-                "Start All", "Suspend All", "Stop All", "", "Rename Smart Group\u{2026}", "Delete Smart Group",
+                "Start All", "Suspend All", "Stop All", "Restart All", "", "Rename Smart Group\u{2026}",
+                "Delete Smart Group",
             ])
         #expect(menu.items[0].isSectionHeader)
         #expect(menu.items[1].badge?.stringValue == "Linux")
@@ -457,7 +458,7 @@ struct SidebarSmartGroupTests {
         // Its only condition names a network no VM can be on, so "Lab" lists
         // nothing — and a group action on it acts on nothing.
         #expect(names(in: viewModel.sidebarLayout.sections[1]).isEmpty)
-        #expect(viewModel.groupActionCounts(for: group) == [.start: 0, .suspend: 0, .stop: 0])
+        #expect(viewModel.groupActionCounts(for: group) == [.start: 0, .suspend: 0, .stop: 0, .restart: 0])
 
         // The menu names the condition it still holds, and clears it.
         let controller = SidebarViewController(viewModel: viewModel)

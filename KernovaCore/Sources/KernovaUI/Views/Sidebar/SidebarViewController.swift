@@ -899,6 +899,11 @@ extension SidebarViewController {
             }
             menu.addItem(forceStop)
         }
+        if capabilities.isApplicable(.restart, to: instance) {
+            let restart = item("Restart", #selector(menuRestart(_:)), instance)
+            restart.isEnabled = capabilities.isAvailable(.restart, on: instance)
+            menu.addItem(restart)
+        }
         if discardsSavedState {
             // Listed whatever its state, disabled when there is nothing behind
             // it: an Ephemeral VM already resting on its baseline would revert
@@ -1066,6 +1071,11 @@ extension SidebarViewController {
     @objc private func menuStop(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         Task { await viewModel.stop(instance) }
+    }
+
+    @objc private func menuRestart(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        Task { await viewModel.restart(instance) }
     }
 
     @objc private func menuForceStop(_ sender: NSMenuItem) {

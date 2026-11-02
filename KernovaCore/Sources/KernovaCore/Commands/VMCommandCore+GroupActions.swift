@@ -2,10 +2,10 @@ import Foundation
 import KernovaCommandModel
 import KernovaLogging
 
-/// Start, suspend or stop every VM in a set — the one executor behind the
-/// group header menus, the `kernova` lifecycle verbs given a group, the
-/// Shortcuts group action, and the launch pass that starts the VMs marked to
-/// start automatically.
+/// Start, suspend, stop or restart every VM in a set — the one executor
+/// behind the group header menus, the `kernova` lifecycle verbs given a group,
+/// the Shortcuts group action, and the launch pass that starts the VMs marked
+/// to start automatically.
 extension VMCommandCore {
     /// How many of the VMs in `group` each action acts on — what the actions'
     /// menu items count, by the rule the actions themselves act by
@@ -90,22 +90,23 @@ extension VMCommandCore {
 
     /// The VMs one run of the executor takes, fixed when it begins, and the
     /// rule that keeps a member in the set until its turn.
-    private struct MemberSet {
+    private struct MemberSet: Sendable {
         let members: [AddressableEntry]
         /// What the log calls the set.
         let description: String
         /// Whether `entry`, re-read at its turn, is still in the set.
-        let holds: @MainActor (AddressableEntry) -> Bool
+        let holds: @MainActor @Sendable (AddressableEntry) -> Bool
     }
 
     /// What one run of the executor does to each member.
-    private enum Run {
+    private enum Run: Sendable {
         /// Brings each VM up — deciding it at its turn and passing over one
         /// other work holds then, or, when `waitsOutBusyVMs`, deciding it once
         /// that work ends.
         case start(waitsOutBusyVMs: Bool)
         case suspend
         case stop
+        case restart
 
         /// A group's action, which passes over a VM other work holds.
         init(_ action: VMGroupAction) {
@@ -113,6 +114,7 @@ extension VMCommandCore {
             case .start: self = .start(waitsOutBusyVMs: false)
             case .suspend: self = .suspend
             case .stop: self = .stop
+            case .restart: self = .restart
             }
         }
 
@@ -121,17 +123,36 @@ extension VMCommandCore {
             case .start: .start
             case .suspend: .suspend
             case .stop: .stop
+            case .restart: .restart
+            }
+        }
+
+        /// Whether the run takes every member at once rather than one after
+        /// another.
+        ///
+        /// A restart waits for its guest to power off, which a guest can hold
+        /// for as long as it likes — an unsaved document's prompt, a desktop
+        /// that ignores the power button with nobody at its screen — so one
+        /// guest's wait must not hold back the next. The reasons the other runs
+        /// go in turn do not reach it: each guest it boots already held its
+        /// memory and its place under the platform's cap, and its identity was
+        /// live before the restart began.
+        var takesMembersAtOnce: Bool {
+            switch self {
+            case .restart: true
+            case .start, .suspend, .stop: false
             }
         }
     }
 
-    /// Takes `run` on each VM in `set`, one after another, and reports what it
-    /// did to each.
+    /// Takes `run` on each VM in `set` and reports what it did to each, in the
+    /// set's order, once every VM is done.
     ///
-    /// One at a time: each guest commits its memory as it comes up, the
-    /// platform's cap on running macOS guests is met by the start that exceeds
-    /// it, which then fails on its own, and the machine-identity check every
-    /// bring-up passes counts a VM still coming up as live.
+    /// One VM after another, unless the run ``Run/takesMembersAtOnce``: each
+    /// guest commits its memory as it comes up, the platform's cap on running
+    /// macOS guests is met by the start that exceeds it, which then fails on
+    /// its own, and the machine-identity check every bring-up passes counts a
+    /// VM still coming up as live.
     ///
     /// Asks nobody and puts nothing in front of the user: each bring-up is
     /// ``StartPolicy/group``, which begins no guest setup and readies its
@@ -152,7 +173,8 @@ extension VMCommandCore {
     ///
     /// Cancelling the calling task — a client hanging up — stops the run
     /// between VMs: the VM in hand finishes, and every later one is reported as
-    /// passed over, untouched.
+    /// passed over, untouched; a run taking its members at once lets every VM
+    /// already in hand finish.
     private func take(_ run: Run, on set: MemberSet) async -> [VMGroupActionResult] {
         let action = run.action
         // A run over no VM moves nothing, so its records are routine progress.
@@ -162,19 +184,37 @@ extension VMCommandCore {
             "\(action.rawValue, privacy: .public) on \(set.description, privacy: .public): \(set.members.count, privacy: .public) VM(s)"
         )
         var results: [VMGroupActionResult] = []
-        for member in set.members {
-            guard !Task.isCancelled else {
-                let current = library.entries.first { $0.id == member.id }?.addressable ?? member
-                results.append(VMGroupActionResult(vm: summary(current), outcome: .passedOver(reason: .cancelled)))
-                continue
+        if run.takesMembersAtOnce {
+            results = await withTaskGroup(of: (Int, VMGroupActionResult).self) { group in
+                for (index, member) in set.members.enumerated() {
+                    group.addTask { (index, await self.turnResult(of: run, on: member, in: set)) }
+                }
+                var byIndex: [Int: VMGroupActionResult] = [:]
+                for await finished in group { byIndex[finished.0] = finished.1 }
+                return set.members.indices.compactMap { byIndex[$0] }
             }
-            results.append(await result(of: run, on: member, in: set))
+        } else {
+            for member in set.members {
+                results.append(await turnResult(of: run, on: member, in: set))
+            }
         }
         logger.log(
             level,
             "\(action.rawValue, privacy: .public) on \(set.description, privacy: .public) finished\(Task.isCancelled ? " after a cancel" : "", privacy: .public) — \(results.undone.count, privacy: .public) of \(results.count, privacy: .public) VM(s) undone"
         )
         return results
+    }
+
+    /// What `run` does to `member` of `set` when its turn comes: nothing, once
+    /// the calling task is cancelled.
+    private func turnResult(
+        of run: Run, on member: AddressableEntry, in set: MemberSet
+    ) async -> VMGroupActionResult {
+        guard !Task.isCancelled else {
+            let current = library.entries.first { $0.id == member.id }?.addressable ?? member
+            return VMGroupActionResult(vm: summary(current), outcome: .passedOver(reason: .cancelled))
+        }
+        return await result(of: run, on: member, in: set)
     }
 
     /// What `run` does to `member` of `set`, looked up and decided at its turn.
@@ -201,6 +241,12 @@ extension VMCommandCore {
         case .stop:
             outcome = await settle(.stop, on: instance, in: set) {
                 try await self.stop(instance, disposition: .graceful, consent: .none)
+            }
+        case .restart:
+            // The single-VM verb, asking nothing: a question it raises is
+            // reported, and a shutdown the guest did not carry out fails.
+            outcome = await settle(.restart, on: instance, in: set) {
+                try await self.restart(.id(instance.id), timeout: nil, consent: .none)
             }
         }
         return VMGroupActionResult(vm: summary(instance), outcome: outcome)
@@ -244,8 +290,8 @@ extension VMCommandCore {
         return turn(of: action, on: instance)
     }
 
-    /// What a suspend or a stop, `action`, does to `instance`, decided now:
-    /// `act` — the plain suspend or graceful stop, with no consent — when the
+    /// What a suspend, a stop or a restart, `action`, does to `instance`,
+    /// decided now: `act` — the plain verb, with no consent — when the
     /// turn takes the VM, which it does by the action's one step.
     private func settle(
         _ action: VMGroupAction, on instance: VMInstance, in set: MemberSet,

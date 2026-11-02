@@ -76,13 +76,13 @@ struct VMToolbarManagerTests {
 
     // MARK: - Item Creation
 
-    @Test("makeToolbarItem returns lifecycle group with 3 subitems")
+    @Test("makeToolbarItem returns the lifecycle group: Start, Pause, Stop, Restart")
     func lifecycleGroupStructure() {
         let manager = makeManager()
         let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testLifecycle"))
         let group = item as? NSToolbarItemGroup
         #expect(group != nil)
-        #expect(group?.subitems.count == 3)
+        #expect(group?.subitems.map(\.label) == ["Start", "Pause", "Stop", "Restart"])
         #expect(group?.label == "State Controls")
     }
 
@@ -501,6 +501,35 @@ struct VMToolbarManagerTests {
         #expect(lifecycle?.subitems[2].isEnabled == false)  // stop
     }
 
+    /// The stop segment of a suspended VM discards its saved state, which no
+    /// restart follows; everywhere else the two segments are one gate.
+    @Test("Restart is enabled exactly where the stop segment offers Stop")
+    func restartFollowsStop() throws {
+        for (phase, expected) in [
+            (PhaseFixture.settled(.running(sessionID: UUID())), true),
+            (.settled(.livePaused(sessionID: UUID())), true),
+            (.settled(.stopped), false),
+            (.settled(.suspended), false),
+            (.operating(.saving, from: .running(sessionID: UUID())), false),
+            (.operating(.pausing, from: .running(sessionID: UUID())), true),
+            (.operating(.forceStopping, from: .running(sessionID: UUID())), false),
+        ] {
+            let instance = makeInstance(phase: phase.phase)
+            if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: instance) }
+            let manager = makeManager(instance: instance)
+            let (toolbar, _, _) = makeToolbar(manager: manager)
+
+            manager.updateToolbarItems(in: toolbar)
+
+            let lifecycle = try #require(
+                toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup)
+            let stop = lifecycle.subitems[2]
+            let offersStop = stop.isEnabled && stop.label == VMInstance.StopAction.stop.toolbarLabel
+            #expect(offersStop == expected, "\(phase)")
+            #expect(lifecycle.subitems[3].isEnabled == expected, "\(phase)")
+        }
+    }
+
     @Test("All lifecycle items disabled during transitioning states")
     func lifecycleDisabledDuringTransition() {
         let instance = makeInstance(
@@ -581,7 +610,8 @@ struct VMToolbarManagerTests {
 
     @Test("Pop In label when displayMode is hidden (headless)")
     func popInLabelWhenHidden() {
-        let instance = makeInstance(phase: .stopped)
+        // Headless is a running session's: a VM with none reads inline.
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.displayMode = .hidden
         let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
         let (toolbar, _, _) = makeToolbar(manager: manager)

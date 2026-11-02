@@ -401,7 +401,7 @@ struct MainMenuViewMenuTests {
         let header = try #require(try fixture.sidebar().viewMenu(for: .smartGroup(group.id)))
         expectRenderedAlike(route.submenu?.items, header.items)
         #expect(try item("Folder", in: menu).isEnabled == false)
-        for title in ["Guest OS", "Start All", "Suspend All", "Stop All", "Rename Smart Group\u{2026}"] {
+        for title in ["Guest OS", "Start All", "Suspend All", "Stop All", "Restart All", "Rename Smart Group\u{2026}"] {
             #expect(route.submenu?.items.contains { $0.title == title } == true)
         }
 

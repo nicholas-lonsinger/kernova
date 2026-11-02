@@ -9,9 +9,9 @@ import Testing
 @testable import KernovaUI
 @testable import KernovaVirtualization
 
-/// A group header's Start All, Suspend All and Stop All: what the menu counts
-/// and enables, and what a pick does in the app — one account of what was
-/// left undone, and nothing selected or focused.
+/// A group header's Start All, Suspend All, Stop All and Restart All: what
+/// the menu counts and enables, and what a pick does in the app — one account
+/// of what was left undone, and nothing selected or focused.
 @Suite("Sidebar group actions", .serialized, .caseScoped)
 @MainActor
 struct SidebarGroupActionTests {
@@ -48,7 +48,7 @@ struct SidebarGroupActionTests {
         SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { _ in })
     }
 
-    /// The three group action items of `menu`, by title.
+    /// The group action items of `menu`, by title.
     private func actionItems(of menu: NSMenu) -> [NSMenuItem] {
         let titles = VMGroupAction.allCases.map(SidebarViewMenu.groupActionTitle)
         return menu.items.filter { titles.contains($0.title) }
@@ -59,14 +59,15 @@ struct SidebarGroupActionTests {
     @Test("A folder's menu counts what each action acts on, badged, and disables an action with none")
     func folderMenuCountsAndEnables() throws {
         let folder = VMFolder(id: UUID(), name: "Lab", members: [])
-        let built = menu().menu(folder: folder, actionCounts: [.start: 2, .suspend: 1, .stop: 0])
+        let built = menu().menu(
+            folder: folder, actionCounts: [.start: 2, .suspend: 1, .stop: 0, .restart: 3])
 
         let items = actionItems(of: built)
-        #expect(items.map(\.title) == ["Start All", "Suspend All", "Stop All"])
-        #expect(items.map(\.isEnabled) == [true, true, false])
-        #expect(items.map { $0.badge?.itemCount } == [2, 1, nil])
+        #expect(items.map(\.title) == ["Start All", "Suspend All", "Stop All", "Restart All"])
+        #expect(items.map(\.isEnabled) == [true, true, false, true])
+        #expect(items.map { $0.badge?.itemCount } == [2, 1, nil, 3])
         #expect(built.items[1].title == "Start All")
-        #expect(built.items[4].isSeparatorItem)
+        #expect(built.items[5].isSeparatorItem)
     }
 
     @Test("A smart group's menu places the actions between its filter and Rename, all disabled without counts")
@@ -78,7 +79,9 @@ struct SidebarGroupActionTests {
         let start = try #require(titles.firstIndex(of: "Start All"))
         #expect(built.items[start - 1].isSeparatorItem)
         #expect(
-            titles[start...].prefix(5) == ["Start All", "Suspend All", "Stop All", "", "Rename Smart Group\u{2026}"])
+            titles[start...].prefix(6) == [
+                "Start All", "Suspend All", "Stop All", "Restart All", "", "Rename Smart Group\u{2026}",
+            ])
         #expect(actionItems(of: built).allSatisfy { !$0.isEnabled && $0.badge == nil })
     }
 
@@ -87,11 +90,13 @@ struct SidebarGroupActionTests {
         var picked: [SidebarViewMenu.Command] = []
         let viewMenu = SidebarViewMenu(networkTitle: { $0.rawValue }, tags: { [] }, perform: { picked.append($0) })
         let folder = VMFolder(id: UUID(), name: "Lab", members: [])
-        let built = viewMenu.menu(folder: folder, actionCounts: [.start: 1, .suspend: 1, .stop: 1])
+        let built = viewMenu.menu(folder: folder, actionCounts: [.start: 1, .suspend: 1, .stop: 1, .restart: 1])
 
         built.performActionForItem(at: try #require(built.items.firstIndex { $0.title == "Stop All" }))
+        built.performActionForItem(at: try #require(built.items.firstIndex { $0.title == "Restart All" }))
 
-        #expect(picked == [.groupAction(.stop, VMGroupReference(.folder, named: folder.id.uuidString))])
+        let group = VMGroupReference(.folder, named: folder.id.uuidString)
+        #expect(picked == [.groupAction(.stop, group), .groupAction(.restart, group)])
     }
 
     @Test("The sidebar's folder menu reads the counts off the library")
@@ -104,10 +109,33 @@ struct SidebarGroupActionTests {
 
         let built = try #require(controller.viewMenu(for: .folder(folder.id)))
 
-        #expect(actionItems(of: built).map { $0.badge?.itemCount } == [1, 1, 1])
+        #expect(actionItems(of: built).map { $0.badge?.itemCount } == [1, 1, 1, 1])
         #expect(
             viewModel.groupActionCounts(for: VMGroupReference(.folder, named: folder.id.uuidString))
-                == [.start: 1, .suspend: 1, .stop: 1])
+                == [.start: 1, .suspend: 1, .stop: 1, .restart: 1])
+    }
+
+    /// Restart All counts, and so enables, exactly where Stop All does.
+    @Test(
+        "Restart All is counted and enabled exactly as Stop All",
+        arguments: [
+            PhaseFixture.settled(.stopped), .settled(.running(sessionID: UUID())),
+            .settled(.livePaused(sessionID: UUID())), .settled(.suspended),
+            .operating(.saving, from: .running(sessionID: UUID())),
+        ])
+    func restartAllFollowsStopAll(phase: PhaseFixture) throws {
+        let viewModel = makeViewModel()
+        let vm = viewModel.library.admitFixture(name: "Only", phase: phase.phase)
+        if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: vm) }
+        let folder = try viewModel.library.createFolder(named: "Lab", members: [vm.id])
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let built = try #require(controller.viewMenu(for: .folder(folder.id)))
+        let stopAll = try #require(built.items.first { $0.title == "Stop All" })
+        let restartAll = try #require(built.items.first { $0.title == "Restart All" })
+
+        #expect(restartAll.isEnabled == stopAll.isEnabled, "\(phase)")
+        #expect(restartAll.badge?.itemCount == stopAll.badge?.itemCount, "\(phase)")
     }
 
     // MARK: - Performing

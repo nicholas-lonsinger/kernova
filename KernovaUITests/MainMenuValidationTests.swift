@@ -108,6 +108,54 @@ struct MainMenuValidationTests {
         #expect(fixture.validate(item) == isEnabled, "\(phase)")
     }
 
+    /// Restart is offered wherever the stop item stands for the graceful Stop;
+    /// a suspended VM's retitled item discards its saved state, which no
+    /// restart follows.
+    @Test(
+        "Restart is enabled exactly where the stop item offers Stop",
+        arguments: [
+            (PhaseFixture.settled(.running(sessionID: UUID())), true),
+            (.settled(.livePaused(sessionID: UUID())), true),
+            (.settled(.stopped), false),
+            (.settled(.suspended), false),
+            (.settled(.failed(message: "Boot failed.")), false),
+            (
+                .operating(
+                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                false
+            ),
+            (.operating(.saving, from: .running(sessionID: UUID())), false),
+            (.operating(.pausing, from: .running(sessionID: UUID())), true),
+            (.operating(.resuming, from: .livePaused(sessionID: UUID())), false),
+            (.operating(.forceStopping, from: .running(sessionID: UUID())), false),
+        ])
+    func restartValidationFollowsStop(phase: PhaseFixture, isEnabled: Bool) throws {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
+        if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: instance) }
+        let stop = makeMenuItem(#selector(AppDelegate.stopVM(_:)))
+        let restart = makeMenuItem(#selector(AppDelegate.restartVM(_:)))
+
+        let offersStop =
+            fixture.validate(stop) && stop.title == VMInstance.StopAction.stop.menuTitle
+        #expect(offersStop == isEnabled, "\(phase)")
+        #expect(fixture.validate(restart) == isEnabled, "\(phase)")
+    }
+
+    @Test("The Virtual Machine menu lists Restart after Force Stop")
+    func restartIsListedInTheVirtualMachineMenu() throws {
+        let fixture = makeFixture()
+        let vmMenu = try #require(
+            submenu(titled: "Virtual Machine", in: fixture.controller.makeMainMenu()))
+        let actions = vmMenu.items.map(\.action)
+        let forceStop = try #require(actions.firstIndex(of: #selector(AppDelegate.forceStopVM(_:))))
+        let restart = try #require(actions.firstIndex(of: #selector(AppDelegate.restartVM(_:))))
+
+        #expect(restart == forceStop + 1)
+        #expect(vmMenu.items[restart].title == "Restart")
+        #expect(vmMenu.items[restart].keyEquivalent.isEmpty)
+    }
+
     @Test("A build with no bundled guest-agent disk withholds the command")
     func guestAgentDiskWithoutBundledImage() {
         let fixture = makeFixture(

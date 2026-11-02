@@ -1023,6 +1023,51 @@ struct VMLibraryViewModelTests {
         #expect(presenter.instanceToStopPaused == nil)
     }
 
+    @Test("restart runs the restart verb: the guest goes down and comes back up")
+    func restartRunsTheRestartVerb() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        let firstSession = UUID()
+        instance.activity.placeForTesting(.running(sessionID: firstSession))
+
+        await viewModel.restart(instance)
+
+        #expect(virtService.stopCallCount == 1)
+        #expect(virtService.startCallCount == 1)
+        #expect(instance.status == .running)
+        #expect(instance.activity.liveSessionID != firstSession)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("restart of a paused VM resumes it and restarts, with no Stop sheet")
+    func restartOfAPausedVMResumesFirst() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        instance.activity.placeForTesting(.livePaused(sessionID: UUID()))
+
+        await viewModel.restart(instance)
+
+        #expect(virtService.resumeCallCount == 1)
+        #expect(virtService.stopCallCount == 1)
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.instanceToStopPaused == nil)
+        #expect(presenter.errors.isEmpty)
+    }
+
+    @Test("restart whose shutdown fails presents the error and boots nothing")
+    func restartPresentsAFailedShutdown() async {
+        let virtService = MockVirtualizationService()
+        virtService.stopError = VirtualizationError.noVirtualMachine
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = viewModel.library.admitFixture()
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+
+        await viewModel.restart(instance)
+
+        #expect(presenter.showError == true)
+        #expect(virtService.startCallCount == 0)
+    }
+
     @Test("forceStop delegates to lifecycle coordinator")
     func forceStopDelegates() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
