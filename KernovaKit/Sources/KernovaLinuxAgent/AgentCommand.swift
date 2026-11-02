@@ -14,6 +14,8 @@ enum AgentCommand: Equatable {
     case install(InstallRequest)
     /// Remove the install of a scope.
     case uninstall(InstallRequest)
+    /// Run the rollback check once for the install of a scope, as its rollback timer does.
+    case rollbackCheck(InstallScope)
 
     /// How an install or uninstall was asked for.
     struct InstallRequest: Equatable {
@@ -32,6 +34,7 @@ enum AgentCommand: Equatable {
     static let usage = """
         usage: kernova-agent session | system | self-test | --version
                kernova-agent install | uninstall [--system] [--dry-run] [--no-systemctl [--root <dir>]]
+               kernova-agent rollback-check --scope user | system
         """
 
     /// The command `arguments` — those after the program name — ask for, or nil when they ask for none.
@@ -45,6 +48,8 @@ enum AgentCommand: Equatable {
             case ["system"]: .system
             case ["self-test"]: .selfTest
             case ["--version"]: .version
+            case ["rollback-check", "--scope", "user"]: .rollbackCheck(.user)
+            case ["rollback-check", "--scope", "system"]: .rollbackCheck(.system)
             default: nil
             }
         }

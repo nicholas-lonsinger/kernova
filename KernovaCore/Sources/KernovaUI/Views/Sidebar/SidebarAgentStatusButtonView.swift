@@ -156,6 +156,7 @@ final class SidebarAgentStatusButtonView: NSView {
         switch status {
         case .waiting: "exclamationmark.circle.fill"
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
+        case .updating: "arrow.triangle.2.circlepath.circle.fill"
         case .connecting: "arrow.triangle.2.circlepath.circle.fill"
         case .current, .connected: "checkmark.circle.fill"
         case .unresponsive: "wifi.exclamationmark"
@@ -167,6 +168,7 @@ final class SidebarAgentStatusButtonView: NSView {
         switch status {
         case .waiting: StatusColor.inactive
         case .outdated: StatusColor.warning
+        case .updating: StatusColor.inactive
         case .connecting: StatusColor.inactive
         case .current, .connected: StatusColor.running
         case .unresponsive: StatusColor.warning
@@ -179,6 +181,7 @@ final class SidebarAgentStatusButtonView: NSView {
         case .waiting: "Guest agent not installed"
         case .outdated(let installed, let bundled):
             "Guest agent update available (\(installed) → \(bundled))"
+        case .updating(let installed, let bundled): "Guest agent updating (\(installed) → \(bundled))"
         case .connecting(let expected): "Connecting to guest agent (was \(expected))"
         case .current(let version), .connected(let version): "Guest agent connected (\(version))"
         case .unresponsive(let version): "Guest agent unresponsive (\(version))"

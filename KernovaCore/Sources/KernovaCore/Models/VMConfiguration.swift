@@ -231,13 +231,20 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// Opt-in. Linux guests have no Kernova agent and ignore this flag.
     package var agentLogForwardingEnabled: Bool
 
-    /// The most recent guest-reported agent version observed on this VM's
-    /// control channel (`Hello.agent_info.agent_version`), or `nil` until the
-    /// host has seen at least one successful Hello.
+    /// The version the guest agent that runs in a user's session last
+    /// reported — the macOS agent's Hello, or a Linux session peer's — or
+    /// `nil` until the host has seen one.
     ///
     /// Persisted, never reset on stop: it suppresses the sidebar install nudge
-    /// for stopped VMs and arms the post-start watchdog.
+    /// for stopped VMs, and a session that has not met its agent yet reads as
+    /// connecting to it. Such an agent starts only once its user logs in, so on
+    /// Linux it arms no watchdog; the macOS agent's does.
     var lastSeenAgentVersion: String?
+
+    /// The version a Linux guest's system peer last reported, or `nil` until
+    /// the host has seen one. The system peer starts at boot, so a session
+    /// that has not met it within the grace finds it didn't reconnect.
+    var lastSeenSystemAgentVersion: String?
 
     /// The most recent guest-reported OS version observed on this VM's control
     /// channel (`Hello.agent_info.os_version`), or `nil` when no agent has
@@ -410,6 +417,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         systemKeyForwarding: VMSystemKeyForwarding = Defaults.systemKeyForwarding,
         agentLogForwardingEnabled: Bool = Defaults.agentLogForwardingEnabled,
         lastSeenAgentVersion: String? = nil,
+        lastSeenSystemAgentVersion: String? = nil,
         lastSeenGuestOSVersion: String? = nil,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
@@ -456,6 +464,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.systemKeyForwarding = systemKeyForwarding
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
+        self.lastSeenSystemAgentVersion = lastSeenSystemAgentVersion
         self.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
@@ -535,6 +544,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
             Bool.self, forKey: .agentLogForwardingEnabled,
             default: Defaults.agentLogForwardingEnabled, in: decoder)
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
+        self.lastSeenSystemAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenSystemAgentVersion)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)

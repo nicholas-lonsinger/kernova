@@ -28,6 +28,16 @@ struct FixedPayloads: BundledPayloadProvider {
     }
 }
 
+/// Serves every payload as zero bytes, up to its size.
+struct ZeroPayloads: UpdatePayloadSource {
+    func read(
+        manifest: UpdateManifestValue, offset: UInt64, count: Int,
+        _ completion: @escaping @Sendable (Result<Data, WireError>) -> Void
+    ) {
+        completion(.success(Data(count: min(count, Int(manifest.payloadSize - offset)))))
+    }
+}
+
 /// The real host runtime, with every connection's commands and events recorded by connection number,
 /// from 1 in accept order.
 final class RecordingConnector: HostConnectionMaking {
@@ -38,9 +48,9 @@ final class RecordingConnector: HostConnectionMaking {
     let policies = Recorder<(connection: Int, policy: PolicySnapshot)>()
     private let count = Locked(0)
 
-    init(receiverPolicy: ReceiverPolicy) {
+    init(receiverPolicy: ReceiverPolicy, payloadSource: any UpdatePayloadSource) {
         runtime = HostConnectionRuntime(
-            claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: FixedPayloads(bundles: []),
+            claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: payloadSource,
             logger: Fixture.logger, receiverPolicy: receiverPolicy)
     }
 
@@ -127,12 +137,14 @@ final class HubHarness: Sendable {
     let hostLogs = Recorder<String>()
     private let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
 
-    /// A hub attached to `transport`, its peers judged by `receiverPolicy`.
+    /// A hub attached to `transport`, its peers judged by `receiverPolicy` and their pulls read from
+    /// `payloadSource`.
     init(
         policy: PolicySnapshot = PolicySnapshot(), bundles: [BundledPayload] = [],
-        receiverPolicy: ReceiverPolicy = .production
+        receiverPolicy: ReceiverPolicy = .production,
+        payloadSource: any UpdatePayloadSource = FixedPayloads(bundles: [])
     ) {
-        connector = RecordingConnector(receiverPolicy: receiverPolicy)
+        connector = RecordingConnector(receiverPolicy: receiverPolicy, payloadSource: payloadSource)
         let (snapshots, hostLogs) = (snapshots, hostLogs)
         hub = AgentHub(
             connector: connector, policy: policy, payloads: FixedPayloads(bundles: bundles),
@@ -197,11 +209,19 @@ final class HubPeer: Sendable {
     let driver: ConnectionDriver<PeerEndpoint>
     let events = Recorder<PeerEvent>()
 
-    convenience init(_ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState) {
-        self.init(harness.transport, claim: claim, state: state)
+    convenience init(
+        _ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false
+    ) {
+        self.init(harness.transport, claim: claim, state: state, update: update, installs: installs)
     }
 
-    init(_ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState) {
+    /// A peer whose installer is `update`: with `installs`, it reports every pull's bytes consumed and the
+    /// payload installed; otherwise it never answers.
+    init(
+        _ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false
+    ) {
         guard let stream = transport.connect() else { preconditionFailure("the transport refused a connection") }
         self.stream = stream
         let events = events
@@ -210,10 +230,19 @@ final class HubPeer: Sendable {
             endpoint: PeerEndpoint(
                 PeerConfiguration(
                     claim: claim, state: state, power: .absent(.notImplemented, debugDetail: ""),
-                    logs: .absent(.notImplemented, debugDetail: ""), update: .absent(.notImplemented, debugDetail: "")),
+                    logs: .absent(.notImplemented, debugDetail: ""), update: update),
                 generation: ConnectionGeneration(rawValue: 1), now: scheduler.now),
             stream: stream, scheduler: scheduler, logger: Fixture.logger,
-            handlers: ConnectionDriver<PeerEndpoint>.Handlers(event: { event, _ in events.record(event) }))
+            handlers: ConnectionDriver<PeerEndpoint>.Handlers(
+                effect: { effect, driver in
+                    guard installs, case .update(let update) = effect else { return }
+                    switch update {
+                    case .payload(let id, let bytes): driver.handle(.update(.consumed(id, bytes.count)))
+                    case .complete(let id, _): driver.handle(.update(.installed(id)))
+                    default: break
+                    }
+                },
+                event: { event, _ in events.record(event) }))
         driver.start()
     }
 

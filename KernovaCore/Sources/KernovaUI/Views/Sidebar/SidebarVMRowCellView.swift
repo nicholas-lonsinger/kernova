@@ -550,7 +550,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         guard let presentation = instance.agentPresentation else { return nil }
         switch presentation.status {
         case .current, .connected: return nil
-        case .waiting, .outdated, .unresponsive, .expectedMissing, .connecting: break
+        case .waiting, .outdated, .updating, .unresponsive, .expectedMissing, .connecting: break
         }
         if case .waiting = presentation.status,
             installPromptDisabled || instance.hostState.agentInstallNudgeDismissed

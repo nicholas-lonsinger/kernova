@@ -50,6 +50,21 @@ public struct DBusAddress: Sendable, Hashable {
         case abstract(String)
     }
 
+    /// `value` as an address value: each byte outside the optionally-escaped set written `%xx`, so ``parse(_:)``
+    /// reads it back unchanged.
+    public static func escaped(_ value: String) -> String {
+        let digits = Array("0123456789abcdef".utf8)
+        var bytes: [UInt8] = []
+        for byte in value.utf8 {
+            if isOptionallyEscaped(byte) {
+                bytes.append(byte)
+            } else {
+                bytes += [UInt8(ascii: "%"), digits[Int(byte >> 4)], digits[Int(byte & 0x0F)]]
+            }
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
     private static func unescape(_ value: Substring) throws(DBusAddressError) -> String {
         var bytes: [UInt8] = []
         var utf8 = value.utf8[...]

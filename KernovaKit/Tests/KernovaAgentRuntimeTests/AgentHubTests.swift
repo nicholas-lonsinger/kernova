@@ -55,7 +55,7 @@ struct AgentHubTests {
         #expect(summary.userName == Fixture.peerState.userName)
         #expect(summary.console == .on)
         #expect(summary.versionLabel == "peer")
-        #expect(summary.standing == .outdated(offeredVersionLabel: "next"))
+        #expect(summary.standing == .outdated(offeredVersionLabel: "next", update: .unavailable))
         #expect(summary.isResponsive)
         driver.close(.shuttingDown)
         _ = await waiter.next { $0.peers.isEmpty }
@@ -67,7 +67,10 @@ struct AgentHubTests {
         "A peer stands current, outdated, or — offered nothing — not judged at all",
         arguments: [
             (hash: UInt8(0xA1), scope: InstallScope.user, standing: PeerSummary.Standing.current),
-            (hash: UInt8(0xA2), scope: InstallScope.user, standing: .outdated(offeredVersionLabel: "next")),
+            (
+                hash: UInt8(0xA2), scope: InstallScope.user,
+                standing: .outdated(offeredVersionLabel: "next", update: .unavailable)
+            ),
             (hash: UInt8(0xA1), scope: InstallScope.unspecified, standing: .notOffered),
         ])
     func standing(_ expected: (hash: UInt8, scope: InstallScope, standing: PeerSummary.Standing)) async {
@@ -84,6 +87,165 @@ struct AgentHubTests {
         let snapshot = await harness.snapshot { $0.peers.count == 1 }
         #expect(snapshot.peers[0].standing == expected.standing)
         peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    // MARK: In-band update
+
+    static let offered = BundledPayload(
+        os: .linux, architecture: .arm64, scope: .user,
+        manifest: UpdateManifestValue(
+            payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 100_000, format: .executable,
+            versionLabel: "next"))
+
+    static func inBandUpdate(_ snapshot: AgentHubSnapshot) -> PeerSummary.InBandUpdate? {
+        guard case .outdated(_, let update)? = snapshot.peers.first?.standing else { return nil }
+        return update
+    }
+
+    @Test("An outdated peer that pulls the offered payload reads updating, and the UPDATE row merges its offer")
+    func updatingWhilePulling() async {
+        let harness = HubHarness(bundles: [Self.offered], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])))
+        let snapshot = await harness.snapshot { Self.inBandUpdate($0) == .updating }
+        #expect(snapshot.features[.update].isAvailable)
+        var events = harness.connector.events.waiter()
+        let pulled = await events.next { if case .update(.pullRequested) = $0.event { true } else { false } }
+        #expect(pulled.connection == 1)
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test("An outdated peer whose pull of the offered payload ends without installing it reads failed")
+    func failedPull() async {
+        // FixedPayloads fails every read, so the host resets the pull READ_FAILED.
+        let harness = HubHarness(bundles: [Self.offered])
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])))
+        _ = await harness.snapshot { Self.inBandUpdate($0) == .failed }
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test(
+        "An outdated peer that refuses the offered hash reads failed; one that cannot take its format, unavailable",
+        arguments: [
+            (UpdateOffer(formats: [.executable], rejectedHash: Data(repeating: 0xB2, count: 32)), .failed),
+            (UpdateOffer(formats: [.paxTree]), PeerSummary.InBandUpdate.unavailable),
+        ])
+    func refusedOffer(offer: UpdateOffer, expected: PeerSummary.InBandUpdate) async {
+        let harness = HubHarness(bundles: [Self.offered], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(harness, claim: .session(.user, instance: 1), update: .available(offer))
+        _ = await harness.snapshot { Self.inBandUpdate($0) == expected }
+        #expect(!harness.connector.events.elements.contains { if case .update = $0.event { true } else { false } })
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test("Each Hello and each peer leaving is logged: the role, the user, the version, the payload, the reason")
+    func logsArrivalsAndDepartures() async {
+        let harness = HubHarness()
+        await harness.attached()
+        var claim = PeerClaim.session(.user, instance: 1)
+        claim.payloadHash = Data([0xAB, 0x01])
+        let peer = HubPeer(harness, claim: claim)
+        var logs = harness.hostLogs.waiter()
+        let hello = await logs.next { $0.hasPrefix("Hello from") }
+        #expect(hello.contains("session peer (session 1, user user)"))
+        #expect(hello.contains("version peer"))
+        #expect(hello.contains("payload ab01"))
+        #expect(hello.contains("joined"))
+        peer.driver.close(.shuttingDown)
+        let left = await logs.next { $0.contains(" left: ") }
+        #expect(left.hasPrefix("The session peer (session 1, user user) left: "))
+        harness.hub.close()
+    }
+
+    // MARK: Away peers
+
+    @Test("A peer that disconnects is remembered away with its standing until one of its identity says Hello")
+    func awayUntilItReturns() async {
+        let harness = HubHarness(bundles: [Self.offered])
+        await harness.attached()
+        let first = HubPeer(harness, claim: .session(.user, instance: 1))
+        _ = await harness.snapshot { $0.peers.count == 1 }
+        first.driver.close(.shuttingDown)
+        let gone = await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
+        #expect(gone.away.count == 1)
+        #expect(gone.away[0].summary.userName == Fixture.peerState.userName)
+        #expect(gone.away[0].summary.standing == .outdated(offeredVersionLabel: "next", update: .unavailable))
+        #expect(!gone.away[0].relaunching)
+
+        // The same user's agent in a new process and a new session — a reboot — is the one that went away.
+        var rebooted = Fixture.peerState
+        rebooted.sessionID = "rebooted"
+        var later = harness.snapshots.waiterFromNow()
+        let second = HubPeer(harness, claim: .session(.user, instance: 2), state: rebooted)
+        let back = await later.next { $0.peers.count == 1 && $0.away.isEmpty }
+        #expect(back.peers[0].sessionID == "rebooted")
+        second.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test("A peer that closes after installing an update is away relaunching, still updating")
+    func relaunching() async {
+        let small = BundledPayload(
+            os: .linux, architecture: .arm64, scope: .user,
+            manifest: UpdateManifestValue(
+                payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 1000, format: .executable,
+                versionLabel: "next"))
+        let harness = HubHarness(bundles: [small], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])),
+            installs: true)
+        var events = harness.connector.events.waiter()
+        _ = await events.next {
+            if case .update(.result(_, let result)) = $0.event { result.kind == .staged } else { false }
+        }
+        peer.driver.close(.shuttingDown)
+        let gone = await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
+        #expect(gone.away[0].relaunching)
+        #expect(gone.away[0].summary.standing == .outdated(offeredVersionLabel: "next", update: .updating))
+        harness.hub.close()
+    }
+
+    @Test("forgetAway drops the peers that went away up to an order, and keeps the later ones")
+    func forgetsAway() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let session = HubPeer(harness, claim: .session(.user, instance: 1))
+        let system = HubPeer(
+            harness,
+            claim: PeerClaim(role: .systemPeer, scope: .system, os: .linux, instanceID: Data(repeating: 9, count: 16)))
+        _ = await harness.snapshot { $0.peers.count == 2 }
+        session.driver.close(.shuttingDown)
+        let first = await harness.snapshot { $0.away.count == 1 }
+        system.driver.close(.shuttingDown)
+        _ = await harness.snapshot { $0.away.count == 2 }
+        var later = harness.snapshots.waiterFromNow()
+        harness.hub.forgetAway(through: first.away[0].order)
+        let left = await later.next { $0.away.count == 1 }
+        #expect(left.away[0].summary.role == .systemPeer)
+        harness.hub.close()
+    }
+
+    @Test("Detaching forgets the away peers: the next attachment serves a new guest session")
+    func detachForgets() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let peer = HubPeer(harness, claim: .session(.user, instance: 1))
+        _ = await harness.snapshot { $0.peers.count == 1 }
+        peer.driver.close(.shuttingDown)
+        _ = await harness.snapshot { $0.away.count == 1 }
+        var later = harness.snapshots.waiterFromNow()
+        harness.hub.detach()
+        let reset = await later.next { $0.away.isEmpty }
+        #expect(reset.peers.isEmpty)
         harness.hub.close()
     }
 
@@ -383,7 +545,8 @@ struct AgentHubTests {
             ])
         #expect(republished[1].level == .info)
         #expect(republished[1].segments.map(\.text) == ["[session 1 app.kernova.tests/Flood] ", "record 45"])
-        #expect(harness.hostLogs.elements.isEmpty)
+        // The guest's records reach only the republisher; the hub's own log holds its Hello notices.
+        #expect(!harness.hostLogs.elements.contains { $0.contains("record") || $0.contains("Dropped") })
 
         let systemLogs = LogForwarding()
         systemLogs.append(

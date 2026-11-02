@@ -8,7 +8,8 @@ import KernovaAgentCore
 /// never one that exits 0, which stays stopped until the next login or boot; `StartLimitIntervalSec=0`
 /// keeps restarts from ever running out. `Type=exec` makes a start fail when the binary cannot be executed,
 /// so the installer's `restart` reports it rather than the restart loop hiding it. The rollback check is
-/// `Type=oneshot`, whose start already waits for it to exit. The rollback timer fires every 30 s, `AccuracySec=1s` because
+/// `Type=oneshot`, whose start already waits for it to exit. The rollback timer fires every
+/// `UpdateRollbackPolicy.checkIntervalSeconds`, `AccuracySec=1s` because
 /// systemd's default of one minute coarsens it; its service runs only while `switch-pending` exists.
 ///
 /// The system units run the agent from `/opt/kernova-agent`. Fedora's targeted policy labels that tree
@@ -76,8 +77,8 @@ enum UnitFiles {
         Description=Kernova guest agent update check
 
         [Timer]
-        OnActiveSec=30s
-        OnUnitActiveSec=30s
+        OnActiveSec=\(UpdateRollbackPolicy.checkIntervalSeconds)s
+        OnUnitActiveSec=\(UpdateRollbackPolicy.checkIntervalSeconds)s
         AccuracySec=1s
 
         [Install]

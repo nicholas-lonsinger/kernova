@@ -52,6 +52,11 @@ struct AddressingTests {
         #expect(try DBusAddress.parse("").isEmpty)
     }
 
+    @Test("An escaped value parses back unchanged", arguments: ["/run/user/1000/bus", "/a b,;=%/ü"])
+    func escapesValues(value: String) throws {
+        #expect(try DBusAddress.parse("unix:path=" + DBusAddress.escaped(value))[0].parameters["path"] == value)
+    }
+
     static let badAddresses: [(String, DBusAddressError)] = [
         ("path=/x", .missingTransport("path=/x")),
         (":path=/x", .missingTransport(":path=/x")),

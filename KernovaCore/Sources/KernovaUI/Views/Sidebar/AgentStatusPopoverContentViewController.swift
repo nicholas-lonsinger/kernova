@@ -284,6 +284,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         switch status {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
+        case .updating: "Updating guest agent"
         case .connecting: "Connecting to guest agent"
         case .current, .connected: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
@@ -307,6 +308,8 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         case .outdated(let installed, let bundled):
             return
                 "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). \(isInstallerMounted ? attachedStep : mountStep)"
+        case .updating(let installed, let bundled):
+            return "\(vmName) is updating guest agent \(installed) to \(bundled)."
         case .connecting(let expected):
             return
                 "Waiting for guest agent \(expected) on \(vmName) to connect."

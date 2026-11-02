@@ -220,10 +220,18 @@ extension PowerOffer {
 }
 
 extension UpdateOffer {
-    /// The advertised `UpdateCapability`; the rejected hash stays local.
+    /// The advertised `UpdateCapability`.
     var encodedCapability: Data {
         var capability = Kernova_V2_UpdateCapability()
         capability.formats = formats
+        capability.rejectedHash = rejectedHash ?? Data()
         return capability.encoded
+    }
+
+    /// Decodes a peer's `UpdateCapability` params; nil when they do not decode.
+    public init?(params: Data) {
+        guard let capability = try? Kernova_V2_UpdateCapability(serializedBytes: params) else { return nil }
+        self.init(
+            formats: capability.formats, rejectedHash: capability.rejectedHash.isEmpty ? nil : capability.rejectedHash)
     }
 }

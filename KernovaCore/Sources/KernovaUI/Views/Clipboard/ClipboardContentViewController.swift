@@ -973,6 +973,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         case .outdated(let installed, let bundled):
             statusCircle.contentTintColor = StatusColor.warning
             statusLabel.stringValue = "Update available (\(installed) → \(bundled))"
+        case .updating(let installed, let bundled):
+            statusCircle.contentTintColor = StatusColor.inactive
+            statusLabel.stringValue = "Updating (\(installed) → \(bundled))"
         case .connecting(let expected):
             statusCircle.contentTintColor = StatusColor.inactive
             statusLabel.stringValue = "Connecting (was \(expected))"

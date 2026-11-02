@@ -7,6 +7,7 @@ import Foundation
 import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
+import KernovaDigest
 import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
@@ -115,16 +116,19 @@ public final class AgentHub: Sendable {
     ) {
         setPolicy(policy)
         queue.async { [self] in
-            let acceptor = GuestStreamAcceptor(logger: logger) { [self] stream in accept(stream) }
-            let attached = state.withLock { state -> Bool in
-                guard !state.isClosed else { return false }
+            let generation = state.withLock { state -> UInt64? in
+                guard !state.isClosed else { return nil }
                 state.republisher = republisher
-                return true
+                state.attachmentGeneration += 1
+                return state.attachmentGeneration
             }
-            guard attached else { return }
+            guard let generation else { return }
+            let acceptor = GuestStreamAcceptor(logger: logger) { [self] stream in accept(stream, attachment: generation)
+            }
             detachTransport()
             state.withLock { $0.attachment = (transport, acceptor) }
             transport.start(admitting: acceptor)
+            publishIfChanged()
         }
     }
 
@@ -150,6 +154,15 @@ public final class AgentHub: Sendable {
         template.withLock { template in
             template.policy = policy
             queue.async { [self] in broadcast(.setPolicy(policy)) { _ in } }
+        }
+    }
+
+    /// Forgets the away peers that went away at or before `order` (``AwayPeer/order``): the host stopped
+    /// waiting for them.
+    public func forgetAway(through order: UInt64) {
+        queue.async { [self] in
+            state.withLock { $0.forgetAway(through: order) }
+            publishIfChanged()
         }
     }
 
@@ -290,9 +303,13 @@ public final class AgentHub: Sendable {
     private func detachTransport() {
         dispatchPrecondition(condition: .onQueue(queue))
         let attachment = state.withLock { state in
-            defer { state.attachment = nil }
+            defer {
+                state.attachment = nil
+                state.resetAttachmentMemory()
+            }
             return state.attachment
         }
+        publishIfChanged()
         guard let attachment else { return }
         // The listener first, so nothing more is offered while the acceptor shuts the live streams.
         attachment.transport.stop()
@@ -314,7 +331,7 @@ public final class AgentHub: Sendable {
     /// The transport's accept path, on the thread that accepted: builds the connection from the template
     /// and registers it on the hub's queue before starting it, so the registration runs before any of
     /// its events.
-    private func accept(_ stream: any ByteStream) {
+    private func accept(_ stream: any ByteStream, attachment: UInt64) {
         let handle = PeerHandle(
             rawValue: handles.withLock { count in
                 count += 1
@@ -324,15 +341,16 @@ public final class AgentHub: Sendable {
             let connection = connector.makeConnection(
                 stream, policy: template.policy, bundles: template.bundles, deliveringOn: queue
             ) { [self] event in receive(event, from: handle) }
-            queue.async { [self] in register(handle, connection) }
+            queue.async { [self] in register(handle, connection, attachment: attachment) }
             return connection
         }
         connection.start()
     }
 
-    private func register(_ handle: PeerHandle, _ connection: any HostConnectionHandle) {
+    private func register(_ handle: PeerHandle, _ connection: any HostConnectionHandle, attachment: UInt64) {
         let frozen = state.withLock { state in
             state.connections[handle] = connection
+            state.connectionAttachments[handle] = attachment
             return state.isFrozen
         }
         if frozen { connection.send(.setPeerFrozen(true)) }
@@ -352,7 +370,12 @@ public final class AgentHub: Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         switch event {
         case .helloReceived(let claim, let peerState):
-            let outcome = state.withLock { $0.helloReceived(handle, claim: claim, state: peerState) }
+            let outcome = state.withLock { state in
+                let outcome = state.helloReceived(handle, claim: claim, state: peerState)
+                state.joined(handle)
+                return outcome
+            }
+            logHello(claim, peerState, outcome)
             resolve(outcome, incoming: handle)
         case .peerStateChanged(let peerState):
             state.withLock { $0.peers[handle]?.state = peerState }
@@ -360,7 +383,12 @@ public final class AgentHub: Sendable {
             state.withLock { $0.peers[handle]?.features = table }
         case .liveness(let change):
             state.withLock { $0.peers[handle]?.isResponsive = change == .responsive }
-        case .closed:
+        case .closed(let closure):
+            if let record = state.withLock({ $0.peers[handle] }) {
+                logger.log(
+                    .notice,
+                    "The \(Self.name(record), privacy: .public) left: \(String(describing: closure), privacy: .public)")
+            }
             state.withLock { $0.closed(handle) }
             endRequests(of: handle)
         case .log(let delivery):
@@ -368,11 +396,51 @@ public final class AgentHub: Sendable {
             return republish(delivery, from: handle)
         case .power(let id, let result):
             return powerResult(id, result)
-        case .update, .diagnostic:
-            // Nothing serves a pull's progress yet, and the driver logs diagnostics itself.
+        case .update(let event):
+            logUpdate(event, from: handle)
+            state.withLock { $0.updateServed(event, from: handle) }
+        case .diagnostic:
+            // The driver logs diagnostics itself.
             return
         }
         publishIfChanged()
+    }
+
+    /// Logs a Hello read: who the peer is, what it runs, and whether it joined.
+    private func logHello(_ claim: PeerClaim, _ peerState: PeerSessionState, _ outcome: HelloOutcome?) {
+        let peer =
+            claim.role == .systemPeer
+            ? "system peer" : "session peer (session \(peerState.sessionID), user \(peerState.userName))"
+        let joined =
+            switch outcome {
+            case .joined: "joined"
+            case .displaced: "joined, displacing the peer it replaces"
+            case .refused(let code, _): "refused: \(code)"
+            case nil: "of a connection already gone"
+            }
+        logger.log(
+            .notice,
+            """
+            Hello from the \(peer, privacy: .public): version \(claim.versionLabel, privacy: .public), payload \
+            \(lowercaseHex(claim.payloadHash), privacy: .public); \(joined, privacy: .public)
+            """)
+    }
+
+    private func logUpdate(_ event: UpdateServeEvent, from handle: PeerHandle) {
+        guard let record = state.withLock({ $0.peers[handle] }) else { return }
+        let peer = Self.name(record)
+        switch event {
+        case .pullRequested(_, let manifest):
+            logger.log(.notice, "The \(peer, privacy: .public) pulls update \(manifest.versionLabel, privacy: .public)")
+        case .result(_, let result) where result.kind == .staged:
+            logger.log(.notice, "The \(peer, privacy: .public) installed the update and relaunches")
+        case .result(_, let result):
+            let code = String(describing: result.error?.code)
+            logger.log(.error, "The \(peer, privacy: .public) refused the update: \(code, privacy: .public)")
+        case .closed(_, let closure):
+            let detail = String(describing: closure)
+            logger.log(.error, "The \(peer, privacy: .public)'s update pull ended early: \(detail, privacy: .public)")
+        }
     }
 
     private func resolve(_ outcome: HelloOutcome?, incoming: PeerHandle) {

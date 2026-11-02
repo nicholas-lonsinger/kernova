@@ -18,20 +18,43 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     public var power: PowerProvision
     /// The power routing running now, if any.
     public var routing: PowerRoutingProgress?
+    /// The peers seen while this transport is attached that are disconnected now, the most recently gone
+    /// first; each leaves when a peer of its identity says Hello again, or ``AgentHub/forgetAway(through:)``
+    /// drops it.
+    public var away: [AwayPeer]
 
     /// A snapshot of these peers and merged features.
     public init(
         peers: [PeerSummary], features: FeatureStatusTable, power: PowerProvision = .absent(.noAgent),
-        routing: PowerRoutingProgress? = nil
+        routing: PowerRoutingProgress? = nil, away: [AwayPeer] = []
     ) {
         self.peers = peers
         self.features = features
         self.power = power
         self.routing = routing
+        self.away = away
     }
 
     /// No peer: every feature `NO_AGENT`.
     public static let empty = AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]))
+}
+
+/// A peer that disconnected, as it was when it did.
+public struct AwayPeer: Sendable, Equatable {
+    /// The peer as the snapshot last showed it.
+    public var summary: PeerSummary
+    /// It closed after installing an update: it is relaunching into it, and returns once the new version
+    /// connects or the rollback check restores the old one.
+    public var relaunching: Bool
+    /// Higher went away later; what ``AgentHub/forgetAway(through:)`` takes.
+    public var order: UInt64
+
+    /// Creates an away peer.
+    public init(summary: PeerSummary, relaunching: Bool, order: UInt64) {
+        self.summary = summary
+        self.relaunching = relaunching
+        self.order = order
+    }
 }
 
 /// One connected peer, as the UI shows it.
@@ -63,8 +86,22 @@ public struct PeerSummary: Sendable, Equatable {
         case notOffered
         /// Its payload hash is the offered payload's.
         case current
-        /// The host offers it the payload `offeredVersionLabel` names, which it does not run.
-        case outdated(offeredVersionLabel: String)
+        /// The host offers it the payload `offeredVersionLabel` names, which it does not run; `update` says
+        /// whether it is updating itself to it.
+        case outdated(offeredVersionLabel: String, update: InBandUpdate)
+    }
+
+    /// Whether an outdated peer is updating itself to the offered payload.
+    public enum InBandUpdate: Sendable, Equatable {
+        /// It offers UPDATE in the payload's format and has not refused it: it pulls the payload, or has
+        /// installed it and is relaunching.
+        case updating
+        /// It refused the payload: its install records the payload's hash as rejected, as a rollback or a
+        /// failed install does, or its pull of it on this connection ended without installing it, and the
+        /// peer pulls no hash twice on one connection.
+        case failed
+        /// It cannot update itself to the payload: it offers no UPDATE, or none in the payload's format.
+        case unavailable
     }
 
     /// Creates a summary.

@@ -85,6 +85,18 @@ struct InstallPlan: Equatable {
         return steps + after.map(Step.run)
     }
 
+    /// What a user-scope agent rewrites as it confirms an update to itself, so its units and autostart entry
+    /// are always the ones its own binary writes: every unit and autostart file the install writes, then a
+    /// reload of the user's manager. The system scope's units are root's, written only by
+    /// `install --system`, and never rewritten by the unprivileged system peer.
+    static func refreshUnits(_ layout: InstallLayout) -> InstallPlan {
+        precondition(layout.scope == .user, "only the user scope rewrites its own units")
+        var plan = InstallPlan(root: layout.root)
+        plan.writes = install(layout).writes
+        plan.after = [Command(systemctlPrefix(layout) + ["daemon-reload"])]
+        return plan
+    }
+
     /// The install of `layout`'s scope.
     ///
     /// A fresh install fills slot `a` and points `current` at it. Before it writes anything it stops the
@@ -98,7 +110,7 @@ struct InstallPlan: Equatable {
                 systemctl + ["stop", InstallLayout.rollbackTimerName, InstallLayout.rollbackServiceName],
                 onlyIfPresent: unit(layout, InstallLayout.rollbackTimerName))
         ]
-        plan.treeRemovals = [layout.switchPending]
+        plan.treeRemovals = [layout.switchPending, layout.switchRejected]
         plan.treeWrites = [
             .directory(path: layout.root + "/slots", mode: 0o755),
             .directory(path: layout.installSlot, mode: 0o755),
@@ -225,32 +237,4 @@ extension InstallPlan.Step: CustomStringConvertible {
 
     private static let plainBytes = Set(
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./=:@+,".utf8)
-}
-
-/// The slot metadata in `state.json`: which slot is in use, and what each holds.
-struct InstallState: Codable, Equatable {
-    /// What one slot holds.
-    struct Slot: Codable, Equatable {
-        /// The payload's SHA-256, lowercase hex.
-        var payloadSHA256: String
-        /// The display version the payload reports.
-        var versionLabel: String
-    }
-
-    /// The slot `current` points at.
-    var active: String
-    /// Each filled slot, by name.
-    var slots: [String: Slot]
-
-    /// The state after a fresh install of the payload hashing to `payloadSHA256` into slot `a`.
-    static func fresh(payloadSHA256: String, versionLabel: String) -> InstallState {
-        InstallState(active: "a", slots: ["a": Slot(payloadSHA256: payloadSHA256, versionLabel: versionLabel)])
-    }
-
-    /// The JSON written, keys sorted.
-    func encoded() throws -> [UInt8] {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        return Array(try encoder.encode(self)) + [0x0A]
-    }
 }

@@ -1507,6 +1507,11 @@ public nonisolated struct Kernova_V2_UpdateCapability: Sendable {
   /// a listed one.
   public var formats: [Kernova_V2_PayloadFormat] = []
 
+  /// The payload hash the install's slot metadata records as rejected; empty
+  /// when none. The peer pulls no payload of this hash, so a host offering it
+  /// knows the peer will not update itself to it. Re-advertised on change.
+  public var rejectedHash: Data = Data()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2708,7 +2713,7 @@ nonisolated extension Kernova_V2_BlockingApp: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Kernova_V2_UpdateCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UpdateCapability"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}formats\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}formats\0\u{3}rejected_hash\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -2717,6 +2722,7 @@ nonisolated extension Kernova_V2_UpdateCapability: SwiftProtobuf.Message, SwiftP
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedEnumField(value: &self.formats) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.rejectedHash) }()
       default: break
       }
     }
@@ -2726,11 +2732,15 @@ nonisolated extension Kernova_V2_UpdateCapability: SwiftProtobuf.Message, SwiftP
     if !self.formats.isEmpty {
       try visitor.visitPackedEnumField(value: self.formats, fieldNumber: 1)
     }
+    if !self.rejectedHash.isEmpty {
+      try visitor.visitSingularBytesField(value: self.rejectedHash, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_UpdateCapability, rhs: Kernova_V2_UpdateCapability) -> Bool {
     if lhs.formats != rhs.formats {return false}
+    if lhs.rejectedHash != rhs.rejectedHash {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

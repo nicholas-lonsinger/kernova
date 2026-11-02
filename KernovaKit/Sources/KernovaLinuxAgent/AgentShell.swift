@@ -5,6 +5,12 @@ import Glibc
 import Musl
 #endif
 
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
+
 import CKernovaAgentVersion
 // Apple's Dispatch marks its source protocols `Sendable`; swift-corelibs-libdispatch does not.
 @preconcurrency import Dispatch
@@ -52,8 +58,13 @@ enum AgentShell {
             runInstaller(request, uninstalling: false, label: label)
         case .uninstall(let request):
             runInstaller(request, uninstalling: true, label: label)
+        case .rollbackCheck(let scope):
+            runRollbackCheck(scope)
         }
     }
+
+    /// The status a peer exits with to relaunch: its unit's `RestartForceExitStatus=` (EX_TEMPFAIL).
+    static let relaunchStatus: Int32 = 75
 
     /// Prints what this binary would claim, so an installer can tell a staged payload runs here.
     private static func selfTest(label: String) -> Never {
@@ -108,15 +119,21 @@ enum AgentShell {
         let power = LinuxPowerAdapter(
             peer: role == .sessionPeer ? .session(GnomeSessionManager()) : .system, systemBus: bus)
         held.withLock { $0.power = power }
+        let update = updateInstaller(scope: claim.scope, label: label)
         // Dials nothing until the watcher's first state.
         let runtime = PeerAgentRuntime(
-            claim: claim, state: nil, registry: PeerFeatureRegistry(power: power, logs: logs),
+            claim: claim, state: nil, registry: PeerFeatureRegistry(power: power, logs: logs, update: update),
             dialer: LinuxVsockDialer(),
             scheduler: SystemScheduler(), logger: logger,
-            handlers: PeerAgentRuntime.Handlers { reason in
-                logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
-                exit(0)
-            })
+            handlers: PeerAgentRuntime.Handlers(
+                event: { event in
+                    // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.
+                    if event == .policyReceived { update?.confirm() }
+                },
+                stop: { reason in
+                    logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
+                    exit(0)
+                }))
         held.withLock { $0.runtime = runtime }
         installTermination()
         runtime.start()
@@ -157,6 +174,88 @@ enum AgentShell {
         }
         held.withLock { $0.watcher = watcher }
         dispatchMain()
+    }
+
+    /// The installer of the install this executable runs from; nil when it runs from none, as a development
+    /// build run in place does, which then advertises UPDATE absent.
+    private static func updateInstaller(scope: InstallScope, label: String) -> LinuxUpdateInstaller? {
+        guard scope != .unspecified, let running = LinuxIdentity.runningSlot() else { return nil }
+        let root: SlotRoot
+        do throws(SlotRoot.Failure) {
+            root = try SlotRoot(path: running.root)
+        } catch {
+            logger.log(.error, "Cannot open the install's root: \(String(describing: error), privacy: .public)")
+            return nil
+        }
+        return LinuxUpdateInstaller(
+            root: root, runningSlot: running.slot, logger: logger,
+            onSwitched: {
+                logger.log(.notice, "The peer relaunches into the update")
+                guard let runtime = held.withLock({ $0.runtime }) else { exit(relaunchStatus) }
+                runtime.close { exit(relaunchStatus) }
+            },
+            onConfirmed: {
+                if scope == .user { refreshUserUnits(root: running.root, label: label) }
+            })
+    }
+
+    /// Rewrites the user scope's units and autostart entry as this binary writes them (spec §8.3).
+    private static func refreshUserUnits(root: String, label: String) {
+        let environment = ProcessInfo.processInfo.environment
+        guard let config = InstallLayout.configHome(environment: environment) else {
+            return logger.log(.error, "Cannot rewrite the user units: neither XDG_CONFIG_HOME nor HOME is set")
+        }
+        // The path the install wrote the units with, from the manager's environment this service shares.
+        let layout = InstallLayout.user(
+            root: LinuxIdentity.userInstallRoot(environment: environment) ?? root, configHome: config)
+        let installer = Installer(
+            stagingRoot: "", runsSystemd: true, payloadSource: "/proc/self/exe", versionLabel: label, account: nil)
+        do throws(Installer.Failure) {
+            try installer.run(.refreshUnits(layout))
+            logger.log(.notice, "Rewrote the user units for this version")
+        } catch {
+            logger.log(.error, "Cannot rewrite the user units: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Runs the rollback check once for `scope`'s install, the one this executable sits in, then exits: 0
+    /// when it ran, 1 when it failed.
+    private static func runRollbackCheck(_ scope: InstallScope) -> Never {
+        guard let running = LinuxIdentity.runningSlot() else {
+            writeError("kernova-agent: rollback-check runs only from an installed slot")
+            exit(1)
+        }
+        do {
+            let check = RollbackCheck(
+                root: try SlotRoot(path: running.root),
+                mainPID: {
+                    let bus = try DBusBusConnection(bus: scope == .system ? .system : .user)
+                    return try SystemdManager(connection: bus).mainPID(ofService: InstallLayout.serviceName(scope))
+                },
+                kill: { pid in _ = kill(pid_t(pid), SIGKILL) })
+            switch try check.run() {
+            case .nothingPending:
+                break
+            case .clearedStaleMarker:
+                logger.log(.notice, "Removed a switch-pending marker that named no update")
+            case .counted(let runs):
+                logger.log(
+                    .notice, "The update is unconfirmed after \(runs) of \(RollbackCheck.runsToRevert) rollback checks")
+            case .confirmedMeanwhile:
+                logger.log(.notice, "The update was confirmed as the rollback check ran")
+            case .reverted(let killed):
+                logger.log(
+                    .error,
+                    """
+                    The update was never confirmed: rolled back to the previous version, killing process \
+                    \(killed.map(String.init) ?? "none", privacy: .public)
+                    """)
+            }
+            exit(0)
+        } catch {
+            logger.log(.error, "The rollback check failed: \(String(describing: error), privacy: .public)")
+            exit(1)
+        }
     }
 
     private static func logState(_ state: PeerSessionState?, role: PeerRole) {

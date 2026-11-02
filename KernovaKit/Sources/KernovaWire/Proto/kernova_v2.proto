@@ -494,6 +494,10 @@ message UpdateCapability {
   // Formats this peer installs; at most one entry each. The host serves only
   // a listed one.
   repeated PayloadFormat formats = 1;
+  // The payload hash the install's slot metadata records as rejected; empty
+  // when none. The peer pulls no payload of this hash, so a host offering it
+  // knows the peer will not update itself to it. Re-advertised on change.
+  bytes rejected_hash = 2;
 }
 
 // FROZEN. What one bundled payload is.

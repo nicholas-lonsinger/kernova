@@ -33,6 +33,15 @@ struct SHA256Tests {
         #expect(lowercaseHex([UInt8]()) == "")
     }
 
+    @Test("Hex reads back two digits a byte, either case, and refuses anything else")
+    func hexBytes() {
+        #expect(bytes(fromHex: "000fa0ff") == [0x00, 0x0F, 0xA0, 0xFF])
+        #expect(bytes(fromHex: "A0Ff") == [0xA0, 0xFF])
+        #expect(bytes(fromHex: "") == [])
+        #expect(bytes(fromHex: "abc") == nil)
+        #expect(bytes(fromHex: "zz") == nil)
+    }
+
     @Test("A million 'a's, fed in uneven pieces")
     func millionA() {
         var hasher = KernovaDigest.SHA256()
