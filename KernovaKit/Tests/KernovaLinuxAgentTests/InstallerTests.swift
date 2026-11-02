@@ -103,8 +103,7 @@ struct InstallerTests {
         ]) { $1 }
 
     static let systemDirectories = [
-        "/opt", "/etc", "/etc/systemd", "/etc/systemd/system", "/etc/sysusers.d", "/etc/polkit-1",
-        "/etc/polkit-1/rules.d",
+        "/opt", "/etc", "/etc/systemd", "/etc/systemd/system", "/etc/sysusers.d",
     ]
 
     static let systemInstall: [String: String] = Dictionary(
@@ -120,7 +119,6 @@ struct InstallerTests {
         "/etc/systemd/system/kernova-agent-rollback.timer": "f0644",
         "/etc/systemd/system/kernova-agent-rollback.service": "f0644",
         "/etc/sysusers.d/kernova-agent.conf": "f0644",
-        "/etc/polkit-1/rules.d/50-kernova-agent.rules": "f0644",
     ]) { $1 }
 
     private static func checkFiles(_ scratch: Scratch, _ layout: InstallLayout) throws {

@@ -32,43 +32,6 @@ public struct Logind: Sendable {
         self.connection = connection
     }
 
-    /// `PowerOff(false)`: powers the machine off, with no interactive polkit
-    /// authorization.
-    ///
-    /// Since systemd 257 a `block` inhibitor on `shutdown` refuses every
-    /// caller with `org.freedesktop.login1.BlockedByInhibitorLock`; earlier
-    /// releases skip it for the lock's own user and for privileged callers
-    /// (org.freedesktop.login1(5)). A caller that must honour inhibitors checks
-    /// `shutdownBlockers(forCallerUID:)` first.
-    public func powerOff() throws(LogindError) {
-        _ = try call(Self.managerPath, Self.managerInterface, "PowerOff", [.boolean(false)], expecting: .empty)
-    }
-
-    /// `Reboot(false)`, as `powerOff()`.
-    public func reboot() throws(LogindError) {
-        _ = try call(Self.managerPath, Self.managerInterface, "Reboot", [.boolean(false)], expecting: .empty)
-    }
-
-    /// `ListInhibitors()`: every inhibitor lock held now.
-    public func inhibitors() throws(LogindError) -> [LogindInhibitor] {
-        let body = try call(Self.managerPath, Self.managerInterface, "ListInhibitors", [], expecting: "a(ssssuu)")
-        return try Self.read { () throws(DBusValueMismatch) in
-            try body[0].arrayElements().map { element throws(DBusValueMismatch) in
-                let fields = try element.structFields()
-                return LogindInhibitor(
-                    what: try fields[0].string().split(separator: ":").map(String.init),
-                    who: try fields[1].string(), why: try fields[2].string(),
-                    mode: LogindInhibitorMode(rawValue: try fields[3].string()),
-                    uid: try fields[4].uint32(), pid: try fields[5].uint32())
-            }
-        }
-    }
-
-    /// The inhibitors that block a power-off or reboot `uid` requests.
-    public func shutdownBlockers(forCallerUID uid: UInt32) throws(LogindError) -> [LogindInhibitor] {
-        try inhibitors().filter { $0.blocksShutdown(forCallerUID: uid) }
-    }
-
     /// `GetUser(uid)`: the user's object. logind answers with an ERROR for a
     /// user with no login.
     ///
@@ -278,63 +241,6 @@ public enum LogindError: Error, Hashable, Sendable {
     case valueMismatch(DBusValueMismatch)
     /// `GetAll` left out a property logind documents.
     case missingProperty(String)
-}
-
-/// One inhibitor lock, as `ListInhibitors()` lists it.
-public struct LogindInhibitor: Sendable, Hashable {
-    /// The operations it inhibits: `shutdown`, `sleep`, `idle`, and others.
-    public var what: [String]
-    /// The application holding it, in its own words.
-    public var who: String
-    /// Why, in the application's words.
-    public var why: String
-    /// How it inhibits.
-    public var mode: LogindInhibitorMode
-    /// The holder's user.
-    public var uid: UInt32
-    /// The holder's process.
-    public var pid: UInt32
-
-    /// An inhibitor with these fields.
-    public init(what: [String], who: String, why: String, mode: LogindInhibitorMode, uid: UInt32, pid: UInt32) {
-        self.what = what
-        self.who = who
-        self.why = why
-        self.mode = mode
-        self.uid = uid
-        self.pid = pid
-    }
-
-    /// Whether it blocks a power-off or reboot `uid` requests: a `block` lock
-    /// on `shutdown` blocks every caller, and a `block-weak` one every
-    /// unprivileged caller but the lock's own user (org.freedesktop.login1(5),
-    /// systemd 257 and later). A `delay` lock only delays.
-    public func blocksShutdown(forCallerUID callerUID: UInt32) -> Bool {
-        guard what.contains("shutdown") else { return false }
-        switch mode {
-        case .block: return true
-        case .blockWeak: return callerUID != 0 && callerUID != uid
-        default: return false
-        }
-    }
-}
-
-/// An inhibitor's mode.
-public struct LogindInhibitorMode: RawRepresentable, Sendable, Hashable {
-    /// The mode as logind spells it.
-    public var rawValue: String
-
-    /// The mode logind spells `rawValue`.
-    public init(rawValue: String) {
-        self.rawValue = rawValue
-    }
-
-    /// `block`.
-    public static let block = LogindInhibitorMode(rawValue: "block")
-    /// `block-weak`.
-    public static let blockWeak = LogindInhibitorMode(rawValue: "block-weak")
-    /// `delay`.
-    public static let delay = LogindInhibitorMode(rawValue: "delay")
 }
 
 /// A session's state: `online`, `active` or `closing`.
