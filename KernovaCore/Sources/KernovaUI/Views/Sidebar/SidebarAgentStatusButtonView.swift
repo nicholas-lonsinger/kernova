@@ -8,7 +8,7 @@ import KernovaCore
 /// An `NSButton` (the static SF Symbol states) and an `NSProgressIndicator`
 /// (the `.connecting` spinner) stacked at fixed size, one visible at a time.
 /// Click opens an `NSPopover` hosting an
-/// ``AgentStatusPopoverContentViewController``.
+/// ``GuestAgentStatusViewController``.
 @MainActor
 final class SidebarAgentStatusButtonView: NSView {
     /// Invoked when the user activates the popover's guest-agent disk control.
@@ -24,7 +24,7 @@ final class SidebarAgentStatusButtonView: NSView {
     private let iconButton = NSButton()
     private let spinner = NSProgressIndicator()
     private let popoverPresenter = PopoverPresenter()
-    private let contentVC = AgentStatusPopoverContentViewController()
+    private let contentVC = GuestAgentStatusViewController()
 
     private(set) var presentation = GuestAgentPresentation(macOSAgent: .waiting)
     var status: AgentStatus { presentation.status }

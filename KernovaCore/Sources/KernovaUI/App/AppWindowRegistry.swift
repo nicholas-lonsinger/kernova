@@ -6,7 +6,8 @@ import KernovaLogging
 /// on screen.
 ///
 /// Every window a person can see belongs here — the library, Settings, the
-/// config check, the per-VM clipboard windows, and the display windows
+/// config check, the per-VM clipboard and guest-agent status windows, and the
+/// display windows
 /// ``VMDisplayPlacementController`` places — so the presence question has a
 /// single answer rather than one per owner.
 @MainActor
@@ -28,6 +29,7 @@ final class AppWindowRegistry {
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
+    private var guestAgentStatusWindows: [UUID: GuestAgentStatusWindowController] = [:]
 
     /// Reports that this registry put a window on screen — an event no
     /// notification carries for a window ordered in without becoming key.
@@ -202,11 +204,38 @@ final class AppWindowRegistry {
 
     func clipboardWindow(for vmID: UUID) -> NSWindow? { clipboardWindows[vmID]?.window }
 
+    // MARK: - Guest Agent Status
+
+    /// Shows or focuses the guest-agent status window for `instance`, when the
+    /// VM's state admits one.
+    func showGuestAgentStatus(for instance: VMInstance) {
+        guard viewModel.capabilities.accepts(.showGuestAgentStatus, on: instance) else { return }
+        let vmID = instance.instanceID
+        if let existing = guestAgentStatusWindows[vmID] {
+            residency?.prepareToPresentWindow()
+            existing.window?.makeKeyAndOrderFront(nil)
+            shown(existing.window)
+            return
+        }
+        guard let controller = GuestAgentStatusWindowController(instance: instance, viewModel: viewModel, stage: stage)
+        else { return }
+        residency?.prepareToPresentWindow()
+        controller.onWillClose = { [weak self] in
+            self?.guestAgentStatusWindows.removeValue(forKey: vmID)
+        }
+        guestAgentStatusWindows[vmID] = controller
+        controller.showWindow(nil)
+        shown(controller.window)
+    }
+
+    func guestAgentStatusWindow(for vmID: UUID) -> NSWindow? { guestAgentStatusWindows[vmID]?.window }
+
     // MARK: - Working Window
 
-    /// The VM `window` shows: a display or clipboard window's own VM, or the
-    /// library's selection while the library window is visible; `nil` for any
-    /// other window. A sheet answers for the window it is attached to.
+    /// The VM `window` shows: a display, clipboard or guest-agent status
+    /// window's own VM, or the library's selection while the library window is
+    /// visible; `nil` for any other window. A sheet answers for the window it
+    /// is attached to.
     func instance(shownIn window: NSWindow) -> VMInstance? {
         let window = Self.sheetRoot(of: window)
         if let instance = ownInstance(of: window) { return instance }
@@ -214,10 +243,10 @@ final class AppWindowRegistry {
         return viewModel.selectedInstance
     }
 
-    /// The VMs `window` can act on: a display or clipboard window's own VM, or
-    /// every VM the library lists while the library window is visible — its
-    /// sidebar acts on any of them, not only the selection. A sheet answers
-    /// for the window it is attached to.
+    /// The VMs `window` can act on: a display, clipboard or guest-agent status
+    /// window's own VM, or every VM the library lists while the library window
+    /// is visible — its sidebar acts on any of them, not only the selection. A
+    /// sheet answers for the window it is attached to.
     func vmIDs(actedOnIn window: NSWindow) -> Set<UUID> {
         let window = Self.sheetRoot(of: window)
         if let instance = ownInstance(of: window) { return [instance.id] }
@@ -225,10 +254,11 @@ final class AppWindowRegistry {
         return Set(viewModel.instances.map(\.id))
     }
 
-    /// The VM a display or clipboard window belongs to.
+    /// The VM a display, clipboard or guest-agent status window belongs to.
     private func ownInstance(of window: NSWindow) -> VMInstance? {
         displayPlacement.instance(forDisplayWindow: window)
             ?? clipboardWindows.values.first { $0.window === window }?.instance
+            ?? guestAgentStatusWindows.values.first { $0.window === window }?.instance
     }
 
     /// The VM the user is working on, found the way AppKit finds a menu
@@ -276,6 +306,7 @@ final class AppWindowRegistry {
         if isPresent(libraryWindow) { return true }
         if displayPlacement.hasWindow(where: { isPresent($0) }) { return true }
         if clipboardWindows.values.contains(where: { isPresent($0.window) }) { return true }
+        if guestAgentStatusWindows.values.contains(where: { isPresent($0.window) }) { return true }
         if isPresent(settingsWindow) { return true }
         if isPresent(configCheckWindow) { return true }
         return false
@@ -321,6 +352,7 @@ final class AppWindowRegistry {
     func closeAll() {
         displayPlacement.closeAllForAppDismissal()
         for controller in Array(clipboardWindows.values) { controller.window?.close() }
+        for controller in Array(guestAgentStatusWindows.values) { controller.window?.close() }
         settingsWindow?.close()
         configCheckWindow?.close()
         mainWindowController?.window?.close()

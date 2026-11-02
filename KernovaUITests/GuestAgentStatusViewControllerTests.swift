@@ -6,9 +6,9 @@ import KernovaTestSupport
 @testable import KernovaUI
 import Testing
 
-@Suite("AgentStatusPopoverContentViewController Tests", .caseScoped)
+@Suite("GuestAgentStatusViewController Tests", .caseScoped)
 @MainActor
-struct AgentStatusPopoverContentViewControllerTests {
+struct GuestAgentStatusViewControllerTests {
     private static let install = GuestAgentDiskControl.Model(
         title: "Install Guest Agent…", isEnabled: true, action: .mount(.install))
     private static let eject = GuestAgentDiskControl.Model(
@@ -18,7 +18,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("default state — title/body/action-button reflect .waiting")
     func defaultState() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         vc.update(
             presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
             diskControl: Self.install, vmName: "TestVM",
@@ -32,7 +32,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("update() swaps title and body per status")
     func updatePerStatus() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         vc.loadViewIfNeeded()
 
         let cases: [(status: AgentStatus, title: String, bodyContains: String)] = [
@@ -56,7 +56,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("The action button carries the disk control it is handed")
     func actionButtonFollowsDiskControl() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         vc.loadViewIfNeeded()
 
         let cases: [(control: GuestAgentDiskControl.Model, title: String)] = [
@@ -78,11 +78,11 @@ struct AgentStatusPopoverContentViewControllerTests {
         // Both states are reached after a mid-session death as well as after a
         // boot, so neither may claim a boot happened, nor guess why the agent
         // is gone.
-        let connecting = AgentStatusPopoverContentViewController.bodyText(
+        let connecting = GuestAgentStatusViewController.bodyText(
             for: .connecting(expected: "0.9.2"), isInstallerMounted: false, vmName: "TestVM")
         #expect(!connecting.contains("boot"))
 
-        let missing = AgentStatusPopoverContentViewController.bodyText(
+        let missing = GuestAgentStatusViewController.bodyText(
             for: .expectedMissing(expected: "0.9.2"), isInstallerMounted: false, vmName: "TestVM")
         #expect(!missing.contains("boot"))
         #expect(!missing.contains("LaunchAgent"))
@@ -90,7 +90,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("Don't show again button visibility tracks hasDismissAction")
     func dismissButtonVisibility() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         vc.loadViewIfNeeded()
 
         vc.update(
@@ -111,7 +111,7 @@ struct AgentStatusPopoverContentViewControllerTests {
     private func tapAction(diskControl: GuestAgentDiskControl.Model) -> (
         title: String?, diskControlCount: Int, doneCount: Int
     ) {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         var diskControlCount = 0
         var doneCount = 0
         vc.onDiskControl = { diskControlCount += 1 }
@@ -150,7 +150,7 @@ struct AgentStatusPopoverContentViewControllerTests {
             .expectedMissing(expected: "0.9.2"),
         ])
     func installerAttachedBody(status: AgentStatus) {
-        let body = AgentStatusPopoverContentViewController.bodyText(
+        let body = GuestAgentStatusViewController.bodyText(
             for: status, isInstallerMounted: true, vmName: "TestVM")
         #expect(body.contains("installer disk is attached"))
         #expect(!body.contains("Mounting"))
@@ -159,7 +159,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("dismiss button click fires onDismiss")
     func dismissFiresCallback() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         var diskControlCount = 0
         var doneCount = 0
         var dismissCount = 0
@@ -180,7 +180,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("A hub presentation shows a line per agent and its capability rows in place of the body")
     func hubRows() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         vc.loadViewIfNeeded()
         let snapshot = AgentHubSnapshot(
             peers: [
@@ -210,7 +210,7 @@ struct AgentStatusPopoverContentViewControllerTests {
 
     @Test("An attached disk opened from a terminal shows its command with a Copy button; none otherwise")
     func installCommandRow() {
-        let vc = AgentStatusPopoverContentViewController()
+        let vc = GuestAgentStatusViewController()
         vc.loadViewIfNeeded()
         let command = #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
         var eject = Self.eject

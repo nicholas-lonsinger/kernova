@@ -1,4 +1,7 @@
 import AppKit
+import KernovaAgentCore
+import KernovaAgentHost
+import KernovaCommandModel
 import Testing
 
 @testable import KernovaCore
@@ -131,6 +134,78 @@ struct MainMenuValidationTests {
 
         #expect(fixture.validate(item) == model.isEnabled)
         #expect(item.title == model.title)
+    }
+
+    /// Whether the VM's session has a channel to an agent, and what kind.
+    enum AgentChannel: Sendable {
+        case none
+        /// A session context; a Linux one without the hub transport a socket
+        /// device gives it.
+        case sessionOnly
+        case agent
+    }
+
+    @Test(
+        "Guest Agent Status is enabled exactly while a settled session has a channel to an agent",
+        arguments: [
+            (VMGuestOS.macOS, PhaseFixture.settled(.stopped), AgentChannel.none, false),
+            (.macOS, .settled(.suspended), .none, false),
+            (.macOS, .settled(.running(sessionID: UUID())), .agent, true),
+            (.macOS, .settled(.livePaused(sessionID: UUID())), .agent, true),
+            // An operation presenting the live phase it started from keeps it.
+            (.macOS, .operating(.pausing, from: .running(sessionID: UUID())), .agent, true),
+            (.macOS, .operating(.saving, from: .running(sessionID: UUID())), .agent, false),
+            (
+                .macOS,
+                .operating(
+                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
+                .agent, false
+            ),
+            (.linux, .settled(.stopped), .none, false),
+            (.linux, .settled(.running(sessionID: UUID())), .agent, true),
+            (.linux, .settled(.livePaused(sessionID: UUID())), .agent, true),
+            // A Linux session without a socket device has no agent.
+            (.linux, .settled(.running(sessionID: UUID())), .sessionOnly, false),
+        ])
+    func guestAgentStatusFollowsTheAgentChannel(
+        guestOS: VMGuestOS, phase: PhaseFixture, channel: AgentChannel, isEnabled: Bool
+    ) throws {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: guestOS, phase: phase.phase)
+        if phase.phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
+        switch channel {
+        case .none: break
+        case .sessionOnly: instance.beginSessionContextForTesting()
+        case .agent: instance.beginSessionContextForTesting().hasAgentTransport = true
+        }
+        let item = makeMenuItem(#selector(AppDelegate.showGuestAgentStatus(_:)))
+
+        #expect(fixture.validate(item) == isEnabled, "\(guestOS) \(phase) \(channel)")
+    }
+
+    @Test("Guest Agent Status stays enabled while every agent is current and the sidebar hides its badge")
+    func guestAgentStatusEnabledWhileTheBadgeIsHidden() {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        let current = PeerSummary(
+            handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+            userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [current], features: FeatureStatus.merge([])))
+
+        #expect(
+            SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: false) == nil)
+        #expect(fixture.validate(makeMenuItem(#selector(AppDelegate.showGuestAgentStatus(_:)))))
+    }
+
+    @Test("The Virtual Machine menu offers Guest Agent Status")
+    func vmMenuOffersGuestAgentStatus() {
+        let fixture = makeFixture()
+        let vmMenu = submenu(titled: "Virtual Machine", in: fixture.controller.makeMainMenu())
+
+        let item = vmMenu?.items.first { $0.action == #selector(AppDelegate.showGuestAgentStatus(_:)) }
+        #expect(item?.title == "Guest Agent Status")
     }
 
     @Test("The Clone items name the preference with no VM selected")

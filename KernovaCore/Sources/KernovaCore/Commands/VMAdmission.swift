@@ -598,6 +598,8 @@ package enum VMAdmission {
             admitted = phase.hasLiveSession
         case .clipboard:
             admitted = facts.clipboardSharingEnabled && phase.hasLiveSession
+        case .guestAgentStatus:
+            admitted = phase.hasLiveSession && facts.reachesGuestAgent
         case .guestAgentDisk:
             guard phase.hasLiveSession, facts.reachesGuestAgent else { return .refuse(.invalidState) }
             return decideOnTheVM(
@@ -654,6 +656,8 @@ package enum VMAffordance: Sendable, Equatable {
     /// Pop out, or go fullscreen.
     case externalDisplay
     case clipboard
+    /// Show the guest agent's status for a session with a channel to one.
+    case guestAgentStatus
     /// Attach or eject the guest-agent installer disk.
     case guestAgentDisk
 }
