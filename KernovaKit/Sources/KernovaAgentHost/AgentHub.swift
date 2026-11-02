@@ -7,6 +7,7 @@ import Foundation
 import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
+import KernovaDigest
 import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
@@ -374,6 +375,7 @@ public final class AgentHub: Sendable {
                 state.joined(handle)
                 return outcome
             }
+            logHello(claim, peerState, outcome)
             resolve(outcome, incoming: handle)
         case .peerStateChanged(let peerState):
             state.withLock { $0.peers[handle]?.state = peerState }
@@ -381,7 +383,12 @@ public final class AgentHub: Sendable {
             state.withLock { $0.peers[handle]?.features = table }
         case .liveness(let change):
             state.withLock { $0.peers[handle]?.isResponsive = change == .responsive }
-        case .closed:
+        case .closed(let closure):
+            if let record = state.withLock({ $0.peers[handle] }) {
+                logger.log(
+                    .notice,
+                    "The \(Self.name(record), privacy: .public) left: \(String(describing: closure), privacy: .public)")
+            }
             state.withLock { $0.closed(handle) }
             endRequests(of: handle)
         case .log(let delivery):
@@ -397,6 +404,26 @@ public final class AgentHub: Sendable {
             return
         }
         publishIfChanged()
+    }
+
+    /// Logs a Hello read: who the peer is, what it runs, and whether it joined.
+    private func logHello(_ claim: PeerClaim, _ peerState: PeerSessionState, _ outcome: HelloOutcome?) {
+        let peer =
+            claim.role == .systemPeer
+            ? "system peer" : "session peer (session \(peerState.sessionID), user \(peerState.userName))"
+        let joined =
+            switch outcome {
+            case .joined: "joined"
+            case .displaced: "joined, displacing the peer it replaces"
+            case .refused(let code, _): "refused: \(code)"
+            case nil: "of a connection already gone"
+            }
+        logger.log(
+            .notice,
+            """
+            Hello from the \(peer, privacy: .public): version \(claim.versionLabel, privacy: .public), payload \
+            \(lowercaseHex(claim.payloadHash), privacy: .public); \(joined, privacy: .public)
+            """)
     }
 
     private func logUpdate(_ event: UpdateServeEvent, from handle: PeerHandle) {

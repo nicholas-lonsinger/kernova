@@ -168,6 +168,7 @@ var targets: [Target] = [
         name: "KernovaAgentHost",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization",
+            "KernovaDigest",
         ],
         swiftSettings: sharedSwiftSettings
     ),

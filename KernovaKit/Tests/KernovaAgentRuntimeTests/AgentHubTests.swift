@@ -146,6 +146,25 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
+    @Test("Each Hello and each peer leaving is logged: the role, the user, the version, the payload, the reason")
+    func logsArrivalsAndDepartures() async {
+        let harness = HubHarness()
+        await harness.attached()
+        var claim = PeerClaim.session(.user, instance: 1)
+        claim.payloadHash = Data([0xAB, 0x01])
+        let peer = HubPeer(harness, claim: claim)
+        var logs = harness.hostLogs.waiter()
+        let hello = await logs.next { $0.hasPrefix("Hello from") }
+        #expect(hello.contains("session peer (session 1, user user)"))
+        #expect(hello.contains("version peer"))
+        #expect(hello.contains("payload ab01"))
+        #expect(hello.contains("joined"))
+        peer.driver.close(.shuttingDown)
+        let left = await logs.next { $0.contains(" left: ") }
+        #expect(left.hasPrefix("The session peer (session 1, user user) left: "))
+        harness.hub.close()
+    }
+
     // MARK: Away peers
 
     @Test("A peer that disconnects is remembered away with its standing until one of its identity says Hello")
@@ -526,7 +545,8 @@ struct AgentHubTests {
             ])
         #expect(republished[1].level == .info)
         #expect(republished[1].segments.map(\.text) == ["[session 1 app.kernova.tests/Flood] ", "record 45"])
-        #expect(harness.hostLogs.elements.isEmpty)
+        // The guest's records reach only the republisher; the hub's own log holds its Hello notices.
+        #expect(!harness.hostLogs.elements.contains { $0.contains("record") || $0.contains("Dropped") })
 
         let systemLogs = LogForwarding()
         systemLogs.append(
