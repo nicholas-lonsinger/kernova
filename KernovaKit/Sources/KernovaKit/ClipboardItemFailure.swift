@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import SwiftProtobuf
 
 /// Which item a transfer failed on, and how: an item the sending side could not
 /// read, or an entry the receiving side could not write.

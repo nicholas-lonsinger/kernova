@@ -1,5 +1,4 @@
 import Foundation
-import SwiftProtobuf
 import KernovaKit
 
 /// One representation's metadata as it rides in an offer's `repInfo`.

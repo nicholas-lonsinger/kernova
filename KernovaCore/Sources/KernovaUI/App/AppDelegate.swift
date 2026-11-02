@@ -442,6 +442,11 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         windows.showClipboard(for: instance)
     }
 
+    @objc func showGuestAgentStatus(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        windows.showGuestAgentStatus(for: instance)
+    }
+
     @objc func toggleGuestAgentDisk(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         Task { @MainActor [viewModel] in await viewModel.toggleGuestAgentDisk(on: instance) }

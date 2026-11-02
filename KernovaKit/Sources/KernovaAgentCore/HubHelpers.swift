@@ -124,8 +124,7 @@ public enum FeatureStatus {
     /// the user can change, the nearest fix first; reasons that name no fix last.
     public static let absencePrecedence: [AbsenceReason] = [
         .protocolMismatch, .versionMismatch, .disabledByPolicy, .turnedOffInGuest, .notPermitted, .notOnConsole,
-        .unsavedWorkUnseen, .noUserSession, .missingOsComponent, .notServedByRole, .notImplemented, .unspecified,
-        .noAgent,
+        .noUserSession, .missingOsComponent, .notServedByRole, .notImplemented, .unspecified, .noAgent,
     ]
 
     static func rank(_ reason: AbsenceReason) -> Int {

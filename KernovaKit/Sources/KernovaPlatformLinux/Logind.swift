@@ -32,47 +32,6 @@ public struct Logind: Sendable {
         self.connection = connection
     }
 
-    /// `PowerOff(false)`: powers the machine off, with no interactive polkit
-    /// authorization, waiting `timeout` for logind's reply.
-    ///
-    /// logind lets an inhibitor's own user through some shutdown blocks: since
-    /// systemd 257 a `block-weak` lock passes its own user and root, and before
-    /// 257 a `block` lock passes its own user too (org.freedesktop.login1(5)).
-    /// gnome-session holds its lock as the session's user — `block` through
-    /// GNOME 50, `block-weak` from 51 (gsm-systemd.c). So a session's own
-    /// power-off can pass its apps' unsaved work, and a caller that must not
-    /// checks `shutdownBlockers()` first.
-    public func powerOff(timeout: Duration = DBusBusConnection.defaultTimeout) throws(DBusServiceError) {
-        _ = try call(
-            Self.managerPath, Self.managerInterface, "PowerOff", [.boolean(false)], expecting: .empty, timeout: timeout)
-    }
-
-    /// `Reboot(false)`, as `powerOff(timeout:)`.
-    public func reboot(timeout: Duration = DBusBusConnection.defaultTimeout) throws(DBusServiceError) {
-        _ = try call(
-            Self.managerPath, Self.managerInterface, "Reboot", [.boolean(false)], expecting: .empty, timeout: timeout)
-    }
-
-    /// `ListInhibitors()`: every inhibitor lock held now.
-    public func inhibitors() throws(DBusServiceError) -> [LogindInhibitor] {
-        let body = try call(Self.managerPath, Self.managerInterface, "ListInhibitors", [], expecting: "a(ssssuu)")
-        return try DBusServiceError.read { () throws(DBusValueMismatch) in
-            try body[0].arrayElements().map { element throws(DBusValueMismatch) in
-                let fields = try element.structFields()
-                return LogindInhibitor(
-                    what: try fields[0].string().split(separator: ":").map(String.init),
-                    who: try fields[1].string(), why: try fields[2].string(),
-                    mode: LogindInhibitorMode(rawValue: try fields[3].string()),
-                    uid: try fields[4].uint32(), pid: try fields[5].uint32())
-            }
-        }
-    }
-
-    /// The inhibitors that block a power-off or reboot for some caller.
-    public func shutdownBlockers() throws(DBusServiceError) -> [LogindInhibitor] {
-        try inhibitors().filter(\.blocksShutdown)
-    }
-
     /// `GetUser(uid)`: the user's object. logind answers with an ERROR for a
     /// user with no login.
     ///
@@ -133,52 +92,7 @@ public struct Logind: Sendable {
         try LogindSessionReference(try property("ActiveSession", of: seat, Self.seatInterface))
     }
 
-    /// `ListSessions()`: every session's object.
-    public func sessions() throws(DBusServiceError) -> [DBusObjectPath] {
-        let body = try call(Self.managerPath, Self.managerInterface, "ListSessions", [], expecting: "a(susso)")
-        return try DBusServiceError.read { () throws(DBusValueMismatch) in
-            try body[0].arrayElements().map { element throws(DBusValueMismatch) in
-                try element.structFields()[4].objectPath()
-            }
-        }
-    }
-
-    /// The sessions running a desktop: each not `closing`, of a class other than `greeter`, and of type
-    /// `x11`, `wayland` or `mir`. A session finalized between the listing and the read is left out.
-    public func desktopSessions() throws(DBusServiceError) -> [LogindSessionProperties] {
-        var desktops: [LogindSessionProperties] = []
-        for path in try sessions() {
-            let properties: LogindSessionProperties
-            do throws(DBusServiceError) {
-                properties = try sessionProperties(path)
-            } catch let error where error.remoteError?.name == "org.freedesktop.DBus.Error.UnknownObject" {
-                continue
-            }
-            if properties.runsDesktop { desktops.append(properties) }
-        }
-        return desktops
-    }
-
-    /// Calls `onChange`, on the connection's reader thread, for each `SessionNew` and `SessionRemoved`
-    /// logind emits, until both subscriptions are cancelled. Subscribe before reading `desktopSessions()`.
-    public func observeSessionList(_ onChange: @escaping @Sendable () -> Void) throws(DBusServiceError)
-        -> [DBusSubscription]
-    {
-        var subscriptions: [DBusSubscription] = []
-        for member in ["SessionNew", "SessionRemoved"] {
-            let rule = DBusMatchRule(
-                sender: Self.busName, path: Self.managerPath, interface: Self.managerInterface, member: member)
-            do throws(DBusCallError) {
-                subscriptions.append(try connection.subscribe(rule) { _ in onChange() })
-            } catch {
-                subscriptions.forEach { $0.cancel() }
-                throw .call(error)
-            }
-        }
-        return subscriptions
-    }
-
-    /// The session's `Id`, `Active`, `State`, `Class`, `Type` and `Seat`.
+    /// The session's `Id`, `Active`, `State`, `Class` and `Seat`.
     public func sessionProperties(_ session: DBusObjectPath) throws(DBusServiceError) -> LogindSessionProperties {
         let body = try call(
             session, Self.propertiesInterface, "GetAll", [.string(Self.sessionInterface)], expecting: "a{sv}")
@@ -198,7 +112,7 @@ public struct Logind: Sendable {
             try DBusServiceError.read { () throws(DBusValueMismatch) in try seat.variantContent() })
         return LogindSessionProperties(
             id: try string("Id"), active: active, state: LogindSessionState(rawValue: try string("State")),
-            sessionClass: sessionClass, type: LogindSessionType(rawValue: try string("Type")), seat: seatReference?.id)
+            sessionClass: sessionClass, seat: seatReference?.id)
     }
 
     /// Calls `onChange` for each `PropertiesChanged` logind emits for the
@@ -288,62 +202,12 @@ public struct Logind: Sendable {
 
     private func call(
         _ path: DBusObjectPath, _ interface: String, _ member: String, _ body: [DBusValue],
-        expecting signature: DBusSignature, timeout: Duration = DBusBusConnection.defaultTimeout
+        expecting signature: DBusSignature
     ) throws(DBusServiceError) -> [DBusValue] {
         try connection.callMethod(
             destination: Self.busName, path: path, interface: interface, member: member, body: body,
-            expecting: signature, timeout: timeout)
+            expecting: signature)
     }
-}
-
-/// One inhibitor lock, as `ListInhibitors()` lists it.
-public struct LogindInhibitor: Sendable, Hashable {
-    /// The operations it inhibits: `shutdown`, `sleep`, `idle`, and others.
-    public var what: [String]
-    /// The application holding it, in its own words.
-    public var who: String
-    /// Why, in the application's words.
-    public var why: String
-    /// How it inhibits.
-    public var mode: LogindInhibitorMode
-    /// The holder's user.
-    public var uid: UInt32
-    /// The holder's process.
-    public var pid: UInt32
-
-    /// An inhibitor with these fields.
-    public init(what: [String], who: String, why: String, mode: LogindInhibitorMode, uid: UInt32, pid: UInt32) {
-        self.what = what
-        self.who = who
-        self.why = why
-        self.mode = mode
-        self.uid = uid
-        self.pid = pid
-    }
-
-    /// Whether it blocks a power-off or reboot for some caller: a `block` or
-    /// `block-weak` lock on `shutdown`. A `delay` lock only delays.
-    public var blocksShutdown: Bool {
-        what.contains("shutdown") && (mode == .block || mode == .blockWeak)
-    }
-}
-
-/// An inhibitor's mode.
-public struct LogindInhibitorMode: RawRepresentable, Sendable, Hashable {
-    /// The mode as logind spells it.
-    public var rawValue: String
-
-    /// The mode logind spells `rawValue`.
-    public init(rawValue: String) {
-        self.rawValue = rawValue
-    }
-
-    /// `block`.
-    public static let block = LogindInhibitorMode(rawValue: "block")
-    /// `block-weak`.
-    public static let blockWeak = LogindInhibitorMode(rawValue: "block-weak")
-    /// `delay`.
-    public static let delay = LogindInhibitorMode(rawValue: "delay")
 }
 
 /// A session's state: `online`, `active` or `closing`.
@@ -362,26 +226,6 @@ public struct LogindSessionState: RawRepresentable, Sendable, Hashable {
     public static let active = LogindSessionState(rawValue: "active")
     /// `closing`: logged out, with processes still running.
     public static let closing = LogindSessionState(rawValue: "closing")
-}
-
-/// A session's type: `x11`, `wayland`, `mir`, `tty` or `unspecified`.
-public struct LogindSessionType: RawRepresentable, Sendable, Hashable {
-    /// The type as logind spells it.
-    public var rawValue: String
-
-    /// The type logind spells `rawValue`.
-    public init(rawValue: String) {
-        self.rawValue = rawValue
-    }
-
-    /// `x11`.
-    public static let x11 = LogindSessionType(rawValue: "x11")
-    /// `wayland`.
-    public static let wayland = LogindSessionType(rawValue: "wayland")
-    /// `mir`.
-    public static let mir = LogindSessionType(rawValue: "mir")
-    /// `tty`: a text console or SSH login.
-    public static let tty = LogindSessionType(rawValue: "tty")
 }
 
 /// A session's class: `user`, `greeter`, `lock-screen`, among others.
@@ -419,7 +263,7 @@ public enum LogindSessionProperty: Sendable, Hashable, CaseIterable {
     }
 }
 
-/// A session's `Id`, `Active`, `State`, `Class`, `Type` and `Seat`.
+/// A session's `Id`, `Active`, `State` and `Class`.
 public struct LogindSessionProperties: Sendable, Hashable {
     /// The session's ID.
     public var id: String
@@ -429,29 +273,19 @@ public struct LogindSessionProperties: Sendable, Hashable {
     public var state: LogindSessionState
     /// The session's class.
     public var sessionClass: LogindSessionClass
-    /// The session's type.
-    public var type: LogindSessionType
     /// The seat the session is attached to, as `seat0`; nil for a session on no seat, as one over SSH is.
     /// logind reports a seatless session as always active.
     public var seat: String?
 
     /// Properties of these values.
     public init(
-        id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass,
-        type: LogindSessionType, seat: String?
+        id: String, active: Bool, state: LogindSessionState, sessionClass: LogindSessionClass, seat: String?
     ) {
         self.id = id
         self.active = active
         self.state = state
         self.sessionClass = sessionClass
-        self.type = type
         self.seat = seat
-    }
-
-    /// Whether the session runs a desktop someone logged in to: graphical, not a greeter's, and not
-    /// `closing`, whose desktop has already ended.
-    public var runsDesktop: Bool {
-        [.x11, .wayland, .mir].contains(type) && sessionClass != .greeter && state != .closing
     }
 }
 

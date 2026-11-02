@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 /// When an installed update that has not connected is reverted: the guest's rollback check runs every
 /// ``checkIntervalSeconds`` while a switch is unconfirmed, and its ``checksToRevert``th run reverts it. The

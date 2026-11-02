@@ -1,5 +1,4 @@
 import Foundation
-import SwiftProtobuf
 
 extension ClipboardContent.Representation {
     /// The wire metadata advertised for this representation in a `ClipboardOffer`.

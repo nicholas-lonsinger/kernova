@@ -34,7 +34,6 @@ enum AgentShell {
         var runtime: PeerAgentRuntime?
         var bus: DBusBusConnection?
         var watcher: LogindPeerStateWatcher?
-        var power: LinuxPowerAdapter?
         var termination: (any DispatchSourceSignal)?
     }
 
@@ -116,13 +115,10 @@ enum AgentShell {
         }
         held.withLock { $0.bus = bus }
         let logind = Logind(connection: bus)
-        let power = LinuxPowerAdapter(
-            peer: role == .sessionPeer ? .session(GnomeSessionManager()) : .system, systemBus: bus)
-        held.withLock { $0.power = power }
         let update = updateInstaller(scope: claim.scope, label: label)
         // Dials nothing until the watcher's first state.
         let runtime = PeerAgentRuntime(
-            claim: claim, state: nil, registry: PeerFeatureRegistry(power: power, logs: logs, update: update),
+            claim: claim, state: nil, registry: PeerFeatureRegistry(logs: logs, update: update),
             dialer: LinuxVsockDialer(),
             scheduler: SystemScheduler(), logger: logger,
             handlers: PeerAgentRuntime.Handlers(
@@ -146,7 +142,6 @@ enum AgentShell {
             case .success(let state):
                 hasState.withLock { $0 = true }
                 logState(state, role: role)
-                power.setPeerState(state)
                 runtime.setPeerState(state)
             case .failure(let error) where !hasState.withLock({ $0 }):
                 // Nothing to keep, and a change that would reread may never come — a headless guest's

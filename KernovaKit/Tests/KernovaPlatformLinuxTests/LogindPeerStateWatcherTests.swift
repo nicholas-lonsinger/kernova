@@ -3,7 +3,6 @@ import Dispatch
 import KernovaAgentCore
 import KernovaDBus
 import KernovaPlatformLinux
-import Synchronization
 import Testing
 
 @Suite("A peer's session state, followed in a fake org.freedesktop.login1")

@@ -330,6 +330,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // entry covers its keyboard shortcut, which still routes through
         // validateMenuItem(_:).
         case #selector(AppDelegate.showClipboard(_:)): .showClipboard
+        case #selector(AppDelegate.showGuestAgentStatus(_:)): .showGuestAgentStatus
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
         case #selector(AppDelegate.attachUSBAccessory(_:)),
             #selector(AppDelegate.detachUSBAccessory(_:)):
@@ -630,6 +631,10 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         deleteImmediatelyItem.keyEquivalentModifierMask = [.command, .option]
         deleteImmediatelyItem.isAlternate = true
         vmMenu.addItem(.separator())
+        // No ellipsis: the window it opens asks for nothing.
+        vmMenu.addItem(
+            withTitle: "Guest Agent Status", action: #selector(AppDelegate.showGuestAgentStatus(_:)),
+            keyEquivalent: "")
         // Title is a placeholder — `validate(_:)` retitles per agent status and
         // attach state on every menu open.
         vmMenu.addItem(

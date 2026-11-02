@@ -134,8 +134,6 @@ struct InstallPlan: Equatable {
             plan.writes += [
                 .directory(path: "/etc/sysusers.d", mode: 0o755),
                 .file(path: InstallLayout.sysusersFile, mode: 0o644, text: UnitFiles.sysusers(layout)),
-                .directory(path: "/etc/polkit-1/rules.d", mode: 0o755),
-                .file(path: InstallLayout.polkitRuleFile, mode: 0o644, text: UnitFiles.polkitRule),
             ]
             plan.after = [
                 Command(systemctl + ["daemon-reload"]),
@@ -183,7 +181,7 @@ struct InstallPlan: Equatable {
             plan.removals.append(autostart + "/" + InstallLayout.autostartName)
         }
         if layout.scope == .system {
-            plan.removals += [InstallLayout.polkitRuleFile, InstallLayout.sysusersFile]
+            plan.removals += [InstallLayout.sysusersFile]
         }
         plan.removesRoot = true
         plan.after = [Command(systemctl + ["daemon-reload"])]

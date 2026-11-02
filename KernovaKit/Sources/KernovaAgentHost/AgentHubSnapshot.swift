@@ -13,25 +13,15 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     public var peers: [PeerSummary]
     /// `FeatureStatus.merge` of the peers' tables, newest first; every feature `NO_AGENT` with none.
     public var features: FeatureStatusTable
-    /// Which agent a shutdown would ask first. POWER's own merged entry: `features[.power]` says only
-    /// whether some peer offers it, and routing asks only the peers serving the console session.
-    public var power: PowerProvision
-    /// The power routing running now, if any.
-    public var routing: PowerRoutingProgress?
     /// The peers seen while this transport is attached that are disconnected now, the most recently gone
     /// first; each leaves when a peer of its identity says Hello again, or ``AgentHub/forgetAway(through:)``
     /// drops it.
     public var away: [AwayPeer]
 
     /// A snapshot of these peers and merged features.
-    public init(
-        peers: [PeerSummary], features: FeatureStatusTable, power: PowerProvision = .absent(.noAgent),
-        routing: PowerRoutingProgress? = nil, away: [AwayPeer] = []
-    ) {
+    public init(peers: [PeerSummary], features: FeatureStatusTable, away: [AwayPeer] = []) {
         self.peers = peers
         self.features = features
-        self.power = power
-        self.routing = routing
         self.away = away
     }
 

@@ -1,5 +1,4 @@
 import Foundation
-import SwiftProtobuf
 
 // MARK: - Control-frame builders
 

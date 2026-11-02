@@ -85,8 +85,6 @@ final class RecordingConnector: HostConnectionMaking {
         let number: Int
         let commands: Recorder<(connection: Int, command: HostCommand)>
 
-        var generation: ConnectionGeneration { connection.generation }
-
         func start() { connection.start() }
 
         func send(_ command: HostCommand) {
