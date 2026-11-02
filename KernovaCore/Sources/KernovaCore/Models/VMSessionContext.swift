@@ -103,6 +103,10 @@ package final class VMSessionContext {
     var observedSessionAgentVersion: String?
     var observedSystemAgentVersion: String?
 
+    /// The newest of the agent hub's away peers this session's watchdog has
+    /// forgotten: what it waits for next is newer.
+    var awayForgottenThrough: UInt64 = 0
+
     /// The external file references this session's boot found moved, and
     /// where to — what its configuration build reads
     /// (`VMInstance.effectiveConfiguration`).

@@ -236,14 +236,13 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// `nil` until the host has seen one.
     ///
     /// Persisted, never reset on stop: it suppresses the sidebar install nudge
-    /// for stopped VMs, and a session that has not met its agent yet reads as
-    /// connecting to it. Such an agent starts only once its user logs in, so on
-    /// Linux it arms no watchdog; the macOS agent's does.
+    /// for stopped VMs, a session that has not met its agent yet reads as
+    /// connecting to it, and `MissingAgentRule` decides when it warns.
     var lastSeenAgentVersion: String?
 
     /// The version a Linux guest's system peer last reported, or `nil` until
-    /// the host has seen one. The system peer starts at boot, so a session
-    /// that has not met it within the grace finds it didn't reconnect.
+    /// the host has seen one; persisted and read as ``lastSeenAgentVersion``
+    /// is.
     var lastSeenSystemAgentVersion: String?
 
     /// The most recent guest-reported OS version observed on this VM's control

@@ -8,11 +8,11 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// The #706 mid-session escalation, end to end over a real control channel:
+/// A mid-session agent disappearance, end to end over a real control channel:
 /// `VMInstance.makeControlService(for:)` wires the hooks the accept path
-/// installs, so an agent that disappears mid-session escalates past
-/// `.connecting` instead of spinning there for the rest of the session.
-@Suite("VMInstance agent reconnect escalation", .caseScoped)
+/// installs, and an agent that said Hello this session never warns once it
+/// leaves (`MissingAgentRule`).
+@Suite("VMInstance agent reconnect", .caseScoped)
 @MainActor
 struct VMInstanceAgentReconnectTests {
     // MARK: - Helpers
@@ -73,7 +73,7 @@ struct VMInstanceAgentReconnectTests {
 
     // MARK: - Tests
 
-    @Test("An agent that disappears mid-session re-arms the watchdog")
+    @Test("Row 3: an agent that disappears after its Hello this session reads connecting and never warns")
     func channelLossRearmsTheWatchdog() async throws {
         let version = try bundledAgentVersion()
         let instance = makeInstance(agentVersion: version)
@@ -91,23 +91,22 @@ struct VMInstanceAgentReconnectTests {
         // A connected agent is nothing to wait for.
         #expect(instance.agentPostStartTaskForTesting == nil)
 
-        // The guest agent quits. Before #706 the status parked at `.connecting`
-        // with nothing left to escalate it.
+        // The guest agent quits — its user logged out, or it crashed. It
+        // connected this session, so its absence is not a missing install.
         guest.close()
         try await waitForChange { instance.vsockControlService?.isConnected == false }
 
-        // `onChannelLost` runs inside the settle, so the re-arm is already done
-        // by the time the settle is observable.
-        #expect(instance.agentPostStartTaskForTesting != nil)
+        // `onChannelLost` runs inside the settle, so the rule has read it by
+        // the time the settle is observable.
+        #expect(instance.agentPostStartTaskForTesting == nil)
         #expect(instance.agentPresentation?.status == .connecting(expected: version))
     }
 
-    @Test("A replacement channel that never handshakes still escalates")
+    @Test("Row 3: a replacement channel that never handshakes, after a Hello this session, never warns")
     func wedgedReplacementChannelStillEscalates() async throws {
         // Replacing a live service settles the old one as owner-requested, so
-        // `onChannelLost` stays silent — the accept path's own arm is the only
-        // thing standing between a connect-but-never-Hello agent (a
-        // half-finished update) and a spinner that never resolves.
+        // `onChannelLost` stays silent and the accept path reads the rule. The
+        // agent connected this session, so the rule finds nothing missing.
         let version = try bundledAgentVersion()
         let instance = makeInstance(agentVersion: version)
         let first = try attachControlService(to: instance)
@@ -126,13 +125,9 @@ struct VMInstanceAgentReconnectTests {
         let second = try attachControlService(to: instance)
         defer { second.close() }
         #expect(instance.agentPresentation?.status == .connecting(expected: version))
-        #expect(instance.agentPostStartTaskForTesting != nil)
-
-        // Re-arm short to watch that clock actually run out.
-        instance.cancelAgentPostStartWatchdog()
+        #expect(instance.agentPostStartTaskForTesting == nil)
         instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
-        await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentPresentation?.status == .expectedMissing(expected: version))
+        #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
     @Test("An owner teardown of the control service arms nothing")
@@ -203,11 +198,11 @@ struct VMInstanceAgentReconnectTests {
 
         #expect(instance.agentPostStartTaskForTesting == nil)
 
-        // Resuming is what starts the clock — and the resumed VM is exactly the
-        // case that must escalate.
+        // Resuming within the session arms nothing either: the agent
+        // connected this session.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.startAgentPostStartWatchdog(grace: .milliseconds(200))
-        await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentPresentation?.status == .expectedMissing(expected: version))
+        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentPresentation?.status == .connecting(expected: version))
     }
 }

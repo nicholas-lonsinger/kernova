@@ -174,7 +174,7 @@ struct VMInstanceAgentHubTests {
         #expect(sessionOnly.agentPresentation?.status == .connecting(expected: "0.9"))
     }
 
-    @Test("A VM that never had an agent still reads not installed")
+    @Test("Row 1, Linux: no agent ever seen arms nothing and the VM reads not installed")
     func neverHadAnAgent() {
         let instance = Self.linuxInstance()
         #expect(instance.agentPresentation?.status == .waiting)
@@ -182,31 +182,55 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
-    @Test("A start arms the watchdog for a remembered system peer, which escalates after the grace")
+    @Test("Row 4, Linux: a remembered system peer missing past the grace warns, with the notice saying so once")
     func systemPeerEscalates() async {
-        let instance = Self.linuxInstance(session: "1.0", system: "1.0")
+        let instance = Self.linuxInstance(system: "1.0")
         instance.startAgentPostStartWatchdog()
         #expect(instance.agentPostStartTaskForTesting != nil)
         instance.cancelAgentPostStartWatchdog()
         instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent, last seen 1.0") == true)
     }
 
-    @Test("At the login screen a remembered session agent alone never escalates, at a start or once it leaves")
-    func loginScreenDoesNotEscalate() async {
-        let instance = Self.linuxInstance(session: "1.0")
-        instance.startAgentPostStartWatchdog()
-        #expect(instance.agentPostStartTaskForTesting == nil)
-        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
-        // The user logs in, then out again: the session peer is away, and its grace forgets it quietly.
-        let session = Self.peer(1, standing: .current)
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session]))
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(session, false)]))
+    @Test("Row 2, Linux: a session agent seen before but not this session warns, though the system peer is connected")
+    func sessionAgentNotYetThisSessionWarns() async {
+        let instance = Self.linuxInstance(session: "0.9", system: "1.0")
+        instance.publishAgentHubSnapshotForTesting(
+            Self.snapshot([Self.peer(2, role: .systemPeer, standing: .current)]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        #expect(instance.agentPostStartTaskForTesting != nil)
         instance.cancelAgentPostStartWatchdog()
         instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
         await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9") == true)
+        // Its user logs in: nothing is missing, and the warning clears.
+        instance.publishAgentHubSnapshotForTesting(
+            Self.snapshot([
+                Self.peer(1, version: "0.9", standing: .current), Self.peer(2, role: .systemPeer, standing: .current),
+            ]))
+        #expect(instance.agentPresentation?.status == .current(version: "0.9"))
+        #expect(instance.agentPostStartTaskForTesting == nil)
+    }
+
+    @Test("Row 3, Linux: a session agent that connected this session never warns once its user logs out")
+    func sessionAgentLogoutNeverWarns() async {
+        let instance = Self.linuxInstance(session: "1.0", system: "1.0")
+        let session = Self.peer(1, standing: .current)
+        let system = Self.peer(2, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session, system]))
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([system], away: [(session, false)]))
+        // Armed only to forget the away line.
+        instance.cancelAgentPostStartWatchdog()
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
+        #expect(instance.agentExpectedButMissing == false)
     }
 
     @Test("Each scope's connected peer is remembered as the session sees it")
@@ -269,7 +293,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
     }
 
-    @Test("Away peers that never return within the grace escalate to didn't reconnect when a system peer is expected")
+    @Test("Rows 3 and 4 together: after a shutdown only the system peer warns, and its return clears it")
     func awayEscalates() async {
         let instance = Self.linuxInstance()
         let system = Self.peer(2, role: .systemPeer, standing: .current)
@@ -280,8 +304,11 @@ struct VMInstanceAgentHubTests {
         instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
         await instance.agentPostStartTaskForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
-        // An agent arriving clears it, as the macOS agent's Hello does.
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session]))
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent") == true)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent") == false)
+        // The system peer arriving clears it.
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([system]))
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
     }
 

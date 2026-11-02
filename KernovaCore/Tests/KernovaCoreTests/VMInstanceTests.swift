@@ -1125,17 +1125,16 @@ struct VMInstanceTests {
         #expect(instance.agentPostStartTaskForTesting == nil)
     }
 
-    @Test("Watchdog is a no-op for Linux guests")
-    func watchdogNoopForLinux() {
-        // Linux uses spice-vdagent, which the host doesn't fingerprint —
-        // the watchdog has no business firing here.
+    @Test("A Linux session agent seen before arms the watchdog on the same rule as the macOS agent")
+    func watchdogArmsForLinuxSessionAgent() {
         let instance = VMInstanceFixture.make(
             name: "Linux VM", phase: .running(sessionID: UUID())
-        ) { $0.lastSeenAgentVersion = "should-be-ignored" }
+        ) { $0.lastSeenAgentVersion = "1.0" }
         instance.beginSessionContextForTesting()
 
-        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        #expect(instance.agentPostStartTaskForTesting == nil)
+        instance.startAgentPostStartWatchdog(grace: .seconds(60))
+        #expect(instance.agentPostStartTaskForTesting != nil)
+        instance.cancelAgentPostStartWatchdog()
     }
 
     @Test("Watchdog is a no-op for the whole of a recovery-booted session")
@@ -1323,14 +1322,12 @@ struct VMInstanceTests {
         #expect(instance.effectiveConfiguration.effectiveGuestMacOSVersion == nil)
     }
 
-    @Test("A mid-session firing leaves the nudge dismissal and guest OS version alone")
+    @Test("Row 3: once the agent said Hello this session, its absence never warns, and nothing persisted moves")
     func watchdogPreservesPersistedStateAfterAMidSessionDeath() async throws {
-        // The clearing exists for an agent that never showed up: nothing
-        // vouched for the stored OS version, and the install nudge should come
-        // back. After a Hello this session both facts are backed by evidence
-        // the session produced, and `agentInstallNudgeDismissed` is a user
-        // preference nothing restores — a dropped channel is not enough to
-        // reverse it.
+        // A login agent that connected this session demonstrably exists: a
+        // logout or crash is not a missing install, so nothing arms, nothing
+        // warns, and neither the nudge dismissal nor the guest OS version
+        // moves.
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, agentInstallNudgeDismissed: true)
@@ -1344,11 +1341,9 @@ struct VMInstanceTests {
 
         // The agent goes away mid-session and never comes back.
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
-        await instance.agentPostStartTaskForTesting?.value
-
-        // The badge still escalates — that is the whole point of #706.
-        #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.hostState.agentInstallNudgeDismissed == true)
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(storage.saveConfigurationCallCount == persistsAfterHello)
@@ -1612,20 +1607,42 @@ struct VMInstanceTests {
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
     }
 
-    @Test("recordObservedAgentInfo cancels the watchdog and clears expected-missing")
+    @Test("recordObservedAgentInfo cancels the watchdog and clears expected-missing, for the rest of the session")
     func recordObservedClearsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.sessionContext?.agentExpectedButMissing = true
         instance.startAgentPostStartWatchdog(grace: .seconds(10))
+        #expect(instance.agentPostStartTaskForTesting != nil)
+        instance.sessionContext?.agentExpectedButMissing = true
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
 
         #expect(instance.agentExpectedButMissing == false)
-        // Re-arming after the cancel must succeed (proves the prior task
-        // was cancelled — the idempotency guard does not block this).
+        #expect(instance.agentPostStartTaskForTesting == nil)
+        // The agent connected this session, so nothing arms again.
         instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        #expect(instance.agentPostStartTaskForTesting == nil)
+    }
+
+    @Test("Row 1, macOS: an agent never seen arms nothing and the VM reads not installed")
+    func macOSRowOneNeverSeen() {
+        let instance = VMInstanceFixture.make(
+            name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        #expect(instance.agentPostStartTaskForTesting == nil)
+        #expect(instance.agentPresentation?.status == .waiting)
+    }
+
+    @Test("Row 2, macOS: an agent seen before but not this session warns after the grace, and the notice says so once")
+    func macOSRowTwoWarnsWithItsNotice() async {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.startAgentPostStartWatchdog(grace: Self.testWatchdogGrace)
+        #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
         await instance.agentPostStartTaskForTesting?.value
-        #expect(instance.agentExpectedButMissing == true)
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+        #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9.2") == true)
     }
 
     @Test(
