@@ -1643,6 +1643,9 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9.2") == true)
+        // (d) macOS unchanged: no per-agent lines, in the popover or `kernova info`.
+        #expect(instance.agentPresentation?.hub == nil)
+        #expect(VMCommandCore.agentLines(of: instance).isEmpty)
     }
 
     @Test(

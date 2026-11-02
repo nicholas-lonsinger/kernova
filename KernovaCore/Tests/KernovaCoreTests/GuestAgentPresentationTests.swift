@@ -186,12 +186,59 @@ struct GuestAgentPresentationTests {
         #expect(GuestAgentPresentation(hub: .empty).status == .waiting)
     }
 
-    @Test("Once the watchdog finds them gone, the session's agents didn't reconnect")
-    func awayEscalates() {
+    // MARK: Missing agents
+
+    private static let missingSession = AgentScopePresence(
+        scope: .login, lastSeenVersion: "0.10.0 (1147)", seenThisSession: false, isConnected: false)
+    private static let missingSystem = AgentScopePresence(
+        scope: .system, lastSeenVersion: "0.10.0 (1147)", seenThisSession: true, isConnected: false)
+
+    @Test("(a) The session agent missing beside a connected system service gets its own line under the warning")
+    func sessionAgentMissing() {
         let presentation = GuestAgentPresentation(
-            hub: AgentHubSnapshot(peers: [], features: FeatureStatus.merge([])), lastSeenAgentVersion: "1.0",
-            agentExpectedButMissing: true)
-        #expect(presentation.status == .expectedMissing(expected: "1.0"))
+            hub: AgentHubSnapshot(
+                peers: [Self.peer(2, role: .systemPeer, version: "0.10.0 (1147)")], features: FeatureStatus.merge([])),
+            lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSession])
+        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
+        #expect(
+            presentation.hub?.peers == [
+                .init(title: "System service", state: "Up to date"),
+                .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
+            ])
+    }
+
+    @Test("(b) The system service missing gets its own line, in place of its away line")
+    func systemServiceMissing() {
+        let presentation = GuestAgentPresentation(
+            hub: AgentHubSnapshot(
+                peers: [Self.peer(1, version: "0.10.0 (1147)")], features: FeatureStatus.merge([]),
+                away: [AwayPeer(summary: Self.peer(2, role: .systemPeer), relaunching: false, order: 3)]),
+            lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSystem])
+        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
+        #expect(
+            presentation.hub?.peers == [
+                .init(title: "Session agent — pbear", state: "Up to date"),
+                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
+            ])
+    }
+
+    @Test("(c) Both missing: a line for each, and no connected agent")
+    func bothMissing() {
+        let presentation = GuestAgentPresentation(
+            hub: .empty, lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSession, Self.missingSystem])
+        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
+        #expect(
+            presentation.hub?.peers == [
+                .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
+                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
+            ])
+    }
+
+    @Test("(d) The macOS agent's presentation is unchanged: its status alone, no agent lines")
+    func macOSMissingUnchanged() {
+        let presentation = GuestAgentPresentation(macOSAgent: .expectedMissing(expected: "0.9.2"))
+        #expect(presentation.status == .expectedMissing(expected: "0.9.2"))
+        #expect(presentation.hub == nil)
     }
 
     @Test("A peer relaunching into an update keeps reading Updating…, and the status stays updating")

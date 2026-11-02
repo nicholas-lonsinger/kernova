@@ -200,8 +200,9 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     public let user: String?
     /// The version the agent reports, empty when it reports none.
     public let version: String
-    /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated` or
-    /// `unresponsive`.
+    /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated`,
+    /// `updating` or `unresponsive` for a connected agent; `expectedMissing` for one the session warns
+    /// didn't reconnect, at the version it last reported.
     public let status: String
 
     /// Describes one agent.

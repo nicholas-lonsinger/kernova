@@ -193,6 +193,31 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent, last seen 1.0") == true)
+        #expect(
+            instance.agentPresentation?.hub?.peers == [.init(title: "System service", state: "Didn\u{2019}t reconnect")]
+        )
+        #expect(
+            VMCommandCore.agentLines(of: instance) == [
+                VMAgentLine(role: "system", user: nil, version: "1.0", status: "expectedMissing")
+            ])
+    }
+
+    @Test("(c) Both agents missing past the grace: the popover and `kernova info` name each")
+    func bothMissingNamedEverywhere() async {
+        let instance = Self.linuxInstance(session: "0.9", system: "1.0")
+        instance.startAgentPostStartWatchdog(grace: .milliseconds(10))
+        await instance.agentPostStartTaskForTesting?.value
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
+        #expect(
+            instance.agentPresentation?.hub?.peers == [
+                .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
+                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
+            ])
+        #expect(
+            VMCommandCore.agentLines(of: instance) == [
+                VMAgentLine(role: "session", user: nil, version: "0.9", status: "expectedMissing"),
+                VMAgentLine(role: "system", user: nil, version: "1.0", status: "expectedMissing"),
+            ])
     }
 
     @Test("Row 2, Linux: a session agent seen before but not this session warns, though the system peer is connected")
@@ -208,6 +233,15 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9") == true)
+        // Every surface names it: the popover's line, and `kernova info`'s.
+        #expect(
+            instance.agentPresentation?.hub?.peers.last
+                == .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"))
+        #expect(
+            VMCommandCore.agentLines(of: instance) == [
+                VMAgentLine(role: "system", user: nil, version: "1.0", status: "current"),
+                VMAgentLine(role: "session", user: nil, version: "0.9", status: "expectedMissing"),
+            ])
         // Its user logs in: nothing is missing, and the warning clears.
         instance.publishAgentHubSnapshotForTesting(
             Self.snapshot([

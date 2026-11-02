@@ -263,9 +263,8 @@ package final class VMInstance {
             return reachesGuestAgent
                 ? GuestAgentPresentation(
                     hub: agentHubSnapshot,
-                    lastSeenAgentVersion: (context.agentExpectedButMissing ? missingAgentVersion : nil)
-                        ?? lastSeenSystemAgentVersion ?? lastSeenAgentVersion,
-                    agentExpectedButMissing: context.agentExpectedButMissing)
+                    lastSeenAgentVersion: lastSeenSystemAgentVersion ?? lastSeenAgentVersion,
+                    missing: warnedMissingAgents)
                 : nil
         }
     }
@@ -1201,10 +1200,12 @@ package final class VMInstance {
         }
     }
 
-    /// The version the status names while it warns: the first missing
-    /// scope's; nil while none is.
-    var missingAgentVersion: String? {
-        MissingAgentRule.missing(agentScopePresences).first?.lastSeenVersion
+    /// The scopes the session warns about: ``MissingAgentRule``'s missing
+    /// ones once the watchdog has found them past the grace
+    /// (`agentExpectedButMissing`), none otherwise — what every surface names.
+    var warnedMissingAgents: [AgentScopePresence] {
+        guard sessionContext?.agentExpectedButMissing == true else { return [] }
+        return MissingAgentRule.missing(agentScopePresences)
     }
 
     /// Reads ``MissingAgentRule`` against the agents now: with no scope
