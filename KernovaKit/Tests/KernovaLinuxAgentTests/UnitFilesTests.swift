@@ -2,7 +2,7 @@ import Testing
 
 @testable import KernovaLinuxAgent
 
-/// The text of every unit, autostart entry, sysusers line and polkit rule, golden: a change to any of them
+/// The text of every unit, autostart entry and sysusers line, golden: a change to any of them
 /// changes what every installed guest runs, so it shows here first.
 @Suite("The installer's unit files")
 struct UnitFilesTests {
@@ -151,25 +151,6 @@ struct UnitFilesTests {
                 u kernova-agent - "Kernova guest agent" /opt/kernova-agent -
 
                 """)
-    }
-
-    @Test("polkit grants the account the four power actions and no ignore-inhibit")
-    func polkit() {
-        #expect(
-            UnitFiles.polkitRule == """
-                // Written by kernova-agent install --system.
-                polkit.addRule(function(action, subject) {
-                    if (subject.user == "kernova-agent" &&
-                        (action.id == "org.freedesktop.login1.power-off" ||
-                         action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
-                         action.id == "org.freedesktop.login1.reboot" ||
-                         action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
-                        return polkit.Result.YES;
-                    }
-                });
-
-                """)
-        #expect(!UnitFiles.polkitRule.contains("ignore-inhibit"))
     }
 
     @Test("A home with a space, a quote or a percent sign stays one ExecStart word")

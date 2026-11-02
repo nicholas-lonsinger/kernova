@@ -1,7 +1,7 @@
 import KernovaAgentCore
 
 /// Where one install scope's files go: the agent's own root, holding its two slots, and the units, autostart
-/// entry, account and polkit rule that run it.
+/// entry and account that run it.
 struct InstallLayout: Equatable, Sendable {
     /// `.user` or `.system`.
     let scope: InstallScope
@@ -70,8 +70,6 @@ struct InstallLayout: Equatable, Sendable {
     static let systemAccount = "kernova-agent"
     /// Declares ``systemAccount`` to systemd-sysusers.
     static let sysusersFile = "/etc/sysusers.d/kernova-agent.conf"
-    /// Grants ``systemAccount`` the power actions.
-    static let polkitRuleFile = "/etc/polkit-1/rules.d/50-kernova-agent.rules"
 
     /// The service that runs the peer.
     var serviceName: String { scope == .system ? "kernova-agent-system.service" : "kernova-agent.service" }
