@@ -15,20 +15,119 @@ package struct GuestAgentPresentation: Equatable, Sendable {
 
     /// What the agent hub reports of a guest's agents.
     package struct Hub: Equatable, Sendable {
-        /// One line per connected agent, newest first.
-        package var peers: [PeerLine]
+        /// One line per agent: the connected ones newest first, then the away
+        /// ones most recently gone first, then each scope that didn't
+        /// reconnect.
+        package var agents: [AgentLine]
         /// One row per capability, in the order shown.
         package var capabilities: [CapabilityRow]
     }
 
-    /// One connected agent.
-    package struct PeerLine: Equatable, Sendable {
+    /// One agent, which the status window and `kernova info` both show.
+    package struct AgentLine: Equatable, Sendable {
+        /// Which agent it is.
+        package enum Role: Equatable, Sendable {
+            /// One GUI session's.
+            case session
+            /// The guest's as a whole.
+            case system
+        }
+
+        /// Where the agent is, and how it stands while connected.
+        package enum Standing: Equatable, Sendable {
+            /// Connected: how it compares with the agent Kernova bundles, and
+            /// whether it answers.
+            case connected(PeerSummary.Standing, isResponsive: Bool)
+            /// Away, relaunching into an update it installed; as it left.
+            case relaunching(PeerSummary.Standing, isResponsive: Bool)
+            /// Away, and expected back.
+            case reconnecting
+            /// A scope ``MissingAgentRule`` warns about: it didn't reconnect.
+            case missing
+        }
+
+        package var role: Role
+        /// The user a session agent runs for; `nil` for the system agent, one
+        /// that names none, or a scope that didn't reconnect.
+        package var user: String?
+        /// The version it reports — for a scope that didn't reconnect, the one
+        /// last seen — empty when there is none.
+        package var version: String
+        package var standing: Standing
+
+        package init(role: Role, user: String?, version: String, standing: Standing) {
+            self.role = role
+            self.user = user
+            self.version = version
+            self.standing = standing
+        }
+
+        /// The line of `peer`, connected or away as `standing` says.
+        init(_ peer: PeerSummary, standing: Standing) {
+            let isSystem = peer.role == .systemPeer
+            self.init(
+                role: isSystem ? .system : .session, user: isSystem || peer.userName.isEmpty ? nil : peer.userName,
+                version: peer.versionLabel, standing: standing)
+        }
+
+        /// The line of a scope ``MissingAgentRule`` warns about.
+        init(missing presence: AgentScopePresence) {
+            self.init(
+                role: presence.scope == .system ? .system : .session, user: nil,
+                version: presence.lastSeenVersion ?? "", standing: .missing)
+        }
+
         /// Which agent: "Session agent — pbear", "System service".
-        package var title: String
-        /// What the line shows of it: whether it answers, then whether it is the
-        /// agent Kernova bundles, or only its version where Kernova offers it
-        /// nothing to compare against.
-        package var state: String
+        package var title: String {
+            switch role {
+            case .system: "System service"
+            case .session: user.map { "Session agent — \($0)" } ?? "Session agent"
+            }
+        }
+
+        /// What the line shows of it: whether it answers, then whether it is
+        /// the agent Kernova bundles, or only its version where Kernova offers
+        /// it nothing to compare against.
+        package var state: String {
+            switch standing {
+            case .connected(let standing, let isResponsive), .relaunching(let standing, let isResponsive):
+                guard isResponsive else { return "Not responding" }
+                switch standing {
+                case .current: return "Up to date"
+                case .outdated(_, .updating): return "Updating\u{2026}"
+                case .outdated(_, .failed): return "Update failed"
+                case .outdated(_, .unavailable): return "Out of date; this agent can\u{2019}t update itself"
+                case .notOffered: return version.isEmpty ? "Connected" : "Version \(version)"
+                }
+            case .reconnecting:
+                return "Reconnecting\u{2026}"
+            case .missing:
+                switch role {
+                case .system: return "Didn\u{2019}t reconnect"
+                case .session: return "Didn\u{2019}t reconnect; it starts when a user logs in"
+                }
+            }
+        }
+
+        /// The agent's state alone: what the presentation's status would be
+        /// with it the only agent for a connected one, updating for one relaunching into an update,
+        /// connecting for any other away one, and expected-missing at its
+        /// last-seen version for a scope that didn't reconnect.
+        package var status: AgentStatus {
+            switch standing {
+            case .connected(let standing, let isResponsive):
+                return GuestAgentPresentation.status(of: [(standing, isResponsive, version)])
+            case .relaunching(let standing, _):
+                guard case .outdated(let offered, _) = standing else {
+                    return .updating(installed: version, bundled: "")
+                }
+                return .updating(installed: version, bundled: offered)
+            case .reconnecting:
+                return .connecting(expected: version)
+            case .missing:
+                return .expectedMissing(expected: version)
+            }
+        }
     }
 
     /// One capability's availability.
@@ -48,16 +147,43 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         hub = nil
     }
 
-    /// The presentation of the agents in `snapshot`.
-    package init(hub snapshot: AgentHubSnapshot) {
-        status = Self.status(of: snapshot.peers)
+    /// The presentation of the agents in `snapshot`, on the macOS agent's terms
+    /// (``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``):
+    /// with no agent connected, a VM that has had one — `lastSeenAgentVersion`
+    /// — is connecting to it; never waiting for an install. With `missing` —
+    /// the scopes ``MissingAgentRule`` warns about — it didn't reconnect,
+    /// naming the first missing scope's version, and each missing scope has a
+    /// line of its own in place of any away line of that scope. An away peer
+    /// otherwise keeps its line: one relaunching into an update keeps the
+    /// standing it left with, counted in the status as though connected; any
+    /// other reads as reconnecting.
+    package init(
+        hub snapshot: AgentHubSnapshot, lastSeenAgentVersion: String? = nil, missing: [AgentScopePresence] = []
+    ) {
+        let relaunching = snapshot.away.filter(\.relaunching).map(\.summary)
+        status = AgentStatus.synthesize(
+            upstream: Self.status(of: snapshot.peers + relaunching),
+            lastSeenAgentVersion: missing.first?.lastSeenVersion ?? lastSeenAgentVersion,
+            agentExpectedButMissing: !missing.isEmpty)
+        let missingScopes = missing.map(\.scope)
+        let away = snapshot.away.filter { !missingScopes.contains(AgentScopePresence.Scope(of: $0.summary)) }.map {
+            away in
+            AgentLine(
+                away.summary,
+                standing: away.relaunching
+                    ? .relaunching(away.summary.standing, isResponsive: away.summary.isResponsive) : .reconnecting)
+        }
         hub = Hub(
-            peers: snapshot.peers.map { peer in PeerLine(title: Self.title(of: peer), state: Self.state(of: peer)) },
+            agents: snapshot.peers.map {
+                AgentLine($0, standing: .connected($0.standing, isResponsive: $0.isResponsive))
+            }
+                + away + missing.map(AgentLine.init(missing:)),
             capabilities: [
                 snapshot.peers.isEmpty
                     ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))
                     : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
                 Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
+                Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
             ])
     }
 
@@ -80,37 +206,29 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
     }
 
-    private static func title(of peer: PeerSummary) -> String {
-        switch peer.role {
-        case .systemPeer: "System service"
-        case .sessionPeer, .host: peer.userName.isEmpty ? "Session agent" : "Session agent — \(peer.userName)"
-        }
-    }
-
-    /// How `peer` stands, as only what the host knows: whether it answers, and
-    /// its version alone when the host offers it nothing to compare against.
-    private static func state(of peer: PeerSummary) -> String {
-        guard peer.isResponsive else { return "Not responding" }
-        switch peer.standing {
-        case .current: return "Up to date"
-        case .outdated: return "Out of date"
-        case .notOffered: return peer.versionLabel.isEmpty ? "Connected" : "Version \(peer.versionLabel)"
-        }
-    }
-
-    /// The agents' state as one value: an outdated agent first, then an
-    /// unresponsive one, else the newest — current only when every agent is,
-    /// and connected when the host offers any of them nothing to judge it
-    /// against.
+    /// The agents' state as one value: an outdated agent that is not updating
+    /// itself first, then one that is, then an unresponsive one, else the
+    /// newest — current only when every agent is, and connected when the host
+    /// offers any of them nothing to judge it against.
     package static func status(of peers: [PeerSummary]) -> AgentStatus {
-        guard let newest = peers.first else { return .waiting }
-        for peer in peers {
-            if case .outdated(let offered) = peer.standing {
-                return .outdated(installed: peer.versionLabel, bundled: offered)
-            }
+        status(of: peers.map { ($0.standing, $0.isResponsive, $0.versionLabel) })
+    }
+
+    /// The same, of agents given by how each stands, whether it answers, and
+    /// its version.
+    fileprivate static func status(
+        of agents: [(standing: PeerSummary.Standing, isResponsive: Bool, version: String)]
+    ) -> AgentStatus {
+        guard let newest = agents.first else { return .waiting }
+        var updating: AgentStatus?
+        for agent in agents {
+            guard case .outdated(let offered, let update) = agent.standing else { continue }
+            if update != .updating { return .outdated(installed: agent.version, bundled: offered) }
+            if updating == nil { updating = .updating(installed: agent.version, bundled: offered) }
         }
-        if let silent = peers.first(where: { !$0.isResponsive }) { return .unresponsive(version: silent.versionLabel) }
-        return peers.allSatisfy { $0.standing == .current }
-            ? .current(version: newest.versionLabel) : .connected(version: newest.versionLabel)
+        if let updating { return updating }
+        if let silent = agents.first(where: { !$0.isResponsive }) { return .unresponsive(version: silent.version) }
+        return agents.allSatisfy { $0.standing == .current }
+            ? .current(version: newest.version) : .connected(version: newest.version)
     }
 }

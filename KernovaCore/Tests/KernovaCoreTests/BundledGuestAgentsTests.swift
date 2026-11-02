@@ -119,6 +119,30 @@ struct BundledGuestAgentsTests {
         #expect(throws: WireError.self) { try refused.get() }
     }
 
+    @Test(
+        "Read as a pull reads it, a grant at a time from offset 0 to payload_size, the provider serves the exact file")
+    func providerServesExactBytes() async throws {
+        let payload = Data(
+            (0..<(2 * WireConstants.maxRawDataPayload + 1234)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        let agents = BundledGuestAgents(bundle: try bundle([Self.linuxAgent: payload]), versionLabel: "1.2 (34)")
+        let provider = BundledGuestAgentPayloads(agents, guestOS: .linux)
+        let manifest = Self.manifest(of: payload)
+        var served = Data()
+        while UInt64(served.count) < manifest.payloadSize {
+            let count = min(WireConstants.maxRawDataPayload, Int(manifest.payloadSize) - served.count)
+            let read = await withCheckedContinuation { continuation in
+                provider.read(manifest: manifest, offset: UInt64(served.count), count: count) {
+                    continuation.resume(returning: $0)
+                }
+            }
+            let bytes = try read.get()
+            try #require(!bytes.isEmpty)
+            served += bytes
+        }
+        #expect(served == payload)
+        #expect(Data(SHA256.hash(data: served)) == manifest.payloadHash)
+    }
+
     @Test("A Linux VM's hub offers the bundled payload, and a peer running it stands current")
     @MainActor
     func hubOffersTheBundle() async throws {

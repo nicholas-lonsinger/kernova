@@ -117,7 +117,7 @@ var targets: [Target] = [
         name: "KernovaLinuxAgent",
         dependencies: [
             "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaDigest",
-            "KernovaLogging", "CKernovaAgentVersion",
+            "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -161,6 +161,7 @@ var targets: [Target] = [
         name: "KernovaAgentHost",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization",
+            "KernovaDigest",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -184,7 +185,11 @@ var targets: [Target] = [
     ),
     .testTarget(
         name: "KernovaLinuxAgentTests",
-        dependencies: ["KernovaLinuxAgent", "KernovaAgentCore", "KernovaPortableTestSupport"],
+        dependencies: [
+            "KernovaLinuxAgent", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation", "KernovaDigest",
+            "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The

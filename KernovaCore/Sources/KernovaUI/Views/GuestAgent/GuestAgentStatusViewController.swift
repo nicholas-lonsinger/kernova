@@ -245,7 +245,7 @@ final class GuestAgentStatusViewController: NSViewController {
     /// The hub's agent lines, then its capability rows, each as a title and the
     /// value beside it.
     static func rows(_ hub: GuestAgentPresentation.Hub) -> [(title: String, value: String)] {
-        hub.peers.map { ($0.title, $0.state) } + hub.capabilities.map { ($0.title, $0.detail) }
+        hub.agents.map { ($0.title, $0.state) } + hub.capabilities.map { ($0.title, $0.detail) }
     }
 
     private func makeRow(_ row: (title: String, value: String)) -> NSView {
@@ -285,6 +285,7 @@ final class GuestAgentStatusViewController: NSViewController {
         switch status {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
+        case .updating: "Updating guest agent"
         case .connecting: "Connecting to guest agent"
         case .current, .connected: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
@@ -308,6 +309,8 @@ final class GuestAgentStatusViewController: NSViewController {
         case .outdated(let installed, let bundled):
             return
                 "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). \(isInstallerMounted ? attachedStep : mountStep)"
+        case .updating(let installed, let bundled):
+            return "\(vmName) is updating guest agent \(installed) to \(bundled)."
         case .connecting(let expected):
             return
                 "Waiting for guest agent \(expected) on \(vmName) to connect."

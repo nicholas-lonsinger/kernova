@@ -639,15 +639,14 @@ package final class VMCommandCore {
         return .failed(verb: verb, error: error)
     }
 
-    /// The hub's agents on `instance`, newest first, as automation reads them:
-    /// none for a guest whose agents the hub doesn't serve.
+    /// The agents ``GuestAgentPresentation`` lists for `instance`, as
+    /// automation reads them: none for a guest whose agents the hub doesn't
+    /// serve.
     static func agentLines(of instance: VMInstance) -> [VMAgentLine] {
-        guard instance.agentPresentation?.hub != nil else { return [] }
-        return instance.agentHubSnapshot.peers.map { peer in
+        (instance.agentPresentation?.hub?.agents ?? []).map { line in
             VMAgentLine(
-                role: peer.role == .systemPeer ? "system" : "session",
-                user: peer.role == .systemPeer || peer.userName.isEmpty ? nil : peer.userName,
-                version: peer.versionLabel, status: GuestAgentPresentation.status(of: [peer]).wireName)
+                role: line.role == .system ? "system" : "session", user: line.user, version: line.version,
+                status: line.status.wireName)
         }
     }
 

@@ -57,13 +57,26 @@ public enum LinuxIdentity {
     public static func scope(ofExecutable executable: String, systemRoot: String?, isFile: (String) -> Bool)
         -> InstallScope
     {
+        guard let slot = slot(ofExecutable: executable), isFile(slot.root + "/state.json") else { return .unspecified }
+        return slot.root == systemRoot ? .system : .user
+    }
+
+    /// The install root and slot `executable` sits in when its path has the slot layout's shape,
+    /// `<root>/slots/<slot>/kernova-agent`; nil otherwise.
+    public static func slot(ofExecutable executable: String) -> (root: String, slot: String)? {
         var components = executable.split(separator: "/", omittingEmptySubsequences: false)
-        guard components.count >= 5, components.removeLast() == "kernova-agent" else { return .unspecified }
-        components.removeLast()
-        guard components.removeLast() == "slots" else { return .unspecified }
+        guard components.count >= 5, components.removeLast() == "kernova-agent" else { return nil }
+        let slot = String(components.removeLast())
+        guard components.removeLast() == "slots" else { return nil }
         let root = components.joined(separator: "/")
-        guard !root.isEmpty, isFile(root + "/state.json") else { return .unspecified }
-        return root == systemRoot ? .system : .user
+        guard !root.isEmpty, !slot.isEmpty else { return nil }
+        return (root, slot)
+    }
+
+    /// The install root and slot this process's executable, `/proc/self/exe`, sits in; nil when it sits in
+    /// none, as a development build run in place does.
+    public static func runningSlot() -> (root: String, slot: String)? {
+        canonicalPath("/proc/self/exe").flatMap(slot(ofExecutable:))
     }
 
     /// The user install root, `${XDG_DATA_HOME:-$HOME/.local/share}/kernova-agent`; nil with neither set.

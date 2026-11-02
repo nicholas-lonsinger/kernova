@@ -180,7 +180,7 @@ struct LogindTests {
         do {
             _ = try logind.user(1002)
             Issue.record("The call returned")
-        } catch LogindError.call(.remote(let error)) {
+        } catch DBusServiceError.call(.remote(let error)) {
             #expect(error.name == "org.freedesktop.login1.NoSuchUser")
         }
     }
@@ -205,7 +205,7 @@ struct LogindTests {
         fake.recorder.activeSession.withLock { $0 = nil }
         #expect(try logind.activeSession(onSeat: seat) == nil)
 
-        #expect(throws: LogindError.self) { try logind.seat("seat1") }
+        #expect(throws: DBusServiceError.self) { try logind.seat("seat1") }
     }
 
     @Test("Observing seat0 delivers each change of its active session")
@@ -214,7 +214,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let seat = try logind.seat("seat0")
-        let inbox = Inbox<Result<LogindSeatChange, LogindError>>()
+        let inbox = Inbox<Result<LogindSeatChange, DBusServiceError>>()
         let subscription = try logind.observeSeat(seat) { inbox.put($0) }
 
         let interface = Logind.seatInterface
@@ -237,7 +237,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let user = try logind.user(FakeLogind.displayUID)
-        let inbox = Inbox<Result<LogindUserChange, LogindError>>()
+        let inbox = Inbox<Result<LogindUserChange, DBusServiceError>>()
         let subscription = try logind.observeUser(user) { inbox.put($0) }
 
         let interface = Logind.userInterface
@@ -263,7 +263,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let path = FakeLogind.userSession.path
-        let inbox = Inbox<Result<LogindSessionChange, LogindError>>()
+        let inbox = Inbox<Result<LogindSessionChange, DBusServiceError>>()
         let subscription = try logind.observeSession(path) { inbox.put($0) }
 
         let interface = Logind.sessionInterface
@@ -284,7 +284,7 @@ struct LogindTests {
         #expect(try inbox.next().get().sessionClass == .user)
 
         try fake.emitChange(on: path, interface: interface, changed: [("Active", .string("yes"))], invalidated: [])
-        #expect(throws: LogindError.valueMismatch(DBusValueMismatch(expected: .boolean, actual: .string))) {
+        #expect(throws: DBusServiceError.valueMismatch(DBusValueMismatch(expected: .boolean, actual: .string))) {
             try inbox.next().get()
         }
         #expect(inbox.isEmpty)

@@ -11,7 +11,8 @@ struct AgentCommandTests {
         "Each subcommand parses alone",
         arguments: [
             (["session"], AgentCommand.session), (["system"], .system), (["self-test"], .selfTest),
-            (["--version"], .version),
+            (["--version"], .version), (["rollback-check", "--scope", "user"], .rollbackCheck(.user)),
+            (["rollback-check", "--scope", "system"], .rollbackCheck(.system)),
         ])
     func subcommand(arguments: [String], command: AgentCommand) {
         #expect(AgentCommand.parse(arguments) == command)
@@ -48,6 +49,8 @@ struct AgentCommandTests {
             ["install", "--root", "relative", "--no-systemctl"],
             // A staging root has no systemd to run.
             ["install", "--root", "/stage"], ["uninstall", "session"],
+            ["rollback-check"], ["rollback-check", "--scope"], ["rollback-check", "--scope", "unspecified"],
+            ["rollback-check", "--system"],
         ])
     func refused(arguments: [String]) {
         #expect(AgentCommand.parse(arguments) == nil)

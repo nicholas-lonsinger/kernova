@@ -157,7 +157,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<Void> {
         pauseCallCount += 1
         if let error = pauseError { throw error }
-        instance.cancelAgentPostStartWatchdog()
+        instance.cancelAgentAbsenceWatchdog()
         return .rest(.live(.paused), ())
     }
 

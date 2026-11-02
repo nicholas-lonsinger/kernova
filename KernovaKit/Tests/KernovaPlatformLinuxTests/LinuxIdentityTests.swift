@@ -88,6 +88,16 @@ struct LinuxIdentityTests {
         #expect(scope("/opt/checkout/KernovaKit/release/kernova-agent") == .unspecified)
     }
 
+    @Test("A path of the slot layout's shape names its root and slot; any other names none")
+    func slot() {
+        let slot = LinuxIdentity.slot(ofExecutable: "/var/home/u/.data/kernova-agent/slots/b/kernova-agent")
+        #expect(slot?.root == "/var/home/u/.data/kernova-agent")
+        #expect(slot?.slot == "b")
+        #expect(LinuxIdentity.slot(ofExecutable: "/opt/kernova-agent/kernova-agent") == nil)
+        #expect(LinuxIdentity.slot(ofExecutable: "/opt/kernova-agent/slots/a/other") == nil)
+        #expect(LinuxIdentity.slot(ofExecutable: "/slots/a/kernova-agent") == nil)
+    }
+
     @Test("The payload hash is the file's SHA-256, and an unreadable file says why")
     func hash() throws {
         let digest = try LinuxIdentity.sha256(ofFileAt: "/dev/null")

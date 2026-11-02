@@ -171,18 +171,13 @@ extension VsockFeatureDescriptor {
         toggle: { _ in true },
         slot: \.control,
         onChannelLost: { instance in
-            // The agent went away mid-session. Re-arm the same grace clock the
-            // post-start path uses, so a channel that never comes back
-            // escalates to `.expectedMissing` instead of spinning at
-            // `.connecting` for the rest of the session.
-            instance.startAgentPostStartWatchdog()
+            // The agent went away: the missing-agent rule reads it again.
+            instance.agentPresenceChanged()
         },
         afterAccept: { instance in
-            // Any accepted channel that never completes its Hello is on a
-            // clock: an agent that connects but cannot handshake (a
-            // half-finished update) is exactly when the reinstall affordance is
-            // wanted. Idempotent; the Hello cancels it.
-            instance.startAgentPostStartWatchdog()
+            // A channel that has not said Hello is no agent yet: the rule
+            // reads it again. Idempotent; the Hello settles it.
+            instance.agentPresenceChanged()
         },
         make: { instance, channel in instance.makeControlService(for: channel) })
 

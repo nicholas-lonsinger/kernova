@@ -226,7 +226,7 @@ package final class VirtualizationService {
         // The grace clock only means something while the guest is executing
         // — a frozen guest cannot say Hello, so letting it run would blame
         // the agent for the pause.
-        instance.cancelAgentPostStartWatchdog()
+        instance.cancelAgentAbsenceWatchdog()
         Self.logger.log(.notice, "Paused VM '\(instance.name, privacy: .public)'")
         return .rest(.live(.paused), ())
     }

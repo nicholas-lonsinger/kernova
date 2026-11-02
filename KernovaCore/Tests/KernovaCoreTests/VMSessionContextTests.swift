@@ -61,7 +61,7 @@ struct VMSessionContextTests {
         context.clipboardService = clipboard
         instance.clipboardDataSink.set(RetainingAcceptor())
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
-        context.agentExpectedButMissing = true
+        context.warnedAgentScopes = [.login]
         context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
         context.vsock.livePolicyApplication = Task<Void, Never> {}
@@ -79,11 +79,11 @@ struct VMSessionContextTests {
         #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
-        #expect(context.agentExpectedButMissing == false)
+        #expect(context.warnedAgentScopes.isEmpty)
         #expect(context.hasSeenAgentThisSession == false)
         #expect(context.networkAttachmentPending == false)
         #expect(context.session == nil)
-        #expect(context.agentPostStartTask == nil)
+        #expect(context.agentAbsenceTimer == nil)
         #expect(context.vsock.livePolicyApplication == nil)
         // The instance-owned sinks the session published into are cleared too.
         try expectSinkCleared(instance.clipboardDataSink)
@@ -303,7 +303,7 @@ struct VMSessionContextTests {
             })
         #expect(
             observationFires(reading: { _ = instance.agentPresentation?.status }) {
-                context.agentExpectedButMissing = true
+                context.warnedAgentScopes = [.login]
             })
         #expect(
             observationFires(reading: { _ = instance.displayDropAvailability }) {
