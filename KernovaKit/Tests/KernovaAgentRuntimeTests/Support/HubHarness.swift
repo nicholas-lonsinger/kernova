@@ -47,6 +47,9 @@ final class RecordingConnector: HostConnectionMaking {
     /// The policy each connection was built with.
     let policies = Recorder<(connection: Int, policy: PolicySnapshot)>()
     private let count = Locked(0)
+    /// The `featuresChanged` events held back from the hub, by connection number; a held connection has
+    /// an entry, empty until its first arrives.
+    private let heldFeatures = Locked<[Int: [@Sendable () -> Void]]>([:])
 
     init(receiverPolicy: ReceiverPolicy, payloadSource: any UpdatePayloadSource) {
         runtime = HostConnectionRuntime(
@@ -62,15 +65,33 @@ final class RecordingConnector: HostConnectionMaking {
             count += 1
             return count
         }
-        let events = events
+        let (events, heldFeatures) = (events, heldFeatures)
         policies.record((number, policy))
         let connection: HostConnection = runtime.makeConnection(
             stream, policy: policy, bundles: bundles, deliveringOn: queue
         ) { event in
             events.record((number, event))
+            if case .featuresChanged = event {
+                let held = heldFeatures.withLock { held in
+                    guard held[number] != nil else { return false }
+                    held[number]?.append { queue.async { handler(event) } }
+                    return true
+                }
+                if held { return }
+            }
             handler(event)
         }
         return Recorded(connection: connection, number: number, commands: commands)
+    }
+
+    /// Holds back connection `number`'s `featuresChanged` events from the hub until `releaseFeatures(of:)`.
+    func holdFeatures(of number: Int) {
+        heldFeatures.withLock { $0[number] = [] }
+    }
+
+    /// Delivers connection `number`'s held `featuresChanged` events to the hub, in order, and stops holding.
+    func releaseFeatures(of number: Int) {
+        for deliver in heldFeatures.withLock({ $0.removeValue(forKey: number) }) ?? [] { deliver() }
     }
 
     /// Every `.closed` each connection reported, by connection number.
@@ -133,7 +154,8 @@ final class HubHarness: Sendable {
     let guestLogs = Recorder<(level: KernovaLogLevel, segments: [LogSegment])>()
     /// The hub's own notices: its acceptor's.
     let hostLogs = Recorder<String>()
-    private let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
+    /// Where the hub delivers its snapshots.
+    let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
 
     /// A hub attached to `transport`, its peers judged by `receiverPolicy` and their pulls read from
     /// `payloadSource`.
@@ -166,6 +188,12 @@ final class HubHarness: Sendable {
             logger: KernovaLogger(subsystem: "app.kernova.guest", category: "VM") { level, _, _, segments in
                 guestLogs.record((level, segments))
             })
+    }
+
+    /// Waits until every event the hub has received is reflected in `snapshots`.
+    func settled() async {
+        await flush(hub.queue)
+        await flush(publishQueue)
     }
 
     /// The next snapshot `predicate` accepts, from the first.

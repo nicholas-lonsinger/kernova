@@ -167,7 +167,7 @@ struct AgentHubTests {
 
     // MARK: Away peers
 
-    @Test("A peer that disconnects is remembered away with its standing until one of its identity says Hello")
+    @Test("A disconnected peer stays away with its standing until one of its identity is shown again")
     func awayUntilItReturns() async {
         let harness = HubHarness(bundles: [Self.offered])
         await harness.attached()
@@ -180,14 +180,53 @@ struct AgentHubTests {
         #expect(gone.away[0].summary.standing == .outdated(offeredVersionLabel: "next", update: .unavailable))
         #expect(!gone.away[0].relaunching)
 
-        // The same user's agent in a new process and a new session — a reboot — is the one that went away.
+        // The same user's agent in a new process and a new session — a reboot — is the one that went away;
+        // its features lag its Hello, so it has joined the set but is not yet shown.
+        harness.connector.holdFeatures(of: 2)
         var rebooted = Fixture.peerState
         rebooted.sessionID = "rebooted"
-        var later = harness.snapshots.waiterFromNow()
         let second = HubPeer(harness, claim: .session(.user, instance: 2), state: rebooted)
-        let back = await later.next { $0.peers.count == 1 && $0.away.isEmpty }
+        var events = harness.connector.events.waiter()
+        _ = await events.next { $0.connection == 2 && $0.event.isFeaturesChanged }
+        await harness.settled()
+        let joined = harness.snapshots.elements.last
+        #expect(joined?.peers.isEmpty == true)
+        #expect(joined?.away == gone.away)
+
+        var later = harness.snapshots.waiterFromNow()
+        harness.connector.releaseFeatures(of: 2)
+        let back = await later.next { $0.peers.count == 1 }
         #expect(back.peers[0].sessionID == "rebooted")
+        #expect(back.away.isEmpty)
+        // Its one identity is shown connected or away in every snapshot once it first connected — never
+        // both, never neither.
+        let shown = harness.snapshots.elements.drop(while: \.peers.isEmpty)
+        #expect(shown.allSatisfy { $0.peers.count + $0.away.count == 1 })
         second.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test("A connection of a shown identity that closes publishes no away peer while its successor is shown")
+    func supersededCloseStaysHidden() async {
+        // Two sessions of one user — the old session's agent still connected as the new one's arrives.
+        let harness = HubHarness()
+        await harness.attached()
+        let old = HubPeer(harness, claim: .session(.user, instance: 1), state: PeerSessionState(sessionID: "old"))
+        _ = await harness.snapshot { $0.peers.count == 1 }
+        let new = HubPeer(harness, claim: .session(.user, instance: 2), state: PeerSessionState(sessionID: "new"))
+        _ = await harness.snapshot { $0.peers.count == 2 }
+
+        var later = harness.snapshots.waiterFromNow()
+        old.driver.close(.shuttingDown)
+        let one = await later.next { $0.peers.count == 1 }
+        #expect(one.peers[0].sessionID == "new")
+        await harness.settled()
+        #expect(harness.snapshots.elements.allSatisfy { $0.away.isEmpty })
+
+        // Its successor's close is the identity's last, and the one it is remembered by.
+        new.driver.close(.shuttingDown)
+        let gone = await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
+        #expect(gone.away.map(\.summary.sessionID) == ["new"])
         harness.hub.close()
     }
 
@@ -744,5 +783,11 @@ extension ConnectionClosure {
         case .closedByPeer(let error), .closedLocally(let error): error.retryAfter
         case .transportLost, .notThisProtocol: nil
         }
+    }
+}
+
+extension HostEvent {
+    fileprivate var isFeaturesChanged: Bool {
+        if case .featuresChanged = self { true } else { false }
     }
 }

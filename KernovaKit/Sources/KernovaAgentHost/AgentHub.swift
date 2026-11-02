@@ -236,11 +236,7 @@ public final class AgentHub: Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         switch event {
         case .helloReceived(let claim, let peerState):
-            let outcome = state.withLock { state in
-                let outcome = state.helloReceived(handle, claim: claim, state: peerState)
-                state.joined(handle)
-                return outcome
-            }
+            let outcome = state.withLock { $0.helloReceived(handle, claim: claim, state: peerState) }
             logHello(claim, peerState, outcome)
             resolve(outcome, incoming: handle)
         case .peerStateChanged(let peerState):

@@ -45,7 +45,7 @@ struct GuestAgentPresentationTests {
     func hubWithNoPeers() {
         let presentation = GuestAgentPresentation(hub: .empty)
         #expect(presentation.status == .waiting)
-        #expect(presentation.hub?.peers == [])
+        #expect(presentation.hub?.windowLines == [])
         #expect(
             presentation.hub?.capabilities == [
                 .init(title: "Status", isAvailable: false, detail: "No Kernova agent is connected."),
@@ -58,7 +58,7 @@ struct GuestAgentPresentationTests {
     func hubWithOneCurrentPeer() {
         let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1)], logs: .available(Data())))
         #expect(presentation.status == .current(version: "1.0"))
-        #expect(presentation.hub?.peers == [.init(title: "Session agent — pbear", state: "Up to date")])
+        #expect(presentation.hub?.windowLines == [.init(title: "Session agent — pbear", state: "Up to date")])
         #expect(
             presentation.hub?.capabilities == [
                 .init(title: "Status", isAvailable: true, detail: "Connected"),
@@ -113,7 +113,7 @@ struct GuestAgentPresentationTests {
             ]))
         #expect(presentation.status == .outdated(installed: "0.9", bundled: "1.0"))
         #expect(
-            presentation.hub?.peers == [
+            presentation.hub?.windowLines == [
                 .init(title: "System service", state: "Updating\u{2026}"),
                 .init(title: "Session agent — pbear", state: line),
             ])
@@ -127,7 +127,7 @@ struct GuestAgentPresentationTests {
                 Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating)),
             ]))
         #expect(presentation.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(presentation.hub?.peers.map(\.state) == ["Not responding", "Updating\u{2026}"])
+        #expect(presentation.hub?.agents.map(\.state) == ["Not responding", "Updating\u{2026}"])
     }
 
     @Test(
@@ -135,14 +135,14 @@ struct GuestAgentPresentationTests {
     func hubWithAPeerOfferedNothing() {
         let alone = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, standing: .notOffered)]))
         #expect(alone.status == .connected(version: "1.0"))
-        #expect(alone.hub?.peers == [.init(title: "Session agent — pbear", state: "Version 1.0")])
+        #expect(alone.hub?.windowLines == [.init(title: "Session agent — pbear", state: "Version 1.0")])
         let mixed = GuestAgentPresentation(
             hub: Self.snapshot([
                 Self.peer(2, role: .systemPeer, version: "1.1"), Self.peer(1, standing: .notOffered),
             ]))
         #expect(mixed.status == .connected(version: "1.1"))
         let unlabelled = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, version: "", standing: .notOffered)]))
-        #expect(unlabelled.hub?.peers.first?.state == "Connected")
+        #expect(unlabelled.hub?.agents.first?.state == "Connected")
     }
 
     @Test("Any unresponsive agent makes the presentation unresponsive, and its line says so")
@@ -155,7 +155,7 @@ struct GuestAgentPresentationTests {
         let mixed = GuestAgentPresentation(
             hub: Self.snapshot([Self.peer(2, role: .systemPeer), Self.peer(1, version: "0.9", isResponsive: false)]))
         #expect(mixed.status == .unresponsive(version: "0.9"))
-        #expect(mixed.hub?.peers.map(\.state) == ["Up to date", "Not responding"])
+        #expect(mixed.hub?.agents.map(\.state) == ["Up to date", "Not responding"])
     }
 
     // MARK: Away peers
@@ -171,7 +171,7 @@ struct GuestAgentPresentationTests {
                 peers: [], features: FeatureStatus.merge([]), away: [Self.away(Self.peer(1))]),
             lastSeenAgentVersion: "1.0")
         #expect(presentation.status == .connecting(expected: "1.0"))
-        #expect(presentation.hub?.peers == [.init(title: "Session agent — pbear", state: "Reconnecting\u{2026}")])
+        #expect(presentation.hub?.windowLines == [.init(title: "Session agent — pbear", state: "Reconnecting\u{2026}")])
     }
 
     @Test("A VM that has had an agent and has none connected yet — a cold boot — is connecting to it")
@@ -196,7 +196,7 @@ struct GuestAgentPresentationTests {
             lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSession])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(
-            presentation.hub?.peers == [
+            presentation.hub?.windowLines == [
                 .init(title: "System service", state: "Up to date"),
                 .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
             ])
@@ -215,7 +215,7 @@ struct GuestAgentPresentationTests {
             lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSystem])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(
-            presentation.hub?.peers == [
+            presentation.hub?.windowLines == [
                 .init(title: "Session agent — pbear", state: "Up to date"),
                 .init(title: "System service", state: "Didn\u{2019}t reconnect"),
             ])
@@ -227,7 +227,7 @@ struct GuestAgentPresentationTests {
             hub: .empty, lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSession, Self.missingSystem])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(
-            presentation.hub?.peers == [
+            presentation.hub?.windowLines == [
                 .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
                 .init(title: "System service", state: "Didn\u{2019}t reconnect"),
             ])
@@ -249,14 +249,14 @@ struct GuestAgentPresentationTests {
                 peers: [], features: FeatureStatus.merge([]), away: [Self.away(updating, relaunching: true)]),
             lastSeenAgentVersion: "0.9")
         #expect(alone.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(alone.hub?.peers.map(\.state) == ["Updating\u{2026}"])
+        #expect(alone.hub?.agents.map(\.state) == ["Updating\u{2026}"])
         // Beside a peer already current again, the relaunching one still decides the status.
         let mixed = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(2, role: .systemPeer, version: "1.0")], features: FeatureStatus.merge([]),
                 away: [Self.away(updating, relaunching: true)]), lastSeenAgentVersion: "1.0")
         #expect(mixed.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(mixed.hub?.peers.map(\.state) == ["Up to date", "Updating\u{2026}"])
+        #expect(mixed.hub?.agents.map(\.state) == ["Up to date", "Updating\u{2026}"])
     }
 
     @Test("An away peer beside a connected one leaves the status to the connected one")
@@ -266,13 +266,13 @@ struct GuestAgentPresentationTests {
                 peers: [Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([]),
                 away: [Self.away(Self.peer(1))]), lastSeenAgentVersion: "1.0")
         #expect(presentation.status == .current(version: "1.0"))
-        #expect(presentation.hub?.peers.map(\.state) == ["Up to date", "Reconnecting\u{2026}"])
+        #expect(presentation.hub?.agents.map(\.state) == ["Up to date", "Reconnecting\u{2026}"])
     }
 
     @Test("A session agent with no user name is named by its role")
     func sessionPeerWithoutUserName() {
         let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, userName: "")]))
-        #expect(presentation.hub?.peers.first?.title == "Session agent")
+        #expect(presentation.hub?.agents.first?.title == "Session agent")
     }
 
     @Test("Each absence reason reads as what it means")
@@ -283,4 +283,15 @@ struct GuestAgentPresentationTests {
         #expect(GuestAgentPresentation.reason(.protocolMismatch) == "The agent is out of date.")
         #expect(GuestAgentPresentation.reason(.notImplemented) == "This agent doesn't offer it.")
     }
+}
+
+/// What the Guest Agent Status window shows of one agent line.
+struct WindowLine: Equatable {
+    var title: String
+    var state: String
+}
+
+extension GuestAgentPresentation.Hub {
+    /// Each agent line as the window shows it.
+    var windowLines: [WindowLine] { agents.map { WindowLine(title: $0.title, state: $0.state) } }
 }

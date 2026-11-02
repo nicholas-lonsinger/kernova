@@ -72,7 +72,8 @@ struct AgentHubState: Sendable {
     var isClosed = false
     var lastPublished = AgentHubSnapshot.empty
     private var nextConnectedOrder: UInt64 = 0
-    /// The peers seen on this attachment that are disconnected now, by who they are.
+    /// The last close of each identity seen on this attachment. The snapshot shows an entry only while no
+    /// visible peer has its identity, so a returning peer reads as away until its features arrive.
     var away: [AwayKey: AwayPeer] = [:]
     private var nextAwayOrder: UInt64 = 0
 
@@ -99,12 +100,6 @@ struct AgentHubState: Sendable {
         return .joined
     }
 
-    /// A peer joined the set: it is no longer away.
-    mutating func joined(_ handle: PeerHandle) {
-        guard let record = peers[handle] else { return }
-        away[record.awayKey] = nil
-    }
-
     /// The connection ended `at` that instant: it leaves the hub. A peer the snapshot showed is remembered as
     /// away while the transport that accepted it is attached, with the standing it left with.
     mutating func closed(_ handle: PeerHandle, at instant: CoreInstant) {
@@ -124,9 +119,10 @@ struct AgentHubState: Sendable {
 
     var snapshot: AgentHubSnapshot {
         let ordered = peers.values.filter { $0.features != nil }.sorted { $0.connectedOrder > $1.connectedOrder }
+        let visible = Set(ordered.map(\.awayKey))
         return AgentHubSnapshot(
             peers: ordered.map(summary), features: FeatureStatus.merge(ordered.compactMap(\.features)),
-            away: away.values.sorted { $0.order > $1.order })
+            away: away.filter { !visible.contains($0.key) }.values.sorted { $0.order > $1.order })
     }
 
     private func summary(_ record: PeerRecord) -> PeerSummary {

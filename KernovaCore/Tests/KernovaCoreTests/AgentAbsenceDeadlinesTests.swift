@@ -1,6 +1,7 @@
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
+import KernovaTestSupport
 import KernovaWire
 import Testing
 

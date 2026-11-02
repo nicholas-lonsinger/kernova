@@ -14,7 +14,7 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// `FeatureStatus.merge` of the peers' tables, newest first; every feature `NO_AGENT` with none.
     public var features: FeatureStatusTable
     /// The peers seen while this transport is attached that are disconnected now, the most recently gone
-    /// first; each leaves when a peer of its identity says Hello again, or the transport detaches.
+    /// first; none shares an identity with a peer in `peers`, and all leave when the transport detaches.
     public var away: [AwayPeer]
 
     /// A snapshot of these peers and merged features.

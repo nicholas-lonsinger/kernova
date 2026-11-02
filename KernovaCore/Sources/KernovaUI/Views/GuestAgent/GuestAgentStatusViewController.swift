@@ -245,7 +245,7 @@ final class GuestAgentStatusViewController: NSViewController {
     /// The hub's agent lines, then its capability rows, each as a title and the
     /// value beside it.
     static func rows(_ hub: GuestAgentPresentation.Hub) -> [(title: String, value: String)] {
-        hub.peers.map { ($0.title, $0.state) } + hub.capabilities.map { ($0.title, $0.detail) }
+        hub.agents.map { ($0.title, $0.state) } + hub.capabilities.map { ($0.title, $0.detail) }
     }
 
     private func makeRow(_ row: (title: String, value: String)) -> NSView {

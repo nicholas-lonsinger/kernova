@@ -126,7 +126,7 @@ struct VMInstanceAgentHubTests {
 
         #expect(instance.agentPresentation == GuestAgentPresentation(hub: snapshot))
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
-        #expect(instance.agentPresentation?.hub?.peers.first?.title == "Session agent — pbear")
+        #expect(instance.agentPresentation?.hub?.agents.first?.title == "Session agent — pbear")
     }
 
     private static func peer(
@@ -210,7 +210,9 @@ struct VMInstanceAgentHubTests {
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("system agent, last seen 1.0") == true)
         #expect(
-            instance.agentPresentation?.hub?.peers == [.init(title: "System service", state: "Didn\u{2019}t reconnect")]
+            instance.agentPresentation?.hub?.windowLines == [
+                .init(title: "System service", state: "Didn\u{2019}t reconnect")
+            ]
         )
         #expect(
             VMCommandCore.agentLines(of: instance) == [
@@ -226,13 +228,55 @@ struct VMInstanceAgentHubTests {
         await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
         #expect(
-            instance.agentPresentation?.hub?.peers == [
+            instance.agentPresentation?.hub?.windowLines == [
                 .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
                 .init(title: "System service", state: "Didn\u{2019}t reconnect"),
             ])
         #expect(
             VMCommandCore.agentLines(of: instance) == [
                 VMAgentLine(role: "session", user: nil, version: "0.9", status: "expectedMissing"),
+                VMAgentLine(role: "system", user: nil, version: "1.0", status: "expectedMissing"),
+            ])
+    }
+
+    @Test("The window and `kernova info` list the same agents in the same order, each with its wire status")
+    func windowAndInfoAgree() async {
+        let instance = Self.linuxInstance(system: "1.0")
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
+        defer { instance.cancelAgentAbsenceWatchdog() }
+
+        instance.agentAbsenceGrace = .seconds(60)
+        var erin = Self.peer(4, standing: .current)
+        erin.userName = "erin"
+        var alice = Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
+        alice.userName = "alice"
+        var bob = Self.peer(2, standing: .current)
+        bob.userName = "bob"
+        let system = Self.peer(3, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(
+            Self.snapshot(
+                [erin, Self.peer(5, standing: .current)],
+                away: [(bob, relaunching: false), (alice, relaunching: true), (system, relaunching: false)]))
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
+
+        // The system scope's line stands in place of its away one.
+        #expect(
+            instance.agentPresentation?.hub?.windowLines == [
+                .init(title: "Session agent — erin", state: "Up to date"),
+                .init(title: "Session agent — pbear", state: "Up to date"),
+                .init(title: "Session agent — bob", state: "Reconnecting\u{2026}"),
+                .init(title: "Session agent — alice", state: "Updating\u{2026}"),
+                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
+            ])
+        #expect(
+            VMCommandCore.agentLines(of: instance) == [
+                VMAgentLine(role: "session", user: "erin", version: "1.0", status: "current"),
+                VMAgentLine(role: "session", user: "pbear", version: "1.0", status: "current"),
+                VMAgentLine(role: "session", user: "bob", version: "1.0", status: "connecting"),
+                VMAgentLine(role: "session", user: "alice", version: "0.9", status: "updating"),
                 VMAgentLine(role: "system", user: nil, version: "1.0", status: "expectedMissing"),
             ])
     }
@@ -252,7 +296,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9") == true)
         // Every surface names it: the popover's line, and `kernova info`'s.
         #expect(
-            instance.agentPresentation?.hub?.peers.last
+            instance.agentPresentation?.hub?.windowLines.last
                 == .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"))
         #expect(
             VMCommandCore.agentLines(of: instance) == [
@@ -331,7 +375,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .updating(installed: "0.9", bundled: "1.0"))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(updating, true)]))
         #expect(instance.agentPresentation?.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(instance.agentPresentation?.hub?.peers.map(\.state) == ["Updating\u{2026}"])
+        #expect(instance.agentPresentation?.hub?.agents.map(\.state) == ["Updating\u{2026}"])
         #expect(instance.agentAbsenceTimerForTesting != nil)
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(2, standing: .current)]))
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
@@ -365,7 +409,7 @@ struct VMInstanceAgentHubTests {
         #expect(context.agentAbsenceTimerDeadline == relaunching.since + grace + Self.rollback)
         #expect(relaunching.since + grace + Self.rollback > floor + grace)
         #expect(instance.warnedMissingAgents.isEmpty)
-        #expect(instance.agentPresentation?.hub?.peers.map(\.state) == ["Up to date", "Updating\u{2026}"])
+        #expect(instance.agentPresentation?.hub?.agents.map(\.state) == ["Up to date", "Updating\u{2026}"])
 
         // The rollback brings the system peer back: the timer is cancelled, and nothing warned.
         instance.publishAgentHubSnapshotForTesting(
@@ -428,7 +472,7 @@ struct VMInstanceAgentHubTests {
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [left]))
         #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
         #expect(
-            instance.agentPresentation?.hub?.peers == [
+            instance.agentPresentation?.hub?.windowLines == [
                 .init(title: "System service", state: "Reconnecting\u{2026}"),
                 .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
             ])
@@ -457,7 +501,9 @@ struct VMInstanceAgentHubTests {
         await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentHubSnapshot.away == [aliceAway])
         #expect(
-            instance.agentPresentation?.hub?.peers == [.init(title: "Session agent — alice", state: "Updating\u{2026}")]
+            instance.agentPresentation?.hub?.windowLines == [
+                .init(title: "Session agent — alice", state: "Updating\u{2026}")
+            ]
         )
         #expect(context.agentAbsenceTimerDeadline == aliceAway.since + grace + Self.rollback)
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
