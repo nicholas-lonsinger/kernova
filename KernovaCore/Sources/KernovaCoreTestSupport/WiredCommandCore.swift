@@ -1,5 +1,4 @@
 import Foundation
-import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
@@ -149,18 +148,17 @@ final class WiredCommandCore {
     }
 
     /// Registers a fixture VM in the library, wired as a load would have left
-    /// it — ``RegisteredVMInstanceFixture/register(name:phase:guestOS:snapshots:library:preferences:hostState:agentConnector:mutate:)``'s
+    /// it — ``RegisteredVMInstanceFixture/register(name:phase:guestOS:snapshots:library:preferences:hostState:mutate:)``'s
     /// defaults, networking off unless `mutate` turns it back on.
     @discardableResult
     func register(
         name: String = "Wired", phase: VMLifecyclePhase = .stopped, guestOS: VMGuestOS = .linux,
         snapshots: [VMSnapshot] = [], hostState: VMHostState = VMHostState(),
-        agentConnector: (any HostConnectionMaking)? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         RegisteredVMInstanceFixture.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots, library: library,
-            preferences: preferences, hostState: hostState, agentConnector: agentConnector, mutate: mutate)
+            preferences: preferences, hostState: hostState, mutate: mutate)
     }
 }
 

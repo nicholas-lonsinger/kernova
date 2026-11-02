@@ -1,5 +1,3 @@
-import KernovaAgentCore
-
 /// The text of every file `kernova-agent install` writes besides the binary and its metadata: the binary
 /// writes its own units, so they can never drift from it.
 ///
@@ -153,22 +151,6 @@ enum UnitFiles {
     static func sysusersLine(_ layout: InstallLayout) -> String {
         #"u \#(InstallLayout.systemAccount) - "Kernova guest agent" \#(layout.root) -"#
     }
-
-    /// The polkit rule granting the system peer's account the four power actions and nothing else: no
-    /// `*-ignore-inhibit`, so a block inhibitor still stops it.
-    static let polkitRule = """
-        // Written by kernova-agent install --system.
-        polkit.addRule(function(action, subject) {
-            if (subject.user == "\(InstallLayout.systemAccount)" &&
-                (action.id == "org.freedesktop.login1.power-off" ||
-                 action.id == "org.freedesktop.login1.power-off-multiple-sessions" ||
-                 action.id == "org.freedesktop.login1.reboot" ||
-                 action.id == "org.freedesktop.login1.reboot-multiple-sessions")) {
-                return polkit.Result.YES;
-            }
-        });
-
-        """
 
     /// `text` with systemd.unit(5)'s specifier character escaped.
     static func escapedSpecifiers(_ text: String) -> String {

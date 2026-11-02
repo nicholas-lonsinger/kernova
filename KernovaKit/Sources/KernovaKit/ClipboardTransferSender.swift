@@ -1,8 +1,6 @@
 import Foundation
-import SwiftProtobuf
 import KernovaLogging
 import KernovaSynchronization
-import os
 
 /// How a transfer's data connection is obtained.
 ///

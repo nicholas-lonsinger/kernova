@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import KernovaSynchronization
 import KernovaTestSupport
 import System
 import Testing

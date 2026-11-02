@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 extension Connection {
     // MARK: - Time

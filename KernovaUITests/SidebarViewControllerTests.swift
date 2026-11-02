@@ -357,7 +357,7 @@ struct SidebarViewControllerTests {
         #expect(control.title == "Eject Guest Agent Media")
         #expect(control.installCommand == LinuxAgentDisk.installCommand)
 
-        let popover = AgentStatusPopoverContentViewController()
+        let popover = GuestAgentStatusViewController()
         popover.update(
             presentation: badge.presentation, isInstallerMounted: badge.isInstallerMounted, diskControl: control,
             vmName: instance.name, hasDismissAction: badge.hasDismissAction)

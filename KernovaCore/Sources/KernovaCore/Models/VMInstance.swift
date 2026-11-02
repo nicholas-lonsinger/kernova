@@ -663,8 +663,7 @@ package final class VMInstance {
             identityConflict: nil,
             accessoryHolder: nil,
             terminating: peers?.isTerminating ?? false,
-            heldByAnotherCopy: heldByAnotherCopy,
-            stopRequestInFlight: activity.isRequestingStop)
+            heldByAnotherCopy: heldByAnotherCopy)
     }
 
     /// The VM claiming the identity (``claimsIdentity``) that bringing this

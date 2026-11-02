@@ -3,7 +3,6 @@ import Dispatch
 import KernovaAgentCore
 import KernovaDBus
 import KernovaPlatformLinux
-import Synchronization
 import Testing
 
 @Suite("A peer's session state, followed in a fake org.freedesktop.login1")
@@ -14,7 +13,7 @@ struct LogindPeerStateTests {
         let fake: FakeLogind
         let connection: DBusBusConnection
         let queue = DispatchQueue(label: "app.kernova.tests.logind-watch")
-        let inbox = Inbox<Result<PeerSessionState?, DBusServiceError>>()
+        let inbox = Inbox<Result<PeerSessionState?, LogindError>>()
         private let watcher: LogindPeerStateWatcher
 
         enum Role {
@@ -47,7 +46,7 @@ struct LogindPeerStateTests {
         }
 
         /// The next delivery, which must be a failure.
-        func nextFailure() throws -> DBusServiceError? {
+        func nextFailure() throws -> LogindError? {
             guard case .failure(let error) = try inbox.next() else { return nil }
             return error
         }
@@ -159,7 +158,7 @@ struct LogindPeerStateTests {
         #expect(try watch.next()?.sessionID == "3")
     }
 
-    static let unknownObject = DBusServiceError.call(
+    static let unknownObject = LogindError.call(
         .remote(DBusRemoteError(name: "org.freedesktop.DBus.Error.UnknownObject", message: "Unknown object")))
 
     @Test("A read that fails delivers its error alone, keeps both subscriptions, and the next signal rereads")
@@ -231,7 +230,7 @@ struct LogindPeerStateTests {
 
     @Test("A user logind does not know cannot be followed")
     func unknownUser() throws {
-        #expect(throws: DBusServiceError.self) { _ = try Watch(.session(uid: 1002)) }
+        #expect(throws: LogindError.self) { _ = try Watch(.session(uid: 1002)) }
     }
 
     @Test("The system peer follows seat0: OFF at the greeter, ON naming a user's session, OFF again on a switch")
@@ -285,7 +284,7 @@ struct LogindPeerStateTests {
         let fake = try NoSuchSeatLogind(on: bus)
         defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
-        let inbox = Inbox<Result<PeerSessionState?, DBusServiceError>>()
+        let inbox = Inbox<Result<PeerSessionState?, LogindError>>()
         let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
             inbox.put($0)
         }

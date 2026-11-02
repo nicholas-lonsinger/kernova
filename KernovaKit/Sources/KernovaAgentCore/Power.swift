@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 /// What a peer's power adapter reports. Every `.perform` ends in exactly one
 /// terminal report: `.refused`, `.cancelled`, `.unconfirmed`, `.handedOff`,

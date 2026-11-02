@@ -3,16 +3,9 @@ import PackageDescription
 
 // Project targets take these from Config/Base.xcconfig; a package target never
 // reads a project xcconfig, so the same gates are stated here.
-//
-// MemberImportVisibility: swift-protobuf imports Foundation, and without the
-// feature Foundation's extension members resolve in any portable file that
-// imports only FoundationEssentials — `String.contains("/")` then binds to
-// Foundation's overload and the static agent links ICU. With it, a member
-// resolves only from a module the file imports itself.
 let sharedSwiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .treatAllWarnings(as: .error),
-    .enableUpcomingFeature("MemberImportVisibility"),
 ]
 
 // The portable targets build wherever Swift does — macOS, Linux, Windows — and
@@ -94,7 +87,7 @@ var targets: [Target] = [
         name: "KernovaPlatformLinux",
         dependencies: [
             "KernovaDBus", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
-            "KernovaDigest", "KernovaSynchronization", "KernovaLogging", "CKernovaShims",
+            "KernovaDigest", "KernovaSynchronization", "CKernovaShims",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -186,9 +179,7 @@ var targets: [Target] = [
     // target it tests, only for Linux.
     .testTarget(
         name: "KernovaPlatformLinuxTests",
-        dependencies: [
-            "KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire",
-        ],
+        dependencies: ["KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime"],
         swiftSettings: sharedSwiftSettings
     ),
     .testTarget(
@@ -317,10 +308,7 @@ targets += [
     ),
     .target(
         name: "KernovaTestSupport",
-        dependencies: [
-            "KernovaKit", "KernovaLogging", "KernovaSynchronization",
-            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
-        ],
+        dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
         swiftSettings: sharedSwiftSettings
     ),
     .testTarget(
@@ -328,8 +316,6 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
-            .product(name: "ArgumentParser", package: "swift-argument-parser"),
         ],
         swiftSettings: sharedSwiftSettings
     ),

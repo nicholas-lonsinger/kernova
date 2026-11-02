@@ -30,6 +30,10 @@ package struct WindowAutosave: Sendable {
         frame("Clipboard-\(vmID.uuidString)")
     }
 
+    package func guestAgentStatusFrame(for vmID: UUID) -> String {
+        frame("GuestAgentStatus-\(vmID.uuidString)")
+    }
+
     /// AppKit reads an empty name as "don't save this window's frame".
     private func frame(_ name: String) -> String {
         savesState ? name : ""

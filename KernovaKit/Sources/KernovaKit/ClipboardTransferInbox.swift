@@ -1,5 +1,4 @@
 import Foundation
-import SwiftProtobuf
 import KernovaLogging
 import KernovaSynchronization
 

@@ -100,6 +100,7 @@ struct VMCapabilityCatalogTests {
         .togglePopOut: .affordance(.externalDisplay),
         .toggleFullscreen: .affordance(.externalDisplay),
         .showClipboard: .affordance(.clipboard),
+        .showGuestAgentStatus: .affordance(.guestAgentStatus),
         .toggleGuestAgentDisk: .affordance(.guestAgentDisk),
         .toggleSettingsPane: .affordance(.display),
     ]

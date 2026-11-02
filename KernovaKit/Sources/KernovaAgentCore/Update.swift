@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 /// What a peer's installer adapter reports.
 public enum UpdateInput: Sendable, Equatable {

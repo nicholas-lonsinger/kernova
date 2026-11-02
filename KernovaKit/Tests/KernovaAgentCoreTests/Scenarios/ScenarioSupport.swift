@@ -7,7 +7,6 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentSimulation
 import KernovaWire
-import SwiftProtobuf
 import Testing
 
 /// One simulation scenario: options, a script run on the world, an end time

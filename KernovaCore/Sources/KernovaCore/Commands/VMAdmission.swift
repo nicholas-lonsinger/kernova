@@ -69,13 +69,6 @@ package enum VMAdmission {
         /// bundle could not read that baseline's settings — so the revert
         /// would fail, leaving the session's changes on the disks.
         case ephemeralBaselineUnreadable
-        /// The live session's graceful stop request is still being sent —
-        /// asked of its guest's agents, or pressed as the ACPI button — and a
-        /// second would race it.
-        ///
-        /// Raised only where the VM would otherwise admit the request, so a
-        /// surface reads it as applicable.
-        case stopRequestInFlight
 
         package static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
@@ -84,8 +77,7 @@ package enum VMAdmission {
             case (.invalidState, .invalidState), (.removed, .removed),
                 (.terminating, .terminating),
                 (.heldByAnotherCopy, .heldByAnotherCopy),
-                (.ephemeralBaselineUnreadable, .ephemeralBaselineUnreadable),
-                (.stopRequestInFlight, .stopRequestInFlight):
+                (.ephemeralBaselineUnreadable, .ephemeralBaselineUnreadable):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
                 l.other === r.other && l.reason == r.reason && l.asks == r.asks
@@ -149,9 +141,6 @@ package enum VMAdmission {
         /// Another running copy of Kernova holds the bundle of this VM, which
         /// is at rest here.
         var heldByAnotherCopy: Bool
-        /// The live session's graceful stop request is being sent
-        /// (``VMActivity/isRequestingStop``).
-        var stopRequestInFlight: Bool
     }
 
     // MARK: - Decide
@@ -167,9 +156,6 @@ package enum VMAdmission {
         }
         if facts.heldByAnotherCopy, isRefusedWhileHeldByAnotherCopy(request, phase: phase) {
             return .refuse(.heldByAnotherCopy)
-        }
-        if facts.stopRequestInFlight, request == .sessionAction(.requestStop) {
-            return .refuse(.stopRequestInFlight)
         }
         return decision
     }
@@ -612,6 +598,8 @@ package enum VMAdmission {
             admitted = phase.hasLiveSession
         case .clipboard:
             admitted = facts.clipboardSharingEnabled && phase.hasLiveSession
+        case .guestAgentStatus:
+            admitted = phase.hasLiveSession && facts.reachesGuestAgent
         case .guestAgentDisk:
             guard phase.hasLiveSession, facts.reachesGuestAgent else { return .refuse(.invalidState) }
             return decideOnTheVM(
@@ -668,6 +656,8 @@ package enum VMAffordance: Sendable, Equatable {
     /// Pop out, or go fullscreen.
     case externalDisplay
     case clipboard
+    /// Show the guest agent's status for a session with a channel to one.
+    case guestAgentStatus
     /// Attach or eject the guest-agent installer disk.
     case guestAgentDisk
 }

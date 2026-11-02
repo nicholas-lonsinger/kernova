@@ -163,8 +163,7 @@ public enum LinuxIdentity {
         return String(cString: resolved)
     }
 
-    /// The whole file at `path` as UTF-8 text; nil when it cannot be read.
-    static func readText(_ path: String) -> String? {
+    private static func readText(_ path: String) -> String? {
         let descriptor = open(path, O_RDONLY | O_CLOEXEC)
         guard descriptor >= 0 else { return nil }
         defer { close(descriptor) }

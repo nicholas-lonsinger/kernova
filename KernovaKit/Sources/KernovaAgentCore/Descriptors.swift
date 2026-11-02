@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 /// Which role opens a stream kind.
 public enum OpenerRole: Sendable, Equatable {

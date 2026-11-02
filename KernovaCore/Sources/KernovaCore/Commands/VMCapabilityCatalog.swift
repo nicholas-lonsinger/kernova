@@ -67,6 +67,7 @@ package enum VMCapability: CaseIterable, Hashable {
     case togglePopOut
     case toggleFullscreen
     case showClipboard
+    case showGuestAgentStatus
     case toggleGuestAgentDisk
     case toggleSettingsPane
 
@@ -109,7 +110,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
         case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen, .showClipboard,
-            .toggleSettingsPane, .editTags:
+            .showGuestAgentStatus, .toggleSettingsPane, .editTags:
             nil
         }
     }
@@ -137,7 +138,8 @@ package enum VMCapability: CaseIterable, Hashable {
             .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
             .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .toggleSettingsPane:
+            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .showGuestAgentStatus,
+            .toggleSettingsPane:
             nil
         }
     }
@@ -210,6 +212,8 @@ package enum VMCapability: CaseIterable, Hashable {
             return .affordance(.externalDisplay)
         case .showClipboard:
             return .affordance(.clipboard)
+        case .showGuestAgentStatus:
+            return .affordance(.guestAgentStatus)
         case .toggleGuestAgentDisk:
             return .affordance(.guestAgentDisk)
         }
@@ -279,12 +283,11 @@ package struct VMCapabilityCatalog {
     /// An operation holding the VM is no reason to hide one: a VM that can be
     /// snapshotted still shows Take Snapshot while another operation runs,
     /// dimmed. Nor is the app's termination, another copy of Kernova
-    /// holding the VM, a rule that takes the VM stopped, or a stop request
-    /// still being sent.
+    /// holding the VM, or a rule that takes the VM stopped.
     package func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
         case .admit, .join, .wait, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
-            .refuse(.takesStoppedVM), .refuse(.stopRequestInFlight):
+            .refuse(.takesStoppedVM):
             true
         case .refuse, nil: false
         }

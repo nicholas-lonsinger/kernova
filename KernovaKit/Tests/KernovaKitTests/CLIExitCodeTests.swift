@@ -1,7 +1,6 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
-import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 

@@ -2,23 +2,24 @@ import AppKit
 import KernovaCore
 import KernovaKit
 
-/// Popover content shown when the user clicks the sidebar agent-status
-/// button (the small SF Symbol or spinner next to each VM row).
+/// One VM's guest-agent status: the popover the sidebar's agent-status badge
+/// opens, and the content of the Guest Agent Status window
+/// (``GuestAgentStatusWindowController``).
 ///
 /// The macOS agent's status reads as a title and a paragraph; the agent hub's
 /// agents add a line per agent and a row per capability.
 ///
 /// State is mutable in place via
 /// ``update(presentation:isInstallerMounted:diskControl:vmName:hasDismissAction:)``
-/// so the host can refresh the popover when any input flips while it is open,
+/// so the host can refresh the panel when any input flips while it is open,
 /// without dismiss/re-present flicker.
 @MainActor
-final class AgentStatusPopoverContentViewController: NSViewController {
+final class GuestAgentStatusViewController: NSViewController {
     /// What the trailing button does.
     enum ActionButton: Equatable {
         /// Presents the guest-agent disk control under its title.
         case diskControl(title: String)
-        /// Only closes the popover: the disk control is disabled, and a popover
+        /// Only closes the panel: the disk control is disabled, and a popover
         /// still needs a way out.
         case done
 
@@ -43,7 +44,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
     /// `hasDismissAction` surfaces.
     var onDismiss: (() -> Void)?
 
-    /// Current presentation driving the popover's title, body and rows.
+    /// Current presentation driving the panel's title, body and rows.
     private(set) var presentation = GuestAgentPresentation(macOSAgent: .waiting)
     /// The presentation's status.
     var status: AgentStatus { presentation.status }
@@ -61,7 +62,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     // MARK: - Layout constants
 
-    /// Popover content width — wider than `CalloutStyle.width` so the action
+    /// Content width — wider than `CalloutStyle.width` so the action
     /// row's buttons (e.g. "Reinstall Guest Agent…") fit on a single line.
     private static let contentWidth: CGFloat = 360
     private static let padding: CGFloat = 16
@@ -89,7 +90,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
-        fatalError("AgentStatusPopoverContentViewController does not support NSCoder")
+        fatalError("GuestAgentStatusViewController does not support NSCoder")
     }
 
     override func loadView() {
@@ -144,7 +145,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    /// Replaces the popover's presentation, installer state, disk control, VM
+    /// Replaces the panel's presentation, installer state, disk control, VM
     /// name, and dismiss-action flag and refreshes every label and button in
     /// place.
     func update(
@@ -291,7 +292,7 @@ final class AgentStatusPopoverContentViewController: NSViewController {
         }
     }
 
-    /// The popover's body; where it tells the user how to install, it says the
+    /// The panel's body; where it tells the user how to install, it says the
     /// installer is already attached when it is, since the button then ejects.
     static func bodyText(
         for status: AgentStatus, isInstallerMounted: Bool, vmName: String

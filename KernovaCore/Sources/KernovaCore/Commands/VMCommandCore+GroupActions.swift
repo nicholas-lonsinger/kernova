@@ -244,7 +244,7 @@ extension VMCommandCore {
             }
         case .restart:
             // The single-VM verb, asking nothing: a question it raises is
-            // reported, and a shutdown the guest did not carry out fails.
+            // reported.
             outcome = await settle(.restart, on: instance, in: set) {
                 try await self.restart(.id(instance.id), timeout: nil, consent: .none)
             }
