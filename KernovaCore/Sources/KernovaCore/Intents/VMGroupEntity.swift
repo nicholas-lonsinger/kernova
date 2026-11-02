@@ -112,6 +112,7 @@ enum VMGroupActionChoice: String, AppEnum {
     case start
     case suspend
     case stop
+    case restart
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Group Action")
 
@@ -119,6 +120,7 @@ enum VMGroupActionChoice: String, AppEnum {
         .start: "Start",
         .suspend: "Suspend",
         .stop: "Stop",
+        .restart: "Restart",
     ]
 
     /// The action this case names.
@@ -127,6 +129,7 @@ enum VMGroupActionChoice: String, AppEnum {
         case .start: .start
         case .suspend: .suspend
         case .stop: .stop
+        case .restart: .restart
         }
     }
 
@@ -137,15 +140,17 @@ enum VMGroupActionChoice: String, AppEnum {
             case .start: .start
             case .suspend: .suspend
             case .stop: .stop
+            case .restart: .restart
             }
     }
 }
 
-/// Starts, suspends or stops every virtual machine in a smart group or folder.
+/// Starts, suspends, stops or restarts every virtual machine in a smart group
+/// or folder.
 struct RunVMGroupActionIntent: AppIntent {
-    static let title: LocalizedStringResource = "Start, Suspend, or Stop a VM Group"
+    static let title: LocalizedStringResource = "Start, Suspend, Stop, or Restart a VM Group"
     static let description: IntentDescription? = IntentDescription(
-        "Starts, suspends, or stops each virtual machine in a smart group or folder, one after another, asking nothing. One whose own action would ask something first is skipped, and the action fails naming each virtual machine it left undone.",
+        "Starts, suspends, stops, or restarts each virtual machine in a smart group or folder, one after another, asking nothing. One whose own action would ask something first is skipped, and the action fails naming each virtual machine it left undone.",
         categoryName: "Groups",
         resultValueName: "Virtual Machines")
 

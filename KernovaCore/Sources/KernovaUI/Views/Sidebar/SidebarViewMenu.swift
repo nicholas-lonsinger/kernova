@@ -276,9 +276,9 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         return menu
     }
 
-    /// Start All, Suspend All and Stop All for `group`, each counting the VMs
-    /// it acts on in `counts` and enabled while that is not zero — every one
-    /// disabled when the counts could not be read.
+    /// Start All, Suspend All, Stop All and Restart All for `group`, each
+    /// counting the VMs it acts on in `counts` and enabled while that is not
+    /// zero — every one disabled when the counts could not be read.
     private func addGroupActions(to menu: NSMenu, group: VMGroupReference, counts: [VMGroupAction: Int]?) {
         for action in VMGroupAction.allCases {
             let count = counts?[action] ?? 0
@@ -295,6 +295,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         case .start: "Start All"
         case .suspend: "Suspend All"
         case .stop: "Stop All"
+        case .restart: "Restart All"
         }
     }
 

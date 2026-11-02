@@ -447,6 +447,7 @@ package struct VMCapabilityCatalog {
         case resume
         case suspend
         case stop
+        case restart
 
         /// The capability whose availability offers this step.
         var capability: VMCapability {
@@ -455,6 +456,7 @@ package struct VMCapabilityCatalog {
             case .resume: .resume
             case .suspend: .suspend
             case .stop: .stop
+            case .restart: .restart
             }
         }
 
@@ -465,6 +467,7 @@ package struct VMCapabilityCatalog {
             case .resume: .resume
             case .suspend: .suspend
             case .stop: .stop
+            case .restart: .restart
             }
         }
 
@@ -477,6 +480,7 @@ package struct VMCapabilityCatalog {
             case .start: [.resume, .start]
             case .suspend: [.suspend]
             case .stop: [.stop]
+            case .restart: [.restart]
             }
         }
     }
@@ -487,9 +491,9 @@ package struct VMCapabilityCatalog {
     /// work in flight is refused rather than joined or waited for. Two rules
     /// narrow the capabilities. A start that would begin a guest setup is
     /// passed over — the unattended start the action commits refuses one
-    /// anyway (``VMCommandCore/StartPolicy/group``). And Stop takes
-    /// running guests only: a paused guest's stop takes a resume first, and a
-    /// suspended VM's discards its saved state (``discardSavedState``).
+    /// anyway (``VMCommandCore/StartPolicy/group``). And Stop and Restart
+    /// take running guests only: a paused guest's stop takes a resume first,
+    /// and a suspended VM's discards its saved state (``discardSavedState``).
     func groupAction(_ action: VMGroupAction, on instance: VMInstance) -> GroupActionStanding {
         var refusal: VMAdmission.Refusal?
         for step in GroupActionStep.steps(of: action) {
@@ -500,7 +504,7 @@ package struct VMCapabilityCatalog {
                 {
                     return .owesGuestSetup
                 }
-                if step == .stop, instance.isLivePaused { return .passedOverByState }
+                if step == .stop || step == .restart, instance.isLivePaused { return .passedOverByState }
                 return .acts(step)
             case .refuse(.invalidState), .refuse(.heldByAnotherCopy), .join, .wait, nil:
                 continue

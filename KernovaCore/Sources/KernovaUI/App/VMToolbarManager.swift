@@ -96,6 +96,7 @@ final class VMToolbarManager: NSObject {
     private static let downloadToolTip = "Download the installer image and start the virtual machine"
     private static let resumeDownloadToolTip = "Resume the interrupted installer image download"
     private static let pauseToolTip = "Pause the virtual machine"
+    private static let restartToolTip = "Restart the virtual machine"
     private static let saveStateToolTip = "Suspend the virtual machine"
     private static let takeSnapshotToolTip = "Take a snapshot of the virtual machine"
     private static let clipboardToolTip = "Open the clipboard sharing window"
@@ -120,8 +121,8 @@ final class VMToolbarManager: NSObject {
     private static let showSettingsToolTip = "Show settings for this VM"
     private static let showDisplayToolTip = "Return to the VM display"
 
-    private enum LifecycleSegment: Int {
-        case play = 0, pause = 1, stop = 2
+    private enum LifecycleSegment: Int, CaseIterable {
+        case play = 0, pause = 1, stop = 2, restart = 3
     }
 
     // MARK: - Init
@@ -154,15 +155,17 @@ final class VMToolbarManager: NSObject {
                     .systemSymbol("play.fill", accessibilityDescription: "Start"),
                     .systemSymbol("pause.fill", accessibilityDescription: "Pause"),
                     .systemSymbol("stop.fill", accessibilityDescription: "Stop"),
+                    .systemSymbol("arrow.clockwise", accessibilityDescription: "Restart"),
                 ],
                 selectionMode: .momentary,
-                labels: ["Start", "Pause", "Stop"],
+                labels: ["Start", "Pause", "Stop", "Restart"],
                 target: self,
                 action: #selector(lifecycleAction(_:))
             )
             group.label = "State Controls"
             group.subitems[LifecycleSegment.play.rawValue].toolTip = Self.startToolTip
             group.subitems[LifecycleSegment.pause.rawValue].toolTip = Self.pauseToolTip
+            group.subitems[LifecycleSegment.restart.rawValue].toolTip = Self.restartToolTip
             // Replaced on the first update pass, which reads the VM's own slot.
             group.subitems[LifecycleSegment.stop.rawValue].toolTip =
                 VMInstance.StopAction.stop.toolTip
@@ -334,7 +337,7 @@ final class VMToolbarManager: NSObject {
         // customization.
         guard let item = toolbar.items.first(where: { $0.itemIdentifier == configuration.lifecycleID })
         else { return }
-        guard let group = item as? NSToolbarItemGroup, group.subitems.count == 3 else {
+        guard let group = item as? NSToolbarItemGroup, group.subitems.count == LifecycleSegment.allCases.count else {
             Self.logger.log(.warning, "updateLifecycleGroup: lifecycle group malformed — wrong type or subitem count")
             return
         }
@@ -402,6 +405,8 @@ final class VMToolbarManager: NSObject {
         let isEnabled = capabilities.isStopActionAvailable(on: instance)
         stop.toolTip = isEnabled ? stopAction.toolTip : Self.disabledStopToolTip(for: instance)
         stop.isEnabled = isEnabled
+        group.subitems[LifecycleSegment.restart.rawValue].isEnabled = isAvailable(
+            .restart, on: instance)
     }
 
     private func updateClipboardItem(in toolbar: NSToolbar, instance: VMInstance?) {
@@ -524,6 +529,8 @@ final class VMToolbarManager: NSObject {
             NSApp.sendAction(#selector(AppDelegate.pauseVM(_:)), to: nil, from: nil)
         case .stop:
             NSApp.sendAction(#selector(AppDelegate.stopVM(_:)), to: nil, from: nil)
+        case .restart:
+            NSApp.sendAction(#selector(AppDelegate.restartVM(_:)), to: nil, from: nil)
         }
     }
 

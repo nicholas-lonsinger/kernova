@@ -97,6 +97,10 @@ struct VMCommandCoreGroupActionTests {
         #expect(acts(.stop) == ["Running"])
         #expect(catalog.isAvailable(.stop, on: library.paused))
         #expect(catalog.isAvailable(.discardSavedState, on: library.suspended))
+        // Restart takes exactly what Stop takes: a paused guest is skipped
+        // as Stop All skips it, and a suspended one has no guest to restart.
+        #expect(acts(.restart) == acts(.stop))
+        #expect(catalog.groupAction(.restart, on: library.running) == .acts(.restart))
 
         let counts = try harness.core.concernedCounts(in: library.folder)
         for action in VMGroupAction.allCases {
@@ -150,6 +154,70 @@ struct VMCommandCoreGroupActionTests {
                 "Fresh": .passedOver(reason: .state),
             ])
         #expect(harness2.virtualization.saveCallCount == 2)
+    }
+
+    @Test("Restart All restarts the running guest through the single-VM restart and passes the rest over")
+    func restartAllRestartsTheRunningGuest() async throws {
+        let harness = makeHarness()
+        let library = try makeLibrary(in: harness)
+        let session = library.running.activity.liveSessionID
+
+        let report = try await harness.core.groupAction(.restart, on: library.folder)
+
+        #expect(
+            outcomes(report) == [
+                "Stopped": .passedOver(reason: .state), "Running": .done(verb: .restart),
+                "Paused": .passedOver(reason: .state), "Suspended": .passedOver(reason: .state),
+                "Fresh": .passedOver(reason: .state),
+            ])
+        #expect(report.results.first { $0.vm.name == "Running" }?.line(for: .restart) == "Restarted Running")
+        #expect(report.undone.isEmpty)
+        #expect(harness.virtualization.stopCallCount == 1)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(library.running.status == .running)
+        #expect(library.running.activity.liveSessionID != session)
+        #expect(library.paused.status == .paused)
+    }
+
+    @Test("Restart All takes every running guest at once: a held shutdown holds back only the report")
+    func restartAllDoesNotWaitOnAHeldShutdown() async throws {
+        let harness = makeHarness()
+        // Each guest's power-off is delivered by hand.
+        harness.virtualization.guestIgnoresShutdownRequest = true
+        let heldSession = UUID()
+        let otherSession = UUID()
+        let held = makeInstance(in: harness, name: "Held", phase: .running(sessionID: heldSession))
+        let other = makeInstance(in: harness, name: "Other", phase: .running(sessionID: otherSession))
+        let folder = try harness.library.organization.createFolder(named: "Lab", members: [held.id, other.id])
+        let reported = ReportBox()
+
+        let restartAll = Task { @MainActor in
+            reported.report = try await harness.core.groupAction(
+                .restart, on: VMGroupReference(.folder, named: folder.id.uuidString))
+        }
+        // Both shutdowns asked for while neither guest has gone down.
+        try await harness.virtualization.stopRequested.wait { harness.virtualization.stopCallCount == 2 }
+        other.activity.deliverSessionEvent(.guestDidStop, from: otherSession)
+        try await waitForChange {
+            other.status == .running && other.activity.liveSessionID.map { $0 != otherSession } == true
+        }
+        #expect(held.activity.liveSessionID == heldSession)
+        #expect(reported.report == nil)
+
+        held.activity.deliverSessionEvent(.guestDidStop, from: heldSession)
+        try await restartAll.value
+
+        let report = try #require(reported.report)
+        #expect(report.results.map(\.vm.name) == ["Held", "Other"])
+        #expect(report.results.map(\.outcome) == [.done(verb: .restart), .done(verb: .restart)])
+        #expect(held.status == .running)
+        #expect(harness.virtualization.startCallCount == 2)
+    }
+
+    /// Where a test reads a group action's report once it has come back.
+    @MainActor
+    private final class ReportBox {
+        var report: VMGroupActionReport?
     }
 
     // MARK: - What it reports

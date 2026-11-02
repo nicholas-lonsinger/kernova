@@ -285,7 +285,7 @@ struct SidebarFolderTests {
         #expect(
             menu.items.map(\.title) == [
                 "\u{201C}Clients\u{201D} \u{2014} drag VMs here to add them", "Start All", "Suspend All",
-                "Stop All", "", "Rename Folder\u{2026}", "Delete Folder",
+                "Stop All", "Restart All", "", "Rename Folder\u{2026}", "Delete Folder",
             ])
         #expect(menu.items[0].isSectionHeader)
         #expect(

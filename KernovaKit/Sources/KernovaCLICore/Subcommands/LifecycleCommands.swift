@@ -264,11 +264,21 @@ extension KernovaCommand {
                 + "guest goes down, unless --yes starts it anyway where Kernova's Settings allow. "
                 + "One whose MAC address another active one uses on the same network is refused "
                 + "there too, printing the command that moves it to a network of its own where it "
-                + "can take it.")
+                + "can take it."
+                + "\n\nWith --smart-group or --folder, restarts every running guest in the group "
+                + "at once and, once each is back up or has failed, prints a line for each; a guest "
+                + "that never shuts down holds the report, not the others' restarts. A paused or suspended virtual machine is skipped, as a group stop skips "
+                + "it; one whose restart would ask something first is skipped too, and a group "
+                + "restart exits 10 when it leaves any it could act on undone.")
 
-        /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
-        var vm: String
+        /// Which virtual machine, by name or identifier; `nil` for a group.
+        @Argument(
+            help: "The virtual machine's name or identifier, unless a group is named instead.",
+            completion: CompletionSource.vm)
+        var vm: String?
+
+        /// The group whose virtual machines the verb acts on instead.
+        @OptionGroup var groups: GroupTargetOptions
 
         /// How long to wait for the guest to power off, or `nil` to wait as
         /// long as it takes.
@@ -278,21 +288,28 @@ extension KernovaCommand {
         /// The options every subcommand carries.
         @OptionGroup var options: GlobalOptions
 
-        /// Refuses a deadline that names no wait.
+        /// Refuses a deadline that names no wait, a line naming both a
+        /// virtual machine and a group or neither, and a group restart given a
+        /// flag for one virtual machine.
         func validate() throws {
             try TimeoutOption.validate(timeout)
+            try groups.validateTarget(
+                vm: vm,
+                singleVMFlags: [timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil]
+                    .compactMap(\.self))
         }
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
-            .restart(
-                try SelectorParsing.selector(from: vm, forcingID: options.id), timeout: timeout,
+            if let group = groups.target { return .groupAction(.restart, group: group) }
+            return .restart(
+                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id), timeout: timeout,
                 consent: options.consent)
         }
 
-        /// Restarts the VM.
+        /// Restarts the VM, or every running one in the group.
         func run() throws {
-            try perform()
+            if groups.target != nil { try performGroupAction() } else { try perform() }
         }
     }
 

@@ -2,7 +2,7 @@ import Foundation
 import KernovaCommandModel
 import KernovaLogging
 
-/// A group header's Start All, Suspend All and Stop All.
+/// A group header's Start All, Suspend All, Stop All and Restart All.
 extension VMLibraryViewModel {
     /// How many of the VMs in `group` each action acts on now, `nil` when the
     /// library's groups cannot be read.
