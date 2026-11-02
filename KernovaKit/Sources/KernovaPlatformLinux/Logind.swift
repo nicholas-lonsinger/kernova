@@ -38,23 +38,23 @@ public struct Logind: Sendable {
     /// The peers run as services — a user service in `user@UID.service`, a
     /// system service — so they belong to no session of their own; their
     /// user's or their seat's is what names the session they serve.
-    public func user(_ uid: UInt32) throws(LogindError) -> DBusObjectPath {
+    public func user(_ uid: UInt32) throws(DBusServiceError) -> DBusObjectPath {
         let body = try call(Self.managerPath, Self.managerInterface, "GetUser", [.uint32(uid)], expecting: "o")
-        return try Self.read { () throws(DBusValueMismatch) in try body[0].objectPath() }
+        return try DBusServiceError.read { () throws(DBusValueMismatch) in try body[0].objectPath() }
     }
 
     /// The user's `Display`: the graphical session logind names the user's
     /// primary display; nil when it names none.
-    public func displaySession(ofUser user: DBusObjectPath) throws(LogindError) -> LogindSessionReference? {
+    public func displaySession(ofUser user: DBusObjectPath) throws(DBusServiceError) -> LogindSessionReference? {
         try LogindSessionReference(try property("Display", of: user, Self.userInterface))
     }
 
     /// The user's `Name`: their login name, as logind holds it. A static
     /// binary has no NSS to look a uid up with, so this is how the agent
     /// learns it.
-    public func userName(_ user: DBusObjectPath) throws(LogindError) -> String {
+    public func userName(_ user: DBusObjectPath) throws(DBusServiceError) -> String {
         let value = try property("Name", of: user, Self.userInterface)
-        return try Self.read { () throws(DBusValueMismatch) in try value.string() }
+        return try DBusServiceError.read { () throws(DBusValueMismatch) in try value.string() }
     }
 
     /// Calls `onChange` for each `PropertiesChanged` logind emits for the
@@ -67,12 +67,12 @@ public struct Logind: Sendable {
     /// session that stops re-elects `Display` at once but emits nothing until
     /// it is finalized, which waits on its last process.
     public func observeUser(
-        _ user: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindUserChange, LogindError>) -> Void
-    ) throws(LogindError) -> DBusSubscription {
+        _ user: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindUserChange, DBusServiceError>) -> Void
+    ) throws(DBusServiceError) -> DBusSubscription {
         try observeProperties(of: user, Self.userInterface, onChange: onChange) {
-            changed, invalidated throws(LogindError) in
+            changed, invalidated throws(DBusServiceError) in
             if let value = changed["Display"] {
-                let content = try Self.read { () throws(DBusValueMismatch) in try value.variantContent() }
+                let content = try DBusServiceError.read { () throws(DBusValueMismatch) in try value.variantContent() }
                 return .display(try LogindSessionReference(content))
             }
             return invalidated.contains("Display") ? .displayInvalidated : nil
@@ -81,35 +81,35 @@ public struct Logind: Sendable {
 
     /// `GetSeat(id)`: the seat's object, as `seat0` for the console. logind
     /// answers with an ERROR for a seat that does not exist.
-    public func seat(_ id: String) throws(LogindError) -> DBusObjectPath {
+    public func seat(_ id: String) throws(DBusServiceError) -> DBusObjectPath {
         let body = try call(Self.managerPath, Self.managerInterface, "GetSeat", [.string(id)], expecting: "o")
-        return try Self.read { () throws(DBusValueMismatch) in try body[0].objectPath() }
+        return try DBusServiceError.read { () throws(DBusValueMismatch) in try body[0].objectPath() }
     }
 
     /// The seat's `ActiveSession`: the session in its foreground, a greeter's
     /// or a user's; nil when it has none.
-    public func activeSession(onSeat seat: DBusObjectPath) throws(LogindError) -> LogindSessionReference? {
+    public func activeSession(onSeat seat: DBusObjectPath) throws(DBusServiceError) -> LogindSessionReference? {
         try LogindSessionReference(try property("ActiveSession", of: seat, Self.seatInterface))
     }
 
     /// The session's `Id`, `Active`, `State`, `Class` and `Seat`.
-    public func sessionProperties(_ session: DBusObjectPath) throws(LogindError) -> LogindSessionProperties {
+    public func sessionProperties(_ session: DBusObjectPath) throws(DBusServiceError) -> LogindSessionProperties {
         let body = try call(
             session, Self.propertiesInterface, "GetAll", [.string(Self.sessionInterface)], expecting: "a{sv}")
-        let properties = try Self.read { () throws(DBusValueMismatch) in try body[0].stringKeyedEntries() }
+        let properties = try DBusServiceError.read { () throws(DBusValueMismatch) in try body[0].stringKeyedEntries() }
         let change = try LogindSessionChange(changed: properties, invalidated: [])
         guard let active = change.active else { throw .missingProperty(LogindSessionProperty.active.name) }
         guard let sessionClass = change.sessionClass else {
             throw .missingProperty(LogindSessionProperty.sessionClass.name)
         }
-        func string(_ name: String) throws(LogindError) -> String {
+        func string(_ name: String) throws(DBusServiceError) -> String {
             guard let value = properties[name] else { throw .missingProperty(name) }
-            return try Self.read { () throws(DBusValueMismatch) in try value.variantContent().string() }
+            return try DBusServiceError.read { () throws(DBusValueMismatch) in try value.variantContent().string() }
         }
         guard let seat = properties["Seat"] else { throw .missingProperty("Seat") }
         // The `(so)` logind holds for a seat has the shape of a session reference, the empty ID for none.
         let seatReference = try LogindSessionReference(
-            try Self.read { () throws(DBusValueMismatch) in try seat.variantContent() })
+            try DBusServiceError.read { () throws(DBusValueMismatch) in try seat.variantContent() })
         return LogindSessionProperties(
             id: try string("Id"), active: active, state: LogindSessionState(rawValue: try string("State")),
             sessionClass: sessionClass, seat: seatReference?.id)
@@ -124,10 +124,10 @@ public struct Logind: Sendable {
     /// between the read and the first notification. `onChange` runs on the
     /// connection's reader thread.
     public func observeSession(
-        _ session: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindSessionChange, LogindError>) -> Void
-    ) throws(LogindError) -> DBusSubscription {
+        _ session: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindSessionChange, DBusServiceError>) -> Void
+    ) throws(DBusServiceError) -> DBusSubscription {
         try observeProperties(of: session, Self.sessionInterface, onChange: onChange) {
-            changed, invalidated throws(LogindError) in
+            changed, invalidated throws(DBusServiceError) in
             let change = try LogindSessionChange(changed: changed, invalidated: invalidated)
             return change.isEmpty ? nil : change
         }
@@ -141,12 +141,12 @@ public struct Logind: Sendable {
     /// Takes a seat's own object, as `seat(_:)` returns it: logind emits no
     /// signals on `seat/self` or `seat/auto`.
     public func observeSeat(
-        _ seat: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindSeatChange, LogindError>) -> Void
-    ) throws(LogindError) -> DBusSubscription {
+        _ seat: DBusObjectPath, onChange: @escaping @Sendable (Result<LogindSeatChange, DBusServiceError>) -> Void
+    ) throws(DBusServiceError) -> DBusSubscription {
         try observeProperties(of: seat, Self.seatInterface, onChange: onChange) {
-            changed, invalidated throws(LogindError) in
+            changed, invalidated throws(DBusServiceError) in
             if let value = changed["ActiveSession"] {
-                let content = try Self.read { () throws(DBusValueMismatch) in try value.variantContent() }
+                let content = try DBusServiceError.read { () throws(DBusValueMismatch) in try value.variantContent() }
                 return .activeSession(try LogindSessionReference(content))
             }
             return invalidated.contains("ActiveSession") ? .activeSessionInvalidated : nil
@@ -157,22 +157,22 @@ public struct Logind: Sendable {
     /// `onChange` what `parse` makes of each, when it makes anything.
     private func observeProperties<Change: Sendable>(
         of path: DBusObjectPath, _ interface: String,
-        onChange: @escaping @Sendable (Result<Change, LogindError>) -> Void,
-        parse: @escaping @Sendable ([String: DBusValue], [String]) throws(LogindError) -> Change?
-    ) throws(LogindError) -> DBusSubscription {
+        onChange: @escaping @Sendable (Result<Change, DBusServiceError>) -> Void,
+        parse: @escaping @Sendable ([String: DBusValue], [String]) throws(DBusServiceError) -> Change?
+    ) throws(DBusServiceError) -> DBusSubscription {
         let rule = DBusMatchRule(
             sender: Self.busName, path: path, interface: Self.propertiesInterface, member: "PropertiesChanged",
             arg0: interface)
         do throws(DBusCallError) {
             return try connection.subscribe(rule) { signal in
-                let result = Result { () throws(LogindError) -> Change? in
+                let result = Result { () throws(DBusServiceError) -> Change? in
                     let body: [DBusValue]
                     do throws(DBusProtocolError) {
                         body = try signal.decodeBody(expecting: "sa{sv}as")
                     } catch {
                         throw .unexpectedReply(error)
                     }
-                    let (changed, invalidated) = try Self.read { () throws(DBusValueMismatch) in
+                    let (changed, invalidated) = try DBusServiceError.read { () throws(DBusValueMismatch) in
                         (
                             try body[1].stringKeyedEntries(),
                             try body[2].arrayElements().map { name throws(DBusValueMismatch) in try name.string() }
@@ -193,54 +193,21 @@ public struct Logind: Sendable {
 
     /// `Properties.Get(interface, name)` on `path`: the property's value, out
     /// of its variant.
-    private func property(_ name: String, of path: DBusObjectPath, _ interface: String) throws(LogindError)
+    private func property(_ name: String, of path: DBusObjectPath, _ interface: String) throws(DBusServiceError)
         -> DBusValue
     {
         let body = try call(path, Self.propertiesInterface, "Get", [.string(interface), .string(name)], expecting: "v")
-        return try Self.read { () throws(DBusValueMismatch) in try body[0].variantContent() }
+        return try DBusServiceError.read { () throws(DBusValueMismatch) in try body[0].variantContent() }
     }
 
     private func call(
         _ path: DBusObjectPath, _ interface: String, _ member: String, _ body: [DBusValue],
         expecting signature: DBusSignature
-    ) throws(LogindError) -> [DBusValue] {
-        let message = DBusMessage.methodCall(
-            destination: Self.busName, path: path, interface: interface, member: member, body: body)
-        let reply: DBusReceivedMessage
-        do throws(DBusCallError) {
-            reply = try connection.call(message)
-        } catch {
-            throw .call(error)
-        }
-        do throws(DBusProtocolError) {
-            return try reply.decodeBody(expecting: signature)
-        } catch {
-            throw .unexpectedReply(error)
-        }
+    ) throws(DBusServiceError) -> [DBusValue] {
+        try connection.callMethod(
+            destination: Self.busName, path: path, interface: interface, member: member, body: body,
+            expecting: signature)
     }
-
-    /// Runs typed reads of a body whose signature was already checked, so a
-    /// mismatch is a value of the wrong type inside a variant.
-    fileprivate static func read<T>(_ body: () throws(DBusValueMismatch) -> T) throws(LogindError) -> T {
-        do throws(DBusValueMismatch) {
-            return try body()
-        } catch {
-            throw .valueMismatch(error)
-        }
-    }
-}
-
-/// Why a logind call failed.
-public enum LogindError: Error, Hashable, Sendable {
-    /// The call returned no reply, or logind answered with an ERROR.
-    case call(DBusCallError)
-    /// The reply or signal's body is not the signature logind documents.
-    case unexpectedReply(DBusProtocolError)
-    /// A property or field holds a value of another type than logind
-    /// documents.
-    case valueMismatch(DBusValueMismatch)
-    /// `GetAll` left out a property logind documents.
-    case missingProperty(String)
 }
 
 /// A session's state: `online`, `active` or `closing`.
@@ -337,16 +304,17 @@ public struct LogindSessionChange: Sendable, Hashable {
 
     /// The change in properties, each value a variant, and a list of
     /// invalidated names.
-    init(changed properties: [String: DBusValue], invalidated names: [String]) throws(LogindError) {
-        func content(_ property: LogindSessionProperty) throws(LogindError) -> DBusValue? {
+    init(changed properties: [String: DBusValue], invalidated names: [String]) throws(DBusServiceError) {
+        func content(_ property: LogindSessionProperty) throws(DBusServiceError) -> DBusValue? {
             guard let value = properties[property.name] else { return nil }
-            return try Logind.read { () throws(DBusValueMismatch) in try value.variantContent() }
+            return try DBusServiceError.read { () throws(DBusValueMismatch) in try value.variantContent() }
         }
-        active = try content(.active).map { value throws(LogindError) in
-            try Logind.read { () throws(DBusValueMismatch) in try value.boolean() }
+        active = try content(.active).map { value throws(DBusServiceError) in
+            try DBusServiceError.read { () throws(DBusValueMismatch) in try value.boolean() }
         }
-        sessionClass = try content(.sessionClass).map { value throws(LogindError) in
-            LogindSessionClass(rawValue: try Logind.read { () throws(DBusValueMismatch) in try value.string() })
+        sessionClass = try content(.sessionClass).map { value throws(DBusServiceError) in
+            LogindSessionClass(
+                rawValue: try DBusServiceError.read { () throws(DBusValueMismatch) in try value.string() })
         }
         invalidated = Set(LogindSessionProperty.allCases.filter { names.contains($0.name) })
     }
@@ -366,8 +334,8 @@ public struct LogindSessionReference: Sendable, Hashable {
 
     /// The `(so)` logind holds in `Display` and `ActiveSession`; nil for the
     /// empty ID it holds when there is no such session.
-    init?(_ value: DBusValue) throws(LogindError) {
-        let (id, path) = try Logind.read { () throws(DBusValueMismatch) in
+    init?(_ value: DBusValue) throws(DBusServiceError) {
+        let (id, path) = try DBusServiceError.read { () throws(DBusValueMismatch) in
             let fields = try value.structFields()
             guard fields.count == 2 else {
                 throw DBusValueMismatch(expected: .struct([.string, .objectPath]), actual: value.type)

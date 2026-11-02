@@ -140,8 +140,10 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// Whether the app last found another running copy of Kernova holding the
     /// VM, which is at rest in the copy answering.
     public let heldByAnotherCopy: Bool
-    /// Each guest agent connected through the agent hub, newest first;
-    /// empty for a guest whose agents the hub doesn't serve.
+    /// Each guest agent the agent hub serves, as the Guest Agent Status window
+    /// lists them: connected ones newest first, then away ones most recently
+    /// gone first, then each scope the session warns didn't reconnect; empty
+    /// for a guest whose agents the hub doesn't serve.
     public let agents: [VMAgentLine]
 
     /// Describes one VM.
@@ -192,7 +194,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
     }
 }
 
-/// One guest agent connected through the agent hub.
+/// One guest agent the agent hub serves.
 public struct VMAgentLine: Codable, Sendable, Hashable {
     /// Which agent: `session`, one GUI session's, or `system`, the guest's as a whole.
     public let role: String
@@ -200,8 +202,10 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     public let user: String?
     /// The version the agent reports, empty when it reports none.
     public let version: String
-    /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated` or
-    /// `unresponsive`.
+    /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated`,
+    /// `updating` or `unresponsive` for a connected agent; `updating` for one away relaunching into an
+    /// update and `connecting` for any other away agent; `expectedMissing` for one the session warns
+    /// didn't reconnect, at the version it last reported.
     public let status: String
 
     /// Describes one agent.

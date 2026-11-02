@@ -33,6 +33,9 @@ public final class DBusBusConnection: Sendable {
         case system
         /// `DBUS_SESSION_BUS_ADDRESS`.
         case session
+        /// The bus of the user's systemd manager, as sd_bus_open_user(3) finds it: `DBUS_SESSION_BUS_ADDRESS`,
+        /// else `$XDG_RUNTIME_DIR/bus`.
+        case user
 
         /// The bus's address from the environment, or its default.
         public func address() throws(DBusConnectError) -> String {
@@ -44,6 +47,12 @@ public final class DBusBusConnection: Sendable {
                     throw .noSessionBusAddress
                 }
                 return address
+            case .user:
+                if let address = Self.environment("DBUS_SESSION_BUS_ADDRESS") { return address }
+                guard let runtime = Self.environment("XDG_RUNTIME_DIR"), runtime.hasPrefix("/") else {
+                    throw .noSessionBusAddress
+                }
+                return "unix:path=" + DBusAddress.escaped(runtime + "/bus")
             }
         }
 

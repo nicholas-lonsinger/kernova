@@ -13,7 +13,7 @@ struct LogindPeerStateTests {
         let fake: FakeLogind
         let connection: DBusBusConnection
         let queue = DispatchQueue(label: "app.kernova.tests.logind-watch")
-        let inbox = Inbox<Result<PeerSessionState?, LogindError>>()
+        let inbox = Inbox<Result<PeerSessionState?, DBusServiceError>>()
         private let watcher: LogindPeerStateWatcher
 
         enum Role {
@@ -46,7 +46,7 @@ struct LogindPeerStateTests {
         }
 
         /// The next delivery, which must be a failure.
-        func nextFailure() throws -> LogindError? {
+        func nextFailure() throws -> DBusServiceError? {
             guard case .failure(let error) = try inbox.next() else { return nil }
             return error
         }
@@ -158,7 +158,7 @@ struct LogindPeerStateTests {
         #expect(try watch.next()?.sessionID == "3")
     }
 
-    static let unknownObject = LogindError.call(
+    static let unknownObject = DBusServiceError.call(
         .remote(DBusRemoteError(name: "org.freedesktop.DBus.Error.UnknownObject", message: "Unknown object")))
 
     @Test("A read that fails delivers its error alone, keeps both subscriptions, and the next signal rereads")
@@ -230,7 +230,7 @@ struct LogindPeerStateTests {
 
     @Test("A user logind does not know cannot be followed")
     func unknownUser() throws {
-        #expect(throws: LogindError.self) { _ = try Watch(.session(uid: 1002)) }
+        #expect(throws: DBusServiceError.self) { _ = try Watch(.session(uid: 1002)) }
     }
 
     @Test("The system peer follows seat0: OFF at the greeter, ON naming a user's session, OFF again on a switch")
@@ -284,7 +284,7 @@ struct LogindPeerStateTests {
         let fake = try NoSuchSeatLogind(on: bus)
         defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
-        let inbox = Inbox<Result<PeerSessionState?, LogindError>>()
+        let inbox = Inbox<Result<PeerSessionState?, DBusServiceError>>()
         let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
             inbox.put($0)
         }

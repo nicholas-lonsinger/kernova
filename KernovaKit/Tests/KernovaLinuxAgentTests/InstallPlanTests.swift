@@ -47,10 +47,12 @@ struct InstallPlanTests {
         #expect(UnitFiles.sysusers(Self.system).contains(UnitFiles.sysusersLine(Self.system)))
     }
 
-    @Test("An install clears a switch an update left pending before it writes anything", arguments: [user, system])
+    @Test(
+        "An install clears a switch an update left pending, or reverted, before it writes anything",
+        arguments: [user, system])
     func clearsPendingSwitch(layout: InstallLayout) {
         let plan = InstallPlan.install(layout)
-        #expect(plan.treeRemovals == [layout.switchPending])
+        #expect(plan.treeRemovals == [layout.switchPending, layout.switchRejected])
     }
 
     @Test("Everything under the agent's root is a tree step, and nothing else is", arguments: [user, system])
@@ -93,6 +95,7 @@ struct InstallPlanTests {
                 "  run systemctl stop kernova-agent-rollback.timer kernova-agent-rollback.service, if /etc/systemd/system/kernova-agent-rollback.timer exists",
                 #"  run systemd-sysusers --inline 'u kernova-agent - "Kernova guest agent" /opt/kernova-agent -'"#,
                 "  remove /opt/kernova-agent/switch-pending, if present",
+                "  remove /opt/kernova-agent/switch-rejected, if present",
                 "  make directory /opt/kernova-agent, if missing",
                 "  make directory /opt/kernova-agent/slots, if missing",
                 "  make directory /opt/kernova-agent/slots/a, if missing",

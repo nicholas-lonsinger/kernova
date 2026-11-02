@@ -147,6 +147,6 @@ struct VsockFeatureCoordinatorTests {
         #expect(instance.vsockAdmissionGate.admission(for: .none) != .admit)
         try expectSinkCleared(instance.clipboardDataSink)
         try expectSinkCleared(instance.dropDataSink)
-        instance.cancelAgentPostStartWatchdog()
+        instance.cancelAgentAbsenceWatchdog()
     }
 }

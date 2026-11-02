@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentCore
 import KernovaAgentHost
 import KernovaLogging
 
@@ -86,16 +87,25 @@ package final class VMSessionContext {
     /// whole session, not just at the moment of boot.
     let bootedIntoRecovery: Bool
 
-    /// `true` when this VM has reached `.running`, the host previously saw a
-    /// guest agent connect (`VMInstance.lastSeenAgentVersion != nil`), and a
-    /// grace period has elapsed without a `Hello` arriving over the control
-    /// channel.
-    ///
-    /// Cleared by the next successful Hello.
-    var agentExpectedButMissing = false
+    /// The agent scopes the absence watchdog has warned about: each joins when
+    /// its absence outlasts its allowance, and leaves once ``MissingAgentRule``
+    /// stops finding it missing, so its next absence gets an allowance of its
+    /// own.
+    var warnedAgentScopes: Set<AgentScopePresence.Scope> = []
 
     /// What this session's latest Hello reported, `nil` before one arrives.
     var observedAgentInfo: ObservedAgentInfo?
+
+    /// The versions a Linux guest's session and system peers reported this
+    /// session, `nil` before each connects: what the session knows whether or
+    /// not the write recording them landed.
+    var observedSessionAgentVersion: String?
+    var observedSystemAgentVersion: String?
+
+    /// The ``AwayPeer/order``s of the agent hub's away peers this session's
+    /// absence watchdog stopped waiting for: every surface shows the hub's away
+    /// list without them.
+    var expiredAwayOrders: Set<UInt64> = []
 
     /// The external file references this session's boot found moved, and
     /// where to — what its configuration build reads
@@ -109,9 +119,17 @@ package final class VMSessionContext {
     /// guest, so only the latter may rewrite persisted agent state.
     var hasSeenAgentThisSession = false
 
-    /// Backing task for the agent-arrival watchdog, re-armed each time the
-    /// control channel is lost.
-    @ObservationIgnored var agentPostStartTask: Task<Void, Never>?
+    /// When the guest last began running under the absence watchdog — a start
+    /// or a hot resume, or after a restore the first presence change the
+    /// watchdog could act on. No absence counts from before it, so a pause
+    /// never counts against an agent; `nil` until then.
+    @ObservationIgnored var agentAbsenceFloor: CoreInstant?
+
+    /// The absence watchdog's timer, armed for ``agentAbsenceTimerDeadline``.
+    @ObservationIgnored var agentAbsenceTimer: Task<Void, Never>?
+
+    /// The deadline ``agentAbsenceTimer`` sleeps until; `nil` while unarmed.
+    @ObservationIgnored var agentAbsenceTimerDeadline: CoreInstant?
 
     /// Bumped by every arm and every cancel, so a watchdog task that finished
     /// sleeping just before a cancel-and-re-arm can tell it has been disowned.
@@ -120,9 +138,9 @@ package final class VMSessionContext {
     /// armed on; only a task matching both may act. The generation alone is an
     /// ABA test across sessions — each context starts counting at zero — and
     /// identity alone is one within a session, so a stale task would otherwise
-    /// fire `.expectedMissing` before its successor's grace elapsed and clear
-    /// that successor's slot on the way out.
-    @ObservationIgnored var agentPostStartGeneration: UInt64 = 0
+    /// fire `.expectedMissing` before its successor's deadline and clear that
+    /// successor's slot on the way out.
+    @ObservationIgnored var agentAbsenceTimerGeneration: UInt64 = 0
 
     // MARK: - Network Attachment Recovery
 
@@ -189,8 +207,10 @@ package final class VMSessionContext {
         stopVsockServices()
         stopClipboardService()
         stopSerialReading()
-        cancelAgentPostStartWatchdog()
-        agentExpectedButMissing = false
+        cancelAgentAbsenceWatchdog()
+        warnedAgentScopes = []
+        expiredAwayOrders = []
+        agentAbsenceFloor = nil
         hasSeenAgentThisSession = false
         serialInputPipe = nil
         serialOutputPipe = nil
@@ -280,16 +300,17 @@ package final class VMSessionContext {
         vsock.stopAll()
     }
 
-    // MARK: - Agent Post-Start Watchdog
+    // MARK: - Agent Absence Watchdog
 
-    /// Cancels the agent-arrival watchdog if armed.
+    /// Cancels the agent absence watchdog's timer if armed.
     ///
-    /// Does not clear ``agentExpectedButMissing`` — callers do that explicitly.
-    func cancelAgentPostStartWatchdog() {
+    /// Leaves ``warnedAgentScopes`` and ``expiredAwayOrders`` as they are.
+    func cancelAgentAbsenceWatchdog() {
         // Bumping disowns a task whose sleep already elapsed, which a bare
         // `cancel()` cannot reach.
-        agentPostStartGeneration &+= 1
-        agentPostStartTask?.cancel()
-        agentPostStartTask = nil
+        agentAbsenceTimerGeneration &+= 1
+        agentAbsenceTimer?.cancel()
+        agentAbsenceTimer = nil
+        agentAbsenceTimerDeadline = nil
     }
 }
