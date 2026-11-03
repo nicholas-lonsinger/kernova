@@ -34,6 +34,15 @@ int kernova_openat2(int directory, const char *name, int flags, uint32_t mode, i
 /// `renameat2(2)` with `RENAME_NOREPLACE`, through the system call, since
 /// musl does not declare the wrapper. Returns 0, or -1 with `errno` set.
 int kernova_rename_exclusive(int directory, const char *name, int new_directory, const char *new_name);
+
+/// `fallocate(2)` with `FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE`: frees
+/// `length` bytes at `offset` in the open file `descriptor`, which then read
+/// as zeros. Returns 0, or -1 with `errno` set.
+int kernova_punch_hole(int descriptor, int64_t offset, int64_t length);
+
+/// `fsetxattr(2)`, creating or replacing the attribute. Returns 0, or -1 with
+/// `errno` set.
+int kernova_set_xattr(int descriptor, const char *name, const void *value, size_t size);
 #endif
 
 #endif

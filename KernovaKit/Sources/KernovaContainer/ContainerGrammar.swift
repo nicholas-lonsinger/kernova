@@ -243,3 +243,9 @@ struct ContainerGrammar {
         return !name.contains(0x2F) && !name.contains(0)
     }
 }
+
+extension EntryHeader {
+    /// Whether `name` is one path component a POSIX file system takes as it is: not empty, `.` or `..`, at
+    /// most 255 bytes, and free of `/` and NUL — the rule every container entry's name keeps.
+    public static func isValidName(_ name: Data) -> Bool { ContainerGrammar.isValidName(name) }
+}

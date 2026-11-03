@@ -120,6 +120,50 @@ final class InterposedArchiveVolume: MutableTreeFileSystem {
         try base.rename(name, in: directory, to: newName, in: newDirectory)
     }
 
+    func makeDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
+        try base.makeDirectory(name, in: directory)
+    }
+
+    func createFile(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        try base.createFile(name, in: directory)
+    }
+
+    func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
+        try base.makeSymlink(name, to: target, in: directory)
+    }
+
+    func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    {
+        try base.write(descriptor, from: buffer, at: offset)
+    }
+
+    func setSize(of descriptor: Int32, to size: Int64) throws(TreeFileSystemError) {
+        try base.setSize(of: descriptor, to: size)
+    }
+
+    func holeSize(of descriptor: Int32) -> Int? { base.holeSize(of: descriptor) }
+
+    func punchHole(in descriptor: Int32, at offset: Int64, length: Int64) throws(TreeFileSystemError) {
+        try base.punchHole(in: descriptor, at: offset, length: length)
+    }
+
+    func closeWritten(_ descriptor: Int32) throws(TreeFileSystemError) { try base.closeWritten(descriptor) }
+
+    func setExtendedAttribute(_ name: [UInt8], to value: [UInt8], of target: TreeEntryTarget)
+        throws(TreeFileSystemError)
+    {
+        try base.setExtendedAttribute(name, to: value, of: target)
+    }
+
+    func setAttributes(_ attributes: TreeEntryAttributes, of target: TreeEntryTarget) throws(TreeFileSystemError) {
+        try base.setAttributes(attributes, of: target)
+    }
+
+    func landingRefusal(of name: [UInt8], pathByteCount: Int) -> TreeFileSystemError? {
+        base.landingRefusal(of: name, pathByteCount: pathByteCount)
+    }
+
     private func interpose(_ call: Call) throws(TreeFileSystemError) {
         do {
             try before(call)
