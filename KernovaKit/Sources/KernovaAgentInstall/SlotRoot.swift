@@ -71,6 +71,12 @@ public final class SlotRoot: Sendable {
         }
     }
 
+    /// The SHA-256 of the payload the slot metadata records `slot` holding, lowercase hex: the identity the
+    /// agent running from it claims. Nil when it records none there.
+    public func payloadSHA256(ofSlot slot: String) throws(Failure) -> String? {
+        try readState().slots[slot]?.payloadSHA256
+    }
+
     /// Replaces the slot metadata whole and durably: written beside it, flushed, renamed over it, then the
     /// directory flushed, so a crash leaves the old file or the new one.
     func writeState(_ state: InstallState) throws(Failure) {

@@ -32,9 +32,12 @@ public struct InstallRoot: Equatable, Sendable {
     public static let installSlotName = "a"
     /// What `current` points at after a fresh install, relative to the root.
     public static let installSlotLink = slotsName + "/" + installSlotName
-    static let currentLinkName = "current"
-    static let rollbackLinkName = "rollback"
+    /// ``current``'s name in the root.
+    public static let currentLinkName = "current"
+    /// ``rollback``'s name in the root.
+    public static let rollbackLinkName = "rollback"
     static let stateName = "state.json"
-    static let switchPendingName = "switch-pending"
+    /// ``switchPending``'s name in the root.
+    public static let switchPendingName = "switch-pending"
     static let switchRejectedName = "switch-rejected"
 }

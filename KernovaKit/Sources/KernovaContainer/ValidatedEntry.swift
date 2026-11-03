@@ -125,7 +125,8 @@ public struct ValidatedEntry: Sendable {
             guard bare else { throw .dataEntryNotBare }
             return
         }
-        guard isValidName(header.name) else { throw .invalidName }
+        // The item's own entry may leave its name to the receiver, which then publishes it under one it chooses.
+        guard isValidName(header.name) || (header.depth == 0 && header.name.isEmpty) else { throw .invalidName }
         guard header.mode <= maxMode else { throw .modeOutOfRange(header.mode) }
         guard header.darwinFlags & ~allowedDarwinFlags == 0 else {
             throw .darwinFlagsNotAllowed(header.darwinFlags & ~allowedDarwinFlags)

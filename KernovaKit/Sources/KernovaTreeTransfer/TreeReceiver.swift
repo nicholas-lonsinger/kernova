@@ -71,12 +71,22 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     ///
     /// - Returns: The name the item landed under in the destination.
     /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an item that could not take
-    ///   its name — `EEXIST` when the destination already holds it; nothing created then remains.
+    ///   its name — `EEXIST` when the destination already holds it, `invalidName` when it carries none; nothing
+    ///   created then remains.
     public func finish() throws(TreeWriteFailure) -> [UInt8] {
+        try finish(as: nil)
+    }
+
+    /// ``finish()``, publishing the item as `name` exactly rather than under the name it carries.
+    public func finish(publishingAs name: [UInt8]) throws(TreeWriteFailure) {
+        _ = try finish(as: name)
+    }
+
+    private func finish(as name: [UInt8]?) throws(TreeWriteFailure) -> [UInt8] {
         try latching { decoder throws(TreeWriteFailure) in
             decoder.finish()
             try land(from: decoder)
-            return try writer.publish()
+            return try writer.publish(as: name)
         }
     }
 

@@ -296,9 +296,18 @@ struct ContainerLimitTests {
         #expect(decodingError(Self.single(file)) == .invalidName)
     }
 
+    @Test("The item's own entry may be unnamed; an entry below it may not")
+    func unnamedEntries() throws {
+        let item = plainFile("", depth: 0, size: 0)
+        #expect(decodingError(Self.single(item)) == nil)
+        var below = plainFile("", depth: 1, size: 0)
+        below.name = Data()
+        #expect(throws: ContainerError.invalidName) { try ValidatedEntry(below) }
+    }
+
     @Test(
         "Refused names",
-        arguments: [Data(), Data(".".utf8), Data("..".utf8), Data("a/b".utf8), Data("/".utf8), Data([0x61, 0x00])])
+        arguments: [Data(".".utf8), Data("..".utf8), Data("a/b".utf8), Data("/".utf8), Data([0x61, 0x00])])
     func refusedNames(_ refused: Data) {
         var file = plainFile("", depth: 0, size: 0)
         file.name = refused

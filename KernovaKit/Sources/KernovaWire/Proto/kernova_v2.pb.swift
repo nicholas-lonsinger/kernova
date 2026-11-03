@@ -52,6 +52,25 @@
 // typed field: non-frozen content travels as `bytes`, decoded only once the
 // owning version is known to match, so a shape change in a current-only
 // feature can never make a frozen message fail to decode.
+//
+// THE UPDATE PROFILE
+//
+// A PAYLOAD_FORMAT_CONTAINER_TREE payload is an item-transfer container, whose
+// grammar is otherwise current-only. The part of it an update payload uses is
+// the update profile, FROZEN with the update stream, since every installed
+// agent must go on landing the payload that replaces it:
+//   - the record framing, `[u8 kind][u32 length][u32 CRC32C][payload]`
+//     little-endian with the CRC32C over the kind, the length and then the
+//     payload, a header payload of at most 64 KiB and a chunk payload of at
+//     most 1 MiB;
+//   - record kinds 1 (an EntryHeader), 2 (a chunk: entry bytes as they are),
+//     4 (a zero run: a little-endian u64 count of zero bytes) and 5 (an
+//     EndRecord), and never 3 (an LZ4 chunk);
+//   - the EntryHeader, PlainStorage and EndRecord fields marked "update
+//     profile" below, and no other field.
+// Its item's own entry is a DIRECTORY at depth 0 with no name: the lander
+// publishes it under a name of its own. The container may grow for transfers
+// in anything the profile never carries.
 
 #if canImport(FoundationEssentials)
 import FoundationEssentials
@@ -601,7 +620,8 @@ public nonisolated enum Kernova_V2_PayloadFormat: SwiftProtobuf.Enum, Swift.Case
   case paxTree // = 2
 
   /// The macOS install tree as one item in the container ITEM_TRANSFER pulls
-  /// carry (KernovaContainer), landed into a slot as a pull's item lands.
+  /// carry (KernovaContainer), in the update profile (above), landed into a
+  /// slot as a pull's item lands.
   case containerTree // = 4
   case UNRECOGNIZED(Int)
 
@@ -2123,7 +2143,7 @@ public nonisolated struct Kernova_V2_PlainStorage: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// the logical size, which the chunks carry exactly
+  /// the logical size, which the chunks carry exactly. Update profile.
   public var size: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -2173,15 +2193,18 @@ public nonisolated struct Kernova_V2_EntryHeader: Sendable {
 
   /// The entry's parent by position: an entry at depth d lies in the directory
   /// entered at depth d - 1, which is the most recent DIRECTORY entry at that
-  /// depth. Depth 0 is the representation's own entry.
+  /// depth. Depth 0 is the representation's own entry. Update profile.
   public var depth: UInt32 = 0
 
   /// One path component. Bytes, not a string: names need not be valid UTF-8.
+  /// Empty only on the representation's own entry, which the receiver then
+  /// names. Update profile.
   public var name: Data = Data()
 
+  /// update profile
   public var type: Kernova_V2_EntryHeader.TypeEnum = .unspecified
 
-  /// Permission bits (07777).
+  /// Permission bits (07777). Update profile.
   public var mode: UInt32 = 0
 
   /// st_flags as Darwin defines them; 0 from any other OS.
@@ -2208,12 +2231,13 @@ public nonisolated struct Kernova_V2_EntryHeader: Sendable {
 
   public var xattrs: [Kernova_V2_Xattr] = []
 
-  /// SYMLINK: the link's target, never followed.
+  /// SYMLINK: the link's target, never followed. Update profile.
   public var symlinkTarget: Data = Data()
 
   /// DATA and FILE: how the chunks carry the bytes. Unset on any other type.
   public var storage: Kernova_V2_EntryHeader.OneOf_Storage? = nil
 
+  /// update profile
   public var plain: Kernova_V2_PlainStorage {
     get {
       if case .plain(let v)? = storage {return v}
@@ -2247,6 +2271,7 @@ public nonisolated struct Kernova_V2_EntryHeader: Sendable {
 
   /// DATA and FILE: how the chunks carry the bytes. Unset on any other type.
   public nonisolated enum OneOf_Storage: Equatable, Sendable {
+    /// update profile
     case plain(Kernova_V2_PlainStorage)
     case lz4(Kernova_V2_Lz4Storage)
     case decmpfs(Kernova_V2_DecmpfsStorage)
@@ -2261,8 +2286,14 @@ public nonisolated struct Kernova_V2_EntryHeader: Sendable {
 
     /// an INLINE representation's bytes: depth 0, no name, no metadata
     case data // = 1
+
+    /// update profile
     case file // = 2
+
+    /// update profile
     case directory // = 3
+
+    /// update profile
     case symlink // = 4
     case UNRECOGNIZED(Int)
 
@@ -2315,12 +2346,12 @@ public nonisolated struct Kernova_V2_EndRecord: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The entries the container held.
+  /// The entries the container held. Update profile.
   public var entries: UInt64 = 0
 
   /// The bytes every entry's chunks carry, data and resource fork, after
   /// decompression: a framing count, not the size landed, which for decmpfs
-  /// storage is the attribute's.
+  /// storage is the attribute's. Update profile.
   public var bytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

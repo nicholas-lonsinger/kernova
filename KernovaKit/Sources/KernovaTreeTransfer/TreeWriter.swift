@@ -200,28 +200,31 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         return root.map { [$0.name] } ?? []
     }
 
-    /// Gives the item's own entry its own name in the destination, exclusively.
+    /// Gives the item's own entry `name` in the destination, exclusively: the name it carries when `name` is
+    /// nil, which an unnamed entry fails.
     ///
     /// - Returns: the name it landed under.
-    func publish() throws(TreeWriteFailure) -> [UInt8] {
+    func publish(as name: [UInt8]? = nil) throws(TreeWriteFailure) -> [UInt8] {
         switch phase {
         case .failed(let failure): throw failure
         case .published: throw failHere(.container(.bytesAfterEnd))
         case .writing: guard sequence.isEnded else { throw failHere(.container(.eventOutOfOrder)) }
         }
         guard let root else { preconditionFailure("ended with no root") }
+        let published = name ?? root.name
+        guard ValidatedEntry.isValidName(Data(published)) else { throw fail(.container(.invalidName), at: []) }
         let staged = try? fileSystem.status(of: stagingName, in: destination)
         guard let staged, FolderBatch.Identity(staged) == root.identity else {
-            throw fail(.moved, at: [root.name])
+            throw fail(.moved, at: [published])
         }
         do {
-            try fileSystem.rename(stagingName, in: destination, to: root.name, in: destination)
+            try fileSystem.rename(stagingName, in: destination, to: published, in: destination)
         } catch {
-            throw fail(.system(error), at: [root.name])
+            throw fail(.system(error), at: [published])
         }
         cursor = nil
         phase = .published
-        return root.name
+        return published
     }
 
     /// Removes everything the writer created, unless it was published.
