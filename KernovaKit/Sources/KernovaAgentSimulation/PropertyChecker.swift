@@ -208,6 +208,7 @@ package struct TraceChecker: Sendable {
 ///     any other pull ends by its connection's `.closed` at the latest, not landed. The serving side's source
 ///     hears exactly one `.release` first, and its end is landed only when the puller's sink published. No
 ///     pull has effects after its end, and a sink's decoder holds at most one record and one feed.
+/// 12. Each side holds at most one clipboard offer of its own open at any time.
 ///
 /// Beyond these, a conforming run never closes INTERNAL or PROTOCOL_ERROR, and
 /// every injected fault takes effect.
@@ -333,6 +334,13 @@ package final class PropertyChecker {
         if footprint.streamRecords > 3 * 64 + 64 { fail("\(where_) holds \(footprint.streamRecords) stream records") }
         let ring = world.peers[link.peerIndex].ring
         if ring.count > LogRing.capacity { fail("\(where_) ring holds \(ring.count)") }
+    }
+
+    /// Property 12 after a drain of `side`.
+    func clipboardOffers(_ link: SimLink, _ side: SimSide) {
+        let offers = side == .host ? link.host?.itemOffers : link.peer?.itemOffers
+        let open = offers?.localTokens(of: .clipboard).count ?? 0
+        if open > 1 { fail("property 12: link \(link.id) \(side) holds \(open) clipboard offers of its own") }
     }
 
     /// Property 5 for the driver's queue, sampled after one `receive` and before

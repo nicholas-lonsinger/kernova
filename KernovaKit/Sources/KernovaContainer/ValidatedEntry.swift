@@ -6,7 +6,8 @@ import Foundation
 
 import KernovaWire
 
-/// An entry header that keeps every rule the format holds one entry to, whatever produced it: its name, its
+/// An entry header that keeps every rule the format holds one entry to, whatever produced it: its name — none
+/// at depth 0, whose name is the item's own and travels in its offer, and one path component below — its
 /// mode, flags and times, its symlink target, its extended attributes, and its storage and resource fork
 /// against its type. `TreeEventSequence` admits no entry without one, so every producer of `TreeEvent`s is
 /// held to the same rules.
@@ -125,7 +126,11 @@ public struct ValidatedEntry: Sendable {
             guard bare else { throw .dataEntryNotBare }
             return
         }
-        guard isValidName(header.name) else { throw .invalidName }
+        if header.depth == 0 {
+            guard header.name.isEmpty else { throw .rootEntryNamed }
+        } else {
+            guard isValidName(header.name) else { throw .invalidName }
+        }
         guard header.mode <= maxMode else { throw .modeOutOfRange(header.mode) }
         guard header.darwinFlags & ~allowedDarwinFlags == 0 else {
             throw .darwinFlagsNotAllowed(header.darwinFlags & ~allowedDarwinFlags)

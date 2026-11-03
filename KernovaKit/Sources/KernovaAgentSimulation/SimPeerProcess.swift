@@ -72,7 +72,7 @@ package final class SimPeerProcess {
             update: updateAvailability)
         configuration.powerLedger = powerLedger
         configuration.receiverPolicy = world.options.receiverPolicy
-        if world.options.itemTransfer { configuration.itemTransfer = .available(NoParams()) }
+        if world.options.items { configuration.items = SimItems.served }
         let version = spec.protocolVersion
         let testKinds = world.options.testKinds
         let hostile = world.options.hostile
@@ -129,6 +129,8 @@ package final class SimPeerProcess {
             world.drainAgent(index)
         case .items(let event):
             world.itemOutput(.event(event), link: link, side: .peer)
+        case .dragTake(let event):
+            link.items(.peer).dragTake(event, link: link, side: .peer, world: world)
         case .established, .hostLiveness, .updateAvailable, .diagnostic:
             break
         }

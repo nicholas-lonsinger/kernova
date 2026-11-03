@@ -185,7 +185,7 @@ public final class PeerAgentRuntime: Sendable {
             }
             configuration.powerLedger = ledger
             configuration.receiverPolicy = receiverPolicy
-            configuration.itemTransfer = ItemAdapters.availability(registry.items)
+            configuration.items.itemTransfer = ItemAdapters.availability(registry.items)
             let driver = ConnectionDriver(
                 endpoint: PeerEndpoint(configuration, generation: generation, now: scheduler.now), stream: stream,
                 scheduler: scheduler, logger: logger, handlers: driverHandlers(generation))
@@ -267,7 +267,7 @@ public final class PeerAgentRuntime: Sendable {
                 switch input {
                 case .power(.availability(let availability)): state.power = availability
                 case .update(.availability(let availability)): state.update = availability
-                case .power, .update, .logs, .items, .peerState: break
+                case .power, .update, .logs, .items, .dragTake, .peerState: break
                 }
                 return state.driver
             }

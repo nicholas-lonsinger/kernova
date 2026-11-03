@@ -233,17 +233,18 @@ struct DecmpfsPassThroughTests {
         let sample = try CompressedSample.read("/bin/ls", on: fileSystem)
         let unsticking = InterposedFileSystem(dropsCompressedFlags: true)
         for (name, depth, inFolder) in [("held", UInt32(1), true), ("root", 0, false)] {
-            var header = file(name, depth: depth, size: 0)
+            var header = file(inFolder ? name : "", depth: depth, size: 0)
             header.decmpfs.attribute = Data(sample.attribute)
             header.resourceForkSize = UInt64(sample.resourceFork.count)
             let writer = TreeWriter(
-                fileSystem: unsticking, destination: try landing.openDestination(),
+                name: .exactly(inFolder ? bytes("r") : bytes(name)), fileSystem: unsticking,
+                destination: try landing.openDestination(),
                 destinationPathByteCount: landing.destinationPath.utf8.count,
                 accepting: ContainerAcceptance(
                     storage: inFolder ? .folder : .file, byteCeiling: 1 << 30, decmpfsTypes: [8], acceptsLZ4: false))
             let path = depth == 0 ? [bytes(name)] : [bytes("r"), bytes(name)]
             let file: [TreeEvent] = [.beginFile(header), .resourceFork, .bytes(Data(sample.resourceFork)), .finishFile]
-            let events = inFolder ? [.enterDirectory(directory("r", depth: 0))] + file + [.leaveDirectory] : file
+            let events = inFolder ? [.enterDirectory(directory(depth: 0))] + file + [.leaveDirectory] : file
             var refusal: TreeWriteFailure?
             do {
                 for event in events { try writer.write(event) }
@@ -270,7 +271,7 @@ struct DecmpfsPassThroughTests {
             var refusal: TreeWriteFailure?
             let writer = try landing.writer(.folder, decmpfsTypes: [type])
             do {
-                for event: TreeEvent in [.enterDirectory(directory("r", depth: 0)), .beginFile(header)] {
+                for event: TreeEvent in [.enterDirectory(directory(depth: 0)), .beginFile(header)] {
                     try writer.write(event)
                 }
             } catch {
@@ -309,20 +310,19 @@ struct DecmpfsPassThroughTests {
         try #require(mkdir(volume.mountPoint + "/ITEM", 0o755) == 0)
         let parent = try fileSystem.openDirectory(bytes(bench.sourcePath), in: AT_FDCWD)
         defer { fileSystem.close(parent) }
-        let landings: [(Representation.Storage, [UInt8], PublishName, [UInt8])] = [
-            (.folder, item, .exactly(bytes("Landed")), bytes("Landed")),
-            (.folder, item, .keepingBoth(bytes("item")), bytes("item 2")),
+        let landings: [(PublishName, [UInt8])] = [
+            (.exactly(bytes("Landed")), bytes("Landed")), (.keepingBoth(bytes("item")), bytes("item 2")),
         ]
-        for (storage, name, publishing, landed) in landings {
+        for (publishing, landed) in landings {
             let acceptance = ContainerAcceptance(
-                storage: storage, byteCeiling: 1 << 30, decmpfsTypes: types, acceptsLZ4: false)
-            let reader = try TreeReader(fileSystem: fileSystem, item: name, in: parent, accepting: acceptance)
+                storage: .folder, byteCeiling: 1 << 30, decmpfsTypes: types, acceptsLZ4: false)
+            let reader = try TreeReader(fileSystem: fileSystem, item: item, in: parent, accepting: acceptance)
             let writer = TreeWriter(
-                fileSystem: fileSystem,
+                name: publishing, fileSystem: fileSystem,
                 destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
                 destinationPathByteCount: volume.mountPoint.utf8.count, accepting: acceptance)
             while let event = try reader.next() { try writer.write(event) }
-            #expect(try writer.publish(as: publishing) == landed)
+            #expect(try writer.publish() == landed)
             for file in ["ls", "pp"] {
                 let path = volume.mountPoint + "/" + String(decoding: landed, as: UTF8.self) + "/" + file
                 #expect(try rawStatus(path).st_flags & UInt32(UF_COMPRESSED) == 0)
@@ -339,11 +339,11 @@ struct DecmpfsPassThroughTests {
         {
             let reader = try TreeReader(fileSystem: fileSystem, item: bytes("ls"), in: files, accepting: fileAcceptance)
             let writer = TreeWriter(
-                fileSystem: fileSystem,
+                name: publishing, fileSystem: fileSystem,
                 destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
                 destinationPathByteCount: volume.mountPoint.utf8.count, accepting: fileAcceptance)
             while let event = try reader.next() { try writer.write(event) }
-            #expect(try writer.publish(as: publishing) == bytes(landed))
+            #expect(try writer.publish() == bytes(landed))
             #expect(try contents(of: volume.mountPoint + "/" + landed) == contents(of: "/bin/ls"))
         }
         #expect(try contents(of: volume.mountPoint + "/LS").isEmpty)
@@ -364,12 +364,13 @@ struct DecmpfsPassThroughTests {
     func exFATRefusesTheFlag() throws {
         let volume = try ExFATVolume()
         let sample = try CompressedSample.read("/bin/ls", on: fileSystem)
-        var header = file("ls", depth: 0, size: 0)
+        var header = file(depth: 0, size: 0)
         header.decmpfs.attribute = Data(sample.attribute)
         header.resourceForkSize = UInt64(sample.resourceFork.count)
         let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [8], acceptsLZ4: false)
         let writer = TreeWriter(
-            fileSystem: fileSystem, destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
+            name: .exactly(bytes("ls")), fileSystem: fileSystem,
+            destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
             destinationPathByteCount: volume.mountPoint.utf8.count, accepting: acceptance)
         let events: [TreeEvent] = [.beginFile(header), .resourceFork, .bytes(Data(sample.resourceFork)), .finishFile]
         let refusal = try #require(Self.failure(writing: events, to: writer))

@@ -23,8 +23,7 @@ enum ItemScenarios {
     static let pullAt: SimTime = .sec(1)
 
     static func options(_ options: inout SimOptions) {
-        options.testKinds = true
-        options.itemTransfer = true
+        options.serveItems()
     }
 
     /// One session peer offering, at 500 ms, one item of these representations.

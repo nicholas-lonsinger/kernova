@@ -28,7 +28,7 @@ struct HostileRow: Sendable, CustomTestStringConvertible {
     var name: String
     var local: SimSide
     var testKinds = false
-    var itemTransfer = false
+    var items = false
     var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     var outcome: Outcome
     var script: @Sendable (HostileRun) -> Void
@@ -49,7 +49,7 @@ struct HostileRow: Sendable, CustomTestStringConvertible {
     }
 
     func run(seed: UInt64) -> [String] {
-        let run = HostileRun(local: local, seed: seed, testKinds: testKinds, itemTransfer: itemTransfer, tweak: tweak)
+        let run = HostileRun(local: local, seed: seed, testKinds: testKinds, items: items, tweak: tweak)
         script(run)
         var failures = run.traceViolations + expect(run)
         let footprint = run.connectionFootprint

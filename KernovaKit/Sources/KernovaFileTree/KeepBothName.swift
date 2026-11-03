@@ -4,6 +4,11 @@
 /// The extension is what `NSString.pathExtension` reads: the bytes after the last `.`, when they are not empty
 /// and hold no space, and a stem precedes them — so `.hidden` and `a.` have none and count at their end.
 public enum KeepBothName {
+    /// The highest number counted to: past it, a taken name stays taken.
+    public static let largestNumber = 9_999
+    /// The most bytes counting adds to a name: `" 9999"`.
+    public static let largestCountByteCount = " \(largestNumber)".utf8.count
+
     /// The name Keep Both tries `number`th for `name`: `name` itself for 1, otherwise `<stem> <number>` and the
     /// extension.
     ///

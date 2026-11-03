@@ -311,6 +311,7 @@ package final class SimWorld {
         let process = process(of: link, side)
         drainOutputs(link, side)
         checker.footprint(link, side, world: self)
+        checker.clipboardOffers(link, side)
         for stall in stalledTestConsumers where stall.side == side && stall.peer == link.peerIndex {
             if testFlows(link, side, stall.kind).contains(where: { $0.held > 0 }) { faultTookEffect(stall.fault) }
         }

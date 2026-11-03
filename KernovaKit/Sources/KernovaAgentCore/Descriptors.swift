@@ -24,12 +24,11 @@ public enum StreamDirection: Sendable, Equatable {
     case rawData
 }
 
-/// Which machine of an endpoint serves a kind. Production kinds belong to a
-/// feature; the simulation's bulk kinds to its test sink, and its item-set offer
-/// kinds to the offer registry the item-transfer machine keeps.
+/// Which machine of an endpoint serves a kind. Every item-set offer kind, whichever feature's, belongs to
+/// the offer registry the item-transfer machine keeps; the simulation's bulk kinds to its test sink.
 package enum KindOwner: Sendable, Equatable {
-    case power, update, logs, itemTransfer
-    case testBulk, testItemOffer
+    case power, update, logs, itemTransfer, itemOffer, dragTake
+    case testBulk
 }
 
 /// One row of the static kind table.
@@ -97,7 +96,24 @@ public struct StreamKindDescriptor: Sendable {
             kind: .itemPullByPeer, feature: .itemTransfer, owner: .itemTransfer, openerRole: .peer,
             openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
             isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
+        itemOffer(.clipboardOfferByHost, feature: .clipboard, openerRole: .host),
+        itemOffer(.clipboardOfferByPeer, feature: .clipboard, openerRole: .peer),
+        itemOffer(.dropOffer, feature: .drop, openerRole: .host),
+        itemOffer(.dragOffer, feature: .drag, openerRole: .peer),
+        StreamKindDescriptor(
+            kind: .dragTake, feature: .drag, owner: .dragTake, openerRole: .host, openerToAcceptor: .nothing,
+            acceptorToOpener: .nothing, maxPerConnection: nil,
+            isValidOpenBody: { (try? Kernova_V2_DragTake(serializedBytes: $0))?.token.count == 16 }),
     ]
+
+    /// An item-set offer kind: an `ItemSetHeader` OPEN followed by `Item` messages, any number at once.
+    private static func itemOffer(_ kind: StreamKind, feature: FeatureID, openerRole: OpenerRole)
+        -> StreamKindDescriptor
+    {
+        StreamKindDescriptor(
+            kind: kind, feature: feature, owner: .itemOffer, openerRole: openerRole, openerToAcceptor: .messages,
+            acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: ItemOfferRegistry.isValidHeader)
+    }
 
     /// The simulation's bulk kinds: 9000 opened by a peer, 9001 by the
     /// host, each carrying raw DATA from acceptor to opener, any number at once.
@@ -108,19 +124,6 @@ public struct StreamKindDescriptor: Sendable {
         StreamKindDescriptor(
             kind: .testBulkByHost, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
             acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
-    ]
-
-    /// The simulation's item-set offer kinds: 9002 opened by the host, 9003 by a
-    /// peer, each an `ItemSetHeader` OPEN followed by `Item` messages, any number at once.
-    package static let testItemOffer: [StreamKindDescriptor] = [
-        StreamKindDescriptor(
-            kind: .testItemOfferByHost, feature: nil, owner: .testItemOffer, openerRole: .host,
-            openerToAcceptor: .messages, acceptorToOpener: .nothing, maxPerConnection: nil,
-            isValidOpenBody: ItemOfferRegistry.isValidHeader),
-        StreamKindDescriptor(
-            kind: .testItemOfferByPeer, feature: nil, owner: .testItemOffer, openerRole: .peer,
-            openerToAcceptor: .messages, acceptorToOpener: .nothing, maxPerConnection: nil,
-            isValidOpenBody: ItemOfferRegistry.isValidHeader),
     ]
 
     /// What this side sends on a stream of the kind, given whether it opened it.
@@ -139,7 +142,7 @@ public struct StreamKindDescriptor: Sendable {
         case .power: 100...119
         case .update: 120...139
         case .logs: 140...199
-        case .itemTransfer: 1000...1199
+        case .itemTransfer, .clipboard, .drop, .drag: 1000...1199
         default: nil
         }
     }
@@ -167,6 +170,15 @@ struct FeatureDescriptor: Sendable {
         FeatureDescriptor(
             feature: .itemTransfer, frozen: false, policyGoverned: false, version: 1,
             paramsDecode: { (try? Kernova_V2_ItemTransferCapability(serializedBytes: $0)) != nil }),
+        FeatureDescriptor(
+            feature: .clipboard, frozen: false, policyGoverned: true, version: 1,
+            paramsDecode: { (try? Kernova_V2_ClipboardCapability(serializedBytes: $0)) != nil }),
+        FeatureDescriptor(
+            feature: .drop, frozen: false, policyGoverned: true, version: 1,
+            paramsDecode: { (try? Kernova_V2_DropCapability(serializedBytes: $0)) != nil }),
+        FeatureDescriptor(
+            feature: .drag, frozen: false, policyGoverned: true, version: 1,
+            paramsDecode: { (try? Kernova_V2_DragCapability(serializedBytes: $0)) != nil }),
     ]
 
     static func lookup(_ feature: FeatureID) -> FeatureDescriptor? {

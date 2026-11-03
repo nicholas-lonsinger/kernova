@@ -38,7 +38,7 @@ struct PublishTests {
         #expect(KeepBothName.candidate(bytes("report.pdf"), 11) == bytes("report 11.pdf"))
     }
 
-    @Test("a FILE publishes under the receiver's name, never the container's", arguments: renames)
+    @Test("a FILE publishes under the receiver's name", arguments: renames)
     func fileTakesTheReceiversName(_ rename: InterposedFileSystem.ExclusiveRename) throws {
         let landing = try Landing(kernelContainment: true)
         let result = try publish(Self.fileContainer, .file, as: .exactly(bytes("chosen.txt")), rename, landing)
@@ -93,30 +93,30 @@ struct PublishTests {
     @Test("publishing before the container finished fails, and a name that is not one component is refused")
     func publishOnlyAValidNameOfAFinishedItem() throws {
         let landing = try Landing(kernelContainment: true)
-        let early = try landing.receiver(acceptance(.file))
+        let early = try landing.receiver(acceptance(.file), as: bytes("x"))
         try early.receive(Self.fileContainer)
-        #expect(Result { () throws(TreeWriteFailure) in try early.publish(as: .exactly(bytes("x"))) }.failure != nil)
+        #expect(Result { () throws(TreeWriteFailure) in try early.publish() }.failure != nil)
         for name in ["", ".", "..", "a/b"] {
             let result = try publish(Self.fileContainer, .file, as: .keepingBoth(bytes(name)), .asTheVolume, landing)
-            #expect(result.failure?.reason == .system(TreeFileSystemError(code: EINVAL)), "\(name)")
+            #expect(result.failure?.reason == .container(.invalidName), "\(name)")
         }
         #expect(try Self.names(landing).isEmpty)
     }
 
     // MARK: - Support
 
-    /// A FILE container whose own entry is named `ignored`, carrying `hello`.
+    /// A FILE container, its own entry unnamed, carrying `hello`.
     static var fileContainer: Data {
         var container = RawContainer()
-        container.file(file("ignored", depth: 0, size: 5), Data("hello".utf8))
+        container.file(file("", depth: 0, size: 5), Data("hello".utf8))
         container.end()
         return container.data
     }
 
-    /// A FOLDER container whose own entry is named `ignored`, holding the file `f`.
+    /// A FOLDER container, its own entry unnamed, holding the file `f`.
     static var folderContainer: Data {
         var container = RawContainer()
-        container.header(directory("ignored", depth: 0))
+        container.header(directory("", depth: 0))
         container.file(file("f", depth: 1, size: 1), Data("f".utf8))
         container.end()
         return container.data
@@ -130,12 +130,12 @@ struct PublishTests {
     ) throws -> Result<[UInt8], TreeWriteFailure> {
         let fileSystem = InterposedFileSystem(exclusiveRename: rename)
         let receiver = TreeReceiver(
-            accepting: acceptance(storage), decodingWorkers: 0, fileSystem: fileSystem,
+            name: name, accepting: acceptance(storage), decodingWorkers: 0, fileSystem: fileSystem,
             destination: try landing.openDestination(), destinationPathByteCount: landing.destinationPath.utf8.count)
         return Result { () throws(TreeWriteFailure) in
             try receiver.receive(container)
             try receiver.finish()
-            return try receiver.publish(as: name)
+            return try receiver.publish()
         }
     }
 

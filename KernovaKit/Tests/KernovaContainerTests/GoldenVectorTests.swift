@@ -12,10 +12,10 @@ import Testing
 /// little-endian. The checksums were computed outside the codec, by a bitwise CRC-32C.
 @Suite("Container golden vectors")
 struct GoldenVectorTests {
-    /// FILE "a", depth 0, mode 0644, plain storage of 3 bytes.
+    /// An unnamed FILE, depth 0, mode 0644, plain storage of 3 bytes.
     static let header = Data([
-        0x01, 0x0C, 0x00, 0x00, 0x00, 0x4F, 0xFE, 0x62, 0xF3,
-        0x12, 0x01, 0x61, 0x18, 0x02, 0x20, 0xA4, 0x03, 0x52, 0x02, 0x08, 0x03,
+        0x01, 0x09, 0x00, 0x00, 0x00, 0x72, 0x7E, 0x2C, 0xAC,
+        0x18, 0x02, 0x20, 0xA4, 0x03, 0x52, 0x02, 0x08, 0x03,
     ])
     /// The bytes `abc`.
     static let chunk = Data([0x02, 0x03, 0x00, 0x00, 0x00, 0x51, 0xA1, 0x7A, 0xF0, 0x61, 0x62, 0x63])
@@ -40,7 +40,6 @@ struct GoldenVectorTests {
     func encoderMatchesGoldenBytes() throws {
         var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         var header = EntryHeader()
-        header.name = name("a")
         header.type = .file
         header.mode = 0o644
         header.plain.size = 3
@@ -52,7 +51,7 @@ struct GoldenVectorTests {
     @Test("The encoder writes a zero run byte for byte")
     func encoderZeroRun() throws {
         var encoder = ContainerEncoder(accepting: generous(), policy: .never)
-        _ = try encoder.entry(plainFile("z", depth: 0, size: 4_096))
+        _ = try encoder.entry(plainFile(depth: 0, size: 4_096))
         #expect(try encoder.bytes(Data(count: 4_096)) == Self.zeroRun)
     }
 
@@ -64,7 +63,7 @@ struct GoldenVectorTests {
             Issue.record("first event \(String(describing: decoded.events.first))")
             return
         }
-        #expect(header.name == name("a"))
+        #expect(header.name.isEmpty)
         #expect(header.mode == 0o644)
         #expect(header.plain.size == 3)
         #expect(decoded.events.dropFirst() == [.bytes(Data("abc".utf8)), .finishFile, .end])
@@ -73,12 +72,12 @@ struct GoldenVectorTests {
     @Test("The decoder reads the golden LZ4 chunk and zero run")
     func decodesLZ4AndZeroRun() {
         let lz4 = decode(
-            headerRecord(lz4File("l", depth: 0, size: 32)) + Self.lz4Chunk + endRecord(entries: 1, bytes: 32))
+            headerRecord(lz4File(depth: 0, size: 32)) + Self.lz4Chunk + endRecord(entries: 1, bytes: 32))
         #expect(lz4.error == nil)
         #expect(content(of: lz4.events) == Data(repeating: 0x61, count: 32))
 
         let zeros = decode(
-            headerRecord(plainFile("z", depth: 0, size: 4_096)) + Self.zeroRun + endRecord(entries: 1, bytes: 4_096))
+            headerRecord(plainFile(depth: 0, size: 4_096)) + Self.zeroRun + endRecord(entries: 1, bytes: 4_096))
         #expect(zeros.error == nil)
         #expect(zeros.events.contains(.zeros(4_096)))
     }
@@ -87,7 +86,7 @@ struct GoldenVectorTests {
     func encoderLZ4Chunk() throws {
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
         var encoder = ContainerEncoder(accepting: generous(), policy: policy)
-        _ = try encoder.entry(lz4File("l", depth: 0, size: 32))
+        _ = try encoder.entry(lz4File(depth: 0, size: 32))
         let records = try encoder.bytes(Data(repeating: 0x61, count: 32))
         #expect(records.first == ContainerRecordKind.lz4Chunk.rawValue)
         #expect(records.dropFirst(9).prefix(4) == Data([0x20, 0x00, 0x00, 0x00]))

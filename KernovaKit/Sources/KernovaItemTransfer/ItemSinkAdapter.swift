@@ -26,7 +26,7 @@ import KernovaWire
 /// and published as its bytes. Each pull's work runs on a queue of its own.
 public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink {
     private enum Pull {
-        case tree(TreeReceiver<FileSystem>, PublishName)
+        case tree(TreeReceiver<FileSystem>)
         case inline(InlineReceiver)
         /// The sink refused the pull; later bytes are dropped.
         case refused
@@ -94,7 +94,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             pulls.run(id) { pull in
                 do throws(WireError) {
                     switch pull {
-                    case .tree(let receiver, _):
+                    case .tree(let receiver):
                         try Self.wire { () throws(TreeWriteFailure) in try receiver.receive(bytes) }
                     case .inline(var receiver):
                         // Its bytes then have one owner, so appending to them never copies them.
@@ -113,7 +113,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             pulls.run(id) { pull in
                 do throws(WireError) {
                     switch pull {
-                    case .tree(let receiver, _): try Self.wire { () throws(TreeWriteFailure) in try receiver.finish() }
+                    case .tree(let receiver): try Self.wire { () throws(TreeWriteFailure) in try receiver.finish() }
                     case .inline(var receiver):
                         // Its bytes then have one owner, so appending to them never copies them.
                         pull = .refused
@@ -130,9 +130,9 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         case .commit(let id):
             pulls.close(id) { pull in
                 switch pull {
-                case .tree(let receiver, let name):
+                case .tree(let receiver):
                     do throws(WireError) {
-                        let landed = try Self.wire { () throws(TreeWriteFailure) in try receiver.publish(as: name) }
+                        let landed = try Self.wire { () throws(TreeWriteFailure) in try receiver.publish() }
                         reporter.report(.published(id, .named(Data(landed))))
                     } catch {
                         reporter.report(.publishFailed(id, error))
@@ -162,9 +162,10 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             do {
                 let destination = try fileSystem.openDirectory(path, in: AT_FDCWD)
                 let receiver = TreeReceiver(
-                    accepting: acceptance, decodingWorkers: decodingWorkers, fileSystem: fileSystem,
+                    name: PublishName(name), accepting: acceptance, decodingWorkers: decodingWorkers,
+                    fileSystem: fileSystem,
                     destination: destination, destinationPathByteCount: path.count)
-                return .success(.tree(receiver, PublishName(name)))
+                return .success(.tree(receiver))
             } catch {
                 return .failure(
                     WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)"))

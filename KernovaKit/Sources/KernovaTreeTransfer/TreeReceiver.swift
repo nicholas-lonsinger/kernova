@@ -10,8 +10,9 @@ import KernovaFileTree
 import KernovaLogging
 
 /// Lands a pulled FILE or FOLDER representation from its container's bytes: a `ContainerDecodePipeline` feeding a
-/// ``TreeWriter``. The item stays under its staging name until ``publish(as:)``, after ``finish()`` has confirmed
-/// the container whole; any failure, or the receiver ending first, removes everything it created.
+/// ``TreeWriter``. The item takes the name its caller supplies — the container's root carries none — only in
+/// ``publish()``, after ``finish()`` has confirmed the container whole; any failure, or the receiver ending first,
+/// removes everything it created.
 ///
 /// Once a call has failed, the receiver takes no more bytes and holds none: whether the container or the writer
 /// failed, the pipeline is released — which returns once none of its work is running — and every later call
@@ -36,9 +37,11 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     /// The name the item has in the destination until it is published.
     public var stagingName: [UInt8] { writer.stagingName }
 
-    /// A receiver landing what `acceptance` admits in `destination`.
+    /// A receiver landing what `acceptance` admits in `destination`, as the item `name`.
     ///
     /// - Parameters:
+    ///   - name: The item's name, which it is published under, exactly or keeping both; the writer holds it to
+    ///     what this OS lands.
     ///   - acceptance: What the pull accepts; its byte ceiling and decmpfs types bound the writer too.
     ///   - decodingWorkers: The lanes LZ4 chunks decompress on; 0 decompresses each in the caller.
     ///   - fileSystem: The calls the writer makes.
@@ -46,12 +49,14 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
-        accepting acceptance: ContainerAcceptance, decodingWorkers: Int, fileSystem: FileSystem, destination: Int32,
+        name: PublishName, accepting acceptance: ContainerAcceptance, decodingWorkers: Int, fileSystem: FileSystem,
+        destination: Int32,
         destinationPathByteCount: Int, logger: KernovaLogger = TreeWriterLog.logger
     ) {
         state = .receiving(ContainerDecodePipeline(accepting: acceptance, workers: decodingWorkers))
         writer = TreeWriter(
-            fileSystem: fileSystem, destination: destination, destinationPathByteCount: destinationPathByteCount,
+            name: name, fileSystem: fileSystem, destination: destination,
+            destinationPathByteCount: destinationPathByteCount,
             accepting: acceptance, logger: logger)
     }
 
@@ -69,7 +74,7 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     }
 
     /// Lands every entry still decompressing and confirms the container ended whole: the item is staged, under
-    /// ``stagingName``, until ``publish(as:)``.
+    /// ``stagingName``, until ``publish()``.
     ///
     /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an entry that could not land;
     ///   nothing created then remains.
@@ -81,20 +86,20 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// Publishes the finished item in the destination under `name`, never the container's own name for it, and
-    /// never replacing anything the receiver did not create.
+    /// Publishes the finished item in the destination under the name it was created with, never replacing
+    /// anything the receiver did not create.
     ///
     /// - Returns: The name the item landed under.
     /// - Throws: ``TreeWriteFailure``: before ``finish()``, `eventOutOfOrder`; for a name that is taken,
-    ///   `EEXIST` unless `name` keeps both; nothing created then remains.
-    public func publish(as name: PublishName) throws(TreeWriteFailure) -> [UInt8] {
+    ///   `EEXIST` unless the name keeps both; nothing created then remains.
+    public func publish() throws(TreeWriteFailure) -> [UInt8] {
         switch state {
         case .failed(let failure): throw failure
         case .receiving: throw writer.failHere(.container(.eventOutOfOrder))
         case .finished: break
         }
         do {
-            return try writer.publish(as: name)
+            return try writer.publish()
         } catch {
             state = .failed(error)
             throw error

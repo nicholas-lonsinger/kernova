@@ -177,7 +177,7 @@ struct TreeBench {
             let encoder = ContainerEncodePipeline(
                 accepting: sending, policy: compression.chunkPolicy, workers: compression.encodingWorkers)
             let receiver = TreeReceiver(
-                accepting: acceptance, decodingWorkers: decodingWorkers, fileSystem: fileSystem,
+                name: .exactly(name), accepting: acceptance, decodingWorkers: decodingWorkers, fileSystem: fileSystem,
                 destination: destination, destinationPathByteCount: destinationBytes.count)
             while true {
                 let sendStart = DispatchTime.now().uptimeNanoseconds
@@ -192,7 +192,7 @@ struct TreeBench {
             }
             let finishStart = DispatchTime.now().uptimeNanoseconds
             try receiver.finish()
-            transfer.landedName = try receiver.publish(as: .exactly(name))
+            transfer.landedName = try receiver.publish()
             transfer.receiving += since(finishStart)
         } catch {
             KernovaBench.fail("the transfer failed: \(error)")

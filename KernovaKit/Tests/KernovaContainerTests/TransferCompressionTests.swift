@@ -78,7 +78,7 @@ struct TransferCompressionTests {
         let tree: [TreeEvent] = [
             .beginFile(
                 decmpfsFile(
-                    "f", depth: 0, attribute: decmpfsAttribute(type: 4, size: 1 << 20),
+                    depth: 0, attribute: decmpfsAttribute(type: 4, size: 1 << 20),
                     resourceForkSize: UInt64(fork.count))),
             .resourceFork, .bytes(fork), .finishFile, .end,
         ]

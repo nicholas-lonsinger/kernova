@@ -17,10 +17,19 @@ package enum TranscriptInput: Sendable, Equatable {
     case pull(PullReport)
     /// The peer's logger emits `count` records into the ring.
     case peerLogs(Int)
-    /// The peer offers the fixture offer of this name on its test offer kind.
-    case peerOffer(String)
-    /// The host pulls from the peer's offer.
-    case hostPull(PullRequest)
+    /// A side offers the fixture offer of this name as the feature's offer.
+    case offer(SimSide, FeatureID, String)
+    /// A side pulls from the far side's offer.
+    case itemPull(SimSide, PullRequest)
+    /// A side withdraws its offer of the token.
+    case withdraw(SimSide, Data)
+    /// A side releases the far side's offer of the token.
+    case release(SimSide, Data)
+    /// The host takes the peer's drag offer of the token.
+    case takeDrag(Data)
+    /// The peer answers the take it was asked about last. The runner addresses it to that take, so a
+    /// script never names a stream id the current side chooses.
+    case answerTake(DragTakeAnswer)
 
     /// An installer's report on a pull.
     package enum PullReport: Sendable, Equatable {
@@ -39,8 +48,9 @@ package enum TranscriptInput: Sendable, Equatable {
 
     var side: SimSide {
         switch self {
-        case .host, .hostPull: .host
-        case .peer, .pull, .peerLogs, .peerOffer: .peer
+        case .host, .takeDrag: .host
+        case .peer, .pull, .peerLogs, .answerTake: .peer
+        case .offer(let side, _, _), .itemPull(let side, _), .withdraw(let side, _), .release(let side, _): side
         }
     }
 
@@ -88,12 +98,26 @@ package enum TranscriptInput: Sendable, Equatable {
             return "peer update rejected code=\(code.rawValue)"
         case .peerLogs(let count):
             return "peer logs records=\(count)"
-        case .peerOffer(let name):
-            return "peer offer fixture=\(name)"
-        case .hostPull(let request):
+        case .offer(let side, let feature, let name):
+            return "\(Self.name(side)) offer feature=\(feature.rawValue) fixture=\(name)"
+        case .itemPull(let side, let request):
             return
-                "host pull token=\(FrozenFields.hex(request.token)) item=\(request.item) representation=\(request.representation) ceiling=\(request.byteCeiling)"
+                "\(Self.name(side)) pull token=\(FrozenFields.hex(request.token)) item=\(request.item) representation=\(request.representation) ceiling=\(request.byteCeiling)"
+        case .withdraw(let side, let token):
+            return "\(Self.name(side)) withdraw token=\(FrozenFields.hex(token))"
+        case .release(let side, let token):
+            return "\(Self.name(side)) release token=\(FrozenFields.hex(token))"
+        case .takeDrag(let token):
+            return "host take token=\(FrozenFields.hex(token))"
+        case .answerTake(.taken):
+            return "peer take taken"
+        case .answerTake(.refused(let error)):
+            return "peer take refused code=\(error.code.rawValue)"
         }
+    }
+
+    static func name(_ side: SimSide) -> String {
+        side == .host ? "host" : "peer"
     }
 
     static func names(_ apps: [AppValue]) -> String {
@@ -113,6 +137,7 @@ package enum TranscriptInput: Sendable, Equatable {
         func code(_ key: String) -> ErrorCode { ErrorCode(rawValue: number(key)) ?? .UNRECOGNIZED(number(key)) }
         let powerID = PowerRequestID(generation: Self.generation, rawValue: UInt64(number("id")))
         let apps = (fields["apps"] ?? "").split(separator: ",").map { AppValue(displayName: String($0)) }
+        let token = fields["token"].flatMap { FrozenFields.unhex(Substring($0)) }
         switch (words[0], words[1]) {
         case ("host", "requestPower"):
             self = .host(.requestPower(powerID, PowerAction(rawValue: number("action")) ?? .unspecified))
@@ -164,17 +189,41 @@ package enum TranscriptInput: Sendable, Equatable {
                         userName: fields["user"] ?? "")))
         case ("peer", "logs"):
             self = .peerLogs(number("records"))
-        case ("peer", "offer"):
-            guard let name = fields["fixture"], TranscriptFixture.offer(name) != nil else { return nil }
-            self = .peerOffer(name)
-        case ("host", "pull"):
-            guard let token = fields["token"].flatMap({ FrozenFields.unhex(Substring($0)) }) else { return nil }
-            var request = PullRequest()
-            request.token = token
-            request.item = UInt32(number("item"))
-            request.representation = UInt32(number("representation"))
-            request.byteCeiling = UInt64(number("ceiling"))
-            self = .hostPull(request)
+        case ("peer", "take"):
+            guard words.count >= 3 else { return nil }
+            switch words[2] {
+            case "taken": self = .answerTake(.taken)
+            case "refused": self = .answerTake(.refused(WireError(code("code"))))
+            default: return nil
+            }
+        case ("host", "take"):
+            guard let token else { return nil }
+            self = .takeDrag(token)
+        case (let side, let verb) where side == "host" || side == "peer":
+            let side: SimSide = side == "host" ? .host : .peer
+            switch verb {
+            case "offer":
+                guard let name = fields["fixture"], TranscriptFixture.offer(name) != nil,
+                    let feature = FeatureID(rawValue: number("feature"))
+                else { return nil }
+                self = .offer(side, feature, name)
+            case "pull":
+                guard let token else { return nil }
+                var request = PullRequest()
+                request.token = token
+                request.item = UInt32(number("item"))
+                request.representation = UInt32(number("representation"))
+                request.byteCeiling = UInt64(number("ceiling"))
+                self = .itemPull(side, request)
+            case "withdraw":
+                guard let token else { return nil }
+                self = .withdraw(side, token)
+            case "release":
+                guard let token else { return nil }
+                self = .release(side, token)
+            default:
+                return nil
+            }
         default:
             return nil
         }
@@ -284,10 +333,45 @@ package struct Exchange: Sendable {
             id: "C01", title: "logs: forwarding two bursts of records", hostFixture: "host-default",
             peerFixture: "linux-session-v1", script: [(500, .peerLogs(3)), (900, .peerLogs(70))], end: 1500),
         Exchange(
-            id: "C02", title: "item transfer: the host pulls the FILE of a peer's offer → LANDED",
+            id: "C02", title: "clipboard: the host pulls the FILE of a peer's clipboard offer → LANDED",
             hostFixture: "host-items", peerFixture: "linux-session-items",
-            script: [(500, .peerOffer("file-2k")), (600, .hostPull(SimItems.request(1, ceiling: 1 << 20)))],
-            end: 1000),
+            script: [
+                (500, .offer(.peer, .clipboard, "file-2k")),
+                (600, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
+            ], end: 1000),
+        Exchange(
+            id: "C03",
+            title:
+                "clipboard: the peer's second offer withdraws its first; the host pulls the second's INLINE and releases it",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [
+                (500, .offer(.peer, .clipboard, "file-2k")), (600, .offer(.peer, .clipboard, "text-64")),
+                (700, .itemPull(.host, SimItems.request(2, ceiling: 1 << 20))),
+                (800, .release(.host, SimItems.token(2))),
+            ], end: 1000),
+        Exchange(
+            id: "C04", title: "drop: the peer pulls the FOLDER of the host's drop offer → LANDED, then releases it",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [
+                (500, .offer(.host, .drop, "folder-4k")),
+                (600, .itemPull(.peer, SimItems.request(3, ceiling: 1 << 20))),
+                (700, .release(.peer, SimItems.token(3))),
+            ], end: 1000),
+        Exchange(
+            id: "C05", title: "drag: the host takes the peer's drag → TAKEN, pulls its FILE → LANDED, and releases it",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [
+                (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))), (650, .answerTake(.taken)),
+                (700, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
+                (800, .release(.host, SimItems.token(1))),
+            ], end: 1000),
+        Exchange(
+            id: "C06", title: "drag: the peer refuses a take DRAG_PRESS_OVER, then withdraws its drag",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [
+                (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))),
+                (650, .answerTake(.refused(WireError(.dragPressOver)))), (700, .withdraw(.peer, SimItems.token(1))),
+            ], end: 1000),
     ]
 }
 
@@ -320,6 +404,8 @@ package final class Duet {
     private var source = FixturePayloadSource()
     private var itemSource = ContainerItemSource()
     private var itemSink = DecodingItemSink()
+    /// The take the peer was asked about last, which `.answerTake` answers.
+    private var lastTake: DragTakeID?
     private lazy var bundleContent: Data? = TranscriptFixture.host(exchange.hostFixture)?.bundles.first.map {
         SimHub.expectedContent($0.manifest)
     }
@@ -400,20 +486,39 @@ package final class Duet {
                 if ring.append(record) { post = true }
             }
             if post { peer.handle(.logs(.recordsAvailable), now: instant) }
-        case .peerOffer(let name):
+        case .offer(let side, let feature, let name):
             guard let offer = TranscriptFixture.offer(name) else { break }
-            if let refusal = peer.offerTestItems(offer, now: instant) {
-                failures.append("t=\(now): `\(input.text)` refused: \(refusal)")
-            }
-        case .hostPull(let request):
-            let storage =
-                host.remoteOfferItem(token: request.token, index: Int(request.item))?.representations
-                .dropFirst(Int(request.representation)).first?.storage ?? .file
-            if case .failure(let error) = host.pullItem(
-                request, landing: DecodingItemSink.landing(storage), now: instant)
-            {
+            let refusal =
+                side == .host
+                ? host.offerItems(offer, feature: feature, now: instant)
+                : peer.offerItems(offer, feature: feature, now: instant)
+            if let refusal { failures.append("t=\(now): `\(input.text)` refused: \(refusal)") }
+        case .itemPull(let side, let request):
+            let item =
+                side == .host
+                ? host.remoteOfferItem(token: request.token, index: Int(request.item))
+                : peer.remoteOfferItem(token: request.token, index: Int(request.item))
+            let storage = item?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
+            let landing = DecodingItemSink.landing(storage)
+            let result =
+                side == .host
+                ? host.pullItem(request, landing: landing, now: instant)
+                : peer.pullItem(request, landing: landing, now: instant)
+            if case .failure(let error) = result { failures.append("t=\(now): `\(input.text)` refused: \(error)") }
+        case .withdraw(.host, let token): host.withdrawOffer(token, now: instant)
+        case .withdraw(.peer, let token): peer.withdrawOffer(token, now: instant)
+        case .release(.host, let token): host.releaseOffer(token, now: instant)
+        case .release(.peer, let token): peer.releaseOffer(token, now: instant)
+        case .takeDrag(let token):
+            if case .failure(let error) = host.takeDrag(token, now: instant) {
                 failures.append("t=\(now): `\(input.text)` refused: \(error)")
             }
+        case .answerTake(let answer):
+            guard let lastTake else {
+                failures.append("t=\(now): `\(input.text)` with no take asked")
+                break
+            }
+            peer.handle(.dragTake(lastTake, answer), now: instant)
         }
         drainAll()
     }
@@ -462,6 +567,7 @@ package final class Duet {
             while let event = peer.pollEvent() {
                 progressed = true
                 if case .diagnostic(.localFault(let text)) = event { localFaults.append("peer: \(text)") }
+                if case .dragTake(.requested(let id, _)) = event { lastTake = id }
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .peer, text: text))
                 }
@@ -662,6 +768,7 @@ package enum TranscriptEvents {
         case .update(.closed(_, let closure)): "host update closed \(describe(closure))"
         case .closed(let closure): "host closed \(describe(closure))"
         case .items(let event): describe(event, side: .host)
+        case .dragTake(let event): describe(event, side: .host)
         default: nil
         }
     }
@@ -682,11 +789,24 @@ package enum TranscriptEvents {
         let prefix = side == .host ? "host item" : "peer item"
         return switch event {
         case .offerReceived(let header):
-            "\(prefix) offerReceived token=\(FrozenFields.hex(header.token)) items=\(header.count)"
-        case .offerEnded(let origin, let token, let closure):
-            "\(prefix) offerEnded \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
+            "\(prefix) offerReceived feature=\(header.feature.rawValue) token=\(FrozenFields.hex(header.token)) items=\(header.count)"
+        case .offerEnded(let feature, let origin, let token, let closure):
+            "\(prefix) offerEnded feature=\(feature.rawValue) \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
         case .pullEnded(let id, let result): "\(prefix) pullEnded id=\(id.stream.rawValue) \(describe(result))"
         case .serveEnded(let id, let result): "\(prefix) serveEnded id=\(id.stream.rawValue) \(describe(result))"
+        }
+    }
+
+    package static func describe(_ event: DragTakeEvent, side: SimSide) -> String {
+        let prefix = side == .host ? "host drag" : "peer drag"
+        return switch event {
+        case .requested(let id, let token):
+            "\(prefix) takeRequested id=\(id.stream.rawValue) token=\(FrozenFields.hex(token))"
+        case .ended(let id, .taken): "\(prefix) takeEnded id=\(id.stream.rawValue) taken"
+        case .ended(let id, .refused(let error)):
+            "\(prefix) takeEnded id=\(id.stream.rawValue) refused code=\(error.code.rawValue)"
+        case .ended(let id, .closed(let closure)):
+            "\(prefix) takeEnded id=\(id.stream.rawValue) closed \(describe(closure))"
         }
     }
 
@@ -711,6 +831,7 @@ package enum TranscriptEvents {
         switch event {
         case .closed(let closure): "peer closed \(describe(closure))"
         case .items(let event): describe(event, side: .peer)
+        case .dragTake(let event): describe(event, side: .peer)
         default: nil
         }
     }

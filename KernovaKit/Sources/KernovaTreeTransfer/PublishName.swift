@@ -6,14 +6,14 @@ public enum PublishName: Equatable, Sendable {
     case keepingBoth([UInt8])
 
     /// The name asked for.
-    var base: [UInt8] {
+    public var base: [UInt8] {
         switch self {
         case .exactly(let name), .keepingBoth(let name): name
         }
     }
 
     /// Whether a taken name moves to the next Keep Both name.
-    var keepsBoth: Bool {
+    public var keepsBoth: Bool {
         if case .keepingBoth = self { true } else { false }
     }
 }

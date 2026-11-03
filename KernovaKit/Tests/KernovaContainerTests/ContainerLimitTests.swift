@@ -23,7 +23,7 @@ struct ContainerLimitTests {
     static func inFolder(_ header: EntryHeader, bytes: Data = Data()) -> Data {
         var entry = header
         entry.depth = 1
-        var container = headerRecord(directory("root", depth: 0)) + headerRecord(entry)
+        var container = headerRecord(directory(depth: 0)) + headerRecord(entry)
         if !bytes.isEmpty { container += record(.chunk, bytes) }
         return container + endRecord(entries: 2, bytes: UInt64(bytes.count))
     }
@@ -32,7 +32,7 @@ struct ContainerLimitTests {
 
     /// A FILE header padded with an extended attribute to serialize to exactly `byteCount` bytes.
     static func header(serializingTo byteCount: Int) -> EntryHeader {
-        var header = plainFile("f", depth: 0, size: 0)
+        var header = plainFile(depth: 0, size: 0)
         var xattr = Kernova_V2_Xattr()
         xattr.name = name("user.pad")
         header.xattrs = [xattr]
@@ -67,9 +67,9 @@ struct ContainerLimitTests {
         let edge = ContainerRecord.maxChunkPayload
         #expect(edge == 1_048_576)
         #expect(
-            decodingError(Self.single(plainFile("f", depth: 0, size: UInt64(edge)), bytes: Data(count: edge))) == nil)
+            decodingError(Self.single(plainFile(depth: 0, size: UInt64(edge)), bytes: Data(count: edge))) == nil)
         let past =
-            headerRecord(plainFile("f", depth: 0, size: UInt64(edge + 1)))
+            headerRecord(plainFile(depth: 0, size: UInt64(edge + 1)))
             + rawRecord(kind: ContainerRecordKind.chunk.rawValue, payload: Data(count: edge + 1))
         #expect(decodingError(past) == .recordLengthOutOfRange(kind: .chunk, length: edge + 1))
     }
@@ -79,20 +79,20 @@ struct ContainerLimitTests {
         let edge = ContainerRecord.maxChunkPayload
         let block = try #require(LZ4Block.compress(Data(count: edge)))
         let edgeContainer =
-            headerRecord(lz4File("l", depth: 0, size: UInt64(edge)))
+            headerRecord(lz4File(depth: 0, size: UInt64(edge)))
             + lz4ChunkRecord(declaredSize: UInt32(edge), block: block) + endRecord(entries: 1, bytes: UInt64(edge))
         #expect(decodingError(edgeContainer) == nil)
 
         let pastBlock = try #require(LZ4Block.compress(Data(count: edge + 1)))
         let past =
-            headerRecord(lz4File("l", depth: 0, size: UInt64(edge + 1)))
+            headerRecord(lz4File(depth: 0, size: UInt64(edge + 1)))
             + lz4ChunkRecord(declaredSize: UInt32(edge + 1), block: pastBlock)
         #expect(decodingError(past) == .lz4(.sizeOutOfRange(declared: edge + 1, ceiling: edge)))
     }
 
     @Test("A zero run's payload is exactly 8 bytes")
     func zeroRunLength() {
-        let header = headerRecord(plainFile("f", depth: 0, size: 100))
+        let header = headerRecord(plainFile(depth: 0, size: 100))
         for length in [0, 7, 9] {
             let container = header + rawRecord(kind: ContainerRecordKind.zeroRun.rawValue, payload: Data(count: length))
             #expect(decodingError(container) == .recordLengthOutOfRange(kind: .zeroRun, length: length))
@@ -101,7 +101,7 @@ struct ContainerLimitTests {
 
     @Test("An LZ4 chunk's payload holds its size and at least one block byte")
     func lz4ChunkMinimum() {
-        let header = headerRecord(lz4File("l", depth: 0, size: 100))
+        let header = headerRecord(lz4File(depth: 0, size: 100))
         let short = header + rawRecord(kind: ContainerRecordKind.lz4Chunk.rawValue, payload: littleEndian(UInt32(1)))
         #expect(decodingError(short) == .recordLengthOutOfRange(kind: .lz4Chunk, length: 4))
     }
@@ -117,7 +117,7 @@ struct ContainerLimitTests {
     func byteCeiling() throws {
         let acceptance = ContainerAcceptance(storage: .folder, byteCeiling: 300, decmpfsTypes: [], acceptsLZ4: false)
         func container(secondSize: UInt64) -> Data {
-            headerRecord(directory("d", depth: 0))
+            headerRecord(directory(depth: 0))
                 + headerRecord(plainFile("a", depth: 1, size: 200)) + zeroRunRecord(200)
                 + headerRecord(plainFile("b", depth: 1, size: secondSize)) + zeroRunRecord(secondSize)
                 + endRecord(entries: 3, bytes: 200 + secondSize)
@@ -128,7 +128,7 @@ struct ContainerLimitTests {
         #expect(refused?.errorCode == .tooLarge)
 
         var encoder = ContainerEncoder(accepting: acceptance, policy: .never)
-        _ = try encoder.entry(directory("d", depth: 0))
+        _ = try encoder.entry(directory(depth: 0))
         _ = try encoder.entry(plainFile("a", depth: 1, size: 200))
         _ = try encoder.bytes(Data(count: 200))
         #expect(throws: ContainerError.exceedsByteCeiling(declared: 301, ceiling: 300)) {
@@ -152,7 +152,7 @@ struct ContainerLimitTests {
 
     @Test("The end record's counts must match: entries and bytes, each off by one")
     func endCounts() {
-        let body = headerRecord(plainFile("f", depth: 0, size: 3)) + record(.chunk, Data("abc".utf8))
+        let body = headerRecord(plainFile(depth: 0, size: 3)) + record(.chunk, Data("abc".utf8))
         #expect(decodingError(body + endRecord(entries: 1, bytes: 3)) == nil)
         let counted = ContainerError.Counts(entries: 1, bytes: 3)
         for (entries, bytes) in [(UInt64(0), UInt64(3)), (2, 3), (1, 2), (1, 4)] {
@@ -165,45 +165,45 @@ struct ContainerLimitTests {
     @Test("A container with no entry, an end inside an entry, and bytes after the end are refused")
     func endPlacement() {
         #expect(decodingError(endRecord(entries: 0, bytes: 0)) == .noEntry)
-        let open = headerRecord(plainFile("f", depth: 0, size: 3)) + record(.chunk, Data("ab".utf8))
+        let open = headerRecord(plainFile(depth: 0, size: 3)) + record(.chunk, Data("ab".utf8))
         #expect(decodingError(open + endRecord(entries: 1, bytes: 2)) == .entryIncomplete(remaining: 1))
-        let whole = Self.single(plainFile("f", depth: 0, size: 0))
+        let whole = Self.single(plainFile(depth: 0, size: 0))
         #expect(decodingError(whole + Data([0x00])) == .bytesAfterEnd)
-        #expect(decodingError(whole + headerRecord(plainFile("g", depth: 0, size: 0))) == .bytesAfterEnd)
+        #expect(decodingError(whole + headerRecord(plainFile(depth: 0, size: 0))) == .bytesAfterEnd)
     }
 
     // MARK: Chunks
 
     @Test("Chunks fill their entry exactly: at its size it finishes, past it is refused")
     func chunkAgainstEntry() {
-        let header = headerRecord(plainFile("f", depth: 0, size: 5))
+        let header = headerRecord(plainFile(depth: 0, size: 5))
         #expect(decodingError(header + zeroRunRecord(5) + endRecord(entries: 1, bytes: 5)) == nil)
         #expect(decodingError(header + zeroRunRecord(6)) == .chunkPastEntrySize(count: 6, remaining: 5))
         #expect(decodingError(header + record(.chunk, Data(count: 6))) == .chunkPastEntrySize(count: 6, remaining: 5))
         #expect(decodingError(header + zeroRunRecord(0)) == .emptyChunk)
         #expect(decodingError(record(.chunk, Data([1]))) == .chunkOutsideEntry)
-        let empty = headerRecord(plainFile("e", depth: 0, size: 0))
+        let empty = headerRecord(plainFile(depth: 0, size: 0))
         #expect(decodingError(empty + record(.chunk, Data([1]))) == .chunkOutsideEntry)
-        let directoryRecord = headerRecord(directory("d", depth: 0))
+        let directoryRecord = headerRecord(directory(depth: 0))
         #expect(decodingError(directoryRecord + zeroRunRecord(1)) == .chunkOutsideEntry)
         #expect(
-            decodingError(header + headerRecord(plainFile("g", depth: 0, size: 0))) == .entryIncomplete(remaining: 5))
+            decodingError(header + headerRecord(plainFile(depth: 0, size: 0))) == .entryIncomplete(remaining: 5))
     }
 
     @Test("LZ4 storage needs the pull's codec, and an LZ4 chunk needs LZ4 storage")
     func lz4Acceptance() {
         let noLZ4 = ContainerAcceptance(storage: .file, byteCeiling: 1 << 20, decmpfsTypes: [], acceptsLZ4: false)
-        #expect(decodingError(Self.single(lz4File("l", depth: 0, size: 0)), accepting: noLZ4) == .lz4NotAccepted)
-        let plain = headerRecord(plainFile("f", depth: 0, size: 32))
+        #expect(decodingError(Self.single(lz4File(depth: 0, size: 0)), accepting: noLZ4) == .lz4NotAccepted)
+        let plain = headerRecord(plainFile(depth: 0, size: 32))
         #expect(decodingError(plain + GoldenVectorTests.lz4Chunk) == .lz4ChunkOutsideLZ4Storage)
         var encoder = ContainerEncoder(accepting: noLZ4, policy: .never)
-        #expect(throws: ContainerError.lz4NotAccepted) { try encoder.entry(lz4File("l", depth: 0, size: 0)) }
+        #expect(throws: ContainerError.lz4NotAccepted) { try encoder.entry(lz4File(depth: 0, size: 0)) }
     }
 
     @Test("A malformed LZ4 block is refused")
     func malformedBlock() {
         let container =
-            headerRecord(lz4File("l", depth: 0, size: 32)) + lz4ChunkRecord(declaredSize: 32, block: Data([0x1F]))
+            headerRecord(lz4File(depth: 0, size: 32)) + lz4ChunkRecord(declaredSize: 32, block: Data([0x1F]))
         #expect(decodingError(container) == .lz4(.truncated))
     }
 
@@ -211,7 +211,7 @@ struct ContainerLimitTests {
 
     @Test("Depth: at most the directories entered; the first entry at 0 and no other")
     func depth() {
-        let root = headerRecord(directory("r", depth: 0))
+        let root = headerRecord(directory(depth: 0))
         let atHeight = root + headerRecord(directory("a", depth: 1)) + headerRecord(plainFile("f", depth: 2, size: 0))
         #expect(decodingError(atHeight + endRecord(entries: 3, bytes: 0)) == nil)
         #expect(
@@ -219,16 +219,16 @@ struct ContainerLimitTests {
                 == .depthBeyondParent(depth: 2, enteredDirectories: 1))
         #expect(
             decodingError(
-                headerRecord(plainFile("f", depth: 0, size: 0)) + headerRecord(plainFile("g", depth: 1, size: 0)))
+                headerRecord(plainFile(depth: 0, size: 0)) + headerRecord(plainFile("g", depth: 1, size: 0)))
                 == .depthBeyondParent(depth: 1, enteredDirectories: 0))
         #expect(decodingError(headerRecord(plainFile("f", depth: 1, size: 0))) == .firstEntryNotAtRoot(depth: 1))
-        #expect(decodingError(root + headerRecord(directory("s", depth: 0))) == .secondRootEntry)
+        #expect(decodingError(root + headerRecord(directory(depth: 0))) == .secondRootEntry)
     }
 
     @Test("A shallower entry leaves directories first, and the end leaves the rest")
     func leaveEvents() {
         let container =
-            headerRecord(directory("r", depth: 0)) + headerRecord(directory("a", depth: 1))
+            headerRecord(directory(depth: 0)) + headerRecord(directory("a", depth: 1))
             + headerRecord(directory("b", depth: 2)) + headerRecord(symlink("s", depth: 1, target: "a"))
             + endRecord(entries: 4, bytes: 0)
         let decoded = decode(container)
@@ -247,10 +247,10 @@ struct ContainerLimitTests {
 
     @Test("Entry types: unspecified and unknown are refused")
     func entryTypes() {
-        var unspecified = plainFile("f", depth: 0, size: 0)
+        var unspecified = plainFile(depth: 0, size: 0)
         unspecified.type = .unspecified
         #expect(decodingError(Self.single(unspecified)) == .unknownEntryType)
-        var unknown = plainFile("f", depth: 0, size: 0)
+        var unknown = plainFile(depth: 0, size: 0)
         unknown.type = .UNRECOGNIZED(9)
         #expect(decodingError(Self.single(unknown)) == .unknownEntryType)
         #expect(decodingError(record(.header, Data([0xFF]))) == .headerUndecodable)
@@ -258,19 +258,19 @@ struct ContainerLimitTests {
 
     @Test("An end record that is not an EndRecord is refused")
     func undecodableEnd() {
-        let container = headerRecord(plainFile("f", depth: 0, size: 0)) + record(.end, Data([0xFF]))
+        let container = headerRecord(plainFile(depth: 0, size: 0)) + record(.end, Data([0xFF]))
         #expect(decodingError(container) == .endUndecodable)
     }
 
     @Test("Storage must fit the entry type")
     func storageByType() {
-        var directoryWithStorage = directory("d", depth: 0)
+        var directoryWithStorage = directory(depth: 0)
         directoryWithStorage.plain.size = 0
         #expect(decodingError(Self.single(directoryWithStorage)) == .storageNotAllowed(.directory))
-        var fileWithout = plainFile("f", depth: 0, size: 0)
+        var fileWithout = plainFile(depth: 0, size: 0)
         fileWithout.storage = nil
         #expect(decodingError(Self.single(fileWithout)) == .storageNotAllowed(.file))
-        var symlinkWithStorage = symlink("s", depth: 0, target: "t")
+        var symlinkWithStorage = symlink("s", depth: 1, target: "t")
         symlinkWithStorage.plain.size = 0
         #expect(decodingError(Self.inFolder(symlinkWithStorage)) == .storageNotAllowed(.symlink))
     }
@@ -279,7 +279,7 @@ struct ContainerLimitTests {
     func symlinkTargets() {
         #expect(decodingError(Self.inFolder(symlink("s", depth: 1, target: ""))) == .invalidSymlinkTarget)
         #expect(decodingError(Self.inFolder(symlink("s", depth: 1, target: "a\0b"))) == .invalidSymlinkTarget)
-        var file = plainFile("f", depth: 0, size: 0)
+        var file = plainFile(depth: 0, size: 0)
         file.symlinkTarget = name("t")
         #expect(decodingError(Self.single(file)) == .invalidSymlinkTarget)
     }
@@ -289,29 +289,44 @@ struct ContainerLimitTests {
     @Test("A name of 255 bytes decodes; 256 is refused")
     func nameLength() {
         let edge = Data(repeating: 0x61, count: 255)
-        var file = plainFile("", depth: 0, size: 0)
+        var file = plainFile(depth: 1, size: 0)
         file.name = edge
-        #expect(decodingError(Self.single(file)) == nil)
+        #expect(decodingError(Self.inFolder(file)) == nil)
         file.name = edge + Data([0x61])
-        #expect(decodingError(Self.single(file)) == .invalidName)
+        #expect(decodingError(Self.inFolder(file)) == .invalidName)
     }
 
     @Test(
         "Refused names",
         arguments: [Data(), Data(".".utf8), Data("..".utf8), Data("a/b".utf8), Data("/".utf8), Data([0x61, 0x00])])
-    func refusedNames(_ refused: Data) {
-        var file = plainFile("", depth: 0, size: 0)
+    func refusedNames(_ refused: Data) throws {
+        var file = plainFile(depth: 1, size: 0)
         file.name = refused
-        #expect(decodingError(Self.single(file)) == .invalidName)
-        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
+        #expect(decodingError(Self.inFolder(file)) == .invalidName)
+        var encoder = ContainerEncoder(accepting: generous(.folder), policy: .never)
+        _ = try encoder.entry(directory(depth: 0))
         #expect(throws: ContainerError.invalidName) { try encoder.entry(file) }
     }
 
     @Test("Accepted names", arguments: [Data("...".utf8), Data(".a".utf8), Data("a..".utf8), Data([0xFF, 0xFE])])
     func acceptedNames(_ accepted: Data) {
-        var file = plainFile("", depth: 0, size: 0)
+        var file = plainFile(depth: 1, size: 0)
         file.name = accepted
-        #expect(decodingError(Self.single(file)) == nil)
+        #expect(decodingError(Self.inFolder(file)) == nil)
+    }
+
+    @Test("A named FILE or FOLDER root is refused ITEM_CONTAINER_MALFORMED: the item's name is its offer's")
+    func namedRoot() throws {
+        var file = plainFile(depth: 0, size: 0)
+        file.name = name("f")
+        #expect(decodingError(Self.single(file)) == .rootEntryNamed)
+        var folder = directory(depth: 0)
+        folder.name = name("d")
+        #expect(decodingError(Self.single(folder)) == .rootEntryNamed)
+        #expect(ContainerError.rootEntryNamed.errorCode == .itemContainerMalformed)
+        var encoder = ContainerEncoder(accepting: generous(.folder), policy: .never)
+        #expect(throws: ContainerError.rootEntryNamed) { try encoder.entry(folder) }
+        #expect(decodingError(Self.single(plainFile(depth: 0, size: 0))) == nil)
     }
 
     // MARK: INLINE data
@@ -332,7 +347,7 @@ struct ContainerLimitTests {
         var decmpfs = inlineData(size: 0)
         decmpfs.decmpfs.attribute = decmpfsAttribute(type: 4, size: 1)
         #expect(decodingError(Self.single(decmpfs)) == .storageNotAllowed(.data))
-        let atRoot = headerRecord(directory("d", depth: 0)) + headerRecord(inlineData(size: 0))
+        let atRoot = headerRecord(directory(depth: 0)) + headerRecord(inlineData(size: 0))
         #expect(decodingError(atRoot) == .dataEntryNotRoot)
     }
 }
@@ -345,7 +360,7 @@ struct DecmpfsStorageTests {
     static func container(_ attribute: Data, fork: Int = 0, accepting types: Set<UInt32> = [3, 4]) -> ContainerError? {
         let acceptance = ContainerAcceptance(
             storage: .file, byteCeiling: 1 << 20, decmpfsTypes: types, acceptsLZ4: false)
-        let header = decmpfsFile("c", depth: 0, attribute: attribute, resourceForkSize: UInt64(fork))
+        let header = decmpfsFile(depth: 0, attribute: attribute, resourceForkSize: UInt64(fork))
         let chunks = fork > 0 ? record(.chunk, Data(repeating: 1, count: fork)) : Data()
         return decodingError(
             headerRecord(header) + chunks + endRecord(entries: 1, bytes: UInt64(fork)), accepting: acceptance)
@@ -428,14 +443,14 @@ struct DecmpfsStorageTests {
 
     @Test("decmpfs storage is for regular files only")
     func regularFilesOnly() {
-        var directoryEntry = directory("d", depth: 0)
+        var directoryEntry = directory(depth: 0)
         directoryEntry.decmpfs.attribute = decmpfsAttribute(type: 4, size: 1)
         #expect(decodingError(ContainerLimitTests.single(directoryEntry)) == .storageNotAllowed(.directory))
     }
 
     @Test("com.apple.decmpfs in the extended attribute list is refused")
     func notAnXattr() {
-        var file = plainFile("f", depth: 0, size: 0)
+        var file = plainFile(depth: 0, size: 0)
         var xattr = Kernova_V2_Xattr()
         xattr.name = name("com.apple.decmpfs")
         xattr.value = decmpfsAttribute(type: 4, size: 1)
@@ -445,7 +460,7 @@ struct DecmpfsStorageTests {
 
     @Test("A decmpfs file's resource fork arrives as its chunks")
     func resourceFork() {
-        let header = decmpfsFile("c", depth: 0, attribute: decmpfsAttribute(type: 4, size: 100), resourceForkSize: 3)
+        let header = decmpfsFile(depth: 0, attribute: decmpfsAttribute(type: 4, size: 100), resourceForkSize: 3)
         let decoded = decode(headerRecord(header) + record(.chunk, Data([7, 8, 9])) + endRecord(entries: 1, bytes: 3))
         #expect(decoded.error == nil)
         #expect(decoded.events == [.beginFile(header), .resourceFork, .bytes(Data([7, 8, 9])), .finishFile, .end])
@@ -454,7 +469,7 @@ struct DecmpfsStorageTests {
     @Test("decmpfs storage carries no data: a chunk is the resource fork's, and with none declared there is none")
     func noDataStream() {
         let attributeOnly = decmpfsFile(
-            "c", depth: 0, attribute: decmpfsAttribute(type: 3, size: 100, tail: Data([0x78])), resourceForkSize: 0)
+            depth: 0, attribute: decmpfsAttribute(type: 3, size: 100, tail: Data([0x78])), resourceForkSize: 0)
         let accepting = ContainerAcceptance(storage: .file, byteCeiling: 1 << 20, decmpfsTypes: [3], acceptsLZ4: true)
         let decoded = decode(headerRecord(attributeOnly) + endRecord(entries: 1, bytes: 0), accepting: accepting)
         #expect(decoded.error == nil)
