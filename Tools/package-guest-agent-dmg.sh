@@ -1,13 +1,14 @@
 #!/bin/bash
 #
 # package-guest-agent-dmg.sh — pack Kernova Guest Agent.app as the macOS agent's
-# update payload, put the payload in Kernova.app's Resources, and stage it with
-# the app and the install/uninstall commands into a guest-mountable raw disk
-# image inside Kernova.app.
+# update payload into Kernova.app's Resources, and stage the app with the
+# install/uninstall commands into a guest-mountable raw disk image inside
+# Kernova.app.
 #
 # The host serves the payload to installed agents and identifies them by its
-# SHA-256; the disk's installer lands the same file, recording that hash, so a
-# fresh install and an in-band update install one identity.
+# SHA-256. The disk carries the app alone: its installer packs the app it runs
+# from with the same packer as it lands it, recording the same hash, so a fresh
+# install and an in-band update install one identity.
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR,
 # BUILT_PRODUCTS_DIR, CONTENTS_FOLDER_PATH.
@@ -28,7 +29,6 @@ mkdir -p "$(dirname "${PAYLOAD_OUTPUT}")"
 "${AGENT_APP}/Contents/MacOS/KernovaMacOSAgent" pack-payload "${AGENT_APP}" "${PAYLOAD_OUTPUT}"
 
 ditto "${AGENT_APP}" "${STAGING_DIR}/Kernova Guest Agent.app"
-cp "${PAYLOAD_OUTPUT}" "${STAGING_DIR}/agent.payload"
 cp "${SRCROOT}/KernovaMacOSAgent/install.command" "${STAGING_DIR}/install.command"
 cp "${SRCROOT}/KernovaMacOSAgent/uninstall.command" "${STAGING_DIR}/uninstall.command"
 chmod +x "${STAGING_DIR}/install.command" "${STAGING_DIR}/uninstall.command"

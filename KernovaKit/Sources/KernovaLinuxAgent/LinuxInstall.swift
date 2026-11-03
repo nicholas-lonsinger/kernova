@@ -71,7 +71,7 @@ enum LinuxInstall {
     /// An installer whose payload is this executable, the agent `label` names.
     static func installer(stagingRoot: String, runsSystemd: Bool, label: String, account: String?) -> Installer {
         Installer(
-            stagingRoot: stagingRoot, runsCommands: runsSystemd, payloadSource: "/proc/self/exe",
+            stagingRoot: stagingRoot, runsCommands: runsSystemd, payloadSource: .file("/proc/self/exe"),
             lander: ExecutableLander(), versionLabel: label, account: account)
     }
 }

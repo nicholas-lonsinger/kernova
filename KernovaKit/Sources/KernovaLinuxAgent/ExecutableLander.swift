@@ -32,7 +32,7 @@ struct ExecutableLander: PayloadLander {
     {
         let path = slot.path + "/" + name
         try slot.writeFile(name, mode: 0o755) { descriptor throws(Installer.Failure) in
-            while let piece = try payload.next() {
+            try payload.read { piece throws(Installer.Failure) in
                 try Installer.writeAll(Array(piece), to: descriptor, path: path)
             }
         }

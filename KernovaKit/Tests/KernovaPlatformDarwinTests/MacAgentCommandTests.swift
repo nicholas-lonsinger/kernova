@@ -15,16 +15,15 @@ struct MacAgentCommandTests {
         #expect(MacAgentCommand.parse(["system"]) == .system)
     }
 
-    @Test("Install and uninstall take each option once; only install takes a payload, and only an absolute one")
+    @Test("Install and uninstall take each option once")
     func install() {
         #expect(MacAgentCommand.parse(["install"]) == .install(.init()))
         #expect(
-            MacAgentCommand.parse(["install", "--system", "--payload", "/Volumes/K/agent.payload", "--dry-run"])
-                == .install(.init(scope: .system, dryRun: true, payload: "/Volumes/K/agent.payload")))
-        #expect(MacAgentCommand.parse(["install", "--payload", "agent.payload"]) == nil)
+            MacAgentCommand.parse(["install", "--system", "--dry-run"])
+                == .install(.init(scope: .system, dryRun: true)))
+        #expect(MacAgentCommand.parse(["install", "--payload", "/Volumes/K/agent.payload"]) == nil)
         #expect(MacAgentCommand.parse(["install", "--system", "--system"]) == nil)
         #expect(MacAgentCommand.parse(["uninstall", "--system"]) == .uninstall(.init(scope: .system)))
-        #expect(MacAgentCommand.parse(["uninstall", "--payload", "/x"]) == nil)
     }
 
     @Test("The tools: rollback check, stop-service and the packer")
@@ -41,12 +40,12 @@ struct MacAgentCommandTests {
         #expect(MacAgentCommand.parse(["--help"]) == nil)
     }
 
-    @Test("An install takes the payload beside its app bundle by default: the installer disk's")
-    func payloadBeside() {
+    @Test("An install packs the app bundle its executable runs from: the installer disk's")
+    func installedBundle() {
         #expect(
-            MacAgentTools.payloadBeside(
-                "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent")
-                == "/Volumes/Kernova Guest Agent/agent.payload")
+            MacAgentTools.bundle(
+                of: "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent")
+                == "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app")
     }
 }
 #endif

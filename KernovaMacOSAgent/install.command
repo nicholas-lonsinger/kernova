@@ -15,7 +15,6 @@ set -euo pipefail
 
 DISK="$(cd "$(dirname "$0")" && pwd)"
 AGENT="${DISK}/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent"
-PAYLOAD="${DISK}/agent.payload"
 interactive=1
 [ -n "${NONINTERACTIVE:-}" ] && interactive=0
 
@@ -66,8 +65,8 @@ if [ -z "${scope}" ]; then
     fi
 fi
 
-install=("${AGENT}" install --payload "${PAYLOAD}")
-[ "${scope}" = system ] && install=("${AGENT}" install --system --payload "${PAYLOAD}")
+install=("${AGENT}" install)
+[ "${scope}" = system ] && install=("${AGENT}" install --system)
 
 "${install[@]}" --dry-run || fail "The agent on this disk could not plan the install."
 echo ""

@@ -96,8 +96,9 @@ public enum MacAgentTools {
 
     // MARK: Install
 
-    /// Installs or uninstalls `request`'s scope from the payload beside this app bundle, or the one it names,
-    /// printing each step as it takes it.
+    /// Installs `request`'s scope from the app bundle this executable runs from, packed as it lands — the bytes
+    /// the build packs it to, so the install records the identity the host serves — or uninstalls it, printing
+    /// each step as it takes it.
     private static func runInstaller(
         _ request: MacAgentCommand.InstallRequest, uninstalling: Bool, label: String
     ) -> Never {
@@ -118,7 +119,7 @@ public enum MacAgentTools {
                 exit(0)
             }
             let installer = Installer(
-                stagingRoot: "", runsCommands: true, payloadSource: request.payload ?? payloadBeside(tool),
+                stagingRoot: "", runsCommands: true, payloadSource: .packedDirectory(bundle(of: tool)),
                 lander: MacAgentPeer.lander, versionLabel: label, account: nil)
             try installer.run(plan) { print("Kernova Guest Agent: \($0)") }
             print(
@@ -131,15 +132,10 @@ public enum MacAgentTools {
         }
     }
 
-    /// `agent.payload` in the directory holding the app bundle `executable` runs from: the installer disk's root.
-    static func payloadBeside(_ executable: String) -> String {
-        let bundle = executable.dropLast(("/" + MacInstallLayout.executable).count)
-        let directory = bundle.split(separator: "/", omittingEmptySubsequences: false).dropLast()
-        return directory.joined(separator: "/") + "/" + payloadName
+    /// The app bundle `executable` runs from.
+    static func bundle(of executable: String) -> String {
+        String(executable.dropLast(("/" + MacInstallLayout.executable).count))
     }
-
-    /// The update payload's name on the installer disk and in the host's bundle.
-    public static let payloadName = "agent.payload"
 
     // MARK: Rollback
 

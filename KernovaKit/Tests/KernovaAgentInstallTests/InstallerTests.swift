@@ -55,7 +55,7 @@ struct InstallerTests {
 
         func installer(account: String? = nil) -> Installer {
             Installer(
-                stagingRoot: root, runsCommands: false, payloadSource: payload, lander: TestLander(),
+                stagingRoot: root, runsCommands: false, payloadSource: .file(payload), lander: TestLander(),
                 versionLabel: "9.9 (99)", account: account)
         }
 

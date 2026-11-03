@@ -226,7 +226,7 @@ struct ContainerTreeTests {
         try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
         let lander = ContainerTreeLander(itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent")
         let installer = Installer(
-            stagingRoot: stage, runsCommands: false, payloadSource: payload, lander: lander,
+            stagingRoot: stage, runsCommands: false, payloadSource: .file(payload), lander: lander,
             versionLabel: "9.9 (99)", account: nil)
         let definitions = TestDefinitions(root: root, directory: "/services")
         for _ in 0..<2 {
@@ -234,6 +234,26 @@ struct ContainerTreeTests {
             #expect(try BundleFixture.describe(stage + "/agent/slots/a/" + Self.itemName) == BundleFixture.expected)
             #expect(try FileManager.default.contentsOfDirectory(atPath: stage + "/agent/slots/a") == [Self.itemName])
         }
+        let state = try InstallState.decoded(
+            Array(try Data(contentsOf: URL(fileURLWithPath: stage + "/agent/state.json"))))
+        #expect(state.slots["a"]?.payloadSHA256 == lowercaseHex(Data(SHA256.hash(Array(frozen)))))
+    }
+
+    @Test("An install from a directory packs it as it lands, recording the SHA-256 of the packed tree")
+    func installPacksDirectory() throws {
+        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
+        let bundle = try BundleFixture()
+        let scratch = try PortableScratchDirectory(prefix: "kernova-container-install")
+        let root = InstallRoot(path: "/agent")
+        let stage = scratch.path + "/stage"
+        try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
+        let installer = Installer(
+            stagingRoot: stage, runsCommands: false, payloadSource: .packedDirectory(bundle.path),
+            lander: ContainerTreeLander(itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent"),
+            versionLabel: "9.9 (99)", account: nil)
+        let definitions = TestDefinitions(root: root, directory: "/services")
+        try installer.run(.install(root: root, payloadName: Self.itemName, definitions: definitions))
+        #expect(try BundleFixture.describe(stage + "/agent/slots/a/" + Self.itemName) == BundleFixture.expected)
         let state = try InstallState.decoded(
             Array(try Data(contentsOf: URL(fileURLWithPath: stage + "/agent/state.json"))))
         #expect(state.slots["a"]?.payloadSHA256 == lowercaseHex(Data(SHA256.hash(Array(frozen)))))

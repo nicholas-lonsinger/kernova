@@ -67,7 +67,7 @@ public struct ContainerTreeLander: PayloadLander {
             operation, errno throws(Installer.Failure) in
             Installer.Failure.system(operation: operation, path: slot.path, errno: errno)
         }
-        while let piece = try payload.next() {
+        try payload.read { piece throws(Installer.Failure) in
             do throws(TreeWriteFailure) {
                 try landing.receive(Data(piece))
             } catch {
@@ -107,7 +107,8 @@ public struct ContainerTreeLander: PayloadLander {
             throw try failure("dup", code)
         }
         let receiver = TreeReceiver(
-            name: Array(name.utf8), accepting: acceptance, decodingWorkers: 0, fileSystem: POSIXTreeFileSystem(), destination: destination,
+            name: Array(name.utf8), accepting: acceptance, decodingWorkers: 0, fileSystem: POSIXTreeFileSystem(),
+            destination: destination,
             destinationPathByteCount: path.utf8.count)
         return TreeLanding(receiver: receiver, name: name, directory: held)
     }

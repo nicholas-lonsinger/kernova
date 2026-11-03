@@ -131,7 +131,7 @@ public final class MacAgentPeer: Sendable {
         }
         let layout = MacInstallLayout.user(home: String(root.dropLast(suffix.count)), userID: getuid())
         let installer = Installer(
-            stagingRoot: "", runsCommands: true, payloadSource: "", lander: lander, versionLabel: "", account: nil)
+            stagingRoot: "", runsCommands: true, payloadSource: nil, lander: lander, versionLabel: "", account: nil)
         do throws(Installer.Failure) {
             try installer.run(.refreshJobs(layout))
             logger.log(.notice, "Rewrote the user's jobs for this version")

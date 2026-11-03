@@ -41,6 +41,8 @@ public struct Installer {
         case command(arguments: [String], status: Int32)
         /// The account the system scope's root belongs to does not exist.
         case noAccount(String)
+        /// The directory at `path` could not be packed as the payload.
+        case packing(path: String, detail: String)
 
         /// The failure as the installer prints it.
         public var description: String {
@@ -54,6 +56,7 @@ public struct Installer {
                     ? "cannot run \(arguments.joined(separator: " "))"
                     : "\(arguments.joined(separator: " ")) exited \(status)"
             case .noAccount(let name): "the \(name) account does not exist"
+            case .packing(let path, let detail): "cannot pack \(path): \(detail)"
             }
         }
     }
@@ -62,8 +65,8 @@ public struct Installer {
     let stagingRoot: String
     /// Whether commands run.
     let runsCommands: Bool
-    /// The file holding the payload a `.payload` write lands.
-    let payloadSource: String
+    /// The payload a `.payload` write lands; nil for an installer whose plans write none.
+    let payloadSource: InstallPayloadSource?
     /// What lands it.
     let lander: any PayloadLander
     /// The display version the payload reports.
@@ -76,7 +79,7 @@ public struct Installer {
     /// `runsCommands`, whose `.payload` write lands `payloadSource` through `lander`, recorded as `versionLabel`,
     /// and whose root belongs to `account`.
     public init(
-        stagingRoot: String, runsCommands: Bool, payloadSource: String, lander: any PayloadLander,
+        stagingRoot: String, runsCommands: Bool, payloadSource: InstallPayloadSource?, lander: any PayloadLander,
         versionLabel: String, account: String?
     ) {
         self.stagingRoot = stagingRoot
@@ -146,10 +149,18 @@ public struct Installer {
         }
     }
 
+    /// Opens the payload `plan` writes, before any step, so a missing one changes nothing: the file, or the
+    /// directory that is packed.
     private func openPayload(_ plan: InstallPlan) throws(Failure) -> Int32? {
         guard plan.treeWrites.contains(where: { if case .payload = $0 { true } else { false } }) else { return nil }
-        let source = open(payloadSource, O_RDONLY | O_CLOEXEC)
-        guard source >= 0 else { throw .system(operation: "open", path: payloadSource, errno: errno) }
+        guard let payloadSource else { preconditionFailure("a plan writing a payload, given none") }
+        let flags =
+            switch payloadSource {
+            case .file: O_RDONLY | O_CLOEXEC
+            case .packedDirectory: O_RDONLY | O_DIRECTORY | O_CLOEXEC
+            }
+        let source = open(payloadSource.path, flags)
+        guard source >= 0 else { throw .system(operation: "open", path: payloadSource.path, errno: errno) }
         return source
     }
 
@@ -312,8 +323,8 @@ public struct Installer {
                 }
             }
         case .payload(let path, let state):
-            guard let source else { throw .system(operation: "open", path: payloadSource, errno: EBADF) }
-            let payload = InstallPayloadReader(source, path: payloadSource)
+            guard let source, let payloadSource else { preconditionFailure("a payload write with no payload open") }
+            let payload = InstallPayloadReader(payloadSource, descriptor: source)
             try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
                 let slot = InstallDirectory(
                     descriptor: parent, path: String(path.dropLast(name.count + 1)), owner: owner)
