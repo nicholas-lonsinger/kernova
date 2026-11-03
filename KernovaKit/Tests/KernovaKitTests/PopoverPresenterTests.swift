@@ -46,12 +46,20 @@ struct PopoverPresenterTests {
         #expect(!presenter.isShown)
     }
 
-    /// Content in a window, standing in for a popover's: first responder needs
-    /// neither key status nor presentation.
+    private final class FocusableView: NSView {
+        override var acceptsFirstResponder: Bool { true }
+    }
+
+    /// Content in a window, standing in for a popover's, with the window's content
+    /// view left for anything outside it: first responder needs neither key status
+    /// nor presentation.
     private func makeContent() -> (content: NSViewController, window: NSWindow) {
+        let frame = NSRect(x: 0, y: 0, width: 200, height: 100)
         let content = NSViewController()
-        content.view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
-        return (content, NSWindow(contentViewController: content))
+        content.view = NSView(frame: frame)
+        let window = NSWindow(contentRect: frame, styleMask: [], backing: .buffered, defer: true)
+        window.contentView?.addSubview(content.view)
+        return (content, window)
     }
 
     @Test("content with nothing that takes the keyboard has it held for it")
@@ -65,16 +73,42 @@ struct PopoverPresenterTests {
     }
 
     @Test("a view in the content that took the keyboard keeps it")
-    func leavesTheKeyboardWithAFocusedField() throws {
+    func leavesTheKeyboardWithAFocusedView() {
         let (content, window) = makeContent()
-        let field = NSTextField(string: "note")
-        content.view.addSubview(field)
+        let focusable = FocusableView()
+        content.view.addSubview(focusable)
+        #expect(window.makeFirstResponder(focusable))
+
+        PopoverPresenter().takeKeyboard(for: content, behavior: .transient)
+
+        #expect(window.firstResponder === focusable)
+    }
+
+    @Test("a view outside the content gives up the keyboard")
+    func takesTheKeyboardFromAViewOutsideTheContent() throws {
+        let (content, window) = makeContent()
+        let elsewhere = FocusableView()
+        window.contentView?.addSubview(elsewhere)
+        #expect(window.makeFirstResponder(elsewhere))
+
+        PopoverPresenter().takeKeyboard(for: content, behavior: .transient)
+
+        let focused = try #require(window.firstResponder as? NSView)
+        #expect(focused.isDescendant(of: content.view))
+    }
+
+    @Test("text being edited outside the content keeps the keyboard")
+    func leavesTheKeyboardWithTextBeingEdited() throws {
+        let (content, window) = makeContent()
+        let field = NSTextField(string: "name")
+        window.contentView?.addSubview(field)
         #expect(window.makeFirstResponder(field))
-        let editor = try #require(window.firstResponder)
+        let editor = try #require(window.firstResponder as? NSText)
 
         PopoverPresenter().takeKeyboard(for: content, behavior: .transient)
 
         #expect(window.firstResponder === editor)
+        #expect(content.view.subviews.isEmpty)
     }
 
     @Test("showing the same content again keeps one holder")

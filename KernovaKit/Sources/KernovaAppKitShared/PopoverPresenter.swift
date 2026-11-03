@@ -35,8 +35,9 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
     /// `preferredContentSize`.
     ///
     /// A `.transient` or `.semitransient` popover has the keyboard while it is
-    /// up, and AppKit returns it to the parent window's first responder as the
-    /// popover closes. An `.applicationDefined` one leaves the keyboard alone.
+    /// up, unless text is being edited, and AppKit returns it to the parent
+    /// window's first responder as the popover closes. An `.applicationDefined`
+    /// one leaves the keyboard alone.
     public func show(
         content: NSViewController,
         from anchor: NSView,
@@ -75,10 +76,16 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
     }
 
     /// Gives `content`'s popover the keyboard, unless `behavior` is
-    /// `.applicationDefined` or a view in `content` already took it.
+    /// `.applicationDefined`, a view in `content` already took it, or text is
+    /// being edited.
     func takeKeyboard(for content: NSViewController, behavior: NSPopover.Behavior) {
         guard behavior != .applicationDefined, let window = content.view.window else { return }
-        if let focused = window.firstResponder as? NSView, focused.isDescendant(of: content.view) {
+        // Taking the keyboard from text being edited would commit it half-typed,
+        // and a sidebar rename ended that way leaves the keyboard reaching nothing
+        // once the popover closes (observed on macOS 27.2).
+        if let focused = window.firstResponder as? NSView,
+            focused.isDescendant(of: content.view) || focused is NSText
+        {
             return
         }
         // With nothing in the popover accepting first responder, keys go to the
