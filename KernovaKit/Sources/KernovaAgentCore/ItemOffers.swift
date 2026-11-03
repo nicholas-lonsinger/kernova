@@ -228,7 +228,7 @@ package struct ItemOfferRegistry: Sendable {
             return refuse(stream, .malformedMessage, "an Item that does not decode", &connection)
         }
         // A copy, so the item holds exactly its bytes rather than the received buffer it was cut from.
-        let held = message.isEmpty ? Data() : message.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
+        let held = message.withUnsafeBytes { Data($0) }
         remote[index].items.append(held)
         remote[index].charged += held.count
         remoteCharged += held.count
