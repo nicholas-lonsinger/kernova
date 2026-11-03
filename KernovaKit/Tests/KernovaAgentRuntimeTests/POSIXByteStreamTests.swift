@@ -55,22 +55,23 @@ enum RawSocket {
         #else
         let datagram = SOCK_DGRAM
         #endif
-        // A port the kernel picked and then freed, so nothing listens on it.
-        let probe = socket(AF_INET, datagram, 0)
-        guard probe >= 0 else { throw ByteStreamError.system(errno) }
-        defer { close(probe) }
-        let bound = withUnsafeMutablePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
-                bind(probe, pointer, length) == 0 && getsockname(probe, pointer, &length) == 0
+        // A port the kernel picked and then freed, so nothing listens on it: the probe closes before the send.
+        try { () throws(ByteStreamError) in
+            let probe = socket(AF_INET, datagram, 0)
+            guard probe >= 0 else { throw .system(errno) }
+            defer { close(probe) }
+            let bound = withUnsafeMutablePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
+                    bind(probe, pointer, length) == 0 && getsockname(probe, pointer, &length) == 0
+                }
             }
-        }
-        guard bound else { throw ByteStreamError.system(errno) }
+            guard bound else { throw .system(errno) }
+        }()
         let descriptor = socket(AF_INET, datagram, 0)
         guard descriptor >= 0 else { throw ByteStreamError.system(errno) }
         let connected = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, length) == 0 }
         }
-        close(probe)
         var byte: UInt8 = 0
         guard connected, write(descriptor, &byte, 1) == 1 else {
             let error = errno

@@ -23,9 +23,8 @@ import Dispatch
 import KernovaAgentRuntime
 import KernovaSynchronization
 
-/// A `ByteStream` over a connected stream socket in non-blocking mode: it reads and writes on the start queue,
-/// and waits through `SocketReadiness` whenever the socket is not ready. The host's, Linux guests' and
-/// macOS 15+ guests' streams.
+/// A `ByteStream` over a connected stream socket in non-blocking mode, waiting through `SocketReadiness`
+/// whenever the socket is not ready. The host's streams to its guests, and the Linux agent's stream to the host.
 ///
 /// A write to a socket the far side closed fails with `EPIPE` and never raises SIGPIPE: Darwin sets
 /// `SO_NOSIGPIPE` on the socket, Linux passes `MSG_NOSIGNAL` to each `sendmsg`.
@@ -85,7 +84,7 @@ public final class POSIXByteStream: ByteStream {
         state = Locked(State())
     }
 
-    /// Begins reading on `queue`, where every read, write and readiness runs.
+    /// Begins reading on `queue`, where every read, readiness and completion runs.
     public func start(on queue: DispatchQueue, _ handler: @escaping @Sendable (ByteStreamEvent) -> Void) {
         let shutBeforeStart = state.withLock { state -> Bool in
             precondition(state.queue == nil, "a stream started twice")
@@ -113,7 +112,8 @@ public final class POSIXByteStream: ByteStream {
         queue?.async { [self] in readReady() }
     }
 
-    /// Writes at once what the socket accepts and the rest as it drains; completes on the start queue.
+    /// Sends at once, on the caller's thread, what the socket accepts, and the rest on the start queue as it
+    /// drains; completes on the start queue.
     public func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void) {
         let refused = state.withLock { state -> (DispatchQueue, ByteStreamError)? in
             guard let queue = state.queue else { preconditionFailure("a write before start") }
@@ -158,7 +158,7 @@ public final class POSIXByteStream: ByteStream {
         if let queue { queue.async(execute: deliver) } else { deliver() }
     }
 
-    // MARK: On the start queue
+    // MARK: Reading and writing
 
     /// Reads once, waiting for readiness when the socket has nothing yet.
     private func readReady() {
