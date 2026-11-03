@@ -177,7 +177,7 @@ struct TreeBench {
             let encoder = ContainerEncodePipeline(
                 accepting: sending, policy: compression.chunkPolicy, workers: compression.encodingWorkers)
             let receiver = TreeReceiver(
-                accepting: acceptance, decodingWorkers: decodingWorkers, fileSystem: fileSystem,
+                name: name, accepting: acceptance, decodingWorkers: decodingWorkers, fileSystem: fileSystem,
                 destination: destination, destinationPathByteCount: destinationBytes.count)
             while true {
                 let sendStart = DispatchTime.now().uptimeNanoseconds

@@ -27,7 +27,7 @@ struct HostileContainerTests {
     /// A folder `r` holding `child`, its bytes, and the end.
     private static func folder(holding child: EntryHeader, content: Data = Data()) -> Data {
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.file(child, content)
         container.end()
         return container.data
@@ -38,7 +38,7 @@ struct HostileContainerTests {
     ]
 
     @Test(
-        "a name that is `..`, `.`, absolute, empty, or holds `/` or NUL is refused, below the root and as it",
+        "a name that is `..`, `.`, absolute, empty, or holds `/` or NUL is refused, below the root and as the item's",
         arguments: bothLayers, invalidNames)
     func invalidNamesAreRefused(kernelContainment: Bool, name: [UInt8]) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
@@ -47,10 +47,22 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
 
         var root = RawContainer()
-        root.header(directory(name, depth: 0))
+        root.header(directory(depth: 0))
         root.end()
-        let atRoot = try landing.land(root.data).failure
-        #expect(atRoot == TreeWriteFailure(path: [], reason: .container(.invalidName)))
+        let atRoot = try landing.land(root.data, as: name).failure
+        #expect(atRoot == TreeWriteFailure(path: [name], reason: .container(.invalidName)))
+        try landing.expectNothingOutside()
+    }
+
+    @Test("a container whose root is named is refused as malformed, landing nothing", arguments: bothLayers)
+    func namedRootIsRefused(kernelContainment: Bool) throws {
+        let landing = try Landing(kernelContainment: kernelContainment)
+        var container = RawContainer()
+        container.header(directory("r", depth: 0))
+        container.end()
+        let failure = try #require(try landing.land(container.data).failure)
+        #expect(failure.reason == .container(.rootEntryNamed))
+        #expect(failure.wireError.code == .itemContainerMalformed)
         try landing.expectNothingOutside()
     }
 
@@ -58,7 +70,7 @@ struct HostileContainerTests {
     func depthJumpsAreRefused(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.header(directory("a", depth: 1))
         container.header(file("deep", depth: 3, size: 0))
         container.end()
@@ -77,7 +89,7 @@ struct HostileContainerTests {
     func entriesBeneathSymlinksAreRefused(kernelContainment: Bool, asDirectory: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.header(symlinkEntry("s", depth: 1, target: landing.outsidePath))
         if asDirectory {
             container.header(directory("s", depth: 1))
@@ -125,7 +137,7 @@ struct HostileContainerTests {
     func duplicatesFailAtCreation(kernelContainment: Bool, shape: Shape) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.file(file("before", depth: 1, size: 1), Data("b".utf8))
         shape.append(to: &container, name: "twice")
         container.file(file("after", depth: 1, size: 1), Data("a".utf8))
@@ -157,7 +169,7 @@ struct HostileContainerTests {
         let landing = try Landing(kernelContainment: kernelContainment)
         let folds = try Self.volumeFolds(first, second, in: landing)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.file(file(first, depth: 1, size: 1), Data("1".utf8))
         container.file(file(second, depth: 1, size: 1), Data("2".utf8))
         container.end()
@@ -184,7 +196,7 @@ struct HostileContainerTests {
             (.chunk, ContainerRecord.maxChunkPayload + 1),
         ] {
             var container = RawContainer()
-            container.header(directory("r", depth: 0))
+            container.header(directory(depth: 0))
             container.header(file("f", depth: 1, size: 1 << 21))
             var prefix = Data([kind.rawValue])
             prefix.append(contentsOf: (0..<4).map { UInt8(truncatingIfNeeded: length >> ($0 * 8)) })
@@ -198,7 +210,7 @@ struct HostileContainerTests {
         }
 
         var lz4 = RawContainer()
-        lz4.header(directory("r", depth: 0))
+        lz4.header(directory(depth: 0))
         var header = file("f", depth: 1, size: 1 << 21)
         header.lz4.size = 1 << 21
         lz4.header(header)
@@ -220,7 +232,7 @@ struct HostileContainerTests {
     func oversizeSizesAreRefused(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
         var alone = RawContainer()
-        alone.header(directory("r", depth: 0))
+        alone.header(directory(depth: 0))
         alone.header(file("big", depth: 1, size: 1001))
         #expect(
             try landing.land(alone.data, accepting: acceptance(ceiling: 1000)).failure
@@ -229,7 +241,7 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
 
         var together = RawContainer()
-        together.header(directory("r", depth: 0))
+        together.header(directory(depth: 0))
         together.file(file("a", depth: 1, size: 600), pattern(600))
         together.header(file("b", depth: 1, size: 401))
         #expect(
@@ -239,7 +251,7 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
 
         var forked = RawContainer()
-        forked.header(directory("r", depth: 0))
+        forked.header(directory(depth: 0))
         forked.header(withResourceFork(file("f", depth: 1, size: 600), size: 401))
         #expect(
             try landing.land(forked.data, accepting: acceptance(ceiling: 1000)).failure
@@ -248,7 +260,7 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
 
         var past = RawContainer()
-        past.header(directory("r", depth: 0))
+        past.header(directory(depth: 0))
         past.header(file("f", depth: 1, size: 2))
         past.chunk(Data("abc".utf8))
         #expect(
@@ -262,7 +274,7 @@ struct HostileContainerTests {
     /// with resource forks, and a symlink.
     private static func everyKind() -> RawContainer {
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.header(directory("nested", depth: 1))
         container.file(file("small", depth: 2, size: 5), Data("small".utf8))
         container.header(file("large", depth: 2, size: largeFileSize + 4096))
@@ -324,7 +336,7 @@ struct HostileContainerTests {
         node.type = .UNRECOGNIZED(type)
         node.storage = nil
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.header(node)
         container.end()
         #expect(
@@ -338,7 +350,7 @@ struct HostileContainerTests {
         let landing = try Landing(kernelContainment: true)
         try #require(mkdir(landing.destinationPath + "/r", 0o755) == 0)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.file(file("f", depth: 1, size: 1), Data("f".utf8))
         container.end()
         #expect(

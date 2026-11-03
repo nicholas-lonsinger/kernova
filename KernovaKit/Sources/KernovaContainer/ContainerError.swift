@@ -42,8 +42,11 @@ public enum ContainerError: Error, Equatable, Sendable {
     /// An event its place in the stream does not admit: a leave with no directory entered, a fork's start or a
     /// file's finish with no file open or a fork already started, or the end inside a directory.
     case eventOutOfOrder
-    /// An entry's name is empty, `.` or `..`, longer than 255 bytes, or holds `/` or NUL.
+    /// A name — an entry's below depth 0, or the item's own — is empty, `.` or `..`, longer than 255 bytes, or
+    /// holds `/` or NUL.
     case invalidName
+    /// The depth-0 entry has a name: the item's own name travels in its offer, and the container carries none.
+    case rootEntryNamed
     /// A DATA entry has a name or metadata: it is an INLINE representation's bytes and nothing else.
     case dataEntryNotBare
     /// An entry's storage is missing where its type needs one, present where it takes none, or decmpfs on

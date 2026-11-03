@@ -58,7 +58,8 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
     }
 
     /// A reader of the item `name` in `parent`, which must be what `acceptance`'s storage names: a directory
-    /// for FOLDER, a regular file for FILE.
+    /// for FOLDER, a regular file for FILE. The item's own header carries no name; `name` is the first
+    /// component of every ``TreeReadFailure``'s path.
     ///
     /// - Parameters:
     ///   - fileSystem: The calls the reader makes.
@@ -333,14 +334,15 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         return status
     }
 
-    /// The header describing an entry of `status`, with the carried extended attributes of `target`.
+    /// The header describing an entry of `status`, with the carried extended attributes of `target`: named
+    /// `name` below depth 0, unnamed as the item's own entry.
     private func header(
         _ name: [UInt8], depth: UInt32, type: EntryHeader.TypeEnum, status: FileStatus,
         attributesOf target: TreeEntryTarget, path: [[UInt8]]
     ) throws(TreeReadFailure) -> EntryHeader {
         var header = EntryHeader()
         header.depth = depth
-        header.name = Data(name)
+        if depth > 0 { header.name = Data(name) }
         header.type = type
         header.mode = status.permissions
         header.darwinFlags = status.flags & ValidatedEntry.allowedDarwinFlags

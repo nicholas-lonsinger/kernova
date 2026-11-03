@@ -250,7 +250,6 @@ struct PipelineBench {
     static func events(of bytes: Data, entrySize: Int, lz4: Bool) -> [TreeEvent] {
         var root = EntryHeader()
         root.type = .directory
-        root.name = Data("corpus".utf8)
         root.mode = 0o755
         var events: [TreeEvent] = [.enterDirectory(root)]
         for (index, start) in stride(from: 0, to: bytes.count, by: entrySize).enumerated() {

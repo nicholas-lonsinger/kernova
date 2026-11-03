@@ -80,15 +80,15 @@ struct WriterBoundsTests {
         arguments: breaches)
     func writerHoldsEntryRules(breach: Breach) throws {
         let landing = try Landing(kernelContainment: true)
-        var root = directory("r", depth: 0)
+        var root = directory(depth: 0)
         breach.change(&root)
         #expect(
             Self.failure(writing: [.enterDirectory(root)], to: try landing.writer())
                 == TreeWriteFailure(path: [bytes("r")], reason: .container(breach.rule)))
-        var rootFile = file("f", depth: 0, size: 1)
+        var rootFile = file(depth: 0, size: 1)
         breach.change(&rootFile)
         #expect(
-            Self.failure(writing: [.beginFile(rootFile)], to: try landing.writer(.file))
+            Self.failure(writing: [.beginFile(rootFile)], to: try landing.writer(.file, as: bytes("f")))
                 == TreeWriteFailure(path: [bytes("f")], reason: .container(breach.rule)))
         for var child in [
             file("c", depth: 1, size: 1), file("c", depth: 1, size: largeFileSize), directory("c", depth: 1),
@@ -102,7 +102,7 @@ struct WriterBoundsTests {
                 default: .beginFile(child)
                 }
             #expect(
-                Self.failure(writing: [.enterDirectory(directory("r", depth: 0)), event], to: try landing.writer())
+                Self.failure(writing: [.enterDirectory(directory(depth: 0)), event], to: try landing.writer())
                     == TreeWriteFailure(path: [bytes("r"), bytes("c")], reason: .container(breach.rule)))
         }
         try landing.expectNothingOutside()
@@ -116,7 +116,7 @@ struct WriterBoundsTests {
             link.symlinkTarget = target
             #expect(
                 Self.failure(
-                    writing: [.enterDirectory(directory("r", depth: 0)), .symlink(link)], to: try landing.writer())
+                    writing: [.enterDirectory(directory(depth: 0)), .symlink(link)], to: try landing.writer())
                     == TreeWriteFailure(
                         path: [bytes("r"), bytes("s")], reason: .container(.invalidSymlinkTarget)))
         }
@@ -127,7 +127,7 @@ struct WriterBoundsTests {
     func emptyPiecesAreRefused(size: UInt64) throws {
         let landing = try Landing(kernelContainment: true)
         let opening: [TreeEvent] = [
-            .enterDirectory(directory("r", depth: 0)), .beginFile(file("f", depth: 1, size: size)),
+            .enterDirectory(directory(depth: 0)), .beginFile(file("f", depth: 1, size: size)),
         ]
         for piece in [TreeEvent.bytes(Data()), .zeros(0)] {
             #expect(
@@ -144,7 +144,7 @@ struct WriterBoundsTests {
         let landing = try Landing(kernelContainment: true)
         let writer = try landing.writer()
         let buffer = pattern(1 << 20)
-        try writer.write(.enterDirectory(directory("r", depth: 0)))
+        try writer.write(.enterDirectory(directory(depth: 0)))
         try writer.write(.beginFile(withResourceFork(file("f", depth: 1, size: 3), size: 3)))
         try writer.write(.bytes(buffer[1000..<1002]))
         try writer.write(.zeros(1))
@@ -171,7 +171,7 @@ struct WriterBoundsTests {
         let landing = try Landing(kernelContainment: true)
         let pieces = 65_536
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.header(file("held", depth: 1, size: UInt64(pieces)))
         for _ in 0..<pieces { container.chunk(Data([0x41])) }
         container.header(file("written", depth: 1, size: largeFileSize + UInt64(pieces)))
@@ -200,11 +200,11 @@ struct WriterBoundsTests {
         let more = Data(repeating: block.data[0], count: 1) + block.data.dropFirst()
 
         var decoderFails = RawContainer()
-        decoderFails.header(directory("r", depth: 0))
-        decoderFails.header(directory("r", depth: 0))
+        decoderFails.header(directory(depth: 0))
+        decoderFails.header(directory(depth: 0))
         try #require(mkdir(landing.destinationPath + "/r", 0o755) == 0)
         var writerFails = RawContainer()
-        writerFails.header(directory("r", depth: 0))
+        writerFails.header(directory(depth: 0))
         writerFails.end()
         for (container, finishes) in [(decoderFails.data, false), (writerFails.data, true)] {
             let receiver = try landing.receiver(acceptance())
@@ -226,9 +226,9 @@ struct WriterBoundsTests {
     func lateFailuresNameTheItem() throws {
         let landing = try Landing(kernelContainment: true)
         var truncatedFile = RawContainer()
-        truncatedFile.file(file("report", depth: 0, size: 5), Data("hello".utf8))
+        truncatedFile.file(file(depth: 0, size: 5), Data("hello".utf8))
         #expect(
-            try landing.land(truncatedFile.data, accepting: acceptance(.file)).failure
+            try landing.land(truncatedFile.data, as: bytes("report"), accepting: acceptance(.file)).failure
                 == TreeWriteFailure(path: [bytes("report")], reason: .container(.truncated)))
 
         var miscounted = truncatedFile
@@ -237,10 +237,11 @@ struct WriterBoundsTests {
         end.bytes = 5
         miscounted.record(.end, RawContainer.serialized(end))
         #expect(
-            try landing.land(miscounted.data, accepting: acceptance(.file)).failure?.path == [bytes("report")])
+            try landing.land(miscounted.data, as: bytes("report"), accepting: acceptance(.file)).failure?.path
+                == [bytes("report")])
 
         var folder = RawContainer()
-        folder.header(directory("r", depth: 0))
+        folder.header(directory(depth: 0))
         folder.file(file("f", depth: 1, size: 1), Data("x".utf8))
         folder.end()
         #expect(
@@ -248,7 +249,7 @@ struct WriterBoundsTests {
                 == TreeWriteFailure(path: [bytes("r")], reason: .container(.bytesAfterEnd)))
 
         let afterEnd = Self.failure(
-            writing: [.enterDirectory(directory("r", depth: 0)), .leaveDirectory, .end, .end],
+            writing: [.enterDirectory(directory(depth: 0)), .leaveDirectory, .end, .end],
             to: try landing.writer())
         #expect(afterEnd == TreeWriteFailure(path: [bytes("r")], reason: .container(.bytesAfterEnd)))
         try landing.expectNothingOutside()
@@ -262,7 +263,7 @@ struct WriterBoundsTests {
             logged.withLock { $0.append("\(level): " + segments.map(\.text).joined()) }
         }
         let writer = try landing.writer(logger: logger)
-        try writer.write(.enterDirectory(directory("r", depth: 0)))
+        try writer.write(.enterDirectory(directory(depth: 0)))
         let staging = landing.destinationPath + "/" + String(decoding: writer.stagingName, as: UTF8.self)
         try #require(rename(staging, landing.destinationPath + "/moved") == 0)
         #expect(

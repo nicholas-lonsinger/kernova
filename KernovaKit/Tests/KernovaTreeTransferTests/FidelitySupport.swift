@@ -138,7 +138,7 @@ final class FidelityBench {
         let reader = try TreeReader(fileSystem: fileSystem, item: name, in: parent, accepting: acceptance)
         var encoder = ContainerEncoder(accepting: acceptance, policy: policy)
         let receiver = TreeReceiver(
-            accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem,
+            name: name, accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem,
             destination: try fileSystem.openDirectory(bytes(destinationPath), in: AT_FDCWD),
             destinationPathByteCount: destinationPath.utf8.count)
         while let event = try reader.next() {
