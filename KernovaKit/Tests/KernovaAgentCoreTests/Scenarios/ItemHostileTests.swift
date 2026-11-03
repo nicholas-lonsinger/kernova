@@ -181,7 +181,8 @@ extension HostileRows {
                 ], preamble: true)
         },
         HostileRow(
-            name: "ITEM_PULL of a token no offer holds → RESET ITEM_OFFER_STALE", local: .host, items: true, outcome: .streamReset(.itemOfferStale)
+            name: "ITEM_PULL of a token no offer holds → RESET ITEM_OFFER_STALE", local: .host, items: true,
+            outcome: .streamReset(.itemOfferStale)
         ) { run in
             run.feed(
                 [HostileItems.peerHello, WireFrames.open(1, .itemPullByPeer, body: SimItems.request(9))], preamble: true
@@ -223,7 +224,8 @@ extension HostileRows {
                 ], preamble: true)
         },
         HostileRow(
-            name: "an offer's END short of its count → RESET STREAM_PROTOCOL_ERROR", local: .host, items: true, outcome: .streamReset(.streamProtocolError)
+            name: "an offer's END short of its count → RESET STREAM_PROTOCOL_ERROR", local: .host, items: true,
+            outcome: .streamReset(.streamProtocolError)
         ) { run in
             run.feed(
                 [
@@ -236,7 +238,8 @@ extension HostileRows {
             return expectThat(!received, "the short offer was received")
         },
         HostileRow(
-            name: "an offer Item that does not decode → RESET MALFORMED_MESSAGE", local: .host, items: true, outcome: .streamReset(.malformedMessage)
+            name: "an offer Item that does not decode → RESET MALFORMED_MESSAGE", local: .host, items: true,
+            outcome: .streamReset(.malformedMessage)
         ) { run in
             run.feed(
                 [
@@ -256,7 +259,8 @@ extension HostileRows {
                 ], preamble: true)
         },
         HostileRow(
-            name: "a second offer of an open token → RESET STREAM_PROTOCOL_ERROR", local: .host, items: true, outcome: .streamReset(.streamProtocolError)
+            name: "a second offer of an open token → RESET STREAM_PROTOCOL_ERROR", local: .host, items: true,
+            outcome: .streamReset(.streamProtocolError)
         ) { run in
             run.feed(
                 [

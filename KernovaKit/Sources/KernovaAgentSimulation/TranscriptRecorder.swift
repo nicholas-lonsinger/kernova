@@ -336,7 +336,8 @@ package struct Exchange: Sendable {
             id: "C02", title: "clipboard: the host pulls the FILE of a peer's clipboard offer → LANDED",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
-                (500, .offer(.peer, .clipboard, "file-2k")), (600, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
+                (500, .offer(.peer, .clipboard, "file-2k")),
+                (600, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
             ], end: 1000),
         Exchange(
             id: "C03",
@@ -352,7 +353,8 @@ package struct Exchange: Sendable {
             id: "C04", title: "drop: the peer pulls the FOLDER of the host's drop offer → LANDED, then releases it",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
-                (500, .offer(.host, .drop, "folder-4k")), (600, .itemPull(.peer, SimItems.request(3, ceiling: 1 << 20))),
+                (500, .offer(.host, .drop, "folder-4k")),
+                (600, .itemPull(.peer, SimItems.request(3, ceiling: 1 << 20))),
                 (700, .release(.peer, SimItems.token(3))),
             ], end: 1000),
         Exchange(
@@ -360,7 +362,8 @@ package struct Exchange: Sendable {
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
                 (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))), (650, .answerTake(.taken)),
-                (700, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))), (800, .release(.host, SimItems.token(1))),
+                (700, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
+                (800, .release(.host, SimItems.token(1))),
             ], end: 1000),
         Exchange(
             id: "C06", title: "drag: the peer refuses a take DRAG_PRESS_OVER, then withdraws its drag",
@@ -789,10 +792,13 @@ package enum TranscriptEvents {
     package static func describe(_ event: DragTakeEvent, side: SimSide) -> String {
         let prefix = side == .host ? "host drag" : "peer drag"
         return switch event {
-        case .requested(let id, let token): "\(prefix) takeRequested id=\(id.stream.rawValue) token=\(FrozenFields.hex(token))"
+        case .requested(let id, let token):
+            "\(prefix) takeRequested id=\(id.stream.rawValue) token=\(FrozenFields.hex(token))"
         case .ended(let id, .taken): "\(prefix) takeEnded id=\(id.stream.rawValue) taken"
-        case .ended(let id, .refused(let error)): "\(prefix) takeEnded id=\(id.stream.rawValue) refused code=\(error.code.rawValue)"
-        case .ended(let id, .closed(let closure)): "\(prefix) takeEnded id=\(id.stream.rawValue) closed \(describe(closure))"
+        case .ended(let id, .refused(let error)):
+            "\(prefix) takeEnded id=\(id.stream.rawValue) refused code=\(error.code.rawValue)"
+        case .ended(let id, .closed(let closure)):
+            "\(prefix) takeEnded id=\(id.stream.rawValue) closed \(describe(closure))"
         }
     }
 

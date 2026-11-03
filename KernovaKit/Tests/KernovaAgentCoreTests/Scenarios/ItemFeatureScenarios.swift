@@ -58,7 +58,8 @@ enum ItemFeatureScenarios {
                     "\(side) withdrew its first clipboard offer: \(local)")
                 let received = items(world, far)?.offersReceived.map(\.header) ?? []
                 failures += expectThat(
-                    received.filter { [SimItems.token(first), SimItems.token(second)].contains($0.token) }.map(\.feature)
+                    received.filter { [SimItems.token(first), SimItems.token(second)].contains($0.token) }.map(
+                        \.feature)
                         == [.clipboard, .clipboard],
                     "\(far) received both clipboard offers: \(received)")
                 let remote = items(world, far)?.offersEnded.filter { $0.origin == .remote } ?? []
@@ -173,7 +174,8 @@ enum ItemFeatureScenarios {
         })
 
     static let dragTakenOnce = Scenario(
-        name: "drag: a second take of a taken drag is refused DRAG_NOT_CURRENT; one naming a clipboard offer never opens",
+        name:
+            "drag: a second take of a taken drag is refused DRAG_NOT_CURRENT; one naming a clipboard offer never opens",
         seeds: 20, end: .sec(2), options: options,
         script: { world in
             dragOffered(world)
