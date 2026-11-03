@@ -257,10 +257,11 @@ struct PeerAgentRuntimeTests {
     }
 
     @Test(
-        "Item transfer is advertised available with item adapters registered; without, it and clipboard, drop and drag are absent NOT_IMPLEMENTED",
+        "Item transfer is advertised available with item adapters registered, and each feature over it where the adapters serve it; everything else is absent NOT_IMPLEMENTED",
         arguments: [true, false])
     func itemTransferAdvert(registered: Bool) async {
-        let harness = PeerRuntimeHarness(items: registered ? RegisteredItemAdapters.adapters : nil)
+        let harness = PeerRuntimeHarness(
+            items: registered ? RegisteredItemAdapters.adapters([.clipboard, .drop]) : nil)
         harness.runtime.start()
         let link = await harness.connect(1)
         let advert = link.far.peerAdvert(.itemTransfer)
@@ -271,11 +272,14 @@ struct PeerAgentRuntimeTests {
         } else {
             Issue.record("advertised \(String(describing: advert))")
         }
-        guard !registered else { return }
+        let served: [FeatureID] = registered ? [.clipboard, .drop] : []
         for feature in [FeatureID.clipboard, .drop, .drag] {
-            guard case .absent(.notImplemented, _)? = link.far.peerAdvert(feature) else {
-                Issue.record("\(feature) advertised \(String(describing: link.far.peerAdvert(feature)))")
+            switch link.far.peerAdvert(feature) {
+            case .available? where served.contains(feature),
+                .absent(.notImplemented, _)? where !served.contains(feature):
                 continue
+            case let advert:
+                Issue.record("\(feature) advertised \(String(describing: advert))")
             }
         }
     }
@@ -369,7 +373,7 @@ struct HostConnectionRuntimeTests {
         "Item transfer is advertised available with item adapters given, and absent NOT_IMPLEMENTED without",
         arguments: [true, false])
     func itemTransferAdvert(registered: Bool) async {
-        let harness = Harness(content: Data(), items: registered ? RegisteredItemAdapters.adapters : nil)
+        let harness = Harness(content: Data(), items: registered ? RegisteredItemAdapters.adapters() : nil)
         await harness.pump()
         let advert = harness.far.hostAdvert(.itemTransfer)
         if registered {

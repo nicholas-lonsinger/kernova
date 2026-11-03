@@ -209,6 +209,8 @@ package struct TraceChecker: Sendable {
 ///     hears exactly one `.release` first, and its end is landed only when the puller's sink published. No
 ///     pull has effects after its end, and a sink's decoder holds at most one record and one feed.
 /// 12. Each side holds at most one clipboard offer of its own open at any time.
+/// 13. Every item command that carries a request id is answered exactly once, before any event it caused:
+///     an offer's `.offerEnded`, a pull's `.pullEnded`, a take's `.ended`.
 ///
 /// Beyond these, a conforming run never closes INTERNAL or PROTOCOL_ERROR, and
 /// every injected fault takes effect.
@@ -523,6 +525,12 @@ package final class PropertyChecker {
 
     func endOfRun(_ world: SimWorld) {
         checkItemPulls(world)
+        for link in world.links {
+            for side in [SimSide.host, .peer] {
+                let unanswered = link.items(side).unanswered.map(\.rawValue)
+                if !unanswered.isEmpty { fail("property 13: link \(link.id) \(side) never answered \(unanswered)") }
+            }
+        }
         for link in world.links {
             for side in [SimSide.host, .peer] {
                 let closed = traces[SideKey(link: link.id, side: side)]?.connectionClosed ?? false

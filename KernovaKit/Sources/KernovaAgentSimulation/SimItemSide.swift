@@ -36,8 +36,71 @@ package final class SimItemSide {
     package private(set) var takesRequested: [(time: SimTime, id: DragTakeID, token: Data)] = []
     /// Host: every take that ended.
     package private(set) var takesEnded: [(time: SimTime, id: DragTakeID, result: DragTakeResult)] = []
+    /// Every item `.read` answered, by the token and item it named.
+    package private(set) var reads: [(time: SimTime, token: Data, item: UInt32, result: OfferedItem?)] = []
+
+    /// What an item command's answer is recorded as.
+    fileprivate enum Awaited {
+        case offer(token: Data)
+        case pull(PullRequest)
+        case take(token: Data)
+        case read(token: Data, item: UInt32)
+    }
+
+    /// The item commands sent and not yet answered.
+    private var awaiting: [ItemRequestID: Awaited] = [:]
+    private var nextRequest: UInt64 = 0
+    /// Property 13: what this side's answers opened and no event has ended yet.
+    private var answeredOffers: Set<Data> = []
+    private var answeredPulls: Set<ItemPullID> = []
+    private var answeredTakes: Set<DragTakeID> = []
 
     init() {}
+
+    /// Item `item` of the far side's offer of `token`, as this side last read it.
+    func read(_ token: Data, item: UInt32) -> OfferedItem? {
+        reads.last { $0.token == token && $0.item == item }?.result
+    }
+
+    /// The ids of the commands sent and never answered.
+    var unanswered: [ItemRequestID] { Array(awaiting.keys) }
+
+    /// The command `build` makes around a fresh request id, recording what its answer is for.
+    fileprivate func command(_ awaited: Awaited, _ build: (ItemRequestID) -> ItemCommand) -> ItemCommand {
+        nextRequest += 1
+        let id = ItemRequestID(rawValue: nextRequest)
+        awaiting[id] = awaited
+        return build(id)
+    }
+
+    /// Records the answer to the command of `id`.
+    func reply(_ id: ItemRequestID, _ reply: ItemReply, link: SimLink, side: SimSide, world: SimWorld) {
+        guard let awaited = awaiting.removeValue(forKey: id) else {
+            return world.checker.fail("property 13: link \(link.id) \(side) answer \(id.rawValue) to no command")
+        }
+        switch (awaited, reply) {
+        case (.offer(let token), .offered(let refusal)):
+            if let refusal { offerRefusals.append(refusal) } else { answeredOffers.insert(token) }
+        case (.pull(let request), .pulled(let result)):
+            pulls.append((world.now, request, result))
+            if case .success(let id) = result { answeredPulls.insert(id) }
+        case (.take(let token), .took(let result)):
+            takes.append((world.now, token, result))
+            if case .success(let id) = result { answeredTakes.insert(id) }
+        case (.read(let token, let item), .read(let result)):
+            reads.append((world.now, token, item, result))
+        default:
+            world.checker.fail("property 13: link \(link.id) \(side) answered \(awaited) with \(reply)")
+        }
+    }
+
+    /// Property 13: the event that ends what an answer opened comes after that answer.
+    private func answered<ID: Hashable>(
+        _ id: ID, in answered: inout Set<ID>, _ what: String, link: SimLink, side: SimSide, world: SimWorld
+    ) {
+        guard answered.remove(id) == nil else { return }
+        world.checker.fail("property 13: link \(link.id) \(side) \(what) ended before its answer")
+    }
 
     /// Hands one output to the source, the sink or the record; answers go back after a delay.
     func handle(_ output: ItemTransferOutput, link: SimLink, side: SimSide, world: SimWorld) {
@@ -60,10 +123,27 @@ package final class SimItemSide {
             }
         case .event(let event):
             switch event {
-            case .offerReceived(let header): offersReceived.append((world.now, header))
+            case .offerReceived(let header):
+                offersReceived.append((world.now, header))
+                // The owner reads each item as the offer arrives, as a pull's landing depends on its storage.
+                let index = world.links.firstIndex { $0 === link } ?? 0
+                world.at(world.now) { world in
+                    world.itemCommand(side, link: index) { items in
+                        (0..<UInt32(clamping: header.count)).map { item in
+                            items.command(.read(token: header.token, item: item)) {
+                                .read($0, token: header.token, item: item)
+                            }
+                        }
+                    }
+                }
             case .offerEnded(let feature, let origin, let token, let closure):
                 offersEnded.append((world.now, feature, origin, token, closure))
-            case .pullEnded(let feature, let id, let result): pullsEnded.append((world.now, feature, id, result))
+                if origin == .local {
+                    answered(token, in: &answeredOffers, "offer", link: link, side: side, world: world)
+                }
+            case .pullEnded(let feature, let id, let result):
+                pullsEnded.append((world.now, feature, id, result))
+                answered(id, in: &answeredPulls, "pull \(id.stream.rawValue)", link: link, side: side, world: world)
             case .serveEnded(let feature, let id, let result): servesEnded.append((world.now, feature, id, result))
             }
         }
@@ -78,19 +158,8 @@ package final class SimItemSide {
             world.peerInput(.dragTake(id, answer), link: link, after: .us(20))
         case .ended(let id, let result):
             takesEnded.append((world.now, id, result))
+            answered(id, in: &answeredTakes, "take \(id.stream.rawValue)", link: link, side: side, world: world)
         }
-    }
-
-    func recordTake(_ token: Data, _ result: Result<DragTakeID, WireError>, at time: SimTime) {
-        takes.append((time, token, result))
-    }
-
-    func recordPull(_ request: PullRequest, _ result: Result<ItemPullID, WireError>, at time: SimTime) {
-        pulls.append((time, request, result))
-    }
-
-    func recordOfferRefusal(_ error: WireError) {
-        offerRefusals.append(error)
     }
 
     /// Releases a consumer stall: what the sink held is consumed now.
@@ -132,17 +201,23 @@ extension SimWorld {
         }
     }
 
-    /// Runs `body` on `side`'s endpoint of link `index` as that side's process, then drains it.
-    private func onEndpoint(
-        _ side: SimSide, link index: Int,
-        _ body: @escaping (SimWorld, SimLink, CoreInstant) -> Void
+    /// Sends `side`'s endpoint of link `index` the commands `build` makes, as that side's process, then
+    /// drains it; each answer reaches the link's item side as the endpoint emits it.
+    fileprivate func itemCommand(
+        _ side: SimSide, link index: Int, _ build: @escaping (SimItemSide) -> [ItemCommand]
     ) {
         guard index < links.count else { return checker.fail("no link \(index)") }
         let link = links[index]
         let process = process(of: link, side)
         perform(process) { world in
             guard !link.shutDown.contains(side) else { return }
-            body(world, link, world.localNow(process))
+            for command in build(link.items(side)) {
+                let now = world.localNow(process)
+                switch side {
+                case .host: link.host?.handle(.items(command), now: now)
+                case .peer: link.peer?.handle(.itemCommand(command), now: now)
+                }
+            }
             world.drain(link, side)
         }
     }
@@ -151,71 +226,46 @@ extension SimWorld {
     package func offerItems(
         _ offer: ItemOffer, feature: FeatureID = .clipboard, from side: SimSide, link index: Int = 0
     ) {
-        onEndpoint(side, link: index) { _, link, now in
-            let refusal =
-                side == .host
-                ? link.host?.offerItems(offer, feature: feature, now: now)
-                : link.peer?.offerItems(offer, feature: feature, now: now)
-            if let refusal { link.items(side).recordOfferRefusal(refusal) }
+        itemCommand(side, link: index) { items in
+            [items.command(.offer(token: offer.token)) { .offer($0, offer, feature: feature) }]
         }
     }
 
     /// `side` withdraws its offer of `token` on link `index`.
     package func withdrawOffer(_ token: Data, from side: SimSide, link index: Int = 0) {
-        onEndpoint(side, link: index) { _, link, now in
-            switch side {
-            case .host: link.host?.withdrawOffer(token, now: now)
-            case .peer: link.peer?.withdrawOffer(token, now: now)
-            }
-        }
+        itemCommand(side, link: index) { _ in [.withdraw(token: token)] }
     }
 
     /// `side` releases the far side's offer of `token` on link `index`.
     package func releaseOffer(_ token: Data, by side: SimSide, link index: Int = 0) {
-        onEndpoint(side, link: index) { _, link, now in
-            switch side {
-            case .host: link.host?.releaseOffer(token, now: now)
-            case .peer: link.peer?.releaseOffer(token, now: now)
-            }
-        }
+        itemCommand(side, link: index) { _ in [.release(token: token)] }
     }
 
     /// The host takes the peer's drag offer of `token` on link `index`.
     package func takeDrag(_ token: Data, link index: Int = 0) {
-        onEndpoint(.host, link: index) { world, link, now in
-            guard let result = link.host?.takeDrag(token, now: now) else { return }
-            link.items(.host).recordTake(token, result, at: world.now)
+        itemCommand(.host, link: index) { items in
+            [items.command(.take(token: token)) { .takeDrag($0, token: token) }]
         }
     }
 
     /// `side` pulls `request` on link `index`, landing it as `DecodingItemSink.landing(_:)` takes the storage
     /// of the representation it names.
     package func pullItem(_ request: PullRequest, by side: SimSide, link index: Int = 0) {
-        onEndpoint(side, link: index) { world, link, now in
-            let item =
-                side == .host
-                ? link.host?.remoteOfferItem(token: request.token, index: Int(request.item))
-                : link.peer?.remoteOfferItem(token: request.token, index: Int(request.item))
-            let storage = item?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
+        itemCommand(side, link: index) { items in
+            let representations = items.read(request.token, item: request.item)?.representations ?? []
+            let storage = representations.dropFirst(Int(request.representation)).first?.storage ?? .file
             let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
-            let result =
-                side == .host
-                ? link.host?.pullItem(order, now: now)
-                : link.peer?.pullItem(order, now: now)
-            if let result { link.items(side).recordPull(request, result, at: world.now) }
+            return [items.command(.pull(request)) { .pull($0, order) }]
         }
     }
 
     /// `side` cancels every pull it opened on link `index` that has not ended.
     package func cancelPulls(by side: SimSide, link index: Int = 0) {
-        onEndpoint(side, link: index) { _, link, now in
-            let items = link.items(side)
+        itemCommand(side, link: index) { items in
             let ended = Set(items.pullsEnded.map(\.id))
-            for case .success(let id) in items.pulls.map(\.result) where !ended.contains(id) {
-                switch side {
-                case .host: link.host?.cancelPull(id, now: now)
-                case .peer: link.peer?.cancelPull(id, now: now)
-                }
+            return items.pulls.compactMap { pull in
+                guard case .success(let id) = pull.result, !ended.contains(id) else { return nil }
+                return .cancel(id)
             }
         }
     }
