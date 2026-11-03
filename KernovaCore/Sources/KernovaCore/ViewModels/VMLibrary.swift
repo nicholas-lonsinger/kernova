@@ -325,7 +325,7 @@ package final class VMLibrary: VMAdmissionPeers {
         let entitlements = entitlements
         let interfaces = HostInterfaceEnumeration(provider: bridgedInterfaces)
         return SidebarLayout.Context(
-            bundledAgentVersion: bundleProducts.guestAgents.macOSVersion, networks: named,
+            bundledPayloadHashes: bundledPayloadHashes, networks: named,
             tags: organization.tags,
             networkTitle: { config in
                 NetworkModeChoice.label(
@@ -521,6 +521,12 @@ package final class VMLibrary: VMAdmissionPeers {
     /// handed.
     package let bundleProducts: AppBundleProducts
 
+    /// The SHA-256 of the guest agent payload bundled for each guest OS
+    /// (``BundledGuestAgents/payloadHashes()``), which the sidebar's guest
+    /// agent bucket judges a VM's agents by; empty until hashed, which the
+    /// library starts as it is made.
+    private(set) var bundledPayloadHashes: [VMGuestOS: Data] = [:]
+
     // MARK: - Initialization
 
     init(
@@ -582,6 +588,10 @@ package final class VMLibrary: VMAdmissionPeers {
         macAddresses.roster = self
         liveIdentities.roster = self
         guestAddresses.roster = self
+        Task { [weak self, agents = bundleProducts.guestAgents] in
+            let hashes = await agents.payloadHashes()
+            self?.bundledPayloadHashes = hashes
+        }
     }
 
     // MARK: - Adoption

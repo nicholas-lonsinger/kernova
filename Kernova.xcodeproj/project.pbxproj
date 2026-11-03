@@ -36,6 +36,8 @@
 		A2000012 /* KernovaAppRegistry in Frameworks */ = {isa = PBXBuildFile; productRef = A2000013 /* KernovaAppRegistry */; };
 		A2000014 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000015 /* KernovaLogging */; };
 		A2000016 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000017 /* KernovaLogging */; };
+		A2000034 /* KernovaPlatformDarwin in Frameworks */ = {isa = PBXBuildFile; productRef = A2000035 /* KernovaPlatformDarwin */; };
+		A2000036 /* KernovaPlatformDarwin in Frameworks */ = {isa = PBXBuildFile; productRef = A2000037 /* KernovaPlatformDarwin */; };
 		A2000018 /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A2000019 /* KernovaLogging */; };
 		A200001A /* KernovaLogging in Frameworks */ = {isa = PBXBuildFile; productRef = A200001B /* KernovaLogging */; };
 		A200001C /* KernovaCore in Frameworks */ = {isa = PBXBuildFile; productRef = A200001D /* KernovaCore */; };
@@ -181,7 +183,6 @@
 		A100020D /* Exceptions for "KernovaMacOSAgent" folder in "KernovaMacOSAgent" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				app.kernova.macosagent.plist,
 				Info.plist,
 				install.command,
 				uninstall.command,
@@ -192,7 +193,6 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AgentAppDelegate.swift,
-				app.kernova.macosagent.plist,
 				Assets.xcassets,
 				Info.plist,
 				install.command,
@@ -302,6 +302,7 @@
 				A2000004 /* KernovaKit in Frameworks */,
 				A2000030 /* KernovaAppKitShared in Frameworks */,
 				A2000014 /* KernovaLogging in Frameworks */,
+				A2000034 /* KernovaPlatformDarwin in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -312,6 +313,7 @@
 				A2000006 /* KernovaKit in Frameworks */,
 				A2000032 /* KernovaAppKitShared in Frameworks */,
 				A2000016 /* KernovaLogging in Frameworks */,
+				A2000036 /* KernovaPlatformDarwin in Frameworks */,
 				A200002E /* KernovaTestSupport in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -514,6 +516,7 @@
 				A2000005 /* KernovaKit */,
 				A2000031 /* KernovaAppKitShared */,
 				A2000015 /* KernovaLogging */,
+				A2000035 /* KernovaPlatformDarwin */,
 			);
 			productName = KernovaMacOSAgent;
 			productReference = A1000200 /* Kernova Guest Agent.app */;
@@ -542,6 +545,7 @@
 				A2000033 /* KernovaAppKitShared */,
 				A2000017 /* KernovaLogging */,
 				A200002F /* KernovaTestSupport */,
+				A2000037 /* KernovaPlatformDarwin */,
 			);
 			productName = KernovaMacOSAgentTests;
 			productReference = A1000300 /* KernovaMacOSAgentTests.xctest */;
@@ -761,7 +765,6 @@
 				"$(BUILT_PRODUCTS_DIR)/Kernova Guest Agent.app/Contents/_CodeSignature/CodeResources",
 				"$(SRCROOT)/KernovaMacOSAgent/install.command",
 				"$(SRCROOT)/KernovaMacOSAgent/uninstall.command",
-				"$(SRCROOT)/KernovaMacOSAgent/app.kernova.macosagent.plist",
 				"$(SRCROOT)/Tools/package-guest-agent-dmg.sh",
 			);
 			name = "Package Guest Agent DMG";
@@ -769,7 +772,7 @@
 			);
 			outputPaths = (
 				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/KernovaMacOSAgent.dmg",
-				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/KernovaMacOSAgentVersion.txt",
+				"$(BUILT_PRODUCTS_DIR)/$(CONTENTS_FOLDER_PATH)/Resources/GuestAgents/macos-arm64/agent.payload",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -789,11 +792,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(DERIVED_FILE_DIR)/AgentBuildNumber.h",
+				"$(DERIVED_FILE_DIR)/KernovaBuildNumber.h",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" agent\n";
+			shellScript = "\"${SRCROOT}/Tools/set-build-number.sh\" app\n";
 		};
 		A1000901 /* Set Build Number from Git */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -1258,6 +1261,14 @@
 		A2000033 /* KernovaAppKitShared */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = KernovaAppKitShared;
+		};
+		A2000035 /* KernovaPlatformDarwin */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaPlatformDarwin;
+		};
+		A2000037 /* KernovaPlatformDarwin */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KernovaPlatformDarwin;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

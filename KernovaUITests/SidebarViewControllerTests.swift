@@ -156,7 +156,7 @@ struct SidebarViewControllerTests {
     @Test("Agent indicator shows .waiting for a running macOS VM without an agent")
     func agentWaitingVisibleForRunningMac() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 
@@ -165,7 +165,7 @@ struct SidebarViewControllerTests {
         let instance = VMInstanceFixture.make(
             guestOS: .macOS, phase: .running(sessionID: UUID()),
             hostState: VMHostState(agentInstallNudgeDismissed: true))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(visibleAgentStatus(for: instance) == nil)
     }
 
@@ -203,7 +203,7 @@ struct SidebarViewControllerTests {
     func agentVisibleDuringOperationHoldingSession() {
         let instance = VMInstanceFixture.make(
             guestOS: .macOS, phase: .operating(.saving, from: .running(sessionID: UUID())))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(visibleAgentStatus(for: instance) == .waiting)
     }
 
@@ -215,7 +215,9 @@ struct SidebarViewControllerTests {
         let instance = library.registerFixture(guestOS: .macOS, phase: .running(sessionID: UUID())) {
             $0.lastSeenAgentVersion = "1.2.3"
         }
-        instance.beginSessionContextForTesting().warnedAgentScopes = [.login]
+        let context = instance.beginSessionContextForTesting()
+        context.hasAgentTransport = true
+        context.warnedAgentScopes = [.login]
         #expect(
             visibleAgentStatus(for: instance)
                 == .expectedMissing(expected: "1.2.3")
@@ -233,7 +235,7 @@ struct SidebarViewControllerTests {
     @Test("The app-wide preference suppresses .waiting without touching the per-VM flag")
     func agentSuppressedWhenPromptDisabledAppWide() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(
             SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: true)?.status
                 == nil)
@@ -253,7 +255,9 @@ struct SidebarViewControllerTests {
         let missing = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
             $0.lastSeenAgentVersion = "1.2.3"
         }
-        missing.beginSessionContextForTesting().warnedAgentScopes = [.login]
+        let context = missing.beginSessionContextForTesting()
+        context.hasAgentTransport = true
+        context.warnedAgentScopes = [.login]
         #expect(
             SidebarVMRowCellView.visibleAgentPresentation(for: missing, installPromptDisabled: true)?.status
                 == .expectedMissing(expected: "1.2.3"))
@@ -310,14 +314,14 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let cell = makeRow(instance: instance, isBusy: false) {
             GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
         }
         let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
         #expect(!badge.isHidden)
         #expect(badge.status == .waiting)
-        #expect(!badge.isInstallerMounted)
+        #expect(badge.diskControl?.action != .eject)
 
         await viewModel.toggleGuestAgentDisk(on: instance)
         #expect(instance.hasGuestAgentInstallerMounted)
@@ -325,7 +329,7 @@ struct SidebarViewControllerTests {
 
         // The cell's observation applies on a later main-actor turn, with no
         // observable of its own to await.
-        try await waitUntil { badge.isInstallerMounted }
+        try await waitUntil { badge.diskControl?.action == .eject }
     }
 
     /// A Linux guest's agent connects only after its install, so the badge has
@@ -354,15 +358,14 @@ struct SidebarViewControllerTests {
         let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
         #expect(!badge.isHidden)
         #expect(badge.status == .waiting)
-        #expect(badge.isInstallerMounted)
         let control = try #require(badge.diskControl)
+        #expect(control.action == .eject)
         #expect(control.title == "Eject Guest Agent Media")
-        #expect(control.installCommand == LinuxAgentDisk.installCommand(for: .systemService))
+        #expect(control.installGuidance == .command(LinuxAgentDisk.installCommand(for: .systemService)))
 
         let popover = GuestAgentStatusViewController()
         popover.update(
-            presentation: badge.presentation, isInstallerMounted: badge.isInstallerMounted, diskControl: control,
-            vmName: instance.name, hasDismissAction: badge.hasDismissAction)
+            presentation: badge.presentation, diskControl: control, hasDismissAction: badge.hasDismissAction)
         popover.loadViewIfNeeded()
         let texts = visibleTexts(in: popover.view)
         #expect(texts.first == "Set up the Kernova guest agent")
@@ -390,7 +393,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let cell = SidebarVMRowCellView()
         cell.configure(
             instance: instance,
@@ -424,7 +427,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let sessionID = UUID()
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: sessionID))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let controller = SidebarViewController(viewModel: viewModel)
         controller.loadViewIfNeeded()
         controller.viewDidAppear()

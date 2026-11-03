@@ -21,33 +21,27 @@ package struct BundledGuestAgentKey: Hashable, Sendable {
     }
 }
 
-/// One guest agent this copy of Kernova bundles: the file that carries it, and how the file is identified.
+/// One guest agent this copy of Kernova bundles: an update payload, identified by its SHA-256, which
+/// ``BundledGuestAgents/payloads(for:)`` computes.
 package struct BundledGuestAgentEntry: Sendable, Equatable {
-    /// How an entry's file is identified.
-    package enum Kind: Sendable, Equatable {
-        /// An installer disk image the user runs inside the guest, identified by its agent's version: the
-        /// macOS agent's DMG.
-        case installerDisk(version: String)
-        /// An update payload, identified by its SHA-256, which ``BundledGuestAgents/payloads(for:)``
-        /// computes; `versionLabel` is the display version it installs.
-        case payload(PayloadFormat, versionLabel: String)
-    }
-
     /// The file in the app bundle.
     package let fileURL: URL
-    /// How the file is identified.
-    package let kind: Kind
+    /// How the payload is packed.
+    package let format: PayloadFormat
+    /// The display version it installs.
+    package let versionLabel: String
 
-    package init(fileURL: URL, kind: Kind) {
+    package init(fileURL: URL, format: PayloadFormat, versionLabel: String) {
         self.fileURL = fileURL
-        self.kind = kind
+        self.format = format
+        self.versionLabel = versionLabel
     }
 }
 
-/// The guest agents a host bundles, one per (OS family, architecture, install scope): the macOS agent's
-/// installer DMG, which the "Package Guest Agent DMG" build phase writes, and the Linux `kernova-agent`,
-/// which the "Embed Linux Guest Agent" build phase copies in, serving both the user and the system scope
-/// from one file. A file the bundle lacks has no entry, so what it would deliver is not offered.
+/// The guest agents a host bundles, one per (OS family, architecture, install scope), each an update payload
+/// serving both the user and the system scope from one file: the macOS agent's container tree, and the Linux
+/// `kernova-agent`. Beside them, the macOS installer disk the user runs inside the guest. A file the bundle
+/// lacks has no entry, so what it would deliver is not offered.
 ///
 /// One of the ``AppBundleProducts``, which reads the app's.
 package struct BundledGuestAgents: Sendable {
@@ -59,49 +53,79 @@ package struct BundledGuestAgents: Sendable {
     /// Where the bundle carries the Linux agent, under its Resources.
     static let linuxAgentPath = "GuestAgents/linux-arm64/kernova-agent"
 
+    /// Where the bundle carries the macOS agent's update payload, under its Resources.
+    static let macOSAgentPath = "GuestAgents/macos-arm64/agent.payload"
+
+    /// Where the bundle carries the macOS installer disk, under its Resources.
+    static let macOSInstallerDiskPath = "KernovaMacOSAgent.dmg"
+
+    /// The payloads a bundle carries: where, for which OS family and architecture, and packed how.
+    private static let payloadFiles: [(path: String, os: OSFamily, architecture: Architecture, format: PayloadFormat)] =
+        [
+            (macOSAgentPath, .macOS, .arm64, .containerTree),
+            (linuxAgentPath, .linux, .arm64, .executable),
+        ]
+
     /// Every entry, by what it installs onto.
     package let entries: [BundledGuestAgentKey: BundledGuestAgentEntry]
+
+    /// The macOS agent's installer DMG, or `nil` when none is bundled.
+    package let macOSInstallerDiskImageURL: URL?
 
     /// Where the Linux agent's installer disk is made.
     package let linuxDisk: GuestAgentDiskCache
 
     private let digests: FileDigests
 
-    package init(entries: [BundledGuestAgentKey: BundledGuestAgentEntry], linuxDisk: GuestAgentDiskCache) {
+    package init(
+        entries: [BundledGuestAgentKey: BundledGuestAgentEntry], macOSInstallerDiskImageURL: URL?,
+        linuxDisk: GuestAgentDiskCache
+    ) {
         self.entries = entries
+        self.macOSInstallerDiskImageURL = macOSInstallerDiskImageURL
         self.linuxDisk = linuxDisk
         self.digests = FileDigests()
     }
 
     /// The agents `bundle` carries; `versionLabel` is the display version of the payloads the bundle's own
-    /// build labelled. Every build bundles the Linux agent, so one missing is a packaging defect.
+    /// build labelled. Every build bundles both agents and the macOS installer disk, so one missing is a
+    /// packaging defect.
     init(bundle: Bundle, versionLabel: String) {
         let entries = Self.entries(in: bundle, versionLabel: versionLabel)
-        if entries[BundledGuestAgentKey(.linux, .arm64, .user)] == nil {
-            Self.logger.log(.fault, "\(Self.linuxAgentPath, privacy: .public) missing from app bundle")
-            assertionFailure("\(Self.linuxAgentPath) missing — check the 'Embed Linux Guest Agent' build phase")
+        for file in Self.payloadFiles where entries[BundledGuestAgentKey(file.os, file.architecture, .user)] == nil {
+            Self.reportMissing(file.path)
         }
-        self.init(entries: entries, linuxDisk: .production)
+        let disk = Self.resource(Self.macOSInstallerDiskPath, in: bundle)
+        if disk == nil { Self.reportMissing(Self.macOSInstallerDiskPath) }
+        self.init(entries: entries, macOSInstallerDiskImageURL: disk, linuxDisk: .production)
     }
 
-    /// The entries for the files `bundle` carries.
+    /// The entries for the payloads `bundle` carries.
     static func entries(in bundle: Bundle, versionLabel: String) -> [BundledGuestAgentKey: BundledGuestAgentEntry] {
         var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
-        if let dmg = bundle.url(forResource: "KernovaMacOSAgent", withExtension: "dmg"),
-            let version = macOSVersion(in: bundle)
-        {
-            entries[BundledGuestAgentKey(.macOS, .arm64, .user)] = BundledGuestAgentEntry(
-                fileURL: dmg, kind: .installerDisk(version: version))
-        }
-        if let agent = bundle.url(
-            forResource: "kernova-agent", withExtension: nil, subdirectory: "GuestAgents/linux-arm64")
-        {
+        for file in payloadFiles {
+            guard let url = resource(file.path, in: bundle) else { continue }
             for scope in [InstallScope.user, .system] {
-                entries[BundledGuestAgentKey(.linux, .arm64, scope)] = BundledGuestAgentEntry(
-                    fileURL: agent, kind: .payload(.executable, versionLabel: versionLabel))
+                entries[BundledGuestAgentKey(file.os, file.architecture, scope)] = BundledGuestAgentEntry(
+                    fileURL: url, format: file.format, versionLabel: versionLabel)
             }
         }
         return entries
+    }
+
+    /// The file at `path` under `bundle`'s Resources, or `nil` when it carries none.
+    private static func resource(_ path: String, in bundle: Bundle) -> URL? {
+        guard let slash = path.lastIndex(of: "/") else {
+            return bundle.url(forResource: path, withExtension: nil)
+        }
+        return bundle.url(
+            forResource: String(path[path.index(after: slash)...]), withExtension: nil,
+            subdirectory: String(path[..<slash]))
+    }
+
+    private static func reportMissing(_ path: String) {
+        logger.log(.fault, "\(path, privacy: .public) missing from app bundle")
+        assertionFailure("\(path) missing from app bundle — check the build phase that writes it")
     }
 
     /// The entry for `os`, `architecture` and `scope`, or nil when none is bundled.
@@ -120,24 +144,33 @@ package struct BundledGuestAgents: Sendable {
         var payloads: [BundledPayload] = []
         let keys = entries.keys.filter { $0.os == os }.sorted { $0.scope.rawValue < $1.scope.rawValue }
         for key in keys {
-            guard let entry = entries[key], case .payload(let format, let versionLabel) = entry.kind,
-                let digest = await digests.digest(of: entry.fileURL)
-            else { continue }
+            guard let entry = entries[key], let digest = await digests.digest(of: entry.fileURL) else { continue }
             payloads.append(
                 BundledPayload(
                     os: key.os, architecture: key.architecture, scope: key.scope,
                     manifest: UpdateManifestValue(
-                        payloadHash: digest.sha256, payloadSize: digest.byteCount, format: format,
-                        versionLabel: versionLabel)))
+                        payloadHash: digest.sha256, payloadSize: digest.byteCount, format: entry.format,
+                        versionLabel: entry.versionLabel)))
         }
         return payloads
+    }
+
+    /// The SHA-256 of the payload bundled for each guest OS that has one: the hash
+    /// ``payloads(for:)`` offers, which a peer running it claims.
+    package func payloadHashes() async -> [VMGuestOS: Data] {
+        var hashes: [VMGuestOS: Data] = [:]
+        for guestOS in VMGuestOS.allCases {
+            if let payload = await payloads(for: OSFamily(guestOS)).first {
+                hashes[guestOS] = payload.manifest.payloadHash
+            }
+        }
+        return hashes
     }
 
     /// The file `manifest` was made from, among the payloads bundled for `os`; nil when none was.
     package func payloadFile(for manifest: UpdateManifestValue, os: OSFamily) async -> URL? {
         for (key, entry) in entries where key.os == os {
-            guard case .payload = entry.kind, let digest = await digests.digest(of: entry.fileURL),
-                digest.sha256 == manifest.payloadHash
+            guard let digest = await digests.digest(of: entry.fileURL), digest.sha256 == manifest.payloadHash
             else { continue }
             return entry.fileURL
         }
@@ -150,7 +183,7 @@ package struct BundledGuestAgents: Sendable {
     /// Linux agent the disk is made from.
     package func bundlesInstallerDisk(for guestOS: VMGuestOS) -> Bool {
         switch guestOS {
-        case .macOS: macOS != nil
+        case .macOS: macOSInstallerDiskImageURL != nil
         case .linux: entry(.linux, .arm64, .user) != nil
         }
     }
@@ -182,49 +215,17 @@ package struct BundledGuestAgents: Sendable {
             || path == linuxDisk.url.path(percentEncoded: false)
     }
 
-    // MARK: The macOS agent
-
-    /// The macOS agent's entry, the one of user scope on arm64.
-    private var macOS: BundledGuestAgentEntry? {
-        entry(.macOS, .arm64, .user)
-    }
-
-    /// The version of the macOS guest agent embedded in this build of the host; `nil` when none is.
-    package var macOSVersion: String? {
-        guard case .installerDisk(let version) = macOS?.kind else { return nil }
-        return version
-    }
-
-    /// The macOS agent's installer DMG, or `nil` when none is bundled.
-    package var macOSInstallerDiskImageURL: URL? {
-        macOS?.fileURL
-    }
-
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "BundledGuestAgents")
+}
 
-    private static func macOSVersion(in bundle: Bundle) -> String? {
-        guard let url = bundle.url(forResource: "KernovaMacOSAgentVersion", withExtension: "txt") else {
-            logger.log(.fault, "KernovaMacOSAgentVersion.txt missing from app bundle")
-            assertionFailure(
-                "KernovaMacOSAgentVersion.txt missing — check 'Package Guest Agent DMG' build phase outputs")
-            return nil
-        }
-        do {
-            let raw = try String(contentsOf: url, encoding: .utf8)
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                logger.log(.fault, "KernovaMacOSAgentVersion.txt is empty")
-                assertionFailure("KernovaMacOSAgentVersion.txt is empty")
-                return nil
+extension OSFamily {
+    /// The OS family of a `guestOS` guest.
+    init(_ guestOS: VMGuestOS) {
+        self =
+            switch guestOS {
+            case .macOS: .macOS
+            case .linux: .linux
             }
-            return trimmed
-        } catch {
-            logger.log(
-                .fault,
-                "Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription, privacy: .public)")
-            assertionFailure("Failed to read KernovaMacOSAgentVersion.txt: \(error.localizedDescription)")
-            return nil
-        }
     }
 }
 

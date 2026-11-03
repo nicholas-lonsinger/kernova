@@ -1,105 +1,87 @@
 #!/bin/bash
+#
+# Removes the Kernova guest agent: the install "Just for me" of the user
+# running it, or the install "For everyone", which needs an administrator
+# password once. The agent's own `uninstall` command does the work; this prints
+# what it will do, waits for Return, and runs it, under sudo for "For everyone".
+#
+# Usage: uninstall.command [--system]
+#   --system         remove the install for everyone without asking which
+# NONINTERACTIVE=1   ask nothing, and run sudo with -n, so a run without
+#                    passwordless sudo stops instead of waiting for a password
+
 set -euo pipefail
 
-# -y/--yes: non-interactive mode for scripted uninstalls (test rigs, automated
-# VM provisioning) — skips the confirmation and exit prompts, nothing else.
-ASSUME_YES=0
-for arg in "$@"; do
-    case "${arg}" in
-        -y|--yes) ASSUME_YES=1 ;;
-        *)
-            echo "Usage: $(basename "$0") [-y|--yes]"
-            exit 2
-            ;;
-    esac
-done
+DISK="$(cd "$(dirname "$0")" && pwd)"
+AGENT="${DISK}/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent"
+interactive=1
+[ -n "${NONINTERACTIVE:-}" ] && interactive=0
 
 pause() {
-    if (( ASSUME_YES == 0 )); then
+    if (( interactive )); then
         echo ""
-        read -r -p "Press Enter to exit..."
+        read -r -p "Press Return to close this window." _ || true
     fi
 }
 
-trap 'echo ""; echo "ERROR: An unexpected error occurred (line $LINENO)."; pause' ERR
-
-# Boot out a LaunchAgent label and wait for launchd to actually drop it —
-# bootout returns before teardown completes, and deleting the bundle under a
-# still-draining agent defeats the point of stopping it first. A label that
-# was never loaded returns immediately.
-bootout_and_wait() {
-    local label="$1" waited=0
-    launchctl bootout "gui/$(id -u)/${label}" 2>/dev/null || true
-    while launchctl print "gui/$(id -u)/${label}" >/dev/null 2>&1; do
-        if (( waited >= 25 )); then
-            echo "WARNING: ${label} did not stop within 5 seconds; continuing."
-            break
-        fi
-        sleep 0.2
-        waited=$((waited + 1))
-    done
+fail() {
+    echo "" >&2
+    echo "ERROR: $*" >&2
+    pause
+    exit 1
 }
+
+scope=""
+case "${1:-}" in
+    --system) scope=system ;;
+    "") ;;
+    *) echo "usage: $(basename "$0") [--system]" >&2; exit 2 ;;
+esac
+
+if [ "$(id -u)" -eq 0 ]; then
+    fail "Run this as your own user, not as root or with sudo. It asks for sudo itself when you remove the install for everyone."
+fi
 
 echo "========================================"
 echo "  Kernova Guest Agent — Uninstaller"
 echo "========================================"
 echo ""
-echo "This will remove the Kernova guest agent from this Mac."
-echo ""
-echo "  App:         ~/Applications/Kernova Guest Agent.app"
-echo "  LaunchAgent: ~/Library/LaunchAgents/app.kernova.macosagent.plist"
-echo ""
-if (( ASSUME_YES )); then
-    echo "Proceeding without confirmation (--yes)."
-    choice="y"
-else
-    read -r -p "Proceed with uninstall? [y/N] " choice
-fi
-if [[ "${choice}" =~ ^[Yy]$ ]]; then
-    echo ""
-    echo "----------------------------------------"
 
-    LABEL="app.kernova.macosagent"
-    INSTALL_DIR="${HOME}/Applications"
-    APP_NAME="Kernova Guest Agent.app"
-    LAUNCHAGENTS_DIR="${HOME}/Library/LaunchAgents"
-    PLIST_NAME="${LABEL}.plist"
-
-    # Legacy (pre-app-bundle) install location, cleaned up if still present.
-    LEGACY_DIR="${HOME}/Library/Application Support/Kernova"
-    LEGACY_BINARY="${LEGACY_DIR}/kernova-agent"
-
-    echo "Uninstalling..."
-
-    # Stop the agent and wait for launchd to drop the label.
-    bootout_and_wait "${LABEL}"
-
-    # A trashed app bundle stays a valid on-disk copy that Launch Services can
-    # rediscover and re-elect until the Trash is emptied.
-    rm -rf "${INSTALL_DIR:?}/${APP_NAME}"
-    # Also remove the pre-rename app bundle name if a stale copy lingers, and
-    # any staging/backup leftovers from an interrupted install.
-    rm -rf "${INSTALL_DIR}/KernovaGuestAgent.app"
-    rm -rf "${INSTALL_DIR}/.${APP_NAME}.staging."* "${INSTALL_DIR}/.${APP_NAME}.previous."*
-    rm -f "${LAUNCHAGENTS_DIR}/${PLIST_NAME}"
-
-    # Also boot out and remove the pre-rename LaunchAgent (label app.kernova.agent).
-    bootout_and_wait "app.kernova.agent"
-    rm -f "${LAUNCHAGENTS_DIR}/app.kernova.agent.plist"
-
-    # Remove any leftover legacy bare-binary install.
-    rm -f "${LEGACY_BINARY}"
-    rmdir "${LEGACY_DIR}" 2>/dev/null || true
-
-    echo ""
-    echo "Kernova Guest Agent has been removed."
-    echo ""
-    echo "========================================"
-    echo "  Uninstall complete."
-    echo "========================================"
-else
-    echo ""
-    echo "Cancelled — no changes were made."
+if [ -z "${scope}" ]; then
+    if (( interactive )); then
+        echo "Remove the agent installed:"
+        echo "  1) Just for me"
+        echo "  2) For everyone (asks for an administrator password)"
+        read -r -p "Choose 1 or 2 [1]: " choice || choice=""
+        case "${choice}" in
+            2) scope=system ;;
+            ""|1) scope=user ;;
+            *) fail "Choose 1 or 2." ;;
+        esac
+        echo ""
+    else
+        scope=user
+    fi
 fi
 
+uninstall=("${AGENT}" uninstall)
+[ "${scope}" = system ] && uninstall=("${AGENT}" uninstall --system)
+
+"${uninstall[@]}" --dry-run || fail "The agent on this disk could not plan the uninstall."
+echo ""
+if (( interactive )); then
+    read -r -p "Press Return to uninstall, or Control-C to cancel." _
+    echo ""
+fi
+
+if [ "${scope}" = system ]; then
+    sudo=(/usr/bin/sudo)
+    (( interactive )) || sudo+=(-n)
+    printf '==>'
+    printf ' %q' "${sudo[@]}" "${uninstall[@]}"
+    echo ""
+    "${sudo[@]}" "${uninstall[@]}" || fail "The uninstall did not finish."
+else
+    "${uninstall[@]}" || fail "The uninstall did not finish."
+fi
 pause

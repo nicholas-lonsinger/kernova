@@ -639,10 +639,9 @@ package final class VMCommandCore {
     }
 
     /// The agents ``GuestAgentPresentation`` lists for `instance`, as
-    /// automation reads them: none for a guest whose agents the hub doesn't
-    /// serve.
+    /// automation reads them: none without a session that reaches the agents.
     static func agentLines(of instance: VMInstance) -> [VMAgentLine] {
-        (instance.agentPresentation?.hub?.agents ?? []).map { line in
+        (instance.agentPresentation?.agents ?? []).map { line in
             VMAgentLine(
                 role: line.role == .system ? "system" : "session", user: line.user, version: line.version,
                 status: line.status.wireName)

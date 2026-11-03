@@ -706,16 +706,18 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, name: "Stub", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let selector = VMSelector.id(instance.id)
 
-        // A mount naming no scopes waits for every scope the guest OS has.
+        // A mount naming no scopes waits for what an install of the guest OS's agent connects.
         #expect(try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: nil))).result == .ok)
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
         #expect(instance.guestAgentInstallerAwaits == [.login])
-        // One naming a scope the guest OS has not is refused, and changes nothing.
-        let refused = try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: [.system])))
-        #expect(refused.result != .ok)
-        #expect(instance.guestAgentInstallerAwaits == [.login])
+        // One naming scopes waits for exactly those.
+        #expect(
+            try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: [.login, .system]))).result
+                == .ok)
+        #expect(instance.guestAgentInstallerAwaits == [.login, .system])
         #expect(try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: []))).result == .ok)
         #expect(instance.guestAgentInstallerAwaits == [])
 

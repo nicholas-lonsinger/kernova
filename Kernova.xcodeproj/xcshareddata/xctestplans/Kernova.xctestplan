@@ -104,6 +104,14 @@
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaPlatformDarwinTests",
+        "name" : "KernovaPlatformDarwinTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaKit",
         "identifier" : "KernovaAgentCoreTests",
         "name" : "KernovaAgentCoreTests"
       }

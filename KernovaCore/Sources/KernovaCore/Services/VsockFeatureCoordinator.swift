@@ -55,12 +55,6 @@ struct VsockFeatureDescriptor {
     /// the settled service stays referenced until the next accept replaces it.
     let releasesSlotOnChannelLoss: Bool
 
-    /// What a lost channel does beyond the slot.
-    let onChannelLost: (@MainActor (VMInstance) -> Void)?
-
-    /// What runs once an accepted service has started.
-    let afterAccept: (@MainActor (VMInstance) -> Void)?
-
     /// Every port this channel binds, the framed port first.
     var ports: [UInt32] { data.map { [port, $0.port] } ?? [port] }
 
@@ -87,8 +81,6 @@ extension VsockFeatureDescriptor {
         toggle: @escaping @MainActor (VMConfiguration) -> Bool,
         slot: ReferenceWritableKeyPath<VsockFeatureCoordinator, Service?>,
         releasesSlotOnChannelLoss: Bool = false,
-        onChannelLost: (@MainActor (VMInstance) -> Void)? = nil,
-        afterAccept: (@MainActor (VMInstance) -> Void)? = nil,
         make: @escaping @MainActor (VMInstance, VsockChannel) -> Service
     ) -> VsockFeatureDescriptor {
         VsockFeatureDescriptor(
@@ -104,9 +96,7 @@ extension VsockFeatureDescriptor {
                 return service
             },
             clear: { $0[keyPath: slot] = nil },
-            releasesSlotOnChannelLoss: releasesSlotOnChannelLoss,
-            onChannelLost: onChannelLost,
-            afterAccept: afterAccept)
+            releasesSlotOnChannelLoss: releasesSlotOnChannelLoss)
     }
 
     /// A framed channel paired with the data port its service serves one
@@ -123,8 +113,6 @@ extension VsockFeatureDescriptor {
         toggle: @escaping @MainActor (VMConfiguration) -> Bool,
         slot: ReferenceWritableKeyPath<VsockFeatureCoordinator, Service?>,
         releasesSlotOnChannelLoss: Bool = false,
-        onChannelLost: (@MainActor (VMInstance) -> Void)? = nil,
-        afterAccept: (@MainActor (VMInstance) -> Void)? = nil,
         make: @escaping @MainActor (VMInstance, VsockChannel) -> Service
     ) -> VsockFeatureDescriptor {
         VsockFeatureDescriptor(
@@ -144,9 +132,7 @@ extension VsockFeatureDescriptor {
                 coordinator[keyPath: slot] = nil
                 coordinator[keyPath: dataSink].set(nil)
             },
-            releasesSlotOnChannelLoss: releasesSlotOnChannelLoss,
-            onChannelLost: onChannelLost,
-            afterAccept: afterAccept)
+            releasesSlotOnChannelLoss: releasesSlotOnChannelLoss)
     }
 }
 
@@ -170,15 +156,6 @@ extension VsockFeatureDescriptor {
         // leaves a live edit nothing to change here.
         toggle: { _ in true },
         slot: \.control,
-        onChannelLost: { instance in
-            // The agent went away: the missing-agent rule reads it again.
-            instance.agentPresenceChanged()
-        },
-        afterAccept: { instance in
-            // A channel that has not said Hello is no agent yet: the rule
-            // reads it again. Idempotent; the Hello settles it.
-            instance.agentPresenceChanged()
-        },
         make: { instance, channel in instance.makeControlService(for: channel) })
 
     static let log = channel(
@@ -388,15 +365,12 @@ final class VsockFeatureCoordinator {
         let service = descriptor.install(self, instance, channel)
         // The one place a channel-loss reaction is wired. The identity check
         // keeps a late callback from acting on a successor this path has
-        // already installed — for the control channel it can only ever hold,
-        // since a replacement stops the service it displaces first.
+        // already installed.
         service.onChannelLost = { [weak self, weak service] in
             guard let self, let service, descriptor.current(self) === service else { return }
             if descriptor.releasesSlotOnChannelLoss { descriptor.clear(self) }
-            if let instance = self.instance { descriptor.onChannelLost?(instance) }
         }
         service.start()
-        descriptor.afterAccept?(instance)
     }
 
     // MARK: - Teardown

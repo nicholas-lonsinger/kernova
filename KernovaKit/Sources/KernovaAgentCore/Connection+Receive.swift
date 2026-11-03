@@ -77,7 +77,7 @@ extension Connection {
             if let code = error.closeCode {
                 fatal(code, "\(error)")
             } else {
-                closeAllStreams(.connectionLost, keepPendingResets: false)
+                closeAllStreams(.connectionLost, keepsCommitted: false)
                 dropAllQueues()
                 finish()
                 emit(.closed(.notThisProtocol))
@@ -273,7 +273,7 @@ extension Connection {
             error.debugDetail = "code \(error.code.rawValue): \(error.debugDetail)"
             error.code = .internal
         }
-        closeAllStreams(.connectionClosedByPeer(error), keepPendingResets: false)
+        closeAllStreams(.connectionClosedByPeer(error), keepsCommitted: false)
         dropAllQueues()
         finish()
         emit(.closed(.closedByPeer(error)))

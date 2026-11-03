@@ -195,7 +195,8 @@ enum AgentShell {
             })
     }
 
-    /// Rewrites the user scope's units and autostart entry as this binary writes them (spec §8.3).
+    /// Rewrites the user scope's units and autostart entry that differ from what this binary writes, logging
+    /// each one it wrote (spec §8.3).
     private static func refreshUserUnits(root: String, label: String) {
         let environment = ProcessInfo.processInfo.environment
         guard let config = InstallLayout.configHome(environment: environment) else {
@@ -206,8 +207,12 @@ enum AgentShell {
             root: LinuxIdentity.userInstallRoot(environment: environment) ?? root, configHome: config)
         let installer = LinuxInstall.installer(stagingRoot: "", runsSystemd: true, label: label, account: nil)
         do throws(Installer.Failure) {
-            try installer.run(.refreshUnits(layout))
-            logger.log(.notice, "Rewrote the user units for this version")
+            let written = try installer.run(.refreshUnits(layout))
+            if !written.isEmpty {
+                logger.log(
+                    .notice,
+                    "Rewrote the user units for this version: \(written.joined(separator: ", "), privacy: .public)")
+            }
         } catch {
             logger.log(.error, "Cannot rewrite the user units: \(String(describing: error), privacy: .public)")
         }

@@ -117,7 +117,7 @@ struct ValidatedConfigurationTests {
         context.session = session
 
         await instance.startVsockServices()
-        #expect((instance.agentPresentation?.hub != nil) == context.hasAgentTransport)
+        #expect((instance.agentPresentation != nil) == context.hasAgentTransport)
         return (instance, context)
     }
 }

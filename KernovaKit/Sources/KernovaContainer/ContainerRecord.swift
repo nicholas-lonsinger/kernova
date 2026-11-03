@@ -6,7 +6,8 @@ import Foundation
 
 import KernovaWire
 
-/// What a container record holds; the value is the record's first byte.
+/// What a container record holds; the value is the record's first byte. The header, chunk, zero-run and end
+/// kinds and the framing are in the update profile, frozen (`kernova_v2.proto`, "The update profile").
 public enum ContainerRecordKind: UInt8, Sendable, CaseIterable {
     /// A protobuf `EntryHeader`.
     case header = 1

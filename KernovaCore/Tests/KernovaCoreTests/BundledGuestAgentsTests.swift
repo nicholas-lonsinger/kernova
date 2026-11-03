@@ -14,8 +14,14 @@ import Testing
 struct BundledGuestAgentsTests {
     private let scratch = TestScratchDirectory(prefix: "kernova-bundled-agents-test")
 
-    /// A bundle at a path of its own holding `files`, keyed by their path under `Contents/Resources`.
+    /// A bundle at a path of its own holding every file a build packs — with `files`, keyed by their path
+    /// under `Contents/Resources`, in place of the stand-ins.
     private func bundle(_ files: [String: Data]) throws -> Bundle {
+        try bundle(exactly: Self.packed.merging(files) { $1 })
+    }
+
+    /// A bundle at a path of its own holding `files` and nothing else.
+    private func bundle(exactly files: [String: Data]) throws -> Bundle {
         let app = scratch.url.appendingPathComponent("Fixture.app", isDirectory: true)
         let resources = app.appendingPathComponent("Contents/Resources", isDirectory: true)
         try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
@@ -35,11 +41,19 @@ struct BundledGuestAgentsTests {
     }
 
     private static let linuxAgent = BundledGuestAgents.linuxAgentPath
+    private static let macOSAgent = BundledGuestAgents.macOSAgentPath
+    private static let macOSDisk = BundledGuestAgents.macOSInstallerDiskPath
     private static let payload = Data((0..<4096).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
+    private static let macOSPayload = Data((0..<3000).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 5) })
 
-    private static func manifest(of payload: Data, label: String = "1.2 (34)") -> UpdateManifestValue {
+    /// Every file a build packs, as stand-ins.
+    private static let packed = [linuxAgent: payload, macOSAgent: macOSPayload, macOSDisk: Data([0])]
+
+    private static func manifest(
+        of payload: Data, format: PayloadFormat = .executable, label: String = "1.2 (34)"
+    ) -> UpdateManifestValue {
         UpdateManifestValue(
-            payloadHash: Data(SHA256.hash(data: payload)), payloadSize: UInt64(payload.count), format: .executable,
+            payloadHash: Data(SHA256.hash(data: payload)), payloadSize: UInt64(payload.count), format: format,
             versionLabel: label)
     }
 
@@ -73,27 +87,47 @@ struct BundledGuestAgentsTests {
         #expect(first.first?.manifest == Self.manifest(of: Self.payload))
     }
 
-    @Test("A bundle without the Linux agent has no Linux entry and offers no payload")
-    func linuxMissing() async throws {
-        let entries = BundledGuestAgents.entries(in: try bundle([:]), versionLabel: "1.2 (34)")
+    @Test("A bundle without an agent's payload has no entry for it and offers no payload")
+    func payloadsMissing() async throws {
+        let entries = BundledGuestAgents.entries(
+            in: try bundle(exactly: [Self.macOSDisk: Data([0])]), versionLabel: "1.2 (34)")
         #expect(entries.isEmpty)
-        #expect(await BundledGuestAgents(entries: entries, linuxDisk: .testing).payloads(for: .linux).isEmpty)
+        let agents = BundledGuestAgents(entries: entries, macOSInstallerDiskImageURL: nil, linuxDisk: .testing)
+        #expect(await agents.payloads(for: .linux).isEmpty)
+        #expect(await agents.payloads(for: .macOS).isEmpty)
+        #expect(await agents.payloadHashes().isEmpty)
     }
 
-    @Test("The macOS agent is its installer DMG and version, and offers no in-band payload")
+    @Test("The macOS agent serves both scopes from one container-tree payload, offered with its hash, beside the DMG")
     func macOS() async throws {
-        let agents = BundledGuestAgents(
-            bundle: try bundle([
-                "KernovaMacOSAgent.dmg": Data([0]), "KernovaMacOSAgentVersion.txt": Data("3.1\n".utf8),
-                Self.linuxAgent: Data([1]),
-            ]),
-            versionLabel: "1.2 (34)")
-        #expect(agents.macOSVersion == "3.1")
+        let agents = BundledGuestAgents(bundle: try bundle([:]), versionLabel: "1.2 (34)")
+        let user = try #require(agents.entry(.macOS, .arm64, .user))
+        let system = try #require(agents.entry(.macOS, .arm64, .system))
+        #expect(user == system)
+        #expect(user.format == .containerTree)
+        #expect(user.versionLabel == "1.2 (34)")
+        #expect(user.fileURL.path(percentEncoded: false).hasSuffix("Contents/Resources/\(Self.macOSAgent)"))
+
+        let payloads = await agents.payloads(for: .macOS)
+        let manifest = Self.manifest(of: Self.macOSPayload, format: .containerTree)
+        #expect(
+            await agents.payloadHashes() == [
+                .macOS: manifest.payloadHash, .linux: Self.manifest(of: Self.payload).payloadHash,
+            ])
+        #expect(payloads.map(\.scope) == [.user, .system])
+        #expect(payloads.allSatisfy { $0.os == .macOS && $0.architecture == .arm64 && $0.manifest == manifest })
+        let session = PeerClaim(role: .sessionPeer, scope: .user, os: .macOS, architecture: .arm64)
+        let service = PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64)
+        #expect(BundledPayload.offer(from: payloads, for: session) == manifest)
+        #expect(BundledPayload.offer(from: payloads, for: service) == manifest)
+        #expect(await agents.payloadFile(for: manifest, os: .macOS) == user.fileURL)
+
         let dmg = try #require(agents.macOSInstallerDiskImageURL)
-        #expect(dmg.lastPathComponent == "KernovaMacOSAgent.dmg")
-        #expect(agents.entry(.macOS, .arm64, .user)?.kind == .installerDisk(version: "3.1"))
-        #expect(await agents.payloads(for: .macOS).isEmpty)
+        #expect(dmg.lastPathComponent == Self.macOSDisk)
+        #expect(agents.bundlesInstallerDisk(for: .macOS))
+        #expect(try await agents.installerDisk(for: .macOS) == dmg)
         #expect(agents.isInstallerDisk(path: dmg.path(percentEncoded: false)))
+        #expect(!agents.isInstallerDisk(path: user.fileURL.path(percentEncoded: false)))
     }
 
     // MARK: The hub's provider

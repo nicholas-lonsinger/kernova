@@ -6033,7 +6033,7 @@ struct VMLibraryViewModelTests {
         let (viewModel, _, _, _, _) = makeViewModel(removableMediaDeviceService: mock)
         let instance = viewModel.library.admitFixture(guestOS: .macOS)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .mount(.install))
 
         await viewModel.toggleGuestAgentDisk(on: instance)
@@ -6068,7 +6068,7 @@ struct VMLibraryViewModelTests {
             ]
         }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .eject)
 
         await viewModel.toggleGuestAgentDisk(on: instance)
@@ -6087,6 +6087,7 @@ struct VMLibraryViewModelTests {
             $0.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         }
         instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
 
         await viewModel.toggleGuestAgentDisk(on: instance)
         try await instance.waitUntilIdle()

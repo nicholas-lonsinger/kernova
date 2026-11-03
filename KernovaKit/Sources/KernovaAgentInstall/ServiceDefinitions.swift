@@ -22,6 +22,15 @@ public protocol ServiceDefinitions {
     var afterRefresh: [InstallPlan.Command] { get }
 }
 
+extension ServiceDefinitions {
+    /// The files among ``writes``: what an uninstall removes.
+    public var files: [String] {
+        writes.compactMap { write in
+            if case .file(let path, _, _) = write { path } else { nil }
+        }
+    }
+}
+
 /// The service manager running one install scope's peer, as the rollback check reaches it.
 ///
 /// The manager restarts the peer through ``InstallRoot/current`` when its process is killed, and the check's

@@ -1548,7 +1548,7 @@ package final class VMLibraryViewModel {
                     for: instance, initial: LinuxAgentInstallChoice(seen: instance.seenAgentScopes))
                 return
             }
-            let awaited = purpose == .install ? guestOS.guestAgentScopes : []
+            let awaited = purpose == .install ? guestOS.installedAgentScopes : []
             await runEdit(on: instance) {
                 let outcome = try await self.commands.mountGuestAgentDisk(.id(instance.id), awaiting: awaited)
                 self.presenter?.presentInstallerMounted(

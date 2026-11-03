@@ -13,11 +13,10 @@ public struct InstallRoot: Equatable, Sendable {
     public var slots: String { path + "/" + Self.slotsName }
     /// Slot `slot`.
     public func slot(_ slot: String) -> String { slots + "/" + slot }
-    /// The slot a fresh install fills.
-    public var installSlot: String { slot(Self.installSlotName) }
     /// The link the service manager runs the agent through, to the slot in use.
     public var current: String { path + "/" + Self.currentLinkName }
-    /// The link to the previous slot, whose agent the rollback check runs.
+    /// The link to the slot whose agent the rollback check runs: the one an update's switch left, or the one a
+    /// fresh install landed.
     public var rollback: String { path + "/" + Self.rollbackLinkName }
     /// The slot metadata.
     public var state: String { path + "/" + Self.stateName }
@@ -28,13 +27,14 @@ public struct InstallRoot: Equatable, Sendable {
     public var switchRejected: String { path + "/" + Self.switchRejectedName }
 
     static let slotsName = "slots"
-    /// The slot a fresh install fills.
-    public static let installSlotName = "a"
-    /// What `current` points at after a fresh install, relative to the root.
-    public static let installSlotLink = slotsName + "/" + installSlotName
-    static let currentLinkName = "current"
-    static let rollbackLinkName = "rollback"
+    /// The slot an install fills when `current` names none.
+    public static let firstSlotName = "a"
+    /// ``current``'s name in the root.
+    public static let currentLinkName = "current"
+    /// ``rollback``'s name in the root.
+    public static let rollbackLinkName = "rollback"
     static let stateName = "state.json"
-    static let switchPendingName = "switch-pending"
+    /// ``switchPending``'s name in the root.
+    public static let switchPendingName = "switch-pending"
     static let switchRejectedName = "switch-rejected"
 }

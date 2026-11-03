@@ -96,9 +96,8 @@ final class GuestAgentStatusWindowController: NSWindowController, NSWindowDelega
     private func refresh() -> Bool {
         guard let presentation = instance.agentPresentation else { return false }
         statusViewController.update(
-            presentation: presentation, isInstallerMounted: instance.hasGuestAgentInstallerMounted,
+            presentation: presentation,
             diskControl: GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities),
-            vmName: instance.name,
             // The link dismisses the sidebar's install nudge, which this
             // window is not.
             hasDismissAction: false)

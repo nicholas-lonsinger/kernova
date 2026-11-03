@@ -246,7 +246,7 @@ struct VMScriptingGatewayTests {
             $0.networkMode = .nat
             $0.macAddress = "aa:bb:cc:dd:ee:ff"
         }
-        alpha.beginSessionContextForTesting()
+        alpha.beginSessionContextForTesting().hasAgentTransport = true
         let beta = wired.register(name: "Beta", phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: beta)
         wired.register(name: "Gamma") {

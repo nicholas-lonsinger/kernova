@@ -1,8 +1,14 @@
 #!/bin/bash
 #
-# package-guest-agent-dmg.sh — stage Kernova Guest Agent.app with its
+# package-guest-agent-dmg.sh — pack Kernova Guest Agent.app as the macOS agent's
+# update payload into Kernova.app's Resources, and stage the app with the
 # install/uninstall commands into a guest-mountable raw disk image inside
-# Kernova.app, and write the version sidecar the host reads at runtime.
+# Kernova.app.
+#
+# The host serves the payload to installed agents and identifies them by its
+# SHA-256. The disk carries the app alone: its installer packs the app it runs
+# from with the same packer as it lands it, recording the same hash, so a fresh
+# install and an in-band update install one identity.
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR,
 # BUILT_PRODUCTS_DIR, CONTENTS_FOLDER_PATH.
@@ -12,14 +18,20 @@ set -euo pipefail
 STAGING_DIR=$(mktemp -d "${DERIVED_FILE_DIR}/guest-agent-dmg-staging.XXXXXX")
 trap 'rm -rf "${STAGING_DIR}"' EXIT
 
-DMG_OUTPUT="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaMacOSAgent.dmg"
-VERSION_OUTPUT="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/KernovaMacOSAgentVersion.txt"
+AGENT_APP="${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app"
+RESOURCES="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources"
+DMG_OUTPUT="${RESOURCES}/KernovaMacOSAgent.dmg"
+PAYLOAD_OUTPUT="${RESOURCES}/GuestAgents/macos-arm64/agent.payload"
 
-ditto "${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app" "${STAGING_DIR}/Kernova Guest Agent.app"
+# The agent packs itself: the packer is its `pack-payload` command, which emits
+# only the update profile every installed agent lands.
+mkdir -p "$(dirname "${PAYLOAD_OUTPUT}")"
+"${AGENT_APP}/Contents/MacOS/KernovaMacOSAgent" pack-payload "${AGENT_APP}" "${PAYLOAD_OUTPUT}"
+
+ditto "${AGENT_APP}" "${STAGING_DIR}/Kernova Guest Agent.app"
 cp "${SRCROOT}/KernovaMacOSAgent/install.command" "${STAGING_DIR}/install.command"
 cp "${SRCROOT}/KernovaMacOSAgent/uninstall.command" "${STAGING_DIR}/uninstall.command"
 chmod +x "${STAGING_DIR}/install.command" "${STAGING_DIR}/uninstall.command"
-cp "${SRCROOT}/KernovaMacOSAgent/app.kernova.macosagent.plist" "${STAGING_DIR}/app.kernova.macosagent.plist"
 
 mkdir -p "$(dirname "${DMG_OUTPUT}")"
 
@@ -32,13 +44,3 @@ diskutil image create from \
 
 # Strip extended attributes that break code signing
 xattr -cr "${DMG_OUTPUT}"
-
-# Extract the agent's CFBundleShortVersionString from the app bundle's Info.plist
-# and write a sidecar the host reads at runtime. Keeping the agent bundle as the
-# single source of truth means the host cannot drift from what it actually ships.
-AGENT_VERSION=$(plutil -extract CFBundleShortVersionString raw "${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app/Contents/Info.plist")
-if [ -z "${AGENT_VERSION}" ]; then
-    echo "error: Could not extract agent version from app bundle" >&2
-    exit 1
-fi
-printf '%s' "${AGENT_VERSION}" > "${VERSION_OUTPUT}"

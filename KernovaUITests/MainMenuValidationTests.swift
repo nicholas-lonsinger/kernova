@@ -166,6 +166,7 @@ struct MainMenuValidationTests {
                 bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
                 guestAgents: .none))
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
 
         #expect(fixture.viewModel.capabilities.isAvailable(.toggleGuestAgentDisk, on: instance))
@@ -177,6 +178,7 @@ struct MainMenuValidationTests {
     func guestAgentDiskWithBundledImage() {
         let fixture = makeFixture()
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
         let model = GuestAgentDiskControl.model(for: instance, in: fixture.viewModel.capabilities)
 
@@ -187,8 +189,8 @@ struct MainMenuValidationTests {
     /// Whether the VM's session has a channel to an agent, and what kind.
     enum AgentChannel: Sendable {
         case none
-        /// A session context; a Linux one without the hub transport a socket
-        /// device gives it.
+        /// A session context without the hub transport a socket device gives
+        /// it.
         case sessionOnly
         case agent
     }
@@ -212,8 +214,9 @@ struct MainMenuValidationTests {
             (.linux, .settled(.stopped), .none, false),
             (.linux, .settled(.running(sessionID: UUID())), .agent, true),
             (.linux, .settled(.livePaused(sessionID: UUID())), .agent, true),
-            // A Linux session without a socket device has no agent.
+            // A session without a socket device has no agent.
             (.linux, .settled(.running(sessionID: UUID())), .sessionOnly, false),
+            (.macOS, .settled(.running(sessionID: UUID())), .sessionOnly, false),
         ])
     func guestAgentStatusFollowsTheAgentChannel(
         guestOS: VMGuestOS, phase: PhaseFixture, channel: AgentChannel, isEnabled: Bool
