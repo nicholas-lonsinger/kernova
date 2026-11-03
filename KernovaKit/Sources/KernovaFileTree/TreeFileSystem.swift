@@ -45,6 +45,92 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     /// rename without replacing.
     func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
         throws(TreeFileSystemError)
+
+    /// Creates the directory `name` in `directory`, searchable and writable by
+    /// its owner alone until its own mode is applied, failing when anything
+    /// already has the name.
+    func makeDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError)
+    /// Creates the regular file `name` in `directory`, readable and writable
+    /// by its owner alone until its own mode is applied, and opens it for
+    /// writing — failing when anything already has the name, a symlink
+    /// included, which it never follows.
+    func createFile(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32
+    /// Creates the symlink `name` in `directory` pointing at `target`, failing
+    /// when anything already has the name.
+    func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(TreeFileSystemError)
+    /// Writes up to `buffer.count` bytes at `offset`, returning how many were
+    /// written: at least one, for a buffer that is not empty.
+    func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    /// Sets the size of the open file `descriptor`, what it grows by reading
+    /// as zeros.
+    func setSize(of descriptor: Int32, to size: Int64) throws(TreeFileSystemError)
+    /// The size, and alignment, of the holes the volume holding `descriptor`
+    /// makes, or `nil` when it makes none.
+    func holeSize(of descriptor: Int32) -> Int?
+    /// Frees the blocks of `length` bytes at `offset` in the open file
+    /// `descriptor`, which then read as zeros; both are multiples of
+    /// ``holeSize(of:)``, and the range lies inside the file.
+    func punchHole(in descriptor: Int32, at offset: Int64, length: Int64) throws(TreeFileSystemError)
+    /// Closes a descriptor that was written through, reporting the write
+    /// failure the system deferred to the close.
+    func closeWritten(_ descriptor: Int32) throws(TreeFileSystemError)
+    /// Sets the extended attribute `name` of `target` to `value`, doing
+    /// nothing when the volume or the OS cannot hold that attribute there.
+    func setExtendedAttribute(_ name: [UInt8], to value: [UInt8], of target: TreeEntryTarget)
+        throws(TreeFileSystemError)
+    /// Applies `attributes` to `target`, leaving out each one the volume or
+    /// the OS cannot hold there.
+    func setAttributes(_ attributes: TreeEntryAttributes, of target: TreeEntryTarget) throws(TreeFileSystemError)
+    /// The failure with which this OS refuses to land an entry named `name`
+    /// whose absolute path, NUL excluded, is `pathByteCount` bytes long, or
+    /// `nil` when it lands it.
+    func landingRefusal(of name: [UInt8], pathByteCount: Int) -> TreeFileSystemError?
+}
+
+/// What a change of attributes applies to.
+public enum TreeEntryTarget: Hashable, Sendable {
+    /// An open descriptor.
+    case descriptor(Int32)
+    /// The symlink `name` in `directory`, itself rather than its target.
+    case symlink([UInt8], in: Int32)
+}
+
+/// The attributes an entry lands with; `nil` leaves one as the entry was
+/// created.
+public struct TreeEntryAttributes: Hashable, Sendable {
+    /// The permission and set-id bits, `0o7777` at most.
+    public var permissions: UInt32?
+    /// The BSD file flags.
+    public var flags: UInt32?
+    /// When the contents last changed.
+    public var modificationTime: FileTime?
+    /// When the entry was created.
+    public var birthTime: FileTime?
+
+    /// Attributes of the given values.
+    public init(
+        permissions: UInt32? = nil, flags: UInt32? = nil, modificationTime: FileTime? = nil,
+        birthTime: FileTime? = nil
+    ) {
+        self.permissions = permissions
+        self.flags = flags
+        self.modificationTime = modificationTime
+        self.birthTime = birthTime
+    }
+
+    /// Whether no attribute is set.
+    public var isEmpty: Bool { self == TreeEntryAttributes() }
+
+    /// Each attribute on its own, so a target refusing one refuses no other.
+    public var separated: [TreeEntryAttributes] {
+        [
+            permissions.map { TreeEntryAttributes(permissions: $0) },
+            flags.map { TreeEntryAttributes(flags: $0) },
+            modificationTime.map { TreeEntryAttributes(modificationTime: $0) },
+            birthTime.map { TreeEntryAttributes(birthTime: $0) },
+        ].compactMap { $0 }
+    }
 }
 
 /// A file-system call's failure: the `errno` it set.

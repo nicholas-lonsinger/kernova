@@ -154,6 +154,17 @@ var targets: [Target] = [
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
+    // An item pull's landing: the writer that creates a tree from `TreeEvent`s through descriptors alone,
+    // never resolving a path, and the receiver that feeds it a container. Its own target, so neither the
+    // codec nor the file-tree layer takes on the other.
+    .target(
+        name: "KernovaTreeTransfer",
+        dependencies: [
+            "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaLogging", "KernovaSynchronization",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
     // endpoints against each other on virtual time.
     .target(
@@ -241,6 +252,17 @@ var targets: [Target] = [
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
             "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The hostile-container corpus, run against this OS's writer. Like `KernovaWireTests`, it cannot reach
+    // `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaTreeTransferTests",
+        dependencies: [
+            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
