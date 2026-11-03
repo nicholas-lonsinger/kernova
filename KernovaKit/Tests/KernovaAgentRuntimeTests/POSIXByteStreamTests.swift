@@ -37,6 +37,49 @@ enum RawSocket {
         return (descriptors[0], descriptors[1])
     }
 
+    /// A datagram socket connected to a loopback port nothing listens on, after one send: the port-unreachable
+    /// reply leaves an error pending on it with nothing to read and no hang-up — the poll state a Linux vsock is
+    /// left in when its transport resets (`virtio_vsock_reset_sock` sets `sk_err` and nothing else `vsock_poll`
+    /// reads as readable).
+    static func refusedDatagram() throws -> Int32 {
+        var address = sockaddr_in()
+        #if canImport(Darwin)
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = in_addr_t(0x7F00_0001).bigEndian
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        // Glibc imports SOCK_DGRAM as an enum case; Darwin and Musl as an Int32.
+        #if canImport(Glibc)
+        let datagram = Int32(SOCK_DGRAM.rawValue)
+        #else
+        let datagram = SOCK_DGRAM
+        #endif
+        // A port the kernel picked and then freed, so nothing listens on it.
+        let probe = socket(AF_INET, datagram, 0)
+        guard probe >= 0 else { throw ByteStreamError.system(errno) }
+        defer { close(probe) }
+        let bound = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { pointer in
+                bind(probe, pointer, length) == 0 && getsockname(probe, pointer, &length) == 0
+            }
+        }
+        guard bound else { throw ByteStreamError.system(errno) }
+        let descriptor = socket(AF_INET, datagram, 0)
+        guard descriptor >= 0 else { throw ByteStreamError.system(errno) }
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(descriptor, $0, length) == 0 }
+        }
+        close(probe)
+        var byte: UInt8 = 0
+        guard connected, write(descriptor, &byte, 1) == 1 else {
+            let error = errno
+            close(descriptor)
+            throw ByteStreamError.system(error)
+        }
+        return descriptor
+    }
+
     /// Writes all of `bytes`, blocking.
     static func send(_ descriptor: Int32, _ bytes: Data) {
         var offset = 0
@@ -211,6 +254,40 @@ extension SocketTests {
             observed.stream.shutdown()
             await observed.waitForRelease()
             close(far)
+        }
+
+        // DIAGNOSTIC, removed before merge: the process CPU a stream burns while it sits on a socket error.
+        @Test("DIAGNOSTIC cpu while a socket error is pending")
+        func diagnosticSpin() async throws {
+            func cpu() -> Double {
+                var now = timespec()
+                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now)
+                return Double(now.tv_sec) + Double(now.tv_nsec) / 1e9
+            }
+            let observed = try ObservedStream(adopting: try RawSocket.refusedDatagram())
+            let before = cpu()
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            let after = cpu()
+            print("DIAG cpu seconds over 2 s on an errored socket: \(after - before); events: \(observed.events.elements)")
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+        }
+
+        @Test(
+            "A socket error with nothing to read ends the read side with that error",
+            .timeLimit(.minutes(1)))
+        func pendingErrorEndsReadSide() async throws {
+            let observed = try ObservedStream(adopting: try RawSocket.refusedDatagram())
+            var events = observed.events.waiter()
+            // At the time limit, shutdown() ends the wait with `.shutDown`, so the test fails rather than hangs.
+            let end = await withTaskCancellationHandler {
+                await events.next { _ in true }
+            } onCancel: {
+                observed.stream.shutdown()
+            }
+            #expect(end == .ended(.failed(.system(ECONNREFUSED))))
+            observed.stream.shutdown()
+            await observed.waitForRelease()
         }
 
         @Test("Nothing more is delivered after a .received until readMore()")
