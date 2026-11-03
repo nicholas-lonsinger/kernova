@@ -256,28 +256,18 @@ extension SocketTests {
             close(far)
         }
 
-        // DIAGNOSTIC, removed before merge: the process CPU a stream burns while it sits on a socket error.
-        @Test("DIAGNOSTIC cpu while a socket error is pending")
-        func diagnosticSpin() async throws {
+        @Test(
+            "A socket error with nothing to read ends the read side with that error",
+            .timeLimit(.minutes(1)))
+        func pendingErrorEndsReadSide() async throws {
+            // DIAGNOSTIC, removed before merge: the process CPU burnt while the test waits.
             func cpu() -> Double {
                 var now = timespec()
                 clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now)
                 return Double(now.tv_sec) + Double(now.tv_nsec) / 1e9
             }
-            let observed = try ObservedStream(adopting: try RawSocket.refusedDatagram())
-            let before = cpu()
-            try await Task.sleep(nanoseconds: 2_000_000_000)
-            let after = cpu()
-            print("DIAG cpu seconds over 2 s on an errored socket: \(after - before)")
-            print("DIAG events: \(observed.events.elements)")
-            observed.stream.shutdown()
-            await observed.waitForRelease()
-        }
-
-        @Test(
-            "A socket error with nothing to read ends the read side with that error",
-            .timeLimit(.minutes(1)))
-        func pendingErrorEndsReadSide() async throws {
+            let cpuBefore = cpu()
+            defer { print("DIAG process CPU seconds while waiting: \(cpu() - cpuBefore)") }
             let observed = try ObservedStream(adopting: try RawSocket.refusedDatagram())
             var events = observed.events.waiter()
             // At the time limit, shutdown() ends the wait with `.shutDown`, so the test fails rather than hangs.
