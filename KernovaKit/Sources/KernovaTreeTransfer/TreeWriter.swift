@@ -510,7 +510,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         let name = header.depth == 0 ? self.name : Array(header.name)
         let path = entered.map(\.name) + [name]
         // The sequence held every header's name to one path component; the caller's is held here.
-        guard header.depth > 0 || ValidatedEntry.isValidName(Data(name)) else {
+        guard header.depth > 0 || PathComponent.isValid(name) else {
             throw TreeWriteFailure(path: path, reason: .container(.invalidName))
         }
         let pathByteCount = (entered.last?.pathByteCount ?? destinationPathByteCount) + 1 + name.count
