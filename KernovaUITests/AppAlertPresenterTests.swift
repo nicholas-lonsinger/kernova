@@ -768,6 +768,8 @@ struct AppAlertPresenterTests {
     func agentDiskNoticeRoutesToItsDisplayWindow() throws {
         let h = makeHarness()
         let vm = makeRunningInstance(name: "Guest", guestOS: .macOS, in: h.viewModel)
+        // The disk applies to a session that reaches its agents: one the hub has a transport for.
+        vm.beginSessionContextForTesting().hasAgentTransport = true
         let display = try showDisplayWindow(for: vm, in: h)
 
         h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)

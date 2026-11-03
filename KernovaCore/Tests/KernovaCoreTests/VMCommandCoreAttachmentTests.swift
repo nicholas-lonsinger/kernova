@@ -1662,7 +1662,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
-    @Test("A mount that names no scopes waits for every one the guest OS has, and refuses one it has not")
+    @Test("A mount that names no scopes waits for what an install of the guest OS's agent connects")
     func mountDefaultsToTheGuestsScopes() async throws {
         let (linuxHarness, linux) = try linuxAgentVM()
         try await linuxHarness.core.mountGuestAgentDisk(.id(linux.id), awaiting: nil)
@@ -1671,17 +1671,11 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let macOS = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
         macOS.beginSessionContextForTesting().hasAgentTransport = true
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: [.system])
-        }
-        guard case .invalidArgument = refusal else {
-            Issue.record("expected an invalid-argument refusal, got \(refusal)")
-            return
-        }
-        #expect(macOS.configuration.removableMedia == nil)
-
         try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: nil)
         #expect(macOS.guestAgentInstallerAwaits == [.login])
+        // A macOS install for everyone also brings a system service, which a mount may wait for.
+        try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: [.login, .system])
+        #expect(macOS.guestAgentInstallerAwaits == [.login, .system])
     }
 
     @Test("A mount on a disk already attached takes what it waits for, without attaching again")
