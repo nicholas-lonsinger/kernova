@@ -25,7 +25,8 @@ struct FolderBatch: Sendable {
     /// An entry waiting to be created: everything creating it takes.
     struct Entry: Sendable {
         enum Content: Sendable {
-            case file([FilePiece])
+            /// A file's bytes, in storage of their own.
+            case file(Data)
             case symlink(target: [UInt8])
         }
 
@@ -34,12 +35,6 @@ struct FolderBatch: Sendable {
         let metadata: EntryMetadata
         let content: Content
         let byteCount: Int
-    }
-
-    /// One run of a held file's bytes.
-    enum FilePiece: Sendable {
-        case bytes(Data)
-        case zeros(Int64)
     }
 
     private(set) var entries: [Entry] = []
@@ -98,19 +93,12 @@ struct FolderBatch: Sendable {
         _ entry: Entry, in directory: Int32, holeSize: Int?, on fileSystem: FileSystem
     ) throws(TreeFileSystemError) -> Identity {
         switch entry.content {
-        case .file(let pieces):
+        case .file(let bytes):
             let descriptor = try fileSystem.createFile(entry.name, in: directory)
             let identity: Identity
             do {
                 var file = SparseFile(fileSystem: fileSystem, descriptor: descriptor, holeSize: holeSize)
-                for piece in pieces {
-                    switch piece {
-                    case .bytes(let bytes):
-                        try file.append(bytes)
-                    case .zeros(let count):
-                        try file.appendZeros(count)
-                    }
-                }
+                try file.append(bytes)
                 try file.finish()
                 try entry.metadata.apply(to: .descriptor(descriptor), on: fileSystem)
                 identity = Identity(try fileSystem.status(of: descriptor))

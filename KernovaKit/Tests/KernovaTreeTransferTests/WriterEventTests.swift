@@ -105,7 +105,7 @@ struct WriterEventTests {
         ] {
             let writer = try landing.writer()
             let failure = Self.failure(writing: [.enterDirectory(directory("r", depth: 0)), event], to: writer)
-            #expect(failure == TreeWriteFailure(path: [bytes("r"), name], reason: .event(.invalidName)))
+            #expect(failure == TreeWriteFailure(path: [bytes("r"), name], reason: .event(.invalidEntry(.invalidName))))
             try landing.expectNothingOutside()
         }
     }

@@ -78,8 +78,8 @@ public enum TreeEventViolation: Equatable, Sendable {
     /// The event is not one the writer's place in the tree admits: bytes with no file open, a leave with no
     /// directory entered, an entry before the root or after it ended, anything after the end.
     case outOfOrder
-    /// The entry's name is empty, `.` or `..`, longer than 255 bytes, or holds `/` or NUL.
-    case invalidName
+    /// The entry's header breaks a rule of `ValidatedEntry`, which every producer is held to.
+    case invalidEntry(ContainerError)
     /// The entry's depth is not the number of directories the writer is inside.
     case depthMismatch(depth: UInt32, entered: Int)
     /// A file's bytes ran past, or ended short of, the size its header declared.
@@ -90,6 +90,6 @@ public enum TreeEventViolation: Equatable, Sendable {
     case decmpfsNotLanded
     /// The entry is not the file, directory or symlink the event creates, or a file has no storage.
     case typeNotLanded
-    /// A symlink's target is empty or holds NUL.
-    case invalidSymlinkTarget
+    /// A file's bytes or zeros of no length.
+    case emptyPiece
 }

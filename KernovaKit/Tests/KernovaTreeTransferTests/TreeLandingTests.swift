@@ -13,6 +13,7 @@ import Foundation
 #endif
 import KernovaContainer
 import KernovaFileTree
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 
@@ -102,6 +103,70 @@ struct TreeLandingTests {
         var status = stat()
         try #require(stat(path, &status) == 0)
         #expect(Int64(status.st_blocks) * 512 < Int64(run) / 2, "\(status.st_blocks) blocks")
+    }
+
+    @Test("zeros land as the bytes and size the container states, as runs or as bytes, held or written")
+    func zerosLandExactly() throws {
+        var generator = SplitMix64(seed: 1794)
+        var cases: [[(isBytes: Bool, count: Int)]] = [
+            [(false, 1)], [(false, 4096)], [(false, 16384)], [(true, 1), (false, 8191), (true, 1)],
+            [(true, 10), (false, 10000), (false, 5000), (true, 3)], [(false, 300_000)],
+            [(true, 4095), (false, 4097)], [(true, 300_000), (false, 65536), (true, 1), (false, 100_000)],
+        ]
+        for _ in 0..<40 {
+            cases.append(
+                (0..<Int.random(in: 1...6, using: &generator)).map { _ in
+                    let limit = Bool.random(using: &generator) ? 200_000 : 9000
+                    return (Bool.random(using: &generator), Int.random(in: 1...limit, using: &generator))
+                })
+        }
+        let landing = try Landing(kernelContainment: true)
+        var container = RawContainer()
+        container.header(directory("r", depth: 0))
+        var expected: [String: Data] = [:]
+        for (index, pieces) in cases.enumerated() {
+            container.header(file("c\(index)", depth: 1, size: UInt64(pieces.reduce(0) { $0 + $1.count })))
+            var content = Data()
+            for (position, piece) in pieces.enumerated() {
+                // Every third run of zeros travels as bytes, so the writer finds those holes itself.
+                if piece.isBytes || position % 3 == 2 {
+                    let bytes = piece.isBytes ? pattern(piece.count, seed: UInt8(truncatingIfNeeded: index)) : Data(count: piece.count)
+                    var start = 0
+                    while start < bytes.count {
+                        let end = min(start + ContainerRecord.maxChunkPayload, bytes.count)
+                        container.chunk(bytes[start..<end])
+                        start = end
+                    }
+                    content += bytes
+                } else {
+                    container.zeros(UInt64(piece.count))
+                    content += Data(count: piece.count)
+                }
+            }
+            expected["c\(index)"] = content
+        }
+        container.end()
+        #expect(try landing.land(container.data, pieceSize: 65536).get() == bytes("r"))
+        for (name, content) in expected.sorted(by: { $0.key < $1.key }) {
+            #expect(try Self.contents(of: landing.destinationPath + "/r/" + name) == content, "\(name)")
+        }
+    }
+
+    @Test("zeros carried as bytes leave a hole too, in a held file and a written one")
+    func zeroBytesBecomeHoles() throws {
+        let landing = try Landing(kernelContainment: true)
+        var container = RawContainer()
+        container.header(directory("r", depth: 0))
+        for (name, size) in [("held", 256 * 1024), ("written", 4 << 20)] {
+            container.file(file(name, depth: 1, size: UInt64(size + 1)), Data(count: size) + Data([1]))
+        }
+        container.end()
+        #expect(try landing.land(container.data).get() == bytes("r"))
+        for (name, size) in [("held", 256 * 1024), ("written", 4 << 20)] {
+            var status = stat()
+            try #require(stat(landing.destinationPath + "/r/" + name, &status) == 0)
+            #expect(Int64(status.st_blocks) * 512 < Int64(size) / 2, "\(name): \(status.st_blocks) blocks")
+        }
     }
 
     @Test("an entry whose path would pass PATH_MAX is refused by name before it is created", arguments: bothLayers)

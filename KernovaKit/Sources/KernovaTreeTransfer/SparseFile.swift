@@ -6,8 +6,8 @@ import Foundation
 
 import KernovaFileTree
 
-/// A new regular file's bytes, appended in order, each run of zeros the producer declared as one left a hole
-/// wherever it covers whole hole-sized blocks.
+/// A new regular file's bytes, appended in order, every whole hole-sized block of zeros left a hole —
+/// whether a producer declared the zeros as a run or carried them as bytes.
 ///
 /// Skipping a range leaves no hole on APFS, and a punch frees blocks only once the range lies inside the file
 /// (docs/research/2026-10-24-receiver-writer-parity.md, findings 6 and 7), so a skipped run is punched once the
@@ -42,15 +42,33 @@ struct SparseFile<FileSystem: MutableTreeFileSystem> {
         if let failure { throw failure }
     }
 
-    /// Appends `bytes`.
+    /// Appends `bytes`, skipping each run of whole hole-sized blocks of zeros among them.
     mutating func append(_ bytes: UnsafeRawBufferPointer) throws(TreeFileSystemError) {
-        var written = 0
-        while written < bytes.count {
-            written += try fileSystem.write(
-                descriptor, from: UnsafeRawBufferPointer(rebasing: bytes[written...]), at: length + Int64(written))
+        guard let holeSize else {
+            try write(bytes)
+            return
         }
-        length += Int64(written)
-        punchSkipped()
+        var start = 0
+        while start < bytes.count {
+            let intoBlock = Int(length % Int64(holeSize))
+            guard intoBlock == 0, bytes.count - start >= holeSize else {
+                let end = start + min(bytes.count - start, holeSize - intoBlock)
+                try write(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+                start = end
+                continue
+            }
+            let isZero = Self.isZero(bytes, at: start, count: holeSize)
+            var end = start + holeSize
+            while bytes.count - end >= holeSize, Self.isZero(bytes, at: end, count: holeSize) == isZero {
+                end += holeSize
+            }
+            if isZero {
+                skip(Int64(end - start))
+            } else {
+                try write(UnsafeRawBufferPointer(rebasing: bytes[start..<end]))
+            }
+            start = end
+        }
     }
 
     /// Appends `count` zero bytes: the whole hole-sized blocks among them skipped, the rest written.
@@ -68,8 +86,7 @@ struct SparseFile<FileSystem: MutableTreeFileSystem> {
             return
         }
         try writeZeros(holeStart - length)
-        skipped = (skipped?.lowerBound ?? holeStart)..<holeEnd
-        length = holeEnd
+        skip(holeEnd - holeStart)
         try writeZeros(end - holeEnd)
     }
 
@@ -80,11 +97,27 @@ struct SparseFile<FileSystem: MutableTreeFileSystem> {
         punchSkipped()
     }
 
+    private mutating func skip(_ count: Int64) {
+        skipped = (skipped?.lowerBound ?? length)..<(length + count)
+        length += count
+    }
+
+    /// Writes `bytes` as they are, then punches the run they put inside the file.
+    private mutating func write(_ bytes: UnsafeRawBufferPointer) throws(TreeFileSystemError) {
+        var written = 0
+        while written < bytes.count {
+            written += try fileSystem.write(
+                descriptor, from: UnsafeRawBufferPointer(rebasing: bytes[written...]), at: length + Int64(written))
+        }
+        length += Int64(written)
+        punchSkipped()
+    }
+
     private mutating func writeZeros(_ count: Int64) throws(TreeFileSystemError) {
         var remaining = count
         while remaining > 0 {
             let piece = Int(min(remaining, Int64(zeroBlock.count)))
-            try append(zeroBlock.prefix(piece))
+            try write(UnsafeRawBufferPointer(rebasing: zeroBlock[..<piece]))
             remaining -= Int64(piece)
         }
     }
@@ -95,7 +128,23 @@ struct SparseFile<FileSystem: MutableTreeFileSystem> {
         // The run already reads as zeros, so a volume refusing the hole leaves the file whole, only larger.
         try? fileSystem.punchHole(in: descriptor, at: run.lowerBound, length: run.upperBound - run.lowerBound)
     }
+
+    /// Whether the `count` bytes of `bytes` at `start` are all zero, read eight words at a time: a
+    /// `SIMD64<UInt8>` comparison is 54 times slower (the parity note, finding 9).
+    private static func isZero(_ bytes: UnsafeRawBufferPointer, at start: Int, count: Int) -> Bool {
+        guard let base = bytes.baseAddress?.advanced(by: start) else { return true }
+        var offset = 0
+        while count - offset >= 64 {
+            var word: UInt64 = 0
+            for index in 0..<8 { word |= base.loadUnaligned(fromByteOffset: offset + index * 8, as: UInt64.self) }
+            if word != 0 { return false }
+            offset += 64
+        }
+        return UnsafeRawBufferPointer(start: base + offset, count: count - offset).allSatisfy { $0 == 0 }
+    }
 }
 
-/// The zeros ``SparseFile`` writes where it makes no hole.
-private let zeroBlock = Data(count: 64 * 1024)
+/// The zeros ``SparseFile`` writes where it makes no hole, allocated once and never freed.
+private nonisolated(unsafe) let zeroBlock = UnsafeRawBufferPointer(
+    UnsafeMutableRawBufferPointer.allocate(byteCount: 64 * 1024, alignment: 16).initializeMemory(
+        as: UInt8.self, repeating: 0))

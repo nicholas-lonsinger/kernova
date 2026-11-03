@@ -1,3 +1,4 @@
+import KernovaContainer
 import KernovaFileTree
 import KernovaWire
 
@@ -11,7 +12,10 @@ struct EntryMetadata: Sendable {
     let extendedAttributes: [ExtendedAttribute]
     let attributes: TreeEntryAttributes
 
-    init(_ header: EntryHeader) {
+    /// The metadata of `entry`, whose header keeps the format's rules, so no flag or extended attribute
+    /// lands that the format does not carry.
+    init(_ entry: ValidatedEntry) {
+        let header = entry.header
         extendedAttributes = header.xattrs.map { ExtendedAttribute(name: Array($0.name), value: Array($0.value)) }
         attributes = TreeEntryAttributes(
             permissions: header.mode,
