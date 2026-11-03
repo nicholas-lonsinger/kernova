@@ -2048,9 +2048,6 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// history and logs.
   public var concealed: Bool = false
 
-  /// The content is momentary: the receiver keeps it out of history.
-  public var transient: Bool = false
-
   /// The Item messages that follow.
   public var count: UInt32 = 0
 
@@ -4056,7 +4053,7 @@ nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{1}transient\0\u{1}count\0\u{1}token\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4065,7 +4062,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularBoolField(value: &self.concealed) }()
-      case 2: try { try decoder.decodeSingularBoolField(value: &self.transient) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.count) }()
       case 4: try { try decoder.decodeSingularBytesField(value: &self.token) }()
       default: break
@@ -4076,9 +4072,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
     if self.concealed != false {
       try visitor.visitSingularBoolField(value: self.concealed, fieldNumber: 1)
-    }
-    if self.transient != false {
-      try visitor.visitSingularBoolField(value: self.transient, fieldNumber: 2)
     }
     if self.count != 0 {
       try visitor.visitSingularUInt32Field(value: self.count, fieldNumber: 3)
@@ -4091,7 +4084,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
 
   public static func ==(lhs: Kernova_V2_ItemSetHeader, rhs: Kernova_V2_ItemSetHeader) -> Bool {
     if lhs.concealed != rhs.concealed {return false}
-    if lhs.transient != rhs.transient {return false}
     if lhs.count != rhs.count {return false}
     if lhs.token != rhs.token {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}

@@ -397,6 +397,7 @@ targets += [
             "KernovaLogging",
             "KernovaSynchronization",
             "KernovaFileTree",
+            "KernovaWire",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
@@ -471,7 +472,7 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-            "KernovaFileTree",
+            "KernovaFileTree", "KernovaWire",
         ],
         swiftSettings: sharedSwiftSettings
     ),
