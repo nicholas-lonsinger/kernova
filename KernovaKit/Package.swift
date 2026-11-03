@@ -34,6 +34,8 @@ var products: [Product] = [
     // The Linux guest agent, one static binary for the session and system
     // peers. Tools/build-linux-guest-agent.sh builds it for the app bundle.
     .executable(name: "kernova-agent", targets: ["KernovaLinuxAgent"]),
+    // Measurements of Kernova's own code, run on the host and, built like the Linux agent, inside guests.
+    .executable(name: "kernova-bench", targets: ["KernovaBench"]),
 ]
 
 var dependencies: [Package.Dependency] = [
@@ -120,6 +122,12 @@ var targets: [Target] = [
             "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaDigest",
             "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
         ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // `kernova-bench`.
+    .executableTarget(
+        name: "KernovaBench",
+        dependencies: ["KernovaWire", "KernovaSynchronization"],
         swiftSettings: sharedSwiftSettings
     ),
     // The non-blocking `ByteStream` over a socket. Declared on every platform,
