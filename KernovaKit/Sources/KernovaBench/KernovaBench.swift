@@ -20,21 +20,28 @@ enum KernovaBench {
     static let usage = """
         usage: kernova-bench lz4 [--block-size <bytes>] [--threads <n>,<n>...] [--pairs <n>]
                                  [--encode-sample <bytes>] [--decode-sample <bytes>] <corpus>...
+               kernova-bench pipeline [--workers <n>,<n>...] [--entry-size <bytes>] [--feed-size <bytes>]
+                                      [--runs <n>] [--abandon-after <n>|never] <corpus>...
           <corpus> is <name>=<file>, the file read whole, or zeros=<bytes>.
-          Defaults: --block-size 262144, --threads 1,2,4,<cores>, --pairs 25,
-                    --encode-sample 8388608 and --decode-sample 33554432 bytes per thread.
+          lz4 defaults: --block-size 262144, --threads 1,2,4,<cores>, --pairs 25,
+                        --encode-sample 8388608 and --decode-sample 33554432 bytes per thread.
+          pipeline defaults: --workers 1,2,4,<cores>, --entry-size 4194304, --feed-size 1048576, --runs 5,
+                             --abandon-after the transfer policy's.
         """
 
     static func main() {
         var arguments = Array(CommandLine.arguments.dropFirst())
-        guard !arguments.isEmpty, arguments.removeFirst() == "lz4" else { fail(usage) }
-        let options: LZ4Bench.Options
+        guard !arguments.isEmpty else { fail(usage) }
+        let mode = arguments.removeFirst()
         do {
-            options = try LZ4Bench.Options(parsing: arguments)
+            switch mode {
+            case "lz4": LZ4Bench(options: try LZ4Bench.Options(parsing: arguments)).run()
+            case "pipeline": PipelineBench(options: try PipelineBench.Options(parsing: arguments)).run()
+            default: fail(usage)
+            }
         } catch {
             fail("\(error.message)\n\(usage)")
         }
-        LZ4Bench(options: options).run()
     }
 
     static func fail(_ message: String) -> Never {
