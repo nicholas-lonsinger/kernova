@@ -23,8 +23,9 @@ import KernovaWire
 /// are open whatever the depth. Each directory's mode, flags and times land as it is left.
 ///
 /// The item's own entry is created in the destination under ``stagingName``, exclusively, and everything
-/// else inside it; it takes its own name only when the module's ``TreeReceiver`` publishes it, after the
-/// producer confirmed the tree whole. A failure removes it, so nothing the writer created stays anywhere.
+/// else inside it; it takes ``name`` — the item's name, which the caller supplies and the container's unnamed
+/// root does not carry — only when the module's ``TreeReceiver`` publishes it, after the producer confirmed
+/// the tree whole. A failure removes it, so nothing the writer created stays anywhere.
 ///
 /// A folder's symlinks and small files are held in a batch and created side by side
 /// (``FolderBatch``) before the writer creates anything else or leaves the folder, so a failure among them
@@ -32,6 +33,9 @@ import KernovaWire
 public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     /// The name the item's own entry has in the destination until it is published.
     public let stagingName: [UInt8]
+    /// The name the item's own entry is published under, and the first component of a failure's path once that
+    /// entry has begun.
+    public let name: [UInt8]
 
     private let fileSystem: FileSystem
     private let destination: Int32
@@ -49,8 +53,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private var sequence: TreeEventSequence
     /// Whether the item's own entry was created under ``stagingName``, which a failure then removes.
     private var stagingCreated = false
-    /// The item's own entry, once created.
-    private var root: Root?
+    /// The identity of the item's own entry, once created.
+    private var root: FolderBatch.Identity?
     /// The directories entered, the item's own first, while the cursor is inside them.
     private var cursor: DirectoryCursor<FileSystem, Frame>?
     /// Each directory entered, the item's own first.
@@ -66,11 +70,6 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private struct Entered {
         let name: [UInt8]
         let pathByteCount: Int
-    }
-
-    private struct Root {
-        let name: [UInt8]
-        let identity: FolderBatch.Identity
     }
 
     /// A directory entered: its identity and what lands on it as it is left.
@@ -130,9 +129,11 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// A writer landing an item in `destination`.
+    /// A writer landing the item `name` in `destination`.
     ///
     /// - Parameters:
+    ///   - name: The item's name, which it is published under; one this OS cannot land fails the item's own
+    ///     entry as it is created — `.container(.invalidName)` for one that is not a single path component.
     ///   - fileSystem: The calls the writer makes.
     ///   - destination: An open directory, which the writer takes ownership of and closes when it ends.
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path, against which
@@ -141,9 +142,10 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///     the decmpfs types it lands compressed, and its codecs.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
-        fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
+        name: [UInt8], fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
         accepting acceptance: ContainerAcceptance, logger: KernovaLogger = TreeWriterLog.logger
     ) {
+        self.name = name
         self.fileSystem = fileSystem
         self.destination = destination
         self.destinationPathByteCount = destinationPathByteCount
@@ -182,7 +184,11 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private func path(of event: TreeEvent) -> [[UInt8]] {
         switch event {
         case .enterDirectory(let header), .beginFile(let header), .symlink(let header):
-            entered.prefix(Int(min(header.depth, UInt32(entered.count)))).map(\.name) + [Array(header.name)]
+            if header.depth == 0 {
+                [name]
+            } else {
+                entered.prefix(Int(min(header.depth, UInt32(entered.count)))).map(\.name) + [Array(header.name)]
+            }
         default: position
         }
     }
@@ -197,34 +203,31 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private var position: [[UInt8]] {
         if let file { return file.path }
         if !entered.isEmpty { return entered.map(\.name) }
-        return root.map { [$0.name] } ?? []
+        return root == nil ? [] : [name]
     }
 
-    /// Gives the item's own entry `name` in the destination, exclusively: the name it carries when `name` is
-    /// nil, which an unnamed entry fails.
+    /// Gives the item's own entry ``name`` in the destination, exclusively.
     ///
-    /// - Returns: the name it landed under.
-    func publish(as name: [UInt8]? = nil) throws(TreeWriteFailure) -> [UInt8] {
+    /// - Returns: ``name``, the name it landed under.
+    func publish() throws(TreeWriteFailure) -> [UInt8] {
         switch phase {
         case .failed(let failure): throw failure
         case .published: throw failHere(.container(.bytesAfterEnd))
         case .writing: guard sequence.isEnded else { throw failHere(.container(.eventOutOfOrder)) }
         }
         guard let root else { preconditionFailure("ended with no root") }
-        let published = name ?? root.name
-        guard ValidatedEntry.isValidName(Data(published)) else { throw fail(.container(.invalidName), at: []) }
         let staged = try? fileSystem.status(of: stagingName, in: destination)
-        guard let staged, FolderBatch.Identity(staged) == root.identity else {
-            throw fail(.moved, at: [published])
+        guard let staged, FolderBatch.Identity(staged) == root else {
+            throw fail(.moved, at: [name])
         }
         do {
-            try fileSystem.rename(stagingName, in: destination, to: published, in: destination)
+            try fileSystem.rename(stagingName, in: destination, to: name, in: destination)
         } catch {
-            throw fail(.system(error), at: [published])
+            throw fail(.system(error), at: [name])
         }
         cursor = nil
         phase = .published
-        return published
+        return name
     }
 
     /// Removes everything the writer created, unless it was published.
@@ -271,7 +274,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             }
             stagingCreated = true
             let (descriptor, status) = try open(stagingName, in: destination, path: path)
-            root = Root(name: name, identity: FolderBatch.Identity(status))
+            root = FolderBatch.Identity(status)
             cursor = DirectoryCursor(
                 fileSystem: fileSystem, descriptor: descriptor, status: status,
                 frame: Frame(identity: FolderBatch.Identity(status), metadata: metadata))
@@ -336,7 +339,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             } else {
                 preconditionFailure("the root file is written as it arrives")
             }
-            root = Root(name: name, identity: FolderBatch.Identity(status))
+            root = FolderBatch.Identity(status)
         } catch {
             throw TreeWriteFailure(path: path, reason: .system(error))
         }
@@ -499,12 +502,17 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
 
     // MARK: - Steps
 
-    /// The name `header` lands under, its path, and its landing path's length, once this OS lands it.
+    /// The name `header` lands under — ``name`` for the item's own entry, else its header's — its path, and
+    /// its landing path's length, once this OS lands it.
     private func landing(_ header: EntryHeader) throws(TreeWriteFailure) -> (
         name: [UInt8], path: [[UInt8]], pathByteCount: Int
     ) {
-        let name = Array(header.name)
+        let name = header.depth == 0 ? self.name : Array(header.name)
         let path = entered.map(\.name) + [name]
+        // The sequence held every header's name to one path component; the caller's is held here.
+        guard header.depth > 0 || PathComponent.isValid(name) else {
+            throw TreeWriteFailure(path: path, reason: .container(.invalidName))
+        }
         let pathByteCount = (entered.last?.pathByteCount ?? destinationPathByteCount) + 1 + name.count
         if let refusal = fileSystem.landingRefusal(of: name, pathByteCount: pathByteCount) {
             throw TreeWriteFailure(path: path, reason: .refused(refusal))

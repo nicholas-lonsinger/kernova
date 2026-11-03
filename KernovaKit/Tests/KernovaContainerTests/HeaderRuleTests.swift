@@ -37,7 +37,7 @@ private func xattr(_ attributeName: Data, _ value: Data = Data([1])) -> Kernova_
 }
 
 private func fileWith(_ edit: (inout EntryHeader) -> Void) -> Data {
-    var header = plainFile("f", depth: 0, size: 0)
+    var header = plainFile(depth: 0, size: 0)
     edit(&header)
     return ContainerLimitTests.single(header)
 }
@@ -53,7 +53,7 @@ struct DataPlacementTests {
         var nested = inlineData(size: 3)
         nested.depth = 1
         let container =
-            headerRecord(directory("d", depth: 0)) + headerRecord(nested) + record(.chunk, Data("abc".utf8))
+            headerRecord(directory(depth: 0)) + headerRecord(nested) + record(.chunk, Data("abc".utf8))
             + endRecord(entries: 2, bytes: 3)
         #expect(decodingError(container, accepting: generous(.folder)) == .dataEntryNotRoot)
     }
@@ -63,7 +63,7 @@ struct DataPlacementTests {
         var nested = inlineData(size: 0)
         nested.depth = 1
         var encoder = ContainerEncoder(accepting: generous(.folder), policy: .never)
-        _ = try encoder.entry(directory("d", depth: 0))
+        _ = try encoder.entry(directory(depth: 0))
         #expect(throws: ContainerError.dataEntryNotRoot) { try encoder.entry(nested) }
     }
 
@@ -77,8 +77,8 @@ struct DataPlacementTests {
 @Suite("The root entry's type matches the pulled representation's storage")
 struct RootTypeTests {
     static let roots: [(EntryHeader, Representation.Storage)] = [
-        (inlineData(size: 0), .inline), (plainFile("f", depth: 0, size: 0), .file),
-        (directory("d", depth: 0), .folder),
+        (inlineData(size: 0), .inline), (plainFile(depth: 0, size: 0), .file),
+        (directory(depth: 0), .folder),
     ]
 
     @Test(
@@ -96,7 +96,7 @@ struct RootTypeTests {
 
     @Test("A symlink is never a root", arguments: [Representation.Storage.inline, .file, .folder, .unspecified])
     func rootSymlink(storage: Representation.Storage) {
-        let container = ContainerLimitTests.single(symlink("s", depth: 0, target: "/etc"))
+        let container = ContainerLimitTests.single(symlink(depth: 0, target: "/etc"))
         #expect(
             decodingError(container, accepting: generous(storage)) == .rootTypeMismatch(.symlink, expected: storage))
     }
@@ -105,13 +105,13 @@ struct RootTypeTests {
     func encoderRefusesWrongRoot() {
         var encoder = ContainerEncoder(accepting: generous(.folder), policy: .never)
         #expect(throws: ContainerError.rootTypeMismatch(.file, expected: .folder)) {
-            try encoder.entry(plainFile("f", depth: 0, size: 0))
+            try encoder.entry(plainFile(depth: 0, size: 0))
         }
     }
 
     @Test("An unspecified storage admits no root")
     func unspecifiedStorage() {
-        let container = ContainerLimitTests.single(plainFile("f", depth: 0, size: 0))
+        let container = ContainerLimitTests.single(plainFile(depth: 0, size: 0))
         #expect(
             decodingError(container, accepting: generous(.unspecified))
                 == .rootTypeMismatch(.file, expected: .unspecified))
@@ -166,9 +166,9 @@ struct XattrRuleTests {
     @Test("A resource fork travels as chunks, never as an attribute, beside any storage")
     func resourceForkNeverAnAttribute() {
         var compressed = decmpfsFile(
-            "c", depth: 0, attribute: decmpfsAttribute(type: 4, size: 1), resourceForkSize: 0)
+            depth: 0, attribute: decmpfsAttribute(type: 4, size: 1), resourceForkSize: 0)
         compressed.xattrs = [xattr(name("com.apple.ResourceFork"))]
-        var plain = plainFile("p", depth: 0, size: 0)
+        var plain = plainFile(depth: 0, size: 0)
         plain.xattrs = [xattr(name("com.apple.ResourceFork"))]
         for header in [compressed, plain] {
             #expect(
@@ -179,7 +179,7 @@ struct XattrRuleTests {
 
     @Test("The encoder refuses an attribute off the allowlist")
     func encoderRefuses() {
-        var header = plainFile("f", depth: 0, size: 0)
+        var header = plainFile(depth: 0, size: 0)
         header.xattrs = [xattr(name("com.apple.quarantine"))]
         var encoder = ContainerEncoder(accepting: generous(.file), policy: .never)
         #expect(throws: ContainerError.xattrNotAllowed(name("com.apple.quarantine"))) { try encoder.entry(header) }
@@ -190,7 +190,7 @@ struct XattrRuleTests {
 struct ResourceForkRuleTests {
     @Test("A file's resource fork follows its data as chunks, with an event between them")
     func forkFollowsData() {
-        let header = withResourceFork(plainFile("f", depth: 0, size: 3), size: 2)
+        let header = withResourceFork(plainFile(depth: 0, size: 3), size: 2)
         let decoded = decode(
             headerRecord(header) + record(.chunk, Data("abc".utf8)) + record(.chunk, Data("de".utf8))
                 + endRecord(entries: 1, bytes: 5))
@@ -204,7 +204,7 @@ struct ResourceForkRuleTests {
 
     @Test("A chunk never spans the data and the fork")
     func chunkStopsAtData() {
-        let header = withResourceFork(plainFile("f", depth: 0, size: 3), size: 2)
+        let header = withResourceFork(plainFile(depth: 0, size: 3), size: 2)
         let container =
             headerRecord(header) + record(.chunk, Data("abcde".utf8)) + endRecord(entries: 1, bytes: 5)
         #expect(decodingError(container) == .chunkPastEntrySize(count: 5, remaining: 3))
@@ -219,7 +219,7 @@ struct ResourceForkRuleTests {
     func forkOnlyFile() throws {
         var fork = Data(String(repeating: "icon ", count: 2_000).utf8)
         fork.append(Data(count: 300_000))
-        let header = withResourceFork(lz4File("Icon\r", depth: 0, size: 0), size: UInt64(fork.count))
+        let header = withResourceFork(lz4File(depth: 0, size: 0), size: UInt64(fork.count))
         var encoder = ContainerEncoder(
             accepting: generous(), policy: ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil))
         var container = try encoder.entry(header)
@@ -241,8 +241,8 @@ struct ResourceForkRuleTests {
         let (root, header): (EntryHeader?, EntryHeader) =
             switch type {
             case .data: (nil, inlineData(size: 0))
-            case .directory: (nil, directory("d", depth: 0))
-            default: (directory("d", depth: 0), symlink("l", depth: 1, target: "t"))
+            case .directory: (nil, directory(depth: 0))
+            default: (directory(depth: 0), symlink("l", depth: 1, target: "t"))
             }
         let forked = withResourceFork(header, size: 1)
         let container = (root.map(headerRecord) ?? Data()) + headerRecord(forked) + endRecord(entries: 2, bytes: 1)
@@ -256,18 +256,18 @@ struct ResourceForkRuleTests {
     func forkSizeLimit() {
         let edge = ValidatedEntry.maxResourceForkByteCount
         #expect(throws: Never.self) {
-            try ValidatedEntry(withResourceFork(plainFile("f", depth: 0, size: 0), size: edge))
+            try ValidatedEntry(withResourceFork(plainFile(depth: 0, size: 0), size: edge))
         }
         #expect(
             decodingError(
-                ContainerLimitTests.single(withResourceFork(plainFile("f", depth: 0, size: 0), size: edge + 1)))
+                ContainerLimitTests.single(withResourceFork(plainFile(depth: 0, size: 0), size: edge + 1)))
                 == .resourceForkTooLarge(edge + 1))
     }
 
     @Test("Starting a fork the header does not declare, or before the data is whole, is refused by the encoder")
     func encoderForkMarker() throws {
         var encoder = ContainerEncoder(accepting: generous(), policy: .never)
-        _ = try encoder.entry(withResourceFork(plainFile("f", depth: 0, size: 3), size: 2))
+        _ = try encoder.entry(withResourceFork(plainFile(depth: 0, size: 3), size: 2))
         #expect(throws: ContainerError.entryIncomplete(remaining: 3)) { try encoder.encode(.resourceFork) }
         _ = try encoder.bytes(Data("abc".utf8))
         #expect(try encoder.encode(.resourceFork).isEmpty)
@@ -275,7 +275,7 @@ struct ResourceForkRuleTests {
         _ = try encoder.bytes(Data("de".utf8))
         #expect(throws: ContainerError.eventOutOfOrder) { try encoder.encode(.resourceFork) }
         var unforked = ContainerEncoder(accepting: generous(), policy: .never)
-        _ = try unforked.entry(plainFile("f", depth: 0, size: 1))
+        _ = try unforked.entry(plainFile(depth: 0, size: 1))
         _ = try unforked.bytes(Data("a".utf8))
         #expect(throws: ContainerError.resourceForkUndeclared) { try unforked.encode(.resourceFork) }
     }
@@ -283,8 +283,8 @@ struct ResourceForkRuleTests {
     @Test("A plain file's data and fork together count against the ceiling")
     func forkCountsAgainstCeiling() {
         let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 10, decmpfsTypes: [], acceptsLZ4: false)
-        let fits = withResourceFork(plainFile("f", depth: 0, size: 6), size: 4)
-        let over = withResourceFork(plainFile("f", depth: 0, size: 6), size: 5)
+        let fits = withResourceFork(plainFile(depth: 0, size: 6), size: 4)
+        let over = withResourceFork(plainFile(depth: 0, size: 6), size: 5)
         let body = Data(repeating: 1, count: 6)
         #expect(
             decodingError(
@@ -301,7 +301,7 @@ struct LandedCeilingTests {
     static func decmpfs(logical: UInt64, fork: UInt64, ceiling: UInt64) -> ContainerError? {
         let acceptance = ContainerAcceptance(storage: .file, byteCeiling: ceiling, decmpfsTypes: [4], acceptsLZ4: false)
         let header = decmpfsFile(
-            "c", depth: 0, attribute: decmpfsAttribute(type: 4, size: logical), resourceForkSize: fork)
+            depth: 0, attribute: decmpfsAttribute(type: 4, size: logical), resourceForkSize: fork)
         var container = headerRecord(header)
         if fork > 0 { container += record(.chunk, Data(repeating: 1, count: Int(fork))) }
         return decodingError(container + endRecord(entries: 1, bytes: fork), accepting: acceptance)
@@ -391,7 +391,7 @@ struct HeaderRangeTests {
 
 @Suite("Unknown protobuf fields make a record malformed")
 struct UnknownFieldTests {
-    static let file = serialized(plainFile("f", depth: 0, size: 0))
+    static let file = serialized(plainFile(depth: 0, size: 0))
     static let end = endRecord(entries: 1, bytes: 0)
 
     @Test("An unknown field in a header is refused")
@@ -413,7 +413,7 @@ struct UnknownFieldTests {
 
     @Test("An unknown field in a message nested in a header is refused", arguments: [6, 7, 8, 10, 11, 12])
     func nested(fieldNumber: Int) {
-        var header = plainFile("f", depth: 0, size: 0)
+        var header = plainFile(depth: 0, size: 0)
         // Fields 10 to 12 are the storage itself.
         if fieldNumber >= 10 { header.storage = nil }
         let known: Data
@@ -442,7 +442,7 @@ struct FinishContractTests {
     @Test("Bytes after the end record in the same feed: .end comes first, then the error, and finish throws")
     func endThenTrailing() {
         var decoder = ContainerDecoder(accepting: generous(.file))
-        decoder.feed(headerRecord(plainFile("f", depth: 0, size: 0)) + endRecord(entries: 1, bytes: 0) + Data([1]))
+        decoder.feed(headerRecord(plainFile(depth: 0, size: 0)) + endRecord(entries: 1, bytes: 0) + Data([1]))
         var events: [TreeEvent] = []
         var thrown: ContainerError?
         do {

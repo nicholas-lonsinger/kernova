@@ -13,7 +13,7 @@ import Testing
 enum Regression {
     /// A host that read the far peer's Hello, recording no trace when `trace` is false.
     static func host(trace: Bool = true) -> HostileRun {
-        let run = HostileRun(local: .host, seed: 1, testKinds: true, itemTransfer: true) { connection in
+        let run = HostileRun(local: .host, seed: 1, items: true) { connection in
             if !trace { connection.recordsTrace = false }
         }
         run.feed([HostileItems.peerHello], preamble: true)
@@ -61,9 +61,9 @@ struct ItemMachineRegressionTests {
     func countReservedAtOpen() {
         let run = Regression.host()
         run.feed([
-            WireFrames.open(1, .testItemOfferByPeer, body: HostileItems.header(count: .max)),
+            WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: .max)),
             WireFrames.open(
-                3, .testItemOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1_000_000)),
+                3, .clipboardOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1_000_000)),
         ])
         #expect(Regression.resets(run, on: 1) == [.tooLarge])
         #expect(Regression.resets(run, on: 3) == [.tooLarge])
@@ -74,18 +74,18 @@ struct ItemMachineRegressionTests {
     func emptyItemsCharged() {
         let run = Regression.host(trace: false)
         let fits = Self.limit / Self.overhead
-        run.feed([WireFrames.open(1, .testItemOfferByPeer, body: HostileItems.header(count: UInt32(fits)))])
+        run.feed([WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: UInt32(fits)))])
         Regression.feedRepeated(run, Unit.rawMessage(1, Data()), count: fits)
         run.feed([Unit.end(1)])
         #expect(Regression.received(run).map(\.count) == [fits])
         run.feed([
-            WireFrames.open(3, .testItemOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1))
+            WireFrames.open(3, .clipboardOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1))
         ])
         #expect(Regression.resets(run, on: 3) == [.tooLarge])
         // The far side withdraws the full offer; its whole charge returns.
         run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
         run.feed([
-            WireFrames.open(5, .testItemOfferByPeer, body: HostileItems.header(token: Regression.token(5), count: 1)),
+            WireFrames.open(5, .clipboardOfferByPeer, body: HostileItems.header(token: Regression.token(5), count: 1)),
             WireFrames.message(5, HostileItems.offer.items[0]), Unit.end(5),
         ])
         #expect(Regression.resets(run, on: 5).isEmpty)
@@ -98,7 +98,7 @@ struct ItemMachineRegressionTests {
         // Each 64 KiB Item holds 32,768 empty representations.
         let payload = Data((0..<65_536).map { $0 % 2 == 0 ? 0x0A : 0x00 })
         let messages = 200
-        run.feed([WireFrames.open(1, .testItemOfferByPeer, body: HostileItems.header(count: UInt32(messages)))])
+        run.feed([WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: UInt32(messages)))])
         Regression.feedRepeated(run, Unit.rawMessage(1, payload), count: messages)
         run.feed([Unit.end(1)])
         #expect(Regression.received(run).map(\.count) == [messages])
@@ -129,7 +129,7 @@ struct ItemMachineRegressionTests {
     func releaseEndsPull() throws {
         let (run, pulled) = HostileItems.pulling(seed: 4)
         let id = try #require(pulled)
-        run.host?.releaseTestOffer(SimItems.token(7), now: run.now)
+        run.host?.releaseOffer(SimItems.token(7), now: run.now)
         run.drain()
         run.feed([Unit.raw(HostileItems.pullStream, HostileItems.container), Unit.end(HostileItems.pullStream)])
         #expect(run.itemEnds == [.pullEnded(id, .closed(.resetLocally(WireError(.itemOfferStale))))])
@@ -194,13 +194,13 @@ struct ItemMachineRegressionTests {
         let token = Regression.token(9)
         #expect(run.offerItems(SimItems.offer(9, [[SimItems.representation(.inline, size: 10)]])) == nil)
         run.feed([
-            WireFrames.open(1, .testItemOfferByPeer, body: HostileItems.header(token: token, count: 0)), Unit.end(1),
+            WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(token: token, count: 0)), Unit.end(1),
         ])
         #expect(Regression.resets(run, on: 1).isEmpty)
         #expect(Regression.received(run).map(\.token) == [token])
         run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
         let ends = run.itemOutputs.compactMap {
-            if case .event(.offerEnded(let origin, let ended, _)) = $0 { (origin, ended) } else { nil }
+            if case .event(.offerEnded(_, let origin, let ended, _)) = $0 { (origin, ended) } else { nil }
         }
         #expect(ends.map(\.0) == [.remote] && ends.map(\.1) == [token])
         // This side's offer of the same token is still open and served.

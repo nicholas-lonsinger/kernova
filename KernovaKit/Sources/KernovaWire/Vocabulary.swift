@@ -42,8 +42,4 @@ extension StreamKind {
     package static let testBulkByPeer = StreamKind.UNRECOGNIZED(9000)
     /// The simulation's raw-DATA kind the host opens.
     package static let testBulkByHost = StreamKind.UNRECOGNIZED(9001)
-    /// The simulation's item-set offer kind the host opens.
-    package static let testItemOfferByHost = StreamKind.UNRECOGNIZED(9002)
-    /// The simulation's item-set offer kind a peer opens.
-    package static let testItemOfferByPeer = StreamKind.UNRECOGNIZED(9003)
 }

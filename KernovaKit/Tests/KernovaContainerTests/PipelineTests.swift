@@ -107,7 +107,7 @@ struct PipelineTests {
         }
         let content = chunks.reduce(Data(), +)
         let tree = [
-            TreeEvent.beginFile(lz4File("item", depth: 0, size: UInt64(content.count))), .bytes(content), .finishFile,
+            TreeEvent.beginFile(lz4File(depth: 0, size: UInt64(content.count))), .bytes(content), .finishFile,
             .end,
         ]
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
@@ -133,13 +133,13 @@ struct PipelineTests {
         let cases: [(Data, ContainerAcceptance, ContainerError)] = [
             // Declares more than the entry still owes.
             (
-                headerRecord(lz4File("f", depth: 0, size: 4_096 * 2 + 100)) + valid + valid
+                headerRecord(lz4File(depth: 0, size: 4_096 * 2 + 100)) + valid + valid
                     + lz4ChunkRecord(declaredSize: 4_096, block: block),
                 generous(.file), .chunkPastEntrySize(count: 4_096, remaining: 100)
             ),
             // Declares more than any chunk may hold.
             (
-                headerRecord(lz4File("f", depth: 0, size: 1 << 22)) + valid
+                headerRecord(lz4File(depth: 0, size: 1 << 22)) + valid
                     + lz4ChunkRecord(declaredSize: UInt32(ContainerRecord.maxChunkPayload + 1), block: block),
                 generous(.file),
                 .lz4(
@@ -148,12 +148,12 @@ struct PipelineTests {
             ),
             // An LZ4 chunk in an entry whose storage is plain.
             (
-                headerRecord(plainFile("f", depth: 0, size: 4_096)) + valid, generous(.file),
+                headerRecord(plainFile(depth: 0, size: 4_096)) + valid, generous(.file),
                 .lz4ChunkOutsideLZ4Storage
             ),
             // A header past the pull's byte ceiling.
             (
-                headerRecord(lz4File("f", depth: 0, size: 4_096 * 4)) + valid, ceiling,
+                headerRecord(lz4File(depth: 0, size: 4_096 * 4)) + valid, ceiling,
                 .exceedsByteCeiling(declared: 4_096 * 4, ceiling: 4_096 * 3)
             ),
         ]
@@ -175,7 +175,7 @@ struct PipelineTests {
         let size = ContainerEncoder.chunkByteCount
         let text = Data(String(repeating: "a guest sends a tree. ", count: size).utf8.prefix(size * 12))
         let tree: [TreeEvent] = [
-            .beginFile(lz4File("item", depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
+            .beginFile(lz4File(depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
         ]
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
         var container = sequentiallyEncoded(tree, accepting: generous(.file), policy: policy).container
@@ -219,7 +219,7 @@ struct PipelineTests {
         let size = ContainerEncoder.chunkByteCount
         let text = Data(String(repeating: "lanes and windows. ", count: size).utf8.prefix(size * 16))
         let tree: [TreeEvent] = [
-            .beginFile(lz4File("item", depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
+            .beginFile(lz4File(depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
         ]
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
         let container = sequentiallyEncoded(tree, accepting: generous(.file), policy: policy).container
@@ -267,7 +267,7 @@ struct PipelineTests {
         let piece = Data(repeating: 0x62, count: 4_096)
         let block = try #require(LZ4Block.compress(piece))
         let size = UInt64(8 * raw.count + piece.count + 2)
-        var feedA = headerRecord(lz4File("pinned", depth: 0, size: size))
+        var feedA = headerRecord(lz4File(depth: 0, size: size))
         for _ in 0..<8 { feedA += record(.chunk, raw) }
         feedA += lz4ChunkRecord(declaredSize: UInt32(piece.count), block: block) + record(.chunk, Data([1]))
         let feedB = record(.chunk, Data([2])) + endRecord(entries: 1, bytes: size)
@@ -303,7 +303,7 @@ struct PipelineTests {
         let piece = Data(String(repeating: "timing ", count: 600).utf8)
         let size = UInt64(piece.count + 1)
         let container =
-            headerRecord(lz4File("t", depth: 0, size: size))
+            headerRecord(lz4File(depth: 0, size: size))
             + lz4ChunkRecord(declaredSize: UInt32(piece.count), block: try #require(LZ4Block.compress(piece)))
             + record(.chunk, Data([9])) + endRecord(entries: 1, bytes: size)
         let expected = sequentiallyDecoded([container], accepting: generous(.file))
@@ -334,7 +334,7 @@ struct PipelineTests {
         let piece = Data(String(repeating: "timing ", count: 600).utf8)
         // A block that decompresses short of the size the chunk declares.
         let container =
-            headerRecord(lz4File("t", depth: 0, size: UInt64(piece.count)))
+            headerRecord(lz4File(depth: 0, size: UInt64(piece.count)))
             + lz4ChunkRecord(
                 declaredSize: UInt32(piece.count), block: try #require(LZ4Block.compress(piece.prefix(4_000))))
         let expected = sequentiallyDecoded([container], accepting: generous(.file))
@@ -369,7 +369,7 @@ struct PipelineTests {
         while text.count < size * 32 { text.append(words[Int(random.next() % 512)]) }
         text = text.prefix(size * 32)
         let tree: [TreeEvent] = [
-            .beginFile(lz4File("item", depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
+            .beginFile(lz4File(depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
         ]
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
         let workers = 2

@@ -81,10 +81,10 @@ struct RandomTree {
             events.append(.finishFile)
         case 1:
             storage = .file
-            events += Self.file("item", depth: 0, kind: pick(0...2), using: &random)
+            events += Self.file(depth: 0, kind: pick(0...2), using: &random)
         default:
             storage = .folder
-            events.append(.enterDirectory(directory("root", depth: 0)))
+            events.append(.enterDirectory(directory(depth: 0)))
             var entered = 1
             // A plain, an LZ4 and a decmpfs file first, so every tree holds every storage.
             let count = pick(3...10)
@@ -113,7 +113,9 @@ struct RandomTree {
     }
 
     /// A file's events: `kind` 0 plain, 1 LZ4, 2 decmpfs; a plain or LZ4 file sometimes with a resource fork.
-    private static func file(_ name: String, depth: UInt32, kind: Int, using random: inout SplitMix64) -> [TreeEvent] {
+    private static func file(_ name: String = "", depth: UInt32, kind: Int, using random: inout SplitMix64)
+        -> [TreeEvent]
+    {
         var events: [TreeEvent] = []
         let fork =
             Int.random(in: 0...2, using: &random) == 0 || kind == 2

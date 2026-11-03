@@ -104,6 +104,15 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
   /// current-only, version 1.
   case logs // = 3
 
+  /// current-only, version 1. Pasteboard offers, both ways.
+  case clipboard // = 10
+
+  /// current-only, version 1. Items dropped onto the VM, host -> peer.
+  case drop // = 11
+
+  /// current-only, version 1. Items dragged out of the guest, peer -> host.
+  case drag // = 12
+
   /// current-only, version 1. Pulls of offered items.
   case itemTransfer // = 13
   case UNRECOGNIZED(Int)
@@ -118,6 +127,9 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
     case 1: self = .power
     case 2: self = .update
     case 3: self = .logs
+    case 10: self = .clipboard
+    case 11: self = .drop
+    case 12: self = .drag
     case 13: self = .itemTransfer
     default: self = .UNRECOGNIZED(rawValue)
     }
@@ -129,6 +141,9 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
     case .power: return 1
     case .update: return 2
     case .logs: return 3
+    case .clipboard: return 10
+    case .drop: return 11
+    case .drag: return 12
     case .itemTransfer: return 13
     case .UNRECOGNIZED(let i): return i
     }
@@ -140,6 +155,9 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
     .power,
     .update,
     .logs,
+    .clipboard,
+    .drop,
+    .drag,
     .itemTransfer,
   ]
 
@@ -156,6 +174,11 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
 /// | LOG_FORWARD   | LOGS    | peer   | LogOpen      | LogBatch msgs      | nothing              | empty          | empty         |
 /// | ITEM_PULL_BY_HOST | ITEM_TRANSFER | host | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 /// | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
+/// | CLIPBOARD_OFFER_BY_HOST | CLIPBOARD | host | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
+/// | CLIPBOARD_OFFER_BY_PEER | CLIPBOARD | peer | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
+/// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
+/// | DRAG_OFFER    | DRAG    | peer   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
+/// | DRAG_TAKE     | DRAG    | host   | DragTake     | nothing            | nothing              | empty, at once | DragTakeOutcome |
 ///
 /// "Opener END: empty, at once" means the opener sends END right after OPEN.
 /// UPDATE_PULL's and both ITEM_PULLs' opener END is sent only after the
@@ -175,8 +198,15 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
   /// FROZEN
   case updatePull // = 200
   case logForward // = 300
+
+  /// Item-set offers (ItemSetHeader) and pulls, and later transfer kinds.
+  case clipboardOfferByHost // = 1000
   case itemPullByHost // = 1001
   case itemPullByPeer // = 1002
+  case dropOffer // = 1003
+  case dragOffer // = 1004
+  case dragTake // = 1005
+  case clipboardOfferByPeer // = 1006
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -189,8 +219,13 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     case 100: self = .powerRequest
     case 200: self = .updatePull
     case 300: self = .logForward
+    case 1000: self = .clipboardOfferByHost
     case 1001: self = .itemPullByHost
     case 1002: self = .itemPullByPeer
+    case 1003: self = .dropOffer
+    case 1004: self = .dragOffer
+    case 1005: self = .dragTake
+    case 1006: self = .clipboardOfferByPeer
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -201,8 +236,13 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     case .powerRequest: return 100
     case .updatePull: return 200
     case .logForward: return 300
+    case .clipboardOfferByHost: return 1000
     case .itemPullByHost: return 1001
     case .itemPullByPeer: return 1002
+    case .dropOffer: return 1003
+    case .dragOffer: return 1004
+    case .dragTake: return 1005
+    case .clipboardOfferByPeer: return 1006
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -213,8 +253,13 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     .powerRequest,
     .updatePull,
     .logForward,
+    .clipboardOfferByHost,
     .itemPullByHost,
     .itemPullByPeer,
+    .dropOffer,
+    .dragOffer,
+    .dragTake,
+    .clipboardOfferByPeer,
   ]
 
 }
@@ -304,7 +349,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
   case updateInstallFailed // = 125
   case updateInProgress // = 126
 
-  /// 1000-1199: item transfer.
+  /// 1000-1199: item transfer and the features that offer items.
   case itemOfferStale // = 1000
 
   /// the indexes name no representation, or its source is gone
@@ -318,6 +363,12 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
 
   /// the destination could not land a decmpfs entry; Error.item names it
   case itemDecmpfsRefused // = 1004
+
+  /// the take names no drag the peer offers, or one already taken
+  case dragNotCurrent // = 1005
+
+  /// the press that carried the drag is over
+  case dragPressOver // = 1006
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -367,6 +418,8 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case 1002: self = .itemContainerMalformed
     case 1003: self = .itemUnpackRefused
     case 1004: self = .itemDecmpfsRefused
+    case 1005: self = .dragNotCurrent
+    case 1006: self = .dragPressOver
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -414,6 +467,8 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case .itemContainerMalformed: return 1002
     case .itemUnpackRefused: return 1003
     case .itemDecmpfsRefused: return 1004
+    case .dragNotCurrent: return 1005
+    case .dragPressOver: return 1006
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -461,6 +516,8 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     .itemContainerMalformed,
     .itemUnpackRefused,
     .itemDecmpfsRefused,
+    .dragNotCurrent,
+    .dragPressOver,
   ]
 
 }
@@ -1904,6 +1961,12 @@ public nonisolated struct Kernova_V2_Representation: Sendable {
   /// The sender's estimate of EndRecord.bytes; 0 when unknown. Not a limit.
   public var sizeEstimate: UInt64 = 0
 
+  /// FILE and FOLDER: the item's name, one path component, which the
+  /// receiver lands it under or derives the name it lands under from. The
+  /// container's own entry carries none. Empty for INLINE. Bytes, not a
+  /// string: names need not be valid UTF-8.
+  public var name: Data = Data()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum Storage: SwiftProtobuf.Enum, Swift.CaseIterable {
@@ -2196,9 +2259,9 @@ public nonisolated struct Kernova_V2_EntryHeader: Sendable {
   /// depth. Depth 0 is the representation's own entry. Update profile.
   public var depth: UInt32 = 0
 
-  /// One path component. Bytes, not a string: names need not be valid UTF-8.
-  /// Empty only on the representation's own entry, which the receiver then
-  /// names. Update profile.
+  /// One path component; empty at depth 0, which takes the representation's
+  /// `name`. Bytes, not a string: names need not be valid UTF-8. Update
+  /// profile.
   public var name: Data = Data()
 
   /// update profile
@@ -2359,20 +2422,170 @@ public nonisolated struct Kernova_V2_EndRecord: Sendable {
   public init() {}
 }
 
+/// FeatureAdvert.params for CLIPBOARD, both sides.
+public nonisolated struct Kernova_V2_ClipboardCapability: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FeaturePolicy.params for CLIPBOARD. Sharing on or off is
+/// FeaturePolicy.enabled.
+public nonisolated struct Kernova_V2_ClipboardPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FeatureAdvert.params for DROP, both sides.
+public nonisolated struct Kernova_V2_DropCapability: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FeaturePolicy.params for DROP. Dropping on or off is FeaturePolicy.enabled.
+public nonisolated struct Kernova_V2_DropPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FeatureAdvert.params for DRAG, both sides.
+public nonisolated struct Kernova_V2_DragCapability: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// FeaturePolicy.params for DRAG. Dragging out on or off is
+/// FeaturePolicy.enabled.
+public nonisolated struct Kernova_V2_DragPolicy: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// OPEN body of DRAG_TAKE (host -> peer): the drag the peer offers left the
+/// VM's display, and the host takes it over.
+public nonisolated struct Kernova_V2_DragTake: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The token of the peer's open DRAG_OFFER.
+  public var token: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The peer's END body on DRAG_TAKE. A taken offer stays open until the host
+/// releases it; a refused one stays the guest's.
+public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Kernova_V2_DragTakeOutcome.Kind = .unspecified
+
+  public var error: Kernova_V2_Error {
+    get {_error ?? Kernova_V2_Error()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum Kind: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+
+    /// fallback: treated as KIND_REFUSED
+    case unspecified // = 0
+    case taken // = 1
+
+    /// `error` says why: DRAG_NOT_CURRENT or DRAG_PRESS_OVER
+    case refused // = 2
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .taken
+      case 2: self = .refused
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .taken: return 1
+      case .refused: return 2
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V2_DragTakeOutcome.Kind] = [
+      .unspecified,
+      .taken,
+      .refused,
+    ]
+
+  }
+
+  public init() {}
+
+  fileprivate var _error: Kernova_V2_Error? = nil
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "kernova.v2"
 
 nonisolated extension Kernova_V2_FeatureId: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0FEATURE_ID_UNSPECIFIED\0\u{1}FEATURE_ID_POWER\0\u{1}FEATURE_ID_UPDATE\0\u{1}FEATURE_ID_LOGS\0\u{2}\u{a}FEATURE_ID_ITEM_TRANSFER\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0FEATURE_ID_UNSPECIFIED\0\u{1}FEATURE_ID_POWER\0\u{1}FEATURE_ID_UPDATE\0\u{1}FEATURE_ID_LOGS\0\u{2}\u{7}FEATURE_ID_CLIPBOARD\0\u{1}FEATURE_ID_DROP\0\u{1}FEATURE_ID_DRAG\0\u{1}FEATURE_ID_ITEM_TRANSFER\0")
 }
 
 nonisolated extension Kernova_V2_StreamKind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAM_KIND_UNSPECIFIED\0\u{2}d\u{1}STREAM_KIND_POWER_REQUEST\0\u{2}d\u{1}STREAM_KIND_UPDATE_PULL\0\u{2}d\u{1}STREAM_KIND_LOG_FORWARD\0\u{2}}\u{a}STREAM_KIND_ITEM_PULL_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_PEER\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAM_KIND_UNSPECIFIED\0\u{2}d\u{1}STREAM_KIND_POWER_REQUEST\0\u{2}d\u{1}STREAM_KIND_UPDATE_PULL\0\u{2}d\u{1}STREAM_KIND_LOG_FORWARD\0\u{2}|\u{a}STREAM_KIND_CLIPBOARD_OFFER_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_PEER\0\u{1}STREAM_KIND_DROP_OFFER\0\u{1}STREAM_KIND_DRAG_OFFER\0\u{1}STREAM_KIND_DRAG_TAKE\0\u{1}STREAM_KIND_CLIPBOARD_OFFER_BY_PEER\0")
 }
 
 nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0")
 }
 
 nonisolated extension Kernova_V2_AbsenceReason: SwiftProtobuf._ProtoNameProviding {
@@ -3755,7 +3968,7 @@ nonisolated extension Kernova_V2_TypeDescriptor: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Kernova_V2_Representation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Representation"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}type\0\u{1}storage\0\u{1}promised\0\u{3}size_estimate\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}type\0\u{1}storage\0\u{1}promised\0\u{3}size_estimate\0\u{1}name\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3767,6 +3980,7 @@ nonisolated extension Kernova_V2_Representation: SwiftProtobuf.Message, SwiftPro
       case 2: try { try decoder.decodeSingularEnumField(value: &self.storage) }()
       case 3: try { try decoder.decodeSingularBoolField(value: &self.promised) }()
       case 4: try { try decoder.decodeSingularUInt64Field(value: &self.sizeEstimate) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self.name) }()
       default: break
       }
     }
@@ -3789,6 +4003,9 @@ nonisolated extension Kernova_V2_Representation: SwiftProtobuf.Message, SwiftPro
     if self.sizeEstimate != 0 {
       try visitor.visitSingularUInt64Field(value: self.sizeEstimate, fieldNumber: 4)
     }
+    if !self.name.isEmpty {
+      try visitor.visitSingularBytesField(value: self.name, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3797,6 +4014,7 @@ nonisolated extension Kernova_V2_Representation: SwiftProtobuf.Message, SwiftPro
     if lhs.storage != rhs.storage {return false}
     if lhs.promised != rhs.promised {return false}
     if lhs.sizeEstimate != rhs.sizeEstimate {return false}
+    if lhs.name != rhs.name {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4310,4 +4528,191 @@ nonisolated extension Kernova_V2_EndRecord: SwiftProtobuf.Message, SwiftProtobuf
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
+}
+
+nonisolated extension Kernova_V2_ClipboardCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardCapability"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_ClipboardCapability, rhs: Kernova_V2_ClipboardCapability) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_ClipboardPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClipboardPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_ClipboardPolicy, rhs: Kernova_V2_ClipboardPolicy) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DropCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DropCapability"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DropCapability, rhs: Kernova_V2_DropCapability) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DropPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DropPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DropPolicy, rhs: Kernova_V2_DropPolicy) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DragCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DragCapability"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DragCapability, rhs: Kernova_V2_DragCapability) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DragPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DragPolicy"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DragPolicy, rhs: Kernova_V2_DragPolicy) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DragTake: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DragTake"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}token\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.token) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.token.isEmpty {
+      try visitor.visitSingularBytesField(value: self.token, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DragTake, rhs: Kernova_V2_DragTake) -> Bool {
+    if lhs.token != rhs.token {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DragTakeOutcome"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}error\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 1)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DragTakeOutcome, rhs: Kernova_V2_DragTakeOutcome) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DragTakeOutcome.Kind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}KIND_TAKEN\0\u{1}KIND_REFUSED\0")
 }

@@ -10,8 +10,9 @@ import KernovaFileTree
 import KernovaLogging
 
 /// Lands a pulled FILE or FOLDER representation from its container's bytes: a `ContainerDecodePipeline` feeding a
-/// ``TreeWriter``. The item takes its own name in the destination only in ``finish()``, once the pipeline has
-/// confirmed the container whole; any failure, or the receiver ending first, removes everything it created.
+/// ``TreeWriter``. The item takes the name its caller supplies — the container's root carries none — in the
+/// destination only in ``finish()``, once the pipeline has confirmed the container whole; any failure, or the
+/// receiver ending first, removes everything it created.
 ///
 /// Once a call has failed, the receiver takes no more bytes and holds none: whether the container or the writer
 /// failed, the pipeline is released — which returns once none of its work is running — and every later call
@@ -34,9 +35,10 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     /// The name the item has in the destination until it is published.
     public var stagingName: [UInt8] { writer.stagingName }
 
-    /// A receiver landing what `acceptance` admits in `destination`.
+    /// A receiver landing what `acceptance` admits in `destination`, as the item `name`.
     ///
     /// - Parameters:
+    ///   - name: The item's name, which it is published under; the writer holds it to what this OS lands.
     ///   - acceptance: What the pull accepts; its byte ceiling and decmpfs types bound the writer too.
     ///   - decodingWorkers: The lanes LZ4 chunks decompress on; 0 decompresses each in the caller.
     ///   - fileSystem: The calls the writer makes.
@@ -44,12 +46,14 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
-        accepting acceptance: ContainerAcceptance, decodingWorkers: Int, fileSystem: FileSystem, destination: Int32,
+        name: [UInt8], accepting acceptance: ContainerAcceptance, decodingWorkers: Int, fileSystem: FileSystem,
+        destination: Int32,
         destinationPathByteCount: Int, logger: KernovaLogger = TreeWriterLog.logger
     ) {
         state = .receiving(ContainerDecodePipeline(accepting: acceptance, workers: decodingWorkers))
         writer = TreeWriter(
-            fileSystem: fileSystem, destination: destination, destinationPathByteCount: destinationPathByteCount,
+            name: name, fileSystem: fileSystem, destination: destination,
+            destinationPathByteCount: destinationPathByteCount,
             accepting: acceptance, logger: logger)
     }
 
@@ -66,27 +70,17 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// Lands every entry still decompressing, confirms the container ended whole, and publishes the item under its own
-    /// name.
+    /// Lands every entry still decompressing, confirms the container ended whole, and publishes the item under the
+    /// name it was created with.
     ///
     /// - Returns: The name the item landed under in the destination.
     /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an item that could not take
-    ///   its name — `EEXIST` when the destination already holds it, `invalidName` when it carries none; nothing
-    ///   created then remains.
+    ///   its name — `EEXIST` when the destination already holds it; nothing created then remains.
     public func finish() throws(TreeWriteFailure) -> [UInt8] {
-        try finish(as: nil)
-    }
-
-    /// ``finish()``, publishing the item as `name` exactly rather than under the name it carries.
-    public func finish(publishingAs name: [UInt8]) throws(TreeWriteFailure) {
-        _ = try finish(as: name)
-    }
-
-    private func finish(as name: [UInt8]?) throws(TreeWriteFailure) -> [UInt8] {
         try latching { decoder throws(TreeWriteFailure) in
             decoder.finish()
             try land(from: decoder)
-            return try writer.publish(as: name)
+            return try writer.publish()
         }
     }
 

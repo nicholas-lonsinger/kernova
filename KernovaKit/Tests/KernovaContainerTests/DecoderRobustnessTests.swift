@@ -14,7 +14,7 @@ struct DecoderRobustnessTests {
     /// A small container with every record kind: a directory, an LZ4 chunk, a raw chunk, a zero run, a
     /// symlink, a decmpfs file and the end.
     static let small: Data = {
-        var container = headerRecord(directory("d", depth: 0))
+        var container = headerRecord(directory(depth: 0))
         container += headerRecord(lz4File("l", depth: 1, size: 32)) + GoldenVectorTests.lz4Chunk
         container += headerRecord(plainFile("f", depth: 1, size: 4_099)) + GoldenVectorTests.zeroRun
         container += record(.chunk, Data("abc".utf8))
@@ -142,7 +142,7 @@ struct DecoderMemoryCeilingTests {
     func boundedResidue(pieceSize: Int) throws {
         // A file whose chunks are each the largest a chunk may be, raw and LZ4.
         let big = UInt64(ContainerRecord.maxChunkPayload)
-        var container = headerRecord(lz4File("max", depth: 0, size: 2 * big))
+        var container = headerRecord(lz4File(depth: 0, size: 2 * big))
         var generator = SplitMix64(seed: 99)
         container += record(.chunk, generator.bytes(ContainerRecord.maxChunkPayload))
         container += lz4ChunkRecord(
@@ -182,7 +182,7 @@ struct DecoderMemoryCeilingTests {
         // A block that would fail to decompress if the size check came second.
         let garbage = Data([0xFF, 0xFF, 0xFF])
         let container =
-            headerRecord(lz4File("l", depth: 0, size: 10)) + lz4ChunkRecord(declaredSize: 1_048_576, block: garbage)
+            headerRecord(lz4File(depth: 0, size: 10)) + lz4ChunkRecord(declaredSize: 1_048_576, block: garbage)
         #expect(decodingError(container) == .chunkPastEntrySize(count: 1_048_576, remaining: 10))
     }
 
@@ -190,7 +190,7 @@ struct DecoderMemoryCeilingTests {
     func ceilingCheckedAtHeader() {
         let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 100, decmpfsTypes: [], acceptsLZ4: false)
         var decoder = ContainerDecoder(accepting: acceptance)
-        decoder.feed(headerRecord(plainFile("f", depth: 0, size: 1 << 62)))
+        decoder.feed(headerRecord(plainFile(depth: 0, size: 1 << 62)))
         #expect(throws: ContainerError.exceedsByteCeiling(declared: 1 << 62, ceiling: 100)) { try decoder.next() }
     }
 
@@ -198,7 +198,7 @@ struct DecoderMemoryCeilingTests {
     func fileTooLarge() {
         let acceptance = ContainerAcceptance(storage: .file, byteCeiling: .max, decmpfsTypes: [], acceptsLZ4: false)
         var decoder = ContainerDecoder(accepting: acceptance)
-        decoder.feed(headerRecord(plainFile("f", depth: 0, size: UInt64(Int64.max) + 1)))
+        decoder.feed(headerRecord(plainFile(depth: 0, size: UInt64(Int64.max) + 1)))
         #expect(throws: ContainerError.fileTooLarge(UInt64(Int64.max) + 1)) { try decoder.next() }
     }
 }

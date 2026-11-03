@@ -20,7 +20,8 @@ public struct ItemPullID: Hashable, Sendable {
     }
 }
 
-/// An item set as an offer stream carries it.
+/// An item set as an offer stream carries it. An offer is refused `INTERNAL` unless its token is 16 bytes no
+/// open offer of this side holds and its every representation is named as `Representation.name` requires.
 public struct ItemOffer: Sendable, Equatable {
     /// The 16 bytes naming the offer, which a pull quotes.
     public var token: Data
@@ -42,6 +43,8 @@ public struct ItemOffer: Sendable, Equatable {
 
 /// An item-set offer's header: what the far side's OPEN announced.
 public struct ItemSetHeaderValue: Sendable, Equatable {
+    /// The feature whose offer kind the OPEN named.
+    public var feature: FeatureID
     /// The 16 bytes naming the offer, which a pull quotes.
     public var token: Data
     /// The receiver keeps the content out of history and logs.
@@ -51,7 +54,8 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     /// The items the offer sends.
     public var count: Int
 
-    init(_ header: Kernova_V2_ItemSetHeader) {
+    init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
+        self.feature = feature
         token = header.token
         concealed = header.concealed
         transient = header.transient
@@ -129,8 +133,8 @@ public enum ItemSinkInput: Sendable, Equatable {
 public enum ItemTransferEvent: Sendable, Equatable {
     /// The far side's offer arrived whole; `ItemTransfer.remoteItem` decodes each item when asked.
     case offerReceived(ItemSetHeaderValue)
-    /// An offer is no longer valid. Once per offer.
-    case offerEnded(ItemOfferOrigin, token: Data, StreamClosure)
+    /// An offer of `FeatureID`'s is no longer valid. Once per offer.
+    case offerEnded(FeatureID, ItemOfferOrigin, token: Data, StreamClosure)
     /// A pull this side opened ended. Once per pull `pull` returned.
     case pullEnded(ItemPullID, ItemPullResult)
     /// A pull this side served ended. Once per `.serve`.
@@ -216,7 +220,7 @@ public struct ItemTransfer: FeatureMachine {
         }
     }
 
-    /// Handles an event on an offer stream, whichever feature's kind it is.
+    /// Handles an event on an item-set offer stream, whichever feature's kind it is.
     package mutating func handleOffer(_ event: FeatureEvent, connection: inout Connection) {
         offers.handle(event, connection: &connection, events: &outbox)
         server.offersChanged(offers, connection: &connection)
@@ -228,18 +232,19 @@ public struct ItemTransfer: FeatureMachine {
         offers.remoteItem(token, index)
     }
 
-    /// Opens an offer of `offer` on a stream of `kind`; nil when sent, or why not.
-    package mutating func offer(_ offer: ItemOffer, kind: StreamKind, connection: inout Connection) -> WireError? {
+    /// Opens an offer of `offer` on a stream of `kind`, an item-set offer kind this role opens; nil when sent,
+    /// or why not.
+    public mutating func offer(_ offer: ItemOffer, kind: StreamKind, connection: inout Connection) -> WireError? {
         offers.offer(offer, kind: kind, connection: &connection)
     }
 
     /// Withdraws this side's offer of `token`.
-    package mutating func withdraw(_ token: Data, connection: inout Connection) {
+    public mutating func withdraw(_ token: Data, connection: inout Connection) {
         offers.withdraw(token, connection: &connection)
     }
 
     /// Releases the far side's offer of `token`: this side pulls nothing more of it.
-    package mutating func release(_ token: Data, connection: inout Connection) {
+    public mutating func release(_ token: Data, connection: inout Connection) {
         offers.release(token, connection: &connection)
     }
 

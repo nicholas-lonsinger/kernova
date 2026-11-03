@@ -59,7 +59,7 @@ struct WriterEventTests {
         let (link, size) = (swap.link, swap.size)
         let landing = try Landing(kernelContainment: kernelContainment)
         let writer = try landing.writer()
-        try writer.write(.enterDirectory(directory("r", depth: 0)))
+        try writer.write(.enterDirectory(directory(depth: 0)))
         try writer.write(.enterDirectory(directory("a", depth: 1)))
         try Self.swap("a", in: landing, writer: writer, link: link)
         let failure = Self.failure(
@@ -76,7 +76,7 @@ struct WriterEventTests {
     func swappedAncestorIsCaught(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
         let writer = try landing.writer()
-        try writer.write(.enterDirectory(directory("r", depth: 0)))
+        try writer.write(.enterDirectory(directory(depth: 0)))
         try writer.write(.enterDirectory(directory("a", depth: 1)))
         try writer.write(.enterDirectory(directory("b", depth: 2)))
         try Self.swap("a", in: landing, writer: writer, link: true)
@@ -104,7 +104,7 @@ struct WriterEventTests {
                 }()),
         ] {
             let writer = try landing.writer()
-            let failure = Self.failure(writing: [.enterDirectory(directory("r", depth: 0)), event], to: writer)
+            let failure = Self.failure(writing: [.enterDirectory(directory(depth: 0)), event], to: writer)
             #expect(failure == TreeWriteFailure(path: [bytes("r"), name], reason: .container(.invalidName)))
             try landing.expectNothingOutside()
         }
@@ -115,7 +115,7 @@ struct WriterEventTests {
         let landing = try Landing(kernelContainment: kernelContainment)
         let writer = try landing.writer()
         let failure = Self.failure(
-            writing: [.enterDirectory(directory("r", depth: 0)), .beginFile(file("f", depth: 2, size: 0))],
+            writing: [.enterDirectory(directory(depth: 0)), .beginFile(file("f", depth: 2, size: 0))],
             to: writer)
         #expect(
             failure
@@ -128,20 +128,20 @@ struct WriterEventTests {
     @Test("events out of order are refused: bytes with no file, a leave past the root, a second root, a symlink root")
     func writerRefusesOutOfOrderEvents() throws {
         let landing = try Landing(kernelContainment: true)
-        let root = TreeEvent.enterDirectory(directory("r", depth: 0))
+        let root = TreeEvent.enterDirectory(directory(depth: 0))
         let cases: [([TreeEvent], ContainerError)] = [
             ([root, .bytes(Data("x".utf8))], .chunkOutsideEntry),
             ([root, .finishFile], .eventOutOfOrder),
             ([root, .resourceFork], .eventOutOfOrder),
             ([root, .leaveDirectory, .leaveDirectory], .eventOutOfOrder),
             ([root, .end], .eventOutOfOrder),
-            ([root, .leaveDirectory, .enterDirectory(directory("s", depth: 0))], .secondRootEntry),
+            ([root, .leaveDirectory, .enterDirectory(directory(depth: 0))], .secondRootEntry),
             (
                 [root, .enterDirectory(directory("d", depth: 1)), .beginFile(file("f", depth: 1, size: 0))],
                 .directoryNotLeft(depth: 1, enteredDirectories: 2)
             ),
             ([root, .beginFile(directory("d", depth: 1))], .eventTypeMismatch(.directory)),
-            ([.symlink(symlinkEntry("s", depth: 0, target: "t"))], .rootTypeMismatch(.symlink, expected: .folder)),
+            ([.symlink(symlinkEntry(depth: 0, target: "t"))], .rootTypeMismatch(.symlink, expected: .folder)),
             ([.end], .noEntry),
         ]
         for (events, error) in cases {
@@ -156,7 +156,7 @@ struct WriterEventTests {
         arguments: bothLayers)
     func writerHoldsSizes(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
-        let root = TreeEvent.enterDirectory(directory("r", depth: 0))
+        let root = TreeEvent.enterDirectory(directory(depth: 0))
         let f = [bytes("r"), bytes("f")]
         for size in [UInt64(2), largeFileSize] {
             let past = Self.failure(
@@ -193,7 +193,7 @@ struct WriterEventTests {
     @Test("a resource fork's bytes follow its data's, after the event that starts them", arguments: bothLayers)
     func resourceForkOrder(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
-        let root = TreeEvent.enterDirectory(directory("r", depth: 0))
+        let root = TreeEvent.enterDirectory(directory(depth: 0))
         let f = [bytes("r"), bytes("f")]
         for size in [UInt64(2), largeFileSize] {
             let forked = TreeEvent.beginFile(withResourceFork(file("f", depth: 1, size: size), size: 3))
@@ -229,7 +229,7 @@ struct WriterEventTests {
         let writer = try landing.writer()
         let fork = pattern(Int(largeFileSize), seed: 9)
         for event in [
-            TreeEvent.enterDirectory(directory("r", depth: 0)),
+            TreeEvent.enterDirectory(directory(depth: 0)),
             .beginFile(withResourceFork(file("held", depth: 1, size: 4), size: 3)), .bytes(Data("data".utf8)),
             .resourceFork, .bytes(Data("ico".utf8)), .finishFile,
             .beginFile(withResourceFork(file("written", depth: 1, size: largeFileSize), size: largeFileSize)),
@@ -262,12 +262,14 @@ struct WriterEventTests {
         #expect(try landing.landedEntries(bytes("r")).contains("./written: regular \(largeFileSize)"))
     }
 
-    @Test("a tree written as events lands only once published", arguments: bothLayers)
+    @Test(
+        "a tree written as events lands only once published, under the name the writer was given", arguments: bothLayers
+    )
     func eventsLandOnlyWhenPublished(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
-        let writer = try landing.writer()
+        let writer = try landing.writer(as: bytes("Given Name"))
         for event in [
-            TreeEvent.enterDirectory(directory("r", depth: 0)), .beginFile(file("f", depth: 1, size: 1)),
+            TreeEvent.enterDirectory(directory(depth: 0)), .beginFile(file("f", depth: 1, size: 1)),
             .bytes(Data("f".utf8)), .finishFile, .leaveDirectory, .end,
         ] {
             try writer.write(event)
@@ -276,9 +278,9 @@ struct WriterEventTests {
         #expect(try landing.entriesOutside(landed: writer.stagingName).count == 3)
         #expect(try landing.landedEntries(writer.stagingName) == [".: directory", "./f: regular 1"].sorted())
         #expect(staged.hasPrefix(".kernova-"))
-        #expect(try writer.publish() == bytes("r"))
-        #expect(try landing.landedEntries(bytes("r")) == [".: directory", "./f: regular 1"].sorted())
-        try landing.expectNothingOutside(landed: bytes("r"))
+        #expect(try writer.publish() == bytes("Given Name"))
+        #expect(try landing.landedEntries(bytes("Given Name")) == [".: directory", "./f: regular 1"].sorted())
+        try landing.expectNothingOutside(landed: bytes("Given Name"))
     }
 
     @Test("a writer that ends unpublished removes what it created")
@@ -286,7 +288,7 @@ struct WriterEventTests {
         let landing = try Landing(kernelContainment: true)
         do {
             let writer = try landing.writer()
-            try writer.write(.enterDirectory(directory("r", depth: 0)))
+            try writer.write(.enterDirectory(directory(depth: 0)))
             try writer.write(.beginFile(file("f", depth: 1, size: largeFileSize)))
             try writer.write(.bytes(pattern(100)))
         }

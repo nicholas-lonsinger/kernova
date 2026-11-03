@@ -50,7 +50,7 @@ public final class HostConnectionRuntime: Sendable {
         let token = Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
         var configuration = HostConfiguration(claim: claim, sessionToken: token, policy: policy, bundles: bundles)
         configuration.receiverPolicy = receiverPolicy
-        configuration.itemTransfer = ItemAdapters.availability(items)
+        configuration.items.itemTransfer = ItemAdapters.availability(items)
         let source = payloadSource
         let items = items
         let driver = ConnectionDriver(

@@ -63,7 +63,7 @@ public struct ContainerTreeLander: PayloadLander {
         guard slot.owner == nil else {
             throw .system(operation: "hand to the account", path: slot.path + "/" + name, errno: ENOTSUP)
         }
-        let landing = try Self.landing(in: slot.descriptor, path: slot.path) {
+        let landing = try Self.landing(name, in: slot.descriptor, path: slot.path) {
             operation, errno throws(Installer.Failure) in
             Installer.Failure.system(operation: operation, path: slot.path, errno: errno)
         }
@@ -75,7 +75,7 @@ public struct ContainerTreeLander: PayloadLander {
             }
         }
         do throws(PayloadRefusal) {
-            try landing.publish(as: name, check: nil)
+            try landing.publish(check: nil)
         } catch {
             throw .system(operation: error.detail, path: slot.path + "/" + name, errno: error.errno)
         }
@@ -86,16 +86,17 @@ public struct ContainerTreeLander: PayloadLander {
         let directory = try root.openSlot(slot)
         defer { close(directory) }
         let path = root.path + "/slots/" + slot
-        let landing = try Self.landing(in: directory, path: path) { operation, errno throws(SlotRoot.Failure) in
+        let landing = try Self.landing(itemName, in: directory, path: path) {
+            operation, errno throws(SlotRoot.Failure) in
             SlotRoot.Failure(operation: operation, name: "slots/" + slot, errno: errno)
         }
         let executable = path + "/" + itemName + "/" + selfTestExecutable
         return Update(landing: landing, itemName: itemName) { [system] in system.selfTest(executable) }
     }
 
-    /// A landing in the open `directory` at `path`, the receiver given a descriptor of its own.
+    /// A landing of the item `name` in the open `directory` at `path`, the receiver given a descriptor of its own.
     private static func landing<Failure: Error>(
-        in directory: Int32, path: String, _ failure: (String, Int32) throws(Failure) -> Failure
+        _ name: String, in directory: Int32, path: String, _ failure: (String, Int32) throws(Failure) -> Failure
     ) throws(Failure) -> TreeLanding {
         let destination = dup(directory)
         guard destination >= 0 else { throw try failure("dup", errno) }
@@ -106,9 +107,9 @@ public struct ContainerTreeLander: PayloadLander {
             throw try failure("dup", code)
         }
         let receiver = TreeReceiver(
-            accepting: acceptance, decodingWorkers: 0, fileSystem: POSIXTreeFileSystem(), destination: destination,
+            name: Array(name.utf8), accepting: acceptance, decodingWorkers: 0, fileSystem: POSIXTreeFileSystem(), destination: destination,
             destinationPathByteCount: path.utf8.count)
-        return TreeLanding(receiver: receiver, directory: held)
+        return TreeLanding(receiver: receiver, name: name, directory: held)
     }
 
     /// One update payload, landing in its slot. ``SlotUpdateInstaller`` calls it from its own queue alone,
@@ -136,7 +137,7 @@ public struct ContainerTreeLander: PayloadLander {
         /// Publishes the landed tree as the slot's item, once its self-test passes: a container that does not
         /// end whole, or an item that does not run, is refused as the payload's fault.
         func publish() throws(PayloadRefusal) {
-            try landing.publish(as: itemName) { [selfTest] in
+            try landing.publish { [selfTest] in
                 let outcome = selfTest()
                 return outcome == .passed ? nil : "self-test: \(outcome)"
             }
@@ -154,12 +155,15 @@ public struct ContainerTreeLander: PayloadLander {
 final class TreeLanding {
     /// The receiver until the landing publishes or is discarded; releasing it removes what it staged.
     private var receiver: TreeReceiver<POSIXTreeFileSystem>?
+    /// The item's name, which the receiver publishes it under.
+    private let name: String
     /// The destination, open, for the swap around the publish.
     private let directory: Int32
     private let fileSystem = POSIXTreeFileSystem()
 
-    init(receiver: TreeReceiver<POSIXTreeFileSystem>, directory: Int32) {
+    init(receiver: TreeReceiver<POSIXTreeFileSystem>, name: String, directory: Int32) {
         self.receiver = receiver
+        self.name = name
         self.directory = directory
     }
 
@@ -174,8 +178,8 @@ final class TreeLanding {
         try receiver.receive(bytes)
     }
 
-    /// Publishes the landed item as `name`, then runs `check`, which answers why the item is refused, or nil.
-    func publish(as name: String, check: (() -> String?)?) throws(PayloadRefusal) {
+    /// Publishes the landed item as its name, then runs `check`, which answers why the item is refused, or nil.
+    func publish(check: (() -> String?)?) throws(PayloadRefusal) {
         guard let receiver else { preconditionFailure("a publish after the landing ended") }
         self.receiver = nil
         let bytes = Array(name.utf8)
@@ -195,7 +199,7 @@ final class TreeLanding {
             if movedAside { try? fileSystem.rename(aside, in: directory, to: bytes, in: directory) }
         }
         do throws(TreeWriteFailure) {
-            try receiver.finish(publishingAs: bytes)
+            _ = try receiver.finish()
         } catch {
             restore()
             let rejects = if case .container = error.reason { true } else { false }

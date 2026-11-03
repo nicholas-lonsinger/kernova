@@ -287,8 +287,8 @@ package final class SoloReplay {
                 report.input(UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: stream))),
                 now: instant)
         case .peerLogs: break
-        case .peerOffer, .hostPull:
-            failures.append("t=\(now): `\(input.text)` names ITEM_TRANSFER, which no frozen transcript replays")
+        case .offer, .itemPull, .withdraw, .release, .takeDrag, .answerTake:
+            failures.append("t=\(now): `\(input.text)` names an item feature, which no frozen transcript replays")
         }
         drain()
         for fault in localFaults[faultsBefore...] {

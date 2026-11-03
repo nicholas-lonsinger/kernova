@@ -257,7 +257,7 @@ struct PeerAgentRuntimeTests {
     }
 
     @Test(
-        "Item transfer is advertised available with item adapters registered, and absent NOT_IMPLEMENTED without",
+        "Item transfer is advertised available with item adapters registered; without, it and clipboard, drop and drag are absent NOT_IMPLEMENTED",
         arguments: [true, false])
     func itemTransferAdvert(registered: Bool) async {
         let harness = PeerRuntimeHarness(items: registered ? RegisteredItemAdapters.adapters : nil)
@@ -270,6 +270,13 @@ struct PeerAgentRuntimeTests {
             #expect(reason == .notImplemented)
         } else {
             Issue.record("advertised \(String(describing: advert))")
+        }
+        guard !registered else { return }
+        for feature in [FeatureID.clipboard, .drop, .drag] {
+            guard case .absent(.notImplemented, _)? = link.far.peerAdvert(feature) else {
+                Issue.record("\(feature) advertised \(String(describing: link.far.peerAdvert(feature)))")
+                continue
+            }
         }
     }
 
