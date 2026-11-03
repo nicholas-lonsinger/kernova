@@ -484,8 +484,32 @@ struct ClipboardItemBridgeTests {
             "com.apple.NSFilePromiseItemMetaData",
             "nsfilenamespboardtype",
             "ORG.NSPASTEBOARD.CONCEALEDTYPE",
+            // Data the system resolves to a file, and Carbon's file flavors.
+            "com.apple.alias-record",
+            "dyn.ah62d4rv4gu80g55rf3u1a6dqqy1gc5dmqf3w46xfqr11e3a",
+            "CorePasteboardFlavorType 0x616c6973",  // 'alis'
+            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b0ge5ggrv3g63u",
+            "com.apple.bookmark",
+            "dyn.ah62d4rv4gu80g55rf3u1a6dqqy1ge55trr00c6xp",
+            "com.apple.alias-file",
+            "dyn.ah62d4rv4gu80g55rf3u1a6dqqy1gc5dmqf3w43xmrvwu",
+            "CorePasteboardFlavorType 0x66737320",  // 'fss '
+            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b0g25xgr3xgk2a",
+            "dyn.ah62d4rv4gk80q65xea",  // 'fss ' OSType
+            "CorePasteboardFlavorType 0x66737266",  // 'fsrf'
+            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b0g25xgr3wg25a",
+            "dyn.ah62d4rv4gk80q65wq2",  // 'fsrf' OSType
+            "NeXT filename pasteboard type",
+            "dyn.ah62d4rv4gu8y63n2nuugq4pqqz1gc5pfeb2gc65yqzvg82pwquuhk8puqy",
+            "NSFilenamePboardType",
+            "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzwza2xtqf3gkzd3sbwu",
+            "com.apple.finder.node",
+            "dyn.ah62d4rv4gu80g55rf3u1a6dqqy1gq4psqvw1epxsr7wgn",
+            "com.apple.finder.noderef",
+            "dyn.ah62d4rv4gu80g55rf3u1a6dqqy1gq4psqvw1epxsr7wgn6xfq2",
         ])
     func smuggledFileReferencesAreRefused(uti: String) {
+        #expect(ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: uti))
         var item = OfferedItem()
         item.representations = [.make(TypeDescriptor(appleUTI: uti), .inline, size: 0)]
         #expect(!ClipboardPromisePolicy.keeps(item.representations[0]))
@@ -494,6 +518,84 @@ struct ClipboardItemBridgeTests {
             for: [item], concealed: false, puller: FixedPuller(bytes: Data("file:///etc/hosts".utf8)))
 
         #expect(specs.isEmpty)
+    }
+
+    /// The bytes a destination pasteboard is served for `uti` when a peer
+    /// offers `bytes` under it.
+    private func served(_ bytes: Data, as uti: String) async -> Data? {
+        var item = OfferedItem()
+        item.representations = [.make(TypeDescriptor(appleUTI: uti), .inline, size: 0)]
+        let destination = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
+            .publish([item], concealed: false, puller: FixedPuller(bytes: bytes))
+        return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
+    }
+
+    @Test(
+        "RTFD is admitted only while no file wrapper in it is a symbolic link",
+        arguments: [
+            "com.apple.flat-rtfd",
+            "COM.APPLE.FLAT-RTFD",
+            "com.apple.rtfd",
+            "NeXT RTFD pasteboard type",
+            "dyn.ah62d4rv4gu80g55rf3u1a6dqqy1gq5dbsu01e7dgqu",  // com.apple.flat-rtfd, as a legacy name
+            "dyn.ah62d4rv4gk8zezcgku",  // 'RTFD' OSType
+            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b1gk5xkrv0g24a",  // 'rtfd' flavor
+        ])
+    func rtfdRefusesSymbolicLinks(uti: String) throws {
+        let hostFile = try directory("host").appendingPathComponent("secret.png")
+        try pngBytes.write(to: hostFile)
+
+        #expect(ClipboardSnapshotPolicy.admits(try flatRTFD(attachment: pngBytes), servedAs: uti))
+        #expect(ClipboardSnapshotPolicy.admits(try flatRTFD(attachment: pngBytes, depth: 2), servedAs: uti))
+        for depth in [0, 2] {
+            let linked = try flatRTFD(linkingTo: hostFile, depth: depth)
+            #expect(!ClipboardSnapshotPolicy.admits(linked, servedAs: uti), "a link at depth \(depth)")
+        }
+        #expect(!ClipboardSnapshotPolicy.admits(Data("{\\rtf1 not a wrapper}".utf8), servedAs: uti))
+    }
+
+    @Test("a published RTFD is served intact, and never with a symbolic link in it")
+    func publishedRTFDRefusesSymbolicLinks() async throws {
+        let hostFile = try directory("host").appendingPathComponent("secret.png")
+        try pngBytes.write(to: hostFile)
+        let uti = "com.apple.flat-rtfd"
+
+        let plain = try flatRTFD(attachment: pngBytes, depth: 2)
+        #expect(await served(plain, as: uti) == plain)
+        #expect(await served(try flatRTFD(linkingTo: hostFile, depth: 2), as: uti) == nil)
+    }
+
+    @Test(
+        "a titled URL list is admitted web URLs but never a file URL",
+        arguments: [
+            "WebURLsWithTitlesPboardType",
+            "weburlswithtitlespboardtype",
+            "dyn.ah62d4rv4gu8zs3pcnzme2641rf4guzdmsv0gn64uqm10c6xenv61a3k",
+        ])
+    func titledURLsRefuseFileURLs(uti: String) throws {
+        func plist(_ urls: [String], _ titles: [String]) throws -> Data {
+            try PropertyListSerialization.data(fromPropertyList: [urls, titles], format: .xml, options: 0)
+        }
+
+        #expect(ClipboardSnapshotPolicy.admits(try plist(["https://example.com/"], ["Example Domain"]), servedAs: uti))
+        #expect(!ClipboardSnapshotPolicy.admits(try plist(["file:///etc/hosts"], ["Hosts"]), servedAs: uti))
+        let mixed = try plist(["https://example.com/", "/etc/hosts"], ["Example", "Hosts"])
+        #expect(!ClipboardSnapshotPolicy.admits(mixed, servedAs: uti))
+    }
+
+    @Test("a published titled URL list is served a web URL, and never a file URL")
+    func publishedTitledURLsRefuseFileURLs() async throws {
+        let uti = "dyn.ah62d4rv4gu8zs3pcnzme2641rf4guzdmsv0gn64uqm10c6xenv61a3k"  // WebURLsWithTitlesPboardType
+        func plist(_ urls: [String], _ titles: [String]) throws -> Data {
+            try PropertyListSerialization.data(fromPropertyList: [urls, titles], format: .xml, options: 0)
+        }
+
+        let web = try plist(["https://example.com/"], ["Example Domain"])
+        #expect(await served(web, as: uti) == web)
+        #expect(await served(try plist(["file:///etc/hosts"], ["Hosts"]), as: uti) == nil)
     }
 
     @Test(
@@ -505,16 +607,7 @@ struct ClipboardItemBridgeTests {
             "dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu",
         ])
     func urlFlavorRefusesFileURLs(uti: String) async throws {
-        func served(_ bytes: Data) async -> Data? {
-            var item = OfferedItem()
-            item.representations = [.make(TypeDescriptor(appleUTI: uti), .inline, size: 0)]
-            let destination = FakePasteboard()
-            let registry = LazyClipboardProviderRegistry()
-            defer { registry.releaseAllForTesting() }
-            ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
-                .publish([item], concealed: false, puller: FixedPuller(bytes: bytes))
-            return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
-        }
+        func served(_ bytes: Data) async -> Data? { await self.served(bytes, as: uti) }
         func plist(_ strings: [String]) throws -> Data {
             try PropertyListSerialization.data(fromPropertyList: strings, format: .xml, options: 0)
         }
