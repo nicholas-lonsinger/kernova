@@ -83,9 +83,6 @@ public struct ContainerEncoder {
     /// - Throws: `ContainerError` when no entry owes bytes or `bytes` is more than it owes.
     public mutating func bytes(_ bytes: Data) throws(ContainerError) -> Data {
         guard !bytes.isEmpty else { return Data() }
-        if let remaining = grammar.owed?.current, UInt64(bytes.count) > remaining {
-            throw .chunkPastEntrySize(count: UInt64(bytes.count), remaining: remaining)
-        }
         var records = Data()
         var start = bytes.startIndex
         while start < bytes.endIndex {
@@ -138,7 +135,7 @@ public struct ContainerEncoder {
 
     /// The records `event` adds: an entry's header, its bytes or zeros, or the end record. A leave adds
     /// nothing, since the next header's depth carries it, and nor does a resource fork's start or a file's
-    /// finish, which the grammar confirms.
+    /// finish, which the declared sizes carry; each is still held to `TreeEventSequence`.
     ///
     /// - Parameter event: The next event of a tree in depth-first pre-order.
     /// - Returns: The records' bytes, possibly none.
@@ -148,14 +145,9 @@ public struct ContainerEncoder {
         case .enterDirectory(let header), .beginFile(let header), .symlink(let header): return try entry(header)
         case .bytes(let bytes): return try self.bytes(bytes)
         case .zeros(let count): return try zeros(count)
-        case .resourceFork:
-            guard let owed = grammar.owed else { throw .resourceForkUndeclared }
-            if owed.data > 0 { throw .entryIncomplete(remaining: owed.data) }
+        case .resourceFork, .finishFile, .leaveDirectory:
+            try grammar.admitStep(event)
             return Data()
-        case .finishFile:
-            if let owed = grammar.owed { throw .entryIncomplete(remaining: owed.total) }
-            return Data()
-        case .leaveDirectory: return Data()
         case .end: return try end()
         }
     }

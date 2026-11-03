@@ -84,12 +84,12 @@ struct WriterBoundsTests {
         breach.change(&root)
         #expect(
             Self.failure(writing: [.enterDirectory(root)], to: try landing.writer())
-                == TreeWriteFailure(path: [bytes("r")], reason: .event(.invalidEntry(breach.rule))))
+                == TreeWriteFailure(path: [bytes("r")], reason: .container(breach.rule)))
         var rootFile = file("f", depth: 0, size: 1)
         breach.change(&rootFile)
         #expect(
-            Self.failure(writing: [.beginFile(rootFile)], to: try landing.writer())
-                == TreeWriteFailure(path: [bytes("f")], reason: .event(.invalidEntry(breach.rule))))
+            Self.failure(writing: [.beginFile(rootFile)], to: try landing.writer(.file))
+                == TreeWriteFailure(path: [bytes("f")], reason: .container(breach.rule)))
         for var child in [
             file("c", depth: 1, size: 1), file("c", depth: 1, size: largeFileSize), directory("c", depth: 1),
             symlinkEntry("c", depth: 1, target: "t"),
@@ -103,7 +103,7 @@ struct WriterBoundsTests {
                 }
             #expect(
                 Self.failure(writing: [.enterDirectory(directory("r", depth: 0)), event], to: try landing.writer())
-                    == TreeWriteFailure(path: [bytes("r"), bytes("c")], reason: .event(.invalidEntry(breach.rule))))
+                    == TreeWriteFailure(path: [bytes("r"), bytes("c")], reason: .container(breach.rule)))
         }
         try landing.expectNothingOutside()
     }
@@ -118,7 +118,7 @@ struct WriterBoundsTests {
                 Self.failure(
                     writing: [.enterDirectory(directory("r", depth: 0)), .symlink(link)], to: try landing.writer())
                     == TreeWriteFailure(
-                        path: [bytes("r"), bytes("s")], reason: .event(.invalidEntry(.invalidSymlinkTarget))))
+                        path: [bytes("r"), bytes("s")], reason: .container(.invalidSymlinkTarget)))
         }
         try landing.expectNothingOutside()
     }
@@ -132,7 +132,7 @@ struct WriterBoundsTests {
         for piece in [TreeEvent.bytes(Data()), .zeros(0)] {
             #expect(
                 Self.failure(writing: opening + [piece], to: try landing.writer())
-                    == TreeWriteFailure(path: [bytes("r"), bytes("f")], reason: .event(.emptyPiece)))
+                    == TreeWriteFailure(path: [bytes("r"), bytes("f")], reason: .container(.emptyChunk)))
         }
         try landing.expectNothingOutside()
     }
@@ -250,7 +250,7 @@ struct WriterBoundsTests {
         let afterEnd = Self.failure(
             writing: [.enterDirectory(directory("r", depth: 0)), .leaveDirectory, .end, .end],
             to: try landing.writer())
-        #expect(afterEnd == TreeWriteFailure(path: [bytes("r")], reason: .event(.outOfOrder)))
+        #expect(afterEnd == TreeWriteFailure(path: [bytes("r")], reason: .container(.bytesAfterEnd)))
         try landing.expectNothingOutside()
     }
 
@@ -265,7 +265,9 @@ struct WriterBoundsTests {
         try writer.write(.enterDirectory(directory("r", depth: 0)))
         let staging = landing.destinationPath + "/" + String(decoding: writer.stagingName, as: UTF8.self)
         try #require(rename(staging, landing.destinationPath + "/moved") == 0)
-        #expect(Self.failure(writing: [.leaveDirectory, .leaveDirectory], to: writer)?.reason == .event(.outOfOrder))
+        #expect(
+            Self.failure(writing: [.leaveDirectory, .leaveDirectory], to: writer)?.reason
+                == .container(.eventOutOfOrder))
         let lines = logged.withLock { $0 }
         #expect(lines.count == 1)
         #expect(lines.first?.hasPrefix("error: Could not remove the staging root .kernova-") == true, "\(lines)")

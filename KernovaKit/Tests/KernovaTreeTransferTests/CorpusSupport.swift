@@ -206,9 +206,10 @@ final class Landing {
 
     /// A writer landing in the destination, driven by events directly.
     func writer(
-        ceiling: UInt64 = 1 << 30, decmpfsTypes: Set<UInt32> = [], logger: KernovaLogger = TreeWriterLog.logger
+        _ storage: Representation.Storage = .folder, ceiling: UInt64 = 1 << 30, decmpfsTypes: Set<UInt32> = [],
+        logger: KernovaLogger = TreeWriterLog.logger
     ) throws -> TreeWriter<POSIXTreeFileSystem> {
-        var accepted = acceptance(ceiling: ceiling)
+        var accepted = acceptance(storage, ceiling: ceiling)
         accepted.decmpfsTypes = decmpfsTypes
         return TreeWriter(
             fileSystem: fileSystem, destination: try openDestination(),

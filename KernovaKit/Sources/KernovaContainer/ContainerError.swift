@@ -20,7 +20,7 @@ public enum ContainerError: Error, Equatable, Sendable {
     case headerUndecodable
     /// An end record's payload is not an `EndRecord`.
     case endUndecodable
-    /// Bytes follow the end record.
+    /// Anything follows the end.
     case bytesAfterEnd
     /// The input ended before the end record.
     case truncated
@@ -35,6 +35,13 @@ public enum ContainerError: Error, Equatable, Sendable {
     case secondRootEntry
     /// An entry's depth is greater than the number of directories it lies inside.
     case depthBeyondParent(depth: UInt32, enteredDirectories: Int)
+    /// An entry event's depth is less than the directories entered: the ones it lies outside were not left.
+    case directoryNotLeft(depth: UInt32, enteredDirectories: Int)
+    /// An entry event creates another type than its header's: a directory's header on `beginFile`, say.
+    case eventTypeMismatch(EntryHeader.TypeEnum)
+    /// An event its place in the stream does not admit: a leave with no directory entered, a fork's start or a
+    /// file's finish with no file open or a fork already started, or the end inside a directory.
+    case eventOutOfOrder
     /// An entry's name is empty, `.` or `..`, longer than 255 bytes, or holds `/` or NUL.
     case invalidName
     /// A DATA entry has a name or metadata: it is an INLINE representation's bytes and nothing else.
@@ -67,6 +74,8 @@ public enum ContainerError: Error, Equatable, Sendable {
     case unknownFields
     /// An entry other than a regular file declares a resource fork.
     case resourceForkNotAllowed(EntryHeader.TypeEnum)
+    /// A file's data is larger than any file a POSIX system holds, `Int64.max` bytes.
+    case fileTooLarge(UInt64)
     /// A resource fork is larger than `ValidatedEntry.maxResourceForkByteCount`.
     case resourceForkTooLarge(UInt64)
     /// A decmpfs storage's attribute is not a well-formed `decmpfs_disk_header`.
@@ -78,13 +87,14 @@ public enum ContainerError: Error, Equatable, Sendable {
 
     // MARK: Chunks
 
-    /// A header or end record arrives while the current entry still owes bytes.
+    /// An entry, a leave or the end arrives while the current file still owes bytes, a resource fork starts
+    /// before the data has all its bytes, or a file finishes short.
     case entryIncomplete(remaining: UInt64)
-    /// A chunk or zero run arrives with no entry owing bytes.
+    /// A chunk, zero run, or `bytes` or `zeros` event arrives with no file open.
     case chunkOutsideEntry
     /// A file's resource fork begins, but its header declares none.
     case resourceForkUndeclared
-    /// A zero run, or an LZ4 chunk, of no bytes.
+    /// A zero run, an LZ4 chunk, or a `bytes` or `zeros` event, of no bytes.
     case emptyChunk
     /// A chunk carries more bytes than its entry's data, or its resource fork, still owes.
     case chunkPastEntrySize(count: UInt64, remaining: UInt64)

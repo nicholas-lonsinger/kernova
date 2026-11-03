@@ -8,12 +8,11 @@ import KernovaWire
 
 /// An entry header that keeps every rule the format holds one entry to, whatever produced it: its name, its
 /// mode, flags and times, its symlink target, its extended attributes, and its storage and resource fork
-/// against its type. The container grammar admits no header without one, and a tree writer lands an entry
-/// only from one, so every producer of `TreeEvent`s is held to the same rules.
+/// against its type. `TreeEventSequence` admits no entry without one, so every producer of `TreeEvent`s is
+/// held to the same rules.
 ///
 /// The rules that depend on a pull — the codecs, decmpfs types and byte ceiling it accepts — and an entry's
-/// place in the tree are the grammar's; ``ContainerAcceptance/admitLanding(_:after:)`` holds the ones a
-/// writer shares.
+/// place in the tree are the sequence's.
 public struct ValidatedEntry: Sendable {
     /// The longest name a POSIX file system takes, `NAME_MAX`; extended attribute names share it
     /// (`XATTR_MAXNAMELEN` on Darwin, `XATTR_NAME_MAX` on Linux).
@@ -87,6 +86,7 @@ public struct ValidatedEntry: Sendable {
         guard header.resourceForkSize == 0 || header.type == .file else {
             throw .resourceForkNotAllowed(header.type)
         }
+        guard dataByteCount <= UInt64(Int64.max) else { throw .fileTooLarge(dataByteCount) }
         guard header.resourceForkSize <= Self.maxResourceForkByteCount else {
             throw .resourceForkTooLarge(header.resourceForkSize)
         }

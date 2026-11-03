@@ -237,7 +237,7 @@ struct DecmpfsPassThroughTests {
             var header = file(name, depth: depth, size: 0)
             header.decmpfs.attribute = Data(attribute)
             header.resourceForkSize = UInt64(sample.resourceFork.count)
-            let writer = try landing.writer(decmpfsTypes: [255])
+            let writer = try landing.writer(inFolder ? .folder : .file, decmpfsTypes: [255])
             let path = depth == 0 ? [bytes(name)] : [bytes("r"), bytes(name)]
             let file: [TreeEvent] = [.beginFile(header), .resourceFork, .bytes(Data(sample.resourceFork)), .finishFile]
             let events = inFolder ? [.enterDirectory(directory("r", depth: 0))] + file + [.leaveDirectory] : file

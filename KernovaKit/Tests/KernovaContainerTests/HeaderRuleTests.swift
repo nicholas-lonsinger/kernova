@@ -273,7 +273,11 @@ struct ResourceForkRuleTests {
         #expect(try encoder.encode(.resourceFork).isEmpty)
         #expect(throws: ContainerError.entryIncomplete(remaining: 2)) { try encoder.encode(.finishFile) }
         _ = try encoder.bytes(Data("de".utf8))
-        #expect(throws: ContainerError.resourceForkUndeclared) { try encoder.encode(.resourceFork) }
+        #expect(throws: ContainerError.eventOutOfOrder) { try encoder.encode(.resourceFork) }
+        var unforked = ContainerEncoder(accepting: generous(), policy: .never)
+        _ = try unforked.entry(plainFile("f", depth: 0, size: 1))
+        _ = try unforked.bytes(Data("a".utf8))
+        #expect(throws: ContainerError.resourceForkUndeclared) { try unforked.encode(.resourceFork) }
     }
 
     @Test("A plain file's data and fork together count against the ceiling")

@@ -7,8 +7,14 @@ import Foundation
 import KernovaWire
 import SwiftProtobuf
 
-/// The rules a container's records keep, past their framing: one enforcement path, which the encoder runs as
-/// it writes and the decoder as it reads, so neither side can produce what the other refuses.
+/// A container's records as the `TreeEvent`s they stand for, held to `TreeEventSequence`: one enforcement
+/// path, which the encoder runs as it writes and the decoder as it reads, so neither side can produce what the
+/// other refuses.
+///
+/// Records carry no leave, resource-fork start or finish: a header's depth stands for the leaves before it,
+/// and a file's declared sizes for the rest. Each is admitted when the next record needs it, unless the
+/// encoder's producer gave it first. What the grammar adds of its own concerns records alone: an LZ4 chunk
+/// only in an entry whose storage is LZ4, and an end record whose counts are the sequence's.
 struct ContainerGrammar {
     /// What an admitted header is.
     enum Entry {
@@ -29,128 +35,80 @@ struct ContainerGrammar {
         case complete
     }
 
-    /// The bytes the current entry still owes: its data's, then its resource fork's.
-    struct Owed: Equatable {
-        var data: UInt64
-        var resourceFork: UInt64
-
-        /// What the next chunk counts against: the data until it is whole, then the fork.
-        var current: UInt64 { data > 0 ? data : resourceFork }
-        var total: UInt64 { data &+ resourceFork }
-    }
-
-    let acceptance: ContainerAcceptance
-
-    /// The directories entered and not yet left; an entry at depth d lies inside the first d of them.
-    private(set) var enteredDirectories = 0
-    /// The bytes the current entry still owes, or nil when no entry owes any.
-    private(set) var owed: Owed?
-    /// Whether the current entry's storage is LZ4, so its chunks may be LZ4 blocks.
-    private(set) var currentIsLZ4 = false
-    private(set) var counted = ContainerError.Counts(entries: 0, bytes: 0)
-    /// The logical bytes the entries so far land, which the byte ceiling bounds.
-    private var landedBytes: UInt64 = 0
-    private(set) var ended = false
+    private(set) var sequence: TreeEventSequence
 
     init(acceptance: ContainerAcceptance) {
-        self.acceptance = acceptance
+        sequence = TreeEventSequence(accepting: acceptance)
     }
+
+    var ended: Bool { sequence.isEnded }
+    var counted: ContainerError.Counts { sequence.counts }
+    /// Whether the open file's storage is LZ4, so its chunks may be LZ4 blocks.
+    var currentIsLZ4: Bool { sequence.openFile?.entry.isLZ4 ?? false }
 
     /// Admits `header`, returning how many directories to leave before it and what it is.
     mutating func admit(_ header: EntryHeader) throws(ContainerError) -> (leaving: Int, entry: Entry) {
-        try requireBetweenEntries()
-        let leaving = try place(header)
-        let entry = try ValidatedEntry(header)
-        if entry.isLZ4 && !acceptance.acceptsLZ4 { throw .lz4NotAccepted }
-        landedBytes = try acceptance.admitLanding(entry, after: landedBytes)
-        counted.entries += 1
-        enteredDirectories = Int(header.depth)
+        try finishWholeFile()
+        let leaving = max(0, sequence.enteredDirectories - Int(header.depth))
+        for _ in 0..<leaving { try sequence.admit(.leaveDirectory) }
         switch header.type {
         case .directory:
-            enteredDirectories += 1
+            try sequence.admit(.enterDirectory(header))
             return (leaving, .directory)
         case .symlink:
+            try sequence.admit(.symlink(header))
             return (leaving, .symlink)
         default:
-            currentIsLZ4 = entry.isLZ4
-            let owing = Owed(data: entry.dataByteCount, resourceFork: entry.resourceForkByteCount)
-            owed = owing.total == 0 ? nil : owing
-            return (leaving, .file(Self.progress(owing)))
+            try sequence.admit(.beginFile(header))
+            return (leaving, .file(progress))
         }
     }
 
-    /// Admits a chunk carrying `count` bytes of the current entry's data, or of its resource fork once the
-    /// data is whole, returning where the entry's bytes then stand.
+    /// Admits a chunk carrying `count` bytes of the open file's data, or of its resource fork once the data is
+    /// whole, returning where the file's bytes then stand.
     mutating func admitChunk(count: UInt64, lz4: Bool) throws(ContainerError) -> Progress {
-        guard !ended else { throw .bytesAfterEnd }
-        guard var owing = owed else { throw .chunkOutsideEntry }
-        guard !lz4 || currentIsLZ4 else { throw .lz4ChunkOutsideLZ4Storage }
-        guard count > 0 else { throw .emptyChunk }
-        guard count <= owing.current else { throw .chunkPastEntrySize(count: count, remaining: owing.current) }
-        counted.bytes += count
-        let progress: Progress
-        if owing.data > 0 {
-            owing.data -= count
-            progress = Self.progress(owing)
-        } else {
-            owing.resourceFork -= count
-            progress = owing.resourceFork > 0 ? .continuing : .complete
-        }
-        owed = owing.total == 0 ? nil : owing
+        try prepareForContent()
+        if lz4, let file = sequence.openFile, !file.entry.isLZ4 { throw .lz4ChunkOutsideLZ4Storage }
+        _ = try sequence.admitContent(count)
         return progress
+    }
+
+    /// Admits a step the encoder's producer gave: a leave, a resource fork's start, or a file's finish.
+    mutating func admitStep(_ event: TreeEvent) throws(ContainerError) {
+        if case .leaveDirectory = event { try finishWholeFile() }
+        try sequence.admit(event)
     }
 
     /// Admits the end record, returning how many directories to leave before the end.
     mutating func admitEnd(_ end: EndRecord) throws(ContainerError) -> Int {
-        try requireBetweenEntries()
+        try finishWholeFile()
+        let leaving = sequence.enteredDirectories
+        for _ in 0..<leaving { try sequence.admit(.leaveDirectory) }
         guard end.unknownFields.data.isEmpty else { throw .unknownFields }
-        guard counted.entries > 0 else { throw .noEntry }
+        try sequence.admit(.end)
         let stated = ContainerError.Counts(entries: end.entries, bytes: end.bytes)
-        guard stated == counted else { throw .endCountsMismatch(stated: stated, counted: counted) }
-        ended = true
-        defer { enteredDirectories = 0 }
-        return enteredDirectories
+        guard stated == sequence.counts else { throw .endCountsMismatch(stated: stated, counted: sequence.counts) }
+        return leaving
     }
 
-    /// Where a file owing `owing` stands once its data has all its bytes.
-    private static func progress(_ owing: Owed) -> Progress {
-        if owing.data > 0 { return .continuing }
-        return owing.resourceFork > 0 ? .resourceForkFollows : .complete
+    /// Where the open file's bytes stand.
+    private var progress: Progress {
+        guard let file = sequence.openFile, file.remaining == 0 else { return .continuing }
+        return file.resourceForkFollows ? .resourceForkFollows : .complete
     }
 
-    private func requireBetweenEntries() throws(ContainerError) {
-        guard !ended else { throw .bytesAfterEnd }
-        if let owed { throw .entryIncomplete(remaining: owed.total) }
+    /// Admits the finish of an open file that has all its bytes, which a record after it stands for.
+    private mutating func finishWholeFile() throws(ContainerError) {
+        if sequence.openFile?.isWhole == true { try sequence.admit(.finishFile) }
     }
 
-    /// The directories to leave before `header`, whose parent is then the innermost one entered.
-    private func place(_ header: EntryHeader) throws(ContainerError) -> Int {
-        switch header.type {
-        case .data, .file, .directory, .symlink: break
-        case .unspecified, .UNRECOGNIZED: throw .unknownEntryType
-        }
-        if counted.entries == 0 {
-            guard header.depth == 0 else { throw .firstEntryNotAtRoot(depth: header.depth) }
-            guard header.type == Self.rootType(of: acceptance.storage) else {
-                throw .rootTypeMismatch(header.type, expected: acceptance.storage)
-            }
-            return 0
-        }
-        guard header.type != .data else { throw .dataEntryNotRoot }
-        guard header.depth > 0 else { throw .secondRootEntry }
-        guard Int(header.depth) <= enteredDirectories else {
-            throw .depthBeyondParent(depth: header.depth, enteredDirectories: enteredDirectories)
-        }
-        return enteredDirectories - Int(header.depth)
-    }
-
-    /// The root entry's type a representation of `storage` sends, or nil for a storage nothing sends.
-    static func rootType(of storage: Representation.Storage) -> EntryHeader.TypeEnum? {
-        switch storage {
-        case .inline: .data
-        case .file: .file
-        case .folder: .directory
-        case .unspecified, .UNRECOGNIZED: nil
+    /// Admits what a chunk stands for before it: the start of a resource fork whose data is whole, or the
+    /// finish of a file with all its bytes.
+    private mutating func prepareForContent() throws(ContainerError) {
+        if sequence.openFile?.resourceForkFollows == true {
+            try sequence.admit(.resourceFork)
+        } else {
+            try finishWholeFile()
         }
     }
 }

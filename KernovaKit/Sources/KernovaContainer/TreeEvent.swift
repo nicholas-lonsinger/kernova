@@ -73,9 +73,9 @@ public struct ContainerAcceptance: Equatable, Sendable {
             acceptsLZ4: pull.codecs.contains(.lz4))
     }
 
-    /// The rules of what lands that every consumer of entries holds `entry` to, after entries that landed
-    /// `landed` bytes: its decmpfs type is one this acceptance lists, and its landed bytes keep the total
-    /// within the byte ceiling.
+    /// The rules of what lands that `TreeEventSequence` holds `entry` to, after entries that landed `landed`
+    /// bytes: its decmpfs type is one this acceptance lists, and its landed bytes keep the total within the
+    /// byte ceiling. A producer that reads a tree checks an entry here before it emits it.
     ///
     /// - Parameters:
     ///   - entry: The entry.
