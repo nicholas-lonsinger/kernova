@@ -24,7 +24,7 @@ public struct PeerConfiguration: Sendable {
     public var update: Availability<UpdateOffer>
     /// The receiver policy the host is judged by.
     public var receiverPolicy: ReceiverPolicy = .production
-    /// Whether this build pulls and serves offered items; absent `NOT_IMPLEMENTED` until a feature offers any.
+    /// Whether this side pulls and serves offered items: available only where item adapters serve them.
     public var itemTransfer: Availability<NoParams> = .absent(.notImplemented, debugDetail: "")
     package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
 
@@ -51,6 +51,8 @@ public enum PeerInput: Sendable, Equatable {
     case logs(LogInput)
     /// The installer's report.
     case update(UpdateInput)
+    /// The item source's answer or the item sink's report; one naming another generation is dropped.
+    case items(ItemTransferInput)
 }
 
 /// What a peer endpoint asks its adapters and runtime to do.
@@ -61,6 +63,10 @@ public enum PeerEffect: Sendable, Equatable {
     case logs(LogEffect)
     /// For the installer.
     case update(UpdateEffect)
+    /// For the item source.
+    case itemSource(ItemSourceEffect)
+    /// For the item sink.
+    case itemSink(ItemSinkEffect)
 }
 
 /// What a peer endpoint tells the shell's UI and the dial schedule.
@@ -73,6 +79,8 @@ public enum PeerEvent: Sendable, Equatable {
     case hostLiveness(LivenessChange)
     /// What the host offers (coalesced).
     case updateAvailable(UpdateManifestValue?)
+    /// An offer or pull of item transfer changed.
+    case items(ItemTransferEvent)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -91,7 +99,6 @@ public struct PeerEndpoint: Sendable {
     public let generation: ConnectionGeneration
     private var effects = OutputQueue<PeerEffect, NoSlot>()
     private var events = OutputQueue<PeerEvent, PeerEventSlot>()
-    private var itemOutputs = OutputQueue<ItemTransferOutput, NoSlot>()
 
     /// Creates the endpoint of a connection that just connected.
     public init(_ configuration: PeerConfiguration, generation: ConnectionGeneration, now: CoreInstant) {
@@ -174,6 +181,8 @@ public struct PeerEndpoint: Sendable {
             logs.handle(input: input, connection: &connection, now: now)
         case .update(let input):
             update.handle(input: input, connection: &connection, now: now)
+        case .items(let input):
+            itemTransfer.handle(input: input, connection: &connection, now: now)
         }
         route(now)
     }
@@ -225,25 +234,12 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
-    /// The item source's answer or the item sink's report; one naming another generation is dropped.
-    public mutating func handle(itemTransfer input: ItemTransferInput, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        itemTransfer.handle(input: input, connection: &connection, now: now)
-        route(now)
-    }
-
     /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
     public func remoteOfferItem(token: Data, index: Int) -> OfferedItem? {
         itemTransfer.remoteItem(token: token, index: index)
     }
 
     package var itemOffers: ItemOfferRegistry { itemTransfer.offers }
-
-    /// The next output for the item source, the item sink or the owner.
-    public mutating func pollItemTransfer() -> ItemTransferOutput? {
-        itemOutputs.poll()
-    }
 
     /// Offers `offer` on this side's test offer kind; nil when opened, or why not.
     package mutating func offerTestItems(_ offer: ItemOffer, now: CoreInstant) -> WireError? {
@@ -390,7 +386,13 @@ public struct PeerEndpoint: Sendable {
             }
         }
         let items = itemTransfer.takeOutputs()
-        for output in items.outputs { itemOutputs.append(output) }
+        for output in items.outputs {
+            switch output {
+            case .source(let effect): effects.append(.itemSource(effect))
+            case .sink(let effect): effects.append(.itemSink(effect))
+            case .event(let event): events.append(.items(event))
+            }
+        }
         for diagnostic in items.diagnostics { connection.diagnose(diagnostic) }
     }
 }

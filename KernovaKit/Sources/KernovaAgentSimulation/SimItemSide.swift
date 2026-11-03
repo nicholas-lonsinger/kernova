@@ -77,8 +77,8 @@ extension SimWorld {
                 guard !link.shutDown.contains(side) else { return }
                 let local = world.localNow(process)
                 switch side {
-                case .host: link.host?.handle(itemTransfer: input, now: local)
-                case .peer: link.peer?.handle(itemTransfer: input, now: local)
+                case .host: link.host?.handle(input, now: local)
+                case .peer: link.peer?.handle(.items(input), now: local)
                 }
                 world.drain(link, side)
             }

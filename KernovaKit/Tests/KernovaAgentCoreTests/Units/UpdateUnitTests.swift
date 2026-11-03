@@ -295,11 +295,7 @@ extension CoreUnits {
         }
 
         static func grants(_ run: HostileRun) -> [Int] {
-            run.hostEffects.map { effect in
-                switch effect {
-                case .read(_, _, _, let maxBytes): maxBytes
-                }
-            }
+            run.hostEffects.compactMap { if case .read(_, _, _, let maxBytes) = $0 { maxBytes } else { nil } }
         }
 
         static func result(_ kind: Kernova_V2_UpdateResult.Kind, _ code: ErrorCode? = nil) -> Frame {

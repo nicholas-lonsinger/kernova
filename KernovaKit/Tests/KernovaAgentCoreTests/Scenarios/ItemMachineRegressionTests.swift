@@ -174,7 +174,9 @@ struct ItemMachineRegressionTests {
         var source = FixturePayloadSource()
         var answered = 0
         while answered < run.hostEffects.count {
-            run.payload(source.answer(run.hostEffects[answered]))
+            if case .read(let id, let manifest, let offset, let maxBytes) = run.hostEffects[answered] {
+                run.payload(source.answer(id, manifest, offset: offset, maxBytes: maxBytes))
+            }
             answered += 1
         }
         var staged = Kernova_V2_UpdateResult()

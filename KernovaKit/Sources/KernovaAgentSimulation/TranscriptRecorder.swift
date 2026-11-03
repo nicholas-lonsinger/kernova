@@ -413,42 +413,28 @@ package final class Duet {
         drainAll()
     }
 
-    /// Answers `side`'s item outputs at once, from the fixtures' source and a decoding sink.
-    private func drainItems(_ side: SimSide) -> Bool {
-        var progressed = false
-        while let output = side == .host ? host.pollItemTransfer() : peer.pollItemTransfer() {
-            progressed = true
-            let input: ItemTransferInput?
-            switch output {
-            case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
-            case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
-            case .event(let event):
-                input = nil
-                items.append(.event(time: now, side: side, text: TranscriptEvents.describe(event, side: side)))
-            }
-            guard let input else { continue }
-            switch side {
-            case .host: host.handle(itemTransfer: input, now: instant)
-            case .peer: peer.handle(itemTransfer: input, now: instant)
-            }
-        }
-        return progressed
-    }
-
     private func drainAll() {
         var progressed = true
         while progressed {
             progressed = false
+            // Effects before events: a pull's `.commit` or `.abort` before its `.pullEnded`, as the machine emits them.
+            while let effect = host.pollEffect() {
+                progressed = true
+                switch effect {
+                case .read(let id, let manifest, let offset, let maxBytes):
+                    host.handle(source.answer(id, manifest, offset: offset, maxBytes: maxBytes), now: instant)
+                case .itemSource(let effect):
+                    if let input = itemSource.handle(effect) { host.handle(.source(input), now: instant) }
+                case .itemSink(let effect):
+                    if let input = itemSink.handle(effect) { host.handle(.sink(input), now: instant) }
+                }
+            }
             while let event = host.pollEvent() {
                 progressed = true
                 if case .diagnostic(.localFault(let text)) = event { localFaults.append("host: \(text)") }
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .host, text: text))
                 }
-            }
-            while let effect = host.pollEffect() {
-                progressed = true
-                host.handle(source.answer(effect), now: instant)
             }
             while let effect = peer.pollEffect() {
                 progressed = true
@@ -461,6 +447,10 @@ package final class Duet {
                 case .logs(.mode(let mode)): ring.setMode(mode)
                 case .logs(.ready):
                     if let batch = ring.takeBatch() { peer.handle(.logs(.batch(batch)), now: instant) }
+                case .itemSource(let effect):
+                    if let input = itemSource.handle(effect) { peer.handle(.items(.source(input)), now: instant) }
+                case .itemSink(let effect):
+                    if let input = itemSink.handle(effect) { peer.handle(.items(.sink(input)), now: instant) }
                 default: break
                 }
             }
@@ -471,8 +461,6 @@ package final class Duet {
                     items.append(.event(time: now, side: .peer, text: text))
                 }
             }
-            if drainItems(.host) { progressed = true }
-            if drainItems(.peer) { progressed = true }
             while let transmit = host.pollTransmit(maxBytes: 1 << 20 + 10) {
                 progressed = true
                 write(transmit, from: .host)
@@ -668,6 +656,7 @@ package enum TranscriptEvents {
             "host update result kind=\(result.kind == .staged ? 1 : 2) code=\(result.error?.code.rawValue ?? 0)"
         case .update(.closed(_, let closure)): "host update closed \(describe(closure))"
         case .closed(let closure): "host closed \(describe(closure))"
+        case .items(let event): describe(event, side: .host)
         default: nil
         }
     }
@@ -707,6 +696,7 @@ package enum TranscriptEvents {
     package static func describe(_ event: PeerEvent) -> String? {
         switch event {
         case .closed(let closure): "peer closed \(describe(closure))"
+        case .items(let event): describe(event, side: .peer)
         default: nil
         }
     }

@@ -296,6 +296,11 @@ final class FarHost: Sendable {
         events.forEach(self.events.record)
     }
 
+    /// What the peer's Hello advertised for `feature`; nil before the Hello.
+    func peerAdvert(_ feature: FeatureID) -> Availability<Data>? {
+        endpoint.withLock { $0.connection.remoteHello?.adverts.first { $0.feature == feature }?.advert.availability }
+    }
+
     /// Everything the host endpoint has to send.
     func output() -> Data {
         let (bytes, events) = endpoint.withLock { endpoint in
@@ -363,6 +368,7 @@ final class PeerDriverHarness: Sendable {
         case .policyReceived: "policyReceived"
         case .hostLiveness: "hostLiveness"
         case .updateAvailable: "updateAvailable"
+        case .items: "items"
         case .diagnostic: "diagnostic"
         case .closed: "closed"
         }
