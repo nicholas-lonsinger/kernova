@@ -147,12 +147,20 @@ var targets: [Target] = [
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
+    // An item pull's answer: the transfer container's records, encoded from
+    // entries and decoded incrementally into `TreeEvent`s.
+    .target(
+        name: "KernovaContainer",
+        dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
     // endpoints against each other on virtual time.
     .target(
         name: "KernovaAgentSimulation",
         dependencies: [
-            "KernovaAgentCore", "KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaAgentCore", "KernovaWire", "KernovaPortableTestSupport",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -179,7 +187,18 @@ var targets: [Target] = [
     // Like `KernovaPortableTests` below, it cannot reach `KernovaTestSupport`.
     .testTarget(
         name: "KernovaWireTests",
-        dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
+        dependencies: [
+            "KernovaWire", "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaContainerTests",
+        dependencies: [
+            "KernovaContainer", "KernovaWire", "KernovaPortableTestSupport",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     .testTarget(
@@ -208,7 +227,7 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaAgentCoreTests",
         dependencies: [
-            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaDigest",
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaDigest", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         exclude: ["Transcripts"],

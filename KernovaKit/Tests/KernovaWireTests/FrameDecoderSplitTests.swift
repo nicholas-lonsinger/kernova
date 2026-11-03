@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 
@@ -64,7 +65,7 @@ struct FrameDecoderSplitTests {
     }
 
     static let largeFrames: [Frame] = {
-        var generator = SeededGenerator(seed: 0x4B52_4E32)
+        var generator = SplitMix64(seed: 0x4B52_4E32)
         return [
             Frame(
                 streamID: StreamID(rawValue: 1), type: .data, payload: generator.bytes(WireConstants.maxRawDataPayload)),
@@ -110,7 +111,7 @@ struct FrameDecoderSplitTests {
 
     @Test("A 1 MiB frame arriving a byte at a time is held as its payload so far, and nothing more")
     func byteAtATimeStorageIsThePayload() throws {
-        var generator = SeededGenerator(seed: 4)
+        var generator = SplitMix64(seed: 4)
         let frame = Frame(
             streamID: StreamID(rawValue: 1), type: .data, payload: generator.bytes(WireConstants.maxRawDataPayload))
         let bytes = wireBytes([frame])
@@ -160,7 +161,7 @@ struct FrameDecoderSplitTests {
 
     @Test("A raw DATA payload of 64 KiB or more inside one chunk is a slice of it")
     func largeRawPayloadIsSliced() throws {
-        var generator = SeededGenerator(seed: 1)
+        var generator = SplitMix64(seed: 1)
         let frame = Frame(streamID: StreamID(rawValue: 1), type: .data, payload: generator.bytes(65_536))
         let chunk = wireBytes([frame])
         var decoder = FrameDecoder()
@@ -172,7 +173,7 @@ struct FrameDecoderSplitTests {
 
     @Test("Every payload under 64 KiB, and every message or control payload, is copied")
     func smallAndControlPayloadsAreCopied() throws {
-        var generator = SeededGenerator(seed: 2)
+        var generator = SplitMix64(seed: 2)
         let frames = [
             Frame(streamID: StreamID(rawValue: 1), type: .data, payload: generator.bytes(65_535)),
             Frame(streamID: StreamID(rawValue: 1), type: .data, flags: .message, payload: generator.bytes(65_536)),
@@ -192,7 +193,7 @@ struct FrameDecoderSplitTests {
 
     @Test("A large raw DATA payload spanning chunks is assembled into storage of its own")
     func spanningPayloadIsAssembled() throws {
-        var generator = SeededGenerator(seed: 3)
+        var generator = SplitMix64(seed: 3)
         let frame = Frame(streamID: StreamID(rawValue: 1), type: .data, payload: generator.bytes(200_000))
         let pieces = wireBytes([frame]).split(at: [100_000])
         var decoder = FrameDecoder()

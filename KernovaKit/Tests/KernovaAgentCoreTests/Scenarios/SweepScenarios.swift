@@ -6,6 +6,7 @@ import Foundation
 
 import KernovaAgentCore
 import KernovaAgentSimulation
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 

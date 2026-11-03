@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 
@@ -46,7 +47,7 @@ struct CRC32CTests {
 
     @Test("Updating in pieces matches one pass, at every split of a short buffer")
     func incremental() {
-        var generator = SeededGenerator(seed: 32)
+        var generator = SplitMix64(seed: 32)
         let bytes = generator.bytes(67)
         let whole = CRC32C.checksum(bytes)
         for offset in 0...bytes.count {
@@ -61,7 +62,7 @@ struct CRC32CTests {
     #if arch(arm64) || arch(x86_64)
     @Test("The table and the CPU instructions agree over seeded buffers of every alignment")
     func tableMatchesHardware() {
-        var generator = SeededGenerator(seed: 0x82F6_3B78)
+        var generator = SplitMix64(seed: 0x82F6_3B78)
         let buffer = generator.bytes(20_000)
         buffer.withUnsafeBytes { all in
             for _ in 0..<300 {

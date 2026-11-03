@@ -6,33 +6,6 @@ import Foundation
 
 import KernovaWire
 
-/// SplitMix64: the same bytes for the same seed on every platform.
-struct SeededGenerator: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(seed: UInt64) {
-        state = seed
-    }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9E37_79B9_7F4A_7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        return z ^ (z >> 31)
-    }
-
-    mutating func bytes(_ count: Int) -> Data {
-        var data = Data(count: count)
-        data.withUnsafeMutableBytes { buffer in
-            for index in 0..<count {
-                buffer[index] = UInt8(truncatingIfNeeded: next())
-            }
-        }
-        return data
-    }
-}
-
 /// The preamble, then each frame's encoded bytes.
 func wireBytes(_ frames: [Frame], preamble: Bool = true) -> Data {
     var data = preamble ? WireConstants.preamble : Data()

@@ -103,7 +103,7 @@ test_only_calls='placeForTesting bindSessionForTesting beginSessionContextForTes
 scratch_owners='KernovaKit/Sources/KernovaTestSupport/TestScratchDirectory.swift KernovaKit/Tests/KernovaKitTests/TestScratchDirectoryTests.swift KernovaKit/Sources/KernovaPortableTestSupport/PortableScratchDirectory.swift'
 
 # The test targets the fourth gate skips, as its header paragraph reads them.
-unscoped_test_roots='^KernovaKit/Tests/(KernovaPortableTests|KernovaWireTests|KernovaAgentCoreTests|KernovaAgentRuntimeTests|KernovaDBusTests|KernovaPlatformLinuxTests|KernovaLinuxAgentTests|KernovaFileTreeTests)/'
+unscoped_test_roots='^KernovaKit/Tests/(KernovaPortableTests|KernovaWireTests|KernovaContainerTests|KernovaAgentCoreTests|KernovaAgentRuntimeTests|KernovaDBusTests|KernovaPlatformLinuxTests|KernovaLinuxAgentTests|KernovaFileTreeTests)/'
 
 report() {
     local summary=$1 text=$2

@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 
@@ -129,7 +130,7 @@ struct FrameDecoderValidationTests {
 
     @Test("Every length at a type's bounds decodes", arguments: acceptances)
     func acceptsBounds(_ acceptance: Acceptance) throws {
-        var generator = SeededGenerator(seed: UInt64(acceptance.length))
+        var generator = SplitMix64(seed: UInt64(acceptance.length))
         let frame = Frame(
             streamID: StreamID(rawValue: 7), type: acceptance.type, flags: acceptance.flags,
             payload: generator.bytes(acceptance.length))

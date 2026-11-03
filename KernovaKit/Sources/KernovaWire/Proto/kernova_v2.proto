@@ -624,7 +624,7 @@ message LogBatch {
 // The container is the same for every pull, an INLINE representation
 // included: records of entries in depth-first pre-order, each entry an
 // EntryHeader followed by its data chunks, and an EndRecord last. The record
-// framing is not protobuf and lives in KernovaWire.
+// framing is not protobuf and lives in KernovaContainer.
 
 // FeatureAdvert.params for ITEM_TRANSFER, both sides.
 message ItemTransferCapability {
@@ -686,14 +686,16 @@ enum Codec {
 // RESET(ITEM_OFFER_STALE) when no offer of `token` is open on this
 // connection, RESET(ITEM_REPRESENTATION_UNAVAILABLE) when the indexes name
 // nothing or the source is gone, and RESET(TOO_LARGE, limit = byte_ceiling)
-// once the container would carry more than `byte_ceiling`.
+// once the container would land more than `byte_ceiling`.
 message PullRequest {
   bytes token = 1;
   // Index into the offer's items, in the order they were sent.
   uint32 item = 2;
   // Index into the item's representations.
   uint32 representation = 3;
-  // The most EndRecord.bytes the destination accepts.
+  // The most logical bytes the container may land: each DATA or FILE
+  // entry's size, and for decmpfs storage the larger of the attribute's
+  // uncompressed size and the resource fork's size.
   uint64 byte_ceiling = 4;
   // The decmpfs compression types the destination lands as they are; a file
   // of any other type is sent decompressed. Empty: none.
@@ -790,6 +792,7 @@ message EntryHeader {
 message EndRecord {
   // The entries the container held.
   uint64 entries = 1;
-  // The bytes every entry's chunks carry, after decompression.
+  // The bytes every entry's chunks carry, after decompression: a framing
+  // count, not the size landed, which for decmpfs storage is the attribute's.
   uint64 bytes = 2;
 }

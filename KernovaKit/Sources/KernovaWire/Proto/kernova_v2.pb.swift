@@ -1977,7 +1977,7 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
 /// RESET(ITEM_OFFER_STALE) when no offer of `token` is open on this
 /// connection, RESET(ITEM_REPRESENTATION_UNAVAILABLE) when the indexes name
 /// nothing or the source is gone, and RESET(TOO_LARGE, limit = byte_ceiling)
-/// once the container would carry more than `byte_ceiling`.
+/// once the container would land more than `byte_ceiling`.
 public nonisolated struct Kernova_V2_PullRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1991,7 +1991,9 @@ public nonisolated struct Kernova_V2_PullRequest: Sendable {
   /// Index into the item's representations.
   public var representation: UInt32 = 0
 
-  /// The most EndRecord.bytes the destination accepts.
+  /// The most logical bytes the container may land: each DATA or FILE
+  /// entry's size, and for decmpfs storage the larger of the attribute's
+  /// uncompressed size and the resource fork's size.
   public var byteCeiling: UInt64 = 0
 
   /// The decmpfs compression types the destination lands as they are; a file
@@ -2307,7 +2309,8 @@ public nonisolated struct Kernova_V2_EndRecord: Sendable {
   /// The entries the container held.
   public var entries: UInt64 = 0
 
-  /// The bytes every entry's chunks carry, after decompression.
+  /// The bytes every entry's chunks carry, after decompression: a framing
+  /// count, not the size landed, which for decmpfs storage is the attribute's.
   public var bytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

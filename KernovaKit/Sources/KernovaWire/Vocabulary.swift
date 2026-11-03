@@ -22,6 +22,18 @@ public typealias TypeDescriptor = Kernova_V2_TypeDescriptor
 /// A container codec a destination decodes besides plain bytes.
 public typealias Codec = Kernova_V2_Codec
 
+/// One form of an offered item: its type, and whether it travels as bytes, a file or a folder.
+public typealias Representation = Kernova_V2_Representation
+
+/// What a pull asks for, and the limits its container must keep.
+public typealias PullRequest = Kernova_V2_PullRequest
+
+/// One entry of a transfer container: its place in the tree, its metadata, and how its bytes travel.
+public typealias EntryHeader = Kernova_V2_EntryHeader
+
+/// The counts a transfer container states last.
+public typealias EndRecord = Kernova_V2_EndRecord
+
 extension StreamKind {
     /// The simulation's raw-DATA kind a peer opens.
     package static let testBulkByPeer = StreamKind.UNRECOGNIZED(9000)
