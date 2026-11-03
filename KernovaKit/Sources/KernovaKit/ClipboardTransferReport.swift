@@ -101,9 +101,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The peer never asked for a single item of an offered drop, so the batch
     /// was called off rather than left waiting forever.
     case unclaimed
-    /// A Mac destination asked for a promised item of a guest drag that the
-    /// guest never named, so it holds a stand-in name nothing is written to.
-    case dragItemUnnamed
 }
 
 extension ClipboardTransferFailure {

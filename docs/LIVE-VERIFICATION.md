@@ -24,7 +24,7 @@ A run reaches past a guest's login screen without its password by setting the gu
 - GNOME: `sudo groupadd -f nopasswdlogin; sudo usermod -aG nopasswdlogin <user>`, and `auth sufficient pam_succeed_if.so user ingroup nopasswdlogin` at the top of `/etc/pam.d/gdm-password`; one click on the user's row then logs in. `AutomaticLoginEnable=false` in GDM's `custom.conf` keeps a boot at the login screen. To log out: `sudo -u <user> DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u <user>)/bus gnome-session-quit --logout --no-prompt`.
 - macOS with automatic login: keep a copy of `/etc/kcpassword` and the `autoLoginUser` value from `/Library/Preferences/com.apple.loginwindow`. Deleting both turns automatic login off, and restoring both then `sudo killall loginwindow` logs in. To log out: `sudo launchctl bootout user/$(id -u <user>)`.
 
-A drag out of the guest's display lands only once the host's catcher becomes the drag target. A screen-control drag whose pointer leaves the display and then holds still was abandoned after `GuestDragTake.handOffDeadline` ("the guest went 3.0 s without its catcher becoming the target"), so keep the pointer moving in small steps for about 2 s past the display's edge before releasing.
+A drag out of the guest's display lands only once the guest's catcher becomes the drag target, which takes pointer motion past the display's edge after the catcher appears: a screen-control drag whose pointer leaves the display and then holds still never hands over, so keep the pointer moving in small steps for about 2 s past the display's edge before releasing.
 
 ## App Intents
 

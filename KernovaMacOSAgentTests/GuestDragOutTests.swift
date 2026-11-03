@@ -1,21 +1,25 @@
 import AppKit
 import Foundation
+import KernovaAgentCore
+import KernovaAgentRuntime
 import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
+import KernovaWire
 import Testing
 import UniformTypeIdentifiers
 
 /// The guest half of dragging files out of the VM display: which drags the
-/// watcher offers and when it withdraws them, how a take is validated, and
-/// every step and lifetime path of the catcher — with the event stream, the
-/// drag pasteboard and the catcher's window all faked.
+/// watcher offers and when it withdraws them, how a take is answered, how a
+/// drag of promises is called in and offered again under its names, what the
+/// host's pulls are served from, and every lifetime path of the catcher — with
+/// the event stream, the drag pasteboard and the catcher's window all faked.
 @Suite("GuestDragOut", .caseScoped)
 @MainActor
 struct GuestDragOutTests {
     private let scratch = TestScratchDirectory(prefix: "GuestDragOutTests")
 
-    /// A drag-out over fakes, offering what `offering` says the host takes.
+    /// A drag-out over fakes, watching while `usable`.
     @MainActor
     private struct Rig {
         let input = FakeGuestDragInput()
@@ -24,10 +28,10 @@ struct GuestDragOutTests {
         let staging = TestStagingRoot()
         let dragOut: GuestDragOut
 
-        init(offering: HostDragOutSupport = .filesAndPromises) {
+        init(usable: Bool = true) {
             dragOut = GuestDragOut(
                 peer: peer, system: .faked(input: input, surface: surface), stagingRoot: staging.root)
-            dragOut.setOffering(offering)
+            dragOut.setUsable(usable)
         }
 
         /// Where every drag's called-in promises land.
@@ -48,13 +52,42 @@ struct GuestDragOutTests {
             input.release()
             input.fireTick()
         }
+
+        /// The token of the `index`th offer.
+        func token(_ index: Int = 0) throws -> Data {
+            try #require(peer.token(index))
+        }
+
+        /// The host takes the `index`th offer, as take `stream`.
+        @discardableResult
+        func take(_ stream: UInt32, offer index: Int = 0) throws -> DragTakeID {
+            let id = takeID(stream)
+            dragOut.take(id, token: try token(index))
+            return id
+        }
     }
+
+    private static func takeID(_ stream: UInt32) -> DragTakeID {
+        DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: stream))
+    }
+
+    private func takeID(_ stream: UInt32) -> DragTakeID { Self.takeID(stream) }
 
     private func file(_ name: String, _ contents: String = "bytes") throws -> URL {
         let directory = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = directory.appendingPathComponent(name)
         try Data(contents.utf8).write(to: url)
+        return url
+    }
+
+    private func folder(_ name: String, files: [String: String]) throws -> URL {
+        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        for (file, contents) in files {
+            try Data(contents.utf8).write(to: url.appendingPathComponent(file))
+        }
         return url
     }
 
@@ -70,9 +103,13 @@ struct GuestDragOutTests {
         GuestDragCatcher.Drag(sourceMask: mask, items: items)
     }
 
+    private func exists(_ url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+
     // MARK: - Which drags are offered
 
-    @Test("a drag of plain files is offered with every item, in order")
+    @Test("a drag of plain files is offered under a fresh token, each item named by its file, not promised")
     func offersPlainFiles() throws {
         let rig = Rig()
         let first = try file("one.txt")
@@ -80,19 +117,26 @@ struct GuestDragOutTests {
 
         rig.pressAndDrag([fileItem(first), fileItem(second)])
 
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["one.txt", "two.txt"])])
+        let token = try rig.token()
+        #expect(token.count == 16)
+        #expect(rig.peer.events == [.offered(token: token, names: ["one.txt", "two.txt"])])
+        let representations = try #require(rig.peer.offers.first).items.map { $0.representations }
+        #expect(representations.map(\.count) == [1, 1])
+        #expect(representations.map { $0[0].storage } == [.file, .file])
+        #expect(representations.map { $0[0].promised } == [false, false])
     }
 
-    @Test("a folder is offered as one item")
+    @Test("a folder is offered as one FOLDER item named by the folder")
     func offersAFolder() throws {
         let rig = Rig()
-        let folder = scratch.url.appendingPathComponent("Folder", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try Data("inside".utf8).write(to: folder.appendingPathComponent("inside.txt"))
+        let folder = try folder("Folder", files: ["inside.txt": "inside"])
 
         rig.pressAndDrag([fileItem(folder)])
 
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["Folder"])])
+        #expect(rig.peer.events == [.offered(token: try rig.token(), names: ["Folder"])])
+        let representation = try #require(rig.peer.offers.first?.items.first?.representations.first)
+        #expect(representation.storage == .folder)
+        #expect(!representation.promised)
     }
 
     @Test("an item's promise wins over the derivative file URL it also carries")
@@ -101,11 +145,10 @@ struct GuestDragOutTests {
         let pasteboard = FakeReadPasteboard()
         pasteboard.setItems([promiseItem("public.heic", alongside: derivative)])
 
-        #expect(
-            GuestDraggedItems.items(on: pasteboard, acceptingPromises: true) == [.promise(uti: "public.heic")])
+        #expect(GuestDraggedItems.items(on: pasteboard) == [.promise(uti: "public.heic")])
     }
 
-    @Test("a drag of files and promises is offered with every item, in order")
+    @Test("a drag of files and promises is offered in order, each promise under a stand-in name, none called in")
     func offersAMixedDrag() throws {
         let rig = Rig()
         let plain = try file("plain.txt")
@@ -117,26 +160,12 @@ struct GuestDragOutTests {
 
         #expect(
             rig.peer.events == [
-                .offered(generation: 1, items: ["plain.txt", "promise:public.heic", "promise:public.folder"])
+                .offered(token: try rig.token(), names: ["plain.txt", "Untitled.heic", "Untitled"])
             ])
-        let offered = try #require(rig.peer.outboundContent(generation: 1)).representations
-        #expect(offered.map(\.isDirectory) == [false, false, true])
-    }
-
-    @Test("a host that takes no promises leaves a drag carrying one in the guest, and takes plain files")
-    func promisesNeedTheHostCapability() throws {
-        let rig = Rig(offering: .files)
-        let pasteboard = FakeReadPasteboard()
-        pasteboard.setItems([fileItem(try file("plain.txt")), promiseItem("public.heic")])
-        #expect(GuestDraggedItems.items(on: pasteboard, acceptingPromises: false) == nil)
-
-        rig.pressAndDrag([fileItem(try file("plain.txt")), promiseItem("public.heic")])
-        #expect(rig.input.resolveCount == 0)
-        #expect(rig.peer.events.isEmpty)
-
-        rig.releaseAndTick()
-        rig.pressAndDrag([fileItem(try file("alone.txt"))])
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["alone.txt"])])
+        let representations = try #require(rig.peer.offers.first).items.compactMap(\.representations.first)
+        #expect(representations.map(\.storage) == [.file, .file, .folder])
+        #expect(representations.map(\.promised) == [false, true, true])
+        #expect(rig.input.receiverReads == 0)
     }
 
     @Test("a promise that names no promised type keeps the whole drag in the guest")
@@ -202,16 +231,30 @@ struct GuestDragOutTests {
         rig.input.fireTick()
         rig.input.deliverResolves()
 
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["late.txt"])])
+        #expect(rig.peer.events == [.offered(token: try rig.token(), names: ["late.txt"])])
+    }
+
+    @Test("the live input offers a folder without reading inside it")
+    func theLiveOfferReadsNoFolder() async throws {
+        let tree = try folder("Tree", files: ["a.txt": "alpha", "b.txt": "beta"])
+        let input = SystemGuestDragInput()
+
+        let intake = await withCheckedContinuation { continuation in
+            input.resolveFiles([tree]) { continuation.resume(returning: $0) }
+        }
+
+        let representation = try #require(intake.representations.first)
+        #expect(representation.isDirectory)
+        #expect(representation.byteCount == 0)
     }
 
     // MARK: - The baseline
 
     @Test("what was already on the drag pasteboard when watching started is not a drag")
     func whatWasStandingIsNotADrag() throws {
-        let rig = Rig(offering: .none)
+        let rig = Rig(usable: false)
         rig.input.drag([fileItem(try file("old.txt"))])
-        rig.dragOut.setOffering(.filesAndPromises)
+        rig.dragOut.setUsable(true)
 
         rig.input.press()
         rig.input.fireTick()
@@ -229,11 +272,9 @@ struct GuestDragOutTests {
         rig.input.press()
         rig.input.fireTick()
 
+        let token = try rig.token()
         #expect(rig.input.resolveCount == 1)
-        #expect(
-            rig.peer.events == [
-                .offered(generation: 1, items: ["dragged.txt"]), .withdrew(generation: 1),
-            ])
+        #expect(rig.peer.events == [.offered(token: token, names: ["dragged.txt"]), .withdrew(token: token)])
     }
 
     @Test("a drag written before its press is heard of is still this press's drag")
@@ -251,7 +292,7 @@ struct GuestDragOutTests {
         rig.input.fireTick()
         rig.input.deliverResolves()
 
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["quick.txt"])])
+        #expect(rig.peer.events == [.offered(token: try rig.token(), names: ["quick.txt"])])
     }
 
     // MARK: - Stale results and changed items
@@ -296,7 +337,7 @@ struct GuestDragOutTests {
         #expect(rig.peer.events.isEmpty)
     }
 
-    @Test("changed items withdraw the offer and offer the new ones")
+    @Test("changed items withdraw the offer and offer the new ones under a new token")
     func changedItemsReplaceTheOffer() throws {
         let rig = Rig()
         rig.pressAndDrag([fileItem(try file("first.txt"))])
@@ -305,10 +346,13 @@ struct GuestDragOutTests {
         rig.input.fireTick()
         rig.input.deliverResolves()
 
+        let first = try rig.token(0)
+        let second = try rig.token(1)
+        #expect(first != second)
         #expect(
             rig.peer.events == [
-                .offered(generation: 1, items: ["first.txt"]), .withdrew(generation: 1),
-                .offered(generation: 2, items: ["second.txt"]),
+                .offered(token: first, names: ["first.txt"]), .withdrew(token: first),
+                .offered(token: second, names: ["second.txt"]),
             ])
     }
 
@@ -322,7 +366,7 @@ struct GuestDragOutTests {
         rig.input.fireTick()
 
         #expect(rig.input.resolveCount == 1)
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["same.txt"])])
+        #expect(rig.peer.events == [.offered(token: try rig.token(), names: ["same.txt"])])
     }
 
     // MARK: - Press end and withdrawal
@@ -337,7 +381,7 @@ struct GuestDragOutTests {
 
         rig.releaseAndTick()
 
-        #expect(rig.peer.events.last == .withdrew(generation: 1))
+        #expect(rig.peer.events.last == .withdrew(token: try rig.token()))
         #expect(!rig.input.isTicking)
     }
 
@@ -345,295 +389,205 @@ struct GuestDragOutTests {
     func aTakenOfferIsNotWithdrawn() throws {
         let rig = Rig()
         rig.pressAndDrag([fileItem(try file("taken.txt"))])
-        rig.dragOut.take(generation: 1)
+        try rig.take(1)
 
         rig.releaseAndTick()
 
-        #expect(!rig.peer.events.contains(.withdrew(generation: 1)))
+        #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
     }
 
-    @Test("an offer the host completed is neither withdrawn nor offered again in its press")
-    func aCompletedOfferIsLeftAlone() throws {
+    @Test("an offer that ended is neither withdrawn nor offered again in its press")
+    func anEndedOfferIsLeftAlone() throws {
         let rig = Rig()
-        let url = try file("completed.txt")
+        let url = try file("ended.txt")
         rig.pressAndDrag([fileItem(url)])
-        rig.dragOut.complete(generation: 1)
+        rig.dragOut.offerEnded(try rig.token())
 
         rig.input.drag([fileItem(url)])
         rig.input.fireTick()
         rig.releaseAndTick()
 
-        #expect(rig.peer.events == [.offered(generation: 1, items: ["completed.txt"])])
+        #expect(rig.peer.events == [.offered(token: try rig.token(), names: ["ended.txt"])])
     }
 
-    @Test("stopping withdraws an untaken offer, drops the monitor and ends the App Nap hold")
+    @Test("DRAG going unusable withdraws an untaken offer, drops the monitor and ends the App Nap hold")
     func stoppingReleasesEverything() throws {
         let rig = Rig()
         #expect(rig.input.isHoldingActivity)
         #expect(rig.input.isObservingPresses)
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
 
-        rig.dragOut.setOffering(.none)
+        rig.dragOut.setUsable(false)
 
-        #expect(rig.peer.events.last == .withdrew(generation: 1))
+        #expect(rig.peer.events.last == .withdrew(token: try rig.token()))
         #expect(!rig.input.isHoldingActivity)
         #expect(!rig.input.isObservingPresses)
         #expect(!rig.input.isTicking)
     }
 
-    // MARK: - Folder sizes
+    // MARK: - Answering a take
 
-    private func folder(_ name: String, files: [String: String]) throws -> URL {
-        let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            .appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        for (file, contents) in files {
-            try Data(contents.utf8).write(to: url.appendingPathComponent(file))
-        }
-        return url
-    }
-
-    @Test("the live input offers a folder without reading inside it, and measures it only when asked")
-    func theLiveOfferReadsNoFolder() async throws {
-        let tree = try folder("Tree", files: ["a.txt": "alpha", "b.txt": "beta"])
-        let measured = Locked<[URL]>([])
-        let input = SystemGuestDragInput(measureFolder: { url in
-            measured.withLock { $0.append(url) }
-            return 1_234
-        })
-
-        let intake = await withCheckedContinuation { continuation in
-            input.resolveFiles([tree]) { continuation.resume(returning: $0) }
-        }
-
-        let representation = try #require(intake.representations.first)
-        #expect(representation.isDirectory)
-        #expect(representation.byteCount == 0)
-        #expect(measured.withLock { $0 }.isEmpty)
-
-        let sizes = await withCheckedContinuation { continuation in
-            input.measureFolders([0: tree]) { continuation.resume(returning: $0) }
-        }
-        #expect(sizes == [0: 1_234])
-        #expect(measured.withLock { $0 } == [tree])
-    }
-
-    @Test("a drag carrying a folder measures it once the take is accepted, and sends its size after armed")
-    func folderSizesFollowTheTake() throws {
+    @Test("a take of plain files arms the catcher and is answered TAKEN once the catcher is the drag's target")
+    func aTakeIsTakenOnceTargeted() throws {
+        let urls = [try file("one.txt"), try file("two.txt")]
         let rig = Rig()
-        let tree = try folder("Tree", files: ["a.txt": "alpha"])
-        rig.pressAndDrag([fileItem(try file("loose.txt")), fileItem(tree)])
-        #expect(rig.input.pendingMeasureFolders.isEmpty)
+        rig.pressAndDrag(urls.map(fileItem))
 
-        rig.dragOut.take(generation: 1)
+        let id = try rig.take(1)
 
-        #expect(rig.input.pendingMeasureFolders.map { $0.keys.sorted() } == [[1]])
-        rig.input.deliverMeasures(size: 4_096)
-        #expect(
-            rig.peer.events.suffix(2) == [
-                .handOff(generation: 1, step: .armed),
-                .sized(generation: 1, folderByteCounts: [1: 4_096]),
-            ])
-        #expect(rig.peer.outboundContent(generation: 1)?.representations[1].byteCount == 4_096)
+        #expect(rig.surface.isShown)
+        #expect(rig.surface.shownItems == urls.map(GuestDragItem.file))
+        #expect(rig.peer.answers(to: id).isEmpty)
+
+        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(urls)) == .copy)
+        #expect(rig.peer.answers(to: id) == [.taken])
     }
 
-    @Test("a refused take, or a drag of files alone, measures nothing")
-    func nothingIsMeasuredWithoutAFolderTaken() throws {
-        let rig = Rig()
-        rig.pressAndDrag([fileItem(try folder("Tree", files: ["a.txt": "alpha"]))])
-        rig.dragOut.take(generation: 2)
-        #expect(rig.input.pendingMeasureFolders.isEmpty)
-
-        let filesOnly = Rig()
-        filesOnly.pressAndDrag([fileItem(try file("loose.txt"))])
-        filesOnly.dragOut.take(generation: 1)
-        #expect(filesOnly.input.pendingMeasureFolders.isEmpty)
-    }
-
-    // MARK: - Validating a take
-
-    @Test("a take naming another generation fails as stale and shows nothing")
-    func aTakeOfAnotherGenerationFails() throws {
+    @Test("a take naming a token this side never offered is refused DRAG_NOT_CURRENT and shows nothing")
+    func aTakeOfAStaleTokenIsNotCurrent() throws {
         let rig = Rig()
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
 
-        rig.dragOut.take(generation: 2)
+        rig.dragOut.take(takeID(1), token: Data(repeating: 7, count: 16))
 
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(
-                    generation: 2,
-                    step: .failed(.dragTakeStale, message: GuestDragWatcher.ClaimRefusal.notCurrent.message))
-            ])
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragNotCurrent)])
         #expect(rig.surface.showCount == 0)
     }
 
-    @Test("a take of an earlier press's drag fails as stale")
+    @Test("a take of an earlier press's drag is refused DRAG_NOT_CURRENT")
     func aTakeOfAnEarlierPressFails() throws {
         let rig = Rig()
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
         rig.releaseAndTick()
         rig.input.press()
 
-        rig.dragOut.take(generation: 1)
+        let id = try rig.take(1)
 
-        #expect(rig.peer.handOffs.count == 1)
-        guard case .handOff(1, .failed(.dragTakeStale, _)) = rig.peer.handOffs.first else {
-            Issue.record("Expected a stale failure, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: id) == [.refused(.dragNotCurrent)])
         #expect(rig.surface.showCount == 0)
     }
 
-    @Test("a take after the button came up fails, before any tick saw it")
-    func aTakeWithTheButtonUpFails() throws {
+    @Test("a take after the button came up is refused DRAG_PRESS_OVER, before any tick saw it")
+    func aTakeWithTheButtonUpIsPressOver() throws {
         let rig = Rig()
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
         rig.input.release()
 
-        rig.dragOut.take(generation: 1)
+        let id = try rig.take(1)
 
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(
-                    generation: 1,
-                    step: .failed(.dragTakeStale, message: GuestDragWatcher.ClaimRefusal.pressOver.message))
-            ])
+        #expect(rig.peer.answers(to: id) == [.refused(.dragPressOver)])
         #expect(rig.surface.showCount == 0)
     }
 
-    @Test("a second take of the same drag fails without touching the first")
+    @Test("a second take of the same drag is refused without touching the first")
     func aRepeatedTakeFails() throws {
         let rig = Rig()
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
-        rig.dragOut.take(generation: 1)
+        let first = try rig.take(1)
 
-        rig.dragOut.take(generation: 1)
+        let second = try rig.take(2)
 
         #expect(rig.surface.isShown)
-        #expect(rig.peer.handOffs.count == 2)
-        guard case .handOff(1, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a stale failure, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: first).isEmpty)
+        #expect(rig.peer.answers(to: second) == [.refused(.dragNotCurrent)])
     }
 
-    @Test("a take while not watching fails as stale")
+    @Test("a take while not watching is refused DRAG_NOT_CURRENT")
     func aTakeWhileNotWatchingFails() {
-        let rig = Rig(offering: .none)
+        let rig = Rig(usable: false)
 
-        rig.dragOut.take(generation: 1)
+        rig.dragOut.take(takeID(1), token: Data(repeating: 1, count: 16))
 
-        #expect(rig.peer.handOffs.count == 1)
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragNotCurrent)])
         #expect(rig.surface.showCount == 0)
     }
 
     // MARK: - The catcher's steps
 
-    /// A rig whose drag of `urls` the host has taken.
-    private func takenRig(_ urls: [URL]) -> Rig {
+    /// A rig whose drag of `urls` the host has taken as take 1.
+    private func takenRig(_ urls: [URL]) throws -> Rig {
         let rig = Rig()
         rig.pressAndDrag(urls.map(fileItem))
-        rig.dragOut.take(generation: 1)
+        try rig.take(1)
         return rig
     }
 
-    @Test("a take arms, targets on entry, catches on the drop and comes down at the end")
-    func theHandOffSteps() throws {
+    @Test("a taken drag is answered once, caught on the drop, and comes down at the end, never withdrawn")
+    func theTakeSteps() throws {
         let urls = [try file("one.txt"), try file("two.txt")]
-        let rig = takenRig(urls)
-        #expect(rig.surface.isShown)
-        #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
 
         #expect(catcher.draggingEntered(caught(urls)) == .copy)
         #expect(catcher.draggingUpdated(caught(urls)) == .copy)
-        #expect(catcher.performDragOperation(receivers: { [] }))
+        #expect(catcher.performDragOperation())
         // The drop's release is the host's; the press ending before the drop
         // concludes leaves the surface for the conclusion to take down.
         rig.releaseAndTick()
         #expect(rig.surface.isShown)
         catcher.concludeDragOperation()
 
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
-                .handOff(generation: 1, step: .caught),
-            ])
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
         #expect(!rig.surface.isShown)
-        #expect(!rig.peer.events.contains(.withdrew(generation: 1)))
+        #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
     }
 
-    @Test("re-entering after leaving reports targeted again")
-    func reEntryTargetsAgain() throws {
+    @Test("re-entering after leaving answers nothing more")
+    func reEntryAnswersNothingMore() throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
 
         _ = catcher.draggingEntered(caught(urls))
         catcher.draggingExited()
-        _ = catcher.draggingEntered(caught(urls))
+        #expect(catcher.draggingEntered(caught(urls)) == .copy)
 
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
-                .handOff(generation: 1, step: .targeted),
-            ])
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
-    @Test("a drag holding other items is refused, fails the take and takes the surface down")
+    @Test("a drag holding other items is refused DRAG_NOT_CURRENT and takes the surface down")
     func otherItemsAreRefused() throws {
-        let rig = takenRig([try file("taken.txt")])
+        let rig = try takenRig([try file("taken.txt")])
         let catcher = rig.dragOut.catcherForTesting
 
         #expect(catcher.draggingEntered(caught([try file("other.txt")])) == [])
 
-        guard case .handOff(1, .failed(.dragTakeRefused, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a refusal, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragNotCurrent)])
         #expect(!rig.surface.isShown)
-        #expect(!rig.peer.handOffs.contains(.handOff(generation: 1, step: .targeted)))
     }
 
     @Test("a drag that carries no plain file URLs is refused")
     func aNonFileDragIsRefused() throws {
-        let rig = takenRig([try file("taken.txt")])
+        let rig = try takenRig([try file("taken.txt")])
         let catcher = rig.dragOut.catcherForTesting
 
         #expect(catcher.draggingUpdated(caught(nil)) == [])
 
-        guard case .handOff(1, .failed(.dragTakeRefused, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a refusal, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragNotCurrent)])
         #expect(!rig.surface.isShown)
     }
 
     @Test("a source that does not allow a copy is refused, never answered move or generic")
     func aSourceWithoutCopyIsRefused() throws {
         let urls = [try file("taken.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
 
         #expect(catcher.draggingEntered(caught(urls, mask: [.move, .generic, .delete])) == [])
 
-        guard case .handOff(1, .failed(.dragTakeRefused, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a refusal, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragNotCurrent)])
         #expect(!rig.surface.isShown)
         // Nothing is left armed to answer a later callback with anything at all.
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation(receivers: { [] }))
+        #expect(!catcher.performDragOperation())
     }
 
     @Test(
-        "a refusal after targeted fails the take once and keeps the surface up to refuse the drop",
+        "a refusal after TAKEN answers nothing more and keeps the surface up to refuse the drop",
         arguments: [false, true])
-    func aRefusalAfterTargetedKeepsTheSurface(otherItems: Bool) throws {
+    func aRefusalAfterTakenKeepsTheSurface(otherItems: Bool) throws {
         let urls = [try file("taken.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         #expect(catcher.draggingEntered(caught(urls)) == .copy)
 
@@ -642,15 +596,10 @@ struct GuestDragOutTests {
         #expect(catcher.draggingUpdated(refused) == [])
 
         #expect(rig.surface.isShown)
-        let failures = rig.peer.handOffs.filter {
-            if case .handOff(1, .failed(.dragTakeRefused, _)) = $0 { return true }
-            return false
-        }
-        #expect(failures.count == 1)
-        // A release the host injected before it heard the refusal drops here
-        // and is refused, so nothing moves.
+        // A release the host injected drops here and is refused, so nothing
+        // moves.
         #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation(receivers: { [] }))
+        #expect(!catcher.performDragOperation())
         // The press ending under the surface leaves it for the drag's end.
         rig.releaseAndTick()
         #expect(rig.surface.isShown)
@@ -658,140 +607,129 @@ struct GuestDragOutTests {
         catcher.draggingEnded()
 
         #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs.count == 3)
-        #expect(!rig.peer.handOffs.contains(.handOff(generation: 1, step: .caught)))
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
-    @Test("no screen to cover fails the take")
-    func noScreenFailsTheTake() throws {
+    @Test("no screen to cover refuses the take")
+    func noScreenRefusesTheTake() throws {
         let rig = Rig()
         rig.surface.hasScreen = false
         rig.pressAndDrag([fileItem(try file("dragged.txt"))])
 
-        rig.dragOut.take(generation: 1)
+        let id = try rig.take(1)
 
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a failure, got \(rig.peer.handOffs)")
-            return
-        }
-        #expect(!rig.peer.handOffs.contains(.handOff(generation: 1, step: .armed)))
+        #expect(rig.peer.answers(to: id) == [.refused(.dragNotCurrent)])
+        #expect(!rig.surface.isShown)
     }
 
     // MARK: - Every path that takes the surface down
 
-    @Test("the drag ending without a drop takes the surface down and fails the take")
-    func draggingEndedTakesItDown() throws {
+    @Test("the drag ending before it reached the catcher refuses the take DRAG_PRESS_OVER")
+    func draggingEndedBeforeTheCatcherRefuses() throws {
+        let rig = try takenRig([try file("one.txt")])
+
+        rig.dragOut.catcherForTesting.draggingEnded()
+
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragPressOver)])
+    }
+
+    @Test("the drag ending without a drop after TAKEN takes the surface down, answering nothing more")
+    func draggingEndedAfterTakenIsQuiet() throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
 
         catcher.draggingEnded()
 
         #expect(!rig.surface.isShown)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a failure, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
     @Test("the drag ending after the drop takes the surface down quietly")
     func draggingEndedAfterTheDropIsQuiet() throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
-        _ = catcher.performDragOperation(receivers: { [] })
+        _ = catcher.performDragOperation()
 
         catcher.draggingEnded()
 
         #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .caught))
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
-    @Test("the host completing the drag takes the surface down without a failure")
-    func completionTakesItDown() throws {
-        let rig = takenRig([try file("one.txt")])
+    @Test("the offer ending before TAKEN takes the surface down and answers nothing")
+    func anOfferEndedBeforeTakenTakesItDown() throws {
+        let urls = [try file("one.txt")]
+        let rig = try takenRig(urls)
 
-        rig.dragOut.complete(generation: 1)
+        rig.dragOut.offerEnded(try rig.token())
 
         #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
+        #expect(rig.peer.answerCount == 0)
+        // Nothing is left armed for a late callback to answer.
+        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(urls)) == [])
+        #expect(rig.peer.answerCount == 0)
     }
 
-    @Test("the host completing a targeted drag this side did not refuse takes the surface down at once")
-    func completionAfterTargetedTakesItDown() throws {
+    @Test("the offer ending after TAKEN leaves the surface up until the drag ends", arguments: [true, false])
+    func anOfferEndedAfterTakenLeavesItUp(dropped: Bool) throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
-        _ = catcher.draggingEntered(caught(urls))
+        #expect(catcher.draggingEntered(caught(urls)) == .copy)
 
-        // The host gave the press back without releasing: the user's drag goes
-        // on in the guest, past where the surface was.
-        rig.dragOut.complete(generation: 1)
-
-        #expect(!rig.surface.isShown)
-        #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(!catcher.performDragOperation(receivers: { [] }))
-        catcher.draggingEnded()
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
-            ])
-    }
-
-    @Test("the host completing a drag this side refused after targeted leaves the surface up")
-    func completionAfterARefusalLeavesItUp() throws {
-        let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
-        let catcher = rig.dragOut.catcherForTesting
-        _ = catcher.draggingEntered(caught(urls))
-        #expect(catcher.draggingUpdated(caught(urls, mask: [.move])) == [])
-
-        rig.dragOut.complete(generation: 1)
+        rig.dragOut.offerEnded(try rig.token())
 
         #expect(rig.surface.isShown)
-        #expect(!catcher.performDragOperation(receivers: { [] }))
-        catcher.draggingEnded()
+        // The host's release may already be on its way: it lands here.
+        #expect(catcher.draggingUpdated(caught(urls)) == .copy)
+        if dropped {
+            #expect(catcher.performDragOperation())
+            catcher.concludeDragOperation()
+        } else {
+            catcher.draggingEnded()
+        }
+
         #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs.count == 3)
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
-    @Test("completing another drag leaves the surface up")
-    func anotherCompletionLeavesItUp() throws {
-        let rig = takenRig([try file("one.txt")])
+    @Test("another offer ending leaves the surface up")
+    func anotherOfferEndingLeavesItUp() throws {
+        let rig = try takenRig([try file("one.txt")])
 
-        rig.dragOut.complete(generation: 7)
+        rig.dragOut.offerEnded(Data(repeating: 9, count: 16))
 
         #expect(rig.surface.isShown)
     }
 
-    @Test("the connection ending takes the surface down")
+    @Test("the session peer stopping takes the surface down")
     func stopTakesItDown() throws {
-        let rig = takenRig([try file("one.txt")])
+        let rig = try takenRig([try file("one.txt")])
 
         rig.dragOut.stop()
 
         #expect(!rig.surface.isShown)
     }
 
-    @Test("the press ending before the drag entered takes the surface down and fails the take")
-    func pressEndBeforeEntryTakesItDown() throws {
-        let rig = takenRig([try file("one.txt")])
+    @Test("the press ending before the catcher is the drag's target refuses the take DRAG_PRESS_OVER")
+    func pressEndBeforeEntryIsPressOver() throws {
+        let rig = try takenRig([try file("one.txt")])
 
         rig.releaseAndTick()
 
         #expect(!rig.surface.isShown)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a failure, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragPressOver)])
     }
 
     @Test("the press ending after the drag left the surface takes it down")
     func pressEndAfterExitTakesItDown() throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
         catcher.draggingExited()
@@ -799,12 +737,23 @@ struct GuestDragOutTests {
         rig.releaseAndTick()
 
         #expect(!rig.surface.isShown)
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
-    @Test("a click on a catcher that outlived its drag takes it down and fails the take")
+    @Test("a click on the catcher before the drag reached it refuses the take DRAG_PRESS_OVER")
+    func aClickBeforeTheDragRefuses() throws {
+        let rig = try takenRig([try file("one.txt")])
+
+        rig.dragOut.catcherForTesting.surfaceClicked()
+
+        #expect(!rig.surface.isShown)
+        #expect(rig.peer.answers(to: takeID(1)) == [.refused(.dragPressOver)])
+    }
+
+    @Test("a click on a catcher that outlived its drag takes it down, and the next take arms afresh")
     func aClickTakesAStrandedCatcherDown() throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         // Entered, so its press ending leaves it waiting for the drop.
         _ = catcher.draggingEntered(caught(urls))
@@ -814,466 +763,326 @@ struct GuestDragOutTests {
         catcher.surfaceClicked()
 
         #expect(!rig.surface.isShown)
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected the take to fail, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
         // The next press's take arms as the first did.
-        rig.pressAndDrag([fileItem(try file("two.txt"))])
-        rig.dragOut.take(generation: 2)
+        let next = [try file("two.txt")]
+        rig.pressAndDrag(next.map(fileItem))
+        let id = try rig.take(2, offer: 1)
         #expect(rig.surface.isShown)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 2, step: .armed))
+        #expect(catcher.draggingEntered(caught(next)) == .copy)
+        #expect(rig.peer.answers(to: id) == [.taken])
     }
 
-    @Test("a click on a catcher that refused after targeted takes it down without a second failure")
+    @Test("a click on a catcher that refused after TAKEN takes it down without another answer")
     func aClickTakesARefusingCatcherDown() throws {
         let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
+        let rig = try takenRig(urls)
         let catcher = rig.dragOut.catcherForTesting
         _ = catcher.draggingEntered(caught(urls))
         _ = catcher.draggingUpdated(caught(urls, mask: [.move]))
-        let reported = rig.peer.handOffs.count
 
         catcher.surfaceClicked()
 
         #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs.count == reported)
-    }
-
-    // MARK: - The host's session over this VM's display
-
-    @Test("standing down hides the surface and keeps the take; showing it again arms and re-targets")
-    func standDownAndShowAgain() throws {
-        let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
-        let catcher = rig.dragOut.catcherForTesting
-        #expect(catcher.draggingEntered(caught(urls)) == .copy)
-
-        rig.dragOut.setCatcherShown(false, generation: 1)
-
-        #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs.count == 2)
-
-        rig.dragOut.setCatcherShown(true, generation: 1)
-
-        #expect(rig.surface.isShown)
-        #expect(catcher.draggingEntered(caught(urls)) == .copy)
-        #expect(catcher.performDragOperation(receivers: { [] }))
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
-                .handOff(generation: 1, step: .caught),
-            ])
-    }
-
-    @Test("a drag dropped inside the guest while stood down ends the take with its press, failing nothing")
-    func aDropInsideTheGuestEndsTheTake() throws {
-        let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
-        let catcher = rig.dragOut.catcherForTesting
-        _ = catcher.draggingEntered(caught(urls))
-        rig.dragOut.setCatcherShown(false, generation: 1)
-        let reported = rig.peer.handOffs
-
-        // The host's release lands on a guest target; the press ends.
-        rig.releaseAndTick()
-
-        #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs == reported)
-        // The take is gone: showing it again is refused as stale.
-        rig.dragOut.setCatcherShown(true, generation: 1)
-        #expect(!rig.surface.isShown)
-        guard case .handOff(1, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a stale refusal, got \(rig.peer.handOffs)")
-            return
-        }
-    }
-
-    @Test("a drag callback after standing down neither targets nor reports, so the next showing targets afresh")
-    func aCallbackWhileStoodDownIsRefusedQuietly() throws {
-        let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
-        let catcher = rig.dragOut.catcherForTesting
-        rig.dragOut.setCatcherShown(false, generation: 1)
-
-        #expect(catcher.draggingUpdated(caught(urls)) == [])
-        #expect(catcher.draggingEntered(caught(urls, mask: [.move])) == [])
-        #expect(!catcher.performDragOperation(receivers: { [] }))
-        #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
-
-        rig.dragOut.setCatcherShown(true, generation: 1)
-        #expect(catcher.draggingEntered(caught(urls)) == .copy)
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .armed),
-                .handOff(generation: 1, step: .targeted),
-            ])
-    }
-
-    @Test("showing the catcher again starts untargeted and reports armed once")
-    func aShowingStartsUntargeted() throws {
-        let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
-        let catcher = rig.dragOut.catcherForTesting
-        _ = catcher.draggingEntered(caught(urls))
-        rig.dragOut.setCatcherShown(false, generation: 1)
-
-        rig.dragOut.setCatcherShown(true, generation: 1)
-        rig.dragOut.setCatcherShown(true, generation: 1)
-
-        #expect(rig.surface.isShown)
-        #expect(
-            rig.peer.handOffs == [
-                .handOff(generation: 1, step: .armed), .handOff(generation: 1, step: .targeted),
-                .handOff(generation: 1, step: .armed),
-            ])
-        // Untargeted in this showing, a refusal takes the surface down rather
-        // than holding it up for a release.
-        _ = catcher.draggingEntered(caught(urls, mask: [.move]))
-        #expect(!rig.surface.isShown)
-        guard case .handOff(1, .failed(.dragTakeRefused, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a refusal, got \(rig.peer.handOffs)")
-            return
-        }
-    }
-
-    @Test("showing the catcher of a take this side no longer holds refuses it as stale")
-    func showingAnUnknownTakeIsStale() throws {
-        let rig = takenRig([try file("one.txt")])
-        rig.dragOut.complete(generation: 1)
-
-        rig.dragOut.setCatcherShown(false, generation: 1)
-        #expect(rig.peer.handOffs == [.handOff(generation: 1, step: .armed)])
-        rig.dragOut.setCatcherShown(true, generation: 1)
-
-        guard case .handOff(1, .failed(.dragTakeStale, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a stale refusal, got \(rig.peer.handOffs)")
-            return
-        }
-        #expect(!rig.surface.isShown)
-    }
-
-    @Test("a take refused after targeted stands down, stays down, and the host's completion ends it")
-    func aRefusedTakeStaysDown() throws {
-        let urls = [try file("one.txt")]
-        let rig = takenRig(urls)
-        let catcher = rig.dragOut.catcherForTesting
-        _ = catcher.draggingEntered(caught(urls))
-        _ = catcher.draggingUpdated(caught(urls, mask: [.move]))
-        let reported = rig.peer.handOffs.count
-
-        rig.dragOut.setCatcherShown(false, generation: 1)
-        rig.dragOut.setCatcherShown(true, generation: 1)
-
-        #expect(!rig.surface.isShown)
-        #expect(rig.peer.handOffs.count == reported)
-        rig.dragOut.complete(generation: 1)
-        // Nothing is left armed: a newer press's take arms afresh.
-        rig.releaseAndTick()
-        rig.pressAndDrag([fileItem(try file("two.txt"))])
-        rig.dragOut.take(generation: 2)
-        #expect(rig.peer.handOffs.count == reported + 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 2, step: .armed))
-    }
-
-    @Test("no screen when the catcher is shown again fails the take")
-    func noScreenOnShowingAgainFails() throws {
-        let rig = takenRig([try file("one.txt")])
-        rig.dragOut.setCatcherShown(false, generation: 1)
-        rig.surface.hasScreen = false
-
-        rig.dragOut.setCatcherShown(true, generation: 1)
-
-        guard case .handOff(1, .failed(.dragTakeFailed, _)) = rig.peer.handOffs.last else {
-            Issue.record("Expected a failure, got \(rig.peer.handOffs)")
-            return
-        }
+        #expect(rig.peer.answers(to: takeID(1)) == [.taken])
     }
 
     // MARK: - Calling promises in
 
-    /// A rig whose drag of a plain file and then a promise of each of
-    /// `promised` the host has taken, entered on the catcher.
-    private func promiseRig(_ promised: [String]) throws -> Rig {
+    /// A rig pressing a drag of a plain file and then a promise of each of
+    /// `promised`, whose pasteboard holds `receivers`.
+    private func promiseRig(
+        _ promised: [String], receivers: [FakePromiseReceiver]
+    ) throws -> (rig: Rig, items: [GuestDragItem]) {
         let plain = try file("plain.txt")
         let rig = Rig()
+        rig.input.receivers = receivers
         rig.pressAndDrag([fileItem(plain)] + promised.map { promiseItem($0) })
-        rig.dragOut.take(generation: 1)
         let items = [GuestDragItem.file(plain)] + promised.map { GuestDragItem.promise(uti: $0) }
-        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(items: items)) == .copy)
-        return rig
+        return (rig, items)
     }
 
-    private func exists(_ url: URL) -> Bool {
-        FileManager.default.fileExists(atPath: url.path)
+    /// A promise rig whose stand-in offer the host took as take 1 and the
+    /// core then ended, as it ends a withdrawn offer: the drag is offered
+    /// again, named.
+    private func calledInRig(
+        _ promised: [String], receivers: [FakePromiseReceiver]
+    ) throws -> (rig: Rig, items: [GuestDragItem]) {
+        let (rig, items) = try promiseRig(promised, receivers: receivers)
+        try rig.take(1)
+        rig.dragOut.offerEnded(try rig.token(0))
+        return (rig, items)
     }
 
-    @Test("a DragResolve is answered resolving only while the taken drag is on the catcher, and refused otherwise")
-    func resolveNeedsATargetedTake() throws {
-        let plain = try file("plain.txt")
-        let rig = Rig()
-        rig.pressAndDrag([fileItem(plain), promiseItem("public.heic")])
-        rig.dragOut.take(generation: 1)
-
-        rig.dragOut.resolve(generation: 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolveRefused))
-        rig.dragOut.resolve(generation: 2)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 2, step: .resolveRefused))
-        // A refused resolve leaves the take standing, and fails nothing.
-        #expect(rig.surface.isShown)
-        #expect(!rig.peer.handOffs.contains { if case .handOff(_, .failed) = $0 { true } else { false } })
-
-        let items: [GuestDragItem] = [.file(plain), .promise(uti: "public.heic")]
-        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(items: items)) == .copy)
-        rig.dragOut.resolve(generation: 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolving))
-
-        rig.dragOut.setCatcherShown(false, generation: 1)
-        rig.dragOut.resolve(generation: 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolveRefused))
-    }
-
-    @Test("a drop the host did not ask to resolve calls nothing in and reads no promise")
-    func noCallInWithoutAResolve() throws {
-        let rig = try promiseRig(["public.heic"])
-        let receiver = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
-        var readReceivers = false
-
-        let dropped = rig.dragOut.catcherForTesting.performDragOperation {
-            readReceivers = true
-            return [receiver]
-        }
-
-        #expect(dropped)
-        #expect(!readReceivers)
-        #expect(!receiver.wasCalledIn)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .caught))
-        #expect(!rig.peer.events.contains { if case .named = $0 { true } else { false } })
-        #expect(!exists(rig.promiseFolders))
-    }
-
-    @Test("a resolve holds only for its showing: a drop after the catcher was shown again calls nothing in")
-    func aResolveEndsWithItsShowing() throws {
-        let plain = try file("plain.txt")
-        let rig = Rig()
-        rig.pressAndDrag([fileItem(plain), promiseItem("public.heic")])
-        rig.dragOut.take(generation: 1)
-        let items: [GuestDragItem] = [.file(plain), .promise(uti: "public.heic")]
-        let catcher = rig.dragOut.catcherForTesting
-        let receiver = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
-        #expect(catcher.draggingEntered(caught(items: items)) == .copy)
-        rig.dragOut.resolve(generation: 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolving))
-
-        rig.dragOut.setCatcherShown(false, generation: 1)
-        rig.dragOut.setCatcherShown(true, generation: 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .armed))
-        #expect(catcher.draggingEntered(caught(items: items)) == .copy)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .targeted))
-        var readReceivers = false
-
-        let dropped = catcher.performDragOperation {
-            readReceivers = true
-            return [receiver]
-        }
-
-        #expect(dropped)
-        #expect(!readReceivers)
-        #expect(!receiver.wasCalledIn)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .caught))
-        #expect(!rig.peer.events.contains { if case .named = $0 { true } else { false } })
-        #expect(!exists(rig.promiseFolders))
-    }
-
-    @Test("a resolved drop names each promise by its first file as its call-in returns, ahead of caught")
-    func theCallInNamesThePromises() throws {
-        let rig = try promiseRig(["public.heic", "public.jpeg", "public.png"])
-        let catcher = rig.dragOut.catcherForTesting
+    @Test("a take of a promise drag calls its promises in, withdraws the stand-in offer and offers it again named")
+    func aTakeCallsThePromisesIn() throws {
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
         let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
-        let unnamed = FakePromiseReceiver(names: [])
-        var sentBeforeBurst: [FakeGuestDragPeer.Event] = []
-        burst.onCalledIn = { sentBeforeBurst = rig.peer.events }
-        rig.dragOut.resolve(generation: 1)
+        let (rig, _) = try promiseRig(["public.heic", "public.jpeg"], receivers: [photo, burst])
+        let standIn = try rig.token(0)
 
-        #expect(catcher.performDragOperation { [photo, burst, unnamed] })
+        let id = try rig.take(1)
 
         let folder = try #require(photo.destination)
         #expect(burst.destination == folder)
         #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
         #expect(exists(folder))
-        // The first item's name was out before the second was called in.
-        #expect(sentBeforeBurst.last == .named(generation: 1, filenames: [1: "IMG_0001.HEIC"]))
+        let named = try rig.token(1)
+        #expect(named != standIn)
+        // A receiver naming several files goes out under its first.
         #expect(
-            rig.peer.events.suffix(4) == [
-                .named(generation: 1, filenames: [1: "IMG_0001.HEIC"]),
-                .named(generation: 1, filenames: [2: "IMG_0002.JPG"]),
-                .named(generation: 1, filenames: [3: ""]),
-                .handOff(generation: 1, step: .caught),
+            rig.peer.events == [
+                .offered(token: standIn, names: ["plain.txt", "Untitled.heic", "Untitled.jpeg"]),
+                .withdrew(token: standIn),
+                .offered(token: named, names: ["plain.txt", "IMG_0001.HEIC", "IMG_0002.JPG"]),
             ])
-        // Caught, the take resolves nothing more.
-        rig.dragOut.resolve(generation: 1)
-        #expect(rig.peer.handOffs.last == .handOff(generation: 1, step: .resolveRefused))
+        let representations = try #require(rig.peer.offers.last).items.compactMap(\.representations.first)
+        #expect(representations.map(\.promised) == [false, true, true])
+        // The withdrawal refuses the take; this side answers nothing, and puts
+        // nothing up.
+        #expect(rig.peer.answers(to: id).isEmpty)
+        #expect(rig.surface.showCount == 0)
     }
 
-    @Test("a drop carrying another count of promises than the drag calls none in and names none")
-    func aPromiseCountMismatchCallsNothingIn() throws {
-        let rig = try promiseRig(["public.heic", "public.jpeg"])
-        let only = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
-        rig.dragOut.resolve(generation: 1)
-
-        #expect(rig.dragOut.catcherForTesting.performDragOperation { [only] })
-
-        #expect(!only.wasCalledIn)
-        #expect(
-            rig.peer.events.suffix(3) == [
-                .unavailable(generation: 1, repIndices: [1, 2]),
-                .named(generation: 1, filenames: [1: "", 2: ""]),
-                .handOff(generation: 1, step: .caught),
-            ])
-    }
-
-    @Test("a promise's landed file resolves its item at its size, and one its source failed is unavailable")
-    func readsResolveOrMarkUnavailable() async throws {
-        let rig = try promiseRig(["public.heic", "public.jpeg"])
+    @Test("a take of the named offer arms the catcher and is TAKEN; a take of the stand-in is not current")
+    func aTakeOfTheNamedOfferArms() throws {
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
-        let other = FakePromiseReceiver(names: ["IMG_0002.JPG"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [photo, other] }
+        let (rig, items) = try calledInRig(["public.heic"], receivers: [photo])
 
-        try photo.write("IMG_0001.HEIC", contents: Data(count: 1_234))
-        try other.fail("IMG_0002.JPG")
-        await drainMainQueue()
+        let late = takeID(3)
+        rig.dragOut.take(late, token: try rig.token(0))
+        #expect(rig.peer.answers(to: late) == [.refused(.dragNotCurrent)])
 
-        #expect(
-            rig.peer.events.suffix(2) == [
-                .resolved(generation: 1, repIndex: 1, filename: "IMG_0001.HEIC", byteCount: 1_234),
-                .unavailable(generation: 1, repIndices: [2]),
-            ])
+        let id = try rig.take(2, offer: 1)
+
+        #expect(rig.surface.shownItems == items)
+        #expect(rig.dragOut.catcherForTesting.draggingEntered(caught(items: items)) == .copy)
+        #expect(rig.peer.answers(to: id) == [.taken])
+        // Called in once: the named offer's take arms, and calls in nothing more.
+        #expect(rig.input.receiverReads == 1)
+        #expect(rig.peer.offers.count == 2)
     }
 
-    @Test("a receiver naming several files resolves its item by the file named, whatever order they land in")
-    func aSeveralFileReceiverResolvesByName() async throws {
-        let rig = try promiseRig(["public.jpeg"])
-        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [burst] }
+    @Test("a promise naming no file as it is called in keeps the drag in the guest, refusing the take")
+    func aPromiseNamingNothingRefusesTheTake() async throws {
+        let unnamed = FakePromiseReceiver(names: [])
+        let (rig, _) = try promiseRig(["public.heic"], receivers: [unnamed])
 
-        try burst.write("IMG_0003.JPG", contents: Data(count: 3))
+        let id = try rig.take(1)
+
+        #expect(unnamed.wasCalledIn)
+        #expect(rig.peer.answers(to: id) == [.refused(.dragNotCurrent)])
+        #expect(rig.peer.offers.count == 1)
+        #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
+        #expect(rig.surface.showCount == 0)
+        // Its source may still write, so the folder goes only once it has.
+        let folder = try #require(unnamed.destination)
+        rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
+        #expect(exists(folder))
+        try unnamed.write("IMG_0001.HEIC", contents: Data(count: 8))
         await drainMainQueue()
-        #expect(!rig.peer.events.contains { if case .resolved = $0 { true } else { false } })
-
-        try burst.write("IMG_0002.JPG", contents: Data(count: 2))
-        await drainMainQueue()
-        #expect(rig.peer.events.last == .resolved(generation: 1, repIndex: 1, filename: "IMG_0002.JPG", byteCount: 2))
-    }
-
-    @Test("a receiver naming several files whose named file never lands is unavailable once its callbacks are in")
-    func aSeveralFileReceiverWithoutItsNamedFileIsUnavailable() async throws {
-        let rig = try promiseRig(["public.jpeg"])
-        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [burst] }
-
-        // An error from a receiver naming several files pairs with none of
-        // them, so it settles nothing by itself.
-        try burst.fail("IMG_0002.JPG")
-        await drainMainQueue()
-        #expect(!rig.peer.events.contains { if case .unavailable = $0 { true } else { false } })
-
-        try burst.write("IMG_0003.JPG", contents: Data(count: 3))
-        await drainMainQueue()
-        #expect(rig.peer.events.last == .unavailable(generation: 1, repIndices: [1]))
-    }
-
-    @Test("a landing after the host is done with the drag is neither resolved nor measured")
-    func aLandingAfterCompletionIsOnlyCounted() async throws {
-        let rig = try promiseRig(["public.folder"])
-        let album = FakePromiseReceiver(names: ["Album"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [album] }
-        let folder = try #require(album.destination)
-        rig.dragOut.complete(generation: 1)
-        let reported = rig.peer.events
-
-        try album.writeFolder("Album")
-        await drainMainQueue()
-
-        #expect(rig.input.pendingMeasureFolders.isEmpty)
-        #expect(rig.peer.events == reported)
-        // Counted, it lets the folder go.
         rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(!exists(folder))
     }
 
-    @Test("a promised folder resolves once its tree is measured")
-    func aPromisedFolderIsMeasured() async throws {
-        let rig = try promiseRig(["public.folder"])
-        let album = FakePromiseReceiver(names: ["Album"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [album] }
+    @Test("a drag carrying another count of promises than its promised items calls none in")
+    func aPromiseCountMismatchCallsNothingIn() throws {
+        let only = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let (rig, _) = try promiseRig(["public.heic", "public.jpeg"], receivers: [only])
 
+        let id = try rig.take(1)
+
+        #expect(!only.wasCalledIn)
+        #expect(rig.peer.answers(to: id) == [.refused(.dragNotCurrent)])
+        #expect(rig.peer.offers.count == 1)
+        #expect(!exists(rig.promiseFolders))
+    }
+
+    // MARK: - What the host's pulls are served from
+
+    /// A pull of item `item` of the offer of `token`.
+    private func request(_ token: Data, item: UInt32) -> PullRequest {
+        var request = PullRequest()
+        request.token = token
+        request.item = item
+        return request
+    }
+
+    /// Starts a pull of item `item` of the offer of `token` on a queue of its
+    /// own, as a pull's queue serves it, returning once the call is under way.
+    private func startPull(
+        _ rig: Rig, token: Data, item: UInt32
+    ) async throws -> Task<Result<ItemContent, WireError>, Never> {
+        let served = rig.dragOut.served
+        let request = request(token, item: item)
+        let probe = PullProbe()
+        let task = Task {
+            await offCooperativePool {
+                probe.markStarted()
+                return served.content(request)
+            }
+        }
+        try await probe.started.wait { probe.isStarted }
+        return task
+    }
+
+    private func failureCode(_ result: Result<ItemContent, WireError>) -> ErrorCode? {
+        guard case .failure(let error) = result else { return nil }
+        return error.code
+    }
+
+    @Test("a pull of a plain file is served from the file's own folder, by its name")
+    func aFileIsServedInPlace() throws {
+        let rig = Rig()
+        let one = try file("one.txt")
+        let tree = try folder("Tree", files: ["a.txt": "alpha"])
+        rig.pressAndDrag([fileItem(one), fileItem(tree)])
+        let token = try rig.token()
+        let served = rig.dragOut.served
+
+        #expect(
+            served.content(request(token, item: 0))
+                == .success(.tree(directory: one.deletingLastPathComponent().path, name: Array("one.txt".utf8))))
+        #expect(
+            served.content(request(token, item: 1))
+                == .success(.tree(directory: tree.deletingLastPathComponent().path, name: Array("Tree".utf8))))
+        #expect(failureCode(served.content(request(token, item: 2))) == .itemRepresentationUnavailable)
+        #expect(
+            failureCode(served.content(request(Data(repeating: 3, count: 16), item: 0)))
+                == .itemRepresentationUnavailable)
+    }
+
+    @Test("a promise not called in serves nothing, and an ended offer serves nothing more")
+    func anUncalledPromiseServesNothing() throws {
+        let (rig, _) = try promiseRig(["public.heic"], receivers: [FakePromiseReceiver(names: ["IMG_0001.HEIC"])])
+        let token = try rig.token()
+        let served = rig.dragOut.served
+
+        #expect(failureCode(served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+        #expect(served.content(request(token, item: 0)).map { _ in true } == .success(true))
+
+        rig.dragOut.offerEnded(token)
+
+        #expect(failureCode(served.content(request(token, item: 0))) == .itemRepresentationUnavailable)
+    }
+
+    @Test("a pull of a called-in promise waits until its source writes the named file, then serves it")
+    func aPromisePullWaitsForItsFile() async throws {
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let (rig, _) = try calledInRig(["public.heic"], receivers: [photo])
+        let folder = try #require(photo.destination)
+
+        let pull = try await startPull(rig, token: try rig.token(1), item: 1)
+        try photo.write("IMG_0001.HEIC", contents: Data(count: 1_234))
+
+        #expect(await pull.value == .success(.tree(directory: folder.path, name: Array("IMG_0001.HEIC".utf8))))
+    }
+
+    @Test("a receiver naming several files serves the one it was named by, whatever order they land in")
+    func aSeveralFileReceiverServesItsNamedFile() async throws {
+        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
+        let (rig, _) = try calledInRig(["public.jpeg"], receivers: [burst])
+        let folder = try #require(burst.destination)
+
+        let pull = try await startPull(rig, token: try rig.token(1), item: 1)
+        try burst.write("IMG_0003.JPG", contents: Data(count: 3))
+        try burst.write("IMG_0002.JPG", contents: Data(count: 2))
+
+        #expect(await pull.value == .success(.tree(directory: folder.path, name: Array("IMG_0002.JPG".utf8))))
+    }
+
+    @Test("a receiver naming several files whose named file never lands is unavailable once its callbacks are in")
+    func aSeveralFileReceiverWithoutItsNamedFileIsUnavailable() async throws {
+        let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
+        let (rig, _) = try calledInRig(["public.jpeg"], receivers: [burst])
+
+        let pull = try await startPull(rig, token: try rig.token(1), item: 1)
+        // An error from a receiver naming several files pairs with none of
+        // them, so it settles nothing by itself.
+        try burst.fail("IMG_0002.JPG")
+        try burst.write("IMG_0003.JPG", contents: Data(count: 3))
+
+        #expect(failureCode(await pull.value) == .itemRepresentationUnavailable)
+    }
+
+    @Test("a promise its source failed to write is unavailable")
+    func aFailedPromiseIsUnavailable() async throws {
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let (rig, _) = try calledInRig(["public.heic"], receivers: [photo])
+
+        let pull = try await startPull(rig, token: try rig.token(1), item: 1)
+        try photo.fail("IMG_0001.HEIC")
+
+        #expect(failureCode(await pull.value) == .itemRepresentationUnavailable)
+    }
+
+    @Test("a promised folder is served once its folder lands, and a file in its place is unavailable")
+    func aPromisedFolderMustLandAsAFolder() async throws {
+        let album = FakePromiseReceiver(names: ["Album"])
+        let (rig, _) = try calledInRig(["public.folder"], receivers: [album])
+        let folder = try #require(album.destination)
+        let pull = try await startPull(rig, token: try rig.token(1), item: 1)
         try album.writeFolder("Album")
-        await drainMainQueue()
+        #expect(await pull.value == .success(.tree(directory: folder.path, name: Array("Album".utf8))))
 
-        #expect(rig.input.pendingMeasureFolders.map { Array($0.keys) } == [[1]])
-        rig.input.deliverMeasures(size: 4_096)
-        #expect(rig.peer.events.last == .resolved(generation: 1, repIndex: 1, filename: "Album", byteCount: 4_096))
+        let flat = FakePromiseReceiver(names: ["Album"])
+        let (other, _) = try calledInRig(["public.folder"], receivers: [flat])
+        let refused = try await startPull(other, token: try other.token(1), item: 1)
+        try flat.write("Album", contents: Data("not a folder".utf8))
+        #expect(failureCode(await refused.value) == .itemRepresentationUnavailable)
     }
 
-    @Test("a promise whose file is not the kind its type declared is unavailable")
-    func aLandingOfTheWrongKindIsUnavailable() async throws {
-        let rig = try promiseRig(["public.folder"])
-        let album = FakePromiseReceiver(names: ["Album"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [album] }
+    @Test("the offer ending while a pull waits on its promise answers the pull unavailable")
+    func anOfferEndingFailsAWaitingPull() async throws {
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let (rig, _) = try calledInRig(["public.heic"], receivers: [photo])
+        let named = try rig.token(1)
 
-        try album.write("Album", contents: Data("not a folder".utf8))
-        await drainMainQueue()
+        let pull = try await startPull(rig, token: named, item: 1)
+        rig.dragOut.offerEnded(named)
 
-        #expect(rig.input.pendingMeasureFolders.isEmpty)
-        #expect(rig.peer.events.last == .unavailable(generation: 1, repIndices: [1]))
+        #expect(failureCode(await pull.value) == .itemRepresentationUnavailable)
     }
+
+    // MARK: - Letting the promises go
 
     @Test(
-        "the promises' folder outlives the take, and goes once the host is done and every read is in",
+        "the named offer ending removes the promises' folder once every read is in, whichever comes first",
         arguments: [true, false])
-    func theFolderGoesOnceHostAndReadsAreDone(hostFirst: Bool) async throws {
-        let rig = try promiseRig(["public.heic"])
-        let catcher = rig.dragOut.catcherForTesting
+    func theFolderGoesOnceTheOfferAndReadsAreDone(offerFirst: Bool) async throws {
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
-        rig.dragOut.resolve(generation: 1)
-        _ = catcher.performDragOperation { [photo] }
-        catcher.concludeDragOperation()
+        let (rig, _) = try calledInRig(["public.heic"], receivers: [photo])
+        let named = try rig.token(1)
         let folder = try #require(photo.destination)
+        // The stand-in offer ending kept the folder: the named one still serves.
         #expect(exists(folder))
 
-        if hostFirst {
-            rig.dragOut.complete(generation: 1)
+        if offerFirst {
+            rig.dragOut.offerEnded(named)
+            rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
             #expect(exists(folder))
             try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
             await drainMainQueue()
         } else {
             try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
             await drainMainQueue()
+            rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
             #expect(exists(folder))
-            rig.dragOut.complete(generation: 1)
+            rig.dragOut.offerEnded(named)
         }
 
         rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(!exists(folder))
     }
 
-    @Test("the connection ending removes the promises' folder once its reads are in, telling the host nothing")
+    @Test("the session peer stopping removes the promises' folder once its reads are in, telling the host nothing")
     func stopWaitsForTheReads() async throws {
-        let rig = try promiseRig(["public.heic"])
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
-        rig.dragOut.resolve(generation: 1)
-        _ = rig.dragOut.catcherForTesting.performDragOperation { [photo] }
+        let (rig, _) = try calledInRig(["public.heic"], receivers: [photo])
         let folder = try #require(photo.destination)
 
         rig.dragOut.stop()
+        rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(exists(folder))
         let reported = rig.peer.events
         try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
@@ -1301,11 +1110,7 @@ struct GuestDragOutTests {
         items: [GuestDragItem], over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
     ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
         let peer = FakeGuestDragPeer()
-        let catcher = GuestDragCatcher(
-            peer: peer,
-            promises: GuestDragPromises(
-                peer: peer, input: FakeGuestDragInput(), stagingRoot: TestStagingRoot().root),
-            makeSurface: { _ in FakeCatcherSurface() })
+        let catcher = GuestDragCatcher(peer: peer, makeSurface: { _ in FakeCatcherSurface() })
         let icons = FakeGuestDragTypeIcons()
         let panel = GuestDragCatcherPanel(catcher: catcher, typeIcon: icons.icon(for:))
         panel.layOut(items: items, over: screen)
@@ -1457,5 +1262,18 @@ struct GuestDragOutTests {
             seen.append(labelColor)
         }
         #expect(seen[0] != seen[1])
+    }
+}
+
+/// Tells a test that a pull it started off the main actor is under way.
+private final class PullProbe: Sendable {
+    let started = AsyncGate()
+    private let state = Locked(false)
+
+    var isStarted: Bool { state.withLock { $0 } }
+
+    func markStarted() {
+        state.withLock { $0 = true }
+        started.notify()
     }
 }

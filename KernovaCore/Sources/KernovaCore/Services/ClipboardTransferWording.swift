@@ -50,7 +50,7 @@ package struct ClipboardTransferWording: Equatable {
         let vm = quoted(vmName)
 
         switch (failure, finish.gesture) {
-        case (_, .dragOut), (.dragItemUnnamed, _):
+        case (_, .dragOut):
             return dragOutWording(for: failure, vm: vm)
 
         case (.diskFull(let needed, let available), let gesture):
@@ -336,9 +336,6 @@ package struct ClipboardTransferWording: Equatable {
         case .peerReported:
             message = "The VM couldn't send the files, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
-        case .dragItemUnnamed:
-            message = "The VM didn't name a dragged item, so the drag didn't finish."
-            menuLine = "Drag: the VM didn't name an item"
         case .sourceUnreadable(let readFailure):
             message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
             menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")

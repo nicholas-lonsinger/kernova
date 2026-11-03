@@ -423,7 +423,7 @@ struct VsockGuestControlAgentTests {
         #expect(policy.clipboardSharingEnabled == false)
     }
 
-    // MARK: - Display drops and drags out
+    // MARK: - Display drops
 
     /// Collects every drop-channel capability set `onHostCapabilitiesChanged`
     /// reports, in order.
@@ -433,7 +433,7 @@ struct VsockGuestControlAgentTests {
         { capabilities in reported.update { $0 = ($0 ?? []) + [capabilities] } }
     }
 
-    @Test("the host's drop and drag-out capabilities are reported from its Hello")
+    @Test("the host's drop capability is reported from its Hello")
     func hostDropCapabilityObservedFromHello() async throws {
         let (agentFd, hostFd) = try makeRawSocketPair()
         let host = VsockChannel(fileDescriptor: hostFd)
@@ -456,43 +456,8 @@ struct VsockGuestControlAgentTests {
         try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
         #expect(
             reported.value == [
-                .unadvertised, HostDropCapabilities(supportsDropFiles: true, dragOut: .filesAndPromises),
+                .unadvertised, HostDropCapabilities(supportsDropFiles: true),
             ])
-    }
-
-    @Test(
-        "a host's drag-out capabilities set what its drags out may carry",
-        arguments: [
-            ([KernovaCapability.dragOutFilesV1], HostDragOutSupport.files),
-            ([KernovaCapability.dragOutPromisesV1], .none),
-            ([KernovaCapability.dragOutFilesV1, KernovaCapability.dragOutPromisesV1], .filesAndPromises),
-        ])
-    func hostDragOutSupport(advertised: [String], support: HostDragOutSupport) {
-        let capabilities = HostDropCapabilities(advertised: [KernovaCapability.dropFilesV3] + advertised)
-
-        #expect(capabilities == HostDropCapabilities(supportsDropFiles: true, dragOut: support))
-    }
-
-    @Test("a host that takes drops but not drags out leaves drag-out off")
-    func hostWithoutDragOutCapability() async throws {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        host.start()
-        defer { host.close() }
-
-        let reported = AtomicBox<[HostDropCapabilities]>()
-        let agent = makeAgent(
-            agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
-        agent.start()
-        defer { agent.stop() }
-
-        _ = try await nextFrame(from: host)  // drain outbound Hello
-        var hello = makeHostHelloFrame()
-        hello.hello.capabilities.removeAll { $0 == KernovaCapability.dragOutFilesV1 }
-        try host.send(hello)
-        try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
-
-        #expect(reported.value?.last == HostDropCapabilities(supportsDropFiles: true, dragOut: .none))
     }
 
     @Test("a host that advertises no drop capability leaves it off")

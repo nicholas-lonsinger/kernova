@@ -65,7 +65,6 @@ struct ClipboardTransferWordingTests {
             (.stagingFailed, .dragOut),
             (.peerReported(nil), .dragOut),
             (.peerReported(.dragItemUnavailable), .dragOut),
-            (.dragItemUnnamed, .dragOut),
             (.sourceUnreadable(Self.mailUnreadable), .dragOut),
             (.sourceUnreadable(nil), .dragOut),
             (.sourceUnreadable(Self.mailUnreadable), .paste),
@@ -276,9 +275,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.peerReported(.dragItemUnavailable), .dragOut)).message
                 == "An app in the VM didn't write a dragged item, so the drag didn't finish.")
-        #expect(
-            try #require(wording(.dragItemUnnamed, .dragOut)).message
-                == "The VM didn't name a dragged item, so the drag didn't finish.")
     }
 
     @Test("an item the VM couldn't read is named by its own name, with the reason the read gave")

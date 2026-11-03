@@ -10,6 +10,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaLogging
 import KernovaSynchronization
+import KernovaWire
 
 /// This process's v2 peer: its claim, its connection to the host through `PeerAgentRuntime`, its update
 /// installer, and the watch on its install's `current` link.
@@ -35,15 +36,18 @@ public final class MacAgentPeer: Sendable {
     private let exiting = Locked(false)
     private let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
 
-    /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
-    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`.
-    public init(role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?) {
+    /// The peer of `role`, labelled `label`, its records forwarded through `logs`, DRAG served by `drag` on
+    /// a session peer. It dials once `setPeerState(_:)` gives it a session to serve, or at once with `state`.
+    public init(
+        role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?,
+        drag: DragFeatureOwner<Void>? = nil
+    ) {
         claim = DarwinIdentity.current(role: role, versionLabel: label)
         let running = DarwinIdentity.runningSlot()
         let peer = Locked<MacAgentPeer?>(nil)
         let (adapter, installer) = Self.updateInstaller(for: claim, running: running, peer: peer)
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
-        let itemRouter = ItemFeatureRouter<Void>()
+        let itemRouter = ItemFeatureRouter<Void>(drag: role == .sessionPeer ? drag : nil)
         let items =
             role == .sessionPeer
             ? ItemAdapters(
@@ -96,6 +100,23 @@ public final class MacAgentPeer: Sendable {
     /// The session's state changed.
     public func setPeerState(_ state: PeerSessionState?) {
         runtime.setPeerState(state)
+    }
+
+    /// Offers `offer` on `feature` to the host; `PeerAgentRuntime.offerItems(_:feature:_:)` has the contract.
+    public func offerItems(
+        _ offer: ItemOffer, feature: FeatureID, _ completion: @escaping @Sendable (WireError?) -> Void
+    ) {
+        runtime.offerItems(offer, feature: feature, completion)
+    }
+
+    /// Withdraws this side's offer of `token`; its `.offerEnded` follows.
+    public func withdrawOffer(_ token: Data) {
+        runtime.withdrawOffer(token)
+    }
+
+    /// Answers the host's take `id` of this side's drag.
+    public func answerDragTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
+        runtime.answerDragTake(id, answer)
     }
 
     /// Closes the connection with `SHUTTING_DOWN`, then exits with `status`; once, whoever asks first.

@@ -52,6 +52,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Services
 
     private var peer: MacAgentPeer?
+    private var dragOut: GuestDragOut?
     private var clipboardAgent: VsockGuestClipboardAgent?
     private var dropAgent: VsockGuestDropAgent?
     private var controlAgent: VsockGuestControlAgent?
@@ -112,15 +113,20 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         KernovaLogger.bootstrapProcessSink(logs.sink)
         Self.logger.log(.notice, "Kernova Guest Agent \(Self.versionLabel, privacy: .public) started")
 
-        let peer = MacAgentPeer(
-            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer())
-        self.peer = peer
-        followSession(peer)
-
         // A live instance's sweep never reaches an exited agent's staging; only
         // this launch-time reclaim bounds its growth.
         let stagingRoot = ClipboardFileStaging.processRoot
         stagingRoot.reclaimAbandonedRoots()
+
+        let dragPeer = GuestDragOutRuntimePeer()
+        let dragOut = GuestDragOut(peer: dragPeer, system: .live, stagingRoot: stagingRoot)
+        self.dragOut = dragOut
+        let peer = MacAgentPeer(
+            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer(),
+            drag: dragOut.owner)
+        dragPeer.peer = peer
+        self.peer = peer
+        followSession(peer)
 
         let transferReporter = ClipboardTransferReporter()
         transferReporter.onReportChanged = { [weak self] report in
@@ -172,6 +178,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             controlAgent.stop()
             clipboardAgent.stop()
             dropAgent.stop()
+            MainActorBridge.async { dragOut.stop() }
             peer.exit(status: 0)
         }
 
@@ -199,6 +206,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         controlAgent?.stop()
         clipboardAgent?.stop()
         dropAgent?.stop()
+        dragOut?.stop()
     }
 
     // MARK: - Session state

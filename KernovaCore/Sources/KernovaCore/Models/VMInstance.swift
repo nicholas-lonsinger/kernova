@@ -137,7 +137,7 @@ package final class VMInstance {
     ///
     /// One per VM rather than per connection: a promise a clipboard service
     /// published outlives that service, so a refusal belongs to the VM.
-    @ObservationIgnored let clipboardTransfers = ClipboardTransferReporter()
+    @ObservationIgnored let clipboardTransfers: ClipboardTransferReporter
 
     /// This VM's clipboard transfer state — running, finished, or idle — which
     /// every surface renders.
@@ -373,10 +373,17 @@ package final class VMInstance {
     #endif
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
-    /// forwards guest logs.
+    /// forwards guest logs, and DRAG exactly when files move by drag and drop.
     static func agentHubPolicy(for configuration: VMConfiguration) -> PolicySnapshot {
-        PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled)])
+        PolicySnapshot([
+            FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
+            FeaturePolicyValue(feature: .drag, enabled: configuration.dropFilesEnabled),
+        ])
     }
+
+    /// DRAG's owner: the guest's drag offers, and their takes over this VM's
+    /// display.
+    @ObservationIgnored let dragOut: HubDragOut
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
 
@@ -445,7 +452,13 @@ package final class VMInstance {
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
-        let itemRouter = ItemFeatureRouter<PeerHandle>()
+        let transfers = ClipboardTransferReporter()
+        clipboardTransfers = transfers
+        let dragOut = HubDragOut(sink: itemSink, reporter: transfers) { [snapshots] in
+            snapshots.instance?.name ?? ""
+        }
+        self.dragOut = dragOut
+        let itemRouter = ItemFeatureRouter<PeerHandle>(drag: dragOut.owner)
         let items = ItemAdapters(
             source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
             sink: itemSink, features: itemRouter.features)
@@ -459,6 +472,7 @@ package final class VMInstance {
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
         }
+        dragOut.hub = agentHub
         activity.owner = self
         snapshots.instance = self
         clipboardTransfers.onReportChanged = { [weak self] report in
@@ -1454,10 +1468,10 @@ package final class VMInstance {
     /// `dropFilesEnabled` are honored at runtime. A Linux guest's clipboard
     /// sharing never changes here: its SPICE port is a device
     /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
-    /// The agent hub takes every log-forwarding change, running or not: it
+    /// The agent hub takes every change to its policy, running or not: it
     /// builds a later session's connections from the policy it holds.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
-        if oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled {
+        if Self.agentHubPolicy(for: oldConfig) != Self.agentHubPolicy(for: newConfig) {
             agentHub.setPolicy(Self.agentHubPolicy(for: newConfig))
         }
 

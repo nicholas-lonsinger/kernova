@@ -1,21 +1,22 @@
 import AppKit
 import Foundation
+import KernovaAgentCore
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import Testing
 import UniformTypeIdentifiers
 
 /// The guest's event stream and drag pasteboard, driven by hand: a test
-/// presses and releases the button, fires the press timer, and decides when
-/// each off-main resolve and folder measure comes back.
+/// presses and releases the button, fires the press timer, decides when each
+/// off-main resolve comes back, and sets the file promises the drag carries.
 @MainActor
 final class FakeGuestDragInput: GuestDragInput {
     let pasteboard = FakeReadPasteboard()
     var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
     var isPrimaryButtonHeld = false
 
-    /// Fires on every registration, cancellation, and queued resolve or
-    /// measure.
+    /// Fires on every registration, cancellation, and queued resolve.
     nonisolated let changed = AsyncGate()
 
     /// Hands each resolve back on the next main-queue turn instead of holding
@@ -29,7 +30,11 @@ final class FakeGuestDragInput: GuestDragInput {
     private(set) var resolveCount = 0
     private var pendingResolves:
         [(urls: [URL], completion: @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)] = []
-    private var pendingMeasures: [(folders: [Int: URL], completion: @MainActor @Sendable ([Int: Int]) -> Void)] = []
+    /// The file promises the drag pasteboard holds, as ``promiseReceivers()``
+    /// reads them.
+    var receivers: [FakePromiseReceiver] = []
+    /// How many times the promises were read.
+    private(set) var receiverReads = 0
 
     /// How many connections have built a drag-out on this input.
     private(set) var connectionCount = 0
@@ -37,8 +42,6 @@ final class FakeGuestDragInput: GuestDragInput {
     var isObservingPresses: Bool { pressHandler != nil }
     var isTicking: Bool { tick != nil }
     var pendingResolveCount: Int { pendingResolves.count }
-    /// The folders of each measure queued and not yet delivered, in order.
-    var pendingMeasureFolders: [[Int: URL]] { pendingMeasures.map(\.folders) }
 
     // MARK: Driving it
 
@@ -76,17 +79,6 @@ final class FakeGuestDragInput: GuestDragInput {
         pendingResolves.removeAll()
         for resolve in pending {
             resolve.completion(intake ?? Self.offerResolve(resolve.urls))
-        }
-    }
-
-    /// Hands back every queued measure, each folder at `size` — or walked for
-    /// real when `size` is `nil`.
-    func deliverMeasures(size: Int? = nil) {
-        let pending = pendingMeasures
-        pendingMeasures.removeAll()
-        for measure in pending {
-            measure.completion(
-                measure.folders.mapValues { size ?? ClipboardArchive.estimatedByteCount(at: $0) })
         }
     }
 
@@ -135,11 +127,9 @@ final class FakeGuestDragInput: GuestDragInput {
         changed.notify()
     }
 
-    func measureFolders(
-        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
-    ) {
-        pendingMeasures.append((folders, completion))
-        changed.notify()
+    func promiseReceivers() -> [any FilePromiseReceiving] {
+        receiverReads += 1
+        return receivers
     }
 }
 
@@ -172,85 +162,62 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
 @MainActor
 final class FakeGuestDragPeer: GuestDragOutPeer {
     enum Event: Equatable {
-        /// An offer, each item by its filename — a promise, which has none, as
-        /// `promise:<its type>`.
-        case offered(generation: UInt64, items: [String])
-        case withdrew(generation: UInt64)
-        case handOff(generation: UInt64, step: ClipboardDragHandOffStep)
-        case sized(generation: UInt64, folderByteCounts: [Int: Int])
-        case named(generation: UInt64, filenames: [Int: String])
-        case resolved(generation: UInt64, repIndex: Int, filename: String, byteCount: Int)
-        case unavailable(generation: UInt64, repIndices: [Int])
+        /// An offer, each item by its one representation's name.
+        case offered(token: Data, names: [String])
+        case withdrew(token: Data)
+        case answered(DragTakeID, DragTakeAnswer)
+    }
+
+    /// A take's answer, a refusal by its code alone.
+    enum Answer: Equatable {
+        case taken
+        case refused(ErrorCode)
     }
 
     private(set) var events: [Event] = []
-    private var nextGeneration: UInt64 = 1
-    /// What each offer carried, until it is withdrawn.
-    private var contents: [UInt64: ClipboardContent] = [:]
+    /// Every offer, in order.
+    private(set) var offers: [ItemOffer] = []
 
-    /// Every hand-off step reported, in order.
-    var handOffs: [Event] {
-        events.filter { if case .handOff = $0 { true } else { false } }
+    /// The token of the `index`th offer, or none.
+    func token(_ index: Int) -> Data? {
+        offers.indices.contains(index) ? offers[index].token : nil
     }
 
-    func offerDrag(_ items: [ClipboardDragOutItem]) -> ClipboardEndpoint.OfferOutcome {
-        let generation = nextGeneration
-        nextGeneration += 1
-        let representations = items.map { item -> ClipboardContent.Representation in
-            switch item {
-            case .file(let representation):
-                return representation
-            case .promise(let uti, let isDirectory):
-                return ClipboardContent.Representation(
-                    pendingRemoteUTI: uti, byteCount: 0, filename: "promise:\(uti)", isDirectory: isDirectory)
+    /// Every answer to the take `id`, in order.
+    func answers(to id: DragTakeID) -> [Answer] {
+        events.compactMap { event in
+            guard case .answered(let answered, let answer) = event, answered == id else { return nil }
+            switch answer {
+            case .taken: return .taken
+            case .refused(let error): return .refused(error.code)
             }
         }
-        events.append(.offered(generation: generation, items: representations.map(\.filename)))
-        contents[generation] = ClipboardContent(representations: representations)
-        return .sent(generation: generation)
     }
 
-    func withdraw(generation: UInt64) -> Bool {
-        events.append(.withdrew(generation: generation))
-        contents[generation] = nil
-        return true
+    /// How many takes were answered, all told.
+    var answerCount: Int {
+        events.count { if case .answered = $0 { true } else { false } }
     }
 
-    func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {
-        events.append(.handOff(generation: generation, step: step))
-    }
-
-    func outboundContent(generation: UInt64) -> ClipboardContent? {
-        contents[generation]
-    }
-
-    func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Bool {
-        guard let content = contents[generation] else { return false }
-        contents[generation] = content.withDirectoryEstimates(folderByteCounts)
-        events.append(.sized(generation: generation, folderByteCounts: folderByteCounts))
-        return true
-    }
-
-    func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
-        events.append(.named(generation: generation, filenames: filenames))
-        return true
-    }
-
-    func resolvePromisedDragItem(generation: UInt64, repIndex: Int, fileURL: URL, byteCount: Int) -> Bool {
+    func offerDrag(_ offer: ItemOffer, _ completion: @escaping @MainActor (WireError?) -> Void) {
+        offers.append(offer)
         events.append(
-            .resolved(
-                generation: generation, repIndex: repIndex, filename: fileURL.lastPathComponent,
-                byteCount: byteCount))
-        return true
+            .offered(
+                token: offer.token,
+                names: offer.items.map { String(decoding: $0.representations.first?.name ?? Data(), as: UTF8.self) }))
+        completion(nil)
     }
 
-    func markPromisedDragItemsUnavailable(generation: UInt64, repIndices: [Int]) -> Bool {
-        events.append(.unavailable(generation: generation, repIndices: repIndices))
-        return true
+    func withdrawDrag(_ token: Data) {
+        events.append(.withdrew(token: token))
+    }
+
+    func answerTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
+        events.append(.answered(id, answer))
     }
 }
 
-/// One file promise a drop carries, whose source a test plays: it names its
+/// One file promise a drag carries, whose source a test plays: it names its
 /// files when called in, and writes each when the test says.
 final class FakePromiseReceiver: FilePromiseReceiving {
     /// The names it gives its files once called in.

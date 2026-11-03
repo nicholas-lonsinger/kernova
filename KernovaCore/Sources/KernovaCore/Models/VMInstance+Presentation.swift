@@ -67,20 +67,16 @@ extension VMInstance {
     /// The guest drag this VM's display may take over when the pointer leaves
     /// it holding the press, or `nil` when there is none it can.
     ///
-    /// A `DragOffer` only ever comes from an agent that has the feature, so the
-    /// live channel and the guest's offer decide it. The setting gates it at
-    /// once, ahead of the live-policy teardown that settles the channel, and a
-    /// pause tears no channel down.
-    package var displayGuestDrag: ClipboardInboundDrag? {
-        guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
-            status == .running, let drop = vsockDropService, drop.isConnected
-        else { return nil }
-        return drop.guestDrag
+    /// The setting gates it at once, ahead of the policy that tells the guest to
+    /// stop offering, and only a running guest can answer the take.
+    package var displayGuestDrag: GuestDragOffer? {
+        guard configuration.dropFilesEnabled, status == .running else { return nil }
+        return dragOut.offer
     }
 
     /// Records that a press began on this VM's display.
     package func displayPressBegan() {
-        vsockDropService?.displayPressBegan()
+        dragOut.displayPressBegan()
     }
 
     /// Takes over ``displayGuestDrag`` for `display`, or returns `nil` when
@@ -89,10 +85,8 @@ extension VMInstance {
     /// The take holds only while the VM stays running: a paused guest cannot
     /// answer the hand-off, and the press goes back to the guest at once.
     package func takeGuestDrag(display: any GuestDragDisplay) -> (any GuestDragTaking)? {
-        guard let drag = displayGuestDrag, let service = vsockDropService else { return nil }
-        return service.takeGuestDrag(
-            generation: drag.generation, display: display,
-            while: { [weak self] in self?.status == .running })
+        guard displayGuestDrag != nil else { return nil }
+        return dragOut.takeGuestDrag(display: display, while: { [weak self] in self?.status == .running })
     }
 
     /// What a person reads for this VM's status.

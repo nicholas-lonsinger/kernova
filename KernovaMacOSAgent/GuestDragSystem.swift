@@ -17,15 +17,9 @@ final class SystemGuestDragInput: GuestDragInput {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "GuestDragWatcher")
 
-    let dragPasteboard: any ClipboardReadPasteboard = NSPasteboard(name: .drag)
+    private let pasteboard = NSPasteboard(name: .drag)
 
-    /// Sizes one folder by walking its tree — the only read of a folder's
-    /// contents a drag makes before the host pulls it.
-    private let measureFolder: @Sendable (URL) -> Int
-
-    init(measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) }) {
-        self.measureFolder = measureFolder
-    }
+    var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
 
     var isPrimaryButtonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
 
@@ -72,14 +66,8 @@ final class SystemGuestDragInput: GuestDragInput {
         }
     }
 
-    func measureFolders(
-        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
-    ) {
-        let measureFolder = measureFolder
-        DispatchQueue.global(qos: .userInitiated).async {
-            let sizes = folders.mapValues(measureFolder)
-            MainActorBridge.async { completion(sizes) }
-        }
+    func promiseReceivers() -> [any FilePromiseReceiving] {
+        pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver] ?? []
     }
 }
 
@@ -184,7 +172,7 @@ private final class CatcherView: NSView {
     private func drag(_ sender: any NSDraggingInfo) -> GuestDragCatcher.Drag {
         GuestDragCatcher.Drag(
             sourceMask: sender.draggingSourceOperationMask,
-            items: GuestDraggedItems.items(on: sender.draggingPasteboard, acceptingPromises: true))
+            items: GuestDraggedItems.items(on: sender.draggingPasteboard))
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
@@ -204,10 +192,7 @@ private final class CatcherView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        catcher?.performDragOperation {
-            sender.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])
-                as? [NSFilePromiseReceiver] ?? []
-        } ?? false
+        catcher?.performDragOperation() ?? false
     }
 
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {
