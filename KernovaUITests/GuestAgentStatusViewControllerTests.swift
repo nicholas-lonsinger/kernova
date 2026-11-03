@@ -158,7 +158,7 @@ struct GuestAgentStatusViewControllerTests {
         vc.loadViewIfNeeded()
         let command = #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
         var eject = Self.eject
-        eject.installCommand = command
+        eject.installGuidance = .command(command)
         vc.update(
             presentation: GuestAgentPresentation(hub: .empty), diskControl: eject,
             hasDismissAction: false)
@@ -166,13 +166,29 @@ struct GuestAgentStatusViewControllerTests {
         #expect(visibleTexts(in: vc.view).contains(LinuxAgentDisk.installCommandPrecondition))
         let copy = firstSubview(NSButton.self, in: vc.view) { $0.accessibilityLabel() == "Copy Install Command" }
         #expect(copy?.isHidden == false)
-        #expect(vc.installCommand == command)
+        #expect(vc.installGuidance == .command(command))
 
         vc.update(
             presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install,
             hasDismissAction: false)
         #expect(!visibleTexts(in: vc.view).contains(command))
-        #expect(vc.installCommand == nil)
+        #expect(vc.installGuidance == nil)
+    }
+
+    @Test("An attached macOS disk shows the step that installs from it, with nothing to copy")
+    func installStepRow() {
+        let vc = GuestAgentStatusViewController()
+        vc.loadViewIfNeeded()
+        var eject = Self.eject
+        eject.installGuidance = .step(GuestAgentDiskControl.macOSInstallStep)
+        vc.update(
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: eject,
+            hasDismissAction: false)
+        let texts = visibleTexts(in: vc.view)
+        #expect(texts.contains(GuestAgentDiskControl.macOSInstallStep))
+        #expect(!texts.contains(LinuxAgentDisk.installCommandPrecondition))
+        let copy = firstSubview(NSButton.self, in: vc.view) { $0.accessibilityLabel() == "Copy Install Command" }
+        #expect(copy?.isHidden == true)
     }
 
     // MARK: - Helpers

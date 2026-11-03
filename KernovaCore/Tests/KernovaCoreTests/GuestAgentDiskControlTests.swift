@@ -145,6 +145,27 @@ struct GuestAgentDiskControlTests {
                 == GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false).title)
     }
 
+    @Test("On a macOS guest the attached disk carries the step that installs from it; none while detached")
+    func macOSGuidance() throws {
+        let installer = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
+        let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
+        let detached = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        detached.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(GuestAgentDiskControl.model(for: detached, in: viewModel.capabilities).installGuidance == nil)
+
+        let attached = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.removableMedia = [
+                RemovableMediaItem(
+                    path: installer.path(percentEncoded: false), readOnly: true, awaitedAgentScopes: [.login])
+            ]
+        }
+        attached.beginSessionContextForTesting().hasAgentTransport = true
+        let ejecting = GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities)
+        #expect(ejecting.action == .eject)
+        #expect(ejecting.installGuidance == .step(GuestAgentDiskControl.macOSInstallStep))
+        #expect(GuestAgentDiskControl.macOSInstallStep.contains("install.command"))
+    }
+
     @Test("On a Linux guest the control mounts the agent's disk, and while it is attached carries its command")
     func linuxGuest() throws {
         let agents = BundledGuestAgents.linux(agent: URL(filePath: "/var/empty/kernova-agent"), disk: .testing)
@@ -161,7 +182,7 @@ struct GuestAgentDiskControlTests {
         let detached = GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
         #expect(detached.action == .mount(.install))
         #expect(detached.isEnabled)
-        #expect(detached.installCommand == nil)
+        #expect(detached.installGuidance == nil)
 
         // Registered, so the arrival hook reaches the core as a load wires it.
         let attached = viewModel.library.registerFixture(
@@ -177,14 +198,14 @@ struct GuestAgentDiskControlTests {
         attached.attachAgentTransport(AgentHubProbe())
         let ejecting = GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities)
         #expect(ejecting.action == .eject)
-        #expect(ejecting.installCommand == LinuxAgentDisk.installCommand(for: .both))
+        #expect(ejecting.installGuidance == .command(LinuxAgentDisk.installCommand(for: .both)))
 
         // The command follows what the disk still waits for: once the session
         // agent connects, the one that installs the system service alone.
         attached.onCurrentAgentsArrived?([.login])
         #expect(
-            GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities).installCommand
-                == LinuxAgentDisk.installCommand(for: .systemService))
+            GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities).installGuidance
+                == .command(LinuxAgentDisk.installCommand(for: .systemService)))
     }
 
     @Test("A Linux disk that waits for no agent offers the session agent's command")
@@ -203,8 +224,8 @@ struct GuestAgentDiskControlTests {
         attached.beginSessionContextForTesting()
         attached.attachAgentTransport(AgentHubProbe())
         #expect(
-            GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities).installCommand
-                == LinuxAgentDisk.installCommand(for: .sessionAgent))
+            GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities).installGuidance
+                == .command(LinuxAgentDisk.installCommand(for: .sessionAgent)))
     }
 
     @Test("A Linux guest in a build without the Linux agent is withheld the control")

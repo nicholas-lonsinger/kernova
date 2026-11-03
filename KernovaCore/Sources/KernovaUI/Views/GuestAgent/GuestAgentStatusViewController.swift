@@ -51,9 +51,9 @@ final class GuestAgentStatusViewController: NSViewController {
     var status: AgentStatus { presentation.status }
     /// The trailing button, resolved from the guest-agent disk control.
     private(set) var actionButtonRole = ActionButton.done
-    /// The command the attached disk installs from, shown with a Copy button;
-    /// `nil` hides the row.
-    private(set) var installCommand: String?
+    /// How the user installs from the attached disk: a step, or a command
+    /// shown with a Copy button; `nil` hides the row.
+    private(set) var installGuidance: GuestAgentDiskControl.InstallGuidance?
     /// When `true`, surfaces the "Don't show again" link in the action row.
     private(set) var hasDismissAction: Bool = false
 
@@ -71,9 +71,12 @@ final class GuestAgentStatusViewController: NSViewController {
     private let titleLabel = NSTextField(labelWithString: "")
     /// The agent lines and capability rows.
     private let rowsStack = NSStackView()
-    /// ``installCommand`` under what it needs, and its Copy button.
+    /// ``installGuidance``: a step alone, or a command under what it needs,
+    /// with its Copy button.
     private let commandRow = NSStackView()
-    private let commandCaption = NSTextField(wrappingLabelWithString: LinuxAgentDisk.installCommandPrecondition)
+    private let commandCaption = NSTextField(wrappingLabelWithString: "")
+    /// The command and its Copy button; hidden for a step.
+    private let commandLine = NSStackView()
     private let commandLabel = NSTextField(wrappingLabelWithString: "")
     private let copyCommandButton = CopyValueButton(name: "Copy Install Command")
     private let actionButton = NSButton()
@@ -147,7 +150,7 @@ final class GuestAgentStatusViewController: NSViewController {
     ) {
         self.presentation = presentation
         actionButtonRole = ActionButton(diskControl)
-        installCommand = diskControl.installCommand
+        installGuidance = diskControl.installGuidance
         self.hasDismissAction = hasDismissAction
         if isViewLoaded {
             applyContent()
@@ -180,14 +183,14 @@ final class GuestAgentStatusViewController: NSViewController {
         commandCaption.textColor = .secondaryLabelColor
         commandCaption.isSelectable = false
         commandCaption.preferredMaxLayoutWidth = Self.bodyWidth
-        let command = NSStackView(views: [commandLabel, copyCommandButton])
-        command.orientation = .horizontal
-        command.alignment = .firstBaseline
-        command.spacing = Spacing.small
+        commandLine.setViews([commandLabel, copyCommandButton], in: .leading)
+        commandLine.orientation = .horizontal
+        commandLine.alignment = .firstBaseline
+        commandLine.spacing = Spacing.small
         commandRow.orientation = .vertical
         commandRow.alignment = .leading
         commandRow.spacing = Spacing.small
-        commandRow.setViews([commandCaption, command], in: .leading)
+        commandRow.setViews([commandCaption, commandLine], in: .leading)
         commandRow.widthAnchor.constraint(equalToConstant: Self.bodyWidth).isActive = true
     }
 
@@ -206,9 +209,21 @@ final class GuestAgentStatusViewController: NSViewController {
     private func applyContent() {
         titleLabel.stringValue = Self.title(for: status)
         rowsStack.setViews(Self.rows(presentation).map(makeRow), in: .leading)
-        commandRow.isHidden = installCommand == nil
-        commandLabel.stringValue = installCommand ?? ""
-        copyCommandButton.value = installCommand
+        commandRow.isHidden = installGuidance == nil
+        let command: String?
+        switch installGuidance {
+        case .step(let step):
+            commandCaption.stringValue = step
+            command = nil
+        case .command(let line):
+            commandCaption.stringValue = LinuxAgentDisk.installCommandPrecondition
+            command = line
+        case nil:
+            command = nil
+        }
+        commandLine.isHidden = command == nil
+        commandLabel.stringValue = command ?? ""
+        copyCommandButton.value = command
         actionButton.title = actionButtonRole.title
         dismissButton.isHidden = !hasDismissAction
     }
