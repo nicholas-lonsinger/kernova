@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaAgentCore
+import KernovaPortableTestSupport
 import KernovaWire
 
 /// One connection: a host end, a peer end, and a pipe each way.

@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 
@@ -20,7 +21,7 @@ enum LZ4Corpus {
 
     static func text(_ count: Int, seed: UInt64) -> Data {
         let words = ["guest", "agent", "frame", "stream", "kernova", "the", "of", "window", "credit", "\n"]
-        var generator = SeededGenerator(seed: seed)
+        var generator = SplitMix64(seed: seed)
         var text = Data()
         while text.count < count {
             text.append(contentsOf: (words.randomElement(using: &generator) ?? "").utf8)
@@ -32,7 +33,7 @@ enum LZ4Corpus {
     /// Random stretches interleaved with copies of earlier stretches at offsets
     /// up to and past the 65,535-byte limit.
     static func mixed(_ count: Int, seed: UInt64) -> Data {
-        var generator = SeededGenerator(seed: seed)
+        var generator = SplitMix64(seed: seed)
         var data = generator.bytes(min(count, 300))
         while data.count < count {
             let length = Int.random(in: 1...600, using: &generator)
@@ -50,7 +51,7 @@ enum LZ4Corpus {
     }
 
     static let inputs: [Input] = {
-        var generator = SeededGenerator(seed: 0x4C5A_34)
+        var generator = SplitMix64(seed: 0x4C5A_34)
         var inputs: [Input] = []
         for size in [13, 14, 15, 16, 17, 31, 270, 271, 4_096, 65_536, 65_537, 300_000] {
             inputs.append(Input(name: "zeros", bytes: Data(count: size), compressible: true))
@@ -181,7 +182,7 @@ struct LZ4BlockTests {
 
     @Test("Mutated blocks either throw or decode to exactly the declared size")
     func hostileBlocks() throws {
-        var generator = SeededGenerator(seed: 0xBAD_B10C)
+        var generator = SplitMix64(seed: 0xBAD_B10C)
         let sources = [LZ4Corpus.text(3_000, seed: 1), LZ4Corpus.mixed(3_000, seed: 2)]
         for source in sources {
             let block = try #require(LZ4Block.compress(source))

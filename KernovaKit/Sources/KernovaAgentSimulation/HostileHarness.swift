@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaAgentCore
+import KernovaPortableTestSupport
 import KernovaWire
 import SwiftProtobuf
 

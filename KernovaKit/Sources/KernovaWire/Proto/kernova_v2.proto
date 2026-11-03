@@ -624,7 +624,7 @@ message LogBatch {
 // The container is the same for every pull, an INLINE representation
 // included: records of entries in depth-first pre-order, each entry an
 // EntryHeader followed by its data chunks, and an EndRecord last. The record
-// framing is not protobuf and lives in KernovaWire.
+// framing is not protobuf and lives in KernovaContainer.
 
 // FeatureAdvert.params for ITEM_TRANSFER, both sides.
 message ItemTransferCapability {
