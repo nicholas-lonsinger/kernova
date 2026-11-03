@@ -91,7 +91,7 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
             (window.firstResponder as? NSText)?.isFieldEditor == true,
             window.makeFirstResponder(nil)
         else { return }
-        var enclosing: NSView? = anchor
+        var enclosing = anchor.superview
         while let view = enclosing, !view.acceptsFirstResponder {
             enclosing = view.superview
         }

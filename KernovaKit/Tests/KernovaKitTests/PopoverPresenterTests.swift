@@ -74,11 +74,10 @@ struct PopoverPresenterTests {
     /// A window with a field under edit, typed into so its delegate is asked before
     /// the edit ends, beside an anchor inside `surroundings`.
     private func makeEdit(
-        anchorIn surroundings: NSView
+        anchorIn surroundings: NSView, anchor: NSView = NSView()
     ) throws -> (window: NSWindow, anchor: NSView, field: NSTextField, watcher: FieldWatcher) {
         let frame = NSRect(x: 0, y: 0, width: 200, height: 100)
         let window = NSWindow(contentRect: frame, styleMask: [], backing: .buffered, defer: true)
-        let anchor = NSView()
         surroundings.addSubview(anchor)
         window.contentView?.addSubview(surroundings)
         let watcher = FieldWatcher()
@@ -106,6 +105,16 @@ struct PopoverPresenterTests {
     @Test("with nothing around the anchor to take it, nothing holds the keyboard")
     func endsAnEditWithNothingAroundTheAnchor() throws {
         let edit = try makeEdit(anchorIn: NSView())
+
+        PopoverPresenter().endTextEdit(around: edit.anchor, behavior: .transient)
+
+        #expect(edit.watcher.endedEdits == 1)
+        #expect(edit.window.firstResponder === edit.window)
+    }
+
+    @Test("an anchor that takes first responder itself is passed over")
+    func endsAnEditPastAnAnchorThatTakesFirstResponder() throws {
+        let edit = try makeEdit(anchorIn: NSView(), anchor: FocusableView())
 
         PopoverPresenter().endTextEdit(around: edit.anchor, behavior: .transient)
 
