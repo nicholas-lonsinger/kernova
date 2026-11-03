@@ -202,6 +202,10 @@ package struct TraceChecker: Sendable {
 ///    accepted, and falls back to ACPI only after every asked peer refused.
 /// 9. No identity key is displaced twice within 20 s, and the hub holds one connection per key.
 /// 10. A seed replays to the same transcript (checked by the scenario runner).
+/// 11. Every item pull ends exactly once on each side that began it, by its connection's `.closed` at the
+///     latest: the pulling side's sink hears exactly one `.commit` or `.abort` first — `.commit` exactly when
+///     the pull landed — and holds nothing after; the serving side's source hears exactly one `.release`
+///     first. No pull has effects after its end, and a sink's decoder holds at most one record and one feed.
 ///
 /// Beyond these, a conforming run never closes INTERNAL or PROTOCOL_ERROR, and
 /// every injected fault takes effect.
@@ -365,9 +369,95 @@ package final class PropertyChecker {
         world.transcript.add("p\(link.id)\(event)")
     }
 
+    // MARK: Item pulls (property 11)
+
+    private struct PullKey: Hashable {
+        var link: Int
+        var side: SimSide
+        var stream: UInt32
+        var serving: Bool
+    }
+
+    private struct PullRecord {
+        var terminals = 0
+        var committed = false
+        var ended = false
+    }
+
+    private var itemPulls: [PullKey: PullRecord] = [:]
+
+    /// A decoder fed after each drain holds at most one incomplete record and one raw DATA payload.
+    package static let sinkBufferBound = 2 * WireConstants.maxRawDataPayload + 9
+
+    func itemOutput(_ output: ItemTransferOutput, link: SimLink, side: SimSide, world: SimWorld) {
+        world.transcript.add("i\(link.id)\(side)\(output)")
+        func key(_ id: ItemPullID, serving: Bool) -> PullKey {
+            PullKey(link: link.id, side: side, stream: id.stream.rawValue, serving: serving)
+        }
+        let where_ = "property 11: link \(link.id) \(side)"
+        switch output {
+        case .sink(.begin(let id, _, _)), .source(.serve(let id, _, _)):
+            let pull = key(id, serving: output.isSource)
+            if itemPulls[pull] != nil { fail("\(where_) pull \(pull.stream) began twice") }
+            itemPulls[pull] = PullRecord()
+        case .sink(.bytes(let id, _)), .sink(.finish(let id)), .source(.read(let id, _)):
+            let record = itemPulls[key(id, serving: output.isSource)]
+            if record == nil || record?.terminals != 0 || record?.ended == true {
+                fail("\(where_) \(output) outside its pull")
+            }
+        case .sink(.commit(let id)), .sink(.abort(let id)), .source(.release(let id)):
+            let pull = key(id, serving: output.isSource)
+            guard var record = itemPulls[pull], !record.ended else {
+                return fail("\(where_) \(output) outside its pull")
+            }
+            record.terminals += 1
+            if case .sink(.commit) = output { record.committed = true }
+            if record.terminals > 1 { fail("\(where_) pull \(pull.stream) released twice") }
+            itemPulls[pull] = record
+        case .event(.pullEnded(let id, let result)), .event(.serveEnded(let id, let result)):
+            let serving: Bool
+            if case .event(.serveEnded) = output { serving = true } else { serving = false }
+            let pull = key(id, serving: serving)
+            guard var record = itemPulls[pull], !record.ended else {
+                return fail("\(where_) pull \(pull.stream) ended twice or never began")
+            }
+            record.ended = true
+            itemPulls[pull] = record
+            if record.terminals != 1 { fail("\(where_) pull \(pull.stream) ended after \(record.terminals) releases") }
+            if !serving {
+                if record.committed != (result == .landed) {
+                    fail("\(where_) pull \(pull.stream) ended \(result), committed \(record.committed)")
+                }
+                if link.items(side).sink.holds(id) {
+                    fail("\(where_) the sink holds pull \(pull.stream) after its end")
+                }
+            }
+        case .event(.offerReceived), .event(.offerEnded):
+            break
+        }
+        let buffered = link.items(side).sink.maxBufferedBytes
+        if buffered > Self.sinkBufferBound { fail("\(where_) a sink decoder held \(buffered) bytes") }
+    }
+
+    private func checkItemPulls(_ world: SimWorld) {
+        for (pull, record) in itemPulls where !record.ended {
+            if traces[SideKey(link: pull.link, side: pull.side)]?.connectionClosed == true {
+                fail("property 11: link \(pull.link) \(pull.side) pull \(pull.stream) never ended")
+            }
+        }
+        for link in world.links {
+            for side in [SimSide.host, .peer] {
+                for violation in link.items(side).sink.violations {
+                    fail("property 11: link \(link.id) \(side) sink: \(violation)")
+                }
+            }
+        }
+    }
+
     // MARK: End of run
 
     func endOfRun(_ world: SimWorld) {
+        checkItemPulls(world)
         for link in world.links {
             for side in [SimSide.host, .peer] {
                 let closed = traces[SideKey(link: link.id, side: side)]?.connectionClosed ?? false
@@ -459,5 +549,12 @@ package final class PropertyChecker {
             }
             last[displacement.key] = displacement.time
         }
+    }
+}
+
+extension ItemTransferOutput {
+    fileprivate var isSource: Bool {
+        if case .source = self { return true }
+        return false
     }
 }

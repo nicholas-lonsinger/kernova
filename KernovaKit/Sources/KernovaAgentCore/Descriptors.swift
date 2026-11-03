@@ -25,10 +25,11 @@ public enum StreamDirection: Sendable, Equatable {
 }
 
 /// Which machine of an endpoint serves a kind. Production kinds belong to a
-/// feature; the simulation's bulk kinds to its test sink.
+/// feature; the simulation's bulk kinds to its test sink, and its item-set offer
+/// kinds to the offer registry the item-transfer machine keeps.
 package enum KindOwner: Sendable, Equatable {
-    case power, update, logs
-    case testBulk
+    case power, update, logs, itemTransfer
+    case testBulk, testItemOffer
 }
 
 /// One row of the static kind table.
@@ -83,6 +84,14 @@ public struct StreamKindDescriptor: Sendable {
             kind: .logForward, feature: .logs, owner: .logs, openerRole: .peer, openerToAcceptor: .messages,
             acceptorToOpener: .nothing, maxPerConnection: 1,
             isValidOpenBody: { (try? Kernova_V2_LogOpen(serializedBytes: $0)) != nil }),
+        StreamKindDescriptor(
+            kind: .itemPullByHost, feature: .itemTransfer, owner: .itemTransfer, openerRole: .host,
+            openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil,
+            isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
+        StreamKindDescriptor(
+            kind: .itemPullByPeer, feature: .itemTransfer, owner: .itemTransfer, openerRole: .peer,
+            openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil,
+            isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
     ]
 
     /// The simulation's bulk kinds: 9000 opened by a peer, 9001 by the
@@ -94,6 +103,19 @@ public struct StreamKindDescriptor: Sendable {
         StreamKindDescriptor(
             kind: .testBulkByHost, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
             acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
+    ]
+
+    /// The simulation's item-set offer kinds: 9002 opened by the host, 9003 by a
+    /// peer, each an `ItemSetHeader` OPEN followed by `Item` messages, any number at once.
+    package static let testItemOffer: [StreamKindDescriptor] = [
+        StreamKindDescriptor(
+            kind: .testItemOfferByHost, feature: nil, owner: .testItemOffer, openerRole: .host,
+            openerToAcceptor: .messages, acceptorToOpener: .nothing, maxPerConnection: nil,
+            isValidOpenBody: ItemOfferRegistry.isValidHeader),
+        StreamKindDescriptor(
+            kind: .testItemOfferByPeer, feature: nil, owner: .testItemOffer, openerRole: .peer,
+            openerToAcceptor: .messages, acceptorToOpener: .nothing, maxPerConnection: nil,
+            isValidOpenBody: ItemOfferRegistry.isValidHeader),
     ]
 
     /// What this side sends on a stream of the kind, given whether it opened it.
@@ -112,6 +134,7 @@ public struct StreamKindDescriptor: Sendable {
         case .power: 100...119
         case .update: 120...139
         case .logs: 140...199
+        case .itemTransfer: 1000...1199
         default: nil
         }
     }
@@ -136,6 +159,9 @@ struct FeatureDescriptor: Sendable {
         FeatureDescriptor(
             feature: .logs, frozen: false, policyGoverned: true, version: 1,
             paramsDecode: { (try? Kernova_V2_LogCapability(serializedBytes: $0)) != nil }),
+        FeatureDescriptor(
+            feature: .itemTransfer, frozen: false, policyGoverned: false, version: 1,
+            paramsDecode: { (try? Kernova_V2_ItemTransferCapability(serializedBytes: $0)) != nil }),
     ]
 
     static func lookup(_ feature: FeatureID) -> FeatureDescriptor? {

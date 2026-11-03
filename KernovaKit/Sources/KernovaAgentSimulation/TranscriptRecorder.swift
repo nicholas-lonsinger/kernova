@@ -17,6 +17,10 @@ package enum TranscriptInput: Sendable, Equatable {
     case pull(PullReport)
     /// The peer's logger emits `count` records into the ring.
     case peerLogs(Int)
+    /// The peer offers the fixture offer of this name on its test offer kind.
+    case peerOffer(String)
+    /// The host pulls from the peer's offer.
+    case hostPull(PullRequest)
 
     /// An installer's report on a pull.
     package enum PullReport: Sendable, Equatable {
@@ -34,8 +38,10 @@ package enum TranscriptInput: Sendable, Equatable {
     static let generation = ConnectionGeneration(rawValue: 1)
 
     var side: SimSide {
-        if case .host = self { return .host }
-        return .peer
+        switch self {
+        case .host, .hostPull: .host
+        case .peer, .pull, .peerLogs, .peerOffer: .peer
+        }
     }
 
     package var text: String {
@@ -82,6 +88,11 @@ package enum TranscriptInput: Sendable, Equatable {
             return "peer update rejected code=\(code.rawValue)"
         case .peerLogs(let count):
             return "peer logs records=\(count)"
+        case .peerOffer(let name):
+            return "peer offer fixture=\(name)"
+        case .hostPull(let request):
+            return
+                "host pull token=\(FrozenFields.hex(request.token)) item=\(request.item) representation=\(request.representation) ceiling=\(request.byteCeiling)"
         }
     }
 
@@ -153,6 +164,17 @@ package enum TranscriptInput: Sendable, Equatable {
                         userName: fields["user"] ?? "")))
         case ("peer", "logs"):
             self = .peerLogs(number("records"))
+        case ("peer", "offer"):
+            guard let name = fields["fixture"], TranscriptFixture.offer(name) != nil else { return nil }
+            self = .peerOffer(name)
+        case ("host", "pull"):
+            guard let token = fields["token"].flatMap({ FrozenFields.unhex(Substring($0)) }) else { return nil }
+            var request = PullRequest()
+            request.token = token
+            request.item = UInt32(number("item"))
+            request.representation = UInt32(number("representation"))
+            request.byteCeiling = UInt64(number("ceiling"))
+            self = .hostPull(request)
         default:
             return nil
         }
@@ -260,7 +282,12 @@ package struct Exchange: Sendable {
     package static let current: [Exchange] = [
         Exchange(
             id: "C01", title: "logs: forwarding two bursts of records", hostFixture: "host-default",
-            peerFixture: "linux-session-v1", script: [(500, .peerLogs(3)), (900, .peerLogs(70))], end: 1500)
+            peerFixture: "linux-session-v1", script: [(500, .peerLogs(3)), (900, .peerLogs(70))], end: 1500),
+        Exchange(
+            id: "C02", title: "item transfer: the host pulls the FILE of a peer's offer → LANDED",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [(500, .peerOffer("file-2k")), (600, .hostPull(SimItems.request(1, ceiling: 1 << 20)))],
+            end: 1000),
     ]
 }
 
@@ -291,6 +318,8 @@ package final class Duet {
     private var ring = LogRing()
     private var extrasPending = false
     private var source = FixturePayloadSource()
+    private var itemSource = ContainerItemSource()
+    private var itemSink = DecodingItemSink()
     private lazy var bundleContent: Data? = TranscriptFixture.host(exchange.hostFixture)?.bundles.first.map {
         SimHub.expectedContent($0.manifest)
     }
@@ -371,8 +400,39 @@ package final class Duet {
                 if ring.append(record) { post = true }
             }
             if post { peer.handle(.logs(.recordsAvailable), now: instant) }
+        case .peerOffer(let name):
+            guard let offer = TranscriptFixture.offer(name) else { break }
+            if let refusal = peer.offerTestItems(offer, now: instant) {
+                failures.append("t=\(now): `\(input.text)` refused: \(refusal)")
+            }
+        case .hostPull(let request):
+            if case .failure(let error) = host.pullItem(request, now: instant) {
+                failures.append("t=\(now): `\(input.text)` refused: \(error)")
+            }
         }
         drainAll()
+    }
+
+    /// Answers `side`'s item outputs at once, from the fixtures' source and a decoding sink.
+    private func drainItems(_ side: SimSide) -> Bool {
+        var progressed = false
+        while let output = side == .host ? host.pollItemTransfer() : peer.pollItemTransfer() {
+            progressed = true
+            let input: ItemTransferInput?
+            switch output {
+            case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
+            case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
+            case .event(let event):
+                input = nil
+                items.append(.event(time: now, side: side, text: TranscriptEvents.describe(event, side: side)))
+            }
+            guard let input else { continue }
+            switch side {
+            case .host: host.handle(itemTransfer: input, now: instant)
+            case .peer: peer.handle(itemTransfer: input, now: instant)
+            }
+        }
+        return progressed
     }
 
     private func drainAll() {
@@ -411,6 +471,8 @@ package final class Duet {
                     items.append(.event(time: now, side: .peer, text: text))
                 }
             }
+            if drainItems(.host) { progressed = true }
+            if drainItems(.peer) { progressed = true }
             while let transmit = host.pollTransmit(maxBytes: 1 << 20 + 10) {
                 progressed = true
                 write(transmit, from: .host)
@@ -619,6 +681,26 @@ package enum TranscriptEvents {
         case .update(.recordRejected(let hash)): "peer update recordRejected hash=\(FrozenFields.hex(hash))"
         case .update(.abort(let id)): "peer update abort id=\(id.stream.rawValue)"
         default: nil
+        }
+    }
+
+    package static func describe(_ event: ItemTransferEvent, side: SimSide) -> String {
+        let prefix = side == .host ? "host item" : "peer item"
+        return switch event {
+        case .offerReceived(let offer):
+            "\(prefix) offerReceived token=\(FrozenFields.hex(offer.token)) items=\(offer.items.count)"
+        case .offerEnded(let token, let closure):
+            "\(prefix) offerEnded token=\(FrozenFields.hex(token)) \(describe(closure))"
+        case .pullEnded(let id, let result): "\(prefix) pullEnded id=\(id.stream.rawValue) \(describe(result))"
+        case .serveEnded(let id, let result): "\(prefix) serveEnded id=\(id.stream.rawValue) \(describe(result))"
+        }
+    }
+
+    static func describe(_ result: ItemPullResult) -> String {
+        switch result {
+        case .landed: "landed"
+        case .failed(let error): "failed code=\(error.code.rawValue)"
+        case .closed(let closure): "closed \(describe(closure))"
         }
     }
 

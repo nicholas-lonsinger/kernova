@@ -72,6 +72,7 @@ package final class SimPeerProcess {
             update: updateAvailability)
         configuration.powerLedger = powerLedger
         configuration.receiverPolicy = world.options.receiverPolicy
+        if world.options.itemTransfer { configuration.itemTransfer = .available(NoParams()) }
         let version = spec.protocolVersion
         let testKinds = world.options.testKinds
         let hostile = world.options.hostile
