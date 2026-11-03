@@ -69,7 +69,7 @@ package final class SimHub {
             claim: PeerClaim(role: .host, versionLabel: "Kernova 2.0"),
             sessionToken: world.rng.bytes(16), policy: policy, bundles: bundles)
         configuration.receiverPolicy = options.receiverPolicy
-        if options.itemTransfer { configuration.itemTransfer = .available(NoParams()) }
+        if options.items { configuration.items = SimItems.served }
         let testKinds = options.testKinds
         let hostile = options.hostile
         configuration.tweak = { connection in
@@ -191,6 +191,8 @@ package final class SimHub {
             handleUpdate(serve, link: link, world: world)
         case .items(let event):
             world.itemOutput(.event(event), link: link, side: .host)
+        case .dragTake(let event):
+            link.items(.host).dragTake(event, link: link, side: .host, world: world)
         case .diagnostic(let diagnostic):
             world.log("host diagnostic: \(diagnostic)")
         case .closed(let closure):

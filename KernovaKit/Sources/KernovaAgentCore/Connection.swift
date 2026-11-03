@@ -369,6 +369,22 @@ public struct Connection: Sendable {
         configuration.kinds.first { $0.kind == kind }
     }
 
+    /// The kind row of stream `id`, while the connection holds it.
+    func descriptor(of id: StreamID) -> StreamKindDescriptor? {
+        index(of: id).map { streams[$0].descriptor }
+    }
+
+    /// Resets every stream of `feature`'s kinds still open, once the feature is not usable:
+    /// `DISABLED_BY_POLICY` when the policy turned it off, `CAPABILITY_WITHDRAWN` otherwise.
+    mutating func resetStreams(ofUnusable feature: FeatureID) {
+        guard case .absent(let reason, _) = usability(feature) else { return }
+        let code: ErrorCode = reason == .disabledByPolicy ? .disabledByPolicy : .capabilityWithdrawn
+        let open = streams.filter { $0.isAccepted && $0.phase != .closed && $0.descriptor.feature == feature }
+        for record in open where canReset(record.id) {
+            reset(record.id, WireError(code))
+        }
+    }
+
     func opensAsThisRole(_ descriptor: StreamKindDescriptor) -> Bool {
         (descriptor.openerRole == .host) == (role == .host)
     }

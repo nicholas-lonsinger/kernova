@@ -6,8 +6,9 @@ import Foundation
 
 import KernovaWire
 
-/// Every open offer on one connection, this side's and the far side's, and the item-set message stream that
-/// carries each: an `ItemSetHeader` OPEN, one `Item` MESSAGE per item, then the opener's END. An offer is in
+/// Every open offer on one connection, this side's and the far side's, of whichever feature's offer kind, and
+/// the item-set message stream that carries each: an `ItemSetHeader` OPEN, one `Item` MESSAGE per item, then
+/// the opener's END. An offer is in
 /// the registry exactly while its stream is open; the opener's RESET withdraws it, and the receiver's END or
 /// RESET releases it. This side's tokens and the far side's are separate namespaces: a pull of this side's
 /// offer is looked up among this side's, and one this side opens among the far side's.
@@ -25,6 +26,7 @@ package struct ItemOfferRegistry: Sendable {
 
     struct Local: Sendable {
         var stream: StreamID
+        var feature: FeatureID
         var offer: ItemOffer
         var encoded: [Data]
         var sent = 0
@@ -54,6 +56,21 @@ package struct ItemOfferRegistry: Sendable {
 
     /// The tokens of this side's open offers.
     package var localTokens: [Data] { local.map(\.offer.token) }
+
+    /// The tokens of this side's open offers of `feature`.
+    package func localTokens(of feature: FeatureID) -> [Data] {
+        local.filter { $0.feature == feature }.map(\.offer.token)
+    }
+
+    /// The feature of this side's open offer of `token`; nil when none is open.
+    package func localFeature(_ token: Data) -> FeatureID? {
+        local.first { $0.offer.token == token }?.feature
+    }
+
+    /// The feature of the far side's open offer of `token`; nil when none is open.
+    package func remoteFeature(_ token: Data) -> FeatureID? {
+        remote.first { $0.header.token == token }?.header.feature
+    }
 
     /// The tokens of the far side's open offers.
     package var remoteTokens: [Data] { remote.map(\.header.token) }
@@ -115,8 +132,12 @@ package struct ItemOfferRegistry: Sendable {
 
     // MARK: This side's offers
 
-    /// Opens a stream of `kind` offering `offer`, and sends its items as credit allows; nil when opened.
+    /// Opens a stream of `kind`, an item-set offer kind, offering `offer`, and sends its items as credit
+    /// allows; nil when opened.
     mutating func offer(_ offer: ItemOffer, kind: StreamKind, connection: inout Connection) -> WireError? {
+        guard let descriptor = connection.descriptor(for: kind), descriptor.owner == .itemOffer,
+            let feature = descriptor.feature
+        else { return WireError(.unsupportedKind, debugDetail: "\(kind) is no item-set offer kind") }
         guard offer.token.count == 16, !local.contains(where: { $0.offer.token == offer.token }) else {
             return WireError(.internal, debugDetail: "an offer token is 16 bytes no open offer holds")
         }
@@ -134,7 +155,7 @@ package struct ItemOfferRegistry: Sendable {
         if let refusal = connection.openRefusal(kind) { return refusal }
         let stream = connection.open(kind, body: body)
         guard stream != .session else { return WireError(.internal) }
-        local.append(Local(stream: stream, offer: offer, encoded: encoded))
+        local.append(Local(stream: stream, feature: feature, offer: offer, encoded: encoded))
         pump(stream, &connection)
         return nil
     }
@@ -197,10 +218,11 @@ package struct ItemOfferRegistry: Sendable {
             pump(stream, &connection)
         case .streamClosed(let stream, let closure):
             if let index = local.firstIndex(where: { $0.stream == stream }) {
-                events.append(.event(.offerEnded(.local, token: local[index].offer.token, closure)))
-                local.remove(at: index)
+                let entry = local.remove(at: index)
+                events.append(.event(.offerEnded(entry.feature, .local, token: entry.offer.token, closure)))
             } else if let index = remote.firstIndex(where: { $0.stream == stream }) {
-                events.append(.event(.offerEnded(.remote, token: remote[index].header.token, closure)))
+                let header = remote[index].header
+                events.append(.event(.offerEnded(header.feature, .remote, token: header.token, closure)))
                 remoteCharged -= remote[index].charged
                 remote.remove(at: index)
             }
@@ -210,8 +232,10 @@ package struct ItemOfferRegistry: Sendable {
     }
 
     private mutating func received(_ stream: StreamID, _ body: Data, _ connection: inout Connection) {
+        // The connection admits only a kind the table lists, and routes only an item-set offer kind here.
+        guard let feature = connection.descriptor(of: stream)?.feature else { return }
         let header = ItemSetHeaderValue(
-            (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader())
+            (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader(), feature: feature)
         guard !remote.contains(where: { $0.header.token == header.token }) else {
             return refuse(stream, .streamProtocolError, "a token the far side already offers", &connection)
         }

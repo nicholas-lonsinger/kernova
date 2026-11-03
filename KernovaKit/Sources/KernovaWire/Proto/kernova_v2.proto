@@ -61,8 +61,9 @@ enum FeatureId {
 
   // Guest status: guest info (hostname, addresses, uptime) 4, metrics 5.
   reserved 4 to 9;
-  // Phase 4 data plane: clipboard 10, drop onto the VM 11, drag out 12.
-  reserved 10 to 12;
+  FEATURE_ID_CLIPBOARD = 10;  // current-only, version 1. Pasteboard offers, both ways.
+  FEATURE_ID_DROP = 11;       // current-only, version 1. Items dropped onto the VM, host -> peer.
+  FEATURE_ID_DRAG = 12;       // current-only, version 1. Items dragged out of the guest, peer -> host.
   FEATURE_ID_ITEM_TRANSFER = 13;  // current-only, version 1. Pulls of offered items.
   reserved 14 to 19;
   // Exec, file browsing, and other later features.
@@ -80,6 +81,11 @@ enum FeatureId {
 // | LOG_FORWARD   | LOGS    | peer   | LogOpen      | LogBatch msgs      | nothing              | empty          | empty         |
 // | ITEM_PULL_BY_HOST | ITEM_TRANSFER | host | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 // | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
+// | CLIPBOARD_OFFER_BY_HOST | CLIPBOARD | host | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
+// | CLIPBOARD_OFFER_BY_PEER | CLIPBOARD | peer | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
+// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
+// | DRAG_OFFER    | DRAG    | peer   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
+// | DRAG_TAKE     | DRAG    | host   | DragTake     | nothing            | nothing              | empty, at once | DragTakeOutcome |
 //
 // "Opener END: empty, at once" means the opener sends END right after OPEN.
 // UPDATE_PULL's and both ITEM_PULLs' opener END is sent only after the
@@ -99,12 +105,15 @@ enum StreamKind {
   STREAM_KIND_LOG_FORWARD = 300;
   reserved 301 to 399;              // logs
   reserved 400 to 499;              // guest info, metrics
-  // 1000, 1003-1099: the clipboard, drop and drag features' item-set offer
-  // kinds (ItemSetHeader), and later transfer kinds.
-  reserved 1000;
+  // Item-set offers (ItemSetHeader) and pulls, and later transfer kinds.
+  STREAM_KIND_CLIPBOARD_OFFER_BY_HOST = 1000;
   STREAM_KIND_ITEM_PULL_BY_HOST = 1001;
   STREAM_KIND_ITEM_PULL_BY_PEER = 1002;
-  reserved 1003 to 1099;
+  STREAM_KIND_DROP_OFFER = 1003;
+  STREAM_KIND_DRAG_OFFER = 1004;
+  STREAM_KIND_DRAG_TAKE = 1005;
+  STREAM_KIND_CLIPBOARD_OFFER_BY_PEER = 1006;
+  reserved 1007 to 1099;
   reserved 1100 to 1199;            // exec
   // The simulation's test kinds (KernovaAgentSimulation). No shipping
   // endpoint opens or serves one.
@@ -168,13 +177,15 @@ enum ErrorCode {
   // 140-199: logs, guest info, metrics.
   reserved 140 to 199;
 
-  // 1000-1199: item transfer.
+  // 1000-1199: item transfer and the features that offer items.
   ERROR_CODE_ITEM_OFFER_STALE = 1000;               // the token names no open offer
   ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE = 1001;// the indexes name no representation, or its source is gone
   ERROR_CODE_ITEM_CONTAINER_MALFORMED = 1002;       // the container broke its grammar or a declared limit
   ERROR_CODE_ITEM_UNPACK_REFUSED = 1003;            // the writer refused an entry; Error.item names it
   ERROR_CODE_ITEM_DECMPFS_REFUSED = 1004;           // the destination could not land a decmpfs entry; Error.item names it
-  reserved 1005 to 1199;
+  ERROR_CODE_DRAG_NOT_CURRENT = 1005;               // the take names no drag the peer offers, or one already taken
+  ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
+  reserved 1007 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -617,10 +628,10 @@ message LogBatch {
 // ============================================================================
 //
 // An offer is a stream of an item-set offer kind, owned by the feature that
-// offers (clipboard, drop, drag). Its OPEN body is an ItemSetHeader; the
+// offers (CLIPBOARD, DROP, DRAG). Its OPEN body is an ItemSetHeader; the
 // opener then sends `count` Item messages, one per MESSAGE frame, and END.
 // The offer is valid while its stream is open: the opener's RESET withdraws
-// it. A pull (ITEM_PULL_BY_HOST / _BY_PEER) names one representation of an
+// it, and the receiver's END or RESET releases it. A pull (ITEM_PULL_BY_HOST / _BY_PEER) names one representation of an
 // open offer; the acceptor answers with a container in raw DATA, then END.
 //
 // The container is the same for every pull, an INLINE representation
@@ -658,6 +669,11 @@ message Representation {
   bool promised = 3;
   // The sender's estimate of EndRecord.bytes; 0 when unknown. Not a limit.
   uint64 size_estimate = 4;
+  // FILE and FOLDER: the item's name, one path component, which the
+  // receiver lands it under or derives the name it lands under from. The
+  // container's own entry carries none. Empty for INLINE. Bytes, not a
+  // string: names need not be valid UTF-8.
+  bytes name = 5;
 }
 
 // One offered item. Item MESSAGE on an offer stream, at most 64 KiB.
@@ -769,7 +785,8 @@ message EntryHeader {
   // entered at depth d - 1, which is the most recent DIRECTORY entry at that
   // depth. Depth 0 is the representation's own entry.
   uint32 depth = 1;
-  // One path component. Bytes, not a string: names need not be valid UTF-8.
+  // One path component; empty at depth 0, which takes the representation's
+  // `name`. Bytes, not a string: names need not be valid UTF-8.
   bytes name = 2;
   Type type = 3;
   // Permission bits (07777).
@@ -802,4 +819,60 @@ message EndRecord {
   // decompression: a framing count, not the size landed, which for decmpfs
   // storage is the attribute's.
   uint64 bytes = 2;
+}
+
+// ============================================================================
+// Clipboard, drop and drag (each feature version 1; current-only)
+// ============================================================================
+//
+// Each feature offers items on its own item-set offer kinds, and every byte
+// moves by ITEM_PULL. CLIPBOARD: each side keeps at most one clipboard offer
+// open, withdrawing the previous one before it offers the next. DROP: the
+// host offers what was dropped onto the VM. DRAG: the peer offers a drag in
+// progress in the guest, and the host takes it with DRAG_TAKE before it
+// pulls.
+
+// FeatureAdvert.params for CLIPBOARD, both sides.
+message ClipboardCapability {
+}
+
+// FeaturePolicy.params for CLIPBOARD. Sharing on or off is
+// FeaturePolicy.enabled.
+message ClipboardPolicy {
+}
+
+// FeatureAdvert.params for DROP, both sides.
+message DropCapability {
+}
+
+// FeaturePolicy.params for DROP. Dropping on or off is FeaturePolicy.enabled.
+message DropPolicy {
+}
+
+// FeatureAdvert.params for DRAG, both sides.
+message DragCapability {
+}
+
+// FeaturePolicy.params for DRAG. Dragging out on or off is
+// FeaturePolicy.enabled.
+message DragPolicy {
+}
+
+// OPEN body of DRAG_TAKE (host -> peer): the drag the peer offers left the
+// VM's display, and the host takes it over.
+message DragTake {
+  // The token of the peer's open DRAG_OFFER.
+  bytes token = 1;
+}
+
+// The peer's END body on DRAG_TAKE. A taken offer stays open until the host
+// releases it; a refused one stays the guest's.
+message DragTakeOutcome {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;  // fallback: treated as KIND_REFUSED
+    KIND_TAKEN = 1;
+    KIND_REFUSED = 2;      // `error` says why: DRAG_NOT_CURRENT or DRAG_PRESS_OVER
+  }
+  Kind kind = 1;
+  Error error = 2;
 }

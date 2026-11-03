@@ -14,12 +14,28 @@ package enum SimItems {
     /// The 16-byte token `tag` names.
     package static func token(_ tag: UInt8) -> Data { Data(repeating: tag, count: 16) }
 
-    /// A representation of `storage` whose tree carries `size` bytes.
+    /// Every item feature available.
+    package static let served = ItemFeatureAvailability(
+        itemTransfer: .available(NoParams()), clipboard: .available(NoParams()), drop: .available(NoParams()),
+        drag: .available(NoParams()))
+
+    /// `policy` with clipboard, drop and drag enabled too.
+    package static func policy(_ policy: PolicySnapshot) -> PolicySnapshot {
+        PolicySnapshot(
+            policy.entries + [FeatureID.clipboard, .drop, .drag].map { FeaturePolicyValue(feature: $0, enabled: true) })
+    }
+
+    /// A representation of `storage` whose tree carries `size` bytes, a FILE named `item` and a FOLDER `folder`.
     package static func representation(_ storage: Representation.Storage, size: Int) -> Representation {
         var representation = Representation()
         representation.type.mime = storage == .inline ? "text/plain" : "application/octet-stream"
         representation.storage = storage
         representation.sizeEstimate = UInt64(size)
+        switch storage {
+        case .file: representation.name = Data("item".utf8)
+        case .folder: representation.name = Data("folder".utf8)
+        default: break
+        }
         return representation
     }
 

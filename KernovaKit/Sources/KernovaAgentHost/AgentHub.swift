@@ -259,13 +259,11 @@ public final class AgentHub: Sendable {
             logUpdate(event, from: handle)
             state.withLock { $0.updateServed(event, from: handle) }
         case .items(let event):
-            // The hub offers and pulls no items, so no item event changes what it does.
-            if let record = state.withLock({ $0.peers[handle] }) {
-                logger.log(
-                    .notice,
-                    "The hub does not act on the \(Self.name(record), privacy: .public)'s item event \(Self.kind(event), privacy: .public)"
-                )
-            }
+            // The hub offers, pulls and takes no items, so no item event changes what it does.
+            ignoreItemEvent(Self.kind(event), from: handle)
+            return
+        case .dragTake:
+            ignoreItemEvent("dragTake", from: handle)
             return
         case .power, .diagnostic:
             // Nothing asks a peer for power yet, and the driver logs diagnostics itself.
@@ -309,6 +307,13 @@ public final class AgentHub: Sendable {
             let detail = String(describing: closure)
             logger.log(.error, "The \(peer, privacy: .public)'s update pull ended early: \(detail, privacy: .public)")
         }
+    }
+
+    private func ignoreItemEvent(_ kind: String, from handle: PeerHandle) {
+        guard let record = state.withLock({ $0.peers[handle] }) else { return }
+        logger.log(
+            .notice,
+            "The hub does not act on the \(Self.name(record), privacy: .public)'s item event \(kind, privacy: .public)")
     }
 
     private static func kind(_ event: ItemTransferEvent) -> String {

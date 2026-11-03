@@ -369,6 +369,7 @@ final class PeerDriverHarness: Sendable {
         case .hostLiveness: "hostLiveness"
         case .updateAvailable: "updateAvailable"
         case .items: "items"
+        case .dragTake: "dragTake"
         case .diagnostic: "diagnostic"
         case .closed: "closed"
         }
