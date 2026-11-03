@@ -24,17 +24,19 @@ private final class DrainedStream: Sendable {
     let queue = DispatchQueue(label: "app.kernova.tests.posix.drained")
     let stream: POSIXByteStream
     let receivedBytes = Locked(0)
+    let receipts = Recorder<Int>()
     let ends = Recorder<ByteStreamEvent>()
     let released = Recorder<Int>()
 
     init(adopting descriptor: Int32) throws {
         let released = released
         stream = try POSIXByteStream(adopting: descriptor) { released.record(1) }
-        let (stream, receivedBytes, ends) = (stream, receivedBytes, ends)
+        let (stream, receivedBytes, receipts, ends) = (stream, receivedBytes, receipts, ends)
         stream.start(on: queue) { event in
             switch event {
             case .received(let data):
                 receivedBytes.withLock { $0 += data.count }
+                receipts.record(data.count)
                 stream.readMore()
             case .ended:
                 ends.record(event)
@@ -140,11 +142,13 @@ extension SocketTests {
                             drained.queue.async { [stream = drained.stream] in
                                 stream.write([Data(count: 200_000)]) { writeDone.record($0) }
                             }
-                            // Varies where the shutdown lands among the reads and the pending write; the test
-                            // waits on none of it.
-                            let jitter = UInt32((round * 31 + lane * 17) % 400)
+                            // Each lane shuts down after a different amount of traffic, so the shutdowns land
+                            // at varied points among the reads and the pending write.
+                            let threshold = (round * 31 + lane * 17) % 400 * 10
+                            var receipts = drained.receipts.waiter()
+                            var received = 0
+                            while received < threshold { received += await receipts.next { _ in true } }
                             onOwnQueue {
-                                usleep(jitter)
                                 drained.stream.shutdown()
                                 drained.stream.shutdown()
                             }
