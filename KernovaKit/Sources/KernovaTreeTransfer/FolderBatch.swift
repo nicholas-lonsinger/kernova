@@ -109,6 +109,7 @@ struct FolderBatch: Sendable {
             do {
                 file = try CompressedFile(
                     creating: entry.name, in: directory, attribute: attribute, logicalSize: logicalSize,
+                    resourceForkLength: UInt64(resourceFork.count),
                     extendedAttributes: entry.metadata.extendedAttributes, on: fileSystem)
             } catch {
                 throw .system(error)

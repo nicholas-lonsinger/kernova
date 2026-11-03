@@ -6,6 +6,8 @@ import KernovaAgentCore
 import KernovaAgentInstall
 import KernovaAgentRuntime
 import KernovaDigest
+import KernovaFileTree
+import KernovaItemTransfer
 import KernovaLogging
 import KernovaSynchronization
 
@@ -48,13 +50,23 @@ public final class MacAgentPeer: Sendable {
         let power = role == .systemPeer ? MacPowerAdapter.systemPeer() : MacPowerAdapter.sessionPeer()
         if let state { power.consoleChanged(state.console) }
         self.power = power
+        // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
+        let itemRouter = ItemFeatureRouter<Void>()
+        let items =
+            role == .sessionPeer
+            ? ItemAdapters(
+                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
+                sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), features: itemRouter.features)
+            : nil
         runtime = PeerAgentRuntime(
-            claim: claim, state: state, registry: PeerFeatureRegistry(power: power, logs: logs, update: adapter),
+            claim: claim, state: state,
+            registry: PeerFeatureRegistry(power: power, logs: logs, update: adapter, items: items),
             dialer: DarwinVsockDialer(), scheduler: SystemScheduler(), logger: Self.logger,
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.
                     if event == .policyReceived { installer?.confirm() }
+                    itemRouter.deliver(event)
                 },
                 stop: { reason in
                     Self.logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")

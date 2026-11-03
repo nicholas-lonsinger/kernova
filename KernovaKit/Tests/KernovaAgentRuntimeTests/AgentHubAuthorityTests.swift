@@ -38,6 +38,11 @@ struct AgentHubAuthorityTests {
         }
     }
 
+    /// The console peer of each feature that offers items becoming `peer`, in feature order.
+    private static func console(_ peer: PeerHandle?) -> [HubItemEvent] {
+        [FeatureID.clipboard, .drop, .drag].map { .consolePeer($0, peer) }
+    }
+
     private static func header(_ tag: UInt8, _ feature: FeatureID) -> ItemSetHeaderValue {
         var header = Kernova_V2_ItemSetHeader()
         header.token = SimItems.token(tag)
@@ -63,7 +68,9 @@ struct AgentHubAuthorityTests {
         connector.deliver(.dragTake(.ended(take, .taken)), stranger)
         connector.deliver(.items(.offerReceived(Self.header(3, .clipboard))), first)
         await flush(scripted.hub.queue)
-        #expect(scripted.items.elements == [.items(firstHandle, .offerReceived(Self.header(3, .clipboard)))])
+        #expect(
+            scripted.items.elements
+                == Self.console(firstHandle) + [.items(firstHandle, .offerReceived(Self.header(3, .clipboard)))])
 
         // The same claim again supersedes the first connection: what the owner held there ends at once.
         _ = scripted.transport.connect()
@@ -74,12 +81,15 @@ struct AgentHubAuthorityTests {
         connector.deliver(.items(.offerReceived(Self.header(4, .drag))), first)
         await flush(scripted.hub.queue)
         #expect(
-            scripted.items.elements == [
-                .items(firstHandle, .offerReceived(Self.header(3, .clipboard))),
-                .items(
-                    firstHandle,
-                    .offerEnded(.clipboard, .remote, token: SimItems.token(3), AgentHubState.endedByHub)),
-            ])
+            scripted.items.elements
+                == Self.console(firstHandle) + [
+                    .items(firstHandle, .offerReceived(Self.header(3, .clipboard))),
+                    .items(
+                        firstHandle,
+                        .offerEnded(.clipboard, .remote, token: SimItems.token(3), AgentHubState.endedByHub)),
+                ]
+                // The new connection's features arrive after its Hello displaced the first.
+                + Self.console(nil) + Self.console(PeerHandle(rawValue: 3)))
         #expect(connector.commands(to: stranger) == [.items(.release(token: SimItems.token(1)))])
         #expect(
             connector.commands(to: first) == [
@@ -110,7 +120,7 @@ struct AgentHubAuthorityTests {
             Issue.record("answered \(answers.elements)"); return
         }
         #expect(error.code == .shuttingDown)
-        #expect(scripted.items.elements.isEmpty)
+        #expect(scripted.items.elements == Self.console(PeerHandle(rawValue: 1)) + Self.console(nil))
         scripted.hub.close()
     }
 }

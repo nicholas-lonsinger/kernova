@@ -136,8 +136,8 @@ public enum ItemServeResult: Sendable, Equatable {
 
 /// What the serving side asks of its item source: one container per pull, a read at a time.
 public enum ItemSourceEffect: Sendable, Equatable {
-    /// Start a container of `representation`, held to `request`'s limits.
-    case serve(ItemPullID, PullRequest, Representation)
+    /// Start a container of `representation` of an offer of `FeatureID`'s, held to `request`'s limits.
+    case serve(ItemPullID, FeatureID, PullRequest, Representation)
     /// Produce 1 … `maxBytes` more bytes of the container, or report it finished.
     case read(ItemPullID, maxBytes: Int)
     /// The pull ended; drop whatever it holds. The pull's last effect.
@@ -198,6 +198,14 @@ public enum ItemTransferEvent: Sendable, Equatable {
     case pullEnded(FeatureID, ItemPullID, ItemPullResult)
     /// A pull this side served, of an offer of `FeatureID`'s, ended. Once per `.serve`.
     case serveEnded(FeatureID, ItemPullID, ItemServeResult)
+
+    /// The feature of the offer this event is about.
+    public var feature: FeatureID {
+        switch self {
+        case .offerReceived(let header): header.feature
+        case .offerEnded(let feature, _, _, _), .pullEnded(let feature, _, _), .serveEnded(let feature, _, _): feature
+        }
+    }
 }
 
 /// One output of the item-transfer machine, in the order it emitted them. An endpoint hands the source

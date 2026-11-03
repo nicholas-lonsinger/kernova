@@ -37,7 +37,7 @@ struct ItemPullServer: Sendable {
             connection.reset(id.stream, error)
         case .success(let (feature, representation)):
             pulls.append(Pull(id: id, feature: feature, token: request.token))
-            outbox.append(.source(.serve(id, request, representation)))
+            outbox.append(.source(.serve(id, feature, request, representation)))
             serve(id.stream, connection: &connection, outbox: &outbox)
         }
     }

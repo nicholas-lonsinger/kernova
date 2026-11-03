@@ -69,7 +69,7 @@ struct PeerLandingTests {
         await harness.pump(link)
         var events = harness.events.waiter()
         _ = await events.next { if case .items(.offerReceived) = $0 { true } else { false } }
-        harness.runtime.send(.pull(ItemRequestID(rawValue: 1), ItemPullOrder(SimItems.request(1), landing: .inline)))
+        harness.runtime.pullItem(ItemPullOrder(SimItems.request(1), landing: .inline)) { _ in }
         await harness.pump(link)
         var committed = sink.committed.waiter()
         _ = await committed.next { _ in true }

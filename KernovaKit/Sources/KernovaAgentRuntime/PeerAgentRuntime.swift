@@ -20,7 +20,7 @@ import KernovaWire
 public final class PeerAgentRuntime: Sendable {
     /// Where the runtime sends what the shell acts on, on the runtime's queue.
     public struct Handlers: Sendable {
-        /// A connection's event for the shell's UI.
+        /// A connection's event for the shell, but for an `.itemReply`, which answers its item call instead.
         public var event: @Sendable (PeerEvent) -> Void
         /// The agent stops for good; the shell exits with status 0.
         public var stop: @Sendable (StopReason) -> Void
@@ -59,6 +59,7 @@ public final class PeerAgentRuntime: Sendable {
         var update: Availability<UpdateOffer>
         var timer = TimerSlot()
         var closeCompletions: [@Sendable () -> Void] = []
+        var items = ItemRequests<ConnectionGeneration>()
     }
 
     /// A runtime for a peer claiming `claim`, whose `instanceID` it replaces with 16 bytes it draws once.
@@ -141,9 +142,80 @@ public final class PeerAgentRuntime: Sendable {
         }
     }
 
-    /// Sends `command` to the current connection; the `.itemReply` it owes, if any, comes through
-    /// `Handlers.event`. With no connection, it is never answered.
-    public func send(_ command: ItemCommand) {
+    // MARK: Items
+
+    /// Offers `offer` on `feature` — CLIPBOARD, withdrawing the previous clipboard offer, or DRAG — to the host,
+    /// and calls `completion` once, on the runtime's queue, with nil once it opened, whose `.items` events then
+    /// follow, or why it did not. Each item call's answer, like each event, reaches the runtime's queue in the
+    /// order the connection emitted them; with no connection, or once it ends, a call is answered as ended.
+    public func offerItems(
+        _ offer: ItemOffer, feature: FeatureID, _ completion: @escaping @Sendable (WireError?) -> Void
+    ) {
+        awaitReply(
+            { .offer($0, offer, feature: feature) }, { if case .offered(let refusal) = $0 { refusal } else { nil } },
+            unanswered: Self.connectionEnded, completion)
+    }
+
+    /// Withdraws this side's offer of `token`; its `.offerEnded` follows.
+    public func withdrawOffer(_ token: Data) {
+        send(.withdraw(token: token))
+    }
+
+    /// Releases the host's offer of `token`: this side pulls nothing more of it.
+    public func releaseOffer(_ token: Data) {
+        send(.release(token: token))
+    }
+
+    /// Pulls one representation of the host's open offer as `order` says, and calls `completion` once with the
+    /// pull's id, whose one `.pullEnded` follows, or why it was not opened.
+    public func pullItem(
+        _ order: ItemPullOrder, _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void
+    ) {
+        awaitReply(
+            { .pull($0, order) }, { if case .pulled(let result) = $0 { result } else { nil } },
+            unanswered: .failure(Self.connectionEnded), completion)
+    }
+
+    /// Cancels a pull this side opened; its `.pullEnded` follows.
+    public func cancelPull(_ id: ItemPullID) {
+        send(.cancel(id))
+    }
+
+    /// Calls `completion` once with item `item` of the host's open offer of `token`, decoded; nil when no such
+    /// item is held.
+    public func readItem(_ token: Data, item: UInt32, _ completion: @escaping @Sendable (OfferedItem?) -> Void) {
+        awaitReply(
+            { .read($0, token: token, item: item) }, { if case .read(let read) = $0 { .some(read) } else { nil } },
+            unanswered: nil, completion)
+    }
+
+    /// Answers the host's take `id` of this side's drag.
+    public func answerDragTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
+        queue.async { [self] in state.withLock { $0.driver }?.handle(.dragTake(id, answer)) }
+    }
+
+    private static var connectionEnded: WireError { ItemRequests<ConnectionGeneration>.connectionEnded }
+
+    /// Sends the current connection the command `command` builds around a fresh request id, and calls
+    /// `completion` once with what `read` reads from its reply — or with `unanswered`, at once with no
+    /// connection, or later when it ends without replying.
+    private func awaitReply<Answer: Sendable>(
+        _ command: @escaping @Sendable (ItemRequestID) -> ItemCommand,
+        _ read: @escaping @Sendable (ItemReply) -> Answer?, unanswered: Answer,
+        _ completion: @escaping @Sendable (Answer) -> Void
+    ) {
+        let answer = ItemRequests<ConnectionGeneration>.answering(read, unanswered: unanswered, completion)
+        queue.async { [self] in
+            let sent = state.withLock { state -> (ConnectionDriver<PeerEndpoint>, ItemCommand)? in
+                guard let driver = state.driver else { return nil }
+                return (driver, state.items.add(driver.generation, command, feature: nil, answer))
+            }
+            guard let (driver, command) = sent else { return answer(nil) }
+            driver.handle(.itemCommand(command))
+        }
+    }
+
+    private func send(_ command: ItemCommand) {
         queue.async { [self] in state.withLock { $0.driver }?.handle(.itemCommand(command)) }
     }
 
@@ -248,14 +320,22 @@ public final class PeerAgentRuntime: Sendable {
     }
 
     private func connectionEvent(_ event: PeerEvent, _ generation: ConnectionGeneration) {
-        if event == .policyReceived {
+        switch event {
+        case .policyReceived:
             step { agent, now in agent.policyReceived(generation, now: now) }
+        case .itemReply(let id, let reply):
+            state.withLock { $0.items.take(id, from: generation) }?.answer(reply)
+            return
+        default:
+            break
         }
         handlers.event(event)
     }
 
-    /// The connection has ended: the schedule hears of it, and `close` completes.
+    /// The connection has ended: each item call it did not answer is answered as ended, the schedule hears of
+    /// it, and `close` completes.
     private func connectionEnded(_ generation: ConnectionGeneration, _ closure: ConnectionClosure) {
+        for pending in state.withLock({ $0.items.takeAll(of: generation) }) { pending.answer(nil) }
         let completions = state.withLock { state -> [@Sendable () -> Void] in
             guard state.driver?.generation == generation else { return [] }
             state.driver = nil

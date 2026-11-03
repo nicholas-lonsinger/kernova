@@ -163,11 +163,12 @@ final class HubHarness: Sendable {
     let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
 
     /// A hub attached to `transport`, its peers judged by `receiverPolicy`, their pulls read from
-    /// `payloadSource`, and its items served by `items`.
+    /// `payloadSource`, and its items served by `items`; each item event reaches `itemEvents` once logged.
     init(
         policy: PolicySnapshot = PolicySnapshot(), bundles: [BundledPayload] = [],
         receiverPolicy: ReceiverPolicy = .production,
-        payloadSource: any UpdatePayloadSource = FixedPayloads(bundles: []), items: ItemAdapters? = nil
+        payloadSource: any UpdatePayloadSource = FixedPayloads(bundles: []), items: ItemAdapters? = nil,
+        itemEvents: @escaping @Sendable (HubItemEvent) -> Void = { _ in }
     ) {
         connector = RecordingConnector(receiverPolicy: receiverPolicy, payloadSource: payloadSource, items: items)
         let (snapshots, hostLogs, itemLog) = (snapshots, hostLogs, itemLog)
@@ -176,7 +177,10 @@ final class HubHarness: Sendable {
             logger: KernovaLogger(subsystem: "app.kernova", category: "AgentHub") { _, _, _, segments in
                 hostLogs.record(segments.map(\.text).joined())
             },
-            itemEvents: { itemLog.record(.event($0)) },
+            itemEvents: { event in
+                itemLog.record(.event(event))
+                itemEvents(event)
+            },
             publishingOn: publishQueue
         ) { snapshots.record($0) }
         hub.attach(transport, policy: policy, republisher: republisher)

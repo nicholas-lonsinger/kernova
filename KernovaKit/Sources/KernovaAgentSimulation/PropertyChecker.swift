@@ -421,7 +421,7 @@ package final class PropertyChecker {
         }
         let where_ = "property 11: link \(link.id) \(side)"
         switch output {
-        case .sink(.begin(let id, _, _)), .source(.serve(let id, _, _)):
+        case .sink(.begin(let id, _, _)), .source(.serve(let id, _, _, _)):
             let pull = key(id, serving: output.isSource)
             if itemPulls[pull] != nil { fail("\(where_) pull \(pull.stream) began twice") }
             itemPulls[pull] = PullRecord()
