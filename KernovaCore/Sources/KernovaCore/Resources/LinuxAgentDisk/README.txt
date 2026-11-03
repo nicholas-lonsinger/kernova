@@ -14,7 +14,7 @@ Open a terminal and run:
 
 Where the desktop has not mounted this disk, the first part mounts it, and says
 why if it can't; the second finds it wherever it is mounted. That installs the agent for you, and it connects at
-once. Kernova ejects this disk when it does.
+once. Kernova ejects this disk once each agent it waits for has connected.
 
 install.sh shows what it will change, and waits for Return. With NONINTERACTIVE
 set, as in NONINTERACTIVE=1 sh .../install.sh, it doesn't wait, and it runs
@@ -26,8 +26,11 @@ and prints each sudo command before it runs it:
 
     findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh" --system
 
-In a root shell, install.sh --system installs only the system service, without
-sudo.
+To install only the system service, run it as root through sudo:
+
+    findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sudo sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh" --system
+
+In a root shell, install.sh --system does the same without sudo.
 
 
 Without a desktop

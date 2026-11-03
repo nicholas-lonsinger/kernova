@@ -474,34 +474,56 @@ struct AppAlertConfigurationsTests {
         #expect(!alert.message.contains("replaced by"))
     }
 
-    @Test("A Linux guest's disk alert gives its command and copies it, where a macOS guest's names Finder")
+    @Test("A Linux guest's manage alert gives both commands and copies each, where a macOS guest's names Finder")
     func installerMountedOnLinux() {
         let (configurations, _) = makeConfigurations()
         var copied: [String] = []
-        let install = configurations.installerMountedConfig(
-            "Ubuntu", guestOS: .linux, purpose: .install, delivery: .usb
-        ) { copied.append($0) }
-        #expect(install.message.contains(LinuxAgentDisk.installCommand))
-        // The command mounts the disk itself where the desktop has not; the lines after it serve a guest with no desktop.
-        #expect(install.message.contains(LinuxAgentDisk.installCommandPrecondition))
-        #expect(install.message.contains(LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")))
-        #expect(install.buttons.map(\.title) == ["Copy Command", "Done"])
-        #expect(install.buttons.first?.role == .default)
-        install.buttons.first?.action()
-        #expect(copied == [LinuxAgentDisk.installCommand])
-
         let manage = configurations.installerMountedConfig(
             "Ubuntu", guestOS: .linux, purpose: .manage, delivery: .usb
         ) { copied.append($0) }
+        #expect(manage.message.contains(LinuxAgentDisk.installCommand(for: .sessionAgent)))
         #expect(manage.message.contains(LinuxAgentDisk.uninstallCommand))
         #expect(manage.message.contains("Adding --system to either also installs or removes the system service."))
+        // The lines after it serve a guest with no desktop.
+        #expect(manage.message.contains(LinuxAgentDisk.mountAndInstallCommands(for: .both).joined(separator: "\n")))
+        #expect(manage.buttons.map(\.title) == ["Copy Install Command", "Done", "Copy Uninstall Command"])
+        manage.buttons.first?.action()
         manage.buttons.last?.action()
-        #expect(copied.last == LinuxAgentDisk.uninstallCommand)
+        #expect(copied == [LinuxAgentDisk.installCommand(for: .sessionAgent), LinuxAgentDisk.uninstallCommand])
 
         let macOS = configurations.installerMountedConfig(
             "Sequoia", guestOS: .macOS, purpose: .install, delivery: .usb
         ) { copied.append($0) }
         #expect(macOS.message.contains("Finder"))
         #expect(macOS.buttons.map(\.title) == ["OK"])
+    }
+
+    @Test("The Linux install question copies the command for the choice it holds, and its Cancel changes nothing")
+    func linuxInstallQuestion() {
+        let (configurations, viewModel) = makeConfigurations()
+        let vm = viewModel.library.admitFixture(name: "Ubuntu", guestOS: .linux, phase: .running(sessionID: UUID()))
+        var choice = LinuxAgentInstallChoice.both
+        var copied: [String] = []
+        let alert = configurations.linuxAgentInstallChoiceConfig(vm, choice: { choice }) { copied.append($0) }
+
+        #expect(alert.title == "What do you want to install in \u{201C}Ubuntu\u{201D}?")
+        #expect(alert.message.contains("ejects it once each agent you choose connects"))
+        #expect(alert.buttons.map(\.title) == ["Attach and Copy Command", "Cancel"])
+        #expect(alert.buttons.map(\.role) == [.default, .cancel])
+
+        alert.buttons.last?.action()
+        #expect(copied.isEmpty)
+        #expect(vm.configuration.removableMedia == nil)
+
+        // Read when the user answers, not when the alert was built.
+        choice = .systemService
+        alert.buttons.first?.action()
+        #expect(copied == [LinuxAgentDisk.installCommand(for: .systemService)])
+
+        let steps = AppAlertConfigurations.linuxAgentInstallSteps(for: .systemService)
+        #expect(steps.precondition == LinuxAgentDisk.installCommandPrecondition)
+        #expect(steps.command == LinuxAgentDisk.installCommand(for: .systemService))
+        let headless = LinuxAgentDisk.mountAndInstallCommands(for: .systemService)
+        #expect(steps.headless.hasSuffix(headless.joined(separator: "\n")))
     }
 }

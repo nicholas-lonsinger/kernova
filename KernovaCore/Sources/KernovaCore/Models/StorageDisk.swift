@@ -145,13 +145,20 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
     /// Free-form user note, empty when none was entered.
     package var notes: String
 
+    /// On a guest-agent installer disk, the agent scopes it still waits to see
+    /// connect current before it ejects
+    /// (``VMConfiguration/recordCurrentAgents(_:of:in:)``); empty on every
+    /// other medium, and on an installer that never ejects on its own.
+    package var awaitedAgentScopes: Set<GuestAgentScope>
+
     init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = true,
         label: String? = nil,
         bookmark: Data? = nil,
-        notes: String = ""
+        notes: String = "",
+        awaitedAgentScopes: Set<GuestAgentScope> = []
     ) {
         self.id = id
         self.path = path
@@ -159,6 +166,7 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
         self.bookmark = bookmark
         self.notes = notes
+        self.awaitedAgentScopes = awaitedAgentScopes
     }
 
     // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
@@ -173,6 +181,9 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.label = try c.decode(String.self, forKey: .label)
         self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
         self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
+        self.awaitedAgentScopes = try c.decode(
+            Set<GuestAgentScope>.self, forKey: .awaitedAgentScopes, default: Self(path: path).awaitedAgentScopes,
+            in: decoder)
     }
 }
 
@@ -239,6 +250,36 @@ extension VMConfiguration {
     /// list: what Eject Guest Agent Media and a cold boot write.
     package mutating func removeInstallerDisks(of agents: BundledGuestAgents, in layout: VMBundleLayout) {
         let kept = (removableMedia ?? []).filter { !$0.isInstaller(of: agents, in: layout) }
+        removableMedia = kept.isEmpty ? nil : kept
+    }
+
+    /// Has every installer disk wait for `scopes`, whatever it waited for before.
+    package mutating func setInstallerDisksAwaiting(
+        _ scopes: Set<GuestAgentScope>, of agents: BundledGuestAgents, in layout: VMBundleLayout
+    ) {
+        removableMedia = removableMedia?.map { item in
+            guard item.isInstaller(of: agents, in: layout) else { return item }
+            var item = item
+            item.awaitedAgentScopes = scopes
+            return item
+        }
+    }
+
+    /// Records that an agent of each of `scopes` connected current: each installer disk waiting for
+    /// one stops waiting for it, and one left waiting for nothing ejects.
+    ///
+    /// A disk that waited for none of `scopes` is left as it is, so one that waits for nothing at all
+    /// stays until it is ejected or the guest powers off.
+    package mutating func recordCurrentAgents(
+        _ scopes: Set<GuestAgentScope>, of agents: BundledGuestAgents, in layout: VMBundleLayout
+    ) {
+        let kept = (removableMedia ?? []).compactMap { item -> RemovableMediaItem? in
+            guard item.isInstaller(of: agents, in: layout), !item.awaitedAgentScopes.isDisjoint(with: scopes)
+            else { return item }
+            var item = item
+            item.awaitedAgentScopes.subtract(scopes)
+            return item.awaitedAgentScopes.isEmpty ? nil : item
+        }
         removableMedia = kept.isEmpty ? nil : kept
     }
 }

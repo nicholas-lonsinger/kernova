@@ -1639,24 +1639,22 @@ struct VMInstanceTests {
         #expect(instance.configuration.lastSeenGuestOSVersion == nil)
     }
 
-    @Test("recordObservedAgentInfo fires onAgentBecameCurrent for a current version")
-    func recordObservedFiresBecameCurrentOnCurrentVersion() throws {
+    @Test("recordObservedAgentInfo reports the login scope arriving for a current version")
+    func recordObservedReportsLoginOnCurrentVersion() throws {
         let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
-        // lastSeen must differ from the reported version so the persist guard
-        // doesn't short-circuit before the auto-eject hook.
         let library = makeWiredLibrary()
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.0.0")
         defer { withExtendedLifetime(library) {} }
-        var fired = 0
-        instance.onAgentBecameCurrent = { fired += 1 }
+        var arrivals: [Set<GuestAgentScope>] = []
+        instance.onCurrentAgentsArrived = { arrivals.append($0) }
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
 
-        #expect(fired == 1)
+        #expect(arrivals == [[.login]])
     }
 
-    @Test("recordObservedAgentInfo does not fire onAgentBecameCurrent for an outdated version")
-    func recordObservedSkipsBecameCurrentOnOutdated() throws {
+    @Test("recordObservedAgentInfo reports no arrival for an outdated version")
+    func recordObservedReportsNothingOnOutdated() throws {
         let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
         // Only meaningful when the bundled version is strictly newer than the
         // sentinel, so "0.0.1" genuinely classifies as outdated.
@@ -1664,31 +1662,29 @@ struct VMInstanceTests {
         let library = makeWiredLibrary()
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.0.0")
         defer { withExtendedLifetime(library) {} }
-        var fired = 0
-        instance.onAgentBecameCurrent = { fired += 1 }
+        var arrivals: [Set<GuestAgentScope>] = []
+        instance.onCurrentAgentsArrived = { arrivals.append($0) }
 
         instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.0.1", osVersion: nil))
 
-        #expect(fired == 0)
+        #expect(arrivals.isEmpty)
     }
 
-    @Test("recordObservedAgentInfo does not fire onAgentBecameCurrent on an unchanged-version reconnect")
-    func recordObservedSkipsBecameCurrentWhenUnchanged() throws {
+    @Test("recordObservedAgentInfo reports the login scope on a same-version reconnect too")
+    func recordObservedReportsLoginOnAnUnchangedVersion() throws {
         let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
-        // Same version as last seen → the became-current guard short-circuits,
-        // so a disk mounted to run uninstall.command is never yanked out by a
-        // same-version reconnect — even when an OS-version change makes the
-        // write itself go through.
+        // What the disk was mounted for decides whether this ejects it, so a
+        // reinstall of the same version is an arrival like any other.
         let library = makeWiredLibrary()
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: bundled)
         defer { withExtendedLifetime(library) {} }
-        var fired = 0
-        instance.onAgentBecameCurrent = { fired += 1 }
+        var arrivals: [Set<GuestAgentScope>] = []
+        instance.onCurrentAgentsArrived = { arrivals.append($0) }
 
         instance.recordObservedAgentInfo(
             ObservedAgentInfo(agentVersion: bundled, osVersion: "Version 26.0 (Build 25A123)"))
 
-        #expect(fired == 0)
+        #expect(arrivals == [[.login]])
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
     }
 

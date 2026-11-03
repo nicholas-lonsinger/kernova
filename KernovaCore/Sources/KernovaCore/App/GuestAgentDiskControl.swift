@@ -26,7 +26,9 @@ package enum GuestAgentDiskControl {
         let action: Action
         /// The command the user runs inside the guest to install from the
         /// attached disk, for a disk opened from a terminal rather than in
-        /// Finder: the Linux agent's, while it is attached.
+        /// Finder: while the Linux agent's is attached, the one that installs
+        /// the agents it still waits for, or the session agent where it waits
+        /// for none.
         package var installCommand: String?
 
         init(title: String, isEnabled: Bool, action: Action, installCommand: String? = nil) {
@@ -65,11 +67,11 @@ package enum GuestAgentDiskControl {
         else {
             return withheld
         }
-        var model = model(
-            status: instance.agentPresentation?.status,
-            isInstallerMounted: instance.hasGuestAgentInstallerMounted)
-        if model.action == .eject, guestOS == .linux {
-            model.installCommand = LinuxAgentDisk.installCommand
+        let awaited = instance.guestAgentInstallerAwaits
+        var model = model(status: instance.agentPresentation?.status, isInstallerMounted: awaited != nil)
+        if let awaited, guestOS == .linux {
+            model.installCommand = LinuxAgentDisk.installCommand(
+                for: LinuxAgentInstallChoice(installing: awaited) ?? .sessionAgent)
         }
         return model
     }

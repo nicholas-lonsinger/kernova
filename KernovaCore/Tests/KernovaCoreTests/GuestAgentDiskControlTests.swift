@@ -163,18 +163,48 @@ struct GuestAgentDiskControlTests {
         #expect(detached.isEnabled)
         #expect(detached.installCommand == nil)
 
-        let attached = viewModel.library.admitFixture(
+        // Registered, so the arrival hook reaches the core as a load wires it.
+        let attached = viewModel.library.registerFixture(
             name: "Attached", guestOS: .linux, phase: .running(sessionID: UUID())
         ) {
             $0.removableMedia = [
-                RemovableMediaItem(path: agents.linuxDisk.url.path(percentEncoded: false), readOnly: true)
+                RemovableMediaItem(
+                    path: agents.linuxDisk.url.path(percentEncoded: false), readOnly: true,
+                    awaitedAgentScopes: [.login, .system])
             ]
         }
         attached.beginSessionContextForTesting()
         attached.attachAgentTransport(AgentHubProbe())
         let ejecting = GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities)
         #expect(ejecting.action == .eject)
-        #expect(ejecting.installCommand == LinuxAgentDisk.installCommand)
+        #expect(ejecting.installCommand == LinuxAgentDisk.installCommand(for: .both))
+
+        // The command follows what the disk still waits for: once the session
+        // agent connects, the one that installs the system service alone.
+        attached.onCurrentAgentsArrived?([.login])
+        #expect(
+            GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities).installCommand
+                == LinuxAgentDisk.installCommand(for: .systemService))
+    }
+
+    @Test("A Linux disk that waits for no agent offers the session agent's command")
+    func linuxManageDiskOffersTheSessionCommand() {
+        let agents = BundledGuestAgents.linux(agent: URL(filePath: "/var/empty/kernova-agent"), disk: .testing)
+        let viewModel = makeLibraryViewModel(
+            preferences: makeTestPreferences(),
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgents: agents))
+        let attached = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID())) {
+            $0.removableMedia = [
+                RemovableMediaItem(path: agents.linuxDisk.url.path(percentEncoded: false), readOnly: true)
+            ]
+        }
+        attached.beginSessionContextForTesting()
+        attached.attachAgentTransport(AgentHubProbe())
+        #expect(
+            GuestAgentDiskControl.model(for: attached, in: viewModel.capabilities).installCommand
+                == LinuxAgentDisk.installCommand(for: .sessionAgent))
     }
 
     @Test("A Linux guest in a build without the Linux agent is withheld the control")

@@ -345,7 +345,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel(bundleProducts: products)
         let instance = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
-        await viewModel.toggleGuestAgentDisk(on: instance)
+        await viewModel.installLinuxGuestAgent(on: instance, choice: .systemService)
         #expect(instance.hasGuestAgentInstallerMounted)
         let cell = makeRow(instance: instance, isBusy: false) {
             GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
@@ -357,7 +357,7 @@ struct SidebarViewControllerTests {
         #expect(badge.isInstallerMounted)
         let control = try #require(badge.diskControl)
         #expect(control.title == "Eject Guest Agent Media")
-        #expect(control.installCommand == LinuxAgentDisk.installCommand)
+        #expect(control.installCommand == LinuxAgentDisk.installCommand(for: .systemService))
 
         let popover = GuestAgentStatusViewController()
         popover.update(
@@ -367,7 +367,7 @@ struct SidebarViewControllerTests {
         let texts = visibleTexts(in: popover.view)
         #expect(texts.first == "Set up the Kernova guest agent")
         #expect(texts.contains(LinuxAgentDisk.installCommandPrecondition))
-        #expect(texts.contains(LinuxAgentDisk.installCommand))
+        #expect(texts.contains(LinuxAgentDisk.installCommand(for: .systemService)))
         #expect(
             firstSubview(NSButton.self, in: popover.view) { $0.title == "Eject Guest Agent Media" }?.isHidden == false)
         #expect(
