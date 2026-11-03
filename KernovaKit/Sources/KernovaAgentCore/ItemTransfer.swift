@@ -27,16 +27,13 @@ public struct ItemOffer: Sendable, Equatable {
     public var token: Data
     /// The receiver keeps the content out of history and logs.
     public var concealed: Bool
-    /// The receiver keeps the content out of history.
-    public var transient: Bool
     /// The items, in the order they are sent.
     public var items: [OfferedItem]
 
     /// Creates an offer.
-    public init(token: Data, concealed: Bool = false, transient: Bool = false, items: [OfferedItem]) {
+    public init(token: Data, concealed: Bool = false, items: [OfferedItem]) {
         self.token = token
         self.concealed = concealed
-        self.transient = transient
         self.items = items
     }
 }
@@ -49,8 +46,6 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var token: Data
     /// The receiver keeps the content out of history and logs.
     public var concealed: Bool
-    /// The receiver keeps the content out of history.
-    public var transient: Bool
     /// The items the offer sends.
     public var count: Int
 
@@ -58,7 +53,6 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
         self.feature = feature
         token = header.token
         concealed = header.concealed
-        transient = header.transient
         count = Int(header.count)
     }
 }

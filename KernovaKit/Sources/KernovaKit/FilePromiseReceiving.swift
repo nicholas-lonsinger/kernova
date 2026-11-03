@@ -13,6 +13,10 @@ public protocol FilePromiseReceiving: AnyObject {
     /// source can name nothing when the drag is taken — a Photos asset does.
     var fileNames: [String] { get }
 
+    /// The type identifiers of the files the promise's source says it writes,
+    /// declared before it is called in.
+    var fileTypes: [String] { get }
+
     /// Asks the source to write its files into `destination`, calling `reader`
     /// on `operationQueue` once per file with the URL it landed at, or with
     /// the error that stopped it.

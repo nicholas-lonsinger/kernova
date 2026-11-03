@@ -147,7 +147,7 @@ public final class ClipboardPasteboardPublisher {
             ) in
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
-                provide: { provide($0.rawValue) },
+                provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
                 onFinished: { provider in registry.release(provider) })
             providers.append(provider)
             return (types: spec.types.map(NSPasteboard.PasteboardType.init(rawValue:)), provider: provider)
@@ -174,6 +174,18 @@ public final class ClipboardPasteboardPublisher {
         heldWrite = (changeCount: pasteboard.changeCount, promised: promised)
         providerRegistry.retain(providers)
         return true
+    }
+
+    /// `data` when the pasteboard may serve it as `type`, else nil.
+    ///
+    /// Every write's bytes pass here, so a URL flavor naming a file on this
+    /// machine is never served whichever path built the spec
+    /// (``ClipboardSnapshotPolicy/admits(_:servedAs:)``). `ItemSpec.fileURLType`
+    /// is exempt: it serves only the URL of a file this side landed, since the
+    /// identity gate keeps every spelling of it off a peer's inline types.
+    nonisolated private static func screened(_ data: Data?, servedAs type: String) -> Data? {
+        guard let data, type != ItemSpec.fileURLType else { return data }
+        return ClipboardSnapshotPolicy.admits(data, servedAs: type) ? data : nil
     }
 
     /// `true` while the pasteboard still holds this publisher's most recent

@@ -257,6 +257,7 @@ final class FakePromiseReceiver: FilePromiseReceiving {
     private let names: [String]
 
     private(set) var fileNames: [String] = []
+    let fileTypes: [String] = []
     /// Where it was called in to, once it was.
     private(set) var destination: URL?
     /// Called as it is called in, before its call-in returns.

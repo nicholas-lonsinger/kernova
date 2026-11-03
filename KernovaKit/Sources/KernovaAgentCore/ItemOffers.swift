@@ -149,7 +149,6 @@ package struct ItemOfferRegistry: Sendable {
         let encoded = offer.items.map(\.encoded)
         var header = Kernova_V2_ItemSetHeader()
         header.concealed = offer.concealed
-        header.transient = offer.transient
         header.count = UInt32(clamping: offer.items.count)
         header.token = offer.token
         let body = header.encoded
