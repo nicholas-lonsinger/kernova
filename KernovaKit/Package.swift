@@ -306,8 +306,8 @@ var targets: [Target] = [
         name: "KernovaAgentRuntimeTests",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
-            "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost",
-            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost", "KernovaItemTransfer",
+            "KernovaFileTree", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -367,11 +367,14 @@ products += [
     .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
     .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
     .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
-    // The app's agent hub, and the protocol types and stream it is driven
-    // with, for KernovaCore.
+    // The app's agent hub, the protocol types and stream it is driven
+    // with, and the item adapters it serves and lands through, for KernovaCore.
     .library(
         name: "KernovaAgentHost",
-        targets: ["KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX"]),
+        targets: [
+            "KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX",
+            "KernovaItemTransfer", "KernovaFileTree",
+        ]),
     // The writer the app makes the Linux agent's disk with, for KernovaCore.
     .library(name: "KernovaISO9660", targets: ["KernovaISO9660"]),
     // The macOS guest agent's peer, install and update, and the core it runs on. Static for the reasons
@@ -428,7 +431,7 @@ targets += [
         name: "KernovaPlatformDarwin",
         dependencies: [
             "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
-            "KernovaDigest", "KernovaLogging", "KernovaSynchronization",
+            "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaItemTransfer", "KernovaFileTree",
         ],
         swiftSettings: sharedSwiftSettings
     ),

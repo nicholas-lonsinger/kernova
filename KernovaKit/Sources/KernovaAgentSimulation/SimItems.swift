@@ -151,7 +151,7 @@ package struct ContainerItemSource: Sendable {
     /// The answer to `effect`, if it takes one.
     package mutating func handle(_ effect: ItemSourceEffect) -> ItemSourceInput? {
         switch effect {
-        case .serve(let id, let request, let representation):
+        case .serve(let id, _, let request, let representation):
             var acceptance = ContainerAcceptance(request, storage: representation.storage)
             if ignoresCeiling { acceptance.byteCeiling = .max }
             do {

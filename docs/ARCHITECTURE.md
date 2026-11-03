@@ -116,7 +116,9 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 - Agent hub, every VM with a socket device: one `AgentHub` (KernovaKit's
   `KernovaAgentHost`) per `VMInstance`, beside the macOS ports above; each
   session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`
-  is what every agent-status surface reads.
+  is what every agent-status surface reads. Its item events and the content its
+  pulls serve route through one `ItemFeatureRouter` to each item feature's
+  owner, as the macOS session peer's do through its own.
 - Guest-agent installer disks: `BundledGuestAgents` (one of `AppBundleProducts`)
   hands `VMCommandCore.mountGuestAgentDisk` the macOS agent's bundled DMG, or the
   Linux agent's ISO, which `GuestAgentDiskCache` writes into Application Support

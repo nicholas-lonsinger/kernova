@@ -33,8 +33,8 @@ public struct PeerFeatureRegistry: Sendable {
 }
 
 /// The adapters that move items' bytes, and the features that offer items over them: the source serves this
-/// side's offers, the sink lands the far side's. Without them, item transfer is advertised absent
-/// `NOT_IMPLEMENTED`, and so is every feature that offers items.
+/// side's offers, the sink lands the far side's. Without them, or with no feature over them, item transfer is
+/// advertised absent `NOT_IMPLEMENTED`, and so is every feature that offers items.
 public struct ItemAdapters: Sendable {
     /// Serves this side's offers.
     public var source: any ItemSource
@@ -56,9 +56,10 @@ public struct ItemAdapters: Sendable {
 
     /// What a connection these adapters, or none, serve advertises of item transfer and the features over it.
     static func availability(_ adapters: ItemAdapters?) -> ItemFeatureAvailability {
-        guard let adapters else {
+        guard let adapters, !adapters.features.isEmpty else {
             var none = ItemFeatureAvailability.notImplemented
-            none.itemTransfer = .absent(.notImplemented, debugDetail: "no adapter registered")
+            none.itemTransfer = .absent(
+                .notImplemented, debugDetail: adapters == nil ? "no adapter registered" : "no feature offers items")
             return none
         }
         var availability = ItemFeatureAvailability.notImplemented
@@ -66,7 +67,7 @@ public struct ItemAdapters: Sendable {
         for feature in ItemFeatureAvailability.offering {
             availability[offering: feature] =
                 adapters.features.contains(feature)
-                ? .available(NoParams()) : .absent(.notImplemented, debugDetail: "no handler registered")
+                ? .available(NoParams()) : .absent(.notImplemented, debugDetail: "no owner registered")
         }
         return availability
     }

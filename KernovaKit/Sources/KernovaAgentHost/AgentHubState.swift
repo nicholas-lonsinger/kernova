@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaAgentCore
+import KernovaAgentRuntime
 import KernovaWire
 
 /// One connection that has said Hello.
@@ -82,7 +83,7 @@ struct AgentHubState: Sendable {
     var isFrozen = false
     var isClosed = false
     var power = HubPowerRouting()
-    var items = HubItemRequests()
+    var items = ItemRequests<PeerHandle>()
     var lastPublished = AgentHubSnapshot.empty
     private var nextConnectedOrder: UInt64 = 0
     /// The last close of each identity seen on this attachment. The snapshot shows an entry only while no

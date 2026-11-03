@@ -3,6 +3,8 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaCommandModel
+import KernovaFileTree
+import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
 import KernovaWire
@@ -442,13 +444,18 @@ package final class VMInstance {
         let snapshots = AgentHubSnapshotRelay()
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
+        let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+        let itemRouter = ItemFeatureRouter<PeerHandle>()
+        let items = ItemAdapters(
+            source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
+            sink: itemSink, features: itemRouter.features)
         agentHub = AgentHub(
             connector: agentConnector
                 ?? HostConnectionRuntime(
                     claim: PeerClaim(role: .host, versionLabel: bundleProducts.hostVersion),
-                    scheduler: SystemScheduler(), payloadSource: payloads, logger: hubLogger),
+                    scheduler: SystemScheduler(), payloadSource: payloads, items: items, logger: hubLogger),
             policy: Self.agentHubPolicy(for: bundle.configuration), payloads: payloads, logger: hubLogger,
-            publishingOn: .main
+            itemEvents: { itemRouter.deliver($0) }, publishingOn: .main
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
         }

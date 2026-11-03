@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaAgentCore
+import KernovaAgentRuntime
 import KernovaWire
 
 /// An item event of one peer's connection, as the hub hands it on under console authority: a peer's offer
@@ -15,6 +16,16 @@ public enum HubItemEvent: Sendable, Equatable {
     case items(PeerHandle, ItemTransferEvent)
     /// A take of `PeerHandle`'s drag ended.
     case dragTake(PeerHandle, DragTakeEvent)
+}
+
+extension ItemFeatureRouter where Peer == PeerHandle {
+    /// Hands `event`, as the hub's `itemEvents` hears it, to its feature's owner.
+    public func deliver(_ event: HubItemEvent) {
+        switch event {
+        case .items(let peer, let event): deliver(event, from: peer)
+        case .dragTake(let peer, let event): deliver(event, from: peer)
+        }
+    }
 }
 
 /// What the owner of the hub's item events holds open on one connection, each in the order it opened: the host's
@@ -30,48 +41,6 @@ struct HubOpenItems: Sendable {
     var forwardedOffers: [Offer] = []
     var pulls: [(id: ItemPullID, feature: FeatureID)] = []
     var takes: [DragTakeID] = []
-}
-
-/// The item commands the hub awaits answers to, each with the peer asked and what its answer is for.
-/// Touched only on the hub's queue.
-struct HubItemRequests: Sendable {
-    struct Pending: Sendable {
-        var peer: PeerHandle
-        var command: ItemCommand
-        /// A pull's: the feature of the offer it names, which the hub forwarded.
-        var feature: FeatureID?
-        /// Receives the answer, or nil when the connection ended without one.
-        var answer: @Sendable (ItemReply?) -> Void
-    }
-
-    private var pending: [ItemRequestID: Pending] = [:]
-    private var nextRequest: UInt64 = 0
-
-    /// Records `command`, the one `build` makes around a fresh id, to `peer`, whose answer `answer` receives;
-    /// `feature` is a pull's, as `Pending.feature` says.
-    mutating func add(
-        _ peer: PeerHandle, _ build: (ItemRequestID) -> ItemCommand, feature: FeatureID?,
-        _ answer: @escaping @Sendable (ItemReply?) -> Void
-    ) -> ItemCommand {
-        nextRequest += 1
-        let id = ItemRequestID(rawValue: nextRequest)
-        let command = build(id)
-        pending[id] = Pending(peer: peer, command: command, feature: feature, answer: answer)
-        return command
-    }
-
-    /// The request `peer`'s connection answered with `id`, which it removes.
-    mutating func take(_ id: ItemRequestID, from peer: PeerHandle) -> Pending? {
-        guard pending[id]?.peer == peer else { return nil }
-        return pending.removeValue(forKey: id)
-    }
-
-    /// Every request asked of `peer`, which it removes: its connection ended, so none is answered.
-    mutating func takeAll(of peer: PeerHandle) -> [Pending] {
-        let ended = pending.filter { $0.value.peer == peer }
-        for id in ended.keys { pending[id] = nil }
-        return ended.sorted { $0.key.rawValue < $1.key.rawValue }.map(\.value)
-    }
 }
 
 /// Console authority over items. A feature's offers, the host's and the peer's, live only on that feature's
@@ -128,7 +97,7 @@ extension AgentHubState {
     }
 
     /// Records what `reply`, the answer of `handle`'s connection to `pending`, opened there.
-    mutating func opened(_ pending: HubItemRequests.Pending, _ reply: ItemReply, on handle: PeerHandle) {
+    mutating func opened(_ pending: ItemRequests<PeerHandle>.Pending, _ reply: ItemReply, on handle: PeerHandle) {
         switch (pending.command, reply) {
         case (.offer(_, let offer, let feature), .offered(nil)):
             connections[handle]?.items.hostOffers.append(HubOpenItems.Offer(token: offer.token, feature: feature))
