@@ -8,6 +8,7 @@ import Dispatch
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
+import KernovaAgentSimulation
 import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
@@ -51,9 +52,9 @@ final class RecordingConnector: HostConnectionMaking {
     /// an entry, empty until its first arrives.
     private let heldFeatures = Locked<[Int: [@Sendable () -> Void]]>([:])
 
-    init(receiverPolicy: ReceiverPolicy, payloadSource: any UpdatePayloadSource) {
+    init(receiverPolicy: ReceiverPolicy, payloadSource: any UpdatePayloadSource, items: ItemAdapters?) {
         runtime = HostConnectionRuntime(
-            claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: payloadSource,
+            claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: payloadSource, items: items,
             logger: Fixture.logger, receiverPolicy: receiverPolicy)
     }
 
@@ -106,6 +107,8 @@ final class RecordingConnector: HostConnectionMaking {
         let number: Int
         let commands: Recorder<(connection: Int, command: HostCommand)>
 
+        var generation: ConnectionGeneration { connection.generation }
+
         func start() { connection.start() }
 
         func send(_ command: HostCommand) {
@@ -150,6 +153,8 @@ final class HubHarness: Sendable {
     let hub: AgentHub
     let transport = TestTransport()
     let snapshots = Recorder<AgentHubSnapshot>()
+    /// The hub's item events, and what each test records beside them on the hub's queue.
+    let itemLog = Recorder<ItemLogEntry>()
     /// What the republisher logged: level, and each segment.
     let guestLogs = Recorder<(level: KernovaLogLevel, segments: [LogSegment])>()
     /// The hub's own notices: its acceptor's.
@@ -157,20 +162,21 @@ final class HubHarness: Sendable {
     /// Where the hub delivers its snapshots.
     let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
 
-    /// A hub attached to `transport`, its peers judged by `receiverPolicy` and their pulls read from
-    /// `payloadSource`.
+    /// A hub attached to `transport`, its peers judged by `receiverPolicy`, their pulls read from
+    /// `payloadSource`, and its items served by `items`.
     init(
         policy: PolicySnapshot = PolicySnapshot(), bundles: [BundledPayload] = [],
         receiverPolicy: ReceiverPolicy = .production,
-        payloadSource: any UpdatePayloadSource = FixedPayloads(bundles: [])
+        payloadSource: any UpdatePayloadSource = FixedPayloads(bundles: []), items: ItemAdapters? = nil
     ) {
-        connector = RecordingConnector(receiverPolicy: receiverPolicy, payloadSource: payloadSource)
-        let (snapshots, hostLogs) = (snapshots, hostLogs)
+        connector = RecordingConnector(receiverPolicy: receiverPolicy, payloadSource: payloadSource, items: items)
+        let (snapshots, hostLogs, itemLog) = (snapshots, hostLogs, itemLog)
         hub = AgentHub(
             connector: connector, policy: policy, payloads: FixedPayloads(bundles: bundles),
             logger: KernovaLogger(subsystem: "app.kernova", category: "AgentHub") { _, _, _, segments in
                 hostLogs.record(segments.map(\.text).joined())
             },
+            itemEvents: { itemLog.record(.event($0)) },
             publishingOn: publishQueue
         ) { snapshots.record($0) }
         hub.attach(transport, policy: policy, republisher: republisher)
@@ -237,39 +243,52 @@ final class HubPeer: Sendable {
 
     convenience init(
         _ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
-        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false,
+        items: MemoryItems? = nil
     ) {
-        self.init(harness.transport, claim: claim, state: state, update: update, installs: installs)
+        self.init(harness.transport, claim: claim, state: state, update: update, installs: installs, items: items)
     }
 
     /// A peer whose installer is `update`: with `installs`, it reports every pull's bytes consumed and the
-    /// payload installed; otherwise it never answers.
+    /// payload installed; otherwise it never answers. With `items`, it serves every item feature through them.
     init(
         _ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
-        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false,
+        items: MemoryItems? = nil
     ) {
         guard let stream = transport.connect() else { preconditionFailure("the transport refused a connection") }
         self.stream = stream
         let events = events
         let scheduler = SystemScheduler()
+        var configuration = PeerConfiguration(
+            claim: claim, state: state, power: .absent(.notImplemented, debugDetail: ""),
+            logs: .absent(.notImplemented, debugDetail: ""), update: update)
+        if items != nil { configuration.items = SimItems.served }
         driver = ConnectionDriver(
-            endpoint: PeerEndpoint(
-                PeerConfiguration(
-                    claim: claim, state: state, power: .absent(.notImplemented, debugDetail: ""),
-                    logs: .absent(.notImplemented, debugDetail: ""), update: update),
-                generation: ConnectionGeneration(rawValue: 1), now: scheduler.now),
+            endpoint: PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: scheduler.now),
             stream: stream, scheduler: scheduler, logger: Fixture.logger,
             handlers: ConnectionDriver<PeerEndpoint>.Handlers(
                 effect: { effect, driver in
-                    guard installs, case .update(let update) = effect else { return }
-                    switch update {
-                    case .payload(let id, let bytes): driver.handle(.update(.consumed(id, bytes.count)))
-                    case .complete(let id, _): driver.handle(.update(.installed(id)))
-                    default: break
+                    switch effect {
+                    case .update(.payload(let id, let bytes)) where installs:
+                        driver.handle(.update(.consumed(id, bytes.count)))
+                    case .update(.complete(let id, _)) where installs:
+                        driver.handle(.update(.installed(id)))
+                    case .itemSource(let effect):
+                        if let input = items?.serve(effect) { driver.handle(.items(.source(input))) }
+                    case .itemSink(let effect):
+                        if let input = items?.land(effect) { driver.handle(.items(.sink(input))) }
+                    default:
+                        break
                     }
                 },
                 event: { event, _ in events.record(event) }))
         driver.start()
+    }
+
+    /// Feeds the endpoint `command`.
+    func send(_ command: ItemCommand) {
+        driver.handle(.itemCommand(command))
     }
 
     /// How the connection ended, once it has.
@@ -288,4 +307,11 @@ extension PeerClaim {
             role: .sessionPeer, scope: scope, os: .linux, architecture: .arm64, versionLabel: "peer",
             instanceID: Data(repeating: instance, count: 16))
     }
+}
+
+/// One entry of a hub harness's item log: an item event the hub handed on, or a note a test made on the
+/// hub's queue, such as a call's answer.
+enum ItemLogEntry: Sendable, Equatable {
+    case event(HubItemEvent)
+    case note(String)
 }

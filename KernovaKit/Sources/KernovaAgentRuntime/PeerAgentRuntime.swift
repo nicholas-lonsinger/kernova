@@ -141,6 +141,12 @@ public final class PeerAgentRuntime: Sendable {
         }
     }
 
+    /// Sends `command` to the current connection; the `.itemReply` it owes, if any, comes through
+    /// `Handlers.event`. With no connection, it is never answered.
+    public func send(_ command: ItemCommand) {
+        queue.async { [self] in state.withLock { $0.driver }?.handle(.itemCommand(command)) }
+    }
+
     // MARK: The dial schedule
 
     /// Runs one input on the dial schedule — unless it is a fire that is no longer armed — then its
@@ -185,7 +191,7 @@ public final class PeerAgentRuntime: Sendable {
             }
             configuration.powerLedger = ledger
             configuration.receiverPolicy = receiverPolicy
-            configuration.items.itemTransfer = ItemAdapters.availability(registry.items)
+            configuration.items = ItemAdapters.availability(registry.items)
             let driver = ConnectionDriver(
                 endpoint: PeerEndpoint(configuration, generation: generation, now: scheduler.now), stream: stream,
                 scheduler: scheduler, logger: logger, handlers: driverHandlers(generation))
@@ -269,7 +275,7 @@ public final class PeerAgentRuntime: Sendable {
                 switch input {
                 case .power(.availability(let availability)): state.power = availability
                 case .update(.availability(let availability)): state.update = availability
-                case .power, .update, .logs, .items, .dragTake, .peerState: break
+                case .power, .update, .logs, .items, .dragTake, .itemCommand, .peerState: break
                 }
                 return state.driver
             }

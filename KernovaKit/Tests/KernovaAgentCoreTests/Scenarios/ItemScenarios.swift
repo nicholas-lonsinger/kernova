@@ -65,15 +65,17 @@ enum ItemScenarios {
     /// The `SimItems` file the host pulls in the publish scenarios, landed under the sim sink's name.
     static let landedFile = ItemPullResult.landed(.named(Data("item".utf8)))
 
+    /// One representation of each storage.
+    static let everyStorage = [
+        SimItems.representation(.inline, size: 100), SimItems.representation(.file, size: 300_000),
+        SimItems.representation(.folder, size: 2_000_000),
+    ]
+
     static let landsEveryStorage = Scenario(
         name: "items: the host pulls each storage of a peer's offer, and each lands", seeds: 30, end: .sec(3),
         options: options,
         script: { world in
-            let representations = [
-                SimItems.representation(.inline, size: 100), SimItems.representation(.file, size: 300_000),
-                SimItems.representation(.folder, size: 2_000_000),
-            ]
-            peerOffers(world, representations)
+            peerOffers(world, everyStorage)
             for index in 0..<3 {
                 world.at(in: .ms(800) ... .ms(900)) { world in
                     world.pullItem(SimItems.request(1, representation: UInt32(index)), by: .host)
@@ -87,10 +89,12 @@ enum ItemScenarios {
             failures += expectThat(link.items(.peer).offerRefusals.isEmpty, "the peer's offer opened")
             failures += expectThat(host.offersReceived.count == 1, "the host received the offer once")
             failures += expectThat(host.pullsEnded.count == 3, "three pulls ended: \(ended(world, .host))")
+            let read = host.reads.first?.result
+            failures += expectThat(read?.representations == everyStorage, "the host read the offered item")
             for ended in host.pullsEnded {
                 guard isLanded(ended.result),
                     let request = host.pulls.first(where: { (try? $0.result.get()) == ended.id })?.request,
-                    let offered = link.host?.remoteOfferItem(token: request.token, index: 0)
+                    let offered = read
                 else {
                     failures.append("pull \(ended.id.stream.rawValue) ended \(ended.result)")
                     continue
