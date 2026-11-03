@@ -137,6 +137,7 @@ package final class HostileRun {
     package private(set) var itemOutputs: [ItemTransferOutput] = []
     package var itemSource = ContainerItemSource()
     package private(set) var itemSink = DecodingItemSink()
+    private var nextRequest: UInt64 = 0
 
     /// A real host endpoint (`local == .host`) holding `bundles`, or a real
     /// session peer whose process's power ledger is `powerLedger`; with `items`, serving every item feature,
@@ -254,19 +255,41 @@ package final class HostileRun {
         return stream
     }
 
+    /// Sends the local endpoint `command`, then drains.
+    package func item(_ command: ItemCommand) {
+        host?.handle(.items(command), now: now)
+        peer?.handle(.itemCommand(command), now: now)
+        drain()
+    }
+
+    /// Sends the local endpoint the command `build` makes around a fresh request id, and returns its answer.
+    private func ask(_ build: (ItemRequestID) -> ItemCommand) -> ItemReply? {
+        nextRequest += 1
+        let id = ItemRequestID(rawValue: nextRequest)
+        item(build(id))
+        for event in hostEvents { if case .itemReply(id, let reply) = event { return reply } }
+        for event in peerEvents { if case .itemReply(id, let reply) = event { return reply } }
+        return nil
+    }
+
     /// Pulls `request` from the far side's offer.
     package func pullItem(_ request: PullRequest) -> Result<ItemPullID, WireError>? {
-        let result = host?.pullItem(request, now: now) ?? peer?.pullItem(request, now: now)
-        drain()
+        guard case .pulled(let result) = ask({ .pull($0, request) }) else { return nil }
         return result
     }
 
     /// Offers `offer` as the local side's offer of `feature`; nil when opened.
     package func offerItems(_ offer: ItemOffer, feature: FeatureID = .clipboard) -> WireError? {
-        let refusal =
-            host?.offerItems(offer, feature: feature, now: now) ?? peer?.offerItems(offer, feature: feature, now: now)
-        drain()
+        guard case .offered(let refusal) = ask({ .offer($0, offer, feature: feature) }) else {
+            return WireError(.internal, debugDetail: "no answer")
+        }
         return refusal
+    }
+
+    /// Item `item` of the far side's open offer of `token`, decoded now; nil when none is held.
+    package func readItem(_ token: Data, item: UInt32 = 0) -> OfferedItem? {
+        guard case .read(let read) = ask({ .read($0, token: token, item: item) }) else { return nil }
+        return read
     }
 
     /// The `.pullEnded` and `.serveEnded` events, in order.

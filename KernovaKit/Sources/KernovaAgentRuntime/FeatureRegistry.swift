@@ -36,34 +36,19 @@ public struct PeerFeatureRegistry: Sendable {
 /// side's offers, the sink lands the far side's. Without them, item transfer is advertised absent
 /// `NOT_IMPLEMENTED`, and so is every feature that offers items.
 public struct ItemAdapters: Sendable {
-    /// The features that offer items, each of which a side serves only where its owner handles its offers.
-    public struct Features: OptionSet, Sendable {
-        /// One bit per feature.
-        public let rawValue: UInt8
-
-        /// Creates a set.
-        public init(rawValue: UInt8) {
-            self.rawValue = rawValue
-        }
-
-        /// CLIPBOARD.
-        public static let clipboard = Features(rawValue: 1 << 0)
-        /// DROP.
-        public static let drop = Features(rawValue: 1 << 1)
-        /// DRAG.
-        public static let drag = Features(rawValue: 1 << 2)
-    }
-
     /// Serves this side's offers.
     public var source: any ItemSource
     /// Lands the far side's offers.
     public var sink: any ItemSink
-    /// The features this side's owner handles: each is advertised available where listed, and absent
-    /// `NOT_IMPLEMENTED` otherwise.
-    public var features: Features
+    /// The features this side's owner handles, each one of `ItemFeatureAvailability.offering`: each is
+    /// advertised available where listed, and absent `NOT_IMPLEMENTED` otherwise.
+    public let features: Set<FeatureID>
 
     /// Creates the adapters, serving `features`.
-    public init(source: any ItemSource, sink: any ItemSink, features: Features = []) {
+    public init(source: any ItemSource, sink: any ItemSink, features: Set<FeatureID> = []) {
+        assert(
+            features.isSubset(of: ItemFeatureAvailability.offering),
+            "\(features.subtracting(ItemFeatureAvailability.offering)) offer no items")
         self.source = source
         self.sink = sink
         self.features = features
@@ -76,13 +61,14 @@ public struct ItemAdapters: Sendable {
             none.itemTransfer = .absent(.notImplemented, debugDetail: "no adapter registered")
             return none
         }
-        func served(_ feature: Features) -> Availability<NoParams> {
-            adapters.features.contains(feature)
+        var availability = ItemFeatureAvailability.notImplemented
+        availability.itemTransfer = .available(NoParams())
+        for feature in ItemFeatureAvailability.offering {
+            availability[offering: feature] =
+                adapters.features.contains(feature)
                 ? .available(NoParams()) : .absent(.notImplemented, debugDetail: "no handler registered")
         }
-        return ItemFeatureAvailability(
-            itemTransfer: .available(NoParams()), clipboard: served(.clipboard), drop: served(.drop),
-            drag: served(.drag))
+        return availability
     }
 }
 

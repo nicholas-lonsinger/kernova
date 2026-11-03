@@ -117,7 +117,7 @@ final class ScriptedDialer: TransportDialer {
 /// Item adapters that are only registered: a test that offers nothing never reaches them.
 struct RegisteredItemAdapters: ItemSource, ItemSink {
     /// The adapters, serving `features`.
-    static func adapters(_ features: ItemAdapters.Features = []) -> ItemAdapters {
+    static func adapters(_ features: Set<FeatureID> = []) -> ItemAdapters {
         ItemAdapters(source: RegisteredItemAdapters(), sink: RegisteredItemAdapters(), features: features)
     }
 
@@ -143,7 +143,7 @@ final class MemoryItems: ItemSource, ItemSink {
     }
 
     /// These adapters, serving `features`.
-    func adapters(_ features: ItemAdapters.Features = [.clipboard, .drop, .drag]) -> ItemAdapters {
+    func adapters(_ features: Set<FeatureID> = ItemFeatureAvailability.offering) -> ItemAdapters {
         ItemAdapters(source: self, sink: self, features: features)
     }
 

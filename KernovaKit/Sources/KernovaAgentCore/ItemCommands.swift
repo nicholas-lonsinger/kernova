@@ -17,24 +17,29 @@ public struct ItemRequestID: Hashable, Sendable {
     }
 }
 
-/// What an endpoint's owner asks of its item machines from another queue than the driver's. Each command
-/// that carries an `ItemRequestID` is answered by exactly one `ItemReply` event of that id, emitted before
-/// any event the command caused; one sent after the connection ended is never answered.
+/// What an endpoint's owner asks of its item machines, the one way in. Each command that carries an
+/// `ItemRequestID` is answered by exactly one `ItemReply` event of that id, emitted before any event the
+/// command caused. A command the driver receives after the connection finished is never answered; one
+/// answered while the connection is closing follows `.closed`.
 public enum ItemCommand: Sendable, Equatable {
-    /// Offer on `feature`'s offer kind, as `offerItems` does; answered `.offered`.
+    /// Offer on `feature`'s offer kind: CLIPBOARD, withdrawing this side's previous clipboard offer, DROP from
+    /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
+    /// does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
-    /// Withdraw this side's offer of `token`.
+    /// Withdraw this side's offer of `token`; its `.offerEnded` follows.
     case withdraw(token: Data)
-    /// Release the far side's offer of `token`.
+    /// Release the far side's offer of `token`: this side pulls nothing more of it. Releasing a taken drag
+    /// offer completes the drag.
     case release(token: Data)
     /// Pull one representation of the far side's open offer; answered `.pulled`.
     case pull(ItemRequestID, PullRequest)
-    /// Cancel a pull this side opened.
+    /// Cancel a pull this side opened; its `.pullEnded` follows.
     case cancel(ItemPullID)
-    /// Host: take the peer's open drag offer of `token`; answered `.took`.
+    /// Host: take the peer's open drag offer of `token`; answered `.took`, refused `ITEM_OFFER_STALE` when no
+    /// drag offer of `token` is open.
     case takeDrag(ItemRequestID, token: Data)
-    /// Decode every item of the far side's open offer of `token`; answered `.read`.
-    case read(ItemRequestID, token: Data)
+    /// Decode item `item` of the far side's open offer of `token`; answered `.read`.
+    case read(ItemRequestID, token: Data, item: UInt32)
 }
 
 /// An endpoint's answer to an `ItemCommand`.
@@ -45,8 +50,9 @@ public enum ItemReply: Sendable, Equatable {
     case pulled(Result<ItemPullID, WireError>)
     /// The take's id, whose one `.dragTake(.ended)` follows, or why it was not opened.
     case took(Result<DragTakeID, WireError>)
-    /// The offer's items in order; nil when no offer of the token is held whole.
-    case read([OfferedItem]?)
+    /// The item, decoded now; nil when no such item is held. Each FILE and FOLDER representation's name passes
+    /// `PathComponent.isValid`, and each INLINE one's is empty.
+    case read(OfferedItem?)
 }
 
 extension ItemMachines {
@@ -65,8 +71,8 @@ extension ItemMachines {
             cancel(pull, connection: &connection)
         case .takeDrag(let id, let token):
             return (id, .took(takeDrag(token, connection: &connection)))
-        case .read(let id, let token):
-            return (id, .read(transfer.offers.remoteItems(token)))
+        case .read(let id, let token, let item):
+            return (id, .read(transfer.offers.remoteItem(token, Int(item))))
         }
         return nil
     }

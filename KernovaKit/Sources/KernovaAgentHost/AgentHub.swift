@@ -232,23 +232,19 @@ public final class AgentHub: Sendable {
         publishIfChanged()
     }
 
-    /// Sends `handle`'s connection the routing's request. `PowerRouting` asks only a peer of `routingPeers`,
-    /// read on this queue in the same turn, so the peer is present; one without a connection is refused as a
-    /// connection that ended, and the drain moves on.
+    /// Sends `handle`'s connection the routing's request.
     private func ask(_ handle: PeerHandle, _ action: PowerAction) {
-        let asked = state.withLock { state -> (any HostConnectionHandle, PowerRequestID, PeerRecord)? in
-            guard let connection = state.connections[handle], let record = state.peers[handle] else {
-                state.power.routing.handle(
-                    .refused(WireError(.shuttingDown, debugDetail: "the connection ended before the request")),
-                    from: handle, peers: state.routingPeers)
-                return nil
+        let (connection, id, record) = state.withLock { state in
+            // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in the same turn, and a peer
+            // lives in its connection's entry.
+            guard let entry = state.connections[handle], let record = entry.peer else {
+                preconditionFailure("routing asked \(handle), which is no peer of this turn")
             }
-            let id = state.power.drawID(connection.generation)
+            let id = state.power.drawID(entry.connection.generation)
             state.power.requests[id] = handle
             state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
-            return (connection, id, record)
+            return (entry.connection, id, record)
         }
-        guard let (connection, id, record) = asked else { return }
         logger.log(
             .notice, "Asking the \(Self.name(record), privacy: .public) to \(Self.name(action), privacy: .public)")
         connection.send(.requestPower(id, action))
@@ -297,7 +293,8 @@ public final class AgentHub: Sendable {
     /// Offers `offer` on `feature` — CLIPBOARD, withdrawing that peer's previous clipboard offer, or DROP —
     /// to the peer the snapshot's `consolePeers` names for it now, and calls `completion` once with that
     /// peer, whose `.items` events then carry the offer, or why it was not opened: `FEATURE_UNAVAILABLE`
-    /// with the absence when no console peer offers `feature`.
+    /// with the absence when no console peer offers `feature`. Once that peer is no longer `feature`'s
+    /// console peer, the hub withdraws the offer, and its `.offerEnded` follows.
     public func offerItems(
         _ offer: ItemOffer, feature: FeatureID,
         _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
@@ -356,15 +353,15 @@ public final class AgentHub: Sendable {
         }
     }
 
-    /// Calls `completion` once with the items of `peer`'s open offer of `token`, decoded, in order; nil when
-    /// no such offer is held whole.
-    public func readOffer(
-        _ token: Data, of peer: PeerHandle, _ completion: @escaping @Sendable ([OfferedItem]?) -> Void
+    /// Calls `completion` once with item `item` of `peer`'s open offer of `token`, decoded; nil when no such
+    /// item is held.
+    public func readItem(
+        _ token: Data, item: UInt32, of peer: PeerHandle, _ completion: @escaping @Sendable (OfferedItem?) -> Void
     ) {
         queue.async { [self] in
             awaitReply(
-                from: peer, { .read($0, token: token) },
-                { if case .read(let items) = $0 { .some(items) } else { nil } },
+                from: peer, { .read($0, token: token, item: item) },
+                { if case .read(let read) = $0 { .some(read) } else { nil } },
                 unanswered: nil, completion)
         }
     }
@@ -374,7 +371,7 @@ public final class AgentHub: Sendable {
 
     /// Sends `peer`'s connection the command `command` builds around a fresh request id, and calls
     /// `completion` once with what `answer` reads from its reply — or with `unanswered`, at once or later, when
-    /// the connection is gone or ends without replying.
+    /// `peer` is no peer or its connection ends without replying.
     private func awaitReply<Answer: Sendable>(
         from peer: PeerHandle, _ command: (ItemRequestID) -> ItemCommand,
         _ answer: @escaping @Sendable (ItemReply) -> Answer?, unanswered: Answer,
@@ -387,22 +384,48 @@ public final class AgentHub: Sendable {
             assert(reply == nil || read != nil, "a reply answering another command")
             completion(read ?? unanswered)
         }
-        let sent = state.withLock { state -> (any HostConnectionHandle, ItemRequestID)? in
-            guard let connection = state.connections[peer] else { return nil }
-            return (connection, state.items.add(peer, deliver))
+        let sent = state.withLock { state -> (any HostConnectionHandle, ItemCommand)? in
+            guard let entry = state.connections[peer], entry.peer != nil else { return nil }
+            return (entry.connection, state.items.add(peer, command, deliver))
         }
-        guard let (connection, id) = sent else { return deliver(nil) }
-        connection.send(.items(command(id)))
+        guard let (connection, command) = sent else { return deliver(nil) }
+        connection.send(.items(command))
     }
 
     private func send(_ command: ItemCommand, to peer: PeerHandle) {
         dispatchPrecondition(condition: .onQueue(queue))
-        state.withLock { $0.connections[peer] }?.send(.items(command))
+        state.withLock { $0.connections[peer]?.connection }?.send(.items(command))
     }
 
     /// The connection `handle` ended: every item call asked of it and not answered gets no answer.
     private func endItemRequests(of handle: PeerHandle) {
         for pending in state.withLock({ $0.items.takeAll(of: handle) }) { pending.answer(nil) }
+    }
+
+    /// The answer of `handle`'s connection to the item call of `id`: what it opened is recorded before the caller
+    /// hears it. One to a call already ended is dropped.
+    private func itemReply(_ id: ItemRequestID, _ reply: ItemReply, from handle: PeerHandle) {
+        let pending = state.withLock { state in
+            let pending = state.items.take(id, from: handle)
+            if let pending { state.opened(pending.command, reply, on: handle) }
+            return pending
+        }
+        pending?.answer(reply)
+    }
+
+    /// Carries out console authority: each command it sends, then each end it hands the owner, in order.
+    private func settleItems() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let ended = state.withLock { state in
+            state.settleItems().map { end in
+                let connection = state.connections[end.handle]?.connection
+                return (send: end.command.flatMap { command in connection.map { ($0, command) } }, event: end.event)
+            }
+        }
+        for end in ended {
+            if let (connection, command) = end.send { connection.send(.items(command)) }
+            itemEvents(end.event)
+        }
     }
 
     private func detachTransport() {
@@ -454,8 +477,7 @@ public final class AgentHub: Sendable {
 
     private func register(_ handle: PeerHandle, _ connection: any HostConnectionHandle, attachment: UInt64) {
         let frozen = state.withLock { state in
-            state.connections[handle] = connection
-            state.connectionAttachments[handle] = attachment
+            state.connections[handle] = ConnectionEntry(connection: connection, attachment: attachment)
             return state.isFrozen
         }
         if frozen { connection.send(.setPeerFrozen(true)) }
@@ -466,7 +488,7 @@ public final class AgentHub: Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         let connections = state.withLock { state in
             update(&state)
-            return Array(state.connections.values)
+            return state.connections.values.map(\.connection)
         }
         for connection in connections { connection.send(command) }
     }
@@ -479,13 +501,13 @@ public final class AgentHub: Sendable {
             logHello(claim, peerState, outcome)
             resolve(outcome, incoming: handle)
         case .peerStateChanged(let peerState):
-            state.withLock { $0.peers[handle]?.state = peerState }
+            state.withLock { $0.connections[handle]?.peer?.state = peerState }
         case .featuresChanged(let table):
-            state.withLock { $0.peers[handle]?.features = table }
+            state.withLock { $0.connections[handle]?.peer?.features = table }
         case .liveness(let change):
-            state.withLock { $0.peers[handle]?.isResponsive = change == .responsive }
+            state.withLock { $0.connections[handle]?.peer?.isResponsive = change == .responsive }
         case .closed(let closure):
-            if let record = state.withLock({ $0.peers[handle] }) {
+            if let record = state.withLock({ $0.connections[handle]?.peer }) {
                 logger.log(
                     .notice,
                     "The \(Self.name(record), privacy: .public) left: \(String(describing: closure), privacy: .public)")
@@ -501,18 +523,23 @@ public final class AgentHub: Sendable {
             state.withLock { $0.updateServed(event, from: handle) }
         case .items(let event):
             // Item events change no peer state, so the snapshot is not rebuilt.
-            return itemEvents(.items(handle, event))
-        case .dragTake(let event):
-            return itemEvents(.dragTake(handle, event))
-        case .itemReply(let id, let reply):
-            state.withLock { $0.items.take(id, from: handle) }?.answer(reply)
+            let (forward, command) = state.withLock { $0.admit(event, from: handle) }
+            if let command { send(command, to: handle) }
+            if forward { itemEvents(.items(handle, event)) }
             return
+        case .dragTake(let event):
+            if state.withLock({ $0.admit(event, from: handle) }) { itemEvents(.dragTake(handle, event)) }
+            return
+        case .itemReply(let id, let reply):
+            itemReply(id, reply, from: handle)
+            return settleItems()
         case .power(let id, let result):
             return powerResult(id, result)
         case .diagnostic:
             // The driver logs diagnostics itself.
             return
         }
+        settleItems()
         publishIfChanged()
     }
 
@@ -537,7 +564,7 @@ public final class AgentHub: Sendable {
     }
 
     private func logUpdate(_ event: UpdateServeEvent, from handle: PeerHandle) {
-        guard let record = state.withLock({ $0.peers[handle] }) else { return }
+        guard let record = state.withLock({ $0.connections[handle]?.peer }) else { return }
         let peer = Self.name(record)
         switch event {
         case .pullRequested(_, let manifest):
@@ -569,13 +596,13 @@ public final class AgentHub: Sendable {
             case .joined, nil: nil
             }
         guard let (handle, code, retryAfter) = loser else { return }
-        state.withLock { $0.connections[handle] }?.send(.close(code, retryAfter: retryAfter))
+        state.withLock { $0.connections[handle]?.connection }?.send(.close(code, retryAfter: retryAfter))
     }
 
     /// Republishes `delivery` behind its peer's source, `session <id>` or `system` (spec §7.4), a drop
     /// report included, so everything a guest's ring sends stays in the guest namespace under its VM.
     private func republish(_ delivery: LogDelivery, from handle: PeerHandle) {
-        let (peer, republisher) = state.withLock { ($0.peers[handle], $0.republisher) }
+        let (peer, republisher) = state.withLock { ($0.connections[handle]?.peer, $0.republisher) }
         guard let peer, let republisher else { return }
         let source = peer.claim.role == .systemPeer ? "system" : "session \(peer.state.sessionID)"
         switch delivery {

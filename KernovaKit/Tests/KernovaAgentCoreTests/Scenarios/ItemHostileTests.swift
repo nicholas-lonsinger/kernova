@@ -200,7 +200,7 @@ struct ItemNameAdmissionTests {
         #expect(run.streamResets.isEmpty, "\(run.streamResets)")
         #expect(HostileItems.offerReceived(run))
         #expect(
-            run.host?.remoteOfferItem(token: SimItems.token(7), index: 0)?.representations.map(\.name)
+            run.readItem(SimItems.token(7))?.representations.map(\.name)
                 == [representation.name])
     }
 

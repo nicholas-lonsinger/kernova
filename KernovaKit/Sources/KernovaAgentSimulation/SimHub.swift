@@ -193,9 +193,8 @@ package final class SimHub {
             world.itemOutput(.event(event), link: link, side: .host)
         case .dragTake(let event):
             link.items(.host).dragTake(event, link: link, side: .host, world: world)
-        case .itemReply:
-            // The simulation calls the endpoints' item methods directly, so it sends no item command.
-            break
+        case .itemReply(let id, let reply):
+            link.items(.host).reply(id, reply, link: link, side: .host, world: world)
         case .diagnostic(let diagnostic):
             world.log("host diagnostic: \(diagnostic)")
         case .closed(let closure):

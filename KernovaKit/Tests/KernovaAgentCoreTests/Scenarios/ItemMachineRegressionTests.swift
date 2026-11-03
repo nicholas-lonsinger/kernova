@@ -107,7 +107,7 @@ struct ItemMachineRegressionTests {
         #expect(holding.itemBytes == messages * payload.count)
         #expect(holding.charged == holding.itemBytes + holding.items * Self.overhead)
         #expect(holding.charged <= Self.limit)
-        let item = try #require(run.host?.remoteOfferItem(token: HostileItems.header(count: 0).token, index: 0))
+        let item = try #require(run.readItem(HostileItems.header(count: 0).token))
         #expect(item.representations.count == 32_768)
     }
 
@@ -129,8 +129,7 @@ struct ItemMachineRegressionTests {
     func releaseEndsPull() throws {
         let (run, pulled) = HostileItems.pulling(seed: 4)
         let id = try #require(pulled)
-        run.host?.releaseOffer(SimItems.token(7), now: run.now)
-        run.drain()
+        run.item(.release(token: SimItems.token(7)))
         run.feed([Unit.raw(HostileItems.pullStream, HostileItems.container), Unit.end(HostileItems.pullStream)])
         #expect(run.itemEnds == [.pullEnded(id, .closed(.resetLocally(WireError(.itemOfferStale))))])
         #expect(!run.itemOutputs.contains(.sink(.commit(id))))

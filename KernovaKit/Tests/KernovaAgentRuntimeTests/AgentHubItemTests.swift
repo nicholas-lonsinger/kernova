@@ -5,7 +5,7 @@ import Foundation
 #endif
 
 import KernovaAgentCore
-import KernovaAgentHost
+@testable import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaAgentSimulation
 import KernovaWire
@@ -129,6 +129,76 @@ struct AgentHubItemTests {
     }
 
     @Test(
+        "A console move withdraws the host's offer from the old peer, the owner hears its end once, and a re-offer reaches the new console peer"
+    )
+    func consoleMoveWithdrawsOffer() async {
+        let harness = await harness()
+        let (oneEvents, twoEvents) = (Recorder<PeerEvent>(), Recorder<PeerEvent>())
+        let first = runtime(harness, events: oneEvents)
+        let second = runtime(harness, claim: Self.offConsole, state: Self.offState, events: twoEvents)
+        let ready = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
+        guard let one = ready.peers.first(where: { $0.sessionID == "1" })?.handle,
+            let two = ready.peers.first(where: { $0.sessionID == "2" })?.handle
+        else { Issue.record("not both sessions"); return }
+        #expect(await offer(harness, .clipboard) == .success(one))
+        var oneWaiter = oneEvents.waiter()
+        _ = await oneWaiter.next(where: Self.isOfferReceived)
+
+        var log = harness.itemLog.waiter()
+        first.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
+        second.setPeerState(PeerSessionState(console: .on, sessionID: "2", userName: "other"))
+        let ended = await log.next { if case .event(.items(_, .offerEnded)) = $0 { true } else { false } }
+        #expect(
+            ended == .event(.items(one, .offerEnded(.clipboard, .local, token: Self.token, AgentHubState.endedByHub))))
+        _ = await oneWaiter.next {
+            if case .items(.offerEnded(.clipboard, .remote, Self.token, _)) = $0 { true } else { false }
+        }
+
+        _ = await harness.snapshot { $0.consolePeers[.clipboard] == two }
+        #expect(await offer(harness, .clipboard) == .success(two))
+        var twoWaiter = twoEvents.waiter()
+        _ = await twoWaiter.next(where: Self.isOfferReceived)
+        await harness.settled()
+        let ends = harness.itemLog.elements.filter {
+            if case .event(.items(_, .offerEnded)) = $0 { true } else { false }
+        }
+        #expect(ends.count == 1, "\(ends)")
+        await close([first, second], harness)
+    }
+
+    @Test("A peer's offer from a peer that is not the feature's console peer is released, never forwarded")
+    func offConsoleOfferReleased() async {
+        let harness = await harness()
+        let on = HubPeer(harness, claim: Fixture.peerClaim, items: MemoryItems())
+        let off = HubPeer(harness, claim: Self.offConsole, state: Self.offState, items: MemoryItems())
+        let ready = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
+        guard let console = ready.peers.first(where: { $0.sessionID == "1" })?.handle else {
+            Issue.record("no peer of session 1"); return
+        }
+        off.send(.offer(ItemRequestID(rawValue: 1), Self.offer, feature: .clipboard))
+        off.send(.offer(ItemRequestID(rawValue: 2), SimItems.offer(2, []), feature: .drag))
+        var released = off.events.waiter()
+        for token in [Self.token, SimItems.token(2)] {
+            _ = await released.next {
+                if case .items(.offerEnded(_, .local, token, _)) = $0 { true } else { false }
+            }
+        }
+        on.send(.offer(ItemRequestID(rawValue: 1), Self.offer, feature: .clipboard))
+        var log = harness.itemLog.waiter()
+        let received = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
+        guard case .event(.items(console, .offerReceived(let header))) = received else {
+            Issue.record("received \(received)"); return
+        }
+        #expect(header.token == Self.token)
+        await harness.settled()
+        let forwarded = harness.itemLog.elements.filter {
+            if case .event(.items(_, .offerReceived)) = $0 { true } else { false }
+        }
+        #expect(forwarded == [received])
+        harness.hub.close()
+    }
+
+    @Test(
         "Each of CLIPBOARD, DROP and DRAG is served only with its own policy entry",
         arguments: [FeatureID.clipboard, .drop, .drag])
     func policyEntryPerFeature(_ enabled: FeatureID) async {
@@ -160,10 +230,10 @@ struct AgentHubItemTests {
         }
         #expect(header.token == Self.token)
 
-        let items = await withCheckedContinuation { continuation in
-            harness.hub.readOffer(Self.token, of: handle) { continuation.resume(returning: $0) }
+        let item = await withCheckedContinuation { continuation in
+            harness.hub.readItem(Self.token, item: 0, of: handle) { continuation.resume(returning: $0) }
         }
-        #expect(items == Self.offer.items)
+        #expect(item == Self.offer.items[0])
         let pulled = await withCheckedContinuation { continuation in
             harness.hub.pullItem(SimItems.request(1), from: handle) { result in
                 harness.itemLog.record(.note("pulled"))
@@ -241,10 +311,10 @@ struct AgentHubItemTests {
         }
         guard case .failure(let error) = pulled else { Issue.record("pulled \(pulled)"); return }
         #expect(error.code == .shuttingDown)
-        let items = await withCheckedContinuation { continuation in
-            harness.hub.readOffer(Self.token, of: gone) { continuation.resume(returning: $0) }
+        let item = await withCheckedContinuation { continuation in
+            harness.hub.readItem(Self.token, item: 0, of: gone) { continuation.resume(returning: $0) }
         }
-        #expect(items == nil)
+        #expect(item == nil)
         harness.hub.close()
     }
 }

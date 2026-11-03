@@ -21,8 +21,9 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     public var power: PowerProvision
     /// The power routing running now, if any.
     public var routing: PowerRoutingProgress?
-    /// For CLIPBOARD, DROP and DRAG, the peer the hub sends that feature's offers to: the newest peer of the
-    /// console's session whose connection offers it. A feature no such peer offers has no entry.
+    /// For CLIPBOARD, DROP and DRAG, the feature's console peer: the newest peer of the console's session whose
+    /// connection offers it. The feature's offers live only there: the hub sends the host's to it, forwards
+    /// only its own, and ends both on a peer that stops being it. A feature no such peer offers has no entry.
     public var consolePeers: [FeatureID: PeerHandle]
 
     /// A snapshot of these peers and merged features.

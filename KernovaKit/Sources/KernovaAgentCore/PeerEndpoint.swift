@@ -230,56 +230,6 @@ public struct PeerEndpoint: Sendable {
 
     // MARK: Items
 
-    /// Offers `offer` on `feature`'s offer kind: CLIPBOARD, withdrawing this side's previous clipboard offer,
-    /// or DRAG; nil when opened, or why not (`UNSUPPORTED_KIND` for DROP, which only the host offers).
-    public mutating func offerItems(_ offer: ItemOffer, feature: FeatureID, now: CoreInstant) -> WireError? {
-        connection.tick(now)
-        route(now)
-        let refusal = items.offer(offer, feature: feature, connection: &connection)
-        route(now)
-        return refusal
-    }
-
-    /// Withdraws this side's offer of `token`; its `.offerEnded` follows.
-    public mutating func withdrawOffer(_ token: Data, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        items.withdraw(token, connection: &connection)
-        route(now)
-    }
-
-    /// Releases the far side's offer of `token`: this side pulls nothing more of it.
-    public mutating func releaseOffer(_ token: Data, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        items.release(token, connection: &connection)
-        route(now)
-    }
-
-    /// Pulls one representation of the far side's open offer: the pull's id, whose one `.pullEnded` follows,
-    /// or why it was not opened.
-    public mutating func pullItem(_ request: PullRequest, now: CoreInstant) -> Result<ItemPullID, WireError> {
-        connection.tick(now)
-        route(now)
-        let result = items.pull(request, connection: &connection)
-        route(now)
-        return result
-    }
-
-    /// Cancels a pull this side opened; its `.pullEnded` follows.
-    public mutating func cancelPull(_ id: ItemPullID, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        items.cancel(id, connection: &connection)
-        route(now)
-    }
-
-    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held. Each FILE and
-    /// FOLDER representation's name passes `PathComponent.isValid`, and each INLINE one's is empty.
-    public func remoteOfferItem(token: Data, index: Int) -> OfferedItem? {
-        items.transfer.remoteItem(token: token, index: index)
-    }
-
     package var itemOffers: ItemOfferRegistry { items.transfer.offers }
 
     // MARK: Outputs
