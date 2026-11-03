@@ -6,11 +6,12 @@ import Musl
 #endif
 
 import CKernovaShims
-// Apple's Dispatch marks its source protocols `Sendable`; swift-corelibs-libdispatch does not.
+// Apple's Dispatch marks `DispatchQueue` `Sendable`; swift-corelibs-libdispatch does not.
 @preconcurrency import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaPlatformPOSIX
+import KernovaSynchronization
 import KernovaWire
 
 /// Dials the host over vsock: a non-blocking connect to the host's CID on the protocol's port, handed on
@@ -33,24 +34,32 @@ public struct LinuxVsockDialer: TransportDialer {
     /// the socket turns writable and `SO_ERROR` says how it ended. vsock bounds a connect's wait itself
     /// (`SO_VM_SOCKETS_CONNECT_TIMEOUT`, 2 s by default), ending it in `ETIMEDOUT`.
     public func dial(_ completion: @escaping @Sendable (Result<any ByteStream, DialFailure>) -> Void) {
+        let readiness: SocketReadiness
+        do throws(ByteStreamError) {
+            readiness = try SocketReadiness.shared()
+        } catch {
+            return completion(.failure(.transient))
+        }
         var inProgress: Int32 = 0
         let descriptor = kernova_vsock_connect(cid, port, &inProgress)
         guard descriptor >= 0 else { return completion(.failure(Self.failure(errno: errno))) }
         guard inProgress != 0 else { return completion(Self.adopt(descriptor)) }
-        let source = DispatchSource.makeWriteSource(fileDescriptor: descriptor, queue: queue)
-        source.setEventHandler { source.cancel() }
-        // The descriptor is read and then closed or adopted only once the source no longer watches it.
-        source.setCancelHandler {
-            var error: Int32 = 0
-            var length = socklen_t(MemoryLayout<Int32>.size)
-            if getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &length) != 0 { error = errno }
-            guard error == 0 else {
-                close(descriptor)
-                return completion(.failure(Self.failure(errno: error)))
+        let watch = Locked<SocketReadiness.Registration?>(nil)
+        let registration = readiness.register(descriptor, queue: queue) { _ in
+            // The descriptor is read and then closed or adopted only once nothing watches it.
+            watch.withLock { $0 }?.cancel {
+                var error: Int32 = 0
+                var length = socklen_t(MemoryLayout<Int32>.size)
+                if getsockopt(descriptor, SOL_SOCKET, SO_ERROR, &error, &length) != 0 { error = errno }
+                guard error == 0 else {
+                    close(descriptor)
+                    return completion(.failure(Self.failure(errno: error)))
+                }
+                completion(Self.adopt(descriptor))
             }
-            completion(Self.adopt(descriptor))
         }
-        source.resume()
+        watch.withLock { $0 = registration }
+        registration.arm(.write)
     }
 
     /// How a failed dial's error number reads: `EAFNOSUPPORT` (no vsock in the kernel) and `ENODEV` (no

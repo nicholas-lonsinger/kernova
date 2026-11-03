@@ -175,7 +175,10 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
 extension AlertSubject {
     /// The VM this subject names, `nil` for the library.
     var vm: VMInstance? {
-        if case .vm(let instance) = self { instance } else { nil }
+        switch self {
+        case .vm(let instance), .session(let instance, _): instance
+        case .library: nil
+        }
     }
 
     var isLibrary: Bool {

@@ -914,6 +914,48 @@ struct AppAlertPresenterTests {
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
+    /// A shutdown of `vm`'s live session that its guest's agents took and
+    /// Kernova can't tell the fate of, as the stop throws it.
+    private func shutdownNotCarriedOut(_ vm: VMInstance) throws -> CommandError {
+        .shutdownNotCarriedOut(
+            GuestShutdownNotCarriedOut(
+                vmName: vm.name, session: try #require(vm.liveSessionID), reason: .indeterminate))
+    }
+
+    @Test("A shutdown the guest didn't carry out is shown about its session, and taken down when the session ends")
+    func shutdownAlertFollowsItsSession() async throws {
+        let h = makeHarness()
+        h.viewModel.presenter = h.presenter
+        let library = h.showLibrary()
+        let vm = makeRunningInstance(name: "Work", in: h.viewModel)
+        h.viewModel.present(try shutdownNotCarriedOut(vm), about: .vm(vm))
+        #expect(sheetText(on: library).contains { $0.contains("can\u{2019}t tell whether \u{201C}Work\u{201D}") })
+
+        vm.activity.placeForTesting(.stopped)
+        // The watch applies in a main-actor task the change enqueued, ahead of this one.
+        await Task { @MainActor in }.value
+
+        #expect(!h.isShowingAlert)
+        #expect(h.presenter.waitingCountForTesting == 0)
+    }
+
+    @Test("A shutdown alert whose session ended while it waited is dropped")
+    func shutdownAlertForAnEndedSessionIsDropped() throws {
+        let h = makeHarness()
+        h.viewModel.presenter = h.presenter
+        h.showLibrary()
+        let vm = makeRunningInstance(name: "Work", in: h.viewModel)
+        h.presenter.presentError("Busy.", title: "Library Notice", about: .library)
+        h.viewModel.present(try shutdownNotCarriedOut(vm), about: .vm(vm))
+        #expect(h.presenter.waitingCountForTesting == 1)
+
+        vm.activity.placeForTesting(.stopped)
+        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+
+        #expect(!h.isShowingAlert)
+        #expect(h.presenter.waitingCountForTesting == 0)
+    }
+
     @Test("A held launch account drops the VMs that left the library, and shows nothing once none is left")
     func heldLaunchAccountFollowsTheLibrary() {
         let h = makeHarness()

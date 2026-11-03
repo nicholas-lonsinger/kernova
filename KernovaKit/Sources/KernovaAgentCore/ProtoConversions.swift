@@ -204,7 +204,8 @@ extension AppValue {
 }
 
 extension PowerOffer {
-    var encoded: Data {
+    /// The `PowerCapability` params it advertises.
+    public var encoded: Data {
         var capability = Kernova_V2_PowerCapability()
         capability.actions = actions
         capability.asksAppsToQuit = asksAppsToQuit

@@ -138,7 +138,8 @@ struct GuestAgentStatusViewControllerTests {
                 PeerSummary(
                     handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
                     userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
-            ], features: FeatureStatusTable([(feature: .logs, status: .absent(.disabledByPolicy, debugDetail: ""))]))
+            ], features: FeatureStatusTable([(feature: .logs, status: .absent(.disabledByPolicy, debugDetail: ""))]),
+            power: .agent(.sessionPeer))
 
         vc.update(
             presentation: GuestAgentPresentation(hub: snapshot), diskControl: Self.withheld, hasDismissAction: false)
@@ -148,7 +149,8 @@ struct GuestAgentStatusViewControllerTests {
             visibleTexts(in: vc.view) == [
                 "Guest agent connected", "Session agent — pbear", "Up to date", "Status", "Connected",
                 "Guest logs in Console", "Turned off in Settings.", "Automatic agent updates",
-                "This agent doesn't offer it.",
+                "This agent doesn't offer it.", "Shut down and restart from Kernova",
+                "Through the session agent",
             ])
     }
 

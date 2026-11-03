@@ -1,5 +1,7 @@
 import Foundation
+import KernovaAgentHost
 import KernovaLogging
+import KernovaWire
 
 /// Runs the lifecycle operations and the guest-setup pipelines — a macOS
 /// install, and a Linux installer image fetched, checked against whatever
@@ -96,19 +98,55 @@ final class VMLifecycleCoordinator {
     }
 
     /// Requests a graceful stop — a session action, which takes no admission
-    /// of its own, so an operation that tolerates it keeps holding the VM.
+    /// of its own, so an operation that tolerates it keeps holding the VM —
+    /// sent as ``shutDownGuest(_:session:)`` sends it.
     func requestStop(_ instance: VMInstance) async throws {
-        try await instance.activity.requestStop {
-            try await virtualizationService.requestStop(instance)
+        try await instance.activity.requestStop { session in
+            try await shutDownGuest(instance, session: session)
         }
     }
 
     /// A Restart's graceful stop, owing `boot` to the end of the session it
-    /// asks to go down — see ``VMActivity/requestStop(continuingWith:_:)``.
+    /// asks to go down — see ``VMActivity/requestStop(continuingWith:_:)`` —
+    /// sent as ``shutDownGuest(_:session:)`` sends it.
     func requestRestartStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
-        try await instance.activity.requestStop(continuingWith: boot) {
-            try await virtualizationService.requestStop(instance)
+        try await instance.activity.requestStop(continuingWith: boot) { session in
+            try await shutDownGuest(instance, session: session)
         }
+    }
+
+    /// Asks `session`, the one the stop was admitted on, to shut down through
+    /// the guest's agents, pressing the ACPI button when none takes it — on
+    /// that session only. A Restart's stop is a shutdown too: its boot is
+    /// owed to the session's end.
+    ///
+    /// Returns once the request is sent; the session's end is what follows it.
+    /// Throws ``GuestShutdownNotCarriedOut`` when an agent took the request
+    /// and the guest did not go down, or Kernova can't tell whether it is.
+    private func shutDownGuest(_ instance: VMInstance, session: UUID) async throws {
+        let failure: GuestShutdownNotCarriedOut.Reason
+        switch await instance.agentHub.requestPower(.shutdown) {
+        case .useACPI:
+            // The session that ended while the agents were asked has nothing
+            // left to press the button on.
+            guard instance.liveSessionID == session else { return }
+            return try await virtualizationService.requestStop(instance)
+        case .handedOff, .lostAfterAcceptance:
+            return
+        case .busy:
+            Self.logger.log(
+                .notice,
+                "A shutdown of '\(instance.name, privacy: .public)' was still being routed")
+            throw VMAdmissionRefusal(refusal: .stopRequestInFlight)
+        case .blocked(let apps): failure = .blocked(apps)
+        case .cancelledInGuest: failure = .cancelledInGuest
+        case .failed(let error): failure = .failed(error)
+        case .indeterminate: failure = .indeterminate
+        }
+        Self.logger.log(
+            .notice,
+            "'\(instance.name, privacy: .public)' didn't shut down: \(String(describing: failure), privacy: .public)")
+        throw GuestShutdownNotCarriedOut(vmName: instance.name, session: session, reason: failure)
     }
 
     /// Immediately terminates the VM — see ``VMActivity/forceStop(_:)``.
