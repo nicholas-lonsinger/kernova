@@ -896,7 +896,9 @@ struct GuestDragOutTests {
         #expect(!exists(rig.promiseFolders))
     }
 
-    @Test("a delivering drop calls the promises in, offers the drag again named, ends CAUGHT naming it, withdrawing nothing")
+    @Test(
+        "a delivering drop calls the promises in, offers the drag again named, ends CAUGHT naming it, withdrawing nothing"
+    )
     func aDeliveringDropCallsThePromisesIn() throws {
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
         let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])

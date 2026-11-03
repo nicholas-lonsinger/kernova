@@ -143,7 +143,9 @@ struct DragReofferTests {
         #expect(Self.ended(withdrawn) == [.caught(reoffer: nil)])
     }
 
-    @Test("the peer answering CAUGHT under a reoffer, its writer stalled, resets nothing; the host's release ends the taken offer")
+    @Test(
+        "the peer answering CAUGHT under a reoffer, its writer stalled, resets nothing; the host's release ends the taken offer"
+    )
     func takenOfferStaysOpenThroughCaught() throws {
         let run = HostileRun(local: .peer, seed: 1, items: true)
         run.feed(
