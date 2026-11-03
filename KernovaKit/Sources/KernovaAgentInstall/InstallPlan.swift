@@ -14,9 +14,9 @@ public struct InstallPlan: Equatable, Sendable {
         case file(path: String, mode: UInt16, text: String)
         /// The payload the installer carries, landed as `payloadName` by its format's ``PayloadLander`` in the
         /// slot of `root` that `current` does not name — ``InstallRoot/firstSlotName`` when it names none — then
-        /// recorded alone in the slot metadata, then `current` switched to it, last, as an update's switch moves
-        /// it: no slot a running peer runs from is written, and every peer running from the root follows the
-        /// switch.
+        /// recorded alone in the slot metadata, `rollback` pointed at it, and `current` switched to it, last, as
+        /// an update's switch moves it: no slot a running peer runs from is written, every peer running from the
+        /// root follows the switch, and `rollback` names no slot the install did not just land.
         case freshSlot(root: InstallRoot, payloadName: String)
     }
 
@@ -142,7 +142,8 @@ extension InstallPlan.Step: CustomStringConvertible {
             case .freshSlot(let root, let payloadName):
                 return
                     "write the agent as \(payloadName) in the slot under \(root.slots) that \(root.current) does not "
-                    + "name, record it in \(root.state), and switch \(root.current) to it"
+                    + "name, record it in \(root.state), point \(root.rollback) at it, and switch \(root.current) "
+                    + "to it"
             }
         case .remove(let path): return "remove \(path), if present"
         case .removeRoot(let path): return "remove \(path) and everything in it, if present"

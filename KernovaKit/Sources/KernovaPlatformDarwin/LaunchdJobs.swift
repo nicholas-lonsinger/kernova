@@ -115,10 +115,13 @@ extension InstallPlan {
 ///
 /// A peer is kept alive only while it exits unsuccessfully (`KeepAlive` `SuccessfulExit` false), so a peer
 /// relaunches into an update or a reverted slot by exiting 75, and stays stopped after exiting 0. The rollback
-/// check runs every `UpdateRollbackPolicy.checkIntervalSeconds` (`StartInterval`) through `/bin/sh`, which
-/// execs the previous slot's agent only while `switch-pending` exists: launchd has no condition on a path, and
-/// before any update there is no `rollback` slot to run. Each job names the app's bundle, so Login Items shows
-/// it as Kernova Guest Agent (`AssociatedBundleIdentifiers`).
+/// check runs every `UpdateRollbackPolicy.checkIntervalSeconds` (`StartInterval`).
+///
+/// Each job names the app's bundle in `AssociatedBundleIdentifiers`, and runs the agent's own executable, never
+/// a shell: Background Task Management attributes a legacy property list to the app it names only when "the
+/// Team Identifier of the `Program` or `ProgramArguments` executable in the legacy property list" matches the
+/// app bundle's, and shows an unattributed job by its executable's name ([Updating helper executables from
+/// earlier versions of macOS](https://developer.apple.com/documentation/servicemanagement/updating-helper-executables-from-earlier-versions-of-macos)).
 public enum LaunchdPlists {
     /// The session peer's LaunchAgent: one per GUI login session (`LimitLoadToSessionType` `Aqua`).
     public static func session(_ layout: MacInstallLayout) -> String {
@@ -144,24 +147,22 @@ public enum LaunchdPlists {
     }
 
     /// The rollback check: a LaunchAgent in the user's GUI session for the user scope, a LaunchDaemon for the
-    /// system scope.
+    /// system scope. It runs the agent through `rollback`, which every install points at a slot
+    /// (``InstallPlan/Write/freshSlot(root:payloadName:)``), and returns at once while no switch is pending.
     public static func rollback(_ layout: MacInstallLayout) -> String {
         let scope = layout.scope == .system ? "system" : "user"
         var entries: [(String, Value)] = [
             ("Label", .string(layout.rollbackLabel)),
             ("AssociatedBundleIdentifiers", .strings([MacInstallLayout.bundleIdentifier])),
-            ("ProgramArguments", .strings(["/bin/sh", "-c", rollbackScript, "sh", layout.root, scope])),
+            (
+                "ProgramArguments",
+                .strings([layout.executable(through: layout.installRoot.rollback), "rollback-check", "--scope", scope])
+            ),
             ("StartInterval", .integer(UpdateRollbackPolicy.checkIntervalSeconds)),
         ]
         if layout.scope == .user { entries.append(("LimitLoadToSessionType", .string("Aqua"))) }
         return document(entries)
     }
-
-    /// Runs the `rollback` slot's agent's `rollback-check` for the root `$1` and the scope `$2`, only while an
-    /// update's switch is pending.
-    static let rollbackScript =
-        #"[ -e "$1/"# + InstallRoot.switchPendingName + #"" ] || exit 0; exec "$1/"# + InstallRoot.rollbackLinkName
-        + "/" + MacInstallLayout.appName + "/" + MacInstallLayout.executable + #"" rollback-check --scope "$2""#
 
     /// A property list value.
     indirect enum Value {

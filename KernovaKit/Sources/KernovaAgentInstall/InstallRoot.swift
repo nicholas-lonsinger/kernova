@@ -15,7 +15,8 @@ public struct InstallRoot: Equatable, Sendable {
     public func slot(_ slot: String) -> String { slots + "/" + slot }
     /// The link the service manager runs the agent through, to the slot in use.
     public var current: String { path + "/" + Self.currentLinkName }
-    /// The link to the previous slot, whose agent the rollback check runs.
+    /// The link to the slot whose agent the rollback check runs: the one an update's switch left, or the one a
+    /// fresh install landed.
     public var rollback: String { path + "/" + Self.rollbackLinkName }
     /// The slot metadata.
     public var state: String { path + "/" + Self.stateName }

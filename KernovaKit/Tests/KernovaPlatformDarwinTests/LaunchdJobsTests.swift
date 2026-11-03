@@ -28,8 +28,8 @@ struct LaunchdJobsTests {
                 "  make directory \(Self.userRoot), if missing",
                 "  make directory \(Self.userRoot)/slots, if missing",
                 "  write the agent as Kernova Guest Agent.app in the slot under \(Self.userRoot)/slots that "
-                    + "\(Self.userRoot)/current does not name, record it in \(Self.userRoot)/state.json, and switch "
-                    + "\(Self.userRoot)/current to it",
+                    + "\(Self.userRoot)/current does not name, record it in \(Self.userRoot)/state.json, point "
+                    + "\(Self.userRoot)/rollback at it, and switch \(Self.userRoot)/current to it",
                 "  make directory /Users/pbear/Library/LaunchAgents, if missing",
                 "  write /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
                 "  write /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
@@ -52,8 +52,8 @@ struct LaunchdJobsTests {
                 "  make directory \(Self.systemRoot), if missing",
                 "  make directory \(Self.systemRoot)/slots, if missing",
                 "  write the agent as Kernova Guest Agent.app in the slot under \(Self.systemRoot)/slots that "
-                    + "\(Self.systemRoot)/current does not name, record it in \(Self.systemRoot)/state.json, and switch "
-                    + "\(Self.systemRoot)/current to it",
+                    + "\(Self.systemRoot)/current does not name, record it in \(Self.systemRoot)/state.json, point "
+                    + "\(Self.systemRoot)/rollback at it, and switch \(Self.systemRoot)/current to it",
                 "  make directory /Library/LaunchAgents, if missing",
                 "  write /Library/LaunchAgents/app.kernova.macosagent.session.plist",
                 "  make directory /Library/LaunchDaemons, if missing",
@@ -171,7 +171,7 @@ struct LaunchdJobsTests {
         #expect(plist["LimitLoadToSessionType"] == nil && plist["UserName"] == nil)
     }
 
-    @Test("The rollback check runs every check interval, the rollback slot's agent only while a switch is pending")
+    @Test("The rollback check runs the rollback slot's agent every check interval")
     func rollbackPlists() {
         let user = Self.parse(LaunchdPlists.rollback(Self.user))
         #expect(user["Label"] as? String == "app.kernova.macosagent.rollback")
@@ -180,31 +180,35 @@ struct LaunchdJobsTests {
         #expect(user["RunAtLoad"] == nil && user["KeepAlive"] == nil)
         #expect(
             user["ProgramArguments"] as? [String] == [
-                "/bin/sh", "-c",
-                #"[ -e "$1/switch-pending" ] || exit 0; exec "$1/rollback/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent" rollback-check --scope "$2""#,
-                "sh", Self.userRoot, "user",
+                Self.userRoot + "/rollback/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent", "rollback-check",
+                "--scope", "user",
             ])
         let system = Self.parse(LaunchdPlists.rollback(Self.system))
         #expect(system["Label"] as? String == "app.kernova.macosagent.system.rollback")
-        #expect((system["ProgramArguments"] as? [String])?.suffix(2) == [Self.systemRoot, "system"])
+        #expect(
+            system["ProgramArguments"] as? [String] == [
+                Self.systemRoot + "/rollback/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent",
+                "rollback-check", "--scope", "system",
+            ])
         #expect(system["LimitLoadToSessionType"] == nil)
     }
 
-    @Test("The rollback script runs nothing without a pending switch, and the rollback agent with one")
-    func rollbackScript() throws {
-        let directory = TestScratchDirectory(prefix: "kernova-rollback").url
-        let agent = directory.appendingPathComponent("rollback/Kernova Guest Agent.app/Contents/MacOS")
-        try FileManager.default.createDirectory(at: agent, withIntermediateDirectories: true)
-        let executable = agent.appendingPathComponent("KernovaMacOSAgent")
-        try Data("#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/ran\"\n".utf8).write(to: executable)
-        #expect(chmod(executable.path, 0o755) == 0)
-        let ran = agent.appendingPathComponent("ran")
-
-        #expect(Self.run(LaunchdPlists.rollbackScript, directory.path) == 0)
-        #expect(!FileManager.default.fileExists(atPath: ran.path))
-        FileManager.default.createFile(atPath: directory.appendingPathComponent("switch-pending").path, contents: nil)
-        #expect(Self.run(LaunchdPlists.rollbackScript, directory.path) == 0)
-        #expect(FileManager.default.contents(atPath: ran.path) == Data("rollback-check --scope user\n".utf8))
+    @Test(
+        "Every property list, in both scopes, names the agent's bundle and runs the agent's own executable",
+        arguments: [true, false])
+    func attributedToTheAgent(_ system: Bool) {
+        let layout = system ? Self.system : Self.user
+        let texts = InstallPlan.install(layout, stopTool: Self.tool).writes.compactMap { write -> String? in
+            if case .file(_, _, let text) = write { text } else { nil }
+        }
+        #expect(texts.count == (system ? 3 : 2))
+        for text in texts {
+            let plist = Self.parse(text)
+            #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.kernova.macosagent"])
+            #expect(
+                (plist["ProgramArguments"] as? [String])?.first?.hasSuffix(
+                    "/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent") == true)
+        }
     }
 
     @Test("Markup in a path is escaped")
@@ -252,16 +256,6 @@ struct LaunchdJobsTests {
 
     static func parse(_ text: String) -> [String: Any] {
         (try? PropertyListSerialization.propertyList(from: Data(text.utf8), format: nil)) as? [String: Any] ?? [:]
-    }
-
-    /// Runs `/bin/sh -c script sh root user`, answering its status.
-    static func run(_ script: String, _ root: String) -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", script, "sh", root, "user"]
-        do { try process.run() } catch { return -1 }
-        process.waitUntilExit()
-        return process.terminationStatus
     }
 }
 #endif

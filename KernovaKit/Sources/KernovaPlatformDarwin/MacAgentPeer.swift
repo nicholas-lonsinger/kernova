@@ -32,7 +32,9 @@ public final class MacAgentPeer: Sendable {
     private let power: MacPowerAdapter
     private let watcher: Locked<SlotLinkWatcher?> = Locked(nil)
     private let exiting = Locked(false)
-    private let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
+    /// Where the watch on `current` and the update installer run: one serial queue, so the peer's own switch
+    /// reports its payload installed before the watch sees `current` move and closes the connection.
+    private let queue: DispatchQueue
 
     /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
     /// `setPeerState(_:)` gives it a session to serve, or at once with `state`.
@@ -40,7 +42,9 @@ public final class MacAgentPeer: Sendable {
         claim = DarwinIdentity.current(role: role, versionLabel: label)
         let running = DarwinIdentity.runningSlot()
         let peer = Locked<MacAgentPeer?>(nil)
-        let (adapter, installer) = Self.updateInstaller(for: claim, running: running, peer: peer)
+        let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
+        self.queue = queue
+        let (adapter, installer) = Self.updateInstaller(for: claim, running: running, queue: queue, peer: peer)
         let power = role == .systemPeer ? MacPowerAdapter.systemPeer() : MacPowerAdapter.sessionPeer()
         if let state { power.consoleChanged(state.console) }
         self.power = power
@@ -110,7 +114,8 @@ public final class MacAgentPeer: Sendable {
     /// install's session peers advertise UPDATE absent, `NOT_SERVED_BY_ROLE`: the host offers them nothing, and
     /// they follow the system peer's switch through `current`. A development build run from no install has none.
     private static func updateInstaller(
-        for claim: PeerClaim, running: (root: String, slot: String)?, peer: Locked<MacAgentPeer?>
+        for claim: PeerClaim, running: (root: String, slot: String)?, queue: DispatchQueue,
+        peer: Locked<MacAgentPeer?>
     ) -> (adapter: (any UpdateInstaller)?, installer: SlotUpdateInstaller?) {
         guard let running, claim.scope != .unspecified else { return (nil, nil) }
         guard claim.role == (claim.scope == .system ? .systemPeer : .sessionPeer) else {
@@ -124,7 +129,7 @@ public final class MacAgentPeer: Sendable {
             return (nil, nil)
         }
         let installer = SlotUpdateInstaller(
-            root: root, runningSlot: running.slot, lander: lander, logger: logger,
+            root: root, runningSlot: running.slot, lander: lander, logger: logger, queue: queue,
             onSwitched: {
                 logger.log(.notice, "The peer relaunches into the update")
                 guard let peer = peer.withLock({ $0 }) else { Darwin.exit(relaunchStatus) }
@@ -136,7 +141,8 @@ public final class MacAgentPeer: Sendable {
         return (installer, installer)
     }
 
-    /// Rewrites the user scope's property lists as this binary writes them; launchd reads them at the next login.
+    /// Rewrites the user scope's property lists that differ from what this binary writes, logging each one it
+    /// wrote; launchd reads them at the next login.
     private static func refreshUserJobs(root: String) {
         let suffix = "/" + MacInstallLayout.userRootBelowHome
         guard root.hasSuffix(suffix) else {
@@ -146,8 +152,12 @@ public final class MacAgentPeer: Sendable {
         let installer = Installer(
             stagingRoot: "", runsCommands: true, payloadSource: nil, lander: lander, versionLabel: "", account: nil)
         do throws(Installer.Failure) {
-            try installer.run(.refreshJobs(layout))
-            logger.log(.notice, "Rewrote the user's jobs for this version")
+            let written = try installer.run(.refreshJobs(layout))
+            if !written.isEmpty {
+                logger.log(
+                    .notice,
+                    "Rewrote the user's jobs for this version: \(written.joined(separator: ", "), privacy: .public)")
+            }
         } catch {
             logger.log(.error, "Cannot rewrite the user's jobs: \(String(describing: error), privacy: .public)")
         }

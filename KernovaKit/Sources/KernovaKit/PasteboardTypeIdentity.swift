@@ -14,10 +14,15 @@ struct PasteboardTypeIdentity {
     private static var ostypeTagClass: UTTagClass { UTTagClass(rawValue: "com.apple.ostype") }
 
     /// The names that hand a pasteboard reader a file on this machine, or a
-    /// promise of one, lowercased.
+    /// promise of one, lowercased. Undeclared names are listed here because no
+    /// conformance reaches them.
     private static let fileReferenceNames: Set<String> = [
         "public.file-url",
         "nsfilenamespboardtype",
+        "nsfilenamepboardtype",
+        "next filename pasteboard type",
+        "com.apple.finder.node",
+        "com.apple.finder.noderef",
         "nsfilespromisepboardtype",
         "apple files promise pasteboard type",
         "apple hfs promise pasteboard type",
@@ -25,13 +30,16 @@ struct PasteboardTypeIdentity {
         "corepasteboardflavortype 0x6675726c",  // 'furl'
         "corepasteboardflavortype 0x68667320",  // 'hfs '
         "corepasteboardflavortype 0x70686673",  // 'phfs'
+        "corepasteboardflavortype 0x616c6973",  // 'alis'
+        "corepasteboardflavortype 0x66737320",  // 'fss '
+        "corepasteboardflavortype 0x66737266",  // 'fsrf'
     ]
     /// Prefixes of the same, lowercased: the promise types
     /// `NSFilePromiseProvider` writes and `NSTypedFilenamesPboardType:<ext>`.
     private static let fileReferencePrefixes = [
         "com.apple.pasteboard.promised-", "com.apple.nsfilepromise", "nstypedfilenamespboardtype:",
     ]
-    private static let fileReferenceOSTypes: Set<String> = ["furl", "hfs ", "phfs"]
+    private static let fileReferenceOSTypes: Set<String> = ["furl", "hfs ", "phfs", "alis", "fss ", "fsrf"]
 
     /// Legacy names AppKit reads a URL from, lowercased.
     private static let urlNames: Set<String> = [
@@ -41,6 +49,19 @@ struct PasteboardTypeIdentity {
         "corepasteboardflavortype 0x6775726c",  // 'gurl'
     ]
     private static let urlOSTypes: Set<String> = ["url ", "gurl"]
+    /// Legacy names carrying `[urls, titles]`, lowercased.
+    private static let titledURLNames: Set<String> = ["weburlswithtitlespboardtype"]
+
+    /// Names AppKit reads RTFD from, lowercased.
+    private static let rtfdNames: Set<String> = [
+        "com.apple.flat-rtfd",
+        "com.apple.rtfd",
+        "next rtfd pasteboard type",
+        "nsrtfdpboardtype",
+        "corepasteboardflavortype 0x72746664",  // 'rtfd'
+        "corepasteboardflavortype 0x52544644",  // 'RTFD'
+    ]
+    private static let rtfdOSTypes: Set<String> = ["rtfd"]
 
     private static let markerPrefix = "org.nspasteboard."
 
@@ -83,10 +104,12 @@ struct PasteboardTypeIdentity {
         names.contains { $0.hasPrefix(Self.markerPrefix) } || encoded.contains(where: \.isMarker)
     }
 
-    /// A file on this machine, a promise of one, or a `dyn.` type too opaque
-    /// to rule either out.
+    /// A file on this machine, a promise of one, data the system resolves to
+    /// one (an alias, a bookmark, a Finder node), or a `dyn.` type too opaque
+    /// to rule any out.
     var isFileReference: Bool {
         isOpaqueDynamic || type?.conforms(to: .fileURL) == true
+            || type?.conforms(to: .resolvable) == true
             || names.contains { name in
                 Self.fileReferenceNames.contains(name) || Self.fileReferencePrefixes.contains { name.hasPrefix($0) }
             }
@@ -98,7 +121,23 @@ struct PasteboardTypeIdentity {
     /// the type is.
     var carriesURL: Bool {
         type?.conforms(to: .url) == true || names.contains(where: Self.urlNames.contains)
+            || carriesTitledURLs
             || ostypes.contains { Self.urlOSTypes.contains($0.lowercased()) }
             || encoded.contains(where: \.carriesURL)
+    }
+
+    /// A URL type whose property list is `[urls, titles]`, so only its first
+    /// array holds URLs.
+    var carriesTitledURLs: Bool {
+        names.contains(where: Self.titledURLNames.contains) || encoded.contains(where: \.carriesTitledURLs)
+    }
+
+    /// RTFD in any spelling: a serialized file wrapper whose members a reader
+    /// opens, so a symbolic link among them names a file on this machine.
+    var isRTFD: Bool {
+        type.map { $0.conforms(to: .rtfd) || $0.conforms(to: .flatRTFD) } == true
+            || names.contains(where: Self.rtfdNames.contains)
+            || ostypes.contains { Self.rtfdOSTypes.contains($0.lowercased()) }
+            || encoded.contains(where: \.isRTFD)
     }
 }
