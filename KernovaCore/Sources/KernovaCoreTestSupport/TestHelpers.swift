@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
@@ -67,7 +68,7 @@ func makeTestLifecycle(
 /// A real `VMLibrary` over mocks: the test target's one construction of a
 /// library, and what a test changes a VM's configuration through once the VM
 /// exists, since only the library writes it. Its VMs come from
-/// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
+/// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:agentConnector:mutate:)``.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
 /// reaches it weakly. The library and its VMs forward their records to
@@ -192,6 +193,7 @@ extension VMLibrary {
         snapshots: VMSnapshotManifest = VMSnapshotManifest(),
         pairings: USBAccessoryPairingSet = USBAccessoryPairingSet(),
         files: InMemoryVMBundleFiles = InMemoryVMBundleFiles(),
+        agentConnector: (any HostConnectionMaking)? = nil,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         guard let storage = storageService as? MockVMStorageService else {
@@ -202,7 +204,7 @@ extension VMLibrary {
             hostState: VMInstanceFixture.hostState(hostState, placedAt: phase),
             snapshots: snapshots, pairings: pairings, files: files, mutate: mutate)
         files.forward(to: storage.files)
-        let instance = admitForTesting(read, phase: phase, preferences: preferences)
+        let instance = admitForTesting(read, phase: phase, preferences: preferences, agentConnector: agentConnector)
         wireHooks(for: instance)
         return instance
     }
