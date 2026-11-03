@@ -57,8 +57,6 @@ public final class ClipboardOfferSource {
     public let items: [OfferedItem]
     /// The content is confidential: `org.nspasteboard.ConcealedType`.
     public let concealed: Bool
-    /// The content is momentary: `org.nspasteboard.TransientType`.
-    public let transient: Bool
 
     private let origins: [[Origin]]
     private let pasteboard: (any ClipboardReadPasteboard)?
@@ -68,7 +66,7 @@ public final class ClipboardOfferSource {
     private var calledIn: [Int: Task<URL, any Error>] = [:]
 
     init(
-        items: [OfferedItem], origins: [[Origin]], concealed: Bool, transient: Bool,
+        items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
         promises: [any FilePromiseReceiving],
         promiseDestination: @escaping @MainActor () throws -> URL
@@ -76,7 +74,6 @@ public final class ClipboardOfferSource {
         self.items = items
         self.origins = origins
         self.concealed = concealed
-        self.transient = transient
         self.pasteboard = pasteboard
         self.changeCount = changeCount
         self.promises = promises
@@ -125,7 +122,7 @@ public final class ClipboardOfferSource {
             origins.insert(inlineOrigins, at: 0)
         }
         self.init(
-            items: items, origins: origins, concealed: content.isConcealed, transient: false,
+            items: items, origins: origins, concealed: content.isConcealed,
             pasteboard: nil, changeCount: 0, promises: [],
             promiseDestination: { throw ClipboardServeError.unavailable })
     }

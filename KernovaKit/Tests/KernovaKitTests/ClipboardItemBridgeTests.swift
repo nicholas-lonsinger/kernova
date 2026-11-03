@@ -15,7 +15,6 @@ import Testing
 struct ClipboardItemBridgeTests {
     private let scratch = TestScratchDirectory(prefix: "item-bridge")
     private let concealedType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
-    private let transientType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI)
     private let rtfType = NSPasteboard.PasteboardType("public.rtf")
     private let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
 
@@ -33,35 +32,56 @@ struct ClipboardItemBridgeTests {
             self.landing = landing
         }
 
-        func pullBytes(item: Int, representation: Int) -> Data? {
-            guard case .bytes(let data)? = serve(item, representation) else { return nil }
-            return data
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            serve(item, representation) { served in
+                guard case .bytes(let data)? = served else { return completion(nil) }
+                completion(data)
+            }
         }
 
-        func pullFile(item: Int, representation: Int) -> URL? {
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
             let name = String(decoding: items[item].representations[representation].name, as: UTF8.self)
             let destination = landing.appendingPathComponent(name)
-            switch serve(item, representation) {
-            case .file(let url)?, .folder(let url)?:
-                guard (try? FileManager.default.copyItem(at: url, to: destination)) != nil else { return nil }
-                return destination
-            default:
-                return nil
+            serve(item, representation) { served in
+                switch served {
+                case .file(let url)?, .folder(let url)?:
+                    let copied = (try? FileManager.default.copyItem(at: url, to: destination)) != nil
+                    completion(copied ? destination : nil)
+                default:
+                    completion(nil)
+                }
             }
         }
 
-        /// Blocks, as the provider callback does, until the source serves.
-        private func serve(_ item: Int, _ representation: Int) -> ClipboardServedRepresentation? {
-            let result = Locked<ClipboardServedRepresentation?>(nil)
-            let done = DispatchSemaphore(value: 0)
+        /// Serves on the main actor, completing from there rather than on the
+        /// paste's thread.
+        private func serve(
+            _ item: Int, _ representation: Int,
+            then completion: @escaping @Sendable (ClipboardServedRepresentation?) -> Void
+        ) {
             let source = self.source
             Task { @MainActor in
-                let served = try? await source.serve(item: item, representation: representation)
-                result.withLock { $0 = served }
-                done.signal()
+                completion(try? await source.serve(item: item, representation: representation))
             }
-            done.wait()
-            return result.withLock { $0 }
+        }
+    }
+
+    /// Completes every pull with `bytes`, counting the pulls it was asked to
+    /// start.
+    private final class FixedPuller: ClipboardItemPulling {
+        let bytes: Data
+        let starts = Locked(0)
+
+        init(bytes: Data) { self.bytes = bytes }
+
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            starts.withLock { $0 += 1 }
+            completion(bytes)
+        }
+
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            starts.withLock { $0 += 1 }
+            completion(nil)
         }
     }
 
@@ -118,8 +138,8 @@ struct ClipboardItemBridgeTests {
         let publisher = ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
         #expect(
             publisher.publish(
-                source.items, concealed: source.concealed, transient: source.transient,
-                servingFileURLs: servingFileURLs, puller: OfferPuller(source: source, landing: landing)))
+                source.items, concealed: source.concealed, servingFileURLs: servingFileURLs,
+                puller: OfferPuller(source: source, landing: landing)))
         return Published(destination: destination, registry: registry, landing: landing)
     }
 
@@ -352,6 +372,44 @@ struct ClipboardItemBridgeTests {
         }
     }
 
+    @Test("a legacy promise item takes its own receiver, so the next promise keeps its own")
+    func legacyPromiseKeepsReceiversAligned() async throws {
+        let legacy = NSPasteboard.PasteboardType(
+            "dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu")
+        let pasteboard = FakePasteboard()
+        pasteboard.setItems([
+            [(type: legacy, data: Data("txt".utf8))], promiseTypes.map { (type: $0, data: Data()) },
+        ])
+        let first = FakeFilePromiseReceiver(
+            name: "legacy.txt", fileType: "public.plain-text", contents: .file(Data("A".utf8)))
+        let second = FakeFilePromiseReceiver(name: "photo.png", fileType: "public.png", contents: .file(pngBytes))
+
+        let source = try await readOffer(pasteboard, promises: [first, second])
+
+        let names = source.items.map { $0.representations.first?.name }
+        #expect(names == [Data("legacy.txt".utf8), Data("photo.png".utf8)])
+        #expect(source.items.allSatisfy { $0.representations.first?.promised == true })
+    }
+
+    @Test("an item whose file resolves still takes its receiver, so the next promise keeps its own")
+    func resolvedFileConsumesItsReceiver() async throws {
+        let file = try directory("on-disk").appendingPathComponent("first.txt")
+        try Data("A".utf8).write(to: file)
+        let promise = promiseTypes.map { (type: $0, data: Data()) }
+        let pasteboard = FakePasteboard()
+        pasteboard.setItems([[(type: .fileURL, data: Data(file.absoluteString.utf8))] + promise, promise])
+        let first = FakeFilePromiseReceiver(
+            name: "first.txt", fileType: "public.plain-text", contents: .file(Data("A".utf8)))
+        let second = FakeFilePromiseReceiver(name: "second.png", fileType: "public.png", contents: .file(pngBytes))
+
+        let source = try await readOffer(pasteboard, promises: [first, second])
+
+        let names = source.items.map { $0.representations.first?.name }
+        #expect(names == [Data("first.txt".utf8), Data("second.png".utf8)])
+        #expect(source.items.map { $0.representations.first?.promised } == [false, true])
+        #expect(first.callIns == 0)
+    }
+
     // MARK: - Markers
 
     @Test("a concealed copy is offered concealed and published with the marker, which reads back concealed")
@@ -361,7 +419,6 @@ struct ClipboardItemBridgeTests {
 
         let source = try await readOffer(pasteboard)
         #expect(source.concealed)
-        #expect(!source.transient)
         #expect(single(source).map(\.type.appleUTI) == [ClipboardContent.utf8TextUTI])
 
         let published = try publish(source)
@@ -372,37 +429,122 @@ struct ClipboardItemBridgeTests {
         #expect(published.destination.providerInvocations == 0)
     }
 
-    @Test("a transient copy is offered transient rather than dropped, and published with the marker")
-    func transientRoundTrips() async throws {
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .string, data: Data("snippet".utf8)), (type: transientType, data: Data())])
-
-        let source = try await readOffer(pasteboard)
-        #expect(source.transient)
-        #expect(!source.concealed)
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.string, transientType]])
-        #expect(await published.paste(transientType) == Data())
-        #expect(await published.paste(.string) == Data("snippet".utf8))
-        #expect(try await readOffer(published.destination).transient)
-    }
-
-    @Test("an auto-generated copy offers nothing")
-    func autoGeneratedIsSuppressed() async {
+    @Test(
+        "a transient or auto-generated copy offers nothing, even concealed",
+        arguments: [
+            (ClipboardSnapshotPolicy.transientMarkerUTI, ClipboardSnapshotPolicy.SkipReason.transientSnapshot),
+            (ClipboardSnapshotPolicy.autoGeneratedMarkerUTI, .autoGeneratedSnapshot),
+        ])
+    func markedMomentaryIsSuppressed(marker: String, reason: ClipboardSnapshotPolicy.SkipReason) async {
+        // A password manager's auto-type marks its copy both concealed and transient.
         let pasteboard = FakePasteboard()
         pasteboard.setItem([
-            (type: .string, data: Data("fix".utf8)),
-            (type: .init(ClipboardSnapshotPolicy.autoGeneratedMarkerUTI), data: Data()),
+            (type: .string, data: Data("hunter2".utf8)), (type: concealedType, data: Data()),
+            (type: .init(marker), data: Data()),
         ])
 
         let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
 
-        guard case .suppressed(.autoGeneratedSnapshot) = outcome else {
+        guard case .suppressed(let suppressed) = outcome else {
             Issue.record("expected suppression, got \(outcome)")
             return
         }
+        #expect(suppressed == reason)
+    }
+
+    @Test("a peer's transient marker is never published")
+    func peerTransientMarkerIsNotPublished() {
+        var item = OfferedItem()
+        item.representations = [
+            .make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0),
+            .make(TypeDescriptor(appleUTI: ClipboardSnapshotPolicy.transientMarkerUTI), .inline, size: 0),
+        ]
+
+        let specs = ClipboardPasteboardPublisher.itemSpecs(
+            for: [item], concealed: false, puller: FixedPuller(bytes: Data("x".utf8)))
+
+        #expect(specs.map(\.types) == [[ClipboardContent.utf8TextUTI]])
+    }
+
+    // MARK: - Smuggled file references
+
+    @Test(
+        "no spelling of a file reference a peer offers INLINE is published",
+        arguments: [
+            "PUBLIC.FILE-URL",
+            "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn",  // NSFilenamesPboardType
+            "Dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn",
+            "DYN.AH62D4RV4GU8Y6Y4GRF0GN5XBRZW1GYDCR7U1E3CYTF2GN",  // encodes nothing
+            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b0g25xnr3wg3bu",  // 'furl' flavor
+            "dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu",  // legacy files promise
+            "COM.APPLE.PASTEBOARD.PROMISED-FILE-URL",
+            "com.apple.pasteboard.promised-suggested-file-name",
+            "com.apple.pasteboard.promised-file-name",
+            "com.apple.pasteboard.NSFilePromiseID",
+            "com.apple.NSFilePromiseItemMetaData",
+            "nsfilenamespboardtype",
+            "ORG.NSPASTEBOARD.CONCEALEDTYPE",
+        ])
+    func smuggledFileReferencesAreRefused(uti: String) {
+        var item = OfferedItem()
+        item.representations = [.make(TypeDescriptor(appleUTI: uti), .inline, size: 0)]
+        #expect(!ClipboardPromisePolicy.keeps(item.representations[0]))
+
+        let specs = ClipboardPasteboardPublisher.itemSpecs(
+            for: [item], concealed: false, puller: FixedPuller(bytes: Data("file:///etc/hosts".utf8)))
+
+        #expect(specs.isEmpty)
+    }
+
+    @Test(
+        "a URL flavor is served a web URL but never a file URL",
+        arguments: [
+            "public.url",
+            "Public.URL",
+            // Apple URL pasteboard type, as a pasteboard item carries it.
+            "dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu",
+        ])
+    func urlFlavorRefusesFileURLs(uti: String) async throws {
+        func served(_ bytes: Data) async -> Data? {
+            var item = OfferedItem()
+            item.representations = [.make(TypeDescriptor(appleUTI: uti), .inline, size: 0)]
+            let destination = FakePasteboard()
+            let registry = LazyClipboardProviderRegistry()
+            defer { registry.releaseAllForTesting() }
+            ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
+                .publish([item], concealed: false, puller: FixedPuller(bytes: bytes))
+            return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
+        }
+        func plist(_ strings: [String]) throws -> Data {
+            try PropertyListSerialization.data(fromPropertyList: strings, format: .xml, options: 0)
+        }
+
+        let web = Data("https://example.com/".utf8)
+        #expect(await served(web) == web)
+        #expect(await served(try plist(["https://example.com/", ""])) != nil)
+        for smuggled in [
+            Data("file:///etc/hosts".utf8), Data(" FILE:///etc/hosts".utf8), Data("/etc/hosts".utf8),
+            try plist(["file:///etc/hosts", ""]), try plist(["hosts", "file:///etc/"]),
+        ] {
+            #expect(await served(smuggled) == nil, "\(String(decoding: smuggled, as: UTF8.self))")
+        }
+    }
+
+    // MARK: - Pulls on the paste's thread
+
+    @Test("a fire on the main thread with no event loop to run is refused before any pull starts")
+    func mainThreadFireWithoutEventLoopIsRefused() {
+        // A wait source that declines stands in for the tracking or modal loop
+        // this bundle cannot enter; the app-hosted counterpart proving the
+        // event-loop wait serves is `ClipboardItemPullMainThreadTests`.
+        let puller = FixedPuller(bytes: Data("x".utf8))
+        var item = OfferedItem()
+        item.representations = [.make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0)]
+        let specs = ClipboardPasteboardPublisher.itemSpecs(
+            for: [item], concealed: false, puller: puller, eventLoopWait: { nil })
+
+        #expect(specs.first?.provide(ClipboardContent.utf8TextUTI) == nil)
+        #expect(puller.starts.withLock { $0 } == 0)
     }
 
     // MARK: - Content

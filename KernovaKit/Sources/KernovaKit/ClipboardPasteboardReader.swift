@@ -128,7 +128,7 @@ public enum ClipboardPasteboardReader {
             return .content(ClipboardContent(text: text, isConcealed: isConcealed), skipped: 0)
         }
 
-        let isFileOrPromiseDrag = item.types.contains { isFileOrPromiseType($0.rawValue) }
+        let isFileOrPromiseDrag = item.types.contains { ClipboardSnapshotPolicy.isFileReference(uti: $0.rawValue) }
 
         // Identity-based skips run before any data is read. A file/promise copy
         // additionally drops the URL/path text fallbacks, so one can never
@@ -291,24 +291,17 @@ public enum ClipboardPasteboardReader {
         }
         // A promise can still deliver through `NSFilePromiseReceiver`, so a
         // missed URL is not a loss while one is advertised.
-        guard missedConcreteURL, !promisesFile(item) else { return .notAFile }
+        guard missedConcreteURL, !carriesPromiseReceiver(item) else { return .notAFile }
         return .vanished
     }
 
-    /// `true` when the item advertises a file promise, whose asynchronous
-    /// receipt can still produce the file.
-    static func promisesFile(_ item: any ClipboardPasteboardItemReading) -> Bool {
-        item.types.contains {
-            $0.rawValue.hasPrefix("com.apple.pasteboard.promised-file")
-                || $0.rawValue.hasPrefix("com.apple.NSFilePromise")
-        }
-    }
-
-    /// `true` for the types that mark a snapshot as a file or file promise.
-    static func isFileOrPromiseType(_ uti: String) -> Bool {
-        uti == "public.file-url" || uti == "NSFilenamesPboardType"
-            || uti.hasPrefix("com.apple.pasteboard.promised-file")
-            || uti.hasPrefix("com.apple.NSFilePromise")
+    /// `true` when `readObjects(forClasses: [NSFilePromiseReceiver.self])`
+    /// yields a receiver for the item, whose asynchronous receipt can still
+    /// produce the file: exactly when it declares one of the receiver's
+    /// readable types.
+    static func carriesPromiseReceiver(_ item: any ClipboardPasteboardItemReading) -> Bool {
+        let readable = Set(NSFilePromiseReceiver.readableDraggedTypes)
+        return item.types.contains { readable.contains($0.rawValue) }
     }
 
     /// `true` for text/URL types that, in a file/promise snapshot, merely

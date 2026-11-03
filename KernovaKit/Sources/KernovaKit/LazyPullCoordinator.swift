@@ -63,9 +63,8 @@ final class LazyPullCoordinator: Sendable {
     final class Waiter: Sendable {
         /// How this waiter is told its outcome.
         fileprivate enum Wakeup: Sendable {
-            /// A held thread: its semaphore, plus the event loop the wait is
-            /// running when it holds the main run loop's base.
-            case synchronous(DispatchSemaphore, NestedEventLoopWait?)
+            /// A held thread.
+            case synchronous(ThreadHold.Wait)
             /// A callback, run on whichever thread resolved the slot.
             case asynchronous(@Sendable (LazyPullOutcome) -> Void)
         }
@@ -97,9 +96,8 @@ final class LazyPullCoordinator: Sendable {
             }
             guard isFirst else { return }
             switch wakeup {
-            case .synchronous(let semaphore, let eventLoop):
-                semaphore.signal()
-                eventLoop?.wake()
+            case .synchronous(let wait):
+                wait.wake()
             case .asynchronous(let onResolve):
                 onResolve(outcome)
             }
@@ -247,24 +245,13 @@ final class LazyPullCoordinator: Sendable {
         retire: @escaping @Sendable () -> Void,
         start: () -> Void
     ) -> LazyPullOutcome {
-        // Decided before registration, so a resolve that races `start` finds it.
-        let eventLoop = eventLoopWait()
-        // The main thread is never parked. A wait source vends no wait on the
-        // main thread where a nested wait would have to dispatch events another
-        // loop owns — the live one, inside a tracking or modal loop. The
-        // semaphore below is the off-main branch, and taking it here would
-        // freeze the app for the length of the transfer. Refusing costs this
-        // one fire, which the caller reports; parking would cost every frame
-        // until the pull resolved.
-        guard eventLoop != nil || !Thread.isMainThread else { return .mainThreadUnavailable }
-        let semaphore = DispatchSemaphore(value: 0)
-        let waiter = Waiter(
-            transferID: transferID, wakeup: .synchronous(semaphore, eventLoop),
-            onProgress: onProgress)
+        // Decided before registration, so a resolve that races `start` finds
+        // it. Refusing costs this one fire, which the caller reports; parking
+        // would cost every frame until the pull resolved.
+        guard let wait = ThreadHold.Wait(eventLoop: eventLoopWait()) else { return .mainThreadUnavailable }
+        let waiter = Waiter(transferID: transferID, wakeup: .synchronous(wait), onProgress: onProgress)
         let slotTimeout = enter(waiter, timeout: timeout, retire: retire, start: start)
-        return Self.hold(
-            eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: slotTimeout
-        ) { waiter.outcome }
+        return wait.hold(recheckingEvery: slotTimeout) { waiter.outcome }
     }
 
     /// Holds the calling thread until `latch` opens, the way
@@ -275,31 +262,10 @@ final class LazyPullCoordinator: Sendable {
     /// - Returns: `.mainThreadUnavailable` without waiting where a pull is
     ///   refused, `nil` once the latch has opened.
     func hold(until latch: OneShotLatch) -> LazyPullOutcome? {
-        let eventLoop = eventLoopWait()
-        guard eventLoop != nil || !Thread.isMainThread else { return .mainThreadUnavailable }
-        let semaphore = DispatchSemaphore(value: 0)
-        latch.whenOpen {
-            semaphore.signal()
-            eventLoop?.wake()
-        }
-        Self.hold(eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: .infinity) {
-            latch.isOpen ? () : nil
-        }
+        guard let wait = ThreadHold.Wait(eventLoop: eventLoopWait()) else { return .mainThreadUnavailable }
+        latch.whenOpen { wait.wake() }
+        wait.hold { latch.isOpen ? () : nil }
         return nil
-    }
-
-    /// Holds the calling thread until `resolved` returns a value, the way
-    /// ``ThreadHold`` holds it, with no deadline: only `resolved` ends it.
-    private static func hold<Value>(
-        eventLoop: NestedEventLoopWait?, semaphore: DispatchSemaphore,
-        recheckingEvery interval: TimeInterval, until resolved: @Sendable () -> Value?
-    ) -> Value {
-        guard
-            let value = ThreadHold.hold(
-                eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: interval,
-                until: resolved)
-        else { preconditionFailure("A hold with no deadline returned without its value") }
-        return value
     }
 
     /// Starts or joins the pull for `transferID` without holding any thread.
