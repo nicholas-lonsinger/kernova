@@ -260,14 +260,6 @@ extension SocketTests {
             "A socket error with nothing to read ends the read side with that error",
             .timeLimit(.minutes(1)))
         func pendingErrorEndsReadSide() async throws {
-            // DIAGNOSTIC, removed before merge: the process CPU burnt while the test waits.
-            func cpu() -> Double {
-                var now = timespec()
-                clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now)
-                return Double(now.tv_sec) + Double(now.tv_nsec) / 1e9
-            }
-            let cpuBefore = cpu()
-            defer { print("DIAG process CPU seconds while waiting: \(cpu() - cpuBefore)") }
             let observed = try ObservedStream(adopting: try RawSocket.refusedDatagram())
             var events = observed.events.waiter()
             // At the time limit, shutdown() ends the wait with `.shutDown`, so the test fails rather than hangs.
