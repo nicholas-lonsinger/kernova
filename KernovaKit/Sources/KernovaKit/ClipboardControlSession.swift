@@ -24,13 +24,12 @@ public final class ClipboardControlSession {
 
     /// Which channel this session serves.
     ///
-    /// Both channels carry offers both ways; what an offer does depends on
-    /// which end sent it (``ClipboardOfferDiscipline``).
+    /// What an offer does depends on the channel and which end sent it
+    /// (``ClipboardOfferDiscipline``).
     public enum Kind: Sendable {
         /// Clipboard sync, offered and pulled in both directions.
         case clipboard
-        /// Files dragged between the Mac and the VM display: dropped on it
-        /// host→guest, dragged out of it guest→host.
+        /// Files dropped on the VM display, host→guest.
         case drop
     }
 
@@ -73,12 +72,6 @@ public final class ClipboardControlSession {
 
     /// Where an inbound payload lands.
     private let staging: ClipboardFileStaging
-
-    /// How the offers this side sends behave.
-    nonisolated let outboundDiscipline: ClipboardOfferDiscipline
-
-    /// How the offers the peer sends behave.
-    nonisolated let inboundDiscipline: ClipboardOfferDiscipline
 
     nonisolated private let dataLink: DataLink
     nonisolated let dataSocketTimeout: TimeInterval
@@ -130,8 +123,7 @@ public final class ClipboardControlSession {
 
     /// Creates a session for one accepted channel.
     ///
-    /// `staging` is where inbound payloads land: every session receives, since
-    /// both channels carry offers both ways.
+    /// `staging` is where inbound payloads land.
     public init(
         channel: VsockChannel, role: Role, kind: Kind, label: String,
         staging: ClipboardFileStaging, dataLink: DataLink = .accepts,
@@ -145,8 +137,6 @@ public final class ClipboardControlSession {
         self.dataLink = dataLink
         self.dataSocketTimeout = dataSocketTimeout
         self.connectionTag = role == .host ? .nextHost() : .nextGuest()
-        self.outboundDiscipline = ClipboardOfferDiscipline(kind: kind, sender: role)
-        self.inboundDiscipline = ClipboardOfferDiscipline(kind: kind, receiver: role)
         // A guest cannot be connected to: a session that expects to accept data
         // connections in that role would leave every transfer waiting for one
         // that can never arrive.
@@ -222,16 +212,13 @@ public final class ClipboardControlSession {
     ///
     /// `handleControlFrame` receives every frame, on the main actor and in
     /// arrival order — including one this session has since stopped for, which
-    /// its owner decides about (``hasStopped``). `observe` sees each frame
-    /// first, on the thread that read it, before it is queued to the main
-    /// actor — for a reply a thread holding the main thread is waiting on.
-    /// `onEnded` runs off the main actor the moment the channel is done, so a
-    /// pull parked on the main thread is woken without waiting for a
-    /// main-queue hop it is itself blocking.
+    /// its owner decides about (``hasStopped``). `onEnded` runs off the main
+    /// actor the moment the channel is done, so a pull parked on the main
+    /// thread is woken without waiting for a main-queue hop it is itself
+    /// blocking.
     @discardableResult
     public func start(
         handleControlFrame: @escaping @MainActor (Frame) -> Void,
-        observe: @escaping @Sendable (Frame) -> Void = { _ in },
         onEnded: @escaping @Sendable () -> Void = {}
     ) -> Bool {
         guard case .idle = lifecycle.withLock({ $0 }) else { return false }
@@ -268,7 +255,6 @@ public final class ClipboardControlSession {
                 channel: channel, label: label, connectionTag: tag, subject: subject,
                 inbox: inbox, lifecycle: lifecycle, onEnded: onEnded,
                 onControlFrame: { frame in
-                    observe(frame)
                     // Fire-and-forget: the consume loop must never wait on the
                     // main actor — a paste's promise callback occupies it, and
                     // a transfer this loop's frames open is what resolves that
@@ -374,25 +360,22 @@ public final class ClipboardControlSession {
 
     // MARK: - Sending control frames
 
-    /// Announces `reps` under `generation` in the vocabulary of what this side
-    /// offers — a `ClipboardOffer`, a host's `DropOffer`, a guest's `DragOffer`.
-    ///
-    /// `promised` names the indices a guest's drag carries as file promises;
-    /// only a `DragOffer` carries any.
-    nonisolated public func sendOffer(
-        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool,
-        promised: [Int] = []
+    /// Announces `reps` under `generation` in `discipline`'s vocabulary — a
+    /// `ClipboardOffer` or a host's `DropOffer`.
+    nonisolated func sendOffer(
+        _ discipline: ClipboardOfferDiscipline, generation: UInt64,
+        reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
     ) throws {
         try channel.send(
-            outboundDiscipline.offerFrame(
-                generation: generation, reps: reps, isConcealed: isConcealed, promised: promised))
+            discipline.offerFrame(generation: generation, reps: reps, isConcealed: isConcealed))
     }
 
-    /// Retires the offer for `generation` in the vocabulary of what this side
-    /// offers — a `ClipboardRelease`, a host's `DropRelease`, a guest's
-    /// `DragRelease`.
-    nonisolated public func sendRelease(generation: UInt64) throws {
-        try channel.send(outboundDiscipline.releaseFrame(generation: generation))
+    /// Retires the offer for `generation` in `discipline`'s vocabulary — a
+    /// `ClipboardRelease` or a host's `DropRelease`.
+    nonisolated func sendRelease(
+        _ discipline: ClipboardOfferDiscipline, generation: UInt64
+    ) throws {
+        try channel.send(discipline.releaseFrame(generation: generation))
     }
 
     /// Asks the peer to dial one representation's data connection.
@@ -431,50 +414,5 @@ public final class ClipboardControlSession {
             .dropComplete(
                 generation: generation, outcome: outcome, code: code, message: message,
                 itemFailure: itemFailure))
-    }
-
-    /// Tells the guest the host is done with the drag for `generation`.
-    /// Best-effort: a channel that died took the drag with it.
-    nonisolated public func sendDragComplete(generation: UInt64) {
-        try? channel.send(.dragComplete(generation: generation))
-    }
-
-    /// Asks the guest to hand the drag for `generation` over. Best-effort: a
-    /// channel that died took the drag with it.
-    nonisolated public func sendDragTake(generation: UInt64) {
-        try? channel.send(.dragTake(generation: generation))
-    }
-
-    /// Shows the guest's catcher for `generation` again, or stands it down.
-    /// Best-effort: a channel that died took the drag with it.
-    nonisolated public func sendDragCatcher(generation: UInt64, shown: Bool) {
-        try? channel.send(.dragCatcher(generation: generation, shown: shown))
-    }
-
-    /// Reports one step of handing the drag for `generation` to the host.
-    /// Best-effort: a channel that died took the drag with it.
-    nonisolated public func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {
-        try? channel.send(.dragHandOff(generation: generation, step: step))
-    }
-
-    /// Tells the host the sizes of items in the drag for `generation`, and
-    /// which will never be sized.
-    nonisolated public func sendDragSizes(
-        generation: UInt64, byteCounts: [Int: Int], unavailable: [Int] = []
-    ) throws {
-        try channel.send(
-            .dragSizes(generation: generation, byteCounts: byteCounts, unavailable: unavailable))
-    }
-
-    /// Asks the guest to have the promised items of the drag for `generation`
-    /// called in.
-    nonisolated public func sendDragResolve(generation: UInt64) throws {
-        try channel.send(.dragResolve(generation: generation))
-    }
-
-    /// Tells the host the names the promised items of the drag for
-    /// `generation` took.
-    nonisolated public func sendDragNames(generation: UInt64, filenames: [Int: String]) throws {
-        try channel.send(.dragNames(generation: generation, filenames: filenames))
     }
 }

@@ -213,7 +213,7 @@ final class VsockGuestClipboardAgent {
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         self.staging = ClipboardFileStaging(
-            label: "agent", root: stagingRoot, receivingOn: .clipboard, as: .guest,
+            label: "agent", root: stagingRoot,
             freeSpaceProvider: freeSpaceProvider)
         self.lastPasteboardChangeCount = pasteboard.changeCount
         // Default-disabled: pause the reconnect loop until the host enables.

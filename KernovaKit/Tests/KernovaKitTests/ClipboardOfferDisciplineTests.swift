@@ -8,59 +8,41 @@ import Testing
 /// and the sending end name, and the frames each flow speaks.
 @Suite("ClipboardOfferDiscipline", .caseScoped)
 struct ClipboardOfferDisciplineTests {
-    @Test("the channel and the sending end name the flow")
+    @Test("the channel and the sending end name the flow, and the drop channel carries none guest→host")
     func flowBySender() {
-        #expect(ClipboardOfferDiscipline(kind: .clipboard, sender: .host).flow == .clipboard)
-        #expect(ClipboardOfferDiscipline(kind: .clipboard, sender: .guest).flow == .clipboard)
-        #expect(ClipboardOfferDiscipline(kind: .drop, sender: .host).flow == .drop)
-        #expect(ClipboardOfferDiscipline(kind: .drop, sender: .guest).flow == .dragOut)
+        #expect(ClipboardOfferDiscipline(kind: .clipboard, sender: .host)?.flow == .clipboard)
+        #expect(ClipboardOfferDiscipline(kind: .clipboard, sender: .guest)?.flow == .clipboard)
+        #expect(ClipboardOfferDiscipline(kind: .drop, sender: .host)?.flow == .drop)
+        #expect(ClipboardOfferDiscipline(kind: .drop, sender: .guest) == nil)
+        #expect(ClipboardOfferDiscipline(kind: .drop, receiver: .host) == nil)
     }
 
     @Test("each flow offers and releases in its own vocabulary")
-    func vocabulary() {
-        let clipboard = ClipboardOfferDiscipline(kind: .clipboard, sender: .guest)
-        let drop = ClipboardOfferDiscipline(kind: .drop, sender: .host)
-        let drag = ClipboardOfferDiscipline(kind: .drop, sender: .guest)
+    func vocabulary() throws {
+        let clipboard = try #require(ClipboardOfferDiscipline(kind: .clipboard, sender: .guest))
+        let drop = try #require(ClipboardOfferDiscipline(kind: .drop, sender: .host))
 
         func offer(_ discipline: ClipboardOfferDiscipline) -> Frame.OneOf_Payload? {
-            discipline.offerFrame(generation: 1, reps: [], isConcealed: false, promised: []).payload
+            discipline.offerFrame(generation: 1, reps: [], isConcealed: false).payload
         }
         guard case .clipboardOffer = offer(clipboard),
             case .dropOffer = offer(drop),
-            case .dragOffer = offer(drag),
             case .clipboardRelease = clipboard.releaseFrame(generation: 1).payload,
-            case .dropRelease = drop.releaseFrame(generation: 1).payload,
-            case .dragRelease = drag.releaseFrame(generation: 1).payload
+            case .dropRelease = drop.releaseFrame(generation: 1).payload
         else {
             Issue.record("A flow spoke another flow's vocabulary")
             return
         }
     }
 
-    @Test("only a drop is up front and on a claim deadline; a drag out opens its readout per offer")
-    func readoutsAndDeadlines() {
-        let clipboard = ClipboardOfferDiscipline(kind: .clipboard, sender: .host)
-        let drop = ClipboardOfferDiscipline(kind: .drop, sender: .host)
-        let drag = ClipboardOfferDiscipline(kind: .drop, sender: .guest)
+    @Test("only a drop is up front and on a claim deadline")
+    func readoutsAndDeadlines() throws {
+        let clipboard = try #require(ClipboardOfferDiscipline(kind: .clipboard, sender: .host))
+        let drop = try #require(ClipboardOfferDiscipline(kind: .drop, sender: .host))
 
         #expect(clipboard.readout == .sharedPeerPaste)
         #expect(drop.readout == .upFront)
-        #expect(drag.readout == .perEntryOnFirstRequest)
-        #expect(drag.servingGesture == .dragOut)
-        #expect(drop.hasClaimDeadline && !drag.hasClaimDeadline && !clipboard.hasClaimDeadline)
-        #expect(clipboard.supersedes && !drop.supersedes && !drag.supersedes)
-        #expect(drag.ownerWithdraws && !drop.ownerWithdraws && !clipboard.ownerWithdraws)
-    }
-
-    @Test("only a drag out's staging outlives the newest-generations window, until its take discards it")
-    func stagingRetention() {
-        let newest = ClipboardFileStaging.Retention.newest(ClipboardFileStaging.maxGenerations)
-
-        #expect(ClipboardOfferDiscipline(kind: .clipboard, receiver: .host).stagingRetention == newest)
-        #expect(ClipboardOfferDiscipline(kind: .clipboard, receiver: .guest).stagingRetention == newest)
-        #expect(ClipboardOfferDiscipline(kind: .drop, receiver: .guest).stagingRetention == newest)
-        #expect(
-            ClipboardOfferDiscipline(kind: .drop, receiver: .host).stagingRetention
-                == .untilDiscarded)
+        #expect(drop.hasClaimDeadline && !clipboard.hasClaimDeadline)
+        #expect(clipboard.supersedes && !drop.supersedes)
     }
 }

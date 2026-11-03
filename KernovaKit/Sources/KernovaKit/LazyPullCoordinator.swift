@@ -18,10 +18,6 @@ public enum LazyPullOutcome: Sendable {
     /// event-loop wait is unavailable, where the only alternative is parking the
     /// app for the transfer's length.
     case mainThreadUnavailable
-    /// Nothing was asked for: the peer said the item will never have bytes —
-    /// a drag's promised item its source failed to write
-    /// (``ClipboardErrorCode/dragItemUnavailable``).
-    case unavailable
 }
 
 /// One in-flight pull per `transfer_id`, shared by every caller that asks for it.
@@ -252,20 +248,6 @@ final class LazyPullCoordinator: Sendable {
         let waiter = Waiter(transferID: transferID, wakeup: .synchronous(wait), onProgress: onProgress)
         let slotTimeout = enter(waiter, timeout: timeout, retire: retire, start: start)
         return wait.hold(recheckingEvery: slotTimeout) { waiter.outcome }
-    }
-
-    /// Holds the calling thread until `latch` opens, the way
-    /// ``pull(transferID:timeout:onProgress:retire:start:)`` holds it: the
-    /// event loop on the main run loop's base, a park anywhere else off the
-    /// main thread. Nothing times the wait out.
-    ///
-    /// - Returns: `.mainThreadUnavailable` without waiting where a pull is
-    ///   refused, `nil` once the latch has opened.
-    func hold(until latch: OneShotLatch) -> LazyPullOutcome? {
-        guard let wait = ThreadHold.Wait(eventLoop: eventLoopWait()) else { return .mainThreadUnavailable }
-        latch.whenOpen { wait.wake() }
-        wait.hold { latch.isOpen ? () : nil }
-        return nil
     }
 
     /// Starts or joins the pull for `transferID` without holding any thread.

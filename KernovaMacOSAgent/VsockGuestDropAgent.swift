@@ -130,7 +130,7 @@ final class VsockGuestDropAgent: Sendable {
         self.downloadsDirectory = downloadsDirectory
         self.revealInFinder = revealInFinder
         self.staging = ClipboardFileStaging(
-            label: "agent-drop", root: stagingRoot, receivingOn: .drop, as: .guest,
+            label: "agent-drop", root: stagingRoot,
             freeSpaceProvider: freeSpaceProvider)
         // Default-paused: nothing dials until the host's `Hello` says it has a
         // drop listener.
@@ -342,10 +342,6 @@ final class VsockGuestDropAgent: Sendable {
                 // Unreachable: this loop runs on `jobQueue`, as the precondition
                 // above asserts, and the refusal is the main thread's alone.
                 outcome = .failed(.dropFailed, "The transfer could not be started")
-            case .unavailable:
-                // Unreachable: only a drag's promised item is refused this way,
-                // and a drop promises nothing.
-                outcome = .failed(.dropFailed, "The file could not be produced")
             }
             if case .completed = outcome { continue }
             break

@@ -15,9 +15,6 @@ struct ClipboardErrorCodeTests {
         #expect(ClipboardErrorCode.pasteTimeout.rawValue == "clipboard.paste.timeout")
         #expect(ClipboardErrorCode.pasteFailed.rawValue == "clipboard.paste.failed")
         #expect(ClipboardErrorCode.copyTooLarge.rawValue == "clipboard.copy.too.large")
-        #expect(ClipboardErrorCode.dragTakeStale.rawValue == "clipboard.drag.take.stale")
-        #expect(ClipboardErrorCode.dragTakeRefused.rawValue == "clipboard.drag.take.refused")
-        #expect(ClipboardErrorCode.dragTakeFailed.rawValue == "clipboard.drag.take.failed")
         #expect(
             ClipboardErrorCode.dragItemUnavailable.rawValue == "clipboard.drag.item.unavailable")
     }

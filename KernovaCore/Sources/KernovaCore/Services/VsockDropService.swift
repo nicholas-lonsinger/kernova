@@ -111,7 +111,7 @@ package final class VsockDropService: VsockFeatureService, VsockDataConnectionAc
         self.directoryByteCount = directoryByteCount
         self.runOffMainActor = runOffMainActor
         let staging = ClipboardFileStaging(
-            label: "host-drag-\(stagingKey)", root: stagingRoot, receivingOn: .drop, as: .host,
+            label: "host-drag-\(stagingKey)", root: stagingRoot,
             freeSpaceProvider: freeSpaceProvider)
         self.endpoint = ClipboardEndpoint(
             channel: channel,

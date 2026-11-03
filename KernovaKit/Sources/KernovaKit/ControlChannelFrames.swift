@@ -111,8 +111,7 @@ public enum ControlChannelInbound: Equatable, Sendable {
         case .policyUpdate(let policy): return .policyUpdate(policy)
         case .clipboardOffer, .clipboardRequest, .clipboardRelease,
             .clipboardTransferRequest, .clipboardTransferReply, .logRecord,
-            .dropOffer, .dropComplete, .dropRelease, .dragOffer, .dragComplete, .dragRelease,
-            .dragTake, .dragHandOff, .dragCatcher, .dragSizes, .dragResolve, .dragNames, .none:
+            .dropOffer, .dropComplete, .dropRelease, .none:
             return .wrongPort
         }
     }

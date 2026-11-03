@@ -3,7 +3,6 @@ import Foundation
 import KernovaTestSupport
 import System
 import Testing
-import UniformTypeIdentifiers
 
 @testable import KernovaKit
 
@@ -258,54 +257,5 @@ struct StagedItemLandingTests {
             try StagedItemLanding.land(
                 representation, at: try destinationFolder().appendingPathComponent("x.bin"))
         }
-    }
-}
-
-/// What the host keeps of a guest-supplied item name and type: a single safe
-/// path component, and a type a file promise accepts.
-@Suite("ClipboardDraggedItem", .caseScoped)
-struct ClipboardDraggedItemTests {
-    @Test(
-        "a hostile or empty name reduces to one safe path component",
-        arguments: [
-            ("../escape", false, "escape"), ("a/b", false, "b"), ("", false, "File"),
-            (".", false, "File"), ("..", false, "File"), ("", true, "Folder"),
-            ("Photos", true, "Photos"), ("report.pdf", false, "report.pdf"),
-        ])
-    func safeFilename(declared: String, isDirectory: Bool, expected: String) {
-        #expect(ClipboardDraggedItem.safeFilename(declared, isDirectory: isDirectory) == expected)
-    }
-
-    @Test(
-        "a type is kept only when it suits the item's kind",
-        arguments: [
-            ("public.png", false, "public.png"),
-            ("public.folder", false, "public.data"),
-            ("not a type at all", false, "public.data"),
-            ("public.item", false, "public.data"),
-            ("public.jpeg", true, "public.folder"),
-            ("com.apple.application-bundle", true, "com.apple.application-bundle"),
-            ("public.folder", true, "public.folder"),
-            ("", true, "public.folder"),
-        ])
-    func usableType(declared: String, isDirectory: Bool, expected: String) {
-        #expect(
-            ClipboardDraggedItem.usableType(declared, isDirectory: isDirectory).identifier
-                == expected)
-    }
-
-    @Test("an item carries its index and its kind as declared")
-    func carriesTheDeclaredFacts() {
-        let item = ClipboardDraggedItem(
-            repIndex: 2,
-            declared: RepInfo(
-                uti: "public.folder", byteCount: 77, filename: "../Tree", isInline: true,
-                isDirectory: true
-            ).wire, isPromised: false)
-
-        #expect(item.repIndex == 2)
-        #expect(item.isDirectory)
-        #expect(item.filename == "Tree")
-        #expect(item.type.identifier == "public.folder")
     }
 }

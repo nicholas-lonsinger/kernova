@@ -138,62 +138,6 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     set {payload = .dropRelease(newValue)}
   }
 
-  public var dragOffer: Kernova_V1_DragOffer {
-    get {
-      if case .dragOffer(let v)? = payload {return v}
-      return Kernova_V1_DragOffer()
-    }
-    set {payload = .dragOffer(newValue)}
-  }
-
-  public var dragComplete: Kernova_V1_DragComplete {
-    get {
-      if case .dragComplete(let v)? = payload {return v}
-      return Kernova_V1_DragComplete()
-    }
-    set {payload = .dragComplete(newValue)}
-  }
-
-  public var dragRelease: Kernova_V1_DragRelease {
-    get {
-      if case .dragRelease(let v)? = payload {return v}
-      return Kernova_V1_DragRelease()
-    }
-    set {payload = .dragRelease(newValue)}
-  }
-
-  public var dragTake: Kernova_V1_DragTake {
-    get {
-      if case .dragTake(let v)? = payload {return v}
-      return Kernova_V1_DragTake()
-    }
-    set {payload = .dragTake(newValue)}
-  }
-
-  public var dragHandOff: Kernova_V1_DragHandOff {
-    get {
-      if case .dragHandOff(let v)? = payload {return v}
-      return Kernova_V1_DragHandOff()
-    }
-    set {payload = .dragHandOff(newValue)}
-  }
-
-  public var dragCatcher: Kernova_V1_DragCatcher {
-    get {
-      if case .dragCatcher(let v)? = payload {return v}
-      return Kernova_V1_DragCatcher()
-    }
-    set {payload = .dragCatcher(newValue)}
-  }
-
-  public var dragSizes: Kernova_V1_DragSizes {
-    get {
-      if case .dragSizes(let v)? = payload {return v}
-      return Kernova_V1_DragSizes()
-    }
-    set {payload = .dragSizes(newValue)}
-  }
-
   /// 50..59: the clipboard data connection. One guest-initiated vsock
   /// connection per transfer carries these two frames as its header, then the
   /// payload bytes, then the trailer `ClipboardTransferTrailer` lays out,
@@ -212,22 +156,6 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
       return Kernova_V1_ClipboardTransferReply()
     }
     set {payload = .clipboardTransferReply(newValue)}
-  }
-
-  public var dragResolve: Kernova_V1_DragResolve {
-    get {
-      if case .dragResolve(let v)? = payload {return v}
-      return Kernova_V1_DragResolve()
-    }
-    set {payload = .dragResolve(newValue)}
-  }
-
-  public var dragNames: Kernova_V1_DragNames {
-    get {
-      if case .dragNames(let v)? = payload {return v}
-      return Kernova_V1_DragNames()
-    }
-    set {payload = .dragNames(newValue)}
   }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -252,21 +180,12 @@ public nonisolated struct Kernova_V1_Frame: Sendable {
     case dropOffer(Kernova_V1_DropOffer)
     case dropComplete(Kernova_V1_DropComplete)
     case dropRelease(Kernova_V1_DropRelease)
-    case dragOffer(Kernova_V1_DragOffer)
-    case dragComplete(Kernova_V1_DragComplete)
-    case dragRelease(Kernova_V1_DragRelease)
-    case dragTake(Kernova_V1_DragTake)
-    case dragHandOff(Kernova_V1_DragHandOff)
-    case dragCatcher(Kernova_V1_DragCatcher)
-    case dragSizes(Kernova_V1_DragSizes)
     /// 50..59: the clipboard data connection. One guest-initiated vsock
     /// connection per transfer carries these two frames as its header, then the
     /// payload bytes, then the trailer `ClipboardTransferTrailer` lays out,
     /// then EOF.
     case clipboardTransferRequest(Kernova_V1_ClipboardTransferRequest)
     case clipboardTransferReply(Kernova_V1_ClipboardTransferReply)
-    case dragResolve(Kernova_V1_DragResolve)
-    case dragNames(Kernova_V1_DragNames)
 
   }
 
@@ -537,8 +456,7 @@ public nonisolated struct Kernova_V1_ClipboardOffer: Sendable {
   public init() {}
 }
 
-/// Sent in response to a `ClipboardOffer` — or, on the drop channel, a
-/// `DragOffer` — to pull one representation's bytes, by the side that cannot
+/// Sent in response to a `ClipboardOffer` to pull one representation's bytes, by the side that cannot
 /// dial: the host, which only ever accepts vsock connections. The OS asks the
 /// pasteboard per type, so a paste pulls only the representation actually read;
 /// the requester sends one `ClipboardRequest` per representation it consumes.
@@ -753,9 +671,8 @@ public nonisolated struct Kernova_V1_PolicyUpdate: Sendable {
   /// `0` means unset — the receiver uses its own built-in default.
   public var clipboardMaxPasteBytes: UInt64 = 0
 
-  /// Whether the guest's drop agent should dial the drop port, take
-  /// `DropOffer` frames, and — with the host's `drag.out.files.v1` — offer the
-  /// files dragged out of the guest as `DragOffer` frames. The host binds the
+  /// Whether the guest's drop agent should dial the drop port and take
+  /// `DropOffer` frames. The host binds the
   /// drop and drop-data ports only while this is set, so a guest that dials
   /// anyway is refused every retry interval for as long as the setting is off.
   public var dropFilesEnabled: Bool = false
@@ -938,266 +855,13 @@ public nonisolated struct Kernova_V1_DropRelease: Sendable {
   public init() {}
 }
 
-/// Guest->host: a drag carrying files is in progress in the guest. Metadata
-/// only, like `DropOffer` in the other direction. The host may take it over
-/// (`DragTake`) once the pointer leaves the VM display, and pulls each item it
-/// needs with a `ClipboardRequest` on this channel, which the guest answers
-/// over the drop data port. Every representation but a promised one carries a
-/// non-empty `filename`; `is_inline` is ignored, and so is a folder's
-/// `byte_count`: the guest lists no folder's contents to offer a drag, and
-/// sends the folders' sizes in `DragSizes` once the host takes it.
-public nonisolated struct Kernova_V1_DragOffer: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  /// Per-connection counter, starting at 1, scoped to the guest. Several drags
-  /// can be live at once: a taken drag stays pullable while a new one starts.
-  public var generation: UInt64 = 0
-
-  /// Metadata for each dragged item, in the order the drag carried them.
-  public var repInfo: [Kernova_V1_ClipboardRepresentationInfo] = []
-
-  /// Indices into `rep_info` of the items the drag carries as file promises,
-  /// which exist only once a destination calls them in. Each declares only its
-  /// promised type in `uti`, with an empty `filename`, a `byte_count` of 0, and
-  /// `is_directory` set when that type conforms to `public.directory`. Once the
-  /// host's `DragResolve` has them called in, the guest names each in
-  /// `DragNames` as it is called in, and sizes each in `DragSizes` once it is
-  /// written.
-  public var promised: [UInt32] = []
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Host->guest: the host is done with the drag for `generation` — nothing will
-/// pull from it again, or a take that was not caught is abandoned. The guest
-/// retires the offer and orders out a catcher armed for it — at once, or, for
-/// one still up that refused the drag after it was targeted, once the guest's
-/// drag ends, refusing its drop.
-public nonisolated struct Kernova_V1_DragComplete: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Guest->host: the guest withdraws the drag for `generation` — it ended inside
-/// the guest, or a newer drag in the same press replaced it. A host that has
-/// already taken `generation` treats this as that take's `STAGE_FAILED`.
-public nonisolated struct Kernova_V1_DragRelease: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Host->guest: the pointer left the VM display holding the drag for
-/// `generation`; the guest arms its catcher and reports each step in
-/// `DragHandOff`.
-public nonisolated struct Kernova_V1_DragTake: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Host->guest: the Mac drag session carrying the drag for `generation`
-/// entered this VM's display (`shown` false) or left it (`shown` true). Entering,
-/// the guest orders its catcher out and keeps the take, and the host moves the
-/// guest pointer with the session; leaving, the guest orders the catcher front
-/// again and reports `STAGE_ARMED`, then `STAGE_TARGETED` as the guest drag
-/// manager re-enters it. A catcher this side already failed stays out.
-public nonisolated struct Kernova_V1_DragCatcher: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var shown: Bool = false
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Guest->host: one step of the hand-off for `generation`.
-public nonisolated struct Kernova_V1_DragHandOff: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var stage: Kernova_V1_DragHandOff.Stage = .unspecified
-
-  /// `ClipboardErrorCode` raw value for `STAGE_FAILED`; empty otherwise.
-  public var code: String = String()
-
-  /// Human-readable detail for logs. Never rendered in host UI.
-  public var message: String = String()
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public nonisolated enum Stage: SwiftProtobuf.Enum, Swift.CaseIterable {
-    public typealias RawValue = Int
-    case unspecified // = 0
-
-    /// The catcher is ordered front under the pointer — once for `DragTake`,
-    /// and once for each `DragCatcher` that shows it again.
-    case armed // = 1
-
-    /// The guest drag manager entered the catcher, which answered copy.
-    case targeted // = 2
-
-    /// The guest drag ended on the catcher; its items stay pullable.
-    case caught // = 3
-
-    /// The hand-off cannot complete — see `code` and `message`.
-    case failed // = 4
-
-    /// Answers `DragResolve`: the catcher will call the drag's promises in when
-    /// the drop lands on it. The one step after which the host releases the
-    /// guest's button to resolve them.
-    case resolving // = 5
-
-    /// Answers a `DragResolve` the catcher will not act on — it holds no such
-    /// take, or the drag is not on it, or it was caught or refused. The take
-    /// stands as it was: this says nothing about the hand-off.
-    case resolveRefused // = 6
-    case UNRECOGNIZED(Int)
-
-    public init() {
-      self = .unspecified
-    }
-
-    public init?(rawValue: Int) {
-      switch rawValue {
-      case 0: self = .unspecified
-      case 1: self = .armed
-      case 2: self = .targeted
-      case 3: self = .caught
-      case 4: self = .failed
-      case 5: self = .resolving
-      case 6: self = .resolveRefused
-      default: self = .UNRECOGNIZED(rawValue)
-      }
-    }
-
-    public var rawValue: Int {
-      switch self {
-      case .unspecified: return 0
-      case .armed: return 1
-      case .targeted: return 2
-      case .caught: return 3
-      case .failed: return 4
-      case .resolving: return 5
-      case .resolveRefused: return 6
-      case .UNRECOGNIZED(let i): return i
-      }
-    }
-
-    // The compiler won't synthesize support with the UNRECOGNIZED case.
-    public static let allCases: [Kernova_V1_DragHandOff.Stage] = [
-      .unspecified,
-      .armed,
-      .targeted,
-      .caught,
-      .failed,
-      .resolving,
-      .resolveRefused,
-    ]
-
-  }
-
-  public init() {}
-}
-
-/// Guest->host: sizes for items of the drag for `generation` whose offer
-/// carried none — its folders, measured once the guest accepted the host's
-/// `DragTake`, and its promised items, each once its file is written. Each
-/// frame settles only the items it lists; the host pulls no folder or promised
-/// item until a frame has settled it. The drag's plain files carry their sizes
-/// in the offer.
-public nonisolated struct Kernova_V1_DragSizes: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  /// Each listed item's size — a folder's or a promised folder's measured tree,
-  /// the sum of its regular files — keyed by its index in the offer.
-  public var byteCounts: Dictionary<UInt32,UInt64> = [:]
-
-  /// Indices of items that will never be sized, such as a promise its source
-  /// failed to write. The host refuses their pulls.
-  public var unavailable: [UInt32] = []
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Host->guest: a Mac destination wants the promised items of the drag for
-/// `generation`. The guest answers `DragHandOff{STAGE_RESOLVING}` once its
-/// catcher will call them in on the drop the host then releases onto it, or
-/// `STAGE_RESOLVE_REFUSED`, and sends `DragNames` as they are called in.
-public nonisolated struct Kernova_V1_DragResolve: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
-/// Guest->host: names for promised items of the drag for `generation`, sent as
-/// the catcher calls each in, keyed by the item's index in the offer. Each
-/// frame names only the items it lists, and names accumulate across frames; an
-/// empty name means that item will not be named.
-public nonisolated struct Kernova_V1_DragNames: Sendable {
-  // SwiftProtobuf.Message conformance is added in an extension below. See the
-  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
-  // methods supported on all messages.
-
-  public var generation: UInt64 = 0
-
-  public var filenames: Dictionary<UInt32,String> = [:]
-
-  public var unknownFields = SwiftProtobuf.UnknownStorage()
-
-  public init() {}
-}
-
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "kernova.v1"
 
 nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Frame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{4}\u{7}log_record\0\u{4}\u{a}drop_offer\0\u{3}drop_complete\0\u{3}drop_release\0\u{3}drag_offer\0\u{3}drag_complete\0\u{3}drag_release\0\u{3}drag_take\0\u{3}drag_hand_off\0\u{3}drag_catcher\0\u{3}drag_sizes\0\u{3}clipboard_transfer_request\0\u{3}clipboard_transfer_reply\0\u{4}\u{9}drag_resolve\0\u{3}drag_names\0\u{c}\u{16}\u{1}\u{c}\u{18}\u{1}\u{c}\u{19}\u{1}\u{c}\u{1a}\u{1}\u{c}\u{1b}\u{1}\u{c}\u{1c}\u{1}\u{c}\u{1d}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}protocol_version\0\u{2}\u{9}hello\0\u{1}error\0\u{1}heartbeat\0\u{3}policy_update\0\u{4}\u{7}clipboard_offer\0\u{3}clipboard_request\0\u{4}\u{2}clipboard_release\0\u{4}\u{7}log_record\0\u{4}\u{a}drop_offer\0\u{3}drop_complete\0\u{3}drop_release\0\u{4}\u{8}clipboard_transfer_request\0\u{3}clipboard_transfer_reply\0\u{c}\u{16}\u{1}\u{c}\u{18}\u{1}\u{c}\u{19}\u{1}\u{c}\u{1a}\u{1}\u{c}\u{1b}\u{1}\u{c}\u{1c}\u{1}\u{c}\u{1d}\u{1}\u{c}+\u{1}\u{c},\u{1}\u{c}-\u{1}\u{c}.\u{1}\u{c}/\u{1}\u{c}0\u{1}\u{c}1\u{1}\u{c}<\u{1}\u{c}=\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1349,97 +1013,6 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
           self.payload = .dropRelease(v)
         }
       }()
-      case 43: try {
-        var v: Kernova_V1_DragOffer?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragOffer(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragOffer(v)
-        }
-      }()
-      case 44: try {
-        var v: Kernova_V1_DragComplete?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragComplete(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragComplete(v)
-        }
-      }()
-      case 45: try {
-        var v: Kernova_V1_DragRelease?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragRelease(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragRelease(v)
-        }
-      }()
-      case 46: try {
-        var v: Kernova_V1_DragTake?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragTake(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragTake(v)
-        }
-      }()
-      case 47: try {
-        var v: Kernova_V1_DragHandOff?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragHandOff(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragHandOff(v)
-        }
-      }()
-      case 48: try {
-        var v: Kernova_V1_DragCatcher?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragCatcher(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragCatcher(v)
-        }
-      }()
-      case 49: try {
-        var v: Kernova_V1_DragSizes?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragSizes(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragSizes(v)
-        }
-      }()
       case 50: try {
         var v: Kernova_V1_ClipboardTransferRequest?
         var hadOneofValue = false
@@ -1464,32 +1037,6 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
         if let v = v {
           if hadOneofValue {try decoder.handleConflictingOneOf()}
           self.payload = .clipboardTransferReply(v)
-        }
-      }()
-      case 60: try {
-        var v: Kernova_V1_DragResolve?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragResolve(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragResolve(v)
-        }
-      }()
-      case 61: try {
-        var v: Kernova_V1_DragNames?
-        var hadOneofValue = false
-        if let current = self.payload {
-          hadOneofValue = true
-          if case .dragNames(let m) = current {v = m}
-        }
-        try decoder.decodeSingularMessageField(value: &v)
-        if let v = v {
-          if hadOneofValue {try decoder.handleConflictingOneOf()}
-          self.payload = .dragNames(v)
         }
       }()
       default: break
@@ -1550,34 +1097,6 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
       guard case .dropRelease(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 42)
     }()
-    case .dragOffer?: try {
-      guard case .dragOffer(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 43)
-    }()
-    case .dragComplete?: try {
-      guard case .dragComplete(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 44)
-    }()
-    case .dragRelease?: try {
-      guard case .dragRelease(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 45)
-    }()
-    case .dragTake?: try {
-      guard case .dragTake(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 46)
-    }()
-    case .dragHandOff?: try {
-      guard case .dragHandOff(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 47)
-    }()
-    case .dragCatcher?: try {
-      guard case .dragCatcher(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 48)
-    }()
-    case .dragSizes?: try {
-      guard case .dragSizes(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 49)
-    }()
     case .clipboardTransferRequest?: try {
       guard case .clipboardTransferRequest(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 50)
@@ -1585,14 +1104,6 @@ nonisolated extension Kernova_V1_Frame: SwiftProtobuf.Message, SwiftProtobuf._Me
     case .clipboardTransferReply?: try {
       guard case .clipboardTransferReply(let v)? = self.payload else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 51)
-    }()
-    case .dragResolve?: try {
-      guard case .dragResolve(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 60)
-    }()
-    case .dragNames?: try {
-      guard case .dragNames(let v)? = self.payload else { preconditionFailure() }
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 61)
     }()
     case nil: break
     }
@@ -2341,325 +1852,6 @@ nonisolated extension Kernova_V1_DropRelease: SwiftProtobuf.Message, SwiftProtob
 
   public static func ==(lhs: Kernova_V1_DropRelease, rhs: Kernova_V1_DropRelease) -> Bool {
     if lhs.generation != rhs.generation {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragOffer: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragOffer"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}rep_info\0\u{1}promised\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 2: try { try decoder.decodeRepeatedMessageField(value: &self.repInfo) }()
-      case 3: try { try decoder.decodeRepeatedUInt32Field(value: &self.promised) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    if !self.repInfo.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.repInfo, fieldNumber: 2)
-    }
-    if !self.promised.isEmpty {
-      try visitor.visitPackedUInt32Field(value: self.promised, fieldNumber: 3)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragOffer, rhs: Kernova_V1_DragOffer) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.repInfo != rhs.repInfo {return false}
-    if lhs.promised != rhs.promised {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragComplete: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragComplete"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragComplete, rhs: Kernova_V1_DragComplete) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragRelease: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragRelease"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragRelease, rhs: Kernova_V1_DragRelease) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragTake: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragTake"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragTake, rhs: Kernova_V1_DragTake) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragCatcher: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragCatcher"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}shown\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 2: try { try decoder.decodeSingularBoolField(value: &self.shown) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    if self.shown != false {
-      try visitor.visitSingularBoolField(value: self.shown, fieldNumber: 2)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragCatcher, rhs: Kernova_V1_DragCatcher) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.shown != rhs.shown {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragHandOff: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragHandOff"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}stage\0\u{1}code\0\u{1}message\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 2: try { try decoder.decodeSingularEnumField(value: &self.stage) }()
-      case 3: try { try decoder.decodeSingularStringField(value: &self.code) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.message) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    if self.stage != .unspecified {
-      try visitor.visitSingularEnumField(value: self.stage, fieldNumber: 2)
-    }
-    if !self.code.isEmpty {
-      try visitor.visitSingularStringField(value: self.code, fieldNumber: 3)
-    }
-    if !self.message.isEmpty {
-      try visitor.visitSingularStringField(value: self.message, fieldNumber: 4)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragHandOff, rhs: Kernova_V1_DragHandOff) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.stage != rhs.stage {return false}
-    if lhs.code != rhs.code {return false}
-    if lhs.message != rhs.message {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragHandOff.Stage: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STAGE_UNSPECIFIED\0\u{1}STAGE_ARMED\0\u{1}STAGE_TARGETED\0\u{1}STAGE_CAUGHT\0\u{1}STAGE_FAILED\0\u{1}STAGE_RESOLVING\0\u{1}STAGE_RESOLVE_REFUSED\0")
-}
-
-nonisolated extension Kernova_V1_DragSizes: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragSizes"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{3}byte_counts\0\u{1}unavailable\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 2: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufUInt32,SwiftProtobuf.ProtobufUInt64>.self, value: &self.byteCounts) }()
-      case 3: try { try decoder.decodeRepeatedUInt32Field(value: &self.unavailable) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    if !self.byteCounts.isEmpty {
-      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufUInt32,SwiftProtobuf.ProtobufUInt64>.self, value: self.byteCounts, fieldNumber: 2)
-    }
-    if !self.unavailable.isEmpty {
-      try visitor.visitPackedUInt32Field(value: self.unavailable, fieldNumber: 3)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragSizes, rhs: Kernova_V1_DragSizes) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.byteCounts != rhs.byteCounts {return false}
-    if lhs.unavailable != rhs.unavailable {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragResolve: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragResolve"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragResolve, rhs: Kernova_V1_DragResolve) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.unknownFields != rhs.unknownFields {return false}
-    return true
-  }
-}
-
-nonisolated extension Kernova_V1_DragNames: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
-  public static let protoMessageName: String = _protobuf_package + ".DragNames"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}generation\0\u{1}filenames\0")
-
-  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 2: try { try decoder.decodeMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufUInt32,SwiftProtobuf.ProtobufString>.self, value: &self.filenames) }()
-      default: break
-      }
-    }
-  }
-
-  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 1)
-    }
-    if !self.filenames.isEmpty {
-      try visitor.visitMapField(fieldType: SwiftProtobuf._ProtobufMap<SwiftProtobuf.ProtobufUInt32,SwiftProtobuf.ProtobufString>.self, value: self.filenames, fieldNumber: 2)
-    }
-    try unknownFields.traverse(visitor: &visitor)
-  }
-
-  public static func ==(lhs: Kernova_V1_DragNames, rhs: Kernova_V1_DragNames) -> Bool {
-    if lhs.generation != rhs.generation {return false}
-    if lhs.filenames != rhs.filenames {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

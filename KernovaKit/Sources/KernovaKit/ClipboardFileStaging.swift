@@ -11,8 +11,9 @@ import System
 /// pastes nothing, and neither calls the provider's delegate; a `public.file-url`
 /// on the same pasteboard pastes in both.
 ///
-/// One directory per offer generation, kept for as long as its ``Retention``
-/// says; `sweep()` clears everything.
+/// One directory per offer generation, the newest ``maxGenerations`` kept so a
+/// pasteboard URL a newer offer replaced survives while Finder copies it out;
+/// `sweep()` clears everything.
 ///
 /// Each instance owns a private root (the label plus a per-instance component)
 /// under its process's ``ProcessStagingRoot``, so no instance's `sweep()` can
@@ -29,21 +30,9 @@ public final class ClipboardFileStaging: Sendable {
     /// the given directory.
     public typealias FreeSpaceProvider = @Sendable (URL) -> Int64?
 
-    /// Number of recent generation directories ``Retention/newest(_:)`` keeps
-    /// alive for staging that replaces what it last vended.
+    /// Number of recent generation directories kept alive; the generation
+    /// past it deletes the oldest.
     public static let maxGenerations = 3
-
-    /// How long a generation's directory lives.
-    enum Retention: Equatable, Sendable {
-        /// The newest `count` generations are kept, so a pasteboard URL a newer
-        /// offer replaced survives while Finder copies it out; the generation
-        /// past `count` deletes the oldest.
-        case newest(Int)
-        /// A generation's directory lives until ``discardGeneration(_:)``,
-        /// which its owner calls once nothing can read it, and nothing else
-        /// deletes it. A discarded generation is never created again.
-        case untilDiscarded
-    }
 
     /// An open append-only sink for one streamed file representation.
     ///
@@ -114,7 +103,6 @@ public final class ClipboardFileStaging: Sendable {
 
     private let processRoot: ProcessStagingRoot
     private let root: URL
-    private let retention: Retention
     private let freeSpaceProvider: FreeSpaceProvider
 
     /// The lock also serializes every filesystem change under ``root``, so the
@@ -123,30 +111,22 @@ public final class ClipboardFileStaging: Sendable {
         /// Generation directories in arrival order (oldest first).
         var generationDirs: [GenerationDir] = []
 
-        /// The generations ``Retention/untilDiscarded`` has discarded.
-        var discarded: Set<UInt64> = []
-
         /// Returns the directory for `generation` under `root`, creating it on
-        /// first use and evicting whatever `retention` no longer keeps.
+        /// first use and evicting the oldest past ``maxGenerations``.
         ///
-        /// - Throws: `CocoaError(.fileNoSuchFile)` for a generation already
-        ///   discarded, or a filesystem error if the directory can't be created.
+        /// - Throws: a filesystem error if the directory can't be created.
         mutating func directory(
-            for generation: UInt64, root: URL, processRoot: ProcessStagingRoot,
-            retention: Retention
+            for generation: UInt64, root: URL, processRoot: ProcessStagingRoot
         ) throws -> URL {
             if let existing = generationDirs.first(where: { $0.generation == generation }) {
                 return existing.dir
             }
-            guard !discarded.contains(generation) else { throw CocoaError(.fileNoSuchFile) }
             let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try processRoot.createDirectory(at: dir)
             generationDirs.append(GenerationDir(generation: generation, dir: dir))
-            if case .newest(let count) = retention {
-                while generationDirs.count > count {
-                    let oldest = generationDirs.removeFirst()
-                    ClipboardFileStaging.discard(oldest.dir)
-                }
+            while generationDirs.count > ClipboardFileStaging.maxGenerations {
+                let oldest = generationDirs.removeFirst()
+                ClipboardFileStaging.discard(oldest.dir)
             }
             return dir
         }
@@ -165,7 +145,7 @@ public final class ClipboardFileStaging: Sendable {
         parent: FileManager.default.temporaryDirectory.appendingPathComponent(
             "KernovaClipboardStaging", isDirectory: true))
 
-    /// Staging that keeps the newest ``maxGenerations`` generations.
+    /// Creates staging under its own root.
     ///
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
@@ -175,41 +155,12 @@ public final class ClipboardFileStaging: Sendable {
     ///     production.
     ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
-    public convenience init(
+    public init(
         label: String,
         root: ProcessStagingRoot,
         freeSpaceProvider: FreeSpaceProvider? = nil
-    ) {
-        self.init(
-            label: label, root: root, retention: .newest(Self.maxGenerations),
-            freeSpaceProvider: freeSpaceProvider)
-    }
-
-    /// Staging for what `role` pulls from its peer's offers on `kind`'s
-    /// channel, kept for as long as that flow's discipline says.
-    ///
-    /// Parameters as ``init(label:root:freeSpaceProvider:)``.
-    public convenience init(
-        label: String,
-        root: ProcessStagingRoot,
-        receivingOn kind: ClipboardControlSession.Kind,
-        as role: ClipboardControlSession.Role,
-        freeSpaceProvider: FreeSpaceProvider? = nil
-    ) {
-        self.init(
-            label: label, root: root,
-            retention: ClipboardOfferDiscipline(kind: kind, receiver: role).stagingRetention,
-            freeSpaceProvider: freeSpaceProvider)
-    }
-
-    init(
-        label: String,
-        root: ProcessStagingRoot,
-        retention: Retention,
-        freeSpaceProvider: FreeSpaceProvider?
     ) {
         processRoot = root
-        self.retention = retention
         self.root =
             root.url
             .appendingPathComponent(label, isDirectory: true)
@@ -259,15 +210,14 @@ public final class ClipboardFileStaging: Sendable {
     }
 
     /// Opens an append-only sink for a streamed file representation, creating
-    /// (or reusing) the directory for `generation` and evicting what the
-    /// retention no longer keeps.
+    /// (or reusing) the directory for `generation` and evicting the oldest past
+    /// ``maxGenerations``.
     ///
-    /// - Throws: a filesystem error if the directory or file can't be created,
-    ///   or `generation` was discarded.
+    /// - Throws: a filesystem error if the directory or file can't be created.
     public func makeSink(generation: UInt64, filename: String) throws -> Sink {
         try state.withLock { state in
             let dir = try state.directory(
-                for: generation, root: root, processRoot: processRoot, retention: retention)
+                for: generation, root: root, processRoot: processRoot)
             // One multi-file copy can carry two payloads that share a name;
             // reusing the first's path would collapse the two files into one.
             let url = NameUniquing.uniqueDestination(in: dir, filename: filename)
@@ -287,12 +237,11 @@ public final class ClipboardFileStaging: Sendable {
     /// ` 2` suffix onto it. `name` is sanitized to one path component so a
     /// crafted offer can't escape the generation directory.
     ///
-    /// - Throws: a filesystem error if the directory can't be created, or
-    ///   `generation` was discarded.
+    /// - Throws: a filesystem error if the directory can't be created.
     public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
         try state.withLock { state in
             let dir = try state.directory(
-                for: generation, root: root, processRoot: processRoot, retention: retention)
+                for: generation, root: root, processRoot: processRoot)
             let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
             let url = parent.appendingPathComponent(
                 NameUniquing.sanitizedComponent(name), isDirectory: true)
@@ -305,12 +254,11 @@ public final class ClipboardFileStaging: Sendable {
     /// caller that materializes files it does not name — a window drop whose
     /// promised files arrive with the source app's own names.
     ///
-    /// - Throws: a filesystem error if the directory can't be created, or
-    ///   `generation` was discarded.
+    /// - Throws: a filesystem error if the directory can't be created.
     public func reserveScratchDirectory(generation: UInt64) throws -> URL {
         try state.withLock { state in
             let directory = try state.directory(
-                for: generation, root: root, processRoot: processRoot, retention: retention)
+                for: generation, root: root, processRoot: processRoot)
             let url = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try processRoot.createDirectory(at: url)
             return url
@@ -332,12 +280,9 @@ public final class ClipboardFileStaging: Sendable {
     /// Removes the directory for `generation`, once the caller knows nothing
     /// can still read from it.
     ///
-    /// Under ``Retention/newest(_:)`` this retires a generation early, and one
-    /// already evicted is a no-op; under ``Retention/untilDiscarded`` it is the
-    /// only deletion, and the generation is never created again.
+    /// This retires a generation early; one already evicted is a no-op.
     public func discardGeneration(_ generation: UInt64) {
         state.withLock { state in
-            if retention == .untilDiscarded { state.discarded.insert(generation) }
             guard let index = state.generationDirs.firstIndex(where: { $0.generation == generation })
             else { return }
             let dir = state.generationDirs.remove(at: index).dir
