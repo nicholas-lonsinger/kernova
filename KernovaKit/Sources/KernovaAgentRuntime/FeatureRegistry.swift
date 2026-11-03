@@ -185,6 +185,11 @@ public protocol UpdatePayloadSource: Sendable {
 public struct PowerReporter: Sendable {
     let deliver: @Sendable (PowerInput) -> Void
 
+    /// A reporter handing each report to `deliver`.
+    package init(deliver: @escaping @Sendable (PowerInput) -> Void) {
+        self.deliver = deliver
+    }
+
     /// Reports `input` to the current connection's endpoint, and its availability to later ones.
     public func report(_ input: PowerInput) {
         deliver(input)

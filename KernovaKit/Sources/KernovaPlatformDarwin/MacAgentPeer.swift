@@ -9,8 +9,8 @@ import KernovaDigest
 import KernovaLogging
 import KernovaSynchronization
 
-/// This process's v2 peer: its claim, its connection to the host through `PeerAgentRuntime`, its update
-/// installer, and the watch on its install's `current` link.
+/// This process's v2 peer: its claim, its connection to the host through `PeerAgentRuntime`, its power adapter
+/// and update installer, and the watch on its install's `current` link.
 ///
 /// A peer relaunches by exiting 75 (EX_TEMPFAIL), which launchd restarts through `current` (`KeepAlive`
 /// `SuccessfulExit` false): after the update it installed itself, and whenever `current` moves away from the
@@ -29,6 +29,7 @@ public final class MacAgentPeer: Sendable {
     /// What it claims.
     public let claim: PeerClaim
     private let runtime: PeerAgentRuntime
+    private let power: MacPowerAdapter
     private let watcher: Locked<SlotLinkWatcher?> = Locked(nil)
     private let exiting = Locked(false)
     private let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
@@ -40,8 +41,11 @@ public final class MacAgentPeer: Sendable {
         let running = DarwinIdentity.runningSlot()
         let peer = Locked<MacAgentPeer?>(nil)
         let (adapter, installer) = Self.updateInstaller(for: claim, running: running, peer: peer)
+        let power = role == .systemPeer ? MacPowerAdapter.systemPeer() : MacPowerAdapter.sessionPeer()
+        if let state { power.consoleChanged(state.console) }
+        self.power = power
         runtime = PeerAgentRuntime(
-            claim: claim, state: state, registry: PeerFeatureRegistry(logs: logs, update: adapter),
+            claim: claim, state: state, registry: PeerFeatureRegistry(power: power, logs: logs, update: adapter),
             dialer: DarwinVsockDialer(), scheduler: SystemScheduler(), logger: Self.logger,
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
@@ -84,6 +88,7 @@ public final class MacAgentPeer: Sendable {
 
     /// The session's state changed.
     public func setPeerState(_ state: PeerSessionState?) {
+        power.consoleChanged(state?.console ?? .unknown)
         runtime.setPeerState(state)
     }
 
