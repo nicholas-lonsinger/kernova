@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// What a VM display moves files through, both ways: drops sent into the guest,
 /// and the guest's own drags taken over at the display's edge.
@@ -15,12 +16,10 @@ package protocol VMDisplayTransferHosting: AnyObject {
     /// Whether files dragged onto the display can be sent to the guest.
     var displayDropAvailability: DisplayDropAvailability { get }
 
-    /// Sends dropped `urls` to the guest, reporting whether the drop was taken;
-    /// `stagedIn` is the directory a promise drag wrote them into.
-    func sendDroppedFilesToGuest(_ urls: [URL], stagedIn stagingDirectory: URL?) -> Bool
-
-    /// Reports a drag the display took that produced no file to send.
-    func reportUnreadableDropToGuest()
+    /// Sends what is dropped on the display to the guest, reporting whether
+    /// the drop was taken: `pasteboard` is the drag's, and `promises` its file
+    /// promises as `readObjects` returns them.
+    func dropOnGuest(_ pasteboard: any ClipboardReadPasteboard, promises: [any FilePromiseReceiving]) -> Bool
 
     /// Records that a press began on the display.
     func displayPressBegan()

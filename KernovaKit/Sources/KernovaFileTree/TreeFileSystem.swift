@@ -1,9 +1,26 @@
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
+
+#if canImport(Darwin) || os(Linux)
+/// The directory a tree's own root is named in, by its absolute path: the platform's `AT_FDCWD`.
+public let treeRootDirectory: Int32 = AT_FDCWD
+#else
+/// The directory a tree's own root is named in, by its absolute path; this platform has no `*at` calls, so
+/// it names no descriptor.
+public let treeRootDirectory: Int32 = -1
+#endif
+
 /// The file-system calls that read a tree and move through it, each naming an
 /// entry by one name relative to an open directory — never by a full path, so
 /// no call meets `PATH_MAX` however deep the tree — and every name as the
 /// volume's raw bytes, which on SMB, NFS and exFAT need not be UTF-8.
 ///
-/// The platform's `AT_FDCWD` with an absolute path names a tree's own root.
+/// ``treeRootDirectory`` with an absolute path names a tree's own root.
 /// Every other name is one entry of the open directory it is resolved in.
 public protocol TreeFileSystem {
     /// The status of `name` in `directory`, not following a symlink.

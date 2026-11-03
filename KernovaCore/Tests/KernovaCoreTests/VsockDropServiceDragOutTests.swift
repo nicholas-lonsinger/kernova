@@ -420,7 +420,7 @@ struct VsockDropServiceDragOutTests {
             let file = scratch.appendingPathComponent("barrier-\(UUID().uuidString).txt")
             try Data("barrier".utf8).write(to: file)
             let before = guestRecorder.offers.count
-            #expect(service.startDrop(urls: [file]))
+            service.offerForTesting([file])
             try await guestRecorder.wait { self.guestRecorder.offers.count > before }
         }
 

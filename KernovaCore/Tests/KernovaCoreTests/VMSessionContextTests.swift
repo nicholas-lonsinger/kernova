@@ -305,7 +305,7 @@ struct VMSessionContextTests {
                 context.warnedAgentScopes = [.login]
             })
         #expect(
-            observationFires(reading: { _ = instance.displayDropAvailability }) {
+            observationFires(reading: { _ = instance.vsockDropService }) {
                 context.vsock.drop = nil
             })
         #expect(

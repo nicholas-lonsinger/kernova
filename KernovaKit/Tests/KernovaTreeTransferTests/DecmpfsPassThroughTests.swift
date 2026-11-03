@@ -314,15 +314,13 @@ struct DecmpfsPassThroughTests {
             try #require(copyfile(source, bench.sourcePath + "/item/" + name, nil, copyfile_flags_t(COPYFILE_ALL)) == 0)
         }
         try #require(mkdir(volume.mountPoint + "/ITEM", 0o755) == 0)
-        let parent = try fileSystem.openDirectory(bytes(bench.sourcePath), in: AT_FDCWD)
-        defer { fileSystem.close(parent) }
         let landings: [(PublishName, [UInt8])] = [
             (.exactly(bytes("Landed")), bytes("Landed")), (.keepingBoth(bytes("item")), bytes("item 2")),
         ]
         for (publishing, landed) in landings {
             let acceptance = ContainerAcceptance(
                 storage: .folder, byteCeiling: 1 << 30, decmpfsTypes: types, acceptsLZ4: false)
-            let reader = try TreeReader(fileSystem: fileSystem, item: item, in: parent, accepting: acceptance)
+            let reader = try TreeReader(fileSystem: fileSystem, root: bench.path([item]), accepting: acceptance)
             let writer = TreeWriter(
                 name: publishing, fileSystem: fileSystem,
                 destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
@@ -336,14 +334,13 @@ struct DecmpfsPassThroughTests {
             }
         }
 
-        let files = try fileSystem.openDirectory(bytes(bench.sourcePath + "/item"), in: AT_FDCWD)
-        defer { fileSystem.close(files) }
         try #require(close(open(volume.mountPoint + "/LS", O_WRONLY | O_CREAT | O_EXCL, 0o644)) == 0)
         let fileAcceptance = ContainerAcceptance(
             storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
         for (publishing, landed) in [(PublishName.exactly(bytes("tool")), "tool"), (.keepingBoth(bytes("ls")), "ls 2")]
         {
-            let reader = try TreeReader(fileSystem: fileSystem, item: bytes("ls"), in: files, accepting: fileAcceptance)
+            let reader = try TreeReader(
+                fileSystem: fileSystem, root: bench.path([item, bytes("ls")]), accepting: fileAcceptance)
             let writer = TreeWriter(
                 name: publishing, fileSystem: fileSystem,
                 destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),

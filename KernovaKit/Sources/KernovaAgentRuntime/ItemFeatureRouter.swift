@@ -9,8 +9,8 @@ import KernovaWire
 
 /// What an offered representation's container is made from, as its owner produces it when a pull names it.
 public enum ItemContent: Sendable, Equatable {
-    /// A FILE or FOLDER: the entry `name` in the directory at the absolute path `directory`.
-    case tree(directory: String, name: [UInt8])
+    /// A FILE or FOLDER: the entry at the absolute path `path`, read through that path itself.
+    case tree(path: String)
     /// An INLINE representation's bytes.
     case inline(Data)
 }

@@ -38,8 +38,7 @@ struct VsockGuestDropAgentDragOutTests {
             agent = VsockGuestDropAgent(
                 client: client, reporter: ClipboardTransferReporter(clock: TestEngineClock()),
                 progressRevealDelay: 0, progressIdleGap: 0,
-                downloadsDirectory: scratch.appendingPathComponent("Downloads", isDirectory: true),
-                stagingRoot: stagingRoot.root, dataDialer: dialled.dialer, revealInFinder: { _ in },
+                stagingRoot: stagingRoot.root, dataDialer: dialled.dialer,
                 dragOutSystem: .faked(input: input, surface: surface))
             agent.applyHostCapabilities(capabilities)
         }

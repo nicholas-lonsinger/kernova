@@ -31,7 +31,7 @@ struct ItemAdapterTests {
         try bench.write(content, to: "source/report.bin")
         let landing = ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("chosen.bin".utf8)))
         let result = try await bench.transfer(
-            .tree(directory: bench.path("source"), name: Array("report.bin".utf8)), .file, landing,
+            .tree(path: bench.path("source/report.bin")), .file, landing,
             servedBy: server)
         #expect(result == .published(Bench.id, .named(Data("chosen.bin".utf8))))
         #expect(try bench.read("landed/chosen.bin") == content)
@@ -46,7 +46,7 @@ struct ItemAdapterTests {
         try bench.makeDirectory("landed/Folder")
         let landing = ItemLanding.tree(directory: bench.path("landed"), name: .keepingBoth(Data("Folder".utf8)))
         let result = try await bench.transfer(
-            .tree(directory: bench.path("source"), name: Array("Folder".utf8)), .folder, landing)
+            .tree(path: bench.path("source/Folder")), .folder, landing)
         #expect(result == .published(Bench.id, .named(Data("Folder 2".utf8))))
         #expect(try bench.read("landed/Folder 2/a.txt") == Data("a".utf8))
         #expect(try bench.read("landed/Folder 2/sub/b.bin") == Data(repeating: 9, count: 300_000))
@@ -120,7 +120,7 @@ struct ItemAdapterTests {
         try bench.write(Data("old".utf8), to: "landed/doc.txt")
         let landing = ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("doc.txt".utf8)))
         let result = try await bench.transfer(
-            .tree(directory: bench.path("source"), name: Array("doc.txt".utf8)), .file, landing)
+            .tree(path: bench.path("source/doc.txt")), .file, landing)
         guard case .publishFailed(_, let error)? = result else {
             Issue.record("\(String(describing: result))")
             return
@@ -141,8 +141,33 @@ struct ItemAdapterTests {
                 == .itemRepresentationUnavailable)
         #expect(
             try await bench.serveFailure(
-                .success(.tree(directory: bench.path("missing"), name: Array("x".utf8))), .file)?
+                .success(.tree(path: bench.path("missing/x"))), .file)?
                 .code == .readFailed)
+    }
+
+    @Test(
+        "an item is served by its own path, though the folder it lies in cannot be opened",
+        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
+    func servedThroughItsOwnPath() async throws {
+        let bench = try Bench()
+        let content = Data("granted".utf8)
+        try bench.write(content, to: "source/locked/report.bin")
+        try bench.write(Data("b".utf8), to: "source/locked/Folder/b.txt")
+        // Searchable but unreadable: the item's path resolves, and opening the folder to read it fails, as
+        // a sandboxed app's open of a dropped item's folder does.
+        try #require(chmod(bench.path("source/locked"), 0o111) == 0)
+        defer { _ = chmod(bench.path("source/locked"), 0o755) }
+        try #require(open(bench.path("source/locked"), O_RDONLY | O_DIRECTORY) == -1)
+        let file = try await bench.transfer(
+            .tree(path: bench.path("source/locked/report.bin")), .file,
+            ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("report.bin".utf8))))
+        #expect(file == .published(Bench.id, .named(Data("report.bin".utf8))))
+        #expect(try bench.read("landed/report.bin") == content)
+        let folder = try await bench.transfer(
+            .tree(path: bench.path("source/locked/Folder")), .folder,
+            ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("Folder".utf8))))
+        #expect(folder == .published(Bench.id, .named(Data("Folder".utf8))))
+        #expect(try bench.read("landed/Folder/b.txt") == Data("b".utf8))
     }
 
     @Test("a container past the pull's byte ceiling fails the serve TOO_LARGE, naming the ceiling")

@@ -306,9 +306,15 @@ public struct ItemTransfer: FeatureMachine {
         offers.withdraw(token, connection: &connection)
     }
 
-    /// Releases the far side's offer of `token`: this side pulls nothing more of it.
-    public mutating func release(_ token: Data, connection: inout Connection) {
-        offers.release(token, connection: &connection)
+    /// Releases the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
+    /// the release is END with `endBody`, its kind's acceptor END body.
+    public mutating func release(_ token: Data, endBody: Data = Data(), connection: inout Connection) {
+        offers.release(token, endBody: endBody, connection: &connection)
+    }
+
+    /// Refuses the far side's offer of `token` with `error`: this side pulls nothing of it, and says why.
+    public mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+        offers.refuse(token, error, connection: &connection)
     }
 
     /// Pulls one representation of the far side's open offer, as `order` says.

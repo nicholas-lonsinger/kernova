@@ -184,6 +184,16 @@ public final class ClipboardTransferReporter {
         record(finish, startedAt: nil)
     }
 
+    /// Records that `gesture`, begun at `startedAt`, delivered everything it
+    /// asked for with no readout to dwell on: it clears the refusal a
+    /// completion of it would displace.
+    public func completed(_ gesture: ClipboardTransferGesture, startedAt: Date) {
+        guard let standing = lastFinish, standing.failure != nil,
+            !Self.keeps(standing, against: gesture, failed: false, startedAt: startedAt)
+        else { return }
+        clearFinished()
+    }
+
     /// Drops `operation` from the readout without a finished report.
     public func retire(_ operation: ClipboardTransferOperation) {
         retire(operation.id)
@@ -246,21 +256,11 @@ public final class ClipboardTransferReporter {
             recompute()
             return
         }
-        if let standing = lastFinish, standing.failure != nil {
-            // A gesture the peer made answers the peer's user, so nothing it ends
-            // with disproves what this side's user is owed — including a refusal
-            // of its own, which the surfaces that interrupt would not present
-            // here anyway.
-            let answersTheOtherUser = !finish.gesture.isMadeHere && standing.gesture.isMadeHere
-            // Running to the end says nothing about a transfer that failed
-            // alongside; a refusal older than the operation is one the operation
-            // retried, so that one is cleared.
-            let raisedDuringTheOperation =
-                finish.failure == nil && (startedAt.map { standing.date >= $0 } ?? false)
-            if answersTheOtherUser || raisedDuringTheOperation {
-                recompute()
-                return
-            }
+        if let standing = lastFinish, standing.failure != nil,
+            Self.keeps(standing, against: finish.gesture, failed: finish.failure != nil, startedAt: startedAt)
+        {
+            recompute()
+            return
         }
         lastFinish = finish
         absorbsRepeats = true
@@ -272,6 +272,24 @@ public final class ClipboardTransferReporter {
             )
         }
         recompute()
+    }
+
+    /// Whether the refusal `standing` stands over a finish of `gesture` —
+    /// `failed` or not, by an operation begun at `startedAt` when it ran one.
+    private static func keeps(
+        _ standing: ClipboardTransferFinish, against gesture: ClipboardTransferGesture, failed: Bool,
+        startedAt: Date?
+    ) -> Bool {
+        // A gesture the peer made answers the peer's user, so nothing it ends
+        // with disproves what this side's user is owed — including a refusal
+        // of its own, which the surfaces that interrupt would not present
+        // here anyway.
+        let answersTheOtherUser = !gesture.isMadeHere && standing.gesture.isMadeHere
+        // Running to the end says nothing about a transfer that failed
+        // alongside; a refusal older than the operation is one the operation
+        // retried, so that one is cleared.
+        let raisedDuringTheOperation = !failed && (startedAt.map { standing.date >= $0 } ?? false)
+        return answersTheOtherUser || raisedDuringTheOperation
     }
 
     /// The one running readout every surface shows.

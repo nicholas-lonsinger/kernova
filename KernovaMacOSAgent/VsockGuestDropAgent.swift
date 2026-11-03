@@ -4,35 +4,30 @@ import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
 
-/// Guest-side agent for files dragged between the VM display and the Mac,
+/// Guest-side agent for files dragged out of the VM display onto the Mac,
 /// talking to the host's `VsockDropService` on `KernovaVsockPort.drop`.
 ///
-/// Independent of clipboard sharing. Files dropped on the display arrive as
-/// `DropOffer`s, each one job, pulled representation by representation on a
-/// dedicated worker queue and landed in the guest's Downloads folder with
-/// Finder's own "Keep Both" naming, then revealed in a Finder window. Files
-/// dragged out of the display leave through ``GuestDragOut``, whose offers the
-/// endpoint serves when the host pulls them.
+/// Independent of clipboard sharing. Files dragged out of the display leave
+/// through ``GuestDragOut``, whose offers the endpoint serves when the host
+/// pulls them. Files dropped on the display arrive over the agent hub instead
+/// (`DropReceiver`).
 ///
-/// Connection state is confined to the main actor; the worker queue is what
-/// the blocking pulls park on, so no pull ever holds the main thread.
+/// Connection state is confined to the main actor.
 final class VsockGuestDropAgent: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "VsockGuestDropAgent")
 
-    /// What the drop readout calls the machine the files come from — the guest
-    /// cannot learn the host's actual computer name over the handshake.
+    /// What a readout calls the machine at the far end — the guest cannot learn
+    /// the host's actual computer name over the handshake.
     private static let dropSourceName = "Mac"
 
     private let client: VsockGuestClient
     private let reporter: ClipboardTransferReporter
     private let progressRevealDelay: TimeInterval
     private let progressIdleGap: TimeInterval
-    private let downloadsDirectory: URL
     private let staging: ClipboardFileStaging
-    /// Where a drag out's called-in promises land, beside `staging`'s drops.
+    /// Where a drag out's called-in promises land, beside the endpoint's `staging`.
     private let stagingRoot: ProcessStagingRoot
-    private let revealInFinder: @Sendable ([URL]) -> Void
     private let dragOutSystem: GuestDragOutSystem
 
     /// Opens one item's data connection to the host; tests hand over a
@@ -60,25 +55,12 @@ final class VsockGuestDropAgent: Sendable {
         var dragOut: HostDragOutSupport { shouldDial ? host.dragOut : .none }
     }
 
-    /// Runs one drop job at a time, in offer order.
-    ///
-    /// Serial and separate from main: an inbound pull blocks its caller, and a
-    /// drop has no pasteboard deadline to race, so one file streams at a time on
-    /// a thread nothing else needs.
-    private let jobQueue = DispatchQueue(
-        label: "app.kernova.macosagent.drop-jobs", qos: .userInitiated)
-
     // MARK: - Main-actor state
 
     @MainActor private var liveChannel: VsockChannel?
 
-    /// The current connection: what the host has offered, and every pull that
-    /// lands it.
+    /// The current connection, which serves the drags out.
     @MainActor private var endpoint: ClipboardEndpoint?
-
-    /// The readout of every drop the host has offered and this side has not
-    /// finished, by generation.
-    @MainActor private var jobs: [UInt64: ClipboardTransferOperation] = [:]
 
     /// The current connection's drags out of the guest.
     @MainActor private var dragOut: GuestDragOut?
@@ -88,50 +70,27 @@ final class VsockGuestDropAgent: Sendable {
     var liveChannelForTesting: VsockChannel? { MainActorBridge.sync { liveChannel } }
     #endif
 
-    /// How one job ended.
-    private enum JobOutcome {
-        case completed
-        case cancelled
-        /// `item` is the entry an unpack failure could not write, when it named
-        /// one.
-        case failed(ClipboardErrorCode, String, item: ClipboardItemFailure? = nil)
-    }
-
     // MARK: - Init
 
-    /// Production init — the real drop port and the guest user's Downloads
-    /// folder.
+    /// Production init — the real drop port.
     convenience init(stagingRoot: ProcessStagingRoot, reporter: ClipboardTransferReporter) {
         self.init(
             client: VsockGuestClient(port: KernovaVsockPort.drop, label: "drop"),
             reporter: reporter, stagingRoot: stagingRoot)
     }
 
-    /// Designated init; tests inject a socketpair-backed client, a Downloads
-    /// directory under a temp root, a staging root of their own, a
-    /// `freeSpaceProvider` to simulate a full disk, a `revealInFinder` sink
-    /// in place of opening a real Finder window, and a drag-out system of fakes
-    /// in place of the guest's event stream and screen.
-    ///
-    /// The agent runs unsandboxed inside the guest, so `.downloadsDirectory`
-    /// resolves to the real `~/Downloads`.
+    /// Designated init; tests inject a socketpair-backed client, a staging root
+    /// of their own, a `freeSpaceProvider` to simulate a full disk, and a
+    /// drag-out system of fakes in place of the guest's event stream and screen.
     init(
         client: VsockGuestClient,
         reporter: ClipboardTransferReporter,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
-        downloadsDirectory: URL = FileManager.default.urls(
-            for: .downloadsDirectory, in: .userDomainMask
-        ).first
-            ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Downloads", isDirectory: true),
         stagingRoot: ProcessStagingRoot,
         freeSpaceProvider: ClipboardFileStaging.FreeSpaceProvider? = nil,
         dataDialer: @escaping @Sendable (UInt32) throws -> Int32 = {
             try VsockGuestDataDialer.connect(port: $0)
-        },
-        revealInFinder: @escaping @Sendable ([URL]) -> Void = { urls in
-            DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
         },
         dragOutSystem: GuestDragOutSystem = .live
     ) {
@@ -140,8 +99,6 @@ final class VsockGuestDropAgent: Sendable {
         self.reporter = reporter
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
-        self.downloadsDirectory = downloadsDirectory
-        self.revealInFinder = revealInFinder
         self.dragOutSystem = dragOutSystem
         self.stagingRoot = stagingRoot
         self.staging = ClipboardFileStaging(
@@ -214,17 +171,9 @@ final class VsockGuestDropAgent: Sendable {
     private func teardownConnectionState() {
         dragOut?.stop()
         dragOut = nil
-        // Unblocks any worker parked on a pull; it reads the dead connection
-        // as a cancellation and ends its job.
         endpoint?.stop()
-        for operation in jobs.values {
-            // Retired, not finished: the transport measuring these is gone, so
-            // there is nothing left to show finishing.
-            operation.abandon()
-        }
         endpoint = nil
         liveChannel = nil
-        jobs.removeAll()
     }
 
     @MainActor
@@ -240,8 +189,8 @@ final class VsockGuestDropAgent: Sendable {
                 channel: channel,
                 configuration: ClipboardEndpoint.Configuration(
                     role: .guest, kind: .drop, label: "drop", peerName: Self.dropSourceName,
-                    // A drop lands in Downloads, never on a pasteboard, so no OS
-                    // paste deadline bounds it and nothing is capped.
+                    // A dragged item is written where it is dropped, never on a
+                    // pasteboard, so no OS paste deadline bounds it.
                     maxPasteBytes: { .max },
                     staging: self.staging,
                     progressRevealDelay: self.progressRevealDelay,
@@ -267,212 +216,11 @@ final class VsockGuestDropAgent: Sendable {
             self.teardownIfCurrent(channel)
         }
     }
-
-    /// Takes on one drop gesture: opens its readout and queues its files behind
-    /// whatever is already running.
-    @MainActor
-    private func takeOn(_ offer: ClipboardEndpoint.InboundOffer, on endpoint: ClipboardEndpoint) {
-        let generation = offer.generation
-        // The whole drop's totals are the floor, so the bar's denominator is
-        // every dropped file rather than each in turn.
-        let operation = ClipboardTransferOperation(
-            gesture: .drop, direction: .inbound, peerName: Self.dropSourceName,
-            expectedBytes: offer.reps.reduce(UInt64(0)) { $0 &+ $1.byteCount },
-            expectedItems: offer.reps.count,
-            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
-            onCancelRequested: { [weak endpoint] in
-                // The tracker calls this outside its own lock, on whichever
-                // thread noticed the click, so it hops before touching anything.
-                MainActorBridge.async { endpoint?.cancelInbound(generation: generation) }
-            },
-            reporter: reporter)
-        jobs[generation] = operation
-        // The job holds `endpoint` strongly: its pulls are what a teardown wakes,
-        // and a loop mid-file still has to read that wake and answer the host.
-        jobQueue.async { [weak self] in
-            self?.run(offer, operation: operation, on: endpoint)
-        }
-    }
-
-    // MARK: - Job execution (worker queue)
-
-    /// Pulls each of the drop's files in order and lands it in Downloads,
-    /// carrying on past any the host turns out not to be able to read.
-    private func run(
-        _ offer: ClipboardEndpoint.InboundOffer, operation: ClipboardTransferOperation,
-        on endpoint: ClipboardEndpoint
-    ) {
-        dispatchPrecondition(condition: .notOnQueue(.main))
-        let generation = offer.generation
-        var landed: [URL] = []
-        var skipped = 0
-        var outcome: JobOutcome = .completed
-
-        for index in offer.reps.indices {
-            // Asked before every pull and again before the file it delivers is
-            // landed: a Cancel or a `DropRelease` retires the job's entry, and
-            // between the two checks lies a whole transfer the user has already
-            // called off — pulling into it would ask the host for bytes nothing
-            // wants, and landing one would put a file in Downloads after the
-            // cancel.
-            guard endpoint.hasLiveInboundOffer(generation: generation) else {
-                outcome = .cancelled
-                break
-            }
-            switch endpoint.pull(generation: generation, repIndex: index, operation: operation) {
-            case .delivered(let representation):
-                if endpoint.hasLiveInboundOffer(generation: generation) {
-                    do {
-                        landed.append(try land(representation, named: offer.reps[index].filename))
-                    } catch {
-                        let failure = Self.classify(error)
-                        Self.logger.log(
-                            .error,
-                            "Failed to save a dropped file into Downloads: \(error.localizedDescription, privacy: .public)"
-                        )
-                        outcome = .failed(failure.0, failure.1)
-                    }
-                } else {
-                    Self.discard(representation)
-                    outcome = .cancelled
-                }
-            case .aborted(let abort):
-                // A retiring code is every route a drop is called off by — a
-                // release, a Cancel on the readout, the channel going. The
-                // channel's own end is why liveness cannot stand in for it: the
-                // session cancels every awaiter before its end reaches this loop,
-                // so the job's entry is still standing when the abort lands.
-                if abort.isRetiring || !endpoint.hasLiveInboundOffer(generation: generation) {
-                    outcome = .cancelled
-                } else if abort.code == .readError {
-                    // The host could not read this one item's source. That is the
-                    // item's failure and not the batch's: everything else in the
-                    // drop is still there to pull, and the side that made the
-                    // gesture is the side that names what it left out.
-                    skipped += 1
-                    Self.logger.log(
-                        .warning,
-                        "Skipping dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public): the host couldn't read it"
-                    )
-                } else {
-                    Self.logger.log(
-                        .warning,
-                        "Dropped file \(index, privacy: .public) of gen=\(generation, privacy: .public) aborted (\(abort.rawCode, privacy: .public))"
-                    )
-                    switch abort.code {
-                    case .diskFull: outcome = .failed(.dropDiskFull, abort.message)
-                    case .extractError:
-                        outcome = .failed(.dropUnpackFailed, abort.message, item: abort.itemFailure)
-                    default: outcome = .failed(.dropFailed, abort.message)
-                    }
-                }
-            case .timedOut:
-                outcome = .failed(.dropFailed, "The transfer stopped making progress")
-            case .cancelled:
-                outcome = .cancelled
-            case .mainThreadUnavailable:
-                // Unreachable: this loop runs on `jobQueue`, as the precondition
-                // above asserts, and the refusal is the main thread's alone.
-                outcome = .failed(.dropFailed, "The transfer could not be started")
-            case .unavailable:
-                // Unreachable: only a drag's promised item is refused this way,
-                // and a drop promises nothing.
-                outcome = .failed(.dropFailed, "The file could not be produced")
-            }
-            if case .completed = outcome { continue }
-            break
-        }
-
-        // The readout ends where it stopped: a cancelled or failed drop finishes
-        // below 100 %, which is the whole of how those two read on screen.
-        switch outcome {
-        case .completed: operation.finish(.completed)
-        case .cancelled: operation.finish(.cancelled)
-        case .failed(let code, _, _): operation.finish(.failed(.peerReported(code)))
-        }
-        if case .completed = outcome, !landed.isEmpty {
-            revealInFinder(landed)
-        }
-        send(completion: outcome, generation: generation, on: endpoint)
-        MainActorBridge.async { [weak self] in
-            // The offer goes with the job: a drop is landed in Downloads by this
-            // loop and never served again, so nothing is left to pull from it.
-            endpoint.retireInbound(generation: generation)
-            // Identity-checked, not just keyed: generations restart at 1 with
-            // every accepted channel, so a worker that outlived a teardown would
-            // otherwise clear the *next* connection's job of the same number —
-            // leaving it unreachable by a release or a Cancel.
-            guard self?.jobs[generation] === operation else { return }
-            self?.jobs[generation] = nil
-        }
-        Self.logger.log(
-            .notice,
-            "Drop job finished (gen=\(generation, privacy: .public), \(landed.count, privacy: .public) file(s) in Downloads, \(skipped, privacy: .public) skipped)"
-        )
-    }
-
-    // MARK: - Landing files in Downloads
-
-    /// Moves a delivered representation out of staging and into the Downloads
-    /// folder, naming it the way Finder would.
-    ///
-    /// Staging and Downloads share the guest's data volume, so this is a rename.
-    private func land(_ representation: ClipboardContent.Representation, named filename: String)
-        throws -> URL
-    {
-        try StagedItemLanding.land(representation, inDirectory: downloadsDirectory, named: filename)
-    }
-
-    /// Throws away a file that arrived for a job the user had already called
-    /// off, so the staging root does not hold it until the generation window
-    /// reclaims it.
-    private static func discard(_ representation: ClipboardContent.Representation) {
-        guard let url = representation.fileURL else { return }
-        try? StagedItemRemoval.remove(at: url)
-    }
-
-    /// Maps a filesystem failure to the code the host renders a sentence from.
-    private static func classify(_ error: any Error) -> (ClipboardErrorCode, String) {
-        let nsError = error as NSError
-        let posix =
-            (nsError.userInfo[NSUnderlyingErrorKey] as? NSError).map(\.code) ?? nsError.code
-        switch Int32(truncatingIfNeeded: posix) {
-        case EACCES, EPERM:
-            return (.dropDownloadsDenied, "The guest agent cannot write to Downloads")
-        case ENOSPC, EDQUOT:
-            return (.dropDiskFull, "The guest volume is full")
-        default:
-            return (.dropFailed, nsError.localizedDescription)
-        }
-    }
-
-    // MARK: - Reporting the outcome
-
-    private func send(
-        completion: JobOutcome, generation: UInt64, on endpoint: ClipboardEndpoint
-    ) {
-        switch completion {
-        case .completed:
-            endpoint.sendDropComplete(generation: generation, outcome: .completed)
-        case .cancelled:
-            endpoint.sendDropComplete(generation: generation, outcome: .cancelled)
-        case .failed(let code, let message, let item):
-            endpoint.sendDropComplete(
-                generation: generation, outcome: .failed, code: code, message: message,
-                itemFailure: item)
-        }
-    }
 }
 
 // MARK: - Endpoint delegate
 
 extension VsockGuestDropAgent: ClipboardEndpointDelegate {
-    func endpoint(
-        _ endpoint: ClipboardEndpoint, didReceiveOffer offer: ClipboardEndpoint.InboundOffer
-    ) {
-        takeOn(offer, on: endpoint)
-    }
-
     func endpoint(_ endpoint: ClipboardEndpoint, didReceiveDragTake generation: UInt64) {
         dragOut?.take(generation: generation)
     }

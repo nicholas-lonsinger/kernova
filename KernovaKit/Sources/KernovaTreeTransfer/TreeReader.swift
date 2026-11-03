@@ -9,11 +9,11 @@ import KernovaFileTree
 import KernovaWire
 
 /// Reads a FILE or FOLDER item from disk as the `TreeEvent`s its container carries, in depth-first pre-order,
-/// never resolving a path or following a symlink.
+/// resolving no path but the item's own and following no symlink.
 ///
-/// Each entry is reached by one name relative to the descriptor of the directory it lies in, through a
-/// ``DirectoryCursor``, and is described from the descriptor it is read through, confirmed to be the entry
-/// the directory listed. A file's holes come out as `zeros`, exactly where the volume reports them, and its
+/// Each entry beneath the item is reached by one name relative to the descriptor of the directory it lies
+/// in, through a ``DirectoryCursor``, and is described from the descriptor it is read through, confirmed to
+/// be the entry the directory listed. A file's holes come out as `zeros`, exactly where the volume reports them, and its
 /// stored bytes as `bytes` of at most `ContainerEncoder.chunkByteCount`; its resource fork follows, read in
 /// pieces of the same size.
 ///
@@ -57,35 +57,40 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         var pending: [[UInt8]]
     }
 
-    /// A reader of the item `name` in `parent`, which must be what `acceptance`'s storage names: a directory
-    /// for FOLDER, a regular file for FILE. The item's own header carries no name; `name` is the first
-    /// component of every ``TreeReadFailure``'s path.
+    /// A reader of the item at the absolute path `root`, which must be what `acceptance`'s storage names: a
+    /// directory for FOLDER, a regular file for FILE. The item is opened by its own path, never through the
+    /// directory it lies in, which a sandboxed reader handed a dropped or picked item may not open
+    /// ([App Sandbox in Depth](https://developer.apple.com/library/archive/documentation/Security/Conceptual/AppSandboxDesignGuide/AppSandboxInDepth/AppSandboxInDepth.html)).
+    /// Every entry beneath it is reached by one name from its directory's descriptor. The item's own header
+    /// carries no name; the path's last component is the first component of every ``TreeReadFailure``'s path.
     ///
     /// - Parameters:
     ///   - fileSystem: The calls the reader makes.
-    ///   - name: The item's name in `parent`.
-    ///   - parent: An open directory, used only while the reader is created; the caller keeps it.
+    ///   - root: The item's absolute path, its last component the item's name.
     ///   - acceptance: What the pull accepts: its storage, its byte ceiling, and whether files go as LZ4
     ///     storage.
     /// - Throws: ``TreeReadFailure`` when the item cannot be opened or is not one `acceptance` names.
-    public init(
-        fileSystem: FileSystem, item name: [UInt8], in parent: Int32, accepting acceptance: ContainerAcceptance
-    ) throws(TreeReadFailure) {
+    public init(fileSystem: FileSystem, root: [UInt8], accepting acceptance: ContainerAcceptance)
+        throws(TreeReadFailure)
+    {
         self.fileSystem = fileSystem
         self.acceptance = acceptance
         step = .ended
+        let slash = UInt8(ascii: "/")
+        let name = Array(root.split(separator: slash, omittingEmptySubsequences: false).last ?? [])
         let path = [name]
-        // The item's name is the one name not read from a directory, so it is held to one path component
-        // before anything resolves it.
-        guard PathComponent.isValid(name) else {
+        // The path's last component is the one name not read from a directory, so it is held to one path
+        // component, and the path to an absolute one, before anything resolves it.
+        guard root.first == slash, PathComponent.isValid(name) else {
             throw TreeReadFailure(path: path, reason: .notCarried(.entry(.invalidName)))
         }
+        let parent = treeRootDirectory
         let status = try Self.system(path) { () throws(TreeFileSystemError) in
-            try fileSystem.status(of: name, in: parent)
+            try fileSystem.status(of: root, in: parent)
         }
         switch (status.kind, acceptance.storage) {
         case (.directory, .folder):
-            let opened = try openDirectory(name, in: parent, listed: status, depth: 0, path: path)
+            let opened = try openDirectory(root, in: parent, listed: status, depth: 0, path: path)
             cursor = DirectoryCursor(
                 fileSystem: fileSystem, descriptor: opened.descriptor, status: opened.status,
                 frame: Frame(pending: opened.names))
@@ -93,7 +98,7 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             rootEvent = .enterDirectory(opened.header)
             step = .walking
         case (.regular, .file):
-            let (read, header) = try openFile(name, in: parent, listed: status, depth: 0, path: path)
+            let (read, header) = try openFile(root, in: parent, listed: status, depth: 0, path: path)
             rootEvent = .beginFile(header)
             step = .reading(read)
         default:

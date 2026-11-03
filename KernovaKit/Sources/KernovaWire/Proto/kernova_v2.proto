@@ -102,7 +102,7 @@ enum FeatureId {
 // | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 // | CLIPBOARD_OFFER_BY_HOST | CLIPBOARD | host | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
 // | CLIPBOARD_OFFER_BY_PEER | CLIPBOARD | peer | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
-// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
+// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | DropLanded    |
 // | DRAG_OFFER    | DRAG    | peer   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
 // | DRAG_TAKE     | DRAG    | host   | DragTake     | nothing            | nothing              | empty, at once | DragTakeOutcome |
 //
@@ -866,6 +866,14 @@ message DropCapability {
 
 // FeaturePolicy.params for DROP. Dropping on or off is FeaturePolicy.enabled.
 message DropPolicy {
+}
+
+// The peer's END body on DROP_OFFER, sent once every item has landed or been
+// skipped. A RESET instead says why the drop stopped.
+message DropLanded {
+  // The index of each item the peer landed, ascending. An item not listed
+  // did not land.
+  repeated uint32 items = 1;
 }
 
 // FeatureAdvert.params for DRAG, both sides.
