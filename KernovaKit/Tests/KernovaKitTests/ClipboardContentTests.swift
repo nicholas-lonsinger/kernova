@@ -364,10 +364,17 @@ struct ClipboardSnapshotPolicyTests {
         "file reference types are skipped",
         arguments: [
             "public.file-url",
+            "Public.File-URL",
             "com.apple.pasteboard.promised-file-url",
             "com.apple.pasteboard.promised-file-content-type",
+            "com.apple.pasteboard.promised-suggested-file-name",
+            "com.apple.pasteboard.NSFilePromiseID",
             "com.apple.NSFilePromiseProvider",
             "NSFilenamesPboardType",
+            "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn",  // NSFilenamesPboardType
+            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b0g25xnr3wg3bu",  // 'furl' flavor
+            "dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu",  // legacy files promise
+            "DYN.AH62D4RV4GU8Y6Y4GRF0GN5XBRZW1GYDCR7U1E3CYTF2GN",  // encodes nothing
         ])
     func fileReferenceTypesSkipped(uti: String) {
         #expect(ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: uti))
@@ -376,13 +383,23 @@ struct ClipboardSnapshotPolicyTests {
         #expect(outcome.skipped == [.init(uti: uti, reason: .fileReferenceType)])
     }
 
-    @Test("dynamic UTIs are kept")
-    func dynamicUTIsKept() {
-        let dyn = "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn"
-        #expect(!ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: dyn))
-        let outcome = ClipboardSnapshotPolicy.evaluate([(uti: dyn, data: Data([1]))])
-        #expect(outcome.content.representations.map(\.uti) == [dyn])
-        #expect(outcome.skipped.isEmpty)
+    @Test("a dynamic UTI encoding a content type is kept, as is a custom UTI no system declares")
+    func dynamicAndCustomUTIsKept() {
+        // "Example private pasteboard type", as AppKit encodes a legacy name.
+        let dyn = "dyn.ah62d4rv4gu8yn8dbrz2g23masb3gw7xbsvwwa6dbsr4gn2xtqf3gkkdytf2gn"
+        for uti in [dyn, "com.example.x"] {
+            #expect(!ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: uti))
+            let outcome = ClipboardSnapshotPolicy.evaluate([(uti: uti, data: Data([1]))])
+            #expect(outcome.content.representations.map(\.uti) == [uti])
+            #expect(outcome.skipped.isEmpty)
+        }
+    }
+
+    @Test("a marker is skipped in any case")
+    func markersSkippedInAnyCase() {
+        let marker = "ORG.NSPASTEBOARD.TRANSIENTTYPE"
+        let outcome = ClipboardSnapshotPolicy.evaluate([(uti: marker, data: Data([1]))])
+        #expect(outcome.skipped == [.init(uti: marker, reason: .transientMarkerType)])
     }
 
     @Test("zero-byte representations are skipped")

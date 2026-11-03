@@ -22,6 +22,8 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         var residents: [[(type: NSPasteboard.PasteboardType, data: Data)]] = []
         /// Bytes a fired provider resolved, which a promised item serves from.
         var resolved: [NSPasteboard.PasteboardType: Data] = [:]
+        /// Every type a resident item was read for, in order.
+        var reads: [NSPasteboard.PasteboardType] = []
     }
 
     private let writer = FakeWritePasteboard()
@@ -44,14 +46,24 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
             let bytes = state.withLock { $0.resolved }
             return promised.map { FakePasteboardItem(types: $0, bytes: bytes) }
         }
-        return state.withLock { $0.residents }.map(FakePasteboardItem.init)
+        let state = self.state
+        return state.withLock { $0.residents }.map { representations in
+            FakePasteboardItem(representations) { type in state.withLock { $0.reads.append(type) } }
+        }
     }
+
+    /// Every type the user's own copy was read for — as data or as a string —
+    /// in the order read, for a test proving what was read when.
+    public var residentReads: [NSPasteboard.PasteboardType] { state.withLock { $0.reads } }
 
     // MARK: - Promised writes
 
     /// Every promised type across all items, concatenated in item order (a
     /// multi-file offer promises one item per file).
     public var promisedTypes: [NSPasteboard.PasteboardType] { writer.promisedTypes }
+
+    /// The types each promised item offers, in item order.
+    public var promisedTypesByItem: [[NSPasteboard.PasteboardType]] { writer.promisedTypesByItem }
 
     /// How many times `prepareForNewContents(with:)` has run.
     public var prepareCount: Int { writer.prepareCount }

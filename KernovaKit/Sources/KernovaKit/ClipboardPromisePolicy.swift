@@ -1,39 +1,76 @@
 import Foundation
+import KernovaWire
 
-/// The receive-side gate on the representations a peer offered: which may be
-/// promised and pulled at all, which of those a paste serves as
-/// `public.file-url`, and the deadline-bound total the paste cap is compared
-/// against.
+/// The receive-side gate on the items a peer offered: which representations
+/// may be published and pulled at all, which pasteboard type each serves, and
+/// the deadline-bound total the paste cap is compared against.
 ///
 /// Every rule here reads offer metadata only — no byte of the offer has crossed
 /// when they are applied.
 public enum ClipboardPromisePolicy {
-    /// Whether an offered representation is kept: surfaced to the pasteboard,
+    /// Whether an offered representation is kept: published to the pasteboard,
     /// and reachable by a pull.
     ///
-    /// An identity-skip type (a transient marker, a raw `public.file-url`
-    /// smuggle) or an inline payload with no bytes is never kept.
-    ///
-    /// The empty-payload skip is keyed on the *filename*, so it reaches only
-    /// inline reps. A named rep is a file the paste creates, and an empty file
-    /// is content native macOS copies; a folder's `byte_count` is an estimate of
-    /// the tree's file bytes (`kernova.proto`), which a tree of empty files, bare
-    /// subdirectories, or nothing at all makes 0 while the archive still carries
-    /// the tree.
-    public static func keeps(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
-        (info.byteCount != 0 || !info.filename.isEmpty)
-            && !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: info.uti)
+    /// An INLINE representation is kept when it names a type a Mac pasteboard
+    /// carries that is not an identity-skip type (a marker, a file reference).
+    /// Its size is not consulted: a sender reads no bytes to offer, so an
+    /// estimate of 0 means unknown. A FILE or FOLDER is always kept: the offer
+    /// registry admits no item whose name breaks `Representation.name`'s
+    /// contract.
+    public static func keeps(_ representation: Representation) -> Bool {
+        switch representation.storage {
+        case .inline:
+            guard let uti = representation.type.appleUTI else { return false }
+            return !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: uti)
+        case .file, .folder:
+            return true
+        case .unspecified, .UNRECOGNIZED:
+            return false
+        }
     }
 
-    /// Whether a promised item serves this representation as `public.file-url` —
-    /// the flavor whose bytes must pull, stage, and (for a folder) extract
-    /// inside the OS pasteboard-promise deadline.
+    /// Whether a kept representation is served as `public.file-url` — the
+    /// flavor whose bytes must pull and land inside the OS pasteboard-promise
+    /// deadline.
+    public static func servesFileURL(_ representation: Representation) -> Bool {
+        keeps(representation) && representation.storage != .inline
+    }
+
+    /// One pasteboard type a published item promises, and the representation
+    /// that serves it.
+    public struct PromisedType: Equatable, Sendable {
+        /// The pasteboard type: the representation's UTI, or `public.file-url`.
+        public let pasteboardType: String
+        /// Index into the item's representations.
+        public let representation: Int
+
+        /// Whether the type is `public.file-url`, served by landing a FILE or
+        /// FOLDER and handing over its URL.
+        public var isFileURL: Bool { pasteboardType == ClipboardPasteboardPublisher.ItemSpec.fileURLType }
+    }
+
+    /// The pasteboard types `item` promises, in its order of preference.
     ///
-    /// `ClipboardPasteboardItemPlan` promises `.fileURL` for every kept rep
-    /// carrying a filename, so an image file — which also promises its image UTI
-    /// inline — is one of them.
-    public static func servesFileURL(_ info: Kernova_V1_ClipboardRepresentationInfo) -> Bool {
-        keeps(info) && !info.filename.isEmpty
+    /// Each type is served by the first kept representation that maps to it, so
+    /// an item's best representation of a type wins. `servingFileURLs` false
+    /// withholds `public.file-url`, leaving the item's inline types.
+    public static func promisedTypes(for item: OfferedItem, servingFileURLs: Bool = true) -> [PromisedType] {
+        var types: [PromisedType] = []
+        var seen: Set<String> = []
+        for (index, representation) in item.representations.enumerated() where keeps(representation) {
+            let pasteboardType: String
+            if representation.storage == .inline, let uti = representation.type.appleUTI {
+                pasteboardType = uti
+            } else if servingFileURLs {
+                pasteboardType = ClipboardPasteboardPublisher.ItemSpec.fileURLType
+            } else {
+                continue
+            }
+            if seen.insert(pasteboardType).inserted {
+                types.append(PromisedType(pasteboardType: pasteboardType, representation: index))
+            }
+        }
+        return types
     }
 
     /// An offer's paste-bound total against the ceiling in force.
@@ -48,35 +85,22 @@ public enum ClipboardPromisePolicy {
         public var exceeds: Bool { total > UInt64(limit) }
     }
 
-    /// The paste-bound total of `reps` against `limit`: the byte count of every
-    /// representation served as `public.file-url`, which is the payload one
-    /// paste has to land against the OS deadline.
+    /// The paste-bound total of `items` against `limit`: the size estimate of
+    /// every representation served as `public.file-url`, which is the payload
+    /// one paste has to land against the OS deadline.
     ///
     /// One paste is one deadline-bound operation, so the OS clock sees the sum
     /// rather than each file: a set over the cap is refused whole rather than
-    /// landing 2 of 3 files. A directory rep contributes the producer's
-    /// stat-walk estimate, the same figure the wire carries as its `byte_count`.
-    /// The sum saturates, so an absurd declared total fails the cap rather than
-    /// wrapping under it.
-    public static func pasteBudget(
-        _ reps: [Kernova_V1_ClipboardRepresentationInfo], limit: Int
-    ) -> PasteBudget {
+    /// landing 2 of 3 files. A promised representation counts its estimate, 0
+    /// while its size is unknown. The sum saturates, so an absurd declared total
+    /// fails the cap rather than wrapping under it.
+    public static func pasteBudget(_ items: [OfferedItem], limit: Int) -> PasteBudget {
         var total: UInt64 = 0
-        for info in reps where servesFileURL(info) {
-            total = total.saturatingAdding(info.byteCount)
+        for item in items {
+            for promised in promisedTypes(for: item) where promised.isFileURL {
+                total = total.saturatingAdding(item.representations[promised.representation].sizeEstimate)
+            }
         }
         return PasteBudget(total: total, limit: limit)
-    }
-
-    /// The pasteboard-item grouping inputs for `reps`, each tagged with whether
-    /// this gate keeps it.
-    public static func descriptors(
-        for reps: [Kernova_V1_ClipboardRepresentationInfo]
-    ) -> [ClipboardRepresentationDescriptor] {
-        reps.map {
-            ClipboardRepresentationDescriptor(
-                uti: $0.uti, filename: $0.filename, isInline: $0.isInline,
-                isPromisable: keeps($0))
-        }
     }
 }

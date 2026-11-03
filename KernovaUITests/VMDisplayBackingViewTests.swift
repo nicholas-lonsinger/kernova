@@ -460,6 +460,7 @@ struct VMDisplayBackingViewTests {
         }
 
         private(set) var fileNames: [String]
+        let fileTypes: [String] = []
         /// Where the view asked for the promised files, which nothing else
         /// tells a drag whose promises never reach an offer.
         private(set) var destination: URL?

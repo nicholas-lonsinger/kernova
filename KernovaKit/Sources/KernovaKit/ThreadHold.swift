@@ -35,3 +35,46 @@ enum ThreadHold {
         }
     }
 }
+
+extension ThreadHold {
+    /// One hold of the calling thread, decided before the work it waits on
+    /// starts: the event loop on the main run loop's base, a park on any other
+    /// thread, and none at all on the main thread anywhere else.
+    ///
+    /// **The main thread is never parked.** Where a nested wait would have to
+    /// dispatch events another loop owns — inside a tracking or modal loop —
+    /// ``NestedEventLoopWait/current(slice:)`` vends none, and parking instead
+    /// would freeze the app for the length of the work; so there is no hold,
+    /// and the caller refuses before starting anything. Off the main thread
+    /// the hold parks, so what ends it MUST come from another thread.
+    struct Wait: Sendable {
+        private let eventLoop: NestedEventLoopWait?
+        private let semaphore = DispatchSemaphore(value: 0)
+
+        /// The hold for the calling thread running `eventLoop`, or nil on the
+        /// main thread when `eventLoop` is nil.
+        init?(eventLoop: NestedEventLoopWait?) {
+            guard eventLoop != nil || !Thread.isMainThread else { return nil }
+            self.eventLoop = eventLoop
+        }
+
+        /// Ends the hold in progress, from any thread; a wake before the hold
+        /// begins is kept.
+        func wake() {
+            semaphore.signal()
+            eventLoop?.wake()
+        }
+
+        /// Holds until `resolved` returns a value, re-checking it at least
+        /// every `interval`. Nothing times the hold out.
+        func hold<Value>(recheckingEvery interval: TimeInterval = .infinity, until resolved: @Sendable () -> Value?)
+            -> Value
+        {
+            guard
+                let value = ThreadHold.hold(
+                    eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: interval, until: resolved)
+            else { preconditionFailure("A hold with no deadline returned without its value") }
+            return value
+        }
+    }
+}
