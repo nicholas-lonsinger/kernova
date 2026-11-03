@@ -17,6 +17,8 @@ import Testing
 
 /// What one router's owners heard, each entry naming the owner that heard it.
 private enum Heard: Sendable, Equatable {
+    /// The feature is usable on this peer's connection now, described; nil for nowhere.
+    case usable(FeatureID, on: String?)
     case items(FeatureID, ItemTransferEvent)
     case take(DragTakeEvent)
     case content(FeatureID, token: Data)
@@ -30,6 +32,7 @@ private func router<Peer: Sendable>(
     func owner(_ feature: FeatureID) -> ItemFeatureOwner<Peer>? {
         guard features.contains(feature) else { return nil }
         return ItemFeatureOwner(
+            usable: { peer in heard.record(.usable(feature, on: peer.map { "\($0)" })) },
             events: { _, event in heard.record(.items(feature, event)) },
             content: { request, _ in
                 heard.record(.content(feature, token: request.token))
@@ -186,11 +189,144 @@ struct ItemFeatureRouterTests {
             switch entry {
             case .event(.items(_, let event)): .items(event.feature, event)
             case .event(.dragTake(_, let event)): .take(event)
+            case .event(.consolePeer(let feature, let peer)): .usable(feature, on: peer.map { "\($0)" })
             case .note: nil
             }
         }
         #expect(hostHeard.elements == delivered)
+        let on = "\(handle)"
+        // DROP, which the peer does not serve, never had a console peer, so its owner hears nothing.
+        #expect(Array(hostHeard.elements.prefix(2)) == [.usable(.clipboard, on: on), .usable(.drag, on: on)])
+        #expect(Array(peerHeard.elements.prefix(2)) == [.usable(.clipboard, on: "()"), .usable(.drag, on: "()")])
+
         await withCheckedContinuation { continuation in peer.close { continuation.resume() } }
+        _ = await host.next { $0 == .usable(.drag, on: nil) }
+        await harness.settled()
+        let hostTail = hostHeard.elements.suffix(2)
+        #expect(Array(hostTail) == [.usable(.clipboard, on: nil), .usable(.drag, on: nil)])
+        let peerTail = peerHeard.elements.filter { if case .usable = $0 { true } else { false } }.suffix(2)
+        #expect(Array(peerTail) == [.usable(.clipboard, on: nil), .usable(.drag, on: nil)])
+        harness.hub.close()
+    }
+
+    // MARK: Usability
+
+    /// A hub whose router owns every item feature, recording into `heard`, its policy `policy`.
+    private static func hub(
+        _ heard: Recorder<Heard>, policy: PolicySnapshot = SimItems.policy(PolicySnapshot())
+    ) async -> HubHarness {
+        let router: ItemFeatureRouter<PeerHandle> = router(heard: heard)
+        let harness = HubHarness(
+            policy: policy, items: MemoryItems().adapters(), itemEvents: { router.deliver($0) })
+        await harness.attached()
+        return harness
+    }
+
+    /// A started peer runtime on `harness` whose router owns CLIPBOARD and DRAG, recording into `heard`.
+    private static func peer(
+        _ harness: HubHarness, _ heard: Recorder<Heard> = Recorder(), claim: PeerClaim = Fixture.peerClaim,
+        state: PeerSessionState = Fixture.peerState
+    ) -> PeerAgentRuntime {
+        let router: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: heard)
+        let runtime = PeerAgentRuntime(
+            claim: claim, state: state,
+            registry: PeerFeatureRegistry(items: MemoryItems().adapters(router.features)),
+            dialer: HubDialer(harness: harness), scheduler: SystemScheduler(), logger: Fixture.logger,
+            handlers: PeerAgentRuntime.Handlers(event: { router.deliver($0) }, stop: { _ in }))
+        runtime.start()
+        return runtime
+    }
+
+    private static func usable(_ heard: Recorder<Heard>) -> [Heard] {
+        heard.elements.filter { if case .usable = $0 { true } else { false } }
+    }
+
+    private static func close(_ runtime: PeerAgentRuntime) async {
+        await withCheckedContinuation { continuation in runtime.close { continuation.resume() } }
+    }
+
+    @Test(
+        "Host: a feature's first console peer, its move away and back, and its connection's end each reach the owner once"
+    )
+    func hostConsoleMoves() async {
+        let heard = Recorder<Heard>()
+        let harness = await Self.hub(heard)
+        let first = Self.peer(harness)
+        var waiter = heard.waiter()
+        _ = await waiter.next { $0 == .usable(.drag, on: "\(PeerHandle(rawValue: 1))") }
+        let a = "\(PeerHandle(rawValue: 1))"
+        #expect(Self.usable(heard) == [.usable(.clipboard, on: a), .usable(.drag, on: a)])
+
+        // The host's offer on the console peer ends before the owner hears the console moved off it.
+        let offered = await withCheckedContinuation { continuation in
+            harness.hub.offerItems(SimItems.offer(1, []), feature: .clipboard) { continuation.resume(returning: $0) }
+        }
+        #expect(offered == .success(PeerHandle(rawValue: 1)))
+        first.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
+        _ = await waiter.next { $0 == .usable(.drag, on: nil) }
+        let afterOffer = heard.elements.drop { $0 != .usable(.drag, on: a) }.dropFirst()
+        guard case .items(.clipboard, .offerEnded(.clipboard, .local, _, _))? = afterOffer.first else {
+            Issue.record("after the move: \(Array(afterOffer))"); return
+        }
+        #expect(Array(afterOffer.dropFirst()) == [.usable(.clipboard, on: nil), .usable(.drag, on: nil)])
+
+        let second = Self.peer(
+            harness, claim: AgentHubItemTests.offConsole,
+            state: PeerSessionState(console: .on, sessionID: "2", userName: "other"))
+        _ = await waiter.next { if case .usable(.drag, on: .some) = $0 { true } else { false } }
+        let b = "\(PeerHandle(rawValue: 2))"
+        await Self.close(second)
+        _ = await waiter.next { $0 == .usable(.drag, on: nil) }
+        await harness.settled()
+        #expect(
+            Self.usable(heard) == [
+                .usable(.clipboard, on: a), .usable(.drag, on: a), .usable(.clipboard, on: nil),
+                .usable(.drag, on: nil), .usable(.clipboard, on: b), .usable(.drag, on: b),
+                .usable(.clipboard, on: nil), .usable(.drag, on: nil),
+            ])
+        await Self.close(first)
+        harness.hub.close()
+    }
+
+    @Test("Host: a policy turning a feature off takes its console peer, and no other feature's")
+    func hostPolicyOff() async {
+        let heard = Recorder<Heard>()
+        let harness = await Self.hub(heard)
+        let peer = Self.peer(harness)
+        var waiter = heard.waiter()
+        _ = await waiter.next { if case .usable(.drag, on: .some) = $0 { true } else { false } }
+        let a = "\(PeerHandle(rawValue: 1))"
+        harness.hub.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .drag, enabled: true)]))
+        _ = await waiter.next { $0 == .usable(.clipboard, on: nil) }
+        await harness.settled()
+        #expect(
+            Self.usable(heard) == [.usable(.clipboard, on: a), .usable(.drag, on: a), .usable(.clipboard, on: nil)])
+        await Self.close(peer)
+        harness.hub.close()
+    }
+
+    @Test(
+        "Agent: first usability, policy off and the connection's end each reach the owner once; a console move is its own"
+    )
+    func agentUsability() async {
+        let heard = Recorder<Heard>()
+        let harness = await Self.hub(Recorder())
+        let peer = Self.peer(harness, heard)
+        var waiter = heard.waiter()
+        _ = await waiter.next { $0 == .usable(.drag, on: "()") }
+        #expect(Self.usable(heard) == [.usable(.clipboard, on: "()"), .usable(.drag, on: "()")])
+
+        peer.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
+        harness.hub.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .drag, enabled: true)]))
+        _ = await waiter.next { $0 == .usable(.clipboard, on: nil) }
+        await Self.close(peer)
+        _ = await waiter.next { $0 == .usable(.drag, on: nil) }
+        await flush(peer.queue)
+        #expect(
+            Self.usable(heard) == [
+                .usable(.clipboard, on: "()"), .usable(.drag, on: "()"), .usable(.clipboard, on: nil),
+                .usable(.drag, on: nil),
+            ])
         harness.hub.close()
     }
 

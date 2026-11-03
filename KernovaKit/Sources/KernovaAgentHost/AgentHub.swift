@@ -416,19 +416,22 @@ public final class AgentHub: Sendable {
         pending?.answer(reply)
     }
 
-    /// Carries out console authority: each command it sends, then each end it hands the owner, in order.
+    /// Carries out console authority: each command it sends, then each end it hands the owner, in order, and
+    /// then each console peer that changed.
     private func settleItems() {
         dispatchPrecondition(condition: .onQueue(queue))
-        let ended = state.withLock { state in
-            state.settleItems().map { end in
+        let (ended, changes) = state.withLock { state in
+            let ended = state.settleItems().map { end in
                 let connection = state.connections[end.handle]?.connection
                 return (send: end.command.flatMap { command in connection.map { ($0, command) } }, event: end.event)
             }
+            return (ended, state.consoleChanges())
         }
         for end in ended {
             if let (connection, command) = end.send { connection.send(.items(command)) }
             itemEvents(end.event)
         }
+        for change in changes { itemEvents(change) }
     }
 
     private func detachTransport() {

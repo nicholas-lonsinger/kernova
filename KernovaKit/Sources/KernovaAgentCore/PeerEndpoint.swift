@@ -88,6 +88,10 @@ public enum PeerEvent: Sendable, Equatable {
     case items(ItemTransferEvent)
     /// The host takes this side's drag.
     case dragTake(DragTakeEvent)
+    /// A feature that offers items became usable on the connection, or stopped being usable: the Hello, the
+    /// adverts and the host's policy decide it, and the connection's end makes every one unusable. Once per
+    /// change, after the event that caused it and before anything the change ends.
+    case itemFeatureUsable(FeatureID, Bool)
     /// The answer to the `.itemCommand` input of this id.
     case itemReply(ItemRequestID, ItemReply)
     /// A note for the runtime's log.
@@ -108,6 +112,8 @@ public struct PeerEndpoint: Sendable {
     public let generation: ConnectionGeneration
     private var effects = OutputQueue<PeerEffect, NoSlot>()
     private var events = OutputQueue<PeerEvent, PeerEventSlot>()
+    /// The features that offer items `.itemFeatureUsable` last said are usable.
+    private var usableItemFeatures: Set<FeatureID> = []
 
     /// Creates the endpoint of a connection that just connected.
     public init(_ configuration: PeerConfiguration, generation: ConnectionGeneration, now: CoreInstant) {
@@ -271,6 +277,7 @@ public struct PeerEndpoint: Sendable {
                 dispatch(routed, now)
             } else if publishAdverts() {
                 notifyAll(.usabilityChanged, now)
+                refreshItemUsability()
             } else {
                 break
             }
@@ -298,14 +305,17 @@ public struct PeerEndpoint: Sendable {
         case .helloReceived(let hello):
             events.append(.established(host: hello.claim))
             notifyAll(.sessionEstablished, now)
+            refreshItemUsability()
         case .remoteAdvertsChanged:
             notifyAll(.usabilityChanged, now)
+            refreshItemUsability()
         case .peerStateChanged:
             break
         case .policyChanged:
             events.append(.policyReceived, coalescing: .policy)
             notifyAll(.policyChanged, now)
             notifyAll(.usabilityChanged, now)
+            refreshItemUsability()
         case .updateAvailable(let manifest):
             events.append(.updateAvailable(manifest), coalescing: .updateAvailable)
             update.offerChanged(manifest, connection: &connection)
@@ -314,6 +324,7 @@ public struct PeerEndpoint: Sendable {
         case .diagnostic(let diagnostic):
             events.append(.diagnostic(diagnostic))
         case .closed(let closure):
+            refreshItemUsability(closed: true)
             events.append(.closed(closure))
         case .opened(let id, _, let body):
             deliver(.opened(id, body: body), to: routed.owner, now)
@@ -330,6 +341,17 @@ public struct PeerEndpoint: Sendable {
         case .slotFreed:
             // The slots are shared across kinds, so every opener re-checks.
             notifyAll(.slotFreed, now)
+        }
+    }
+
+    /// Emits `.itemFeatureUsable` for each feature that offers items whose usability changed; with `closed`,
+    /// every one is unusable.
+    private mutating func refreshItemUsability(closed: Bool = false) {
+        for feature in ItemFeatureAvailability.offering.sorted(by: { $0.rawValue < $1.rawValue }) {
+            let usable = !closed && connection.usability(feature).isAvailable
+            guard usable != usableItemFeatures.contains(feature) else { continue }
+            if usable { usableItemFeatures.insert(feature) } else { usableItemFeatures.remove(feature) }
+            events.append(.itemFeatureUsable(feature, usable))
         }
     }
 

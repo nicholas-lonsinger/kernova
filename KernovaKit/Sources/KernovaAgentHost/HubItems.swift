@@ -16,6 +16,9 @@ public enum HubItemEvent: Sendable, Equatable {
     case items(PeerHandle, ItemTransferEvent)
     /// A take of `PeerHandle`'s drag ended.
     case dragTake(PeerHandle, DragTakeEvent)
+    /// `FeatureID`'s console peer changed to this one, or to none. Once per change, after the ends of the
+    /// offers the change took from the peer that lost it.
+    case consolePeer(FeatureID, PeerHandle?)
 }
 
 extension ItemFeatureRouter where Peer == PeerHandle {
@@ -24,6 +27,7 @@ extension ItemFeatureRouter where Peer == PeerHandle {
         switch event {
         case .items(let peer, let event): deliver(event, from: peer)
         case .dragTake(let peer, let event): deliver(event, from: peer)
+        case .consolePeer(let feature, let peer): deliver(feature, usableOn: peer)
         }
     }
 }
@@ -146,6 +150,19 @@ extension AgentHubState {
             connections[handle]?.items = items
         }
         return ended
+    }
+
+    /// A `.consolePeer` event for each feature that offers items whose console peer is no longer the one the
+    /// last said, which it records.
+    mutating func consoleChanges() -> [HubItemEvent] {
+        var changes: [HubItemEvent] = []
+        for feature in ItemFeatureAvailability.offering.sorted(by: { $0.rawValue < $1.rawValue }) {
+            let peer = consolePeer(for: feature)
+            guard peer != itemConsole[feature] else { continue }
+            itemConsole[feature] = peer
+            changes.append(.consolePeer(feature, peer))
+        }
+        return changes
     }
 
     /// How an item the hub ended for console authority closed.

@@ -84,6 +84,8 @@ struct AgentHubState: Sendable {
     var isClosed = false
     var power = HubPowerRouting()
     var items = ItemRequests<PeerHandle>()
+    /// The console peer of each feature that offers items, as the owner last heard it.
+    var itemConsole: [FeatureID: PeerHandle] = [:]
     var lastPublished = AgentHubSnapshot.empty
     private var nextConnectedOrder: UInt64 = 0
     /// The last close of each identity seen on this attachment. The snapshot shows an entry only while no

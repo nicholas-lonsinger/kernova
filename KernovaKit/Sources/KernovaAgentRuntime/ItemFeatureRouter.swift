@@ -17,6 +17,10 @@ public enum ItemContent: Sendable, Equatable {
 
 /// The owner of one feature that offers items, on one end, whose connections `Peer` names.
 public struct ItemFeatureOwner<Peer: Sendable>: Sendable {
+    /// Hears where the feature can be used now: the peer whose connection serves it, or nil once none does.
+    /// Once per change, in order with the item events. On the host it is the feature's console peer; on a
+    /// guest agent, `()` while its connection to the host can use the feature.
+    public var usable: @Sendable (Peer?) -> Void
     /// Hears each item event of the feature, from the connection of the peer it names, in the order the end
     /// delivers them and on its queue.
     public var events: @Sendable (Peer, ItemTransferEvent) -> Void
@@ -26,9 +30,11 @@ public struct ItemFeatureOwner<Peer: Sendable>: Sendable {
 
     /// Creates an owner.
     public init(
+        usable: @escaping @Sendable (Peer?) -> Void,
         events: @escaping @Sendable (Peer, ItemTransferEvent) -> Void,
         content: @escaping @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
     ) {
+        self.usable = usable
         self.events = events
         self.content = content
     }
@@ -83,6 +89,14 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
         owner.events(peer, event)
     }
 
+    /// Tells `feature`'s owner where it can be used now: on `peer`'s connection, or nowhere.
+    public func deliver(_ feature: FeatureID, usableOn peer: Peer?) {
+        guard let owner = owner(of: feature) else {
+            return assertionFailure("\(feature) became usable or not, though it has no owner to be advertised")
+        }
+        owner.usable(peer)
+    }
+
     /// Hands `event` of `peer`'s connection to DRAG's owner.
     public func deliver(_ event: DragTakeEvent, from peer: Peer) {
         guard let drag else { return assertionFailure("a drag take, though DRAG has no owner to be advertised") }
@@ -111,12 +125,15 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
 }
 
 extension ItemFeatureRouter where Peer == Void {
-    /// Hands each item event and drag take of a peer's connection to its owner; every other event is not one.
+    /// Hands each item event, drag take and usability change of a peer's connection to its owner; every other
+    /// event is not one.
     public func deliver(_ event: PeerEvent) {
         switch event {
         case .items(let event): deliver(event, from: ())
         case .dragTake(let event): deliver(event, from: ())
-        case .established, .policyReceived, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed: break
+        case .itemFeatureUsable(let feature, let usable): deliver(feature, usableOn: usable ? () : nil)
+        case .established, .policyReceived, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed:
+            break
         }
     }
 }
