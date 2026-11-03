@@ -278,7 +278,7 @@ struct ConnectionDriverTests {
             harness.stream.deliver(.received(Data([byte])))
             await harness.settle()
         }
-        #expect(harness.takeEvents().contains(.policyReceived))
+        #expect(harness.takeEvents().contains { $0.isPolicyReceived })
 
         let ping = FrameEncoder.encode(Frame(streamID: .session, type: .ping, payload: Data(count: 8)))
             .reduce(into: Data()) { $0.append($1) }

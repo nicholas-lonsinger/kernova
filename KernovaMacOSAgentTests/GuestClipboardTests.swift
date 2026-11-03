@@ -21,6 +21,7 @@ struct GuestClipboardTests {
         private struct Calls {
             var offers: [ItemOffer] = []
             var releases: [Data] = []
+            var ceilings: [UInt64] = []
         }
 
         private let calls = Locked(Calls())
@@ -33,6 +34,8 @@ struct GuestClipboardTests {
 
         var offers: [ItemOffer] { calls.withLock(\.offers) }
         var releases: [Data] { calls.withLock(\.releases) }
+        /// The `byte_ceiling` of each pull ordered, in order.
+        var ceilings: [UInt64] { calls.withLock(\.ceilings) }
 
         func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
             calls.withLock { $0.offers.append(offer) }
@@ -62,6 +65,7 @@ struct GuestClipboardTests {
         func order(
             token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
         ) throws(WireError) -> ItemPullOrder {
+            calls.withLock { $0.ceilings.append(byteCeiling) }
             throw WireError(.writeFailed)
         }
     }
@@ -75,7 +79,7 @@ struct GuestClipboardTests {
         let pasteboard = FakePasteboard()
         return Rig(
             pasteboard: pasteboard,
-            clipboard: GuestClipboard(pasteboard: pasteboard, promises: { [] }, stagingRoot: staging.root))
+            clipboard: GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root))
     }
 
     /// The types each of `link`'s offers carries, in order.
@@ -165,5 +169,40 @@ struct GuestClipboardTests {
         rig.clipboard.checkPasteboard()
         try await link.changed.wait { link.releases == [token] }
         #expect(link.offers.isEmpty)
+    }
+
+    @Test("The host's policy sets each pull's byte ceiling, and a policy arriving later changes it")
+    func policySetsThePullCeiling() async throws {
+        let rig = rig()
+        var text = OfferedItem()
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.storage = .inline
+        text.representations = [representation]
+        let link = RecordingLink(items: [text])
+        rig.clipboard.setLink(link)
+        func policy(_ bytes: Int) -> PolicySnapshot {
+            PolicySnapshot([ClipboardPolicyValue(maxPasteBytes: UInt64(bytes)).policy(enabled: true)])
+        }
+        let first = ClipboardPasteLimit.choices[0]
+        rig.clipboard.apply(policy(first))
+        rig.clipboard.exchange.handle(
+            .offerReceived(
+                ItemSetHeaderValue(
+                    feature: .clipboard, token: Data(repeating: 9, count: 16), concealed: false, count: 1)),
+            on: link)
+        try await rig.pasteboard.changed.wait { !rig.pasteboard.promisedTypes.isEmpty }
+        let pasteboard = rig.pasteboard
+        let type = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+
+        // A paste holds its thread until the pull ends, so it fires off the main actor.
+        _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
+        #expect(link.ceilings == [UInt64(first)])
+
+        let raised = 16 * 1024 * 1024 * 1024
+        rig.clipboard.apply(policy(raised))
+        _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
+        #expect(link.ceilings == [UInt64(first), UInt64(raised)])
+        #expect(rig.clipboard.exchange.pasteCeilingBytes == raised)
     }
 }

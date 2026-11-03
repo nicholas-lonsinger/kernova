@@ -46,13 +46,12 @@ package enum ClipboardIntakeGesture: Sendable {
     case drop
 }
 
-/// Reads a pasteboard for one of the host's gestures — the clipboard window's
-/// Paste and drop, and the passthrough poll — into a cause and a count.
+/// Reads a pasteboard for one of the clipboard window's gestures — Paste and
+/// drop — into a cause and a count, its content read whole into the buffer.
 ///
 /// Every rule about what may cross lives in `ClipboardPasteboardReader`, shared
 /// with the guest agent and the drop service. `message(for:gesture:)` and
-/// `skipNote(count:)` are the clipboard window's wording; the passthrough poll
-/// reports losses as transfer failures instead.
+/// `skipNote(count:)` are the clipboard window's wording.
 @MainActor
 package enum ClipboardPasteboardIntake {
     nonisolated private static let logger = KernovaLogger(

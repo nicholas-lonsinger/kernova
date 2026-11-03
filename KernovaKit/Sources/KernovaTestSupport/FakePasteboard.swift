@@ -52,6 +52,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         }
     }
 
+    /// None: no copy on this double carries a file promise.
+    @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { [] }
+
     /// Every type the user's own copy was read for — as data or as a string —
     /// in the order read, for a test proving what was read when.
     public var residentReads: [NSPasteboard.PasteboardType] { state.withLock { $0.reads } }

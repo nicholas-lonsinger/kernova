@@ -218,6 +218,43 @@ extension PowerOffer {
     }
 }
 
+/// CLIPBOARD's policy params, as the host's `ClipboardPolicy` carries them.
+public struct ClipboardPolicyValue: Sendable, Equatable {
+    /// The most bytes one paste on the peer may land; 0 leaves the peer on its own default.
+    public var maxPasteBytes: UInt64
+
+    /// Creates the params.
+    public init(maxPasteBytes: UInt64) {
+        self.maxPasteBytes = maxPasteBytes
+    }
+
+    /// The params of `policy`'s CLIPBOARD entry; nil when it has none, or one encoded for another version of the
+    /// feature, or params that do not decode.
+    public init?(_ policy: PolicySnapshot) {
+        guard let entry = policy.entries.first(where: { $0.feature == .clipboard }),
+            entry.version == Self.version,
+            let decoded = try? Kernova_V2_ClipboardPolicy(serializedBytes: entry.params)
+        else { return nil }
+        self.init(maxPasteBytes: decoded.maxPasteBytes)
+    }
+
+    /// CLIPBOARD's entry in a policy, carrying these params.
+    public func policy(enabled: Bool) -> FeaturePolicyValue {
+        var params = Kernova_V2_ClipboardPolicy()
+        params.maxPasteBytes = maxPasteBytes
+        return FeaturePolicyValue(feature: .clipboard, version: Self.version, enabled: enabled, params: params.encoded)
+    }
+
+    /// The version of CLIPBOARD these params are encoded for.
+    private static var version: UInt32 {
+        guard let descriptor = FeatureDescriptor.lookup(.clipboard) else {
+            assertionFailure("CLIPBOARD has no descriptor")
+            return 1
+        }
+        return descriptor.version
+    }
+}
+
 extension UpdateOffer {
     /// The advertised `UpdateCapability`.
     var encodedCapability: Data {

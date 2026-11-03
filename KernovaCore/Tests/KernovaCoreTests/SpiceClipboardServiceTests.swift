@@ -331,6 +331,39 @@ struct SpiceClipboardServiceTests {
         #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
     }
 
+    // MARK: - A copy on the Mac
+
+    @Test("A copy on the Mac is taken into the buffer as its text, and grabbed")
+    func hostCopyGrabsItsText() async {
+        let (service, inputPipe, _) = makeService()
+        connect(service)
+        drainPipe(inputPipe)
+        let copy = ClipboardOfferSource(
+            content: ClipboardContent(representations: [
+                ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("from the Mac".utf8)),
+                ClipboardContent.Representation(uti: "public.html", data: Data("<b>Mac</b>".utf8)),
+            ]))
+
+        #expect(await service.offerHostCopy(copy) == .settled)
+        #expect(service.clipboardContent.text == "from the Mac")
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+    }
+
+    @Test("A copy on the Mac with no text leaves the buffer alone and grabs nothing")
+    func hostCopyWithoutTextGrabsNothing() async {
+        let (service, inputPipe, _) = makeService()
+        connect(service)
+        drainPipe(inputPipe)
+        let copy = ClipboardOfferSource(
+            content: ClipboardContent(representations: [
+                ClipboardContent.Representation(uti: "public.png", data: Data([0x89, 0x50, 0x4E, 0x47]))
+            ]))
+
+        #expect(await service.offerHostCopy(copy) == .settled)
+        #expect(service.clipboardContent.isEmpty)
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
     // MARK: - Lifecycle
 
     @Test("stop() clears connected state")

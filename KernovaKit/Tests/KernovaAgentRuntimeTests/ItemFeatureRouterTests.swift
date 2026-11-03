@@ -22,6 +22,7 @@ private enum Heard: Sendable, Equatable {
     case items(FeatureID, ItemTransferEvent)
     case take(DragTakeEvent)
     case content(FeatureID, token: Data)
+    case policy(FeatureID, PolicySnapshot)
 }
 
 /// A router whose owners — of `features` — record into `heard`, each serving `content` when pulled.
@@ -37,7 +38,8 @@ private func router<Peer: Sendable>(
             content: { request, _ in
                 heard.record(.content(feature, token: request.token))
                 return .success(content)
-            })
+            },
+            policy: { heard.record(.policy(feature, $0)) })
     }
     return ItemFeatureRouter(
         clipboard: owner(.clipboard), drop: owner(.drop),
@@ -77,8 +79,20 @@ struct ItemFeatureRouterTests {
         let offerEnded = ItemTransferEvent.offerEnded(.drag, .local, token: SimItems.token(1), Self.closed)
         router.deliver(.dragTake(.requested(Self.take, token: SimItems.token(1))))
         router.deliver(.items(offerEnded))
-        router.deliver(.policyReceived)
+        router.deliver(.updateAvailable(nil))
         #expect(heard.elements == [.take(.requested(Self.take, token: SimItems.token(1))), .items(.drag, offerEnded)])
+    }
+
+    @Test("The host's policy reaches every owner, in order with item events")
+    func policyReachesEveryOwner() {
+        let heard = Recorder<Heard>()
+        let router: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: heard)
+        let policy = PolicySnapshot([FeaturePolicyValue(feature: .clipboard, enabled: true, params: Data([8, 1]))])
+        let offerEnded = ItemTransferEvent.offerEnded(.clipboard, .local, token: SimItems.token(1), Self.closed)
+        router.deliver(.policyReceived(policy))
+        router.deliver(.items(offerEnded))
+        #expect(
+            heard.elements == [.policy(.clipboard, policy), .policy(.drag, policy), .items(.clipboard, offerEnded)])
     }
 
     @Test("Content comes from the owner of the pulled offer's feature", arguments: [FeatureID.clipboard, .drop, .drag])
@@ -197,7 +211,15 @@ struct ItemFeatureRouterTests {
         let on = "\(handle)"
         // DROP, which the peer does not serve, never had a console peer, so its owner hears nothing.
         #expect(Array(hostHeard.elements.prefix(2)) == [.usable(.clipboard, on: on), .usable(.drag, on: on)])
-        #expect(Array(peerHeard.elements.prefix(2)) == [.usable(.clipboard, on: "()"), .usable(.drag, on: "()")])
+        // The peer's owners hear the host's policy before the usability it decides.
+        let peerHead = peerHeard.elements.prefix(4).map { heard -> Heard in
+            if case .policy(let feature, _) = heard { .policy(feature, PolicySnapshot()) } else { heard }
+        }
+        #expect(
+            peerHead == [
+                .policy(.clipboard, PolicySnapshot()), .policy(.drag, PolicySnapshot()),
+                .usable(.clipboard, on: "()"), .usable(.drag, on: "()"),
+            ])
 
         await withCheckedContinuation { continuation in peer.close { continuation.resume() } }
         _ = await host.next { $0 == .usable(.drag, on: nil) }

@@ -1026,6 +1026,7 @@ private final class FakeClipboardService: ClipboardServicing {
         announcedCount += 1
         return .settled
     }
+    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
     func clearBuffer() { clipboardContent = .empty }
     // materializeForPreview uses the protocol-extension default (no-op).
 

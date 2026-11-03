@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
@@ -80,30 +81,62 @@ struct HubClipboardServiceTests {
 
     // MARK: - Host → guest
 
-    @Test("A copy on the Mac, forwarded by passthrough, is offered to the console peer")
-    func hostCopyIsOffered() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
+    /// Has passthrough forward a copy of `text` on the Mac, returning the offer the console peer was sent.
+    private func forwardMacCopy(
+        _ text: String, _ instance: VMInstance, _ probe: AgentHubProbe
+    ) async throws -> (offer: ItemOffer, pasteboard: FakePasteboard, coordinator: ClipboardPassthroughCoordinator) {
         let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: instance.hostClipboardPublisher, reporter: instance.clipboardTransfers)
         // The first poll marks where this connection's copies begin.
         coordinator.pollHostClipboard()
-
-        #expect(pasteboard.setString("from the Mac", forType: .string))
+        #expect(pasteboard.setString(text, forType: .string))
         coordinator.pollHostClipboard()
-
         try await probe.changed.wait { !offers(probe).isEmpty }
-        let offer = try #require(offers(probe).first).offer
-        #expect(offer.items.count == 1)
-        #expect(offer.items[0].representations.map(\.storage) == [.inline])
-        #expect(offer.items[0].representations[0].type.appleUTI == ClipboardContent.utf8TextUTI)
-        // A pull of it is served from what was copied.
+        return (try #require(offers(probe).last).offer, pasteboard, coordinator)
+    }
+
+    /// The guest's pull of `offer`'s first representation, as the hub's source asks the exchange for it.
+    private func pull(_ offer: ItemOffer, from instance: VMInstance) async -> Result<ItemContent, WireError> {
         var request = PullRequest()
         request.token = offer.token
         let exchange = instance.hubClipboard.exchange
-        let served = await Task.detached { exchange.content(request, offer.items[0].representations[0]) }.value
-        #expect(served == .success(.inline(Data("from the Mac".utf8))))
+        let representation = offer.items[0].representations[0]
+        return await Task.detached { exchange.content(request, representation) }.value
+    }
+
+    @Test("A copy on the Mac is offered from its types alone, its bytes read only when the guest pulls them")
+    func hostCopyIsOffered() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let (offer, pasteboard, _) = try await forwardMacCopy("from the Mac", instance, probe)
+
+        #expect(offer.items.count == 1)
+        #expect(offer.items[0].representations.map(\.storage) == [.inline])
+        #expect(offer.items[0].representations[0].type.appleUTI == ClipboardContent.utf8TextUTI)
+        // The copy read nothing, so a privacy prompt can come only with a paste in the guest.
+        #expect(pasteboard.residentReads.isEmpty)
+        // The buffer is not the copy: showing it would read it.
+        #expect(instance.hubClipboard.clipboardContent.isEmpty)
+
+        #expect(await pull(offer, from: instance) == .success(.inline(Data("from the Mac".utf8))))
+        #expect(pasteboard.residentReads == [.string])
+    }
+
+    @Test("A pull after the Mac's clipboard moved on fails ITEM_REPRESENTATION_UNAVAILABLE")
+    func pullAfterTheCopyMovedOn() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let (offer, pasteboard, _) = try await forwardMacCopy("from the Mac", instance, probe)
+
+        // A newer copy, not yet polled: the offer still stands, but what it was read from is gone.
+        #expect(pasteboard.setString("copied since", forType: .string))
+        guard case .failure(let error) = await pull(offer, from: instance) else {
+            Issue.record("the pull was served")
+            return
+        }
+        #expect(error.code == .itemRepresentationUnavailable)
+        #expect(pasteboard.residentReads.isEmpty)
     }
 
     @Test("A console peer arriving is offered the host's clipboard again, under a fresh token")

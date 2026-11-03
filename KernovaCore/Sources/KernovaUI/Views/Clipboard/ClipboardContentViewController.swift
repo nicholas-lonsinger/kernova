@@ -871,7 +871,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         statusMessage.showTransientMessage("Receiving dropped file…", style: .info)
 
-        guard let destination = service.reserveDropDestination() else {
+        guard let destination = service.reservePromiseDestination() else {
             statusMessage.showTransientMessage("Couldn't receive the dropped file", style: .error)
             Self.logger.log(.error, "Failed to reserve a directory for the dropped file promise")
             return

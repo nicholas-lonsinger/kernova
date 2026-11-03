@@ -858,6 +858,10 @@ message ClipboardCapability {
 // FeaturePolicy.params for CLIPBOARD. Sharing on or off is
 // FeaturePolicy.enabled.
 message ClipboardPolicy {
+  // The most bytes the peer lets one paste land: the total of a paste's FILE
+  // and FOLDER representations, and every pull's `byte_ceiling`. 0: the
+  // peer's own default.
+  uint64 max_paste_bytes = 1;
 }
 
 // FeatureAdvert.params for DROP, both sides.

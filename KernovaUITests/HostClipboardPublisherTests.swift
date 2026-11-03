@@ -32,6 +32,7 @@ struct HostClipboardPublisherCancellationTests {
 
         func stop() {}
         func grabIfChanged() -> ClipboardGrabOutcome { .settled }
+        func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
         func clearBuffer() { clipboardContent = .empty }
 
         func materializeForCopy() -> [CopyToMacItem] {
@@ -160,6 +161,7 @@ struct HostClipboardPublisherOutcomeTests {
 
         func stop() {}
         func grabIfChanged() -> ClipboardGrabOutcome { .settled }
+        func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
         func clearBuffer() { clipboardContent = .empty }
         func materializeForCopy() -> [CopyToMacItem] { copyItems }
     }

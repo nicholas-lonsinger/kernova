@@ -395,12 +395,20 @@ package final class VMInstance {
     #endif
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
-    /// forwards guest logs, CLIPBOARD exactly when it shares the clipboard.
-    static func agentHubPolicy(for configuration: VMConfiguration) -> PolicySnapshot {
+    /// forwards guest logs, CLIPBOARD exactly when it shares the clipboard, its
+    /// paste ceiling `maxPasteBytes`.
+    static func agentHubPolicy(for configuration: VMConfiguration, maxPasteBytes: Int) -> PolicySnapshot {
         PolicySnapshot([
             FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
-            FeaturePolicyValue(feature: .clipboard, enabled: configuration.clipboardSharingEnabled),
+            ClipboardPolicyValue(maxPasteBytes: UInt64(clamping: maxPasteBytes))
+                .policy(enabled: configuration.clipboardSharingEnabled),
         ])
+    }
+
+    /// The policy the hub sends this VM's agents under `configuration`, with the
+    /// app-wide paste ceiling.
+    func agentHubPolicy(for configuration: VMConfiguration) -> PolicySnapshot {
+        Self.agentHubPolicy(for: configuration, maxPasteBytes: preferences.clipboardMaxPasteBytes)
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
@@ -483,7 +491,8 @@ package final class VMInstance {
                 ?? HostConnectionRuntime(
                     claim: PeerClaim(role: .host, versionLabel: bundleProducts.hostVersion),
                     scheduler: SystemScheduler(), payloadSource: payloads, items: items, logger: hubLogger),
-            policy: Self.agentHubPolicy(for: bundle.configuration), payloads: payloads, logger: hubLogger,
+            policy: Self.agentHubPolicy(for: bundle.configuration, maxPasteBytes: preferences.clipboardMaxPasteBytes),
+            payloads: payloads, logger: hubLogger,
             itemEvents: { itemRouter.deliver($0) }, publishingOn: .main
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
@@ -1175,7 +1184,7 @@ package final class VMInstance {
     func attachAgentTransport(_ transport: any GuestStreamTransport) {
         guard let context = sessionContext else { return }
         agentHub.attach(
-            transport, policy: Self.agentHubPolicy(for: configuration),
+            transport, policy: agentHubPolicy(for: configuration),
             republisher: GuestLogRepublisher(vmLabel: name))
         context.hasAgentTransport = true
     }
@@ -1225,12 +1234,13 @@ package final class VMInstance {
         sessionContext?.clipboardPassthroughCoordinator?.republishIfCeilingRaised()
     }
 
-    /// Re-pushes the current policy to a connected guest agent.
+    /// Re-pushes the current policy to the guest agents.
     ///
     /// For app-wide settings that reach the guest but produce no `VMConfiguration`
-    /// diff for `applyLivePolicy` to notice. No-ops with no control channel — the
-    /// next Hello sends the current snapshot anyway.
+    /// diff for `applyLivePolicy` to notice. The hub takes it running or not, and
+    /// builds a later session's connections from it.
     func resendAgentPolicy() {
+        agentHub.setPolicy(agentHubPolicy(for: configuration))
         vsockControlService?.sendPolicyUpdate(agentPolicySnapshot)
     }
 
@@ -1501,8 +1511,8 @@ package final class VMInstance {
     /// The agent hub takes every change to its policy, running or not: it
     /// builds a later session's connections from the policy it holds.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
-        if Self.agentHubPolicy(for: oldConfig) != Self.agentHubPolicy(for: newConfig) {
-            agentHub.setPolicy(Self.agentHubPolicy(for: newConfig))
+        if agentHubPolicy(for: oldConfig) != agentHubPolicy(for: newConfig) {
+            agentHub.setPolicy(agentHubPolicy(for: newConfig))
         }
 
         guard hasLiveSession else { return }

@@ -234,7 +234,11 @@ extension CoreUnits {
                 Unit.updateAvailable(nil), Unit.policy(logs: true), Unit.updateAvailable(last),
             ]
             run.feed(WireFrames.bytes(frames, preamble: false), maxSplit: 1 << 20)
-            #expect(run.peerEvents.count { $0 == .policyReceived } == 1)
+            // One event, carrying the last policy.
+            #expect(
+                run.peerEvents.filter { if case .policyReceived = $0 { true } else { false } } == [
+                    .policyReceived(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]))
+                ])
             #expect(
                 run.peerEvents.filter { if case .updateAvailable = $0 { true } else { false } } == [
                     .updateAvailable(last)

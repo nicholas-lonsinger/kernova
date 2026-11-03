@@ -11,8 +11,8 @@ import KernovaWire
 import UniformTypeIdentifiers
 
 /// A VM's clipboard over the guest agent's CLIPBOARD items, through the agent hub to the feature's console
-/// peer: the buffer the clipboard window and passthrough read and write, the host's offer the buffer makes, and
-/// the guest's offer shown in it.
+/// peer: the buffer the clipboard window and passthrough read and write, the host's offer — of the buffer, or
+/// of a copy on the Mac read from its pasteboard — and the guest's offer shown in the buffer.
 ///
 /// One per VM, for its whole life: its owner is registered with the hub's item router before the hub exists,
 /// and each console peer the hub names is offered the host's clipboard again. The guest's offer stays held
@@ -76,9 +76,9 @@ final class HubClipboardService: ClipboardServicing {
     /// The guest offer whose preview has run, by token.
     @ObservationIgnored private var previewedToken: Data?
 
-    /// Where the window materializes a dropped file promise.
-    @ObservationIgnored private let dropStaging: ClipboardFileStaging
-    @ObservationIgnored private var nextDropGeneration: UInt64 = 1
+    /// Where a file promise, dropped on the window or copied on the Mac, is called in.
+    @ObservationIgnored private let promiseStaging: ClipboardFileStaging
+    @ObservationIgnored private var nextPromiseGeneration: UInt64 = 1
 
     nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubClipboardService")
 
@@ -90,7 +90,7 @@ final class HubClipboardService: ClipboardServicing {
             stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot,
             pasteCeiling: ClipboardPasteLimit.defaultBytes,
             logger: Self.logger)
-        dropStaging = ClipboardFileStaging(label: "host-drops-\(stagingKey)", root: stagingRoot)
+        promiseStaging = ClipboardFileStaging(label: "host-promises-\(stagingKey)", root: stagingRoot)
         exchange.onRemoteOffer = { [weak self] in self?.received($0) }
         exchange.onRemoteOfferEnded = { [weak self] in self?.remoteEnded($0, byGuest: $1) }
     }
@@ -154,20 +154,27 @@ final class HubClipboardService: ClipboardServicing {
         return .settled
     }
 
+    /// Makes the Mac's copy the host's offer, held for every console peer from now on: nothing is owed a retry.
+    /// The buffer keeps what it shows, since showing the copy would read it.
+    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
+        exchange.offer(copy)
+        return .settled
+    }
+
     func clearBuffer() {
         offeredDigest = nil
         clipboardContent = .empty
     }
 
-    func reserveDropDestination() -> URL? {
-        let generation = nextDropGeneration
-        nextDropGeneration += 1
+    func reservePromiseDestination() -> URL? {
+        let generation = nextPromiseGeneration
+        nextPromiseGeneration += 1
         do {
-            return try dropStaging.reserveScratchDirectory(generation: generation)
+            return try promiseStaging.reserveScratchDirectory(generation: generation)
         } catch {
             Self.logger.log(
                 .error,
-                "Failed to reserve a clipboard drop directory for '\(self.label(), privacy: .public)': \(String(describing: error), privacy: .public)"
+                "Failed to reserve a clipboard promise directory for '\(self.label(), privacy: .public)': \(String(describing: error), privacy: .public)"
             )
             return nil
         }

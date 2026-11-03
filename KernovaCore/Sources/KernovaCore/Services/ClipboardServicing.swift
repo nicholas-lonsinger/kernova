@@ -46,6 +46,11 @@ package protocol ClipboardServicing: AnyObject {
     /// live connection would send it.
     func grabIfChanged() -> ClipboardGrabOutcome
 
+    /// Offers a copy on the Mac to the guest, as passthrough read it from the host pasteboard: metadata only,
+    /// each representation's bytes read from `copy` when this transport sends them. Its outcome means what
+    /// ``grabIfChanged()``'s does.
+    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome
+
     /// Empties the buffer (the window's "Clear" gesture) and resets the
     /// outbound dedup state.
     ///
@@ -54,16 +59,17 @@ package protocol ClipboardServicing: AnyObject {
     /// by `grabIfChanged()` as "unchanged" and silently never reach the guest.
     func clearBuffer()
 
-    /// Reserves a directory for the window to materialize a dropped file promise
-    /// into, or `nil` when the transport can't stage one.
+    /// Reserves a directory to call a file promise in to — one dropped on the
+    /// window, or one copied on the Mac that the guest pulls — or `nil` when the
+    /// transport can't stage one.
     ///
     /// The files stay there for as long as the buffer, an offer, or the host
     /// pasteboard can read them, and the service reclaims the directory once none
     /// can — so the window must not delete the file it keeps, nor stage one
     /// anywhere else.
     ///
-    /// Default `nil`: a text-only transport never takes a file drop.
-    func reserveDropDestination() -> URL?
+    /// Default `nil`: a text-only transport never takes a file.
+    func reservePromiseDestination() -> URL?
 
     /// Pulls the representations the clipboard window renders richly (text,
     /// inline RTF, images up to a size limit) for a lazily-offered guest payload,
@@ -128,7 +134,7 @@ package enum CopyToMacDropReason: Sendable, Equatable {
 }
 
 extension ClipboardServicing {
-    func reserveDropDestination() -> URL? { nil }
+    func reservePromiseDestination() -> URL? { nil }
     func materializeForPreview() async {}
     func materializeForCopy() -> [CopyToMacItem] {
         clipboardContent.representations.map { .resolved($0) }

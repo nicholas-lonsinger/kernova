@@ -21,7 +21,6 @@ final class GuestClipboard {
     let exchange: ClipboardItemExchange
 
     private let pasteboard: any ClipboardPasteboard
-    private let promises: @MainActor () -> [any FilePromiseReceiving]
     /// Where a copied file promise is called in when the host pulls it.
     private let promiseStaging: ClipboardFileStaging
     private var nextPromiseGeneration: UInt64 = 1
@@ -44,17 +43,14 @@ final class GuestClipboard {
     /// The latest clipboard activity, for the menu-bar status line.
     private(set) var activity: ClipboardActivity = .disabled
 
-    /// A clipboard over `pasteboard`, whose copies' file promises `promises` yields as
-    /// `readObjects(forClasses: [NSFilePromiseReceiver.self])` returns them, landing the host's files and
-    /// calling in copied promises under `stagingRoot`, and raising `onNotice` when a refusal lands in
-    /// ``activity``.
+    /// A clipboard over `pasteboard`, landing the host's files and calling in copied promises under
+    /// `stagingRoot`, and raising `onNotice` when a refusal lands in ``activity``. Each pull lands no more than
+    /// `pasteCeiling` bytes until the host's policy sets it.
     init(
-        pasteboard: any ClipboardPasteboard, promises: @escaping @MainActor () -> [any FilePromiseReceiving],
-        stagingRoot: ProcessStagingRoot, pasteCeiling: Int = ClipboardPasteLimit.defaultBytes,
-        onNotice: @escaping @Sendable () -> Void = {}
+        pasteboard: any ClipboardPasteboard, stagingRoot: ProcessStagingRoot,
+        pasteCeiling: Int = ClipboardPasteLimit.defaultBytes, onNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
-        self.promises = promises
         self.onNotice = onNotice
         exchange = ClipboardItemExchange(
             stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: pasteCeiling, logger: Self.logger)
@@ -72,13 +68,7 @@ final class GuestClipboard {
 
     /// The general pasteboard's clipboard.
     convenience init(stagingRoot: ProcessStagingRoot, onNotice: @escaping @Sendable () -> Void) {
-        self.init(
-            pasteboard: NSPasteboard.general,
-            promises: {
-                NSPasteboard.general.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver]
-                    ?? []
-            },
-            stagingRoot: stagingRoot, onNotice: onNotice)
+        self.init(pasteboard: NSPasteboard.general, stagingRoot: stagingRoot, onNotice: onNotice)
     }
 
     /// CLIPBOARD's owner on the session peer's connection, calling into it through `calls`.
@@ -93,7 +83,17 @@ final class GuestClipboard {
                 if case .pullEnded(_, let id, let result) = event { return exchange.pullEnded(id, result) }
                 MainActorBridge.async { exchange.handle(event, on: link) }
             },
-            content: { exchange.content($0, $1) })
+            content: { exchange.content($0, $1) },
+            policy: { [weak self] policy in MainActorBridge.async { self?.apply(policy) } })
+    }
+
+    /// Takes the paste ceiling the host's policy sets, the default when it sets none, for every later publish
+    /// and pull.
+    func apply(_ policy: PolicySnapshot) {
+        let ceiling = ClipboardPasteLimit.fromPolicy(ClipboardPolicyValue(policy)?.maxPasteBytes ?? 0)
+        guard ceiling != exchange.pasteCeilingBytes else { return }
+        exchange.setPasteCeiling(ceiling)
+        Self.logger.log(.notice, "The host sets the paste ceiling to \(ceiling, privacy: .public) bytes")
     }
 
     // MARK: Gating
@@ -163,7 +163,7 @@ final class GuestClipboard {
         let promiseStaging = promiseStaging
         let generation = nextPromiseGeneration
         nextPromiseGeneration += 1
-        let receivers = promises()
+        let receivers = pasteboard.filePromiseReceivers
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await ClipboardPasteboardReader.readOffer(

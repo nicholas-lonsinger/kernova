@@ -27,16 +27,21 @@ public struct ItemFeatureOwner<Peer: Sendable>: Sendable {
     /// Produces the content of a representation of this end's offer of the feature that a pull names, or why
     /// it cannot: called on the pull's own queue, so it may wait, as a promise called in does.
     public var content: @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
+    /// Hears the host's policy each time a guest agent's connection receives it, in order with the item events;
+    /// never on the host, whose policy it is.
+    public var policy: @Sendable (PolicySnapshot) -> Void
 
     /// Creates an owner.
     public init(
         usable: @escaping @Sendable (Peer?) -> Void,
         events: @escaping @Sendable (Peer, ItemTransferEvent) -> Void,
-        content: @escaping @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
+        content: @escaping @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>,
+        policy: @escaping @Sendable (PolicySnapshot) -> Void = { _ in }
     ) {
         self.usable = usable
         self.events = events
         self.content = content
+        self.policy = policy
     }
 }
 
@@ -125,14 +130,16 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
 }
 
 extension ItemFeatureRouter where Peer == Void {
-    /// Hands each item event, drag take and usability change of a peer's connection to its owner; every other
-    /// event is not one.
+    /// Hands each item event, drag take and usability change of a peer's connection to its owner, and the
+    /// host's policy to every owner; every other event is none of these.
     public func deliver(_ event: PeerEvent) {
         switch event {
         case .items(let event): deliver(event, from: ())
         case .dragTake(let event): deliver(event, from: ())
         case .itemFeatureUsable(let feature, let usable): deliver(feature, usableOn: usable ? () : nil)
-        case .established, .policyReceived, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed:
+        case .policyReceived(let policy):
+            for owner in [clipboard, drop, drag?.items].compactMap({ $0 }) { owner.policy(policy) }
+        case .established, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed:
             break
         }
     }

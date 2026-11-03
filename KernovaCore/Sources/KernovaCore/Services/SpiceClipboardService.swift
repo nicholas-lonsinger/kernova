@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaWire
 
 /// Manages SPICE clipboard sharing between the host and a single guest VM.
 ///
@@ -140,6 +141,14 @@ final class SpiceClipboardService: ClipboardServicing {
             "Sent clipboard grab (\(text.utf8.count, privacy: .public) bytes pending, byDemand: \(self.guestSupportsByDemand, privacy: .public))"
         )
         return .settled
+    }
+
+    /// Takes the copy's UTF-8 text into the buffer and grabs it: the one representation this transport
+    /// carries, read now because the buffer holds what a grab sends. A copy with no text has nothing to send.
+    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
+        guard let text = await copy.utf8Text() else { return .settled }
+        clipboardContent = ClipboardContent(text: text, isConcealed: copy.concealed)
+        return grabIfChanged()
     }
 
     // MARK: - Reading
@@ -329,5 +338,20 @@ final class SpiceClipboardService: ClipboardServicing {
         let message = SpiceMessageBuilder.buildAnnounceCapabilities(request: true)
         _ = writeToGuest(message)
         Self.logger.log(.debug, "Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
+    }
+}
+
+extension ClipboardOfferSource {
+    /// The first INLINE UTF-8 text representation's text, read now; nil when the offer has none or it can no
+    /// longer be served.
+    func utf8Text() async -> String? {
+        for (item, offered) in items.enumerated() {
+            for (index, representation) in offered.representations.enumerated()
+            where representation.storage == .inline && representation.type.appleUTI == ClipboardContent.utf8TextUTI {
+                guard case .bytes(let data)? = try? await serve(item: item, representation: index) else { return nil }
+                return String(decoding: data, as: UTF8.self)
+            }
+        }
+        return nil
     }
 }
