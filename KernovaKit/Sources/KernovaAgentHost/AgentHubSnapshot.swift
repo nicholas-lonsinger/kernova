@@ -16,12 +16,28 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// The peers seen while this transport is attached that are disconnected now, the most recently gone
     /// first; none shares an identity with a peer in `peers`, and all leave when the transport detaches.
     public var away: [AwayPeer]
+    /// Which agent a shutdown would ask first. POWER's own merged entry: `features[.power]` says only
+    /// whether some peer offers it, and routing asks only the peers serving the console session.
+    public var power: PowerProvision
+    /// The power routing running now, if any.
+    public var routing: PowerRoutingProgress?
+    /// For CLIPBOARD, DROP and DRAG, the feature's console peer: the newest peer of the console's session whose
+    /// connection offers it. The feature's offers live only there: the hub sends the host's to it, forwards
+    /// only its own, and ends both on a peer that stops being it. A feature no such peer offers has no entry.
+    public var consolePeers: [FeatureID: PeerHandle]
 
     /// A snapshot of these peers and merged features.
-    public init(peers: [PeerSummary], features: FeatureStatusTable, away: [AwayPeer] = []) {
+    public init(
+        peers: [PeerSummary], features: FeatureStatusTable, away: [AwayPeer] = [],
+        power: PowerProvision = .absent(.noAgent), routing: PowerRoutingProgress? = nil,
+        consolePeers: [FeatureID: PeerHandle] = [:]
+    ) {
         self.peers = peers
         self.features = features
         self.away = away
+        self.power = power
+        self.routing = routing
+        self.consolePeers = consolePeers
     }
 
     /// No peer: every feature `NO_AGENT`.

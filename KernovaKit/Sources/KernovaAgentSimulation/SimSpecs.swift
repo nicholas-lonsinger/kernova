@@ -168,6 +168,9 @@ package struct SimOptions: Sendable {
     package var bundles: [BundledPayload] = []
     package var receiverPolicy = ReceiverPolicy.production
     package var testKinds = false
+    /// Both sides serve item transfer, clipboard, drop and drag; `serveItems()` also has the host's policy
+    /// enable the last three.
+    package var items = false
     package var hostToPeer = PipeParameters.hostToGuest
     package var peerToHost = PipeParameters.guestToHost
     /// Hostile runs may close with FLOW_CONTROL_ERROR and the like.
@@ -179,4 +182,10 @@ package struct SimOptions: Sendable {
     package var payloadSourceDelay: SimTime = .us(20)
 
     package init() {}
+
+    /// Both sides serve every item feature, and the host's policy enables clipboard, drop and drag.
+    package mutating func serveItems() {
+        items = true
+        hostPolicy = SimItems.policy(hostPolicy)
+    }
 }

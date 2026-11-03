@@ -1,5 +1,7 @@
-#if os(Linux)
-#if canImport(Glibc)
+#if canImport(Darwin) || os(Linux)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
 import Musl
@@ -15,29 +17,38 @@ import Musl
 /// it by removing it, the rollback check reverts it by renaming it to `switch-rejected`, and of the two calls
 /// on that one name exactly one succeeds. The agent then folds `switch-rejected` into `state.json` when it
 /// next starts (``reconcile(runningSlot:)``).
-final class SlotRoot: Sendable {
+public final class SlotRoot: Sendable {
     /// What failed, and where.
-    struct Failure: Error, CustomStringConvertible, Equatable {
+    public struct Failure: Error, CustomStringConvertible, Equatable {
         /// The call that failed.
-        var operation: String
+        public var operation: String
         /// The name it acted on, relative to the root.
-        var name: String
+        public var name: String
         /// Its errno; 0 when the failure was not a call's, as for metadata that does not parse.
-        var errno: Int32
+        public var errno: Int32
         /// What failed, when `errno` is 0.
-        var detail = ""
+        public var detail = ""
 
-        var description: String {
+        /// `operation` on `name` failing with `errno`, or with `detail` when `errno` is 0.
+        public init(operation: String, name: String, errno: Int32, detail: String = "") {
+            self.operation = operation
+            self.name = name
+            self.errno = errno
+            self.detail = detail
+        }
+
+        /// The call, the name, and the OS's message for the errno or the detail.
+        public var description: String {
             errno == 0 ? "\(operation) \(name): \(detail)" : "\(operation) \(name): \(String(cString: strerror(errno)))"
         }
     }
 
     /// The root's path, for messages.
-    let path: String
+    public let path: String
     private let descriptor: Int32
 
     /// The root at `path`, opened as a directory.
-    init(path: String) throws(Failure) {
+    public init(path: String) throws(Failure) {
         let descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         guard descriptor >= 0 else { throw Failure(operation: "open", name: path, errno: errno) }
         self.path = path
@@ -52,11 +63,11 @@ final class SlotRoot: Sendable {
 
     /// The slot metadata.
     func readState() throws(Failure) -> InstallState {
-        let bytes = try contents(of: InstallLayout.stateName)
+        let bytes = try contents(of: InstallRoot.stateName)
         do {
             return try InstallState.decoded(bytes)
         } catch {
-            throw Failure(operation: "parse", name: InstallLayout.stateName, errno: 0, detail: "\(error)")
+            throw Failure(operation: "parse", name: InstallRoot.stateName, errno: 0, detail: "\(error)")
         }
     }
 
@@ -65,9 +76,9 @@ final class SlotRoot: Sendable {
     func writeState(_ state: InstallState) throws(Failure) {
         let bytes: [UInt8]
         do { bytes = try state.encoded() } catch {
-            throw Failure(operation: "encode", name: InstallLayout.stateName, errno: 0, detail: "\(error)")
+            throw Failure(operation: "encode", name: InstallRoot.stateName, errno: 0, detail: "\(error)")
         }
-        let temporary = InstallLayout.stateName + ".tmp"
+        let temporary = InstallRoot.stateName + ".tmp"
         let file = openat(descriptor, temporary, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o644)
         guard file >= 0 else { throw Failure(operation: "create", name: temporary, errno: errno) }
         do throws(Failure) {
@@ -79,10 +90,10 @@ final class SlotRoot: Sendable {
             throw error
         }
         close(file)
-        guard renameat(descriptor, temporary, descriptor, InstallLayout.stateName) == 0 else {
+        guard renameat(descriptor, temporary, descriptor, InstallRoot.stateName) == 0 else {
             let failure = errno
             unlinkat(descriptor, temporary, 0)
-            throw Failure(operation: "rename onto", name: InstallLayout.stateName, errno: failure)
+            throw Failure(operation: "rename onto", name: InstallRoot.stateName, errno: failure)
         }
         try syncDirectory()
     }
@@ -127,7 +138,7 @@ final class SlotRoot: Sendable {
 
     /// Makes `switch-pending` empty: no run of the rollback check has counted against the switch yet.
     func createSwitchPending() throws(Failure) {
-        let name = InstallLayout.switchPendingName
+        let name = InstallRoot.switchPendingName
         let file = openat(descriptor, name, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o644)
         guard file >= 0 else { throw Failure(operation: "create", name: name, errno: errno) }
         let synced = fsync(file) == 0
@@ -141,7 +152,7 @@ final class SlotRoot: Sendable {
     /// `switch-pending`, and answers how many runs have counted; nil when there is no pending switch. The
     /// marker is opened without `O_CREAT`, so a switch confirmed meanwhile is never brought back.
     func countRollbackRun() throws(Failure) -> Int? {
-        let name = InstallLayout.switchPendingName
+        let name = InstallRoot.switchPendingName
         let file = openat(descriptor, name, O_WRONLY | O_APPEND | O_NOFOLLOW | O_CLOEXEC)
         guard file >= 0 else {
             guard errno == ENOENT else { throw Failure(operation: "open", name: name, errno: errno) }
@@ -157,17 +168,17 @@ final class SlotRoot: Sendable {
     /// Takes `switch-pending` away for the agent, settling the switch without a rollback; false when it is
     /// gone already, as a rollback check that reverted the switch leaves it.
     func takeSwitchPending() throws(Failure) -> Bool {
-        try remove(InstallLayout.switchPendingName)
+        try remove(InstallRoot.switchPendingName)
     }
 
     /// Takes `switch-pending` away for the rollback check, renaming it `switch-rejected`; false when it is gone
     /// already, as the new version's confirmation leaves it.
     func claimRollback() throws(Failure) -> Bool {
         guard
-            renameat(descriptor, InstallLayout.switchPendingName, descriptor, InstallLayout.switchRejectedName) == 0
+            renameat(descriptor, InstallRoot.switchPendingName, descriptor, InstallRoot.switchRejectedName) == 0
         else {
             guard errno == ENOENT else {
-                throw Failure(operation: "rename", name: InstallLayout.switchPendingName, errno: errno)
+                throw Failure(operation: "rename", name: InstallRoot.switchPendingName, errno: errno)
             }
             return false
         }
@@ -189,7 +200,7 @@ final class SlotRoot: Sendable {
     // MARK: Slots
 
     /// The directory `slots/<slot>`, open; made first when it is missing.
-    func openSlot(_ slot: String) throws(Failure) -> Int32 {
+    public func openSlot(_ slot: String) throws(Failure) -> Int32 {
         let name = "slots/" + slot
         if mkdirat(descriptor, name, 0o755) != 0, errno != EEXIST {
             throw Failure(operation: "mkdir", name: name, errno: errno)
@@ -208,16 +219,16 @@ final class SlotRoot: Sendable {
     func reconcile(runningSlot: String) throws(Failure) -> InstallState {
         var state = try readState()
         let before = state
-        if exists(InstallLayout.switchRejectedName) {
+        if exists(InstallRoot.switchRejectedName) {
             if let reverted = state.pendingSwitch { state.rejectedSHA256 = reverted.payloadSHA256 }
             state.pendingSwitch = nil
         } else if let pending = state.pendingSwitch {
-            if !exists(InstallLayout.switchPendingName) {
+            if !exists(InstallRoot.switchPendingName) {
                 state.pendingSwitch = nil
             } else if pending.to != runningSlot {
                 if try takeSwitchPending() {
                     state.pendingSwitch = nil
-                } else if exists(InstallLayout.switchRejectedName) {
+                } else if exists(InstallRoot.switchRejectedName) {
                     // The rollback check reverted it between the two looks.
                     state.rejectedSHA256 = pending.payloadSHA256
                     state.pendingSwitch = nil
@@ -226,7 +237,7 @@ final class SlotRoot: Sendable {
         }
         state.active = runningSlot
         if state != before { try writeState(state) }
-        try remove(InstallLayout.switchRejectedName)
+        try remove(InstallRoot.switchRejectedName)
         return state
     }
 

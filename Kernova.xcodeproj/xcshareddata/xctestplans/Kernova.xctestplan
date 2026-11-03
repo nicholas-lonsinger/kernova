@@ -80,6 +80,30 @@
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaTreeTransferTests",
+        "name" : "KernovaTreeTransferTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaItemTransferTests",
+        "name" : "KernovaItemTransferTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaAgentInstallTests",
+        "name" : "KernovaAgentInstallTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaKit",
         "identifier" : "KernovaAgentCoreTests",
         "name" : "KernovaAgentCoreTests"
       }

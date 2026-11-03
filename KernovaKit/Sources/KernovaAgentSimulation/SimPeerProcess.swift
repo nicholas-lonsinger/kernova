@@ -72,6 +72,7 @@ package final class SimPeerProcess {
             update: updateAvailability)
         configuration.powerLedger = powerLedger
         configuration.receiverPolicy = world.options.receiverPolicy
+        if world.options.items { configuration.items = SimItems.served }
         let version = spec.protocolVersion
         let testKinds = world.options.testKinds
         let hostile = world.options.hostile
@@ -110,6 +111,10 @@ package final class SimPeerProcess {
             }
         case .update(let update):
             handleUpdate(update, link: link, world: world)
+        case .itemSource(let effect):
+            world.itemOutput(.source(effect), link: link, side: .peer)
+        case .itemSink(let effect):
+            world.itemOutput(.sink(effect), link: link, side: .peer)
         }
     }
 
@@ -122,6 +127,12 @@ package final class SimPeerProcess {
         case .closed(let closure):
             agent?.connectionEnded(link.generation, closure, now: world.localNow(.peer(index)))
             world.drainAgent(index)
+        case .items(let event):
+            world.itemOutput(.event(event), link: link, side: .peer)
+        case .dragTake(let event):
+            link.items(.peer).dragTake(event, link: link, side: .peer, world: world)
+        case .itemReply(let id, let reply):
+            link.items(.peer).reply(id, reply, link: link, side: .peer, world: world)
         case .established, .hostLiveness, .updateAvailable, .diagnostic:
             break
         }

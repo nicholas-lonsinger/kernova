@@ -49,7 +49,7 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
     /// `..` in `directory`, with no kernel containment: the open leaves `directory` by design.
     public func openParent(of directory: Int32) throws(TreeFileSystemError) -> Int32 {
         try Self.call([0x2E, 0x2E]) {
-            Self.open(directory, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, beneath: false)
+            Self.open(directory, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC, mode: 0, beneath: false)
         }
     }
 
@@ -103,6 +103,76 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
         try Self.check(Self.readDescriptor(descriptor, buffer.baseAddress, buffer.count))
     }
 
+    /// `pread(2)`, again on `EINTR`.
+    public func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    {
+        while true {
+            let count = pread(descriptor, buffer.baseAddress, buffer.count, off_t(offset))
+            if count >= 0 { return count }
+            let code = errno
+            guard code == EINTR else { throw TreeFileSystemError(code: code) }
+        }
+    }
+
+    /// `lseek(2)` to the next data, then to the hole after it.
+    public func dataRun(in descriptor: Int32, from offset: Int64) throws(TreeFileSystemError) -> Range<Int64>? {
+        let start = lseek(descriptor, off_t(offset), Self.seekData)
+        guard start >= 0 else {
+            let code = errno
+            // `ENXIO`: nothing but a hole from `offset` to the end (lseek(2)).
+            if code == ENXIO { return nil }
+            guard Self.unreportedHoleCodes.contains(code) else { throw TreeFileSystemError(code: code) }
+            let size = try status(of: descriptor).size
+            return offset < size ? offset..<size : nil
+        }
+        let end = try Self.check(lseek(descriptor, start, Self.seekHole))
+        return Int64(start)..<Int64(end)
+    }
+
+    /// `flistxattr`, on Darwin with a symlink opened itself; on Linux none
+    /// for a symlink, which takes no `user.` attribute.
+    public func extendedAttributeNames(of target: TreeEntryTarget) throws(TreeFileSystemError) -> [[UInt8]] {
+        guard let descriptor = try Self.openAttributes(of: target) else { return [] }
+        defer { Self.closeAttributes(descriptor, of: target) }
+        while true {
+            let size = try Self.check(Self.listAttributes(descriptor, nil, 0))
+            guard size > 0 else { return [] }
+            var buffer = [UInt8](repeating: 0, count: size)
+            let listed = buffer.withUnsafeMutableBytes { Self.listAttributes(descriptor, $0.baseAddress, size) }
+            // `ERANGE`: an attribute was added since the size was read.
+            if listed < 0 && errno == ERANGE { continue }
+            try Self.check(listed)
+            return buffer[..<listed].split(separator: 0, omittingEmptySubsequences: true).map { Array($0) }
+        }
+    }
+
+    /// `fgetxattr`, its length read first; on Darwin with a symlink opened
+    /// itself, and on Linux `EPERM` for a symlink.
+    public func extendedAttribute(_ name: [UInt8], of target: TreeEntryTarget, maxByteCount: Int)
+        throws(TreeFileSystemError) -> [UInt8]?
+    {
+        guard let descriptor = try Self.openAttributes(of: target) else { throw TreeFileSystemError(code: EPERM) }
+        defer { Self.closeAttributes(descriptor, of: target) }
+        while true {
+            let size = try Self.call(name) { Self.getAttribute(descriptor, $0, nil, 0) }
+            guard size <= maxByteCount else { return nil }
+            var value = [UInt8](repeating: 0, count: size)
+            var code: Int32 = 0
+            let got = try Self.call(name) { name in
+                let got = value.withUnsafeMutableBytes { Self.getAttribute(descriptor, name, $0.baseAddress, size) }
+                // `ERANGE`: the value grew since its length was read.
+                if got < 0 && errno == ERANGE {
+                    code = ERANGE
+                    return 0
+                }
+                return got
+            }
+            if code == ERANGE { continue }
+            return Array(value[..<got])
+        }
+    }
+
     /// `close(2)`.
     public func close(_ descriptor: Int32) { Self.closeDescriptor(descriptor) }
 
@@ -118,26 +188,119 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
         try Self.call(name) { unlinkat(directory, $0, isDirectory ? AT_REMOVEDIR : 0) }
     }
 
-    /// Darwin's `renameatx_np` with `RENAME_EXCL`; Linux's `renameat2` with `RENAME_NOREPLACE`.
+    /// Darwin's `renameatx_np` with `RENAME_EXCL`; Linux's `renameat2` with `RENAME_NOREPLACE`, whose
+    /// `EINVAL` for a file system that does not take the flag (rename(2)) is `ENOTSUP`.
     public func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
         throws(TreeFileSystemError)
     {
         try Self.call(name, newName) { Self.renameExclusive(directory, $0, newDirectory, $1) }
     }
 
+    /// `renameat`.
+    public func renameReplacing(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(TreeFileSystemError)
+    {
+        try Self.call(name, newName) { renameat(directory, $0, newDirectory, $1) }
+    }
+
+    // MARK: - Creation
+
+    /// `mkdirat` at `0700`.
+    public func makeDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
+        try Self.call(name) { mkdirat(directory, $0, 0o700) }
+    }
+
+    /// `O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW` at `0600`, beneath `directory`.
+    public func createFile(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        let descriptor = try open(
+            name, in: directory, flags: O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode: 0o600)
+        Self.bypassCache(descriptor)
+        return descriptor
+    }
+
+    /// `symlinkat`.
+    public func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
+        try Self.call(target, name) { target, name in symlinkat(target, directory, name) }
+    }
+
+    /// `pwrite(2)`, again on `EINTR`; `EIO` for a write of nothing, which
+    /// `pwrite` returns only for an empty buffer.
+    public func write(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    {
+        while true {
+            let written = pwrite(descriptor, buffer.baseAddress, buffer.count, off_t(offset))
+            if written > 0 || (written == 0 && buffer.isEmpty) { return written }
+            if written == 0 { throw TreeFileSystemError(code: EIO) }
+            let code = errno
+            guard code == EINTR else { throw TreeFileSystemError(code: code) }
+        }
+    }
+
+    /// `ftruncate(2)`.
+    public func setSize(of descriptor: Int32, to size: Int64) throws(TreeFileSystemError) {
+        try Self.check(ftruncate(descriptor, off_t(size)))
+    }
+
+    /// `close(2)`, its failure reported.
+    public func closeWritten(_ descriptor: Int32) throws(TreeFileSystemError) {
+        try Self.check(Self.closeReporting(descriptor))
+    }
+
+    /// Applies `attributes` in one call where the OS takes them together;
+    /// when the target refuses that call as holding one it cannot, one at a
+    /// time, leaving out each it refuses.
+    public func setAttributes(_ attributes: TreeEntryAttributes, of target: TreeEntryTarget)
+        throws(TreeFileSystemError)
+    {
+        guard !attributes.isEmpty else { return }
+        do {
+            try Self.apply(attributes, to: target)
+            return
+        } catch let error where Self.unheldAttributeCodes.contains(error.code) {}
+        let separated = attributes.separated
+        guard separated.count > 1 else { return }
+        for attribute in separated {
+            do {
+                try Self.apply(attribute, to: target)
+            } catch let error where Self.unheldAttributeCodes.contains(error.code) {}
+        }
+    }
+
+    /// `fsetxattr`, or on Darwin the symlink opened itself; nothing when the
+    /// call fails with one of the errnos that refuse an attribute the target
+    /// cannot hold.
+    public func setExtendedAttribute(_ name: [UInt8], to value: [UInt8], of target: TreeEntryTarget)
+        throws(TreeFileSystemError)
+    {
+        do {
+            try Self.setExtendedAttribute(name, to: value, of: target)
+        } catch let error where Self.unheldAttributeCodes.contains(error.code) {}
+    }
+
+    /// `ENAMETOOLONG` when the path and its NUL do not fit `PATH_MAX`, so
+    /// that what lands can be named by a path; on Darwin also `EILSEQ` for a
+    /// name that is not UTF-8, which APFS does not store.
+    public func landingRefusal(of name: [UInt8], pathByteCount: Int) -> TreeFileSystemError? {
+        if pathByteCount >= Int(PATH_MAX) { return TreeFileSystemError(code: ENAMETOOLONG) }
+        return Self.nameRefusal(name)
+    }
+
     // MARK: - Private
 
     /// Opens `name` in `directory`, beneath it unless `directory` is
     /// `AT_FDCWD`, where the name is a tree's root.
-    private func open(_ name: [UInt8], in directory: Int32, flags: Int32) throws(TreeFileSystemError) -> Int32 {
+    private func open(_ name: [UInt8], in directory: Int32, flags: Int32, mode: UInt32 = 0)
+        throws(TreeFileSystemError) -> Int32
+    {
         let beneath = resolvesBeneath && directory != AT_FDCWD
-        return try Self.call(name) { Self.open(directory, $0, flags, beneath: beneath) }
+        return try Self.call(name) { Self.open(directory, $0, flags, mode: mode, beneath: beneath) }
     }
 
     /// Runs `syscall` on `name` as a C string, reading `errno` while the
     /// string still exists: freeing it may change `errno`.
     @discardableResult
-    private static func call<Result: BinaryInteger>(
+    static func call<Result: BinaryInteger>(
         _ name: [UInt8], _ syscall: (UnsafePointer<CChar>) -> Result
     ) throws(TreeFileSystemError) -> Result {
         try call(name, []) { first, _ in syscall(first) }
@@ -145,7 +308,7 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
 
     /// ``call(_:_:)`` for a call taking two names.
     @discardableResult
-    private static func call<Result: BinaryInteger>(
+    static func call<Result: BinaryInteger>(
         _ first: [UInt8], _ second: [UInt8],
         _ syscall: (UnsafePointer<CChar>, UnsafePointer<CChar>) -> Result
     ) throws(TreeFileSystemError) -> Result {
@@ -162,7 +325,7 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
     }
 
     @discardableResult
-    private static func check<Result: BinaryInteger>(_ result: Result) throws(TreeFileSystemError) -> Result {
+    static func check<Result: BinaryInteger>(_ result: Result) throws(TreeFileSystemError) -> Result {
         guard result >= 0 else { throw TreeFileSystemError(code: errno) }
         return result
     }

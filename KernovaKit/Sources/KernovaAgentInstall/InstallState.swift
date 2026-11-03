@@ -9,9 +9,9 @@ import Foundation
 ///
 /// While the agent runs, only it writes the file; the rollback check reads it and writes nothing but its own
 /// markers (``SlotRoot``).
-struct InstallState: Codable, Equatable {
+struct InstallState: Codable, Equatable, Sendable {
     /// What one slot holds.
-    struct Slot: Codable, Equatable {
+    struct Slot: Codable, Equatable, Sendable {
         /// The payload's SHA-256, lowercase hex.
         var payloadSHA256: String
         /// The display version the payload reports.
@@ -19,7 +19,7 @@ struct InstallState: Codable, Equatable {
     }
 
     /// An update's switch of `current` from one slot to another, unconfirmed while its marker exists.
-    struct Switch: Codable, Equatable {
+    struct Switch: Codable, Equatable, Sendable {
         /// The slot the switch left, which a rollback returns to.
         var from: String
         /// The slot the switch made current.
@@ -43,9 +43,10 @@ struct InstallState: Codable, Equatable {
         case rejectedSHA256 = "rejectedPayloadSHA256"
     }
 
-    /// The state after a fresh install of the payload hashing to `payloadSHA256` into slot `a`.
+    /// The state after a fresh install of the payload hashing to `payloadSHA256` into the install slot.
     static func fresh(payloadSHA256: String, versionLabel: String) -> InstallState {
-        InstallState(active: "a", slots: ["a": Slot(payloadSHA256: payloadSHA256, versionLabel: versionLabel)])
+        let slot = InstallRoot.installSlotName
+        return InstallState(active: slot, slots: [slot: Slot(payloadSHA256: payloadSHA256, versionLabel: versionLabel)])
     }
 
     /// The JSON written, keys sorted.

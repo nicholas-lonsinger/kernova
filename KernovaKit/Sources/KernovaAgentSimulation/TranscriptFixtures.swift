@@ -26,9 +26,12 @@ package enum TranscriptFixture {
     package static func host(_ name: String) -> HostConfiguration? {
         var bundles: [BundledPayload] = []
         var protocolVersion: UInt32 = 1
+        var items = false
         switch name {
         case "host-default":
             break
+        case "host-items":
+            items = true
         case "host-pax-system":
             bundles = [
                 BundledPayload(
@@ -45,15 +48,29 @@ package enum TranscriptFixture {
         default:
             return nil
         }
+        let policy = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
         var configuration = HostConfiguration(
             claim: PeerClaim(role: .host, versionLabel: "Kernova"), sessionToken: token,
-            policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
+            policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
         let version = protocolVersion
         configuration.tweak = { connection in
             connection.recordsTrace = true
             connection.protocolVersion = version
         }
+        if items { configuration.items = SimItems.served }
         return configuration
+    }
+
+    /// The offer an `offer fixture=<name>` input makes.
+    package static func offer(_ name: String) -> ItemOffer? {
+        switch name {
+        case "file-2k":
+            SimItems.offer(
+                1, [[SimItems.representation(.file, size: 2048), SimItems.representation(.inline, size: 64)]])
+        case "text-64": SimItems.offer(2, [[SimItems.representation(.inline, size: 64)]])
+        case "folder-4k": SimItems.offer(3, [[SimItems.representation(.folder, size: 4096)]])
+        default: nil
+        }
     }
 
     /// The bundles a `setBundles fixture=<name>` input installs.
@@ -67,9 +84,11 @@ package enum TranscriptFixture {
 
     package static func peer(_ name: String) -> PeerConfiguration? {
         var protocolVersion: UInt32 = 1
+        var items = false
         let configuration: PeerConfiguration
         switch name {
-        case "linux-session-v1", "linux-session-proto2":
+        case "linux-session-v1", "linux-session-proto2", "linux-session-items":
+            items = name == "linux-session-items"
             protocolVersion = name == "linux-session-proto2" ? 2 : 1
             configuration = PeerConfiguration(
                 claim: PeerClaim(
@@ -97,6 +116,7 @@ package enum TranscriptFixture {
             connection.recordsTrace = true
             connection.protocolVersion = version
         }
+        if items { tweaked.items = SimItems.served }
         return tweaked
     }
 }
@@ -293,14 +313,13 @@ package struct FixturePayloadSource: Sendable {
 
     package init() {}
 
-    /// The answer to `effect`.
-    package mutating func answer(_ effect: HostEffect) -> PayloadInput {
-        switch effect {
-        case .read(let id, let manifest, let offset, let maxBytes):
-            let content = contents[manifest.payloadHash] ?? SimHub.expectedContent(manifest)
-            contents[manifest.payloadHash] = content
-            return .bytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))
-        }
+    /// The answer to a `HostEffect.read` of up to `maxBytes` of `manifest`'s payload from `offset`.
+    package mutating func answer(
+        _ id: UpdatePullID, _ manifest: UpdateManifestValue, offset: UInt64, maxBytes: Int
+    ) -> PayloadInput {
+        let content = contents[manifest.payloadHash] ?? SimHub.expectedContent(manifest)
+        contents[manifest.payloadHash] = content
+        return .bytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))
     }
 
     /// Up to `maxBytes` of `content` from `offset`: empty past its end.

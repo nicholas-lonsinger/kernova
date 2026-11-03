@@ -1,4 +1,5 @@
 import KernovaAgentCore
+import KernovaAgentInstall
 
 /// Where one install scope's files go: the agent's own root, holding its two slots, and the units, autostart
 /// entry and account that run it.
@@ -7,6 +8,8 @@ struct InstallLayout: Equatable, Sendable {
     let scope: InstallScope
     /// The agent's own root: `slots/a`, `slots/b`, the `current` link, `state.json`.
     let root: String
+    /// The same root, as the core lays it out.
+    var installRoot: InstallRoot { InstallRoot(path: root) }
     /// Where its systemd units go.
     let unitDirectory: String
     /// User scope: the XDG autostart directory, which starts the session service at login.
@@ -82,28 +85,6 @@ struct InstallLayout: Equatable, Sendable {
     /// The user scope's autostart entry's file name.
     static let autostartName = "app.kernova.agent.desktop"
 
-    /// The slot a fresh install fills.
-    var installSlot: String { root + "/slots/a" }
-    /// The link the units run the agent through, to the slot in use.
-    var current: String { root + "/" + Self.currentLinkName }
-    /// What `current` points at after a fresh install, relative to ``root``.
-    static let installSlotLink = "slots/a"
-    /// The slot metadata.
-    var state: String { root + "/" + Self.stateName }
-    /// Present exactly while an update's switch is unconfirmed; the rollback service runs only then.
-    var switchPending: String { root + "/" + Self.switchPendingName }
-    static let switchPendingName = "switch-pending"
-    /// Present from the moment the rollback check reverts a switch until the agent it restarts records the
-    /// switch's payload as rejected.
-    var switchRejected: String { root + "/" + Self.switchRejectedName }
-    static let switchRejectedName = "switch-rejected"
-    /// The link to the previous slot, whose binary the rollback service runs.
-    var rollback: String { root + "/" + Self.rollbackLinkName }
-    static let rollbackLinkName = "rollback"
-    /// `current`'s name in the root.
-    static let currentLinkName = "current"
-    /// `state.json`'s name in the root.
-    static let stateName = "state.json"
     /// The binary's name in every slot.
     static let binaryName = "kernova-agent"
 }

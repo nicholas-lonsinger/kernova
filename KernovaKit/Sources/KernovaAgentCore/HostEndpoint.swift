@@ -18,6 +18,8 @@ public struct HostConfiguration: Sendable {
     public var bundles: [BundledPayload]
     /// The receiver policy the peer is judged by.
     public var receiverPolicy: ReceiverPolicy = .production
+    /// What this side serves of item transfer, clipboard, drop and drag.
+    public var items = ItemFeatureAvailability.notImplemented
     package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
 
     /// Creates a configuration.
@@ -43,12 +45,18 @@ public enum HostCommand: Sendable, Equatable {
     case setBundles([BundledPayload])
     /// Close the connection (`SUPERSEDED`, `DUPLICATE_PEER`, `SHUTTING_DOWN`).
     case close(ErrorCode, retryAfter: CoreDuration?)
+    /// Offer, withdraw, release, pull, cancel, take or read items; answered as `ItemCommand` says.
+    case items(ItemCommand)
 }
 
-/// What a host endpoint asks of its update payload source.
+/// What a host endpoint asks of its update payload source and its item adapters.
 public enum HostEffect: Sendable, Equatable {
     /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
     case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
+    /// For the item source.
+    case itemSource(ItemSourceEffect)
+    /// For the item sink.
+    case itemSink(ItemSinkEffect)
 }
 
 /// The update payload source's answer to the outstanding `.read`.
@@ -75,6 +83,12 @@ public enum HostEvent: Sendable, Equatable {
     case log(LogDelivery)
     /// An update pull's progress.
     case update(UpdateServeEvent)
+    /// An offer or pull of item transfer changed.
+    case items(ItemTransferEvent)
+    /// A take of the peer's drag ended.
+    case dragTake(DragTakeEvent)
+    /// The answer to the `.items` command of this id.
+    case itemReply(ItemRequestID, ItemReply)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -87,12 +101,12 @@ public struct HostEndpoint: Sendable {
     private var power: PowerRequester
     private var logs = LogReceiver()
     private var update: UpdateServer
+    private var items: ItemMachines
     package var testSink = TestBulkSink()
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
     private var events = OutputQueue<HostEvent, HostEventSlot>()
-    private var effects: [HostEffect] = []
-    private var effectHead = 0
+    private var effects = OutputQueue<HostEffect, NoSlot>()
     private var lastStatus: FeatureStatusTable?
 
     /// Creates the endpoint of a connection just accepted.
@@ -100,12 +114,12 @@ public struct HostEndpoint: Sendable {
         self.generation = generation
         power = PowerRequester(generation: generation)
         update = UpdateServer(generation: generation)
+        items = ItemMachines(configuration.items, role: configuration.claim.role, generation: generation)
         var connectionConfiguration = ConnectionConfiguration(
             claim: configuration.claim, adverts: [], sessionToken: configuration.sessionToken,
             hostPolicy: configuration.policy, hostBundles: configuration.bundles, policy: configuration.receiverPolicy)
-        connectionConfiguration.adverts = [
-            (.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert),
-        ]
+        connectionConfiguration.adverts =
+            [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
         configuration.tweak(&connectionConfiguration)
         connection = Connection(connectionConfiguration, now: now)
     }
@@ -113,12 +127,19 @@ public struct HostEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
+    /// Whether a committed pull's `.pullEnded` is still owed, which its sink's publish report brings, though
+    /// the connection may have finished.
+    public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
+
     /// When the driver must next call `handleTimeout`: the soonest of the
     /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
         let clock = connection.clock
-        let machines = [power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock)]
+        let machines = [
+            power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock),
+            items.nextDeadline(on: clock),
+        ]
         return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
     }
 
@@ -176,6 +197,11 @@ public struct HostEndpoint: Sendable {
             update.offerChanged(connection.offeredUpdate, connection: &connection)
         case .close(let code, let retryAfter):
             connection.close(code, retryAfter: retryAfter, now: now)
+        case .items(let command):
+            // Queued before the route below collects what the command caused, so the answer comes first.
+            if let (id, reply) = items.perform(command, connection: &connection) {
+                events.append(.itemReply(id, reply))
+            }
         }
         route(now)
     }
@@ -208,6 +234,18 @@ public struct HostEndpoint: Sendable {
         route(now)
     }
 
+    // MARK: Items
+
+    /// The item source's answer or the item sink's report; one naming another generation is dropped.
+    public mutating func handle(_ input: ItemTransferInput, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        items.handle(input, connection: &connection, now: now)
+        route(now)
+    }
+
+    package var itemOffers: ItemOfferRegistry { items.transfer.offers }
+
     // MARK: Outputs
 
     /// The next frames to write.
@@ -225,17 +263,9 @@ public struct HostEndpoint: Sendable {
     /// Events not yet polled.
     package var pendingEventCount: Int { events.count }
 
-    /// The next ask of the payload source.
+    /// The next ask of the payload source or an item adapter.
     public mutating func pollEffect() -> HostEffect? {
-        guard effectHead < effects.count else { return nil }
-        defer {
-            effectHead += 1
-            if effectHead == effects.count {
-                effects.removeAll(keepingCapacity: true)
-                effectHead = 0
-            }
-        }
-        return effects[effectHead]
+        effects.poll()
     }
 
     package mutating func takeTrace() -> [ConnectionTrace] {
@@ -256,6 +286,7 @@ public struct HostEndpoint: Sendable {
         power.handle(event, connection: &connection, now: now)
         logs.handle(event, connection: &connection, now: now)
         update.handle(event, connection: &connection, now: now)
+        items.notify(event, connection: &connection, now: now)
     }
 
     private mutating func refreshStatus() {
@@ -304,18 +335,29 @@ public struct HostEndpoint: Sendable {
     }
 
     private mutating func deliver(_ event: FeatureEvent, to owner: KindOwner?, _ now: CoreInstant) {
+        guard let owner else { return }
         switch owner {
         case .power: power.handle(event, connection: &connection, now: now)
         case .update: update.handle(event, connection: &connection, now: now)
         case .logs: logs.handle(event, connection: &connection, now: now)
+        case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection, now: now)
         case .testBulk: testSink.handle(event, connection: &connection)
-        case nil: break
         }
     }
 
     private mutating func collect() {
         let served = update.takeOutputs()
-        effects += served.effects
+        for effect in served.effects { effects.append(effect) }
+        let outputs = items.takeOutputs()
+        for output in outputs.items {
+            switch output {
+            case .source(let effect): effects.append(.itemSource(effect))
+            case .sink(let effect): effects.append(.itemSink(effect))
+            case .event(let event): events.append(.items(event))
+            }
+        }
+        for event in outputs.drag { events.append(.dragTake(event)) }
+        for diagnostic in outputs.diagnostics { connection.diagnose(diagnostic) }
         for output in [
             power.takeOutputs(), logs.takeOutputs(), (events: served.events, diagnostics: served.diagnostics),
         ] {

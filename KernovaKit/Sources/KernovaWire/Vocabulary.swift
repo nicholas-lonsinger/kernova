@@ -25,6 +25,9 @@ public typealias Codec = Kernova_V2_Codec
 /// One form of an offered item: its type, and whether it travels as bytes, a file or a folder.
 public typealias Representation = Kernova_V2_Representation
 
+/// One item of an offer: its representations, best first.
+public typealias OfferedItem = Kernova_V2_Item
+
 /// What a pull asks for, and the limits its container must keep.
 public typealias PullRequest = Kernova_V2_PullRequest
 
@@ -39,8 +42,4 @@ extension StreamKind {
     package static let testBulkByPeer = StreamKind.UNRECOGNIZED(9000)
     /// The simulation's raw-DATA kind the host opens.
     package static let testBulkByHost = StreamKind.UNRECOGNIZED(9001)
-    /// The simulation's item-set offer kind the host opens.
-    package static let testItemOfferByHost = StreamKind.UNRECOGNIZED(9002)
-    /// The simulation's item-set offer kind a peer opens.
-    package static let testItemOfferByPeer = StreamKind.UNRECOGNIZED(9003)
 }

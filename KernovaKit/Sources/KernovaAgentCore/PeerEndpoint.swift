@@ -24,6 +24,9 @@ public struct PeerConfiguration: Sendable {
     public var update: Availability<UpdateOffer>
     /// The receiver policy the host is judged by.
     public var receiverPolicy: ReceiverPolicy = .production
+    /// What this side serves of item transfer, clipboard, drop and drag. A system peer advertises the last
+    /// three absent `NOT_SERVED_BY_ROLE` whatever this says.
+    public var items = ItemFeatureAvailability.notImplemented
     package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
 
     /// Creates a configuration.
@@ -49,6 +52,12 @@ public enum PeerInput: Sendable, Equatable {
     case logs(LogInput)
     /// The installer's report.
     case update(UpdateInput)
+    /// The item source's answer or the item sink's report; one naming another generation is dropped.
+    case items(ItemTransferInput)
+    /// The answer to a take of this side's drag; one to a take already ended is dropped.
+    case dragTake(DragTakeID, DragTakeAnswer)
+    /// Offer, withdraw, release, pull, cancel or read items; answered as `ItemCommand` says.
+    case itemCommand(ItemCommand)
 }
 
 /// What a peer endpoint asks its adapters and runtime to do.
@@ -59,6 +68,10 @@ public enum PeerEffect: Sendable, Equatable {
     case logs(LogEffect)
     /// For the installer.
     case update(UpdateEffect)
+    /// For the item source.
+    case itemSource(ItemSourceEffect)
+    /// For the item sink.
+    case itemSink(ItemSinkEffect)
 }
 
 /// What a peer endpoint tells the shell's UI and the dial schedule.
@@ -71,6 +84,12 @@ public enum PeerEvent: Sendable, Equatable {
     case hostLiveness(LivenessChange)
     /// What the host offers (coalesced).
     case updateAvailable(UpdateManifestValue?)
+    /// An offer or pull of item transfer changed.
+    case items(ItemTransferEvent)
+    /// The host takes this side's drag.
+    case dragTake(DragTakeEvent)
+    /// The answer to the `.itemCommand` input of this id.
+    case itemReply(ItemRequestID, ItemReply)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -83,6 +102,7 @@ public struct PeerEndpoint: Sendable {
     private var power: PowerResponder
     private var logs: LogForwarder
     private var update: UpdateClient
+    private var items: ItemMachines
     package var testSink = TestBulkSink()
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
@@ -97,12 +117,12 @@ public struct PeerEndpoint: Sendable {
         logs = LogForwarder(availability: configuration.logs)
         update = UpdateClient(
             availability: configuration.update, ownHash: configuration.claim.payloadHash, generation: generation)
+        items = ItemMachines(configuration.items, role: configuration.claim.role, generation: generation)
         var connectionConfiguration = ConnectionConfiguration(
             claim: configuration.claim, initialState: configuration.state, adverts: [],
             policy: configuration.receiverPolicy)
-        connectionConfiguration.adverts = [
-            (.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert),
-        ]
+        connectionConfiguration.adverts =
+            [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
         configuration.tweak(&connectionConfiguration)
         connection = Connection(connectionConfiguration, now: now)
     }
@@ -110,12 +130,19 @@ public struct PeerEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
+    /// Whether a committed pull's `.pullEnded` is still owed, which its sink's publish report brings, though
+    /// the connection may have finished.
+    public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
+
     /// When the driver must next call `handleTimeout`: the soonest of the
     /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
         let clock = connection.clock
-        let machines = [power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock)]
+        let machines = [
+            power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock),
+            items.nextDeadline(on: clock),
+        ]
         return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
     }
 
@@ -165,6 +192,15 @@ public struct PeerEndpoint: Sendable {
             logs.handle(input: input, connection: &connection, now: now)
         case .update(let input):
             update.handle(input: input, connection: &connection, now: now)
+        case .items(let input):
+            items.handle(input, connection: &connection, now: now)
+        case .dragTake(let id, let answer):
+            items.answer(id, answer, connection: &connection)
+        case .itemCommand(let command):
+            // Queued before the route below collects what the command caused, so the answer comes first.
+            if let (id, reply) = items.perform(command, connection: &connection) {
+                events.append(.itemReply(id, reply))
+            }
         }
         route(now)
     }
@@ -195,6 +231,10 @@ public struct PeerEndpoint: Sendable {
         testSink.setConsumes(consumes, on: stream, connection: &connection)
         route(now)
     }
+
+    // MARK: Items
+
+    package var itemOffers: ItemOfferRegistry { items.transfer.offers }
 
     // MARK: Outputs
 
@@ -238,9 +278,8 @@ public struct PeerEndpoint: Sendable {
     }
 
     private mutating func publishAdverts() -> Bool {
-        let adverts: [(FeatureID, LocalAdvert)] = [
-            (.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert),
-        ]
+        let adverts: [(FeatureID, LocalAdvert)] =
+            [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
         let before = connection.localAdverts
         connection.setLocalAdverts(adverts)
         return connection.localAdverts != before && connection.state == .established
@@ -250,6 +289,7 @@ public struct PeerEndpoint: Sendable {
         power.handle(event, connection: &connection, now: now)
         logs.handle(event, connection: &connection, now: now)
         update.handle(event, connection: &connection, now: now)
+        items.notify(event, connection: &connection, now: now)
     }
 
     private mutating func dispatch(_ routed: RoutedEvent, _ now: CoreInstant) {
@@ -294,12 +334,13 @@ public struct PeerEndpoint: Sendable {
     }
 
     private mutating func deliver(_ event: FeatureEvent, to owner: KindOwner?, _ now: CoreInstant) {
+        guard let owner else { return }
         switch owner {
         case .power: power.handle(event, connection: &connection, now: now)
         case .update: update.handle(event, connection: &connection, now: now)
         case .logs: logs.handle(event, connection: &connection, now: now)
+        case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection, now: now)
         case .testBulk: testSink.handle(event, connection: &connection)
-        case nil: break
         }
     }
 
@@ -310,6 +351,16 @@ public struct PeerEndpoint: Sendable {
                 connection.diagnose(diagnostic)
             }
         }
+        let outputs = items.takeOutputs()
+        for output in outputs.items {
+            switch output {
+            case .source(let effect): effects.append(.itemSource(effect))
+            case .sink(let effect): effects.append(.itemSink(effect))
+            case .event(let event): events.append(.items(event))
+            }
+        }
+        for event in outputs.drag { events.append(.dragTake(event)) }
+        for diagnostic in outputs.diagnostics { connection.diagnose(diagnostic) }
     }
 }
 

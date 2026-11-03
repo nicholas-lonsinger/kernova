@@ -36,7 +36,7 @@ struct RoundTripTests {
     @Test("Plain storage never carries an LZ4 chunk, whatever the policy")
     func plainStorageStaysRaw() throws {
         let text = Data(String(repeating: "plain ", count: 10_000).utf8)
-        let fixture = TreeFixture(entries: [(plainFile("p", depth: 0, size: UInt64(text.count)), text)])
+        let fixture = TreeFixture(entries: [(plainFile(depth: 0, size: UInt64(text.count)), text)])
         let container = try fixture.encoded(policy: Self.lz4Always)
         #expect(!recordOffsets(container).contains { $0.kind == .lz4Chunk })
     }
@@ -47,7 +47,7 @@ struct RoundTripTests {
         let size = ContainerEncoder.chunkByteCount
         // Two incompressible chunks, then a compressible one.
         let bytes = generator.bytes(2 * size) + Data(repeating: 0x61, count: size)
-        let fixture = TreeFixture(entries: [(lz4File("l", depth: 0, size: UInt64(bytes.count)), bytes)])
+        let fixture = TreeFixture(entries: [(lz4File(depth: 0, size: UInt64(bytes.count)), bytes)])
         func kinds(_ policy: ChunkCompressionPolicy) throws -> [ContainerRecordKind] {
             recordOffsets(try fixture.encoded(policy: policy, pieceSize: bytes.count)).map(\.kind)
         }
@@ -69,7 +69,7 @@ struct RoundTripTests {
         let size = ContainerEncoder.chunkByteCount
         var bytes = Data(count: 4 * size + 10)
         bytes[2 * size] = 1
-        let fixture = TreeFixture(entries: [(plainFile("s", depth: 0, size: UInt64(bytes.count)), bytes)])
+        let fixture = TreeFixture(entries: [(plainFile(depth: 0, size: UInt64(bytes.count)), bytes)])
         let container = try fixture.encoded(pieceSize: bytes.count)
         #expect(recordOffsets(container).map(\.kind) == [.header, .zeroRun, .chunk, .zeroRun, .end])
         let decoded = decode(container)
@@ -82,7 +82,7 @@ struct RoundTripTests {
     @Test("A zero run spans the encoder's calls")
     func zeroRunAcrossCalls() throws {
         var encoder = ContainerEncoder(accepting: generous(), policy: .never)
-        var container = try encoder.entry(plainFile("z", depth: 0, size: 300))
+        var container = try encoder.entry(plainFile(depth: 0, size: 300))
         for _ in 0..<3 {
             let records = try encoder.bytes(Data(count: 100))
             container += records
@@ -90,6 +90,45 @@ struct RoundTripTests {
         container += try encoder.end()
         #expect(recordOffsets(container).map(\.kind) == [.header, .zeroRun, .end])
         #expect(decode(container).events.contains(.zeros(300)))
+    }
+
+    @Test("A declared zero run lands as exactly that run, merged with the zeros beside it, however short")
+    func declaredZeros() throws {
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
+        var container = try encoder.entry(plainFile(depth: 0, size: 4096 * 3 + 300))
+        container += try encoder.bytes(Data(repeating: 7, count: 4096))
+        container += try encoder.zeros(4096)
+        container += try encoder.bytes(Data(count: 100))
+        container += try encoder.zeros(4096)
+        container += try encoder.bytes(Data(repeating: 9, count: 200))
+        container += try encoder.end()
+        #expect(recordOffsets(container).map(\.kind) == [.header, .chunk, .zeroRun, .chunk, .end])
+        let decoded = decode(container)
+        #expect(decoded.error == nil)
+        #expect(decoded.events.contains(.zeros(4096 * 2 + 100)))
+
+        var trailing = ContainerEncoder(accepting: generous(), policy: .never)
+        var ending = try trailing.entry(plainFile(depth: 0, size: 5000))
+        ending += try trailing.bytes(Data([1]))
+        ending += try trailing.zeros(4999)
+        #expect(recordOffsets(ending).map(\.kind) == [.header, .chunk, .zeroRun])
+        #expect(throws: ContainerError.chunkOutsideEntry) { try trailing.zeros(1) }
+    }
+
+    @Test("Encoding a tree's events writes what the encoder's own calls write, and refuses a file finished short")
+    func encodesEvents() throws {
+        let fixture = TreeFixture.mixed()
+        // Each file's bytes in one call, as `expectedEvents` carries them.
+        let direct = try fixture.encoded(pieceSize: 1 << 40)
+        var encoder = ContainerEncoder(accepting: generous(for: direct), policy: .never)
+        var container = Data()
+        for event in fixture.expectedEvents { container += try encoder.encode(event) }
+        #expect(container == direct)
+
+        var short = ContainerEncoder(accepting: generous(), policy: .never)
+        _ = try short.encode(.beginFile(plainFile(depth: 0, size: 2)))
+        _ = try short.encode(.bytes(Data([1])))
+        #expect(throws: ContainerError.entryIncomplete(remaining: 1)) { try short.encode(.finishFile) }
     }
 
     @Test("INLINE data round-trips as one bare DATA entry")
@@ -103,7 +142,7 @@ struct RoundTripTests {
     @Test("The encoder refuses bytes past an entry's size, an end with an entry incomplete, and records after the end")
     func encoderRefusals() throws {
         var encoder = ContainerEncoder(accepting: generous(), policy: .never)
-        _ = try encoder.entry(plainFile("f", depth: 0, size: 3))
+        _ = try encoder.entry(plainFile(depth: 0, size: 3))
         #expect(throws: ContainerError.chunkPastEntrySize(count: 4, remaining: 3)) { try encoder.bytes(Data(count: 4)) }
         _ = try encoder.bytes(Data([1, 2]))
         #expect(throws: ContainerError.entryIncomplete(remaining: 1)) { try encoder.end() }
@@ -116,7 +155,7 @@ struct RoundTripTests {
         var orphan = ContainerEncoder(accepting: generous(), policy: .never)
         #expect(throws: ContainerError.chunkOutsideEntry) { try orphan.bytes(Data([1])) }
         var deep = ContainerEncoder(accepting: generous(.folder), policy: .never)
-        _ = try deep.entry(directory("d", depth: 0))
+        _ = try deep.entry(directory(depth: 0))
         #expect(throws: ContainerError.depthBeyondParent(depth: 2, enteredDirectories: 1)) {
             try deep.entry(plainFile("f", depth: 2, size: 0))
         }
@@ -125,7 +164,7 @@ struct RoundTripTests {
     @Test("Seeded random trees round-trip", arguments: 0..<20)
     func randomTrees(seed: UInt64) throws {
         var generator = SplitMix64(seed: seed)
-        var entries: [(header: EntryHeader, bytes: Data)] = [(directory("root", depth: 0), Data())]
+        var entries: [(header: EntryHeader, bytes: Data)] = [(directory(depth: 0), Data())]
         var entered = 1
         for index in 0..<Int.random(in: 1...30, using: &generator) {
             let depth = UInt32(Int.random(in: 1...entered, using: &generator))

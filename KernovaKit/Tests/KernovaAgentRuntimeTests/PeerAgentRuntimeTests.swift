@@ -256,6 +256,34 @@ struct PeerAgentRuntimeTests {
         }
     }
 
+    @Test(
+        "Item transfer is advertised available with item adapters registered, and each feature over it where the adapters serve it; everything else is absent NOT_IMPLEMENTED",
+        arguments: [true, false])
+    func itemTransferAdvert(registered: Bool) async {
+        let harness = PeerRuntimeHarness(
+            items: registered ? RegisteredItemAdapters.adapters([.clipboard, .drop]) : nil)
+        harness.runtime.start()
+        let link = await harness.connect(1)
+        let advert = link.far.peerAdvert(.itemTransfer)
+        if registered {
+            #expect(advert == .available(Data()))
+        } else if case .absent(let reason, _) = advert {
+            #expect(reason == .notImplemented)
+        } else {
+            Issue.record("advertised \(String(describing: advert))")
+        }
+        let served: [FeatureID] = registered ? [.clipboard, .drop] : []
+        for feature in [FeatureID.clipboard, .drop, .drag] {
+            switch link.far.peerAdvert(feature) {
+            case .available? where served.contains(feature),
+                .absent(.notImplemented, _)? where !served.contains(feature):
+                continue
+            case let advert:
+                Issue.record("\(feature) advertised \(String(describing: advert))")
+            }
+        }
+    }
+
     @Test("SUPERSEDED stops the agent, and no dial timer stays armed")
     func stopDisarms() async {
         let harness = PeerRuntimeHarness()
@@ -284,11 +312,12 @@ struct HostConnectionRuntimeTests {
         let source: FakePayloadSource
         let connection: HostConnection
 
-        init(content: Data) {
+        init(content: Data, items: ItemAdapters? = nil) {
             far = FarPeer(clock: scheduler)
             source = FakePayloadSource(content: content)
             let runtime = HostConnectionRuntime(
-                claim: Fixture.hostClaim, scheduler: scheduler, payloadSource: source, logger: Fixture.logger)
+                claim: Fixture.hostClaim, scheduler: scheduler, payloadSource: source, items: items,
+                logger: Fixture.logger)
             let events = events
             connection = runtime.makeConnection(
                 stream, policy: PolicySnapshot(),
@@ -338,6 +367,22 @@ struct HostConnectionRuntimeTests {
             return
         }
         #expect(error.code == .readFailed)
+    }
+
+    @Test(
+        "Item transfer is advertised available with item adapters given, and absent NOT_IMPLEMENTED without",
+        arguments: [true, false])
+    func itemTransferAdvert(registered: Bool) async {
+        let harness = Harness(content: Data(), items: registered ? RegisteredItemAdapters.adapters() : nil)
+        await harness.pump()
+        let advert = harness.far.hostAdvert(.itemTransfer)
+        if registered {
+            #expect(advert == .available(Data()))
+        } else if case .absent(let reason, _) = advert {
+            #expect(reason == .notImplemented)
+        } else {
+            Issue.record("advertised \(String(describing: advert))")
+        }
     }
 
     @Test("A hub command reaches the connection")

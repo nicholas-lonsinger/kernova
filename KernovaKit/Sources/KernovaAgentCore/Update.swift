@@ -316,12 +316,8 @@ public struct UpdateServer: FeatureMachine {
         case .writable(let stream) where pull?.id.stream == stream:
             serve(&connection)
         case .remoteEnded(let stream, let body):
+            // The connection resets an END that comes before this side's (`acceptorEndsFirst`).
             guard var current = pull, current.id.stream == stream else { return }
-            guard current.ended else {
-                diagnostics.append(.remoteViolation("the peer ended UPDATE_PULL before the host"))
-                if connection.canReset(stream) { connection.reset(stream, WireError(.streamProtocolError)) }
-                return
-            }
             let decoded = (try? Kernova_V2_UpdateResult(serializedBytes: body)) ?? Kernova_V2_UpdateResult()
             let error = decoded.hasError ? WireError(received: decoded.error) : nil
             let result = UpdateResultValue(kind: decoded.kind == .staged ? .staged : .rejected, error: error)
@@ -355,11 +351,11 @@ public struct UpdateServer: FeatureMachine {
             let short = current.manifest.payloadSize - current.sent
             return sourceFailed(id, "the payload source returned no bytes \(short) short of payload_size", &connection)
         }
-        guard data.count <= granted, data.count <= connection.writableData(id.stream) else {
+        guard data.count <= granted else {
             return sourceFailed(
                 id, "the payload source returned \(data.count) bytes for a \(granted)-byte read", &connection)
         }
-        connection.send(data: data, on: id.stream)
+        connection.send(reserved: data, on: id.stream)
         current.sent += UInt64(data.count)
         pull = current
         serve(&connection)
@@ -371,8 +367,8 @@ public struct UpdateServer: FeatureMachine {
         connection.reset(id.stream, error)
     }
 
-    /// Ends the pull once `payload_size` bytes are queued; otherwise asks the
-    /// source for the next read once the stream is writable, never past the size.
+    /// Ends the pull once `payload_size` bytes are queued; otherwise reserves the next read once the stream
+    /// is writable, never past the size, so the source's answer always fits.
     private mutating func serve(_ connection: inout Connection) {
         guard var current = pull, !current.ended, current.granted == nil, connection.canQueue(on: current.id.stream)
         else { return }
@@ -382,9 +378,8 @@ public struct UpdateServer: FeatureMachine {
             pull = current
             return connection.end(current.id.stream, body: Data())
         }
-        let writable = connection.writableData(current.id.stream)
-        guard writable >= Limits.writableLowWater else { return }
-        let grant = min(writable, WireConstants.maxRawDataPayload, Int(clamping: remaining))
+        guard connection.writableData(current.id.stream) >= Limits.writableLowWater else { return }
+        let grant = connection.reserveRawData(Int(clamping: remaining), on: current.id.stream)
         current.granted = grant
         pull = current
         reads.append(.read(current.id, current.manifest, offset: current.sent, maxBytes: grant))

@@ -192,6 +192,38 @@ private final class MemoryFileSystem: TreeFileSystem {
         throw Self.badDescriptor
     }
 
+    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    {
+        throw Self.badDescriptor
+    }
+
+    func dataRun(in descriptor: Int32, from offset: Int64) throws(TreeFileSystemError) -> Range<Int64>? {
+        throw Self.badDescriptor
+    }
+
+    func extendedAttributeNames(of target: TreeEntryTarget) throws(TreeFileSystemError) -> [[UInt8]] { [] }
+
+    func extendedAttribute(_ name: [UInt8], of target: TreeEntryTarget, maxByteCount: Int)
+        throws(TreeFileSystemError) -> [UInt8]?
+    {
+        throw Self.badDescriptor
+    }
+
+    func compressedStorage(of descriptor: Int32, maxByteCount: Int) throws(TreeFileSystemError) -> [UInt8]? {
+        throw Self.badDescriptor
+    }
+
+    func resourceForkSize(of descriptor: Int32, showingCompression: Bool) throws(TreeFileSystemError) -> UInt64 {
+        throw Self.badDescriptor
+    }
+
+    func readResourceFork(
+        _ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: UInt64, showingCompression: Bool
+    ) throws(TreeFileSystemError) -> Int {
+        throw Self.badDescriptor
+    }
+
     func close(_ descriptor: Int32) {
         let closed = open.removeValue(forKey: descriptor)
         precondition(closed != nil, "closed descriptor \(descriptor) twice")

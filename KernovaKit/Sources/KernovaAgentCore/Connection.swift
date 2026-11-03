@@ -69,6 +69,10 @@ public struct Connection: Sendable {
     var queuedRawTotal = 0 {
         didSet { refreshAllWritable() }
     }
+    /// Every stream's `reservedRaw`: spendable only by the stream that reserved it.
+    var reservedRawTotal = 0 {
+        didSet { refreshAllWritable() }
+    }
 
     // MARK: Session
 
@@ -365,6 +369,22 @@ public struct Connection: Sendable {
         configuration.kinds.first { $0.kind == kind }
     }
 
+    /// The kind row of stream `id`, while the connection holds it.
+    func descriptor(of id: StreamID) -> StreamKindDescriptor? {
+        index(of: id).map { streams[$0].descriptor }
+    }
+
+    /// Resets every stream of `feature`'s kinds still open, once the feature is not usable:
+    /// `DISABLED_BY_POLICY` when the policy turned it off, `CAPABILITY_WITHDRAWN` otherwise.
+    mutating func resetStreams(ofUnusable feature: FeatureID) {
+        guard case .absent(let reason, _) = usability(feature) else { return }
+        let code: ErrorCode = reason == .disabledByPolicy ? .disabledByPolicy : .capabilityWithdrawn
+        let open = streams.filter { $0.isAccepted && $0.phase != .closed && $0.descriptor.feature == feature }
+        for record in open where canReset(record.id) {
+            reset(record.id, WireError(code))
+        }
+    }
+
     func opensAsThisRole(_ descriptor: StreamKindDescriptor) -> Bool {
         (descriptor.openerRole == .host) == (role == .host)
     }
@@ -411,10 +431,18 @@ public struct Connection: Sendable {
         streams.insert(record, at: low)
     }
 
+    /// What `index` may send beyond its own reservation: its window and the shared budget, less every
+    /// reservation, so no send spends bytes another stream reserved.
     func writableData(at index: Int) -> Int {
         let record = streams[index]
         guard record.canSend, record.sending == .rawData, isAcceptingInput else { return 0 }
-        return max(0, min(record.sendWindow, connectionSendCredit, policy.senderRawBudget - queuedRawTotal))
+        return Self.unreserved(
+            record, credit: connectionSendCredit, budget: policy.senderRawBudget - queuedRawTotal,
+            reserved: reservedRawTotal)
+    }
+
+    static func unreserved(_ record: StreamRecord, credit: Int, budget: Int, reserved: Int) -> Int {
+        max(0, min(record.sendWindow - record.reservedRaw, credit - reserved, budget - reserved))
     }
 
     static func sortedAdverts(_ adverts: [(FeatureID, LocalAdvert)]) -> [FeatureAdvertValue] {

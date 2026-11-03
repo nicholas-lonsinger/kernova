@@ -223,6 +223,27 @@ extension CoreUnits {
         }
     }
 
+    @Suite("ConsoleAuthority: the session peers on the console")
+    struct ConsoleAuthorityUnitTests {
+        typealias Peers = PowerRoutingUnitTests
+
+        @Test("The console session's peers, newest first, whatever else they can do; never the system peer")
+        func consoleSessionNewestFirst() {
+            let peers = [
+                Peers.session(1, "a", console: .off, order: 3, usable: false, actions: []),
+                Peers.session(2, "a", console: .off, order: 7), Peers.session(3, "b"),
+                Peers.system(9, console: .on, consoleSessionID: "a"),
+            ]
+            #expect(ConsoleAuthority.consolePeers(peers) == [peers[1], peers[0]])
+        }
+
+        @Test("A system peer reporting the console off leaves no console peer, whatever the sessions report")
+        func consoleOff() {
+            let peers = [Peers.session(1, "a"), Peers.system(9, console: .off)]
+            #expect(ConsoleAuthority.consolePeers(peers).isEmpty)
+        }
+    }
+
     @Suite("PeerConflict: each row of the identity-conflict table")
     struct PeerConflictUnitTests {
         static let instanceA = Data(repeating: 0xAA, count: 16)
@@ -344,7 +365,7 @@ extension CoreUnits {
         @Test("No peer at all → every feature absent NO_AGENT")
         func noPeers() {
             let merged = FeatureStatus.merge([])
-            #expect(merged.entries.map(\.feature) == [.power, .update, .logs])
+            #expect(merged.entries.map(\.feature) == [.power, .update, .logs, .clipboard, .drop, .drag, .itemTransfer])
             for entry in merged.entries {
                 #expect(entry.status == .absent(.noAgent, debugDetail: ""))
             }
@@ -395,7 +416,7 @@ extension CoreUnits {
         @Test("The merged table is ordered by feature")
         func ordered() {
             let merged = FeatureStatus.merge([Self.table([(.logs, .available(Data())), (.power, .available(Data()))])])
-            #expect(merged.entries.map(\.feature) == [.power, .update, .logs])
+            #expect(merged.entries.map(\.feature) == [.power, .update, .logs, .clipboard, .drop, .drag, .itemTransfer])
         }
     }
 }

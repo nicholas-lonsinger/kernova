@@ -287,6 +287,8 @@ package final class SoloReplay {
                 report.input(UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: stream))),
                 now: instant)
         case .peerLogs: break
+        case .offer, .itemPull, .withdraw, .release, .takeDrag, .answerTake:
+            failures.append("t=\(now): `\(input.text)` names an item feature, which no frozen transcript replays")
         }
         drain()
         for fault in localFaults[faultsBefore...] {
@@ -309,13 +311,23 @@ package final class SoloReplay {
             }
             while let effect = host?.pollEffect() {
                 progressed = true
-                host?.handle(source.answer(effect), now: instant)
+                switch effect {
+                case .read(let id, let manifest, let offset, let maxBytes):
+                    host?.handle(source.answer(id, manifest, offset: offset, maxBytes: maxBytes), now: instant)
+                case .itemSource, .itemSink:
+                    failures.append("t=\(now): the host asked an item adapter, which no frozen transcript carries")
+                }
             }
             while let effect = peer?.pollEffect() {
                 progressed = true
                 if let text = TranscriptEvents.describe(effect) { events.append(text) }
-                if case .update(.payload(let id, let bytes)) = effect {
+                switch effect {
+                case .update(.payload(let id, let bytes)):
                     peer?.handle(.update(.consumed(id, bytes.count)), now: instant)
+                case .itemSource, .itemSink:
+                    failures.append("t=\(now): the peer asked an item adapter, which no frozen transcript carries")
+                case .power, .logs, .update:
+                    break
                 }
             }
             while let event = peer?.pollEvent() {

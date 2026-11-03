@@ -10,15 +10,25 @@ import Testing
 
 @Suite("Item transfer schema")
 struct ItemTransferSchemaTests {
-    @Test("The feature, kinds and error codes carry the proto's numbers")
+    @Test("The features, kinds and error codes carry the proto's numbers")
     func numbers() {
         #expect(FeatureID.itemTransfer.rawValue == 13)
         #expect(StreamKind.itemPullByHost.rawValue == 1001)
         #expect(StreamKind.itemPullByPeer.rawValue == 1002)
         #expect(StreamKind.testBulkByPeer.rawValue == 9000)
         #expect(StreamKind.testBulkByHost.rawValue == 9001)
-        #expect(StreamKind.testItemOfferByHost.rawValue == 9002)
-        #expect(StreamKind.testItemOfferByPeer.rawValue == 9003)
+        #expect(FeatureID.clipboard.rawValue == 10)
+        #expect(FeatureID.drop.rawValue == 11)
+        #expect(FeatureID.drag.rawValue == 12)
+        #expect(StreamKind.clipboardOfferByHost.rawValue == 1000)
+        #expect(StreamKind.dropOffer.rawValue == 1003)
+        #expect(StreamKind.dragOffer.rawValue == 1004)
+        #expect(StreamKind.dragTake.rawValue == 1005)
+        #expect(StreamKind.clipboardOfferByPeer.rawValue == 1006)
+        #expect(ErrorCode.dragNotCurrent.rawValue == 1005)
+        #expect(ErrorCode.dragPressOver.rawValue == 1006)
+        #expect(Kernova_V2_DragTakeOutcome.Kind.taken.rawValue == 1)
+        #expect(Kernova_V2_DragTakeOutcome.Kind.refused.rawValue == 2)
         #expect(ErrorCode.itemOfferStale.rawValue == 1000)
         #expect(ErrorCode.itemRepresentationUnavailable.rawValue == 1001)
         #expect(ErrorCode.itemContainerMalformed.rawValue == 1002)
@@ -76,19 +86,18 @@ struct ItemTransferSchemaTests {
         #expect(try header.serializedBytes() == [0x5A, 0])
         var decmpfs = Kernova_V2_DecmpfsStorage()
         decmpfs.attribute = Data([0x63])
-        decmpfs.resourceForkSize = 1
         header.decmpfs = decmpfs
-        #expect(try header.serializedBytes() == [0x62, 5, 0x0A, 1, 0x63, 0x10, 1])
+        header.resourceForkSize = 1
+        #expect(try header.serializedBytes() == [0x62, 3, 0x0A, 1, 0x63, 0x68, 1])
     }
 
     @Test("The item-set, outcome and record messages carry the proto's numbers")
     func itemSetAndRecordFields() throws {
         var setHeader = Kernova_V2_ItemSetHeader()
         setHeader.concealed = true
-        setHeader.transient = true
         setHeader.count = 1
         setHeader.token = Data([0xAA])
-        #expect(try setHeader.serializedBytes() == [0x08, 1, 0x10, 1, 0x18, 1, 0x22, 1, 0xAA])
+        #expect(try setHeader.serializedBytes() == [0x08, 1, 0x18, 1, 0x22, 1, 0xAA])
 
         var type = TypeDescriptor()
         type.mime = "a"
@@ -100,7 +109,8 @@ struct ItemTransferSchemaTests {
         representation.storage = .file
         representation.promised = true
         representation.sizeEstimate = 1
-        #expect(try representation.serializedBytes() == [0x0A, 0, 0x10, 2, 0x18, 1, 0x20, 1])
+        representation.name = Data([0x61])
+        #expect(try representation.serializedBytes() == [0x0A, 0, 0x10, 2, 0x18, 1, 0x20, 1, 0x2A, 1, 0x61])
 
         var item = Kernova_V2_Item()
         item.representations = [Kernova_V2_Representation()]
@@ -132,6 +142,18 @@ struct ItemTransferSchemaTests {
         end.entries = 1
         end.bytes = 1
         #expect(try end.serializedBytes() == [0x08, 1, 0x10, 1])
+    }
+
+    @Test("The drag take's messages carry the proto's numbers")
+    func dragTakeFields() throws {
+        var take = Kernova_V2_DragTake()
+        take.token = Data([0xAA])
+        #expect(try take.serializedBytes() == [0x0A, 1, 0xAA])
+
+        var outcome = Kernova_V2_DragTakeOutcome()
+        outcome.kind = .refused
+        outcome.error = Kernova_V2_Error()
+        #expect(try outcome.serializedBytes() == [0x08, 2, 0x12, 0])
     }
 }
 

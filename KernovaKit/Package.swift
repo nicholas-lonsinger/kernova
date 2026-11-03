@@ -34,6 +34,8 @@ var products: [Product] = [
     // The Linux guest agent, one static binary for the session and system
     // peers. Tools/build-linux-guest-agent.sh builds it for the app bundle.
     .executable(name: "kernova-agent", targets: ["KernovaLinuxAgent"]),
+    // Measurements of Kernova's own code, run on the host and, built like the Linux agent, inside guests.
+    .executable(name: "kernova-bench", targets: ["KernovaBench"]),
 ]
 
 var dependencies: [Package.Dependency] = [
@@ -117,8 +119,18 @@ var targets: [Target] = [
     .executableTarget(
         name: "KernovaLinuxAgent",
         dependencies: [
-            "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaDigest",
-            "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
+            "KernovaAgentInstall", "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus",
+            "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // `kernova-bench`.
+    .executableTarget(
+        name: "KernovaBench",
+        dependencies: [
+            "KernovaWire", "KernovaContainer", "KernovaContainerPipeline", "KernovaSynchronization",
+            "KernovaTreeTransfer", "KernovaFileTree", "KernovaDigest",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -154,12 +166,40 @@ var targets: [Target] = [
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
+    // The container codec around the sans-I/O encoder and decoder: LZ4 tried and decompressed on worker lanes,
+    // records kept in stream order, and the per-transfer compression choice.
+    .target(
+        name: "KernovaContainerPipeline",
+        dependencies: ["KernovaContainer", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // An item pull's landing: the writer that creates a tree from `TreeEvent`s through descriptors alone,
+    // never resolving a path, and the receiver that feeds it a container. Its own target, so neither the
+    // codec nor the file-tree layer takes on the other.
+    .target(
+        name: "KernovaTreeTransfer",
+        dependencies: [
+            "KernovaContainer", "KernovaContainerPipeline", "KernovaFileTree", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The item adapters a shell registers: the sink landing pulls through `KernovaTreeTransfer` and the source
+    // serving offers through it, over the runtime's `ItemSink` and `ItemSource`.
+    .target(
+        name: "KernovaItemTransfer",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaTreeTransfer", "KernovaContainer",
+            "KernovaContainerPipeline", "KernovaFileTree", "KernovaWire", "KernovaSynchronization",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
     // endpoints against each other on virtual time.
     .target(
         name: "KernovaAgentSimulation",
         dependencies: [
-            "KernovaAgentCore", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaAgentCore", "KernovaContainer", "KernovaWire", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
@@ -170,6 +210,18 @@ var targets: [Target] = [
         name: "KernovaAgentRuntime",
         dependencies: [
             "KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization", "CKernovaShims",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // An agent's install and in-band update, on every OS with an agent: the root and its slots, the switch,
+    // confirm and rollback, and the install plan with what carries it out. The service manager and a payload
+    // format's lander are each OS's, reached through the protocols it declares. Its sources compile only for
+    // Darwin and Linux, but for the plan's data, which compiles everywhere.
+    .target(
+        name: "KernovaAgentInstall",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaDigest", "KernovaLogging",
+            "KernovaSynchronization",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -196,7 +248,8 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaContainerTests",
         dependencies: [
-            "KernovaContainer", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaContainer", "KernovaContainerPipeline", "KernovaWire", "KernovaSynchronization",
+            "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
@@ -216,8 +269,18 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaLinuxAgentTests",
         dependencies: [
-            "KernovaLinuxAgent", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation", "KernovaDigest",
-            "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaLinuxAgent", "KernovaAgentInstall", "KernovaAgentCore", "KernovaSynchronization", "KernovaWire",
+            "KernovaPortableTestSupport",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its suites, like the target they test,
+    // compile only for Darwin and Linux.
+    .testTarget(
+        name: "KernovaAgentInstallTests",
+        dependencies: [
+            "KernovaAgentInstall", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation",
+            "KernovaDigest", "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
@@ -227,7 +290,8 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaAgentCoreTests",
         dependencies: [
-            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaDigest", "KernovaPortableTestSupport",
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaContainer", "KernovaWire", "KernovaDigest",
+            "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         exclude: ["Transcripts"],
@@ -242,6 +306,27 @@ var targets: [Target] = [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
             "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The hostile-container corpus, run against this OS's writer. Like `KernovaWireTests`, it cannot reach
+    // `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaTreeTransferTests",
+        dependencies: [
+            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization", "KernovaDigest", "KernovaPortableTestSupport",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaItemTransferTests",
+        dependencies: [
+            "KernovaItemTransfer", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation",
+            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaSynchronization",
+            "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -302,6 +387,7 @@ targets += [
             "KernovaLogging",
             "KernovaSynchronization",
             "KernovaFileTree",
+            "KernovaWire",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
@@ -358,7 +444,7 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-            "KernovaFileTree",
+            "KernovaFileTree", "KernovaWire",
         ],
         swiftSettings: sharedSwiftSettings
     ),

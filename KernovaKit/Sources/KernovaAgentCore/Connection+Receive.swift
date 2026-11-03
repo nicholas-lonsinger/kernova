@@ -450,6 +450,11 @@ extension Connection {
             diagnose(.remoteViolation("a second END"))
             return resetStream(at: index, WireError(.streamProtocolError, debugDetail: "a second END"))
         }
+        if !streams[index].isLocal, streams[index].descriptor.acceptorEndsFirst, !streams[index].endHandedOut {
+            let violation = "the opener's END before this side's"
+            diagnose(.remoteViolation(violation))
+            return resetStream(at: index, WireError(.streamProtocolError, debugDetail: violation))
+        }
         let id = frame.streamID
         streams[index].remoteEndBody = frame.payload
         emit(.remoteEnded(id, body: frame.payload), owner: streams[index].owner)

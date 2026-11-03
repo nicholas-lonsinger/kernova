@@ -9,9 +9,9 @@ import KernovaPortableTestSupport
 import KernovaWire
 import SwiftProtobuf
 
-/// A pull of a `storage` representation accepting LZ4, decmpfs type 4, and up to 1 GiB.
+/// A pull of a `storage` representation accepting LZ4, decmpfs types 3 and 4, and up to 1 GiB.
 func generous(_ storage: Representation.Storage = .file) -> ContainerAcceptance {
-    ContainerAcceptance(storage: storage, byteCeiling: 1 << 30, decmpfsTypes: [4], acceptsLZ4: true)
+    ContainerAcceptance(storage: storage, byteCeiling: 1 << 30, decmpfsTypes: [3, 4], acceptsLZ4: true)
 }
 
 /// The storage whose representation sends `type` as its root entry.
@@ -40,7 +40,7 @@ func generous(for container: Data) -> ContainerAcceptance {
 
 func name(_ text: String) -> Data { Data(text.utf8) }
 
-func plainFile(_ fileName: String, depth: UInt32, size: UInt64) -> EntryHeader {
+func plainFile(_ fileName: String = "", depth: UInt32, size: UInt64) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = name(fileName)
@@ -50,13 +50,13 @@ func plainFile(_ fileName: String, depth: UInt32, size: UInt64) -> EntryHeader {
     return header
 }
 
-func lz4File(_ fileName: String, depth: UInt32, size: UInt64) -> EntryHeader {
+func lz4File(_ fileName: String = "", depth: UInt32, size: UInt64) -> EntryHeader {
     var header = plainFile(fileName, depth: depth, size: size)
     header.lz4.size = size
     return header
 }
 
-func directory(_ directoryName: String, depth: UInt32) -> EntryHeader {
+func directory(_ directoryName: String = "", depth: UInt32) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = name(directoryName)
@@ -65,7 +65,7 @@ func directory(_ directoryName: String, depth: UInt32) -> EntryHeader {
     return header
 }
 
-func symlink(_ linkName: String, depth: UInt32, target: String) -> EntryHeader {
+func symlink(_ linkName: String = "", depth: UInt32, target: String) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = name(linkName)
@@ -92,11 +92,27 @@ func decmpfsAttribute(type: UInt32, size: UInt64, magic: UInt32 = DecmpfsHeader.
     return attribute
 }
 
-func decmpfsFile(_ fileName: String, depth: UInt32, attribute: Data, resourceForkSize: UInt64) -> EntryHeader {
+func decmpfsFile(_ fileName: String = "", depth: UInt32, attribute: Data, resourceForkSize: UInt64) -> EntryHeader {
     var header = plainFile(fileName, depth: depth, size: 0)
     header.decmpfs.attribute = attribute
-    header.decmpfs.resourceForkSize = resourceForkSize
+    header.resourceForkSize = resourceForkSize
     return header
+}
+
+/// `header` with a resource fork of `size` bytes.
+func withResourceFork(_ header: EntryHeader, size: UInt64) -> EntryHeader {
+    var header = header
+    header.resourceForkSize = size
+    return header
+}
+
+/// The bytes `header`'s data chunks carry, before its resource fork's.
+func dataSize(of header: EntryHeader) -> Int {
+    switch header.storage {
+    case .plain(let plain): Int(plain.size)
+    case .lz4(let lz4): Int(lz4.size)
+    case .decmpfs, nil: 0
+    }
 }
 
 func serialized(_ message: some SwiftProtobuf.Message) -> Data {
@@ -202,7 +218,7 @@ func content(of events: [TreeEvent]) -> Data {
     return data
 }
 
-/// A tree to encode: each entry with the bytes its file carries.
+/// A tree to encode: each entry with the bytes its file carries, its data's then its resource fork's.
 struct TreeFixture {
     var entries: [(header: EntryHeader, bytes: Data)]
 
@@ -216,11 +232,15 @@ struct TreeFixture {
         var container = Data()
         for (header, bytes) in entries {
             container.append(try encoder.entry(header))
-            var start = bytes.startIndex
-            while start < bytes.endIndex {
-                let end = min(start + pieceSize, bytes.endIndex)
-                container.append(try encoder.bytes(bytes[start..<end]))
-                start = end
+            let split = bytes.startIndex + dataSize(of: header)
+            for (part, isFork) in [(bytes[..<split], false), (bytes[split...], true)] {
+                if isFork && !part.isEmpty { container.append(try encoder.encode(.resourceFork)) }
+                var start = part.startIndex
+                while start < part.endIndex {
+                    let end = min(start + pieceSize, part.endIndex)
+                    container.append(try encoder.bytes(part[start..<end]))
+                    start = end
+                }
             }
         }
         container.append(try encoder.end())
@@ -237,7 +257,7 @@ struct TreeFixture {
         let text = Data(String(repeating: "the guest agent streams a container. ", count: 20_000).utf8)
         let fork = generator.bytes(5_000)
         return TreeFixture(entries: [
-            (directory("root", depth: 0), Data()),
+            (directory(depth: 0), Data()),
             (plainFile("random", depth: 1, size: UInt64(random.count)), random),
             (directory("nested", depth: 1), Data()),
             (plainFile("sparse", depth: 2, size: UInt64(sparse.count)), sparse),
@@ -269,7 +289,9 @@ struct TreeFixture {
                 events.append(.symlink(header))
             default:
                 events.append(.beginFile(header))
-                if !bytes.isEmpty { events.append(.bytes(bytes)) }
+                let split = bytes.startIndex + dataSize(of: header)
+                if split > bytes.startIndex { events.append(.bytes(Data(bytes[..<split]))) }
+                if split < bytes.endIndex { events += [.resourceFork, .bytes(Data(bytes[split...]))] }
                 events.append(.finishFile)
             }
         }

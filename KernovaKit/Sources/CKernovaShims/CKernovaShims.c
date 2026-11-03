@@ -137,4 +137,27 @@ int kernova_openat2(int directory, const char *name, int flags, uint32_t mode, i
 int kernova_rename_exclusive(int directory, const char *name, int new_directory, const char *new_name) {
     return (int)syscall(SYS_renameat2, directory, name, new_directory, new_name, KERNOVA_RENAME_NOREPLACE);
 }
+
+// `FALLOC_FL_KEEP_SIZE` and `FALLOC_FL_PUNCH_HOLE` from the kernel's
+// `include/uapi/linux/falloc.h`.
+#define KERNOVA_FALLOC_FL_KEEP_SIZE 0x01
+#define KERNOVA_FALLOC_FL_PUNCH_HOLE 0x02
+
+int kernova_punch_hole(int descriptor, int64_t offset, int64_t length) {
+    return (int)syscall(
+        SYS_fallocate, descriptor, KERNOVA_FALLOC_FL_PUNCH_HOLE | KERNOVA_FALLOC_FL_KEEP_SIZE, (off_t)offset,
+        (off_t)length);
+}
+
+int kernova_set_xattr(int descriptor, const char *name, const void *value, size_t size) {
+    return (int)syscall(SYS_fsetxattr, descriptor, name, value, size, 0);
+}
+
+long kernova_list_xattr(int descriptor, char *names, size_t size) {
+    return (long)syscall(SYS_flistxattr, descriptor, names, size);
+}
+
+long kernova_get_xattr(int descriptor, const char *name, void *value, size_t size) {
+    return (long)syscall(SYS_fgetxattr, descriptor, name, value, size);
+}
 #endif

@@ -23,11 +23,13 @@ package enum WireFrames {
         return Self.message(0, message)
     }
 
-    /// A Hello for `role`, POWER, UPDATE and LOGS available.
+    /// A Hello for `role`, POWER, UPDATE and LOGS available, and with `items` ITEM_TRANSFER, CLIPBOARD, DROP
+    /// and DRAG.
     package static func hello(
         role: Kernova_V2_PeerIdentity.Role, scope: Kernova_V2_PeerIdentity.InstallScope = .user,
         sessionID: String = "c1", protocolVersion: UInt32 = 1, powerActions: [PowerAction] = [.shutdown, .restart],
-        instanceID: Data = Data(repeating: 0x11, count: 16), payloadHash: Data = Data(repeating: 0xA1, count: 32)
+        instanceID: Data = Data(repeating: 0x11, count: 16), payloadHash: Data = Data(repeating: 0xA1, count: 32),
+        items: Bool = false
     ) -> Frame {
         session { message in
             var hello = Kernova_V2_Hello()
@@ -63,6 +65,15 @@ package enum WireFrames {
             logs.version = 1
             logs.params = Data()
             hello.features = [power, update, logs]
+            if items {
+                for feature in [FeatureID.itemTransfer, .clipboard, .drop, .drag] {
+                    var advert = Kernova_V2_FeatureAdvert()
+                    advert.feature = feature
+                    advert.version = 1
+                    advert.params = Data()
+                    hello.features.append(advert)
+                }
+            }
             message.hello = hello
         }
     }
@@ -115,18 +126,24 @@ package final class HostileRun {
     private var outbound = FrameDecoder()
     package private(set) var written: [Frame] = []
     package private(set) var hostEvents: [HostEvent] = []
-    /// The host endpoint's payload reads, in order.
+    /// The host endpoint's effects, in order.
     package private(set) var hostEffects: [HostEffect] = []
     package private(set) var peerEvents: [PeerEvent] = []
     package private(set) var peerEffects: [PeerEffect] = []
     package private(set) var trace: [ConnectionTrace] = []
     /// While set, nothing is taken from `pollTransmit`: the far side reads nothing.
     package var writerStalled = false
+    /// The endpoint's item-transfer effects and events; its source and sink answer each effect at once.
+    package private(set) var itemOutputs: [ItemTransferOutput] = []
+    package var itemSource = ContainerItemSource()
+    package private(set) var itemSink = DecodingItemSink()
+    private var nextRequest: UInt64 = 0
 
     /// A real host endpoint (`local == .host`) holding `bundles`, or a real
-    /// session peer whose process's power ledger is `powerLedger`.
+    /// session peer whose process's power ledger is `powerLedger`; with `items`, serving every item feature,
+    /// and a host's policy enabling them.
     package init(
-        local: SimSide, seed: UInt64, testKinds: Bool = false,
+        local: SimSide, seed: UInt64, testKinds: Bool = false, items: Bool = false,
         bundles: [BundledPayload] = [SimHub.bundle(size: 100_000, tag: 1)], powerLedger: PowerLedger = PowerLedger(),
         tweak: @escaping @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     ) {
@@ -139,10 +156,12 @@ package final class HostileRun {
         }
         switch local {
         case .host:
+            let policy = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
             var configuration = HostConfiguration(
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
-                policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
+                policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
             configuration.tweak = configure
+            if items { configuration.items = SimItems.served }
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         case .peer:
             var spec = PeerSpec.session()
@@ -152,6 +171,7 @@ package final class HostileRun {
                 update: .available(UpdateOffer(formats: [.executable])))
             configuration.powerLedger = powerLedger
             configuration.tweak = configure
+            if items { configuration.items = SimItems.served }
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         }
         drain()
@@ -235,25 +255,92 @@ package final class HostileRun {
         return stream
     }
 
+    /// Sends the local endpoint `command`, then drains.
+    package func item(_ command: ItemCommand) {
+        host?.handle(.items(command), now: now)
+        peer?.handle(.itemCommand(command), now: now)
+        drain()
+    }
+
+    /// Sends the local endpoint the command `build` makes around a fresh request id, and returns its answer.
+    private func ask(_ build: (ItemRequestID) -> ItemCommand) -> ItemReply? {
+        nextRequest += 1
+        let id = ItemRequestID(rawValue: nextRequest)
+        item(build(id))
+        for event in hostEvents { if case .itemReply(id, let reply) = event { return reply } }
+        for event in peerEvents { if case .itemReply(id, let reply) = event { return reply } }
+        return nil
+    }
+
+    /// Pulls `request` from the far side's offer, landing it as `landing` says.
+    package func pullItem(_ request: PullRequest, landing: ItemLanding = DecodingItemSink.landing(.file))
+        -> Result<ItemPullID, WireError>?
+    {
+        let order = ItemPullOrder(request, landing: landing)
+        guard case .pulled(let result) = ask({ .pull($0, order) }) else { return nil }
+        return result
+    }
+
+    /// Offers `offer` as the local side's offer of `feature`; nil when opened.
+    package func offerItems(_ offer: ItemOffer, feature: FeatureID = .clipboard) -> WireError? {
+        guard case .offered(let refusal) = ask({ .offer($0, offer, feature: feature) }) else {
+            return WireError(.internal, debugDetail: "no answer")
+        }
+        return refusal
+    }
+
+    /// Item `item` of the far side's open offer of `token`, decoded now; nil when none is held.
+    package func readItem(_ token: Data, item: UInt32 = 0) -> OfferedItem? {
+        guard case .read(let read) = ask({ .read($0, token: token, item: item) }) else { return nil }
+        return read
+    }
+
+    /// The `.pullEnded` and `.serveEnded` events, in order.
+    package var itemEnds: [ItemTransferEvent] {
+        itemOutputs.compactMap { output in
+            switch output {
+            case .event(let event):
+                switch event {
+                case .pullEnded, .serveEnded: event
+                default: nil
+                }
+            default: nil
+            }
+        }
+    }
+
     package func drain() {
         var progressed = true
         while progressed {
             progressed = false
-            while let event = host?.pollEvent() {
-                hostEvents.append(event)
+            // Effects before events: a pull's `.commit` or `.abort` before its `.pullEnded`, as the machine emits them.
+            while let effect = host?.pollEffect() {
+                hostEffects.append(effect)
                 progressed = true
-            }
-            while let event = peer?.pollEvent() {
-                peerEvents.append(event)
-                progressed = true
+                switch effect {
+                case .itemSource(let effect): item(.source(effect))
+                case .itemSink(let effect): item(.sink(effect))
+                case .read: break
+                }
             }
             while let effect = peer?.pollEffect() {
                 peerEffects.append(effect)
                 progressed = true
+                switch effect {
+                case .itemSource(let effect): item(.source(effect))
+                case .itemSink(let effect): item(.sink(effect))
+                case .power, .logs, .update: break
+                }
             }
-            while let effect = host?.pollEffect() {
-                hostEffects.append(effect)
+            while let event = host?.pollEvent() {
+                hostEvents.append(event)
                 progressed = true
+                if case .items(let event) = event { itemOutputs.append(.event(event)) }
+            }
+            while let event = peer?.pollEvent() {
+                peerEvents.append(event)
+                progressed = true
+                if case .items(let event) = event { itemOutputs.append(.event(event)) }
             }
             while !writerStalled,
                 let transmit = host?.pollTransmit(maxBytes: 1 << 20) ?? peer?.pollTransmit(maxBytes: 1 << 20)
@@ -269,6 +356,20 @@ package final class HostileRun {
         }
         trace += host?.takeTrace() ?? []
         trace += peer?.takeTrace() ?? []
+    }
+
+    /// Records an item effect and answers it at once from the item source or sink.
+    private func item(_ output: ItemTransferOutput) {
+        itemOutputs.append(output)
+        let input: ItemTransferInput?
+        switch output {
+        case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
+        case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
+        case .event: input = nil
+        }
+        guard let input else { return }
+        host?.handle(input, now: now)
+        peer?.handle(.items(input), now: now)
     }
 
     /// Properties 1 and 3 over the endpoint's trace.

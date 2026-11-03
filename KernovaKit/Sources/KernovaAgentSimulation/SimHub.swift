@@ -69,6 +69,7 @@ package final class SimHub {
             claim: PeerClaim(role: .host, versionLabel: "Kernova 2.0"),
             sessionToken: world.rng.bytes(16), policy: policy, bundles: bundles)
         configuration.receiverPolicy = options.receiverPolicy
+        if options.items { configuration.items = SimItems.served }
         let testKinds = options.testKinds
         let hostile = options.hostile
         configuration.tweak = { connection in
@@ -188,6 +189,12 @@ package final class SimHub {
             }
         case .update(let serve):
             handleUpdate(serve, link: link, world: world)
+        case .items(let event):
+            world.itemOutput(.event(event), link: link, side: .host)
+        case .dragTake(let event):
+            link.items(.host).dragTake(event, link: link, side: .host, world: world)
+        case .itemReply(let id, let reply):
+            link.items(.host).reply(id, reply, link: link, side: .host, world: world)
         case .diagnostic(let diagnostic):
             world.log("host diagnostic: \(diagnostic)")
         case .closed(let closure):
@@ -249,12 +256,16 @@ package final class SimHub {
         }
     }
 
-    /// The payload source: each read is served from the content its manifest names.
+    /// The payload source, each read served from the content its manifest names, and the link's item side.
     func handle(_ effect: HostEffect, link: SimLink, world: SimWorld) {
         switch effect {
         case .read(let id, let manifest, let offset, let maxBytes):
             let bytes = FixturePayloadSource.read(world.content(of: manifest), offset: offset, maxBytes: maxBytes)
             world.hostPayload(.bytes(id, bytes), link: link, after: options.payloadSourceDelay)
+        case .itemSource(let effect):
+            world.itemOutput(.source(effect), link: link, side: .host)
+        case .itemSink(let effect):
+            world.itemOutput(.sink(effect), link: link, side: .host)
         }
     }
 

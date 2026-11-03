@@ -5,7 +5,8 @@ import Testing
 struct ScenarioSuite {
     static let all: [Scenario] =
         HandshakeScenarios.all + PowerScenarios.all + UpdateScenarios.all
-        + IdentityScenarios.all + LogScenarios.all + StreamScenarios.all + LivenessScenarios.all
+        + IdentityScenarios.all + LogScenarios.all + StreamScenarios.all + LivenessScenarios.all + ItemScenarios.all
+        + ItemFeatureScenarios.all
 
     @Test("Every property holds over every seed", arguments: ScenarioSuite.all)
     func scenario(_ scenario: Scenario) {

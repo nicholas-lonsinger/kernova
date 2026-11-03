@@ -7,43 +7,19 @@ import Foundation
 import KernovaWire
 import SwiftProtobuf
 
-/// When the encoder tries LZ4 on a chunk of an entry whose storage is LZ4. A tried chunk is sent as a block
-/// only when its record comes out smaller than the raw chunk's.
-public struct ChunkCompressionPolicy: Equatable, Sendable {
-    /// Whether any chunk is tried.
-    public var attemptsLZ4: Bool
-    /// After this many tried chunks of one entry in a row that LZ4 did not shrink, the entry's remaining
-    /// chunks go raw; nil keeps trying.
-    public var abandonAfterUnshrunkChunks: Int?
-
-    /// A policy of the given rules.
-    ///
-    /// - Parameters:
-    ///   - attemptsLZ4: Whether any chunk is tried.
-    ///   - abandonAfterUnshrunkChunks: Tried chunks of one entry in a row that did not shrink, after which
-    ///     the entry's remaining chunks go raw; nil keeps trying.
-    public init(attemptsLZ4: Bool, abandonAfterUnshrunkChunks: Int?) {
-        self.attemptsLZ4 = attemptsLZ4
-        self.abandonAfterUnshrunkChunks = abandonAfterUnshrunkChunks
-    }
-
-    /// Every chunk raw.
-    public static let never = ChunkCompressionPolicy(attemptsLZ4: false, abandonAfterUnshrunkChunks: nil)
-}
-
 /// Writes a container's records from its entries: `entry(_:)` for each header in depth-first pre-order,
-/// `bytes(_:)` for a file's bytes until it has all it declared, then `end()`. It holds the container to the
-/// same rules as `ContainerDecoder`, so what it writes the decoder accepts. After it throws, discard it.
+/// `bytes(_:)` for a file's data until it has all it declared and then for its resource fork's, then `end()`.
+/// It holds the container to the same rules as `ContainerDecoder`, so what it writes the decoder accepts.
+/// After it throws, discard it.
+///
+/// It is a `ContainerRecordAdmission` writing straight into a `ContainerRecordWriter`, each LZ4 candidate tried
+/// in the caller as it is written.
 public struct ContainerEncoder {
     /// The most bytes one chunk carries.
     public static let chunkByteCount = 262_144
 
-    private var grammar: ContainerGrammar
-    private let policy: ChunkCompressionPolicy
-    /// Zero bytes counted and not yet written: consecutive all-zero chunks share one zero run.
-    private var pendingZeros: UInt64 = 0
-    private var unshrunkChunks = 0
-    private var lz4Abandoned = false
+    private var admission: ContainerRecordAdmission
+    private var writer: ContainerRecordWriter
 
     /// An encoder of a container `acceptance` admits, compressing chunks as `policy` allows.
     ///
@@ -51,8 +27,8 @@ public struct ContainerEncoder {
     ///   - acceptance: What the pull's destination accepts.
     ///   - policy: When to try LZ4 on a chunk.
     public init(accepting acceptance: ContainerAcceptance, policy: ChunkCompressionPolicy) {
-        grammar = ContainerGrammar(acceptance: acceptance)
-        self.policy = policy
+        admission = ContainerRecordAdmission(accepting: acceptance)
+        writer = ContainerRecordWriter(policy: policy)
     }
 
     /// The header record of the next entry.
@@ -61,47 +37,16 @@ public struct ContainerEncoder {
     /// - Returns: The record's bytes.
     /// - Throws: `ContainerError` when the entry breaks a container rule or its header is too large.
     public mutating func entry(_ header: EntryHeader) throws(ContainerError) -> Data {
-        let payload = Self.serialized(header)
-        guard ContainerRecordKind.header.payloadLengths.contains(payload.count) else {
-            throw .recordLengthOutOfRange(kind: .header, length: payload.count)
-        }
-        _ = try grammar.admit(header)
-        unshrunkChunks = 0
-        lz4Abandoned = false
-        var records = Data()
-        ContainerRecord.append(.header, payload: payload, to: &records)
-        return records
+        written(try admission.entry(header))
     }
 
-    /// The records carrying the current entry's next bytes: one per chunk, with consecutive all-zero chunks
-    /// as one zero run, written once a non-zero chunk follows or the entry has all its bytes.
+    /// The records carrying the current entry's next bytes, as `ContainerRecordAdmission.bytes(_:)` admits them.
     ///
-    /// - Parameter bytes: The entry's next bytes, no more than it still owes.
+    /// - Parameter bytes: The entry's next bytes, no more than its data, or its fork, still owes.
     /// - Returns: The records' bytes, possibly none while zeros are pending.
     /// - Throws: `ContainerError` when no entry owes bytes or `bytes` is more than it owes.
     public mutating func bytes(_ bytes: Data) throws(ContainerError) -> Data {
-        guard !bytes.isEmpty else { return Data() }
-        if let remaining = grammar.remainingBytes, UInt64(bytes.count) > remaining {
-            throw .chunkPastEntrySize(count: UInt64(bytes.count), remaining: remaining)
-        }
-        var records = Data()
-        var start = bytes.startIndex
-        while start < bytes.endIndex {
-            let end = min(start + Self.chunkByteCount, bytes.endIndex)
-            let chunk = bytes[start..<end]
-            start = end
-            if Self.isAllZero(chunk) {
-                let complete = try grammar.admitChunk(count: UInt64(chunk.count), lz4: false)
-                pendingZeros += UInt64(chunk.count)
-                if complete { flushZeros(into: &records) }
-                continue
-            }
-            flushZeros(into: &records)
-            let (kind, payload) = encodedChunk(chunk)
-            _ = try grammar.admitChunk(count: UInt64(chunk.count), lz4: kind == .lz4Chunk)
-            ContainerRecord.append(kind, payload: payload, to: &records)
-        }
-        return records
+        written(try admission.bytes(bytes))
     }
 
     /// The end record, stating the container's counts.
@@ -109,58 +54,47 @@ public struct ContainerEncoder {
     /// - Returns: The record's bytes.
     /// - Throws: `ContainerError` when the current entry still owes bytes or no entry was written.
     public mutating func end() throws(ContainerError) -> Data {
-        var end = EndRecord()
-        end.entries = grammar.counted.entries
-        end.bytes = grammar.counted.bytes
-        _ = try grammar.admitEnd(end)
-        var records = Data()
-        ContainerRecord.append(.end, payload: Self.serialized(end), to: &records)
-        return records
+        written(try admission.end())
+    }
+
+    /// The records carrying the current entry's next `count` bytes, all zero, as
+    /// `ContainerRecordAdmission.zeros(_:)` admits them.
+    ///
+    /// - Parameter count: The zero bytes, no more than the entry's data, or its fork, still owes.
+    /// - Returns: The records' bytes, possibly none while zeros are pending.
+    /// - Throws: `ContainerError` when no entry owes bytes or `count` is more than it owes.
+    public mutating func zeros(_ count: UInt64) throws(ContainerError) -> Data {
+        written(try admission.zeros(count))
+    }
+
+    /// The records `event` adds, as `ContainerRecordAdmission.admit(_:)` admits them.
+    ///
+    /// - Parameter event: The next event of a tree in depth-first pre-order.
+    /// - Returns: The records' bytes, possibly none.
+    /// - Throws: `ContainerError` when the event breaks a container rule.
+    public mutating func encode(_ event: TreeEvent) throws(ContainerError) -> Data {
+        written(try admission.admit(event))
+    }
+
+    private mutating func written(_ records: [AdmittedRecord]) -> Data {
+        var bytes = Data()
+        for record in records { writer.write(record, to: &bytes) }
+        return bytes
     }
 
     /// A proto3 message's bytes; with no required fields, serializing it cannot fail.
-    private static func serialized(_ message: some SwiftProtobuf.Message) -> Data {
+    static func serialized(_ message: some SwiftProtobuf.Message) -> Data {
         do {
             return try message.serializedBytes()
         } catch {
             preconditionFailure("a proto3 message always serializes: \(error)")
         }
     }
+}
 
-    private mutating func flushZeros(into records: inout Data) {
-        guard pendingZeros > 0 else { return }
-        ContainerRecord.append(.zeroRun, payload: Data(littleEndianBytes(pendingZeros)), to: &records)
-        pendingZeros = 0
-    }
-
-    /// `chunk` as an LZ4 chunk when the policy tries it and its record comes out smaller, otherwise raw.
-    private mutating func encodedChunk(_ chunk: Data) -> (ContainerRecordKind, Data) {
-        guard grammar.currentIsLZ4, policy.attemptsLZ4, !lz4Abandoned else { return (.chunk, chunk) }
-        if let block = LZ4Block.compress(chunk), block.count + ContainerRecord.lz4SizeByteCount < chunk.count {
-            unshrunkChunks = 0
-            var payload = Data(littleEndianBytes(UInt32(chunk.count)))
-            payload.append(block)
-            return (.lz4Chunk, payload)
-        }
-        unshrunkChunks += 1
-        if let limit = policy.abandonAfterUnshrunkChunks, unshrunkChunks >= limit { lz4Abandoned = true }
-        return (.chunk, chunk)
-    }
-
-    /// Whether every byte of `bytes` is zero, read a word at a time.
-    static func isAllZero(_ bytes: Data) -> Bool {
-        bytes.withUnsafeBytes { buffer in
-            let wordSize = MemoryLayout<UInt64>.size
-            var index = 0
-            while index + wordSize <= buffer.count {
-                if buffer.loadUnaligned(fromByteOffset: index, as: UInt64.self) != 0 { return false }
-                index += wordSize
-            }
-            while index < buffer.count {
-                if buffer[index] != 0 { return false }
-                index += 1
-            }
-            return true
-        }
+extension EntryHeader {
+    /// Whether the header fits one header record, whose payload lengths `ContainerRecordKind.header` states.
+    public var fitsHeaderRecord: Bool {
+        ContainerRecordKind.header.payloadLengths.contains(ContainerEncoder.serialized(self).count)
     }
 }
