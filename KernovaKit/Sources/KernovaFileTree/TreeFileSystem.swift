@@ -25,6 +25,22 @@ public protocol TreeFileSystem {
     func linkTarget(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> [UInt8]
     /// Reads up to `buffer.count` bytes, returning `0` at the end of the file.
     func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int
+    /// Reads up to `buffer.count` bytes at `offset`, returning `0` at the end
+    /// of the file.
+    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    /// The first run of the open file's stored bytes at or after `offset` —
+    /// what lies between `offset` and it is a hole — or `nil` when only a
+    /// hole lies past `offset`. A volume that reports no holes stores the
+    /// whole file.
+    func dataRun(in descriptor: Int32, from offset: Int64) throws(TreeFileSystemError) -> Range<Int64>?
+    /// The names of `target`'s extended attributes, in no order; none where
+    /// the OS keeps none on such a target.
+    func extendedAttributeNames(of target: TreeEntryTarget) throws(TreeFileSystemError) -> [[UInt8]]
+    /// The value of `target`'s extended attribute `name`, or `nil` when it is
+    /// longer than `maxByteCount` bytes, which are then never read.
+    func extendedAttribute(_ name: [UInt8], of target: TreeEntryTarget, maxByteCount: Int)
+        throws(TreeFileSystemError) -> [UInt8]?
     /// Closes a descriptor this file system opened.
     func close(_ descriptor: Int32)
 }
@@ -88,7 +104,7 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     func landingRefusal(of name: [UInt8], pathByteCount: Int) -> TreeFileSystemError?
 }
 
-/// What a change of attributes applies to.
+/// What a change of attributes, or an extended attribute read or written, applies to.
 public enum TreeEntryTarget: Hashable, Sendable {
     /// An open descriptor.
     case descriptor(Int32)

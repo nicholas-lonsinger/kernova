@@ -51,27 +51,48 @@ extension POSIXTreeFileSystem {
         }
     }
 
-    /// `fsetxattr` on `target`, a symlink opened itself through `O_SYMLINK`.
+    /// `fsetxattr` on `target`.
     static func setExtendedAttribute(_ name: [UInt8], to value: [UInt8], of target: TreeEntryTarget)
         throws(TreeFileSystemError)
     {
-        switch target {
-        case .descriptor(let descriptor):
-            try setExtendedAttribute(name, to: value, on: descriptor)
-        case .symlink(let linkName, let directory):
-            let descriptor = try call(linkName) { openat(directory, $0, O_RDONLY | O_SYMLINK | O_CLOEXEC) }
-            defer { closeDescriptor(descriptor) }
-            try setExtendedAttribute(name, to: value, on: descriptor)
-        }
-    }
-
-    private static func setExtendedAttribute(_ name: [UInt8], to value: [UInt8], on descriptor: Int32)
-        throws(TreeFileSystemError)
-    {
+        guard let descriptor = try openAttributes(of: target) else { return }
+        defer { closeAttributes(descriptor, of: target) }
         try call(name) { name in
             value.withUnsafeBytes { fsetxattr(descriptor, name, $0.baseAddress, $0.count, 0, 0) }
         }
     }
+
+    /// The descriptor `target`'s extended attributes are reached through: a symlink opened itself, through
+    /// `O_SYMLINK`.
+    static func openAttributes(of target: TreeEntryTarget) throws(TreeFileSystemError) -> Int32? {
+        switch target {
+        case .descriptor(let descriptor):
+            return descriptor
+        case .symlink(let name, let directory):
+            return try call(name) { openat(directory, $0, O_RDONLY | O_SYMLINK | O_CLOEXEC) }
+        }
+    }
+
+    /// Closes what ``openAttributes(of:)`` opened for `target`.
+    static func closeAttributes(_ descriptor: Int32, of target: TreeEntryTarget) {
+        if case .symlink = target { closeDescriptor(descriptor) }
+    }
+
+    static func listAttributes(_ descriptor: Int32, _ names: UnsafeMutableRawPointer?, _ size: Int) -> Int {
+        flistxattr(descriptor, names?.assumingMemoryBound(to: CChar.self), size, 0)
+    }
+
+    static func getAttribute(
+        _ descriptor: Int32, _ name: UnsafePointer<CChar>, _ value: UnsafeMutableRawPointer?, _ size: Int
+    ) -> Int {
+        fgetxattr(descriptor, name, value, size, 0, 0)
+    }
+
+    static let seekData = SEEK_DATA
+    static let seekHole = SEEK_HOLE
+
+    /// The errnos with which `lseek(2)` says the volume reports no holes.
+    static let unreportedHoleCodes: Set<Int32> = [EINVAL, ENOTTY, ENOTSUP, EOPNOTSUPP]
 
     /// `EILSEQ` for a name that is not UTF-8: APFS stores only UTF-8 names.
     static func nameRefusal(_ name: [UInt8]) -> TreeFileSystemError? {

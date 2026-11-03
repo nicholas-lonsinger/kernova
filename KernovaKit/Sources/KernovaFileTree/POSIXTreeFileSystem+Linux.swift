@@ -67,6 +67,33 @@ extension POSIXTreeFileSystem {
         }
     }
 
+    /// A descriptor's own; `nil` for a symlink, which takes no `user.`
+    /// attribute on Linux and cannot be opened for one.
+    static func openAttributes(of target: TreeEntryTarget) throws(TreeFileSystemError) -> Int32? {
+        guard case .descriptor(let descriptor) = target else { return nil }
+        return descriptor
+    }
+
+    static func closeAttributes(_ descriptor: Int32, of target: TreeEntryTarget) {}
+
+    static func listAttributes(_ descriptor: Int32, _ names: UnsafeMutableRawPointer?, _ size: Int) -> Int {
+        kernova_list_xattr(descriptor, names?.assumingMemoryBound(to: CChar.self), size)
+    }
+
+    static func getAttribute(
+        _ descriptor: Int32, _ name: UnsafePointer<CChar>, _ value: UnsafeMutableRawPointer?, _ size: Int
+    ) -> Int {
+        kernova_get_xattr(descriptor, name, value, size)
+    }
+
+    /// `SEEK_DATA` and `SEEK_HOLE` from the kernel's `include/uapi/linux/fs.h`,
+    /// which the C library declares only under `_GNU_SOURCE`.
+    static let seekData: Int32 = 3
+    static let seekHole: Int32 = 4
+
+    /// The errnos with which `lseek(2)` says the volume reports no holes.
+    static let unreportedHoleCodes: Set<Int32> = [EINVAL, ENOTTY, EOPNOTSUPP]
+
     /// Linux's file systems take any name of bytes but `/` and NUL.
     static func nameRefusal(_ name: [UInt8]) -> TreeFileSystemError? { nil }
 

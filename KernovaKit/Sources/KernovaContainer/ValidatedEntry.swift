@@ -33,7 +33,7 @@ public struct ValidatedEntry: Sendable {
     /// `UF_IMMUTABLE`, `UF_APPEND` and `UF_DATAVAULT` block removal of the landed tree or need an entitlement,
     /// the superuser and synthetic flags need privilege the receiver lacks, `UF_COMPRESSED` is implied by
     /// decmpfs storage alone, and `UF_TRACKED` marks a document ID that does not travel.
-    static let allowedDarwinFlags: UInt32 = 0x0000_8009
+    public static let allowedDarwinFlags: UInt32 = 0x0000_8009
 
     /// The extended attributes the format carries, by exact name: Finder tags and the resource fork.
     static let allowedXattrNames: Set<Data> = [
@@ -106,13 +106,13 @@ public struct ValidatedEntry: Sendable {
     }
 
     /// Whether the format carries an extended attribute named `name`.
-    static func isAllowedXattrName(_ name: Data) -> Bool {
+    public static func isAllowedXattrName(_ name: Data) -> Bool {
         allowedXattrNames.contains(name)
             || (name.count > allowedXattrPrefix.count && name.starts(with: allowedXattrPrefix))
     }
 
     /// Whether `name` is one path component a POSIX file system takes as it is.
-    static func isValidName(_ name: Data) -> Bool {
+    public static func isValidName(_ name: Data) -> Bool {
         guard !name.isEmpty, name.count <= maxNameByteCount else { return false }
         guard name != Data([0x2E]), name != Data([0x2E, 0x2E]) else { return false }
         return !name.contains(0x2F) && !name.contains(0)

@@ -118,8 +118,44 @@ public struct ContainerEncoder {
         return records
     }
 
+    /// The records carrying the current entry's next `count` bytes, all zero, as a zero run: merged with any
+    /// zeros pending, and written once a non-zero chunk follows or the entry has all its bytes. A producer
+    /// that knows where a file's holes are passes each one here, so it lands as exactly that hole.
+    ///
+    /// - Parameter count: The zero bytes, no more than the entry still owes.
+    /// - Returns: The records' bytes, possibly none while zeros are pending.
+    /// - Throws: `ContainerError` when no entry owes bytes or `count` is more than it owes.
+    public mutating func zeros(_ count: UInt64) throws(ContainerError) -> Data {
+        guard count > 0 else { return Data() }
+        let complete = try grammar.admitChunk(count: count, lz4: false)
+        pendingZeros += count
+        var records = Data()
+        if complete { flushZeros(into: &records) }
+        return records
+    }
+
+    /// The records `event` adds: an entry's header, its bytes or zeros, or the end record. A leave adds
+    /// nothing, since the next header's depth carries it, and nor does a file's finish, which the grammar
+    /// confirms.
+    ///
+    /// - Parameter event: The next event of a tree in depth-first pre-order.
+    /// - Returns: The records' bytes, possibly none.
+    /// - Throws: `ContainerError` when the event breaks a container rule.
+    public mutating func encode(_ event: TreeEvent) throws(ContainerError) -> Data {
+        switch event {
+        case .enterDirectory(let header), .beginFile(let header), .symlink(let header): return try entry(header)
+        case .bytes(let bytes): return try self.bytes(bytes)
+        case .zeros(let count): return try zeros(count)
+        case .finishFile:
+            if let remaining = grammar.remainingBytes { throw .entryIncomplete(remaining: remaining) }
+            return Data()
+        case .leaveDirectory: return Data()
+        case .end: return try end()
+        }
+    }
+
     /// A proto3 message's bytes; with no required fields, serializing it cannot fail.
-    private static func serialized(_ message: some SwiftProtobuf.Message) -> Data {
+    fileprivate static func serialized(_ message: some SwiftProtobuf.Message) -> Data {
         do {
             return try message.serializedBytes()
         } catch {
@@ -162,5 +198,12 @@ public struct ContainerEncoder {
             }
             return true
         }
+    }
+}
+
+extension EntryHeader {
+    /// Whether the header fits one header record, whose payload lengths `ContainerRecordKind.header` states.
+    public var fitsHeaderRecord: Bool {
+        ContainerRecordKind.header.payloadLengths.contains(ContainerEncoder.serialized(self).count)
     }
 }

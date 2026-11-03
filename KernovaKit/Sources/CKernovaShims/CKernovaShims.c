@@ -152,4 +152,12 @@ int kernova_punch_hole(int descriptor, int64_t offset, int64_t length) {
 int kernova_set_xattr(int descriptor, const char *name, const void *value, size_t size) {
     return (int)syscall(SYS_fsetxattr, descriptor, name, value, size, 0);
 }
+
+long kernova_list_xattr(int descriptor, char *names, size_t size) {
+    return (long)syscall(SYS_flistxattr, descriptor, names, size);
+}
+
+long kernova_get_xattr(int descriptor, const char *name, void *value, size_t size) {
+    return (long)syscall(SYS_fgetxattr, descriptor, name, value, size);
+}
 #endif
