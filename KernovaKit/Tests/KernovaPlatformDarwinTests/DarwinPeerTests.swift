@@ -273,6 +273,20 @@ struct BlockingConnectTests {
         #expect(gate.admit("t"))
     }
 
+    @Test("POLLHUP with SO_ERROR 0 completes a non-blocking connect; POLLNVAL stays fatal")
+    func connectCompletion() throws {
+        guard #available(macOS 26.0, *) else { return }
+        // A socketpair end whose peer has closed reports POLLHUP while SO_ERROR reads 0, the shape a connect the
+        // host accepted and then hung up on takes.
+        var fds: [Int32] = [0, 0]
+        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
+        close(fds[1])
+        defer { close(fds[0]) }
+        #expect(DarwinVsockConnect.awaitConnectCompletion(fd: fds[0], label: "t", port: 0))
+        // A number at the fd-table size never names an open descriptor, so poll() reports POLLNVAL.
+        #expect(!DarwinVsockConnect.awaitConnectCompletion(fd: getdtablesize(), label: "t", port: 0))
+    }
+
     @Test("EAFNOSUPPORT and EPROTONOSUPPORT are permanent; anything else is transient")
     func classification() {
         for code in [EAFNOSUPPORT, EPROTONOSUPPORT] {

@@ -28,7 +28,7 @@ public final class MacAgentPeer: Sendable {
 
     /// What it claims.
     public let claim: PeerClaim
-    private let runtime: Locked<PeerAgentRuntime?> = Locked(nil)
+    private let runtime: PeerAgentRuntime
     private let watcher: Locked<SlotLinkWatcher?> = Locked(nil)
     private let exiting = Locked(false)
     private let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
@@ -40,7 +40,7 @@ public final class MacAgentPeer: Sendable {
         let running = DarwinIdentity.runningSlot()
         let peer = Locked<MacAgentPeer?>(nil)
         let (adapter, installer) = Self.updateInstaller(for: claim, running: running, peer: peer)
-        let runtime = PeerAgentRuntime(
+        runtime = PeerAgentRuntime(
             claim: claim, state: state, registry: PeerFeatureRegistry(logs: logs, update: adapter),
             dialer: DarwinVsockDialer(), scheduler: SystemScheduler(), logger: Self.logger,
             handlers: PeerAgentRuntime.Handlers(
@@ -52,7 +52,6 @@ public final class MacAgentPeer: Sendable {
                     Self.logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
                     Darwin.exit(0)
                 }))
-        self.runtime.withLock { $0 = runtime }
         peer.withLock { $0 = self }
         if let running, claim.scope != .unspecified {
             let watcher = SlotLinkWatcher(root: running.root, runningSlot: running.slot, queue: queue) { [self] in
@@ -72,12 +71,12 @@ public final class MacAgentPeer: Sendable {
 
     /// Starts the adapters and dials.
     public func start() {
-        runtime.withLock { $0 }?.start()
+        runtime.start()
     }
 
     /// The session's state changed.
     public func setPeerState(_ state: PeerSessionState?) {
-        runtime.withLock { $0 }?.setPeerState(state)
+        runtime.setPeerState(state)
     }
 
     /// Closes the connection with `SHUTTING_DOWN`, then exits with `status`; once, whoever asks first.
@@ -88,7 +87,6 @@ public final class MacAgentPeer: Sendable {
             })
         else { return }
         watcher.withLock { $0 }?.cancel()
-        guard let runtime = runtime.withLock({ $0 }) else { Darwin.exit(status) }
         runtime.close { Darwin.exit(status) }
     }
 

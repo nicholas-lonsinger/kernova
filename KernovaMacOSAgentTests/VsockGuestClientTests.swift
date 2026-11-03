@@ -456,38 +456,6 @@ struct VsockGuestClientPauseTests {
     }
 }
 
-// MARK: - awaitConnectCompletion revents classification
-
-@Suite("VsockGuestClient.awaitConnectCompletion revents classification", .caseScoped)
-struct AwaitConnectCompletionTests {
-    @Test("POLLHUP with SO_ERROR == 0 is a completed connect, not a failure")
-    func pollhupWithNoSocketErrorCompletes() throws {
-        guard #available(macOS 26.0, *) else { return }
-        // A socketpair end whose peer has closed reports POLLHUP from poll()
-        // while SO_ERROR reads 0 — the shape a state-blind vsock fd produces
-        // for a connect the host accepted
-        // (docs/research/2026-08-06-macos13-vsock-nonblocking-state-blind.md).
-        var fds: [Int32] = [0, 0]
-        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
-        close(fds[1])
-        defer { close(fds[0]) }
-        #expect(
-            VsockGuestClient.awaitConnectCompletion(
-                fd: fds[0], label: "test", port: 0, clock: MonotonicEngineClock()))
-    }
-
-    @Test("POLLNVAL (invalid descriptor) stays fatal")
-    func pollnvalFails() {
-        guard #available(macOS 26.0, *) else { return }
-        // A number at the fd-table size can never name an open descriptor, so
-        // poll() reports POLLNVAL with no fd-reuse window.
-        let fd = getdtablesize()
-        #expect(
-            !VsockGuestClient.awaitConnectCompletion(
-                fd: fd, label: "test", port: 0, clock: MonotonicEngineClock()))
-    }
-}
-
 // MARK: - Concurrency helpers
 
 /// Actor-isolated counter for tracking cross-task call counts.

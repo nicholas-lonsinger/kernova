@@ -225,7 +225,7 @@ public enum DarwinVsockConnect {
     /// Waits up to `connectTimeoutSeconds` for an in-flight non-blocking connect to complete on `fd`. The
     /// caller owns `fd` on both paths and must `close()` it on a `false` return.
     @available(macOS 26.0, *)
-    private static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {
+    static func awaitConnectCompletion(fd: Int32, label: String, port: UInt32) -> Bool {
         var pfd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
         let deadline = SystemScheduler().now.advanced(by: .seconds(Int64(connectTimeoutSeconds)))
 
