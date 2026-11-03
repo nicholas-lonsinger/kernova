@@ -8,7 +8,7 @@ import KernovaAgentCore
 import KernovaWire
 
 /// One connection that has said Hello.
-struct PeerRecord: Sendable {
+struct PeerRecord: ConsolePeer, Sendable {
     var handle: PeerHandle
     var claim: PeerClaim
     var state: PeerSessionState
@@ -31,6 +31,8 @@ struct PeerRecord: Sendable {
     var awayKey: AwayKey {
         AwayKey(isSystemPeer: claim.role == .systemPeer, userName: claim.role == .systemPeer ? "" : state.userName)
     }
+
+    var role: PeerRole { claim.role }
 
     var conflictParty: ConflictParty {
         ConflictParty(claim: claim, state: state, isUnresponsive: !isResponsive)
@@ -70,6 +72,8 @@ struct AgentHubState: Sendable {
     var bundles: [BundledPayload] = []
     var isFrozen = false
     var isClosed = false
+    var power = HubPowerRouting()
+    var items = HubItemRequests()
     var lastPublished = AgentHubSnapshot.empty
     private var nextConnectedOrder: UInt64 = 0
     /// The last close of each identity seen on this attachment. The snapshot shows an entry only while no
@@ -117,12 +121,67 @@ struct AgentHubState: Sendable {
         away = [:]
     }
 
+    /// The peers whose features are known: the ones the snapshot shows, and the only ones power and items
+    /// are routed to.
+    private var visiblePeers: [PeerRecord] {
+        peers.values.filter { $0.features != nil }
+    }
+
+    /// The routing view of every visible peer. An unresponsive peer's POWER is not usable: a request to it
+    /// could only end in the host's wait expiring, which stops the routing as indeterminate where the next
+    /// candidate could have served.
+    var routingPeers: [RoutingPeer] {
+        visiblePeers.compactMap { record in
+            guard let features = record.features else { return nil }
+            var peer = RoutingPeer(
+                handle: record.handle, role: record.claim.role, state: record.state,
+                connectedOrder: record.connectedOrder, features: features)
+            peer.powerUsable = peer.powerUsable && record.isResponsive
+            return peer
+        }
+    }
+
+    /// The peer `feature`'s offers go to: the newest peer of the console's session whose connection offers it.
+    func consolePeer(for feature: FeatureID) -> PeerHandle? {
+        ConsoleAuthority.consolePeers(visiblePeers).first { $0.features?[feature].isAvailable == true }?.handle
+    }
+
+    /// Why no peer is `feature`'s console peer.
+    func consoleAbsence(of feature: FeatureID) -> AbsenceReason {
+        Self.absence(of: feature, in: FeatureStatus.merge(visiblePeers.compactMap(\.features)))
+    }
+
     var snapshot: AgentHubSnapshot {
-        let ordered = peers.values.filter { $0.features != nil }.sorted { $0.connectedOrder > $1.connectedOrder }
+        let ordered = visiblePeers.sorted { $0.connectedOrder > $1.connectedOrder }
         let visible = Set(ordered.map(\.awayKey))
+        let features = FeatureStatus.merge(ordered.compactMap(\.features))
+        var consolePeers: [FeatureID: PeerHandle] = [:]
+        for feature in [FeatureID.clipboard, .drop, .drag] {
+            consolePeers[feature] = consolePeer(for: feature)
+        }
         return AgentHubSnapshot(
-            peers: ordered.map(summary), features: FeatureStatus.merge(ordered.compactMap(\.features)),
-            away: away.filter { !visible.contains($0.key) }.values.sorted { $0.order > $1.order })
+            peers: ordered.map(summary), features: features,
+            away: away.filter { !visible.contains($0.key) }.values.sorted { $0.order > $1.order },
+            power: provision(features: features), routing: power.progress, consolePeers: consolePeers)
+    }
+
+    /// The merged POWER entry: the first candidate a shutdown would ask, else why there is none.
+    private func provision(features: FeatureStatusTable) -> PowerProvision {
+        if let first = PowerRouting.candidates(for: .shutdown, peers: routingPeers, excluding: []).first,
+            let role = peers[first]?.claim.role
+        {
+            return .agent(role)
+        }
+        return .absent(Self.absence(of: .power, in: features))
+    }
+
+    /// Why no console peer serves `feature`: the merged absence, or `NOT_ON_CONSOLE` for a feature some peer
+    /// offers while serving no console session.
+    private static func absence(of feature: FeatureID, in features: FeatureStatusTable) -> AbsenceReason {
+        switch features[feature] {
+        case .absent(let reason, _): reason
+        case .available: .notOnConsole
+        }
     }
 
     private func summary(_ record: PeerRecord) -> PeerSummary {

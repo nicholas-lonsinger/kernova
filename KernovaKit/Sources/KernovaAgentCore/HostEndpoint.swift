@@ -45,6 +45,8 @@ public enum HostCommand: Sendable, Equatable {
     case setBundles([BundledPayload])
     /// Close the connection (`SUPERSEDED`, `DUPLICATE_PEER`, `SHUTTING_DOWN`).
     case close(ErrorCode, retryAfter: CoreDuration?)
+    /// Offer, withdraw, release, pull, cancel, take or read items; answered as `ItemCommand` says.
+    case items(ItemCommand)
 }
 
 /// What a host endpoint asks of its update payload source and its item adapters.
@@ -85,6 +87,8 @@ public enum HostEvent: Sendable, Equatable {
     case items(ItemTransferEvent)
     /// A take of the peer's drag ended.
     case dragTake(DragTakeEvent)
+    /// The answer to the `.items` command of this id.
+    case itemReply(ItemRequestID, ItemReply)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -189,6 +193,11 @@ public struct HostEndpoint: Sendable {
             update.offerChanged(connection.offeredUpdate, connection: &connection)
         case .close(let code, let retryAfter):
             connection.close(code, retryAfter: retryAfter, now: now)
+        case .items(let command):
+            // Queued before the route below collects what the command caused, so the answer comes first.
+            if let (id, reply) = items.perform(command, connection: &connection) {
+                events.append(.itemReply(id, reply))
+            }
         }
         route(now)
     }

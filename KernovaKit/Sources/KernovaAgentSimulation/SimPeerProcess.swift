@@ -131,7 +131,7 @@ package final class SimPeerProcess {
             world.itemOutput(.event(event), link: link, side: .peer)
         case .dragTake(let event):
             link.items(.peer).dragTake(event, link: link, side: .peer, world: world)
-        case .established, .hostLiveness, .updateAvailable, .diagnostic:
+        case .established, .hostLiveness, .updateAvailable, .diagnostic, .itemReply:
             break
         }
     }

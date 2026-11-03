@@ -91,6 +91,17 @@ package struct ItemOfferRegistry: Sendable {
         return try? OfferedItem(serializedBytes: entry.items[index])
     }
 
+    /// Every item of the far side's open offer of `token`, decoded now; nil unless it arrived whole.
+    func remoteItems(_ token: Data) -> [OfferedItem]? {
+        guard let entry = remote.first(where: { $0.header.token == token }), entry.complete else { return nil }
+        var items: [OfferedItem] = []
+        for encoded in entry.items {
+            guard let item = try? OfferedItem(serializedBytes: encoded) else { return nil }
+            items.append(item)
+        }
+        return items
+    }
+
     /// The representation a pull of this side's offer names, or the code refusing it.
     func localRepresentation(_ request: PullRequest) -> Result<Representation, WireError> {
         guard let offer = local.first(where: { $0.offer.token == request.token })?.offer else {

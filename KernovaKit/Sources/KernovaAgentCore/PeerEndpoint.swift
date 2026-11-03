@@ -56,6 +56,8 @@ public enum PeerInput: Sendable, Equatable {
     case items(ItemTransferInput)
     /// The answer to a take of this side's drag; one to a take already ended is dropped.
     case dragTake(DragTakeID, DragTakeAnswer)
+    /// Offer, withdraw, release, pull, cancel or read items; answered as `ItemCommand` says.
+    case itemCommand(ItemCommand)
 }
 
 /// What a peer endpoint asks its adapters and runtime to do.
@@ -86,6 +88,8 @@ public enum PeerEvent: Sendable, Equatable {
     case items(ItemTransferEvent)
     /// The host takes this side's drag.
     case dragTake(DragTakeEvent)
+    /// The answer to the `.itemCommand` input of this id.
+    case itemReply(ItemRequestID, ItemReply)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -188,6 +192,11 @@ public struct PeerEndpoint: Sendable {
             items.handle(input, connection: &connection, now: now)
         case .dragTake(let id, let answer):
             items.answer(id, answer, connection: &connection)
+        case .itemCommand(let command):
+            // Queued before the route below collects what the command caused, so the answer comes first.
+            if let (id, reply) = items.perform(command, connection: &connection) {
+                events.append(.itemReply(id, reply))
+            }
         }
         route(now)
     }

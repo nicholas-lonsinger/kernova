@@ -38,6 +38,8 @@ public protocol HostConnectionMaking: Sendable {
 
 /// One host connection, as the hub drives it.
 public protocol HostConnectionHandle: Sendable {
+    /// The connection's generation, which every power request id the hub sends it carries.
+    var generation: ConnectionGeneration { get }
     /// Starts the connection.
     func start()
     /// Sends `command` to the connection's driver with `async`.
@@ -65,7 +67,8 @@ extension HostConnection: HostConnectionHandle {}
 /// The state lives on the hub's own serial queue. Every method returns at once, posting its work there;
 /// drivers deliver events there and take commands from it, both with `async`, so no queue ever waits on
 /// another (spec §9.7). Snapshots reach `publish` on the publishing queue, coalesced: at most one is
-/// pending, and a newer one replaces it.
+/// pending, and a newer one replaces it. Item events and the answers to item calls run on the hub's queue,
+/// in the order the connections emitted them, so a call's answer comes before any event it caused.
 public final class AgentHub: Sendable {
     /// The hub's queue: serial, every input to its state runs on it.
     package let queue = DispatchQueue(label: "app.kernova.agent-hub")
@@ -75,33 +78,38 @@ public final class AgentHub: Sendable {
     private let handles = Locked<UInt64>(0)
     private let state = Locked(AgentHubState())
     private let publisher: SnapshotPublisher
+    private let itemEvents: @Sendable (HubItemEvent) -> Void
     private let logger: KernovaLogger
 
-    /// A hub whose connections say Hello as `claim`, offer `payloads`' bundles and serve their bytes,
-    /// and start with `policy`.
+    /// A hub whose connections say Hello as `claim`, offer `payloads`' bundles and serve their bytes, serve
+    /// items through `items`, and start with `policy`; the item events of every connection reach
+    /// `itemEvents`.
     public convenience init(
-        claim: PeerClaim, policy: PolicySnapshot, payloads: any BundledPayloadProvider,
+        claim: PeerClaim, policy: PolicySnapshot, payloads: any BundledPayloadProvider, items: ItemAdapters? = nil,
         scheduler: any RuntimeScheduler = SystemScheduler(),
         logger: KernovaLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub"),
+        itemEvents: @escaping @Sendable (HubItemEvent) -> Void = { _ in },
         publishingOn publishQueue: DispatchQueue = .main,
         _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
     ) {
         self.init(
             connector: HostConnectionRuntime(
-                claim: claim, scheduler: scheduler, payloadSource: payloads, logger: logger),
-            policy: policy, payloads: payloads, scheduler: scheduler, logger: logger, publishingOn: publishQueue,
-            publish)
+                claim: claim, scheduler: scheduler, payloadSource: payloads, items: items, logger: logger),
+            policy: policy, payloads: payloads, scheduler: scheduler, logger: logger, itemEvents: itemEvents,
+            publishingOn: publishQueue, publish)
     }
 
     /// A hub whose connections `connector` builds, stamping when each peer goes away on `scheduler`'s clock.
     public init(
         connector: any HostConnectionMaking, policy: PolicySnapshot, payloads: any BundledPayloadProvider,
         scheduler: any RuntimeScheduler = SystemScheduler(), logger: KernovaLogger,
-        publishingOn publishQueue: DispatchQueue, _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
+        itemEvents: @escaping @Sendable (HubItemEvent) -> Void = { _ in }, publishingOn publishQueue: DispatchQueue,
+        _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
     ) {
         self.connector = connector
         self.scheduler = scheduler
         self.logger = logger
+        self.itemEvents = itemEvents
         template = Locked(HostConfigurationTemplate(policy: policy))
         publisher = SnapshotPublisher(queue: publishQueue, deliver: publish)
         payloads.loadPayloads { [self] bundles in setBundles(bundles) }
@@ -164,6 +172,231 @@ public final class AgentHub: Sendable {
             state.withLock { $0.isClosed = true }
             detachTransport()
         }
+    }
+
+    // MARK: Power
+
+    /// Routes `action` across the peers (spec §6.4) — `ConsoleAuthority`'s console peers newest first, then
+    /// the system peer — and calls `completion` once, on the hub's queue, with how it ended. The hub never
+    /// presses the ACPI button: `.useACPI` hands that back to the caller.
+    public func requestPower(_ action: PowerAction, _ completion: @escaping @Sendable (PowerRoutingOutcome) -> Void) {
+        queue.async { [self] in
+            let begun = state.withLock { state -> Bool in
+                guard !state.power.routing.isRouting else { return false }
+                state.power.completion = completion
+                state.power.routing.begin(action, peers: state.routingPeers)
+                return true
+            }
+            guard begun else { return completion(.busy) }
+            logger.log(.notice, "Routing \(Self.name(action), privacy: .public) across the guest's agents")
+            drainRouting()
+        }
+    }
+
+    /// ``requestPower(_:_:)``, awaited.
+    public func requestPower(_ action: PowerAction) async -> PowerRoutingOutcome {
+        await withCheckedContinuation { continuation in
+            requestPower(action) { continuation.resume(returning: $0) }
+        }
+    }
+
+    /// Carries out the routing's outputs: each ask becomes a request to that peer's connection, each
+    /// progress the snapshot's stage, and the terminal output the caller's outcome.
+    private func drainRouting() {
+        dispatchPrecondition(condition: .onQueue(queue))
+        while let output = state.withLock({ $0.power.routing.pollOutput() }) {
+            switch output {
+            case .ask(let handle, let action):
+                ask(handle, action)
+            case .progress(_, let stage, let apps):
+                state.withLock { state in
+                    state.power.progress?.stage =
+                        switch stage {
+                        case .askingApps: .askingApps
+                        case .waitingOnApps: .waitingOnApps(apps)
+                        }
+                }
+            default:
+                guard let outcome = PowerRoutingOutcome(output) else { continue }
+                let completion = state.withLock { state in
+                    defer {
+                        state.power.completion = nil
+                        state.power.progress = nil
+                    }
+                    return state.power.completion
+                }
+                logger.log(.notice, "Power routing ended: \(String(describing: outcome), privacy: .public)")
+                completion?(outcome)
+            }
+        }
+        publishIfChanged()
+    }
+
+    private func ask(_ handle: PeerHandle, _ action: PowerAction) {
+        // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in the same turn, and a
+        // peer and its connection leave the hub together; so both are present.
+        let (connection, id, record) = state.withLock { state in
+            let connection = state.connections[handle]!
+            let record = state.peers[handle]!
+            let id = state.power.drawID(connection.generation)
+            state.power.requests[id] = handle
+            state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
+            return (connection, id, record)
+        }
+        logger.log(
+            .notice, "Asking the \(Self.name(record), privacy: .public) to \(Self.name(action), privacy: .public)")
+        connection.send(.requestPower(id, action))
+    }
+
+    /// A power request's result, from the connection it was asked of.
+    private func powerResult(_ id: PowerRequestID, _ result: PowerRequestResult) {
+        state.withLock { state in
+            guard let handle = state.power.requests[id] else { return }
+            switch result {
+            case .accepted:
+                state.power.progress?.stage = .accepted
+            case .progress:
+                break
+            case .refused, .indeterminate, .finished, .lostAfterAcceptance:
+                state.power.requests[id] = nil
+            }
+            state.power.routing.handle(result, from: handle, peers: state.routingPeers)
+        }
+        drainRouting()
+    }
+
+    /// The connection `handle` ended. A request asked of it that never reached its endpoint — the driver
+    /// drops what is sent after it shut down — reported nothing, and nothing was done.
+    private func endPowerRequests(of handle: PeerHandle) {
+        let unanswered = state.withLock { state in
+            state.power.requests.filter { $0.value == handle }.map(\.key)
+        }
+        for id in unanswered {
+            powerResult(
+                id,
+                .refused(WireError(.shuttingDown, debugDetail: "the connection ended before the request reached it")))
+        }
+    }
+
+    private static func name(_ action: PowerAction) -> String {
+        switch action {
+        case .shutdown: "shut down"
+        case .restart: "restart"
+        case .unspecified, .UNRECOGNIZED: "act on \(action)"
+        }
+    }
+
+    // MARK: Items
+
+    /// Offers `offer` on `feature` — CLIPBOARD, withdrawing that peer's previous clipboard offer, or DROP —
+    /// to the peer the snapshot's `consolePeers` names for it now, and calls `completion` once with that
+    /// peer, whose `.items` events then carry the offer, or why it was not opened: `FEATURE_UNAVAILABLE`
+    /// with the absence when no console peer offers `feature`.
+    public func offerItems(
+        _ offer: ItemOffer, feature: FeatureID,
+        _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
+    ) {
+        queue.async { [self] in
+            let route = state.withLock { state in
+                state.consolePeer(for: feature).map { Result.success($0) }
+                    ?? .failure(WireError(.featureUnavailable, absence: state.consoleAbsence(of: feature)))
+            }
+            guard case .success(let peer) = route else { return completion(route) }
+            awaitReply(
+                from: peer, { .offer($0, offer, feature: feature) },
+                { if case .offered(let refusal) = $0 { refusal.map(Result.failure) ?? .success(peer) } else { nil } },
+                unanswered: .failure(Self.connectionEnded), completion)
+        }
+    }
+
+    /// Withdraws the offer of `token` made to `peer`; its `.offerEnded` follows.
+    public func withdrawOffer(_ token: Data, from peer: PeerHandle) {
+        queue.async { [self] in send(.withdraw(token: token), to: peer) }
+    }
+
+    /// Releases `peer`'s offer of `token`: the host pulls nothing more of it. Releasing a taken drag offer
+    /// completes the drag.
+    public func releaseOffer(_ token: Data, of peer: PeerHandle) {
+        queue.async { [self] in send(.release(token: token), to: peer) }
+    }
+
+    /// Pulls one representation of `peer`'s open offer, and calls `completion` once with the pull's id, whose
+    /// one `.pullEnded` follows, or why it was not opened.
+    public func pullItem(
+        _ request: PullRequest, from peer: PeerHandle,
+        _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void
+    ) {
+        queue.async { [self] in
+            awaitReply(
+                from: peer, { .pull($0, request) }, { if case .pulled(let result) = $0 { result } else { nil } },
+                unanswered: .failure(Self.connectionEnded), completion)
+        }
+    }
+
+    /// Cancels a pull of `peer`'s offer; its `.pullEnded` follows.
+    public func cancelPull(_ id: ItemPullID, on peer: PeerHandle) {
+        queue.async { [self] in send(.cancel(id), to: peer) }
+    }
+
+    /// Takes `peer`'s open drag offer of `token`, and calls `completion` once with the take's id, whose one
+    /// `.dragTake(.ended)` follows, or why it was not opened.
+    public func takeDrag(
+        _ token: Data, of peer: PeerHandle, _ completion: @escaping @Sendable (Result<DragTakeID, WireError>) -> Void
+    ) {
+        queue.async { [self] in
+            awaitReply(
+                from: peer, { .takeDrag($0, token: token) }, { if case .took(let result) = $0 { result } else { nil } },
+                unanswered: .failure(Self.connectionEnded), completion)
+        }
+    }
+
+    /// Calls `completion` once with the items of `peer`'s open offer of `token`, decoded, in order; nil when
+    /// no such offer is held whole.
+    public func readOffer(
+        _ token: Data, of peer: PeerHandle, _ completion: @escaping @Sendable ([OfferedItem]?) -> Void
+    ) {
+        queue.async { [self] in
+            awaitReply(
+                from: peer, { .read($0, token: token) },
+                { if case .read(let items) = $0 { .some(items) } else { nil } },
+                unanswered: nil, completion)
+        }
+    }
+
+    /// The error of an item call whose connection was gone, or ended before answering.
+    private static let connectionEnded = WireError(.shuttingDown, debugDetail: "the connection ended before answering")
+
+    /// Sends `peer`'s connection the command `command` builds around a fresh request id, and calls
+    /// `completion` once with what `answer` reads from its reply — or with `unanswered`, at once or later, when
+    /// the connection is gone or ends without replying.
+    private func awaitReply<Answer: Sendable>(
+        from peer: PeerHandle, _ command: (ItemRequestID) -> ItemCommand,
+        _ answer: @escaping @Sendable (ItemReply) -> Answer?, unanswered: Answer,
+        _ completion: @escaping @Sendable (Answer) -> Void
+    ) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        let deliver: @Sendable (ItemReply?) -> Void = { reply in
+            let read = reply.flatMap(answer)
+            // The endpoint answers each command with that command's kind of reply.
+            assert(reply == nil || read != nil, "a reply answering another command")
+            completion(read ?? unanswered)
+        }
+        let sent = state.withLock { state -> (any HostConnectionHandle, ItemRequestID)? in
+            guard let connection = state.connections[peer] else { return nil }
+            return (connection, state.items.add(peer, deliver))
+        }
+        guard let (connection, id) = sent else { return deliver(nil) }
+        connection.send(.items(command(id)))
+    }
+
+    private func send(_ command: ItemCommand, to peer: PeerHandle) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        state.withLock { $0.connections[peer] }?.send(.items(command))
+    }
+
+    /// The connection `handle` ended: every item call asked of it and not answered gets no answer.
+    private func endItemRequests(of handle: PeerHandle) {
+        for pending in state.withLock({ $0.items.takeAll(of: handle) }) { pending.answer(nil) }
     }
 
     private func detachTransport() {
@@ -252,6 +485,8 @@ public final class AgentHub: Sendable {
                     "The \(Self.name(record), privacy: .public) left: \(String(describing: closure), privacy: .public)")
             }
             state.withLock { [now = scheduler.now] in $0.closed(handle, at: now) }
+            endPowerRequests(of: handle)
+            endItemRequests(of: handle)
         case .log(let delivery):
             // Records change no peer state, so the snapshot is not rebuilt.
             return republish(delivery, from: handle)
@@ -259,14 +494,17 @@ public final class AgentHub: Sendable {
             logUpdate(event, from: handle)
             state.withLock { $0.updateServed(event, from: handle) }
         case .items(let event):
-            // The hub offers, pulls and takes no items, so no item event changes what it does.
-            ignoreItemEvent(Self.kind(event), from: handle)
+            // Item events change no peer state, so the snapshot is not rebuilt.
+            return itemEvents(.items(handle, event))
+        case .dragTake(let event):
+            return itemEvents(.dragTake(handle, event))
+        case .itemReply(let id, let reply):
+            state.withLock { $0.items.take(id, from: handle) }?.answer(reply)
             return
-        case .dragTake:
-            ignoreItemEvent("dragTake", from: handle)
-            return
-        case .power, .diagnostic:
-            // Nothing asks a peer for power yet, and the driver logs diagnostics itself.
+        case .power(let id, let result):
+            return powerResult(id, result)
+        case .diagnostic:
+            // The driver logs diagnostics itself.
             return
         }
         publishIfChanged()
@@ -306,22 +544,6 @@ public final class AgentHub: Sendable {
         case .closed(_, let closure):
             let detail = String(describing: closure)
             logger.log(.error, "The \(peer, privacy: .public)'s update pull ended early: \(detail, privacy: .public)")
-        }
-    }
-
-    private func ignoreItemEvent(_ kind: String, from handle: PeerHandle) {
-        guard let record = state.withLock({ $0.peers[handle] }) else { return }
-        logger.log(
-            .notice,
-            "The hub does not act on the \(Self.name(record), privacy: .public)'s item event \(kind, privacy: .public)")
-    }
-
-    private static func kind(_ event: ItemTransferEvent) -> String {
-        switch event {
-        case .offerReceived: "offerReceived"
-        case .offerEnded: "offerEnded"
-        case .pullEnded: "pullEnded"
-        case .serveEnded: "serveEnded"
         }
     }
 

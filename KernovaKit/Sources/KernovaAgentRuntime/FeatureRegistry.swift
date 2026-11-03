@@ -32,23 +32,56 @@ public struct PeerFeatureRegistry: Sendable {
     }
 }
 
-/// The adapters that move items' bytes: the source serves this side's offers, the sink lands the far
-/// side's. Without them, item transfer is advertised absent `NOT_IMPLEMENTED`.
+/// The adapters that move items' bytes, and the features that offer items over them: the source serves this
+/// side's offers, the sink lands the far side's. Without them, item transfer is advertised absent
+/// `NOT_IMPLEMENTED`, and so is every feature that offers items.
 public struct ItemAdapters: Sendable {
+    /// The features that offer items, each of which a side serves only where its owner handles its offers.
+    public struct Features: OptionSet, Sendable {
+        public let rawValue: UInt8
+
+        /// Creates a set.
+        public init(rawValue: UInt8) {
+            self.rawValue = rawValue
+        }
+
+        /// CLIPBOARD.
+        public static let clipboard = Features(rawValue: 1 << 0)
+        /// DROP.
+        public static let drop = Features(rawValue: 1 << 1)
+        /// DRAG.
+        public static let drag = Features(rawValue: 1 << 2)
+    }
+
     /// Serves this side's offers.
     public var source: any ItemSource
     /// Lands the far side's offers.
     public var sink: any ItemSink
+    /// The features this side's owner handles: each is advertised available where listed, and absent
+    /// `NOT_IMPLEMENTED` otherwise.
+    public var features: Features
 
-    /// Creates the adapters.
-    public init(source: any ItemSource, sink: any ItemSink) {
+    /// Creates the adapters, serving `features`.
+    public init(source: any ItemSource, sink: any ItemSink, features: Features = []) {
         self.source = source
         self.sink = sink
+        self.features = features
     }
 
-    /// Item transfer's availability on a connection these adapters, or none, serve.
-    static func availability(_ adapters: ItemAdapters?) -> Availability<NoParams> {
-        adapters == nil ? .absent(.notImplemented, debugDetail: "no adapter registered") : .available(NoParams())
+    /// What a connection these adapters, or none, serve advertises of item transfer and the features over it.
+    static func availability(_ adapters: ItemAdapters?) -> ItemFeatureAvailability {
+        guard let adapters else {
+            var none = ItemFeatureAvailability.notImplemented
+            none.itemTransfer = .absent(.notImplemented, debugDetail: "no adapter registered")
+            return none
+        }
+        func served(_ feature: Features) -> Availability<NoParams> {
+            adapters.features.contains(feature)
+                ? .available(NoParams()) : .absent(.notImplemented, debugDetail: "no handler registered")
+        }
+        return ItemFeatureAvailability(
+            itemTransfer: .available(NoParams()), clipboard: served(.clipboard), drop: served(.drop),
+            drag: served(.drag))
     }
 }
 
