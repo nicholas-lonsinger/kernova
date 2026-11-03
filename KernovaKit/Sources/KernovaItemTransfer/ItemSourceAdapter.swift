@@ -1,3 +1,5 @@
+// The adapters land and serve through POSIX directories, which only Darwin and Linux have here.
+#if canImport(Darwin) || os(Linux)
 #if canImport(FoundationEssentials)
 import FoundationEssentials
 #else
@@ -212,3 +214,4 @@ final class InlineEvents: TreeEventSource {
         return .end
     }
 }
+#endif

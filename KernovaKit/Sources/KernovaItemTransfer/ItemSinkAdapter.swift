@@ -1,3 +1,5 @@
+// The adapters land and serve through POSIX directories, which only Darwin and Linux have here.
+#if canImport(Darwin) || os(Linux)
 #if canImport(FoundationEssentials)
 import FoundationEssentials
 #else
@@ -241,3 +243,4 @@ extension ContainerError {
             errorCode, limit: errorCode == .tooLarge ? acceptance.byteCeiling : 0, debugDetail: "\(self)")
     }
 }
+#endif
