@@ -252,8 +252,8 @@ extension SimWorld {
     /// of the representation it names.
     package func pullItem(_ request: PullRequest, by side: SimSide, link index: Int = 0) {
         itemCommand(side, link: index) { items in
-            let storage = items.read(request.token, item: request.item)?.representations
-                .dropFirst(Int(request.representation)).first?.storage ?? .file
+            let representations = items.read(request.token, item: request.item)?.representations ?? []
+            let storage = representations.dropFirst(Int(request.representation)).first?.storage ?? .file
             let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
             return [items.command(.pull(request)) { .pull($0, order) }]
         }
