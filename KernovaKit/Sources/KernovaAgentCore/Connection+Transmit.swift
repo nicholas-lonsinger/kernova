@@ -83,7 +83,11 @@ extension Connection {
             return Frame(streamID: streams[index].id, type: .window, payload: Self.bigEndian(increment))
         }
         if state == .closing {
-            return takeConnectionReset(fits)
+            // Only a completed stream's FIFO survives the close (`closeAllStreams`), and it leaves before RESET(0).
+            guard streams.contains(where: { $0.openHandedOut && $0.hasQueuedFrames }) else {
+                return takeConnectionReset(fits)
+            }
+            return takeStreamFrame(fits)
         }
         // 7. The lowest-id unsent OPEN: ids are allocated in increasing order, so OPENs leave in id order.
         if let index = streams.firstIndex(where: \.frontIsOpen) {

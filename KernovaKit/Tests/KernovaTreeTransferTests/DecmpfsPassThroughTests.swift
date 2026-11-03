@@ -55,7 +55,7 @@ struct DecmpfsPassThroughTests {
             let name = Array("type-\(type)".utf8)
             let file = try CompressedFile(
                 creating: name, in: directory, attribute: sample.attribute, logicalSize: sample.logicalSize,
-                extendedAttributes: [], on: fileSystem)
+                resourceForkLength: UInt64(sample.resourceFork.count), extendedAttributes: [], on: fileSystem)
             try sample.resourceFork.withUnsafeBytes { fork in
                 for start in stride(from: 0, to: fork.count, by: ContainerEncoder.chunkByteCount) {
                     let end = min(start + ContainerEncoder.chunkByteCount, fork.count)
@@ -149,9 +149,7 @@ struct DecmpfsPassThroughTests {
             let name = String(decoding: components[1], as: UTF8.self)
             try #require(read.flags & FileStatus.compressedFlag != 0, "\(name) is compressed in the source")
             #expect(wrote.flags & FileStatus.compressedFlag != 0, "\(name) landed compressed")
-            // A resource fork written in several pieces can hold more blocks than the same fork written whole
-            // until APFS trims it (observed on macOS 27.2, 26B123), so only one-piece forks compare blocks.
-            if name != "type4-large" { #expect(wrote.blocks == read.blocks, "st_blocks of \(name)") }
+            #expect(wrote.blocks == read.blocks, "st_blocks of \(name)")
             #expect(wrote.size == read.size, "size of \(name)")
             #expect(wrote.digest == read.digest, "SHA-256 of \(name)")
             #expect(wrote.modificationTime == read.modificationTime, "mtime of \(name)")
@@ -201,7 +199,9 @@ struct DecmpfsPassThroughTests {
 
     // MARK: - Resource forks
 
-    @Test("a resource fork above a header record's 64 KiB, on a folder's Icon\\r or a plain file, round-trips")
+    @Test(
+        "a resource fork above a header record's 64 KiB, on a folder's Icon\\r or a plain file, round-trips at its source's st_blocks"
+    )
     func largeResourceForks() throws {
         let bench = try FidelityBench()
         let item = bytes("item")
@@ -223,6 +223,12 @@ struct DecmpfsPassThroughTests {
         #expect(landed[[item, bytes("written")]]?.resourceFork == large)
         #expect(landed[[item, bytes("written")]]?.digest == SHA256.hash(Array(data)))
         #expect(landed[[item, bytes("Icon\r")]]?.carriedXattrs.isEmpty == true, "the fork is no attribute")
+        for name in ["Icon\r", "written"] {
+            let fork = "/item/" + name + "/..namedfork/rsrc"
+            #expect(
+                try rawStatus(bench.destinationPath + fork).st_blocks == rawStatus(bench.sourcePath + fork).st_blocks,
+                "st_blocks of \(name)'s resource fork")
+        }
     }
 
     // MARK: - The confirmation
