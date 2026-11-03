@@ -6,7 +6,14 @@ import Foundation
 
 import Dispatch
 import KernovaAgentCore
+import KernovaAgentRuntime
 import KernovaSynchronization
+
+/// One pull, across every connection an adapter serves: its id is unique only on its connection.
+struct PullKey: Hashable, Sendable {
+    let connection: ItemConnection
+    let id: ItemPullID
+}
 
 /// Each pull's state on a serial queue of its own, so one pull's disk work never waits on another's and every
 /// effect of a pull runs in the order the core emitted it.
@@ -23,23 +30,23 @@ final class PullLanes<State>: Sendable {
     }
 
     private let label: String
-    private let lanes = Locked<[ItemPullID: Lane]>([:])
+    private let lanes = Locked<[PullKey: Lane]>([:])
 
     init(label: String) {
         self.label = label
     }
 
-    /// Opens `id`'s lane and runs `body` on it, which makes the pull's state.
-    func open(_ id: ItemPullID, _ body: @escaping @Sendable () -> State?) {
-        let lane = Lane("\(label).\(id.generation.rawValue).\(id.stream.rawValue)")
-        lanes.withLock { $0[id] = lane }
+    /// Opens `key`'s lane and runs `body` on it, which makes the pull's state.
+    func open(_ key: PullKey, _ body: @escaping @Sendable () -> State?) {
+        let lane = Lane("\(label).\(key.id.generation.rawValue).\(key.id.stream.rawValue)")
+        lanes.withLock { $0[key] = lane }
         lane.queue.async { lane.state = body() }
     }
 
-    /// Runs `body` on `id`'s lane with its state, after everything queued before it; nothing when the lane is
+    /// Runs `body` on `key`'s lane with its state, after everything queued before it; nothing when the lane is
     /// closed or holds no state.
-    func run(_ id: ItemPullID, _ body: @escaping @Sendable (inout State) -> Void) {
-        guard let lane = lanes.withLock({ $0[id] }) else { return }
+    func run(_ key: PullKey, _ body: @escaping @Sendable (inout State) -> Void) {
+        guard let lane = lanes.withLock({ $0[key] }) else { return }
         lane.queue.async {
             guard var state = lane.state else { return }
             lane.state = nil
@@ -48,9 +55,9 @@ final class PullLanes<State>: Sendable {
         }
     }
 
-    /// Closes `id`'s lane: `body` runs last on it with its state, which is then dropped.
-    func close(_ id: ItemPullID, _ body: @escaping @Sendable (inout State?) -> Void = { _ in }) {
-        guard let lane = lanes.withLock({ $0.removeValue(forKey: id) }) else { return }
+    /// Closes `key`'s lane: `body` runs last on it with its state, which is then dropped.
+    func close(_ key: PullKey, _ body: @escaping @Sendable (inout State?) -> Void = { _ in }) {
+        guard let lane = lanes.withLock({ $0.removeValue(forKey: key) }) else { return }
         lane.queue.async {
             body(&lane.state)
             lane.state = nil

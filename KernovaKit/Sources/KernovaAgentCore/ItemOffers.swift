@@ -91,23 +91,24 @@ package struct ItemOfferRegistry: Sendable {
         return try? OfferedItem(serializedBytes: entry.items[index])
     }
 
-    /// The representation a pull of this side's offer names, or the code refusing it.
-    func localRepresentation(_ request: PullRequest) -> Result<Representation, WireError> {
-        guard let offer = local.first(where: { $0.offer.token == request.token })?.offer else {
+    /// The representation a pull of this side's offer names, and the offer's feature, or the code refusing it.
+    func localRepresentation(_ request: PullRequest) -> Result<(FeatureID, Representation), WireError> {
+        guard let entry = local.first(where: { $0.offer.token == request.token }) else {
             return .failure(WireError(.itemOfferStale))
         }
-        return Self.representation(request, in: offer.items)
+        return Self.representation(request, in: entry.offer.items).map { (entry.feature, $0) }
     }
 
-    /// The representation a pull of the far side's offer names, among the items received so far.
-    func remoteRepresentation(_ request: PullRequest) -> Result<Representation, WireError> {
-        guard remote.contains(where: { $0.header.token == request.token }) else {
+    /// The representation a pull of the far side's offer names, among the items received so far, and the
+    /// offer's feature.
+    func remoteRepresentation(_ request: PullRequest) -> Result<(FeatureID, Representation), WireError> {
+        guard let entry = remote.first(where: { $0.header.token == request.token }) else {
             return .failure(WireError(.itemOfferStale))
         }
         guard let item = remoteItem(request.token, Int(request.item)) else {
             return .failure(WireError(.itemRepresentationUnavailable))
         }
-        return Self.representation(request, of: item)
+        return Self.representation(request, of: item).map { (entry.header.feature, $0) }
     }
 
     private static func representation(_ request: PullRequest, in items: [OfferedItem]) -> Result<

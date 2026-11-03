@@ -56,16 +56,16 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
     /// volume holding a tree landing's directory reads back (`DecmpfsMatrix.acceptedTypes`).
     ///
     /// - Throws: `WireError` `WRITE_FAILED` when the landing's directory cannot be opened or its volume asked.
-    public func request(
+    public func order(
         token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
-    ) throws(WireError) -> PullRequest {
+    ) throws(WireError) -> ItemPullOrder {
         var request = PullRequest()
         request.token = token
         request.item = item
         request.representation = representation
         request.byteCeiling = byteCeiling
         request.codecs = [.lz4]
-        guard case .tree(let directory, _) = landing else { return request }
+        guard case .tree(let directory, _) = landing else { return ItemPullOrder(request, landing: landing) }
         do {
             let opened = try fileSystem.openDirectory(Array(directory.utf8), in: AT_FDCWD)
             defer { fileSystem.close(opened) }
@@ -73,16 +73,18 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         } catch {
             throw WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)")
         }
-        return request
+        return ItemPullOrder(request, landing: landing)
     }
 
     /// Carries out `effect` on its pull's queue, reporting through `reporter`.
     public func handle(_ effect: ItemSinkEffect, reporter: ItemSinkReporter) {
         switch effect {
-        case .begin(let id, let request, let representation, let landing):
-            let acceptance = ContainerAcceptance(request, storage: representation.storage)
-            pulls.open(id) { [fileSystem, decodingWorkers] in
-                switch Self.begin(acceptance, landing, fileSystem: fileSystem, decodingWorkers: decodingWorkers) {
+        case .begin(let id, let order, let representation):
+            let acceptance = ContainerAcceptance(order.request, storage: representation.storage)
+            pulls.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, decodingWorkers] in
+                switch Self.begin(
+                    acceptance, order.landing, fileSystem: fileSystem, decodingWorkers: decodingWorkers)
+                {
                 case .success(let pull):
                     return pull
                 case .failure(let error):
@@ -91,7 +93,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                 }
             }
         case .bytes(let id, let bytes):
-            pulls.run(id) { pull in
+            pulls.run(PullKey(connection: reporter.connection, id: id)) { pull in
                 do throws(WireError) {
                     switch pull {
                     case .tree(let receiver):
@@ -110,7 +112,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                 }
             }
         case .finish(let id):
-            pulls.run(id) { pull in
+            pulls.run(PullKey(connection: reporter.connection, id: id)) { pull in
                 do throws(WireError) {
                     switch pull {
                     case .tree(let receiver): try Self.wire { () throws(TreeWriteFailure) in try receiver.finish() }
@@ -128,7 +130,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                 }
             }
         case .commit(let id):
-            pulls.close(id) { pull in
+            pulls.close(PullKey(connection: reporter.connection, id: id)) { pull in
                 switch pull {
                 case .tree(let receiver):
                     do throws(WireError) {
@@ -146,7 +148,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             }
         case .abort(let id):
             // Dropping a tree's receiver removes everything it staged.
-            pulls.close(id)
+            pulls.close(PullKey(connection: reporter.connection, id: id))
         }
     }
 

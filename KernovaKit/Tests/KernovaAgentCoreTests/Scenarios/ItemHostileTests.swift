@@ -93,7 +93,7 @@ enum HostileItems {
     /// The codes of the serves that ended reset by this side, in order.
     static func servesResetLocally(_ run: HostileRun) -> [ErrorCode] {
         run.itemEnds.compactMap {
-            if case .serveEnded(_, .closed(.resetLocally(let error))) = $0 { error.code } else { nil }
+            if case .serveEnded(_, _, .closed(.resetLocally(let error))) = $0 { error.code } else { nil }
         }
     }
 
@@ -133,13 +133,14 @@ struct ItemHostileTests {
             let outcome = HostileItems.outcome(run)
             if cut == container.count {
                 failures += expectThat(
-                    run.itemEnds == [.pullEnded(id, .landed(.named(Data("item".utf8))))], "whole: \(run.itemEnds)")
+                    run.itemEnds == [.pullEnded(.clipboard, id, .landed(.named(Data("item".utf8))))],
+                    "whole: \(run.itemEnds)")
                 failures += expectThat(outcome?.kind == .landed, "END \(String(describing: outcome))")
                 failures += expectThat(
                     run.itemSink.landed[id] == SimItems.digest(HostileItems.request, HostileItems.representation),
                     "landed other bytes")
             } else {
-                guard case .pullEnded(_, .failed(let error))? = run.itemEnds.first else {
+                guard case .pullEnded(_, _, .failed(let error))? = run.itemEnds.first else {
                     Issue.record("cut \(cut): \(run.itemEnds)")
                     return
                 }
@@ -170,7 +171,7 @@ struct ItemHostileTests {
             var failures = HostileItems.endedOnce(run, id)
             let expected: ItemPullResult =
                 cut == wire.count ? .landed(.named(Data("item".utf8))) : .closed(.connectionLost)
-            failures += expectThat(run.itemEnds == [.pullEnded(id, expected)], "ends \(run.itemEnds)")
+            failures += expectThat(run.itemEnds == [.pullEnded(.clipboard, id, expected)], "ends \(run.itemEnds)")
             if !failures.isEmpty {
                 Issue.record("cut \(cut) of \(wire.count): \(failures.joined(separator: "; "))")
                 return

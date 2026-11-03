@@ -394,12 +394,23 @@ package final class PropertyChecker {
         /// The sink's publish report, once fed.
         var report: ItemPullResult?
         var ended = false
+        /// The feature its end named.
+        var feature: FeatureID?
     }
 
     private var itemPulls: [PullKey: PullRecord] = [:]
 
     /// A decoder fed after each drain holds at most one incomplete record and one raw DATA payload.
     package static let sinkBufferBound = 2 * WireConstants.maxRawDataPayload + 9
+
+    /// The two ends of one pull name the same feature.
+    private func checkFeature(_ feature: FeatureID, of pull: PullKey, link: SimLink, _ where_: String) {
+        let far = PullKey(
+            link: link.id, side: pull.side == .host ? .peer : .host, stream: pull.stream, serving: !pull.serving)
+        if let other = itemPulls[far]?.feature, other != feature {
+            fail("\(where_) pull \(pull.stream) ended naming \(feature), its far end \(other)")
+        }
+    }
 
     func itemOutput(_ output: ItemTransferOutput, link: SimLink, side: SimSide, world: SimWorld) {
         world.transcript.add("i\(link.id)\(side)\(output)")
@@ -408,7 +419,7 @@ package final class PropertyChecker {
         }
         let where_ = "property 11: link \(link.id) \(side)"
         switch output {
-        case .sink(.begin(let id, _, _, _)), .source(.serve(let id, _, _)):
+        case .sink(.begin(let id, _, _)), .source(.serve(let id, _, _)):
             let pull = key(id, serving: output.isSource)
             if itemPulls[pull] != nil { fail("\(where_) pull \(pull.stream) began twice") }
             itemPulls[pull] = PullRecord()
@@ -426,14 +437,16 @@ package final class PropertyChecker {
             if case .sink(.commit) = output { record.committed = true }
             if record.terminals > 1 { fail("\(where_) pull \(pull.stream) released twice") }
             itemPulls[pull] = record
-        case .event(.pullEnded(let id, let result)):
+        case .event(.pullEnded(let feature, let id, let result)):
             let serving = false
             let pull = key(id, serving: serving)
             guard var record = itemPulls[pull], !record.ended else {
                 return fail("\(where_) pull \(pull.stream) ended twice or never began")
             }
             record.ended = true
+            record.feature = feature
             itemPulls[pull] = record
+            checkFeature(feature, of: pull, link: link, where_)
             if record.terminals != 1 { fail("\(where_) pull \(pull.stream) ended after \(record.terminals) releases") }
             if !serving {
                 if record.committed, record.report != result {
@@ -448,13 +461,15 @@ package final class PropertyChecker {
                     fail("\(where_) the sink holds pull \(pull.stream) after its end")
                 }
             }
-        case .event(.serveEnded(let id, let result)):
+        case .event(.serveEnded(let feature, let id, let result)):
             let pull = key(id, serving: true)
             guard var record = itemPulls[pull], !record.ended else {
                 return fail("\(where_) pull \(pull.stream) ended twice or never began")
             }
             record.ended = true
+            record.feature = feature
             itemPulls[pull] = record
+            checkFeature(feature, of: pull, link: link, where_)
             if record.terminals != 1 { fail("\(where_) pull \(pull.stream) ended after \(record.terminals) releases") }
             if result == .landed {
                 let puller = PullKey(

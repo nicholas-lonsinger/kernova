@@ -71,6 +71,22 @@ public enum ItemOfferOrigin: Sendable, Equatable {
     case remote
 }
 
+/// One pull of a representation of the far side's offer, and where its sink lands it. The sink builds it, since
+/// what the request accepts — the decmpfs types above all — is what that landing's volume reads back; nothing
+/// else can pair a request with a landing.
+public struct ItemPullOrder: Sendable, Equatable {
+    /// What the pull asks the far side for.
+    public let request: PullRequest
+    /// Where the sink lands it.
+    public let landing: ItemLanding
+
+    /// Pairs `request` with `landing`, which the caller has made it accept.
+    package init(_ request: PullRequest, landing: ItemLanding) {
+        self.request = request
+        self.landing = landing
+    }
+}
+
 /// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`
 /// without reading it. An INLINE representation lands as its bytes; a FILE or FOLDER in a directory.
 public enum ItemLanding: Sendable, Equatable {
@@ -149,8 +165,9 @@ public enum ItemSourceInput: Sendable, Equatable {
 /// decodes. Each pull's sink hears `.begin`, then `.bytes` and at most one `.finish`, and last exactly one
 /// of `.commit` and `.abort`: only the core decides that a pull is published.
 public enum ItemSinkEffect: Sendable, Equatable {
-    /// A container of `representation`, held to `request`'s limits, is coming, to land as `landing` says.
-    case begin(ItemPullID, PullRequest, Representation, ItemLanding)
+    /// A container of `representation`, held to the order's request's limits, is coming, to land as its
+    /// landing says.
+    case begin(ItemPullID, ItemPullOrder, Representation)
     /// The container's next bytes: feed them, then report `.consumed`.
     case bytes(ItemPullID, Data)
     /// Every byte arrived: finish the decoder, then report `.verified` or `.refused`.
@@ -182,11 +199,11 @@ public enum ItemTransferEvent: Sendable, Equatable {
     case offerReceived(ItemSetHeaderValue)
     /// An offer of `FeatureID`'s is no longer valid. Once per offer.
     case offerEnded(FeatureID, ItemOfferOrigin, token: Data, StreamClosure)
-    /// A pull this side opened ended. Once per pull `pull` returned; a committed pull's follows its sink's
-    /// publish report, and may follow the connection's `.closed`.
-    case pullEnded(ItemPullID, ItemPullResult)
-    /// A pull this side served ended. Once per `.serve`.
-    case serveEnded(ItemPullID, ItemServeResult)
+    /// A pull this side opened, of an offer of `FeatureID`'s, ended. Once per pull `pull` returned; a committed
+    /// pull's follows its sink's publish report, and may follow the connection's `.closed`.
+    case pullEnded(FeatureID, ItemPullID, ItemPullResult)
+    /// A pull this side served, of an offer of `FeatureID`'s, ended. Once per `.serve`.
+    case serveEnded(FeatureID, ItemPullID, ItemServeResult)
 }
 
 /// One output of the item-transfer machine, in the order it emitted them. An endpoint hands the source
@@ -297,13 +314,9 @@ public struct ItemTransfer: FeatureMachine {
         offers.release(token, connection: &connection)
     }
 
-    /// Pulls one representation of the far side's open offer, to land as `landing` says.
-    public mutating func pull(_ request: PullRequest, landing: ItemLanding, connection: inout Connection)
-        -> Result<ItemPullID, WireError>
-    {
-        client.pull(
-            request, landing: landing, offers: offers, generation: generation, connection: &connection,
-            outbox: &outbox)
+    /// Pulls one representation of the far side's open offer, as `order` says.
+    public mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
+        client.pull(order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
     }
 
     /// Whether a pull this side committed has not had its sink's publish report: its `.pullEnded` is still

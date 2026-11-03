@@ -21,8 +21,10 @@ package final class SimItemSide {
     package private(set) var pulls: [(time: SimTime, request: PullRequest, result: Result<ItemPullID, WireError>)] = []
     /// Every refused offer.
     package private(set) var offerRefusals: [WireError] = []
-    package private(set) var pullsEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
-    package private(set) var servesEnded: [(time: SimTime, id: ItemPullID, result: ItemServeResult)] = []
+    package private(set) var pullsEnded: [(time: SimTime, feature: FeatureID, id: ItemPullID, result: ItemPullResult)] =
+        []
+    package private(set) var servesEnded:
+        [(time: SimTime, feature: FeatureID, id: ItemPullID, result: ItemServeResult)] = []
     package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
@@ -61,8 +63,8 @@ package final class SimItemSide {
             case .offerReceived(let header): offersReceived.append((world.now, header))
             case .offerEnded(let feature, let origin, let token, let closure):
                 offersEnded.append((world.now, feature, origin, token, closure))
-            case .pullEnded(let id, let result): pullsEnded.append((world.now, id, result))
-            case .serveEnded(let id, let result): servesEnded.append((world.now, id, result))
+            case .pullEnded(let feature, let id, let result): pullsEnded.append((world.now, feature, id, result))
+            case .serveEnded(let feature, let id, let result): servesEnded.append((world.now, feature, id, result))
             }
         }
     }
@@ -195,11 +197,11 @@ extension SimWorld {
                 ? link.host?.remoteOfferItem(token: request.token, index: Int(request.item))
                 : link.peer?.remoteOfferItem(token: request.token, index: Int(request.item))
             let storage = item?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
-            let landing = DecodingItemSink.landing(storage)
+            let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
             let result =
                 side == .host
-                ? link.host?.pullItem(request, landing: landing, now: now)
-                : link.peer?.pullItem(request, landing: landing, now: now)
+                ? link.host?.pullItem(order, now: now)
+                : link.peer?.pullItem(order, now: now)
             if let result { link.items(side).recordPull(request, result, at: world.now) }
         }
     }

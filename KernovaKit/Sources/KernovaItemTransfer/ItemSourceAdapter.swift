@@ -30,8 +30,8 @@ public enum ItemContent: Sendable, Equatable {
 }
 
 /// Serves this side's offers as `ItemSourceEffect` asks: each pull's container encoded from its content — a tree
-/// read by `TreeReader`, or INLINE bytes as one DATA entry — compressed as `TransferCompression` chooses for this
-/// side's direction. Each pull's work runs on a queue of its own.
+/// read by `TreeReader`, or INLINE bytes as one DATA entry — compressed as `TransferCompression` chooses for the
+/// direction this side's role on the pull's connection sends it. Each pull's work runs on a queue of its own.
 public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: ItemSource {
     /// Produces the content of the offered representation a pull names, or why it cannot: called on the pull's
     /// own queue, so it may wait, as a promise called in does.
@@ -54,7 +54,6 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
     }
 
     private let fileSystem: FileSystem
-    private let direction: TransferDirection
     private let sendingCores: Int
     private let content: Content
     private let serves = PullLanes<Serve>(label: "app.kernova.item-source")
@@ -63,15 +62,13 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
     ///
     /// - Parameters:
     ///   - fileSystem: The calls a tree's read makes.
-    ///   - direction: Which way this side's containers travel, which decides whether they compress.
     ///   - sendingCores: The active cores compression may use.
     ///   - content: The content of each pulled representation.
     public init(
-        fileSystem: FileSystem, direction: TransferDirection,
-        sendingCores: Int = ProcessInfo.processInfo.activeProcessorCount, content: @escaping Content
+        fileSystem: FileSystem, sendingCores: Int = ProcessInfo.processInfo.activeProcessorCount,
+        content: @escaping Content
     ) {
         self.fileSystem = fileSystem
-        self.direction = direction
         self.sendingCores = sendingCores
         self.content = content
     }
@@ -81,9 +78,10 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
         switch effect {
         case .serve(let id, let request, let representation):
             let compression = TransferCompression.forSending(
-                direction, pullAcceptsLZ4: request.codecs.contains(.lz4), sendingCores: sendingCores)
+                TransferDirection(servedBy: reporter.connection.role), pullAcceptsLZ4: request.codecs.contains(.lz4),
+                sendingCores: sendingCores)
             let acceptance = compression.sending(ContainerAcceptance(request, storage: representation.storage))
-            serves.open(id) { [fileSystem, content] in
+            serves.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, content] in
                 switch Self.events(content(request, representation), acceptance, fileSystem) {
                 case .success(let events):
                     return Serve(
@@ -98,7 +96,7 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
                 }
             }
         case .read(let id, let maxBytes):
-            serves.run(id) { serve in
+            serves.run(PullKey(connection: reporter.connection, id: id)) { serve in
                 guard !serve.failed else { return }
                 do throws(WireError) {
                     while serve.pending.count < maxBytes, !serve.ended {
@@ -124,7 +122,7 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
                 reporter.report(.bytes(id, bytes))
             }
         case .release(let id):
-            serves.close(id)
+            serves.close(PullKey(connection: reporter.connection, id: id))
         }
     }
 
@@ -154,6 +152,16 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
         case (.success(let content), let storage):
             return .failure(
                 WireError(.itemRepresentationUnavailable, debugDetail: "\(content) for \(storage) storage"))
+        }
+    }
+}
+
+extension TransferDirection {
+    /// The way a container a side of `role` serves travels.
+    init(servedBy role: PeerRole) {
+        switch role {
+        case .host: self = .hostToGuest
+        case .sessionPeer, .systemPeer: self = .guestToHost
         }
     }
 }

@@ -151,6 +151,10 @@ enum ItemFeatureScenarios {
                     ItemScenarios.isLanded(ItemScenarios.onePull(world, .host)?.1),
                     "the pull: \(ItemScenarios.ended(world, .host))")
                 + expectThat(
+                    host?.pullsEnded.map(\.feature) == [.drag]
+                        && items(world, .peer)?.servesEnded.map(\.feature) == [.drag],
+                    "both ends of the pull name DRAG: \(String(describing: host?.pullsEnded))")
+                + expectThat(
                     ends(world, .peer, .local).count == 1
                         && ends(world, .peer, .local).allSatisfy {
                             if case .completed = $0 { true } else { false }

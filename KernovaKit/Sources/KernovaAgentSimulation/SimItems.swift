@@ -205,14 +205,14 @@ package struct DecodingItemSink {
     /// The answer to `effect`, if it takes one.
     package mutating func handle(_ effect: ItemSinkEffect) -> ItemSinkInput? {
         switch effect {
-        case .begin(let id, let request, let representation, let landing):
+        case .begin(let id, let order, let representation):
             guard begun.insert(id).inserted else {
                 violations.append("pull \(id.stream.rawValue) begun twice")
                 return nil
             }
-            let acceptance = ContainerAcceptance(request, storage: representation.storage)
+            let acceptance = ContainerAcceptance(order.request, storage: representation.storage)
             pulls[id] = Pull(
-                decoder: ContainerDecoder(accepting: acceptance), acceptance: acceptance, landing: landing)
+                decoder: ContainerDecoder(accepting: acceptance), acceptance: acceptance, landing: order.landing)
             return nil
         case .bytes(let id, let bytes):
             if terminated.contains(id) { violations.append("bytes for pull \(id.stream.rawValue) after its end") }

@@ -9,12 +9,12 @@ import KernovaAgentRuntime
 import KernovaWire
 import Testing
 
-/// A committed pull's end can follow its connection's: the driver keeps running inputs for it, and ends only
-/// once it has.
+/// A committed pull's end can follow its connection's: the driver ends the connection when the stream shuts
+/// down, and keeps running inputs until the pull has ended.
 @Suite("Connection driver: landings in flight")
 struct DriverLandingTests {
-    @Test("A connection that finishes with a landing in flight shuts the stream at once and ends after its report")
-    func endsAfterTheLanding() async {
+    @Test("A connection that finishes with a landing in flight ends at once and delivers the pull's end after it")
+    func endsBeforeTheLanding() async {
         let stream = ScriptedStream()
         let ended = Recorder<ConnectionClosure>()
         let events = Recorder<String>()
@@ -30,12 +30,12 @@ struct DriverLandingTests {
         await flush(driver.queue)
         #expect(stream.shutdowns == 1)
         #expect(events.elements == ["closed"])
-        #expect(ended.elements.isEmpty)
+        #expect(ended.elements == [.transportLost])
 
         driver.handle(.publishReported)
         await flush(driver.queue)
         #expect(events.elements == ["closed", "pullEnded"])
-        #expect(ended.elements == [.transportLost])
+        #expect(ended.elements.count == 1)
         #expect(stream.shutdowns == 1)
 
         driver.handle(.publishReported)

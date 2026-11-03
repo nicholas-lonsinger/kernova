@@ -251,14 +251,12 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
-    /// Pulls one representation of the far side's open offer, to land as `landing` says: the pull's id, whose
-    /// one `.pullEnded` follows, or why it was not opened.
-    public mutating func pullItem(_ request: PullRequest, landing: ItemLanding, now: CoreInstant)
-        -> Result<ItemPullID, WireError>
-    {
+    /// Pulls one representation of the far side's open offer, as `order` says: the pull's id, whose one
+    /// `.pullEnded` follows, or why it was not opened.
+    public mutating func pullItem(_ order: ItemPullOrder, now: CoreInstant) -> Result<ItemPullID, WireError> {
         connection.tick(now)
         route(now)
-        let result = items.pull(request, landing: landing, connection: &connection)
+        let result = items.pull(order, connection: &connection)
         route(now)
         return result
     }

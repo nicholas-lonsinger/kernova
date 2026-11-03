@@ -16,6 +16,7 @@ import KernovaWire
 struct ItemPullServer: Sendable {
     private struct Pull: Sendable {
         var id: ItemPullID
+        var feature: FeatureID
         var token: Data
         /// The bytes the outstanding read reserved, the most it may return; nil when none is outstanding.
         var granted: Int?
@@ -34,8 +35,8 @@ struct ItemPullServer: Sendable {
         switch offers.localRepresentation(request) {
         case .failure(let error):
             connection.reset(id.stream, error)
-        case .success(let representation):
-            pulls.append(Pull(id: id, token: request.token))
+        case .success(let (feature, representation)):
+            pulls.append(Pull(id: id, feature: feature, token: request.token))
             outbox.append(.source(.serve(id, request, representation)))
             serve(id.stream, connection: &connection, outbox: &outbox)
         }
@@ -104,9 +105,9 @@ struct ItemPullServer: Sendable {
 
     mutating func closed(_ stream: StreamID, _ closure: StreamClosure, outbox: inout [ItemTransferOutput]) {
         guard let index = pulls.firstIndex(where: { $0.id.stream == stream }) else { return }
-        let id = pulls.remove(at: index).id
-        outbox.append(.source(.release(id)))
-        outbox.append(.event(.serveEnded(id, Self.result(closure))))
+        let pull = pulls.remove(at: index)
+        outbox.append(.source(.release(pull.id)))
+        outbox.append(.event(.serveEnded(pull.feature, pull.id, Self.result(closure))))
     }
 
     /// The puller's `PullOutcome` when it ENDed; otherwise how the stream closed.
@@ -155,6 +156,7 @@ struct ItemPullClient: Sendable {
 
     private struct Pull: Sendable {
         var id: ItemPullID
+        var feature: FeatureID
         var token: Data
         var sink: Sink = .receiving
         /// The stream closed while the sink was publishing.
@@ -170,13 +172,14 @@ struct ItemPullClient: Sendable {
     var hasLandingsInFlight: Bool { pulls.contains { $0.sink == .publishing } }
 
     mutating func pull(
-        _ request: PullRequest, landing: ItemLanding, offers: ItemOfferRegistry, generation: ConnectionGeneration,
+        _ order: ItemPullOrder, offers: ItemOfferRegistry, generation: ConnectionGeneration,
         connection: inout Connection, outbox: inout [ItemTransferOutput]
     ) -> Result<ItemPullID, WireError> {
-        let representation: Representation
+        let (request, landing) = (order.request, order.landing)
+        let (feature, representation): (FeatureID, Representation)
         switch offers.remoteRepresentation(request) {
         case .failure(let error): return .failure(error)
-        case .success(let named): representation = named
+        case .success(let named): (feature, representation) = named
         }
         guard landing.takes(representation.storage) else {
             return .failure(
@@ -188,8 +191,8 @@ struct ItemPullClient: Sendable {
         let stream = connection.open(kind, body: request.encoded)
         guard stream != .session else { return .failure(WireError(.internal, debugDetail: "the open failed")) }
         let id = ItemPullID(generation: generation, stream: stream)
-        pulls.append(Pull(id: id, token: request.token))
-        outbox.append(.sink(.begin(id, request, representation, landing)))
+        pulls.append(Pull(id: id, feature: feature, token: request.token))
+        outbox.append(.sink(.begin(id, order, representation)))
         return .success(id)
     }
 
@@ -264,6 +267,7 @@ struct ItemPullClient: Sendable {
         guard pulls[index].sink == .publishing else {
             return diagnostics.append(.localFault("the item sink reported a publish it was not asked for"))
         }
+        let feature = pulls[index].feature
         if pulls[index].streamClosed {
             pulls.remove(at: index)
         } else {
@@ -271,7 +275,7 @@ struct ItemPullClient: Sendable {
             let error: WireError? = if case .failed(let error) = result { error } else { nil }
             end(id.stream, Self.outcome(error), &connection)
         }
-        outbox.append(.event(.pullEnded(id, result)))
+        outbox.append(.event(.pullEnded(feature, id, result)))
     }
 
     mutating func closed(_ stream: StreamID, _ closure: StreamClosure, outbox: inout [ItemTransferOutput]) {
@@ -292,7 +296,7 @@ struct ItemPullClient: Sendable {
         }
         let pull = pulls.remove(at: index)
         outbox.append(.sink(.abort(pull.id)))
-        outbox.append(.event(.pullEnded(pull.id, result)))
+        outbox.append(.event(.pullEnded(pull.feature, pull.id, result)))
     }
 
     private func index(_ id: ItemPullID, _ generation: ConnectionGeneration) -> Int? {
