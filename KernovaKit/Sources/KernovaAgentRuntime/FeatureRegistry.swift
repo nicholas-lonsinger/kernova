@@ -86,9 +86,35 @@ public protocol ItemSink: Sendable {
     func handle(_ effect: ItemSinkEffect, reporter: ItemSinkReporter)
 }
 
+/// The connection an item adapter's effect came from. No two connections in the process share one, though
+/// connections of different runtimes share generations, so `ItemPullID`s.
+package struct ItemConnection: Hashable, Sendable {
+    private static let drawn = Locked<UInt64>(0)
+
+    /// This side's role on the connection, which decides which way the containers it serves travel.
+    package let role: PeerRole
+    private let key: UInt64
+
+    /// A connection no other in the process is, on which this side has `role`.
+    package init(role: PeerRole) {
+        self.role = role
+        key = Self.drawn.withLock { count in
+            count += 1
+            return count
+        }
+    }
+}
+
 /// How an item source answers one connection, from any thread.
 public struct ItemSourceReporter: Sendable {
+    /// The connection whose effect this reporter came with.
+    package let connection: ItemConnection
     let deliver: @Sendable (ItemSourceInput) -> Void
+
+    package init(_ connection: ItemConnection, _ deliver: @escaping @Sendable (ItemSourceInput) -> Void) {
+        self.connection = connection
+        self.deliver = deliver
+    }
 
     /// Reports `input` to the connection whose effect this reporter came with.
     public func report(_ input: ItemSourceInput) {
@@ -98,7 +124,14 @@ public struct ItemSourceReporter: Sendable {
 
 /// How an item sink reports to one connection, from any thread.
 public struct ItemSinkReporter: Sendable {
+    /// The connection whose effect this reporter came with.
+    package let connection: ItemConnection
     let deliver: @Sendable (ItemSinkInput) -> Void
+
+    package init(_ connection: ItemConnection, _ deliver: @escaping @Sendable (ItemSinkInput) -> Void) {
+        self.connection = connection
+        self.deliver = deliver
+    }
 
     /// Reports `input` to the connection whose effect this reporter came with.
     public func report(_ input: ItemSinkInput) {

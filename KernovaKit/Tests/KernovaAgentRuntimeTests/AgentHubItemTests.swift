@@ -19,6 +19,7 @@ struct AgentHubItemTests {
     static let allEnabled = SimItems.policy(PolicySnapshot())
     static let offer = SimItems.offer(1, [[SimItems.representation(.inline, size: 64)]])
     static let token = SimItems.token(1)
+    static let order = ItemPullOrder(SimItems.request(1), landing: .inline)
 
     private func harness(policy: PolicySnapshot = Self.allEnabled) async -> HubHarness {
         let harness = HubHarness(policy: policy, items: MemoryItems().adapters())
@@ -235,14 +236,14 @@ struct AgentHubItemTests {
         }
         #expect(item == Self.offer.items[0])
         let pulled = await withCheckedContinuation { continuation in
-            harness.hub.pullItem(SimItems.request(1), from: handle) { result in
+            harness.hub.pullItem(Self.order, from: handle) { result in
                 harness.itemLog.record(.note("pulled"))
                 continuation.resume(returning: result)
             }
         }
         guard case .success(let id) = pulled else { Issue.record("pulled \(pulled)"); return }
         let ended = await log.next { if case .event(.items(_, .pullEnded)) = $0 { true } else { false } }
-        guard case .event(.items(handle, .pullEnded(id, let result))) = ended, case .landed = result else {
+        guard case .event(.items(handle, .pullEnded(.clipboard, id, let result))) = ended, case .landed = result else {
             Issue.record("ended \(ended)"); return
         }
         let entries = harness.itemLog.elements
@@ -266,12 +267,12 @@ struct AgentHubItemTests {
         _ = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
 
         let pulled = await withCheckedContinuation { continuation in
-            harness.hub.pullItem(SimItems.request(1), from: handle) { continuation.resume(returning: $0) }
+            harness.hub.pullItem(Self.order, from: handle) { continuation.resume(returning: $0) }
         }
         guard case .success(let id) = pulled else { Issue.record("pulled \(pulled)"); return }
         harness.hub.cancelPull(id, on: handle)
         let ended = await log.next { if case .event(.items(_, .pullEnded)) = $0 { true } else { false } }
-        guard case .event(.items(handle, .pullEnded(id, let result))) = ended else {
+        guard case .event(.items(handle, .pullEnded(.clipboard, id, let result))) = ended else {
             Issue.record("ended \(ended)"); return
         }
         if case .landed = result { Issue.record("a cancelled pull landed") }
@@ -307,7 +308,7 @@ struct AgentHubItemTests {
         let harness = await harness()
         let gone = PeerHandle(rawValue: 99)
         let pulled = await withCheckedContinuation { continuation in
-            harness.hub.pullItem(SimItems.request(1), from: gone) { continuation.resume(returning: $0) }
+            harness.hub.pullItem(Self.order, from: gone) { continuation.resume(returning: $0) }
         }
         guard case .failure(let error) = pulled else { Issue.record("pulled \(pulled)"); return }
         #expect(error.code == .shuttingDown)

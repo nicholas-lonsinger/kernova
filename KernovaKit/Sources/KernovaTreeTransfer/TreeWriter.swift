@@ -3,6 +3,15 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(ucrt)
+import ucrt
+#endif
 
 import KernovaContainer
 import KernovaFileTree
@@ -33,9 +42,11 @@ import KernovaWire
 public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     /// The name the item's own entry has in the destination until it is published.
     public let stagingName: [UInt8]
-    /// The name the item's own entry is published under, and the first component of a failure's path once that
-    /// entry has begun.
+    /// The name the item's own entry is published under — or, where ``publishing`` keeps both, counted up from —
+    /// and the first component of a failure's path once that entry has begun.
     public let name: [UInt8]
+    /// How the item's own entry takes ``name``.
+    public let publishing: PublishName
 
     private let fileSystem: FileSystem
     private let destination: Int32
@@ -129,11 +140,12 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// A writer landing the item `name` in `destination`.
+    /// A writer landing the item `name` names in `destination`.
     ///
     /// - Parameters:
-    ///   - name: The item's name, which it is published under; one this OS cannot land fails the item's own
-    ///     entry as it is created — `.container(.invalidName)` for one that is not a single path component.
+    ///   - name: The item's name, which it is published under, exactly or keeping both; one this OS cannot
+    ///     land fails the item's own entry as it is created — `.container(.invalidName)` for one that is not a
+    ///     single path component. A Keep Both name is measured against this OS's limits at its longest.
     ///   - fileSystem: The calls the writer makes.
     ///   - destination: An open directory, which the writer takes ownership of and closes when it ends.
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path, against which
@@ -142,10 +154,11 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///     the decmpfs types it lands compressed, and its codecs.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
-        name: [UInt8], fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
+        name: PublishName, fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
         accepting acceptance: ContainerAcceptance, logger: KernovaLogger = TreeWriterLog.logger
     ) {
-        self.name = name
+        self.name = name.base
+        publishing = name
         self.fileSystem = fileSystem
         self.destination = destination
         self.destinationPathByteCount = destinationPathByteCount
@@ -199,16 +212,23 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     }
 
     /// The writer's place in the tree: the file open, else the directory it is in, else the item's own
-    /// entry once it has begun.
+    /// entry, whether or not it has begun.
     private var position: [[UInt8]] {
         if let file { return file.path }
         if !entered.isEmpty { return entered.map(\.name) }
-        return root == nil ? [] : [name]
+        return [name]
     }
 
-    /// Gives the item's own entry ``name`` in the destination, exclusively.
+    /// Gives the item's own entry ``name`` in the destination — or, where ``publishing`` keeps both, the first
+    /// free name `KeepBothName` counts up to — never replacing anything the writer did not create.
     ///
-    /// - Returns: ``name``, the name it landed under.
+    /// Where the volume renames without replacing, the staged entry is renamed onto the name exclusively.
+    /// Where it cannot (exFAT, FAT), the writer first claims the name — `O_CREAT | O_EXCL` for a file,
+    /// `mkdirat` for a directory — and renames the staged entry onto its own claim, provided the name still
+    /// holds that claim. A name something else has fails `EEXIST`, or for Keep Both moves to the next name,
+    /// up to `KeepBothName.largestNumber`.
+    ///
+    /// - Returns: the name it landed under.
     func publish() throws(TreeWriteFailure) -> [UInt8] {
         switch phase {
         case .failed(let failure): throw failure
@@ -217,17 +237,77 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         }
         guard let root else { preconditionFailure("ended with no root") }
         let staged = try? fileSystem.status(of: stagingName, in: destination)
-        guard let staged, FolderBatch.Identity(staged) == root else {
-            throw fail(.moved, at: [name])
-        }
+        guard let staged, FolderBatch.Identity(staged) == root else { throw fail(.moved, at: [name]) }
+        var exclusive: Bool
         do {
-            try fileSystem.rename(stagingName, in: destination, to: name, in: destination)
+            exclusive = try fileSystem.renamesExclusively(in: destination)
         } catch {
             throw fail(.system(error), at: [name])
         }
-        cursor = nil
-        phase = .published
-        return name
+        var number = 1
+        while true {
+            let candidate = KeepBothName.candidate(name, number)
+            // A counted name past the container's name limit is one no OS here lands.
+            guard PathComponent.isValid(candidate) else {
+                throw fail(.system(TreeFileSystemError(code: ENAMETOOLONG)), at: [candidate])
+            }
+            do {
+                try place(as: candidate, directory: staged.kind == .directory, exclusive: &exclusive)
+                cursor = nil
+                phase = .published
+                return candidate
+            } catch  where error.code == EEXIST && publishing.keepsBoth && number < KeepBothName.largestNumber {
+                number += 1
+            } catch {
+                throw fail(.system(error), at: [candidate])
+            }
+        }
+    }
+
+    /// Renames the staged entry to `candidate`: exclusively while `exclusive`, which a volume that answers
+    /// `ENOTSUP` clears, and otherwise onto a claim of the name.
+    private func place(as candidate: [UInt8], directory: Bool, exclusive: inout Bool) throws(TreeFileSystemError) {
+        if exclusive {
+            do {
+                return try fileSystem.rename(stagingName, in: destination, to: candidate, in: destination)
+            } catch  where error.code == ENOTSUP {
+                exclusive = false
+            }
+        }
+        let claim = try self.claim(candidate, directory: directory)
+        do throws(TreeFileSystemError) {
+            // Something that took the name from the claim is not replaced: the name is taken.
+            guard FolderBatch.Identity(try fileSystem.status(of: candidate, in: destination)) == claim else {
+                throw TreeFileSystemError(code: EEXIST)
+            }
+            try fileSystem.renameReplacing(stagingName, in: destination, to: candidate, in: destination)
+        } catch {
+            if (try? fileSystem.status(of: candidate, in: destination)).map(FolderBatch.Identity.init) == claim {
+                try? fileSystem.remove(candidate, in: destination, isDirectory: directory)
+            }
+            throw error
+        }
+    }
+
+    /// Creates `name` in the destination, empty, as what the staged entry replaces: its identity.
+    private func claim(_ name: [UInt8], directory: Bool) throws(TreeFileSystemError) -> FolderBatch.Identity {
+        if directory {
+            try fileSystem.makeDirectory(name, in: destination)
+            do {
+                return FolderBatch.Identity(try fileSystem.status(of: name, in: destination))
+            } catch {
+                try? fileSystem.remove(name, in: destination, isDirectory: true)
+                throw error
+            }
+        }
+        let descriptor = try fileSystem.createFile(name, in: destination)
+        defer { fileSystem.close(descriptor) }
+        do {
+            return FolderBatch.Identity(try fileSystem.status(of: descriptor))
+        } catch {
+            try? fileSystem.remove(name, in: destination, isDirectory: false)
+            throw error
+        }
     }
 
     /// Removes everything the writer created, unless it was published.
@@ -418,7 +498,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         guard let open = file.take() else { preconditionFailure("a finish admitted with no file open") }
         if let compressed = open.compressed {
             do {
-                _ = try compressed.finish(open.metadata.attributes)
+                let status = try compressed.finish(open.metadata.attributes)
+                if isRootFile { root = FolderBatch.Identity(status) }
             } catch {
                 throw TreeWriteFailure(path: open.path, reason: Self.reason(error))
             }
@@ -443,12 +524,20 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         do {
             try sparse.finish()
             try open.metadata.apply(to: .descriptor(descriptor), on: fileSystem)
+            if isRootFile {
+                root = FolderBatch.Identity(try fileSystem.status(of: descriptor))
+            }
         } catch {
             fileSystem.close(descriptor)
             throw TreeWriteFailure(path: open.path, reason: .system(error))
         }
         try system(open.path) { () throws(TreeFileSystemError) in try fileSystem.closeWritten(descriptor) }
     }
+
+    /// Whether the file open is the item's own entry. Its identity is read again once its bytes are written:
+    /// exFAT on macOS 27.2 numbers an empty file apart from the cluster it later starts at, so the number it had
+    /// when created is not the one it publishes with.
+    private var isRootFile: Bool { entered.isEmpty }
 
     /// The reason a compressed file's `failure` fails its entry for.
     static func reason(_ failure: CompressedFileFailure) -> TreeWriteFailure.Reason {
@@ -513,7 +602,9 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         guard header.depth > 0 || PathComponent.isValid(name) else {
             throw TreeWriteFailure(path: path, reason: .container(.invalidName))
         }
-        let pathByteCount = (entered.last?.pathByteCount ?? destinationPathByteCount) + 1 + name.count
+        // A Keep Both name can publish up to the longest count longer, which every path below it carries.
+        let counted = header.depth == 0 && publishing.keepsBoth ? KeepBothName.largestCountByteCount : 0
+        let pathByteCount = (entered.last?.pathByteCount ?? destinationPathByteCount) + 1 + name.count + counted
         if let refusal = fileSystem.landingRefusal(of: name, pathByteCount: pathByteCount) {
             throw TreeWriteFailure(path: path, reason: .refused(refusal))
         }

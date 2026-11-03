@@ -71,14 +71,72 @@ public enum ItemOfferOrigin: Sendable, Equatable {
     case remote
 }
 
-/// How one pull ended, on either side.
+/// One pull of a representation of the far side's offer, and where its sink lands it. The sink builds it, since
+/// what the request accepts — the decmpfs types above all — is what that landing's volume reads back; nothing
+/// else can pair a request with a landing.
+public struct ItemPullOrder: Sendable, Equatable {
+    /// What the pull asks the far side for.
+    public let request: PullRequest
+    /// Where the sink lands it.
+    public let landing: ItemLanding
+
+    /// Pairs `request` with `landing`, which the caller has made it accept.
+    package init(_ request: PullRequest, landing: ItemLanding) {
+        self.request = request
+        self.landing = landing
+    }
+}
+
+/// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`
+/// without reading it. An INLINE representation lands as its bytes; a FILE or FOLDER in a directory.
+public enum ItemLanding: Sendable, Equatable {
+    /// The INLINE representation's bytes, which the sink publishes as `LandedItem.inline`.
+    case inline
+    /// A FILE or FOLDER, in the directory at the absolute path `directory`, under the name `name` chooses.
+    case tree(directory: String, name: ItemLandingName)
+
+    /// Whether this landing takes a representation of `storage`.
+    func takes(_ storage: Representation.Storage) -> Bool {
+        switch (self, storage) {
+        case (.inline, .inline), (.tree, .file), (.tree, .folder): true
+        default: false
+        }
+    }
+}
+
+/// The name a FILE or FOLDER lands under: one path component, as the volume's raw bytes.
+public enum ItemLandingName: Sendable, Equatable {
+    /// Exactly this name; the publish fails `EEXIST` when anything has it.
+    case exactly(Data)
+    /// This name, or when anything has it, the first free one in Finder's Keep Both form (`name 2.ext`).
+    case keepingBoth(Data)
+}
+
+/// What a pull's sink published.
+public enum LandedItem: Sendable, Equatable {
+    /// An INLINE representation's bytes.
+    case inline(Data)
+    /// A FILE or FOLDER, under this name in its landing's directory.
+    case named(Data)
+}
+
+/// How one pull this side opened ended.
 public enum ItemPullResult: Sendable, Equatable {
-    /// The container landed: on the pulling side, the sink verified it and was told to commit; on the
-    /// serving side, the puller's `PullOutcome` says so.
-    case landed
-    /// Nothing landed: the sink refused the container, or the puller's `PullOutcome` says so.
+    /// The sink published the container, as this.
+    case landed(LandedItem)
+    /// Nothing landed: the sink refused the container, or could not publish it.
     case failed(WireError)
     /// Nothing landed: the stream closed before the sink verified the container.
+    case closed(StreamClosure)
+}
+
+/// How one pull this side served ended.
+public enum ItemServeResult: Sendable, Equatable {
+    /// The puller's `PullOutcome` says its sink published the container.
+    case landed
+    /// The puller's `PullOutcome` says nothing landed.
+    case failed(WireError)
+    /// The stream closed without the puller's `PullOutcome`.
     case closed(StreamClosure)
 }
 
@@ -105,15 +163,17 @@ public enum ItemSourceInput: Sendable, Equatable {
 
 /// What the pulling side asks of its item sink, which feeds a container decoder and stages what it
 /// decodes. Each pull's sink hears `.begin`, then `.bytes` and at most one `.finish`, and last exactly one
-/// of `.commit` and `.abort`: only the core decides that a pull landed.
+/// of `.commit` and `.abort`: only the core decides that a pull is published.
 public enum ItemSinkEffect: Sendable, Equatable {
-    /// A container of `representation`, held to `request`'s limits, is coming.
-    case begin(ItemPullID, PullRequest, Representation)
+    /// A container of `representation`, held to the order's request's limits, is coming, to land as its
+    /// landing says.
+    case begin(ItemPullID, ItemPullOrder, Representation)
     /// The container's next bytes: feed them, then report `.consumed`.
     case bytes(ItemPullID, Data)
     /// Every byte arrived: finish the decoder, then report `.verified` or `.refused`.
     case finish(ItemPullID)
-    /// Land what the pull staged. The pull's last effect.
+    /// Publish what the pull staged, then report `.published` or `.publishFailed`; a failed publish leaves
+    /// nothing. The pull's last effect: nothing withdraws it.
     case commit(ItemPullID)
     /// Drop whatever the pull staged. The pull's last effect.
     case abort(ItemPullID)
@@ -127,6 +187,10 @@ public enum ItemSinkInput: Sendable, Equatable {
     case verified(ItemPullID)
     /// It refused the container: `ITEM_CONTAINER_MALFORMED`, `TOO_LARGE`, `ITEM_UNPACK_REFUSED`, …
     case refused(ItemPullID, WireError)
+    /// After `.commit`, it published the pull as this.
+    case published(ItemPullID, LandedItem)
+    /// After `.commit`, it could not publish the pull, and holds nothing of it.
+    case publishFailed(ItemPullID, WireError)
 }
 
 /// What the item-transfer machine tells its owner.
@@ -135,10 +199,11 @@ public enum ItemTransferEvent: Sendable, Equatable {
     case offerReceived(ItemSetHeaderValue)
     /// An offer of `FeatureID`'s is no longer valid. Once per offer.
     case offerEnded(FeatureID, ItemOfferOrigin, token: Data, StreamClosure)
-    /// A pull this side opened ended. Once per pull `pull` returned.
-    case pullEnded(ItemPullID, ItemPullResult)
-    /// A pull this side served ended. Once per `.serve`.
-    case serveEnded(ItemPullID, ItemPullResult)
+    /// A pull this side opened, of an offer of `FeatureID`'s, ended. Once per pull `pull` returned; a committed
+    /// pull's follows its sink's publish report, and may follow the connection's `.closed`.
+    case pullEnded(FeatureID, ItemPullID, ItemPullResult)
+    /// A pull this side served, of an offer of `FeatureID`'s, ended. Once per `.serve`.
+    case serveEnded(FeatureID, ItemPullID, ItemServeResult)
 }
 
 /// One output of the item-transfer machine, in the order it emitted them. An endpoint hands the source
@@ -162,8 +227,9 @@ public enum ItemTransferInput: Sendable, Equatable {
 
 /// ITEM_TRANSFER on one connection: the offer registry, and the pull server and
 /// client over it. A pull is valid only while the offer it names is open, so
-/// after every change to the registry both the server and the client reset the
-/// pulls of offers it no longer holds, before any later input can commit one.
+/// after every change to the registry the server resets the pulls of offers it
+/// no longer holds that it has not sent whole, and the client those it has not
+/// committed, before any later input can commit one. Nothing withdraws a commit.
 public struct ItemTransfer: FeatureMachine {
     /// ITEM_TRANSFER.
     public static let feature = FeatureID.itemTransfer
@@ -243,10 +309,14 @@ public struct ItemTransfer: FeatureMachine {
         offers.release(token, connection: &connection)
     }
 
-    /// Pulls one representation of the far side's open offer.
-    public mutating func pull(_ request: PullRequest, connection: inout Connection) -> Result<ItemPullID, WireError> {
-        client.pull(request, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
+    /// Pulls one representation of the far side's open offer, as `order` says.
+    public mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
+        client.pull(order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
     }
+
+    /// Whether a pull this side committed has not had its sink's publish report: its `.pullEnded` is still
+    /// owed, though its connection may have finished.
+    public var hasLandingsInFlight: Bool { client.hasLandingsInFlight }
 
     /// Cancels a pull this side opened.
     public mutating func cancel(_ id: ItemPullID, connection: inout Connection) {

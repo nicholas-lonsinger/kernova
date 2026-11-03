@@ -187,7 +187,8 @@ struct WriterBoundsTests {
         let held = try clock.measure { try receiver.receive(data[heldStart..<heldEnd]) }
         try receiver.receive(data[heldEnd..<writtenStart])
         let written = try clock.measure { try receiver.receive(data[writtenStart...]) }
-        #expect(try receiver.finish() == bytes("r"))
+        try receiver.finish()
+        #expect(try receiver.publish() == bytes("r"))
         // Quadratic, the held file took 358 s in a release build at 256 KiB, about 22 s at this size.
         #expect(held < written * 4 + .seconds(1), "held \(held), written \(written)")
     }
@@ -210,7 +211,8 @@ struct WriterBoundsTests {
             let receiver = try landing.receiver(acceptance())
             let first = Result { () throws(TreeWriteFailure) in
                 try receiver.receive(container)
-                _ = try receiver.finish()
+                try receiver.finish()
+                _ = try receiver.publish()
             }
             let failure = try #require(first.failure, "finishes: \(finishes)")
             for _ in 0..<16 {

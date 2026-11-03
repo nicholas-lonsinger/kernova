@@ -28,7 +28,7 @@ struct HubOpenItems: Sendable {
 
     var hostOffers: [Offer] = []
     var forwardedOffers: [Offer] = []
-    var pulls: [ItemPullID] = []
+    var pulls: [(id: ItemPullID, feature: FeatureID)] = []
     var takes: [DragTakeID] = []
 }
 
@@ -38,6 +38,8 @@ struct HubItemRequests: Sendable {
     struct Pending: Sendable {
         var peer: PeerHandle
         var command: ItemCommand
+        /// A pull's: the feature of the offer it names, which the hub forwarded.
+        var feature: FeatureID?
         /// Receives the answer, or nil when the connection ended without one.
         var answer: @Sendable (ItemReply?) -> Void
     }
@@ -45,14 +47,16 @@ struct HubItemRequests: Sendable {
     private var pending: [ItemRequestID: Pending] = [:]
     private var nextRequest: UInt64 = 0
 
-    /// Records `command`, the one `build` makes around a fresh id, to `peer`, whose answer `answer` receives.
+    /// Records `command`, the one `build` makes around a fresh id, to `peer`, whose answer `answer` receives;
+    /// `feature` is a pull's, as `Pending.feature` says.
     mutating func add(
-        _ peer: PeerHandle, _ build: (ItemRequestID) -> ItemCommand, _ answer: @escaping @Sendable (ItemReply?) -> Void
+        _ peer: PeerHandle, _ build: (ItemRequestID) -> ItemCommand, feature: FeatureID?,
+        _ answer: @escaping @Sendable (ItemReply?) -> Void
     ) -> ItemCommand {
         nextRequest += 1
         let id = ItemRequestID(rawValue: nextRequest)
         let command = build(id)
-        pending[id] = Pending(peer: peer, command: command, answer: answer)
+        pending[id] = Pending(peer: peer, command: command, feature: feature, answer: answer)
         return command
     }
 
@@ -95,8 +99,8 @@ extension AgentHubState {
             return (entry.items.hostOffers.removeFirst(where: { $0.token == token }), nil)
         case .offerEnded(_, .remote, let token, _):
             return (entry.items.forwardedOffers.removeFirst(where: { $0.token == token }), nil)
-        case .pullEnded(let id, _):
-            return (entry.items.pulls.removeFirst(where: { $0 == id }), nil)
+        case .pullEnded(_, let id, _):
+            return (entry.items.pulls.removeFirst(where: { $0.id == id }), nil)
         case .serveEnded:
             return (entry.peer != nil, nil)
         }
@@ -113,13 +117,24 @@ extension AgentHubState {
         }
     }
 
-    /// Records what `reply`, the answer of `handle`'s connection to `command`, opened there.
-    mutating func opened(_ command: ItemCommand, _ reply: ItemReply, on handle: PeerHandle) {
-        switch (command, reply) {
+    /// Whether `handle`'s connection is a peer.
+    func isPeer(_ handle: PeerHandle) -> Bool {
+        connections[handle]?.peer != nil
+    }
+
+    /// The feature of the offer of `token` the hub forwarded from `handle`'s connection and still holds.
+    func forwardedFeature(_ token: Data, on handle: PeerHandle) -> FeatureID? {
+        connections[handle]?.items.forwardedOffers.first { $0.token == token }?.feature
+    }
+
+    /// Records what `reply`, the answer of `handle`'s connection to `pending`, opened there.
+    mutating func opened(_ pending: HubItemRequests.Pending, _ reply: ItemReply, on handle: PeerHandle) {
+        switch (pending.command, reply) {
         case (.offer(_, let offer, let feature), .offered(nil)):
             connections[handle]?.items.hostOffers.append(HubOpenItems.Offer(token: offer.token, feature: feature))
-        case (_, .pulled(.success(let id))):
-            connections[handle]?.items.pulls.append(id)
+        case (.pull, .pulled(.success(let id))):
+            guard let feature = pending.feature else { break }
+            connections[handle]?.items.pulls.append((id, feature))
         case (_, .took(.success(let id))):
             connections[handle]?.items.takes.append(id)
         default:
@@ -149,8 +164,9 @@ extension AgentHubState {
             items.hostOffers.removeAll { !held($0) }
             items.forwardedOffers.removeAll { !held($0) }
             if !isPeer {
-                for id in items.pulls {
-                    ended.append((handle, .cancel(id), .items(handle, .pullEnded(id, .closed(Self.endedByHub)))))
+                for pull in items.pulls {
+                    let end = ItemTransferEvent.pullEnded(pull.feature, pull.id, .closed(Self.endedByHub))
+                    ended.append((handle, .cancel(pull.id), .items(handle, end)))
                 }
                 for id in items.takes {
                     ended.append((handle, nil, .dragTake(handle, .ended(id, .closed(Self.endedByHub)))))

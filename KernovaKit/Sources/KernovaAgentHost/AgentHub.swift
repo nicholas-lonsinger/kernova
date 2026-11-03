@@ -323,15 +323,23 @@ public final class AgentHub: Sendable {
         queue.async { [self] in send(.release(token: token), to: peer) }
     }
 
-    /// Pulls one representation of `peer`'s open offer, and calls `completion` once with the pull's id, whose
-    /// one `.pullEnded` follows, or why it was not opened.
+    /// Pulls one representation of `peer`'s open offer as `order` says, and calls `completion` once with the
+    /// pull's id, whose one `.pullEnded` follows, or why it was not opened: `ITEM_OFFER_STALE` for an offer the
+    /// hub has not forwarded, or no longer holds.
     public func pullItem(
-        _ request: PullRequest, from peer: PeerHandle,
+        _ order: ItemPullOrder, from peer: PeerHandle,
         _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void
     ) {
         queue.async { [self] in
+            let (isPeer, feature) = state.withLock {
+                ($0.isPeer(peer), $0.forwardedFeature(order.request.token, on: peer))
+            }
+            if isPeer, feature == nil {
+                return completion(.failure(WireError(.itemOfferStale, debugDetail: "the hub holds no such offer")))
+            }
             awaitReply(
-                from: peer, { .pull($0, request) }, { if case .pulled(let result) = $0 { result } else { nil } },
+                from: peer, feature: feature, { .pull($0, order) },
+                { if case .pulled(let result) = $0 { result } else { nil } },
                 unanswered: .failure(Self.connectionEnded), completion)
         }
     }
@@ -373,7 +381,7 @@ public final class AgentHub: Sendable {
     /// `completion` once with what `answer` reads from its reply — or with `unanswered`, at once or later, when
     /// `peer` is no peer or its connection ends without replying.
     private func awaitReply<Answer: Sendable>(
-        from peer: PeerHandle, _ command: (ItemRequestID) -> ItemCommand,
+        from peer: PeerHandle, feature: FeatureID? = nil, _ command: (ItemRequestID) -> ItemCommand,
         _ answer: @escaping @Sendable (ItemReply) -> Answer?, unanswered: Answer,
         _ completion: @escaping @Sendable (Answer) -> Void
     ) {
@@ -386,7 +394,8 @@ public final class AgentHub: Sendable {
         }
         let sent = state.withLock { state -> (any HostConnectionHandle, ItemCommand)? in
             guard let entry = state.connections[peer], entry.peer != nil else { return nil }
-            return (entry.connection, state.items.add(peer, command, deliver))
+            let command = state.items.add(peer, command, feature: feature, deliver)
+            return (entry.connection, command)
         }
         guard let (connection, command) = sent else { return deliver(nil) }
         connection.send(.items(command))
@@ -407,7 +416,7 @@ public final class AgentHub: Sendable {
     private func itemReply(_ id: ItemRequestID, _ reply: ItemReply, from handle: PeerHandle) {
         let pending = state.withLock { state in
             let pending = state.items.take(id, from: handle)
-            if let pending { state.opened(pending.command, reply, on: handle) }
+            if let pending { state.opened(pending, reply, on: handle) }
             return pending
         }
         pending?.answer(reply)

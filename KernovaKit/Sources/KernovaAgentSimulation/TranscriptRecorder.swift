@@ -408,6 +408,8 @@ package final class Duet {
     private var lastTake: DragTakeID?
     /// The item commands sent and not yet answered, each with the step's text.
     private var asked: [ItemRequestID: String] = [:]
+    /// The item the last `.read` answered.
+    private var read: OfferedItem?
     private var nextRequest: UInt64 = 0
     private lazy var bundleContent: Data? = TranscriptFixture.host(exchange.hostFixture)?.bundles.first.map {
         SimHub.expectedContent($0.manifest)
@@ -493,7 +495,13 @@ package final class Duet {
             guard let offer = TranscriptFixture.offer(name) else { break }
             item(side, ask(input) { .offer($0, offer, feature: feature) })
         case .itemPull(let side, let request):
-            item(side, ask(input) { .pull($0, request) })
+            // The landing takes the storage of the representation the pull names, so the item is read first.
+            read = nil
+            item(side, ask(input) { .read($0, token: request.token, item: request.item) })
+            drainAll()
+            let storage = read?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
+            let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
+            item(side, ask(input) { .pull($0, order) })
         case .withdraw(let side, let token): item(side, .withdraw(token: token))
         case .release(let side, let token): item(side, .release(token: token))
         case .takeDrag(let token):
@@ -534,6 +542,7 @@ package final class Duet {
             case .pulled(.failure(let error)), .took(.failure(let error)): error
             case .pulled, .took, .read: nil
             }
+        if case .read(let item) = reply { read = item }
         if let refusal { failures.append("t=\(now): `\(text)` refused: \(refusal)") }
     }
 
@@ -808,8 +817,10 @@ package enum TranscriptEvents {
             "\(prefix) offerReceived feature=\(header.feature.rawValue) token=\(FrozenFields.hex(header.token)) items=\(header.count)"
         case .offerEnded(let feature, let origin, let token, let closure):
             "\(prefix) offerEnded feature=\(feature.rawValue) \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
-        case .pullEnded(let id, let result): "\(prefix) pullEnded id=\(id.stream.rawValue) \(describe(result))"
-        case .serveEnded(let id, let result): "\(prefix) serveEnded id=\(id.stream.rawValue) \(describe(result))"
+        case .pullEnded(let feature, let id, let result):
+            "\(prefix) pullEnded feature=\(feature.rawValue) id=\(id.stream.rawValue) \(describe(result))"
+        case .serveEnded(let feature, let id, let result):
+            "\(prefix) serveEnded feature=\(feature.rawValue) id=\(id.stream.rawValue) \(describe(result))"
         }
     }
 
@@ -827,6 +838,15 @@ package enum TranscriptEvents {
     }
 
     static func describe(_ result: ItemPullResult) -> String {
+        switch result {
+        case .landed(.named(let name)): "landed name=\(FrozenFields.hex(name))"
+        case .landed(.inline(let bytes)): "landed inline=\(FrozenFields.hex(bytes))"
+        case .failed(let error): "failed code=\(error.code.rawValue)"
+        case .closed(let closure): "closed \(describe(closure))"
+        }
+    }
+
+    static func describe(_ result: ItemServeResult) -> String {
         switch result {
         case .landed: "landed"
         case .failed(let error): "failed code=\(error.code.rawValue)"

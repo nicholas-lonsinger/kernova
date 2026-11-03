@@ -15,7 +15,8 @@ import KernovaWire
 ///
 /// Its state lives on its own serial queue. Each connection runs on a `ConnectionDriver` of its own;
 /// adapter reports reach the current one through this queue, and its events come back through it. A
-/// connection has ended once its driver has shut its stream down: only then does the schedule hear of it.
+/// connection has ended once its driver has shut its stream down: then the schedule hears of it, though a pull
+/// it committed may end later, when its sink reports the publish.
 public final class PeerAgentRuntime: Sendable {
     /// Where the runtime sends what the shell acts on, on the runtime's queue.
     public struct Handlers: Sendable {
@@ -127,7 +128,8 @@ public final class PeerAgentRuntime: Sendable {
     }
 
     /// Stops dialing and closes the connection with `SHUTTING_DOWN`. `completion` runs on the runtime's
-    /// queue once the connection has ended — its stream shut down — or at once when there is none.
+    /// queue once the connection has ended — its stream shut down, whether or not a pull it committed has
+    /// ended — or at once when there is none.
     public func close(_ completion: @escaping @Sendable () -> Void) {
         queue.async { [self] in
             step { agent, now in agent.shutDown(now: now) }
@@ -137,6 +139,12 @@ public final class PeerAgentRuntime: Sendable {
             }
             if let driver { driver.close(.shuttingDown) } else { completion() }
         }
+    }
+
+    /// Sends `command` to the current connection; the `.itemReply` it owes, if any, comes through
+    /// `Handlers.event`. With no connection, it is never answered.
+    public func send(_ command: ItemCommand) {
+        queue.async { [self] in state.withLock { $0.driver }?.handle(.itemCommand(command)) }
     }
 
     // MARK: The dial schedule
@@ -196,6 +204,7 @@ public final class PeerAgentRuntime: Sendable {
 
     private func driverHandlers(_ generation: ConnectionGeneration) -> ConnectionDriver<PeerEndpoint>.Handlers {
         let logs = registry.logs
+        let itemConnection = ItemConnection(role: claim.role)
         return ConnectionDriver<PeerEndpoint>.Handlers(
             inTurn: { effect in
                 guard case .logs(let effect) = effect, let logs else { return .deliver }
@@ -223,9 +232,10 @@ public final class PeerAgentRuntime: Sendable {
                 case .update(.clearRejected): registry.update?.clearRejected()
                 case .itemSource(let effect):
                     registry.items?.source.handle(
-                        effect, reporter: ItemSourceReporter { driver.handle(.items(.source($0))) })
+                        effect, reporter: ItemSourceReporter(itemConnection) { driver.handle(.items(.source($0))) })
                 case .itemSink(let effect):
-                    registry.items?.sink.handle(effect, reporter: ItemSinkReporter { driver.handle(.items(.sink($0))) })
+                    registry.items?.sink.handle(
+                        effect, reporter: ItemSinkReporter(itemConnection) { driver.handle(.items(.sink($0))) })
                 case .logs: break
                 }
             },
@@ -244,7 +254,7 @@ public final class PeerAgentRuntime: Sendable {
         handlers.event(event)
     }
 
-    /// The connection's stream is shut down: the schedule hears of its end, and `close` completes.
+    /// The connection has ended: the schedule hears of it, and `close` completes.
     private func connectionEnded(_ generation: ConnectionGeneration, _ closure: ConnectionClosure) {
         let completions = state.withLock { state -> [@Sendable () -> Void] in
             guard state.driver?.generation == generation else { return [] }

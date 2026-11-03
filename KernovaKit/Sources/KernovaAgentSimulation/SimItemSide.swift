@@ -11,16 +11,20 @@ import KernovaWire
 /// adapters do, and what its owner heard.
 package final class SimItemSide {
     package var source = ContainerItemSource()
-    package private(set) var sink = DecodingItemSink()
+    package var sink = DecodingItemSink()
     /// The consumer-stall fault holding the sink's consumption, while one does.
     var stall: Int?
+    /// How long the sink takes to publish a committed pull.
+    package var publishDelay: SimTime = .us(20)
     private var heldConsumption: [ItemSinkInput] = []
     /// Every pull asked for, and what `pullItem` returned.
     package private(set) var pulls: [(time: SimTime, request: PullRequest, result: Result<ItemPullID, WireError>)] = []
     /// Every refused offer.
     package private(set) var offerRefusals: [WireError] = []
-    package private(set) var pullsEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
-    package private(set) var servesEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
+    package private(set) var pullsEnded: [(time: SimTime, feature: FeatureID, id: ItemPullID, result: ItemPullResult)] =
+        []
+    package private(set) var servesEnded:
+        [(time: SimTime, feature: FeatureID, id: ItemPullID, result: ItemServeResult)] = []
     package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
@@ -52,6 +56,11 @@ package final class SimItemSide {
     private var answeredTakes: Set<DragTakeID> = []
 
     init() {}
+
+    /// Item `item` of the far side's offer of `token`, as this side last read it.
+    func read(_ token: Data, item: UInt32) -> OfferedItem? {
+        reads.last { $0.token == token && $0.item == item }?.result
+    }
 
     /// The ids of the commands sent and never answered.
     var unanswered: [ItemRequestID] { Array(awaiting.keys) }
@@ -106,19 +115,36 @@ package final class SimItemSide {
                 world.faultTookEffect(stall)
                 return
             }
-            world.itemInput(.sink(input), link: link, side: side, after: .us(20))
+            switch input {
+            case .published, .publishFailed:
+                world.itemInput(.sink(input), link: link, side: side, after: publishDelay)
+            default:
+                world.itemInput(.sink(input), link: link, side: side, after: .us(20))
+            }
         case .event(let event):
             switch event {
-            case .offerReceived(let header): offersReceived.append((world.now, header))
+            case .offerReceived(let header):
+                offersReceived.append((world.now, header))
+                // The owner reads each item as the offer arrives, as a pull's landing depends on its storage.
+                let index = world.links.firstIndex { $0 === link } ?? 0
+                world.at(world.now) { world in
+                    world.itemCommand(side, link: index) { items in
+                        (0..<UInt32(clamping: header.count)).map { item in
+                            items.command(.read(token: header.token, item: item)) {
+                                .read($0, token: header.token, item: item)
+                            }
+                        }
+                    }
+                }
             case .offerEnded(let feature, let origin, let token, let closure):
                 offersEnded.append((world.now, feature, origin, token, closure))
                 if origin == .local {
                     answered(token, in: &answeredOffers, "offer", link: link, side: side, world: world)
                 }
-            case .pullEnded(let id, let result):
-                pullsEnded.append((world.now, id, result))
+            case .pullEnded(let feature, let id, let result):
+                pullsEnded.append((world.now, feature, id, result))
                 answered(id, in: &answeredPulls, "pull \(id.stream.rawValue)", link: link, side: side, world: world)
-            case .serveEnded(let id, let result): servesEnded.append((world.now, id, result))
+            case .serveEnded(let feature, let id, let result): servesEnded.append((world.now, feature, id, result))
             }
         }
     }
@@ -157,13 +183,15 @@ extension SimWorld {
         }
     }
 
-    /// Feeds an item source's or sink's answer to `side`'s endpoint after `delay`, if the link still runs there.
+    /// Feeds an item source's or sink's answer to `side`'s endpoint after `delay`, if the link still runs
+    /// there or has a landing in flight, as a driver feeds a finished endpoint until its committed pulls end.
     package func itemInput(_ input: ItemTransferInput, link: SimLink, side: SimSide, after delay: SimTime) {
         let process = process(of: link, side)
         at(now + delay) { world in
             world.perform(process) { world in
-                guard !link.shutDown.contains(side) else { return }
+                guard !link.shutDown.contains(side) || link.hasLandingsInFlight(side) else { return }
                 let local = world.localNow(process)
+                if case .sink(let report) = input { world.checker.sinkReport(report, link: link, side: side) }
                 switch side {
                 case .host: link.host?.handle(input, now: local)
                 case .peer: link.peer?.handle(.items(input), now: local)
@@ -175,7 +203,7 @@ extension SimWorld {
 
     /// Sends `side`'s endpoint of link `index` the commands `build` makes, as that side's process, then
     /// drains it; each answer reaches the link's item side as the endpoint emits it.
-    private func itemCommand(
+    fileprivate func itemCommand(
         _ side: SimSide, link index: Int, _ build: @escaping (SimItemSide) -> [ItemCommand]
     ) {
         guard index < links.count else { return checker.fail("no link \(index)") }
@@ -220,15 +248,14 @@ extension SimWorld {
         }
     }
 
-    /// `side` pulls `request` on link `index`.
+    /// `side` pulls `request` on link `index`, landing it as `DecodingItemSink.landing(_:)` takes the storage
+    /// of the representation it names.
     package func pullItem(_ request: PullRequest, by side: SimSide, link index: Int = 0) {
-        itemCommand(side, link: index) { items in [items.command(.pull(request)) { .pull($0, request) }] }
-    }
-
-    /// `side` reads item `item` of the far side's offer of `token` on link `index`.
-    package func readItem(_ token: Data, item: UInt32 = 0, by side: SimSide, link index: Int = 0) {
         itemCommand(side, link: index) { items in
-            [items.command(.read(token: token, item: item)) { .read($0, token: token, item: item) }]
+            let storage = items.read(request.token, item: request.item)?.representations
+                .dropFirst(Int(request.representation)).first?.storage ?? .file
+            let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
+            return [items.command(.pull(request)) { .pull($0, order) }]
         }
     }
 

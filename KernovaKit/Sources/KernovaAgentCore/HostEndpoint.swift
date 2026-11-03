@@ -127,6 +127,10 @@ public struct HostEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
+    /// Whether a committed pull's `.pullEnded` is still owed, which its sink's publish report brings, though
+    /// the connection may have finished.
+    public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
+
     /// When the driver must next call `handleTimeout`: the soonest of the
     /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {

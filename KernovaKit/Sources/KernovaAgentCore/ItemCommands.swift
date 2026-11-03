@@ -31,8 +31,8 @@ public enum ItemCommand: Sendable, Equatable {
     /// Release the far side's offer of `token`: this side pulls nothing more of it. Releasing a taken drag
     /// offer completes the drag.
     case release(token: Data)
-    /// Pull one representation of the far side's open offer; answered `.pulled`.
-    case pull(ItemRequestID, PullRequest)
+    /// Pull one representation of the far side's open offer, landing it as the order says; answered `.pulled`.
+    case pull(ItemRequestID, ItemPullOrder)
     /// Cancel a pull this side opened; its `.pullEnded` follows.
     case cancel(ItemPullID)
     /// Host: take the peer's open drag offer of `token`; answered `.took`, refused `ITEM_OFFER_STALE` when no
@@ -65,8 +65,8 @@ extension ItemMachines {
             withdraw(token, connection: &connection)
         case .release(let token):
             release(token, connection: &connection)
-        case .pull(let id, let request):
-            return (id, .pulled(pull(request, connection: &connection)))
+        case .pull(let id, let order):
+            return (id, .pulled(pull(order, connection: &connection)))
         case .cancel(let pull):
             cancel(pull, connection: &connection)
         case .takeDrag(let id, let token):

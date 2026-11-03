@@ -272,9 +272,12 @@ package final class HostileRun {
         return nil
     }
 
-    /// Pulls `request` from the far side's offer.
-    package func pullItem(_ request: PullRequest) -> Result<ItemPullID, WireError>? {
-        guard case .pulled(let result) = ask({ .pull($0, request) }) else { return nil }
+    /// Pulls `request` from the far side's offer, landing it as `landing` says.
+    package func pullItem(_ request: PullRequest, landing: ItemLanding = DecodingItemSink.landing(.file))
+        -> Result<ItemPullID, WireError>?
+    {
+        let order = ItemPullOrder(request, landing: landing)
+        guard case .pulled(let result) = ask({ .pull($0, order) }) else { return nil }
         return result
     }
 
