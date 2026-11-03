@@ -90,6 +90,16 @@ struct PublishTests {
         #expect(try Self.names(landing) == ["taken", "taken folder"])
     }
 
+    @Test("Keep Both counts no name past the name limit: a taken name that has no room fails ENAMETOOLONG")
+    func keepBothWithinTheNameLimit() throws {
+        let landing = try Landing(kernelContainment: true)
+        let longest = String(repeating: "n", count: 255)
+        try Self.seed(landing, files: [longest], folders: [])
+        let result = try publish(Self.fileContainer, .file, as: .keepingBoth(bytes(longest)), .asTheVolume, landing)
+        #expect(result.failure?.reason == .system(TreeFileSystemError(code: ENAMETOOLONG)))
+        #expect(try Self.names(landing) == [longest])
+    }
+
     @Test("publishing before the container finished fails, and a name that is not one component is refused")
     func publishOnlyAValidNameOfAFinishedItem() throws {
         let landing = try Landing(kernelContainment: true)
