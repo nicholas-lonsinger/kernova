@@ -238,6 +238,15 @@ struct HostileContainerTests {
                     path: [bytes("r")], reason: .container(.exceedsByteCeiling(declared: 1001, ceiling: 1000))))
         try landing.expectNothingOutside()
 
+        var forked = RawContainer()
+        forked.header(directory("r", depth: 0))
+        forked.header(withResourceFork(file("f", depth: 1, size: 600), size: 401))
+        #expect(
+            try landing.land(forked.data, accepting: acceptance(ceiling: 1000)).failure
+                == TreeWriteFailure(
+                    path: [bytes("r")], reason: .container(.exceedsByteCeiling(declared: 1001, ceiling: 1000))))
+        try landing.expectNothingOutside()
+
         var past = RawContainer()
         past.header(directory("r", depth: 0))
         past.header(file("f", depth: 1, size: 2))
@@ -249,8 +258,8 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
     }
 
-    /// A container of every record kind: a folder, a nested folder, small and large files, a zero run and a
-    /// symlink.
+    /// A container of every record kind: a folder, a nested folder, small and large files, a zero run, files
+    /// with resource forks, and a symlink.
     private static func everyKind() -> RawContainer {
         var container = RawContainer()
         container.header(directory("r", depth: 0))
@@ -259,6 +268,11 @@ struct HostileContainerTests {
         container.header(file("large", depth: 2, size: largeFileSize + 4096))
         container.chunk(pattern(Int(largeFileSize)))
         container.zeros(4096)
+        container.header(withResourceFork(file("forked", depth: 2, size: 3), size: 5))
+        container.chunk(Data("abc".utf8))
+        container.chunk(Data("forks".utf8))
+        container.header(withResourceFork(file("Icon\r", depth: 2, size: 0), size: largeFileSize))
+        container.chunk(pattern(Int(largeFileSize)))
         container.header(symlinkEntry("link", depth: 1, target: "nested/small"))
         container.end()
         return container
@@ -296,7 +310,8 @@ struct HostileContainerTests {
             try landing.landedEntries(landed)
                 == [
                     "./link: symlink -> nested/small", "./nested/large: regular \(largeFileSize + 4096)",
-                    "./nested/small: regular 5", ".: directory", "./nested: directory",
+                    "./nested/small: regular 5", "./nested/forked: regular 3", "./nested/Icon%d: regular 0",
+                    ".: directory", "./nested: directory",
                 ].sorted())
     }
 

@@ -95,8 +95,24 @@ func decmpfsAttribute(type: UInt32, size: UInt64, magic: UInt32 = DecmpfsHeader.
 func decmpfsFile(_ fileName: String, depth: UInt32, attribute: Data, resourceForkSize: UInt64) -> EntryHeader {
     var header = plainFile(fileName, depth: depth, size: 0)
     header.decmpfs.attribute = attribute
-    header.decmpfs.resourceForkSize = resourceForkSize
+    header.resourceForkSize = resourceForkSize
     return header
+}
+
+/// `header` with a resource fork of `size` bytes.
+func withResourceFork(_ header: EntryHeader, size: UInt64) -> EntryHeader {
+    var header = header
+    header.resourceForkSize = size
+    return header
+}
+
+/// The bytes `header`'s data chunks carry, before its resource fork's.
+func dataSize(of header: EntryHeader) -> Int {
+    switch header.storage {
+    case .plain(let plain): Int(plain.size)
+    case .lz4(let lz4): Int(lz4.size)
+    case .decmpfs, nil: 0
+    }
 }
 
 func serialized(_ message: some SwiftProtobuf.Message) -> Data {
@@ -202,7 +218,7 @@ func content(of events: [TreeEvent]) -> Data {
     return data
 }
 
-/// A tree to encode: each entry with the bytes its file carries.
+/// A tree to encode: each entry with the bytes its file carries, its data's then its resource fork's.
 struct TreeFixture {
     var entries: [(header: EntryHeader, bytes: Data)]
 
@@ -216,11 +232,15 @@ struct TreeFixture {
         var container = Data()
         for (header, bytes) in entries {
             container.append(try encoder.entry(header))
-            var start = bytes.startIndex
-            while start < bytes.endIndex {
-                let end = min(start + pieceSize, bytes.endIndex)
-                container.append(try encoder.bytes(bytes[start..<end]))
-                start = end
+            let split = bytes.startIndex + dataSize(of: header)
+            for (part, isFork) in [(bytes[..<split], false), (bytes[split...], true)] {
+                if isFork && !part.isEmpty { container.append(try encoder.encode(.resourceFork)) }
+                var start = part.startIndex
+                while start < part.endIndex {
+                    let end = min(start + pieceSize, part.endIndex)
+                    container.append(try encoder.bytes(part[start..<end]))
+                    start = end
+                }
             }
         }
         container.append(try encoder.end())
@@ -269,7 +289,9 @@ struct TreeFixture {
                 events.append(.symlink(header))
             default:
                 events.append(.beginFile(header))
-                if !bytes.isEmpty { events.append(.bytes(bytes)) }
+                let split = bytes.startIndex + dataSize(of: header)
+                if split > bytes.startIndex { events.append(.bytes(Data(bytes[..<split]))) }
+                if split < bytes.endIndex { events += [.resourceFork, .bytes(Data(bytes[split...]))] }
                 events.append(.finishFile)
             }
         }

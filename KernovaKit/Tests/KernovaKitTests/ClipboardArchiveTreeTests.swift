@@ -414,6 +414,20 @@ private final class FakeVolume: TreeFileSystem {
         throw TreeFileSystemError(code: EINVAL)
     }
 
+    func compressedStorage(of descriptor: Int32, maxByteCount: Int) throws(TreeFileSystemError) -> [UInt8]? {
+        throw TreeFileSystemError(code: EINVAL)
+    }
+
+    func resourceForkSize(of descriptor: Int32, showingCompression: Bool) throws(TreeFileSystemError) -> UInt64 {
+        throw TreeFileSystemError(code: EINVAL)
+    }
+
+    func readResourceFork(
+        _ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: UInt64, showingCompression: Bool
+    ) throws(TreeFileSystemError) -> Int {
+        throw TreeFileSystemError(code: EINVAL)
+    }
+
     func close(_ descriptor: Int32) {
         let closed = open.removeValue(forKey: descriptor)
         precondition(closed != nil, "closed descriptor \(descriptor) twice")

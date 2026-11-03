@@ -7,12 +7,13 @@ import Foundation
 import KernovaWire
 
 /// An entry header that keeps every rule the format holds one entry to, whatever produced it: its name, its
-/// mode, flags and times, its symlink target, and its extended attributes. The container grammar admits no
-/// header without one, and a tree writer lands an entry's metadata only from one, so every producer of
-/// `TreeEvent`s is held to the same rules.
+/// mode, flags and times, its symlink target, its extended attributes, and its storage and resource fork
+/// against its type. The container grammar admits no header without one, and a tree writer lands an entry
+/// only from one, so every producer of `TreeEvent`s is held to the same rules.
 ///
 /// The rules that depend on a pull — the codecs, decmpfs types and byte ceiling it accepts — and an entry's
-/// place in the tree are the grammar's.
+/// place in the tree are the grammar's; ``ContainerAcceptance/admitLanding(_:after:)`` holds the ones a
+/// writer shares.
 public struct ValidatedEntry: Sendable {
     /// The longest name a POSIX file system takes, `NAME_MAX`; extended attribute names share it
     /// (`XATTR_MAXNAMELEN` on Darwin, `XATTR_NAME_MAX` on Linux).
@@ -35,19 +36,46 @@ public struct ValidatedEntry: Sendable {
     /// decmpfs storage alone, and `UF_TRACKED` marks a document ID that does not travel.
     public static let allowedDarwinFlags: UInt32 = 0x0000_8009
 
-    /// The extended attributes the format carries, by exact name: Finder tags and the resource fork.
-    static let allowedXattrNames: Set<Data> = [
-        Data("com.apple.metadata:_kMDItemUserTags".utf8), resourceForkName,
-    ]
+    /// The extended attributes the format carries, by exact name: Finder tags. A resource fork travels as an
+    /// entry's own chunks, never as an attribute.
+    static let allowedXattrNames: Set<Data> = [Data("com.apple.metadata:_kMDItemUserTags".utf8)]
+
+    /// The largest resource fork, 4 GiB: Darwin, the one OS that keeps resource forks, reads and writes one
+    /// in pieces at a 32-bit position (`getxattr(2)`, `setxattr(2)`).
+    public static let maxResourceForkByteCount: UInt64 = 1 << 32
 
     /// The extended attribute namespace the format carries whole: Linux's `user.*`.
     static let allowedXattrPrefix = Data("user.".utf8)
 
-    /// The resource fork, which an entry with decmpfs storage carries as its chunks instead.
-    static let resourceForkName = Data("com.apple.ResourceFork".utf8)
-
     /// The header, which keeps every rule.
     public let header: EntryHeader
+
+    /// The bytes the entry's data chunks carry: its size for plain or LZ4 storage, none for decmpfs storage or
+    /// an entry that is not a file.
+    public let dataByteCount: UInt64
+
+    /// The bytes its resource fork's chunks carry, which follow the data's; 0 for none.
+    public let resourceForkByteCount: UInt64
+
+    /// The header of its `com.apple.decmpfs` attribute, for decmpfs storage.
+    public let decmpfs: DecmpfsHeader?
+
+    /// Whether its chunks may be LZ4 blocks.
+    public let isLZ4: Bool
+
+    /// The logical bytes it lands, which a pull's byte ceiling bounds: its data and its resource fork, and for
+    /// decmpfs storage, whose data is the resource fork read through the attribute, the larger of the
+    /// attribute's uncompressed size and the fork, so neither can pass the ceiling.
+    public var landedByteCount: UInt64 {
+        if let decmpfs { return max(decmpfs.uncompressedSize, resourceForkByteCount) }
+        return carriedByteCount
+    }
+
+    /// The bytes all its chunks carry, data then resource fork.
+    public var carriedByteCount: UInt64 {
+        let (sum, overflow) = dataByteCount.addingReportingOverflow(resourceForkByteCount)
+        return overflow ? .max : sum
+    }
 
     /// `header`, once it keeps every rule.
     ///
@@ -55,6 +83,14 @@ public struct ValidatedEntry: Sendable {
     /// - Throws: `ContainerError` naming the first rule it breaks.
     public init(_ header: EntryHeader) throws(ContainerError) {
         try Self.check(header)
+        (dataByteCount, decmpfs, isLZ4) = try Self.storage(of: header)
+        guard header.resourceForkSize == 0 || header.type == .file else {
+            throw .resourceForkNotAllowed(header.type)
+        }
+        guard header.resourceForkSize <= Self.maxResourceForkByteCount else {
+            throw .resourceForkTooLarge(header.resourceForkSize)
+        }
+        resourceForkByteCount = header.resourceForkSize
         self.header = header
     }
 
@@ -88,19 +124,39 @@ public struct ValidatedEntry: Sendable {
         try checkXattrs(of: header)
     }
 
+    /// The bytes `header`'s data chunks carry, its decmpfs header, and whether its chunks may be LZ4, once its
+    /// storage is one its type takes: plain or LZ4 for DATA and FILE, decmpfs for FILE alone, none otherwise.
+    private static func storage(of header: EntryHeader) throws(ContainerError) -> (UInt64, DecmpfsHeader?, Bool) {
+        switch (header.type, header.storage) {
+        case (.data, .plain(let plain)?), (.file, .plain(let plain)?):
+            guard plain.unknownFields.data.isEmpty else { throw .unknownFields }
+            return (plain.size, nil, false)
+        case (.data, .lz4(let lz4)?), (.file, .lz4(let lz4)?):
+            guard lz4.unknownFields.data.isEmpty else { throw .unknownFields }
+            return (lz4.size, nil, true)
+        case (.file, .decmpfs(let decmpfs)?):
+            guard decmpfs.unknownFields.data.isEmpty else { throw .unknownFields }
+            do {
+                return (0, try DecmpfsHeader(attribute: decmpfs.attribute), false)
+            } catch {
+                throw .malformedDecmpfsAttribute(error)
+            }
+        case (.directory, nil), (.symlink, nil):
+            return (0, nil, false)
+        default:
+            throw .storageNotAllowed(header.type)
+        }
+    }
+
     private static func checkXattrs(of header: EntryHeader) throws(ContainerError) {
         var names = Set<Data>()
-        let decmpfs: Bool
-        if case .decmpfs = header.storage { decmpfs = true } else { decmpfs = false }
         for xattr in header.xattrs {
             guard xattr.unknownFields.data.isEmpty else { throw .unknownFields }
             let name = xattr.name
             guard !name.isEmpty, name.count <= maxNameByteCount, !name.contains(0) else {
                 throw .invalidXattrName
             }
-            guard isAllowedXattrName(name), !(decmpfs && name == resourceForkName) else {
-                throw .xattrNotAllowed(name)
-            }
+            guard isAllowedXattrName(name) else { throw .xattrNotAllowed(name) }
             guard names.insert(name).inserted else { throw .duplicateXattrName(name) }
         }
     }

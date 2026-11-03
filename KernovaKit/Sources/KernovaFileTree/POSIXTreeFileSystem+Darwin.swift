@@ -132,6 +132,129 @@ extension POSIXTreeFileSystem {
     }
 }
 
+extension POSIXTreeFileSystem {
+    /// `fgetxattr` of `com.apple.decmpfs` with `XATTR_SHOWCOMPRESSION`, which alone shows it.
+    public func compressedStorage(of descriptor: Int32, maxByteCount: Int) throws(TreeFileSystemError) -> [UInt8]? {
+        try Self.attribute(Self.decmpfsName, of: descriptor, options: XATTR_SHOWCOMPRESSION, maxByteCount: maxByteCount)
+    }
+
+    /// `fgetxattr` of `XATTR_RESOURCEFORK_NAME` with no buffer.
+    public func resourceForkSize(of descriptor: Int32, showingCompression: Bool) throws(TreeFileSystemError)
+        -> UInt64
+    {
+        let size = Self.call(XATTR_RESOURCEFORK_NAME) { name in
+            fgetxattr(descriptor, name, nil, 0, 0, Self.forkOptions(showingCompression))
+        }
+        switch size {
+        case .success(let size): return UInt64(size)
+        case .failure(let error) where error.code == ENOATTR: return 0
+        case .failure(let error): throw error
+        }
+    }
+
+    /// `fgetxattr` of `XATTR_RESOURCEFORK_NAME` at a position, which its 32-bit argument bounds; past the
+    /// end it reads nothing.
+    public func readResourceFork(
+        _ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: UInt64, showingCompression: Bool
+    ) throws(TreeFileSystemError) -> Int {
+        guard let position = UInt32(exactly: offset) else { throw TreeFileSystemError(code: EFBIG) }
+        let size = try resourceForkSize(of: descriptor, showingCompression: showingCompression)
+        guard offset < size else { return 0 }
+        let count = Int(min(UInt64(buffer.count), size - offset))
+        return try Self.check(
+            fgetxattr(
+                descriptor, XATTR_RESOURCEFORK_NAME, buffer.baseAddress, count, position,
+                Self.forkOptions(showingCompression)))
+    }
+
+    /// `fsetxattr` of `XATTR_RESOURCEFORK_NAME` at a position, which its 32-bit argument bounds; `false` for
+    /// the errnos with which a volume refuses an attribute it cannot hold.
+    public func writeResourceFork(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: UInt64)
+        throws(TreeFileSystemError) -> Bool
+    {
+        guard let position = UInt32(exactly: offset),
+            UInt64(position) + UInt64(buffer.count) <= UInt64(UInt32.max) + 1
+        else { throw TreeFileSystemError(code: EFBIG) }
+        let written = fsetxattr(descriptor, XATTR_RESOURCEFORK_NAME, buffer.baseAddress, buffer.count, position, 0)
+        guard written < 0 else { return true }
+        let code = errno
+        if Self.unheldAttributeCodes.contains(code) { return false }
+        throw TreeFileSystemError(code: code)
+    }
+
+    /// `fgetattrlist` of `ATTR_VOL_CAPABILITIES` on `directory`: `VOL_CAP_FMT_DECMPFS_COMPRESSION` both valid
+    /// and set, the check `copyfile` makes before it copies a file compressed.
+    public func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool {
+        var list = attrlist()
+        list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
+        list.volattr = attrgroup_t(ATTR_VOL_INFO) | attrgroup_t(ATTR_VOL_CAPABILITIES)
+        // A length word, then the capabilities (getattrlist(2)).
+        struct Reply {
+            var length: UInt32
+            var capabilities: vol_capabilities_attr_t
+        }
+        var reply = Reply(length: 0, capabilities: vol_capabilities_attr_t())
+        try Self.check(fgetattrlist(directory, &list, &reply, MemoryLayout<Reply>.size, 0))
+        let format = Int(VOL_CAPABILITIES_FORMAT)
+        let bit = UInt32(VOL_CAP_FMT_DECMPFS_COMPRESSION)
+        let valid = withUnsafeBytes(of: reply.capabilities.valid) {
+            $0.load(fromByteOffset: format * 4, as: UInt32.self)
+        }
+        let set = withUnsafeBytes(of: reply.capabilities.capabilities) {
+            $0.load(fromByteOffset: format * 4, as: UInt32.self)
+        }
+        return valid & bit != 0 && set & bit != 0
+    }
+
+    /// `fsetxattr` of `com.apple.decmpfs` with `XATTR_SHOWCOMPRESSION`.
+    public func setCompressedStorage(_ attribute: [UInt8], of descriptor: Int32) throws(TreeFileSystemError) {
+        try Self.check(
+            attribute.withUnsafeBytes {
+                fsetxattr(descriptor, Self.decmpfsName, $0.baseAddress, $0.count, 0, XATTR_SHOWCOMPRESSION)
+            })
+    }
+
+    /// One `fchflags` of `flags | UF_COMPRESSED`.
+    public func setCompressedFlags(_ flags: UInt32, of descriptor: Int32) throws(TreeFileSystemError) {
+        try Self.check(fchflags(descriptor, flags | UInt32(UF_COMPRESSED)))
+    }
+
+    static let decmpfsName = "com.apple.decmpfs"
+
+    private static func forkOptions(_ showingCompression: Bool) -> Int32 {
+        showingCompression ? XATTR_SHOWCOMPRESSION : 0
+    }
+
+    private static func call(_ name: String, _ syscall: (UnsafePointer<CChar>) -> Int) -> Result<
+        Int, TreeFileSystemError
+    > {
+        let result = syscall(name)
+        return result < 0 ? .failure(TreeFileSystemError(code: errno)) : .success(result)
+    }
+
+    /// The attribute `name` of `descriptor` read with `options`, or nil when it has none or it is longer than
+    /// `maxByteCount`.
+    private static func attribute(_ name: String, of descriptor: Int32, options: Int32, maxByteCount: Int)
+        throws(TreeFileSystemError) -> [UInt8]?
+    {
+        while true {
+            let size = fgetxattr(descriptor, name, nil, 0, 0, options)
+            if size < 0 {
+                let code = errno
+                if code == ENOATTR { return nil }
+                throw TreeFileSystemError(code: code)
+            }
+            guard size <= maxByteCount else { return nil }
+            var value = [UInt8](repeating: 0, count: size)
+            let got = value.withUnsafeMutableBytes { fgetxattr(descriptor, name, $0.baseAddress, size, 0, options) }
+            // `ERANGE`: the value grew since its length was read.
+            if got < 0 && errno == ERANGE { continue }
+            try check(got)
+            return Array(value[..<got])
+        }
+    }
+}
+
 extension timespec {
     init(_ time: FileTime) {
         self.init(tv_sec: Int(time.seconds), tv_nsec: Int(time.nanoseconds))

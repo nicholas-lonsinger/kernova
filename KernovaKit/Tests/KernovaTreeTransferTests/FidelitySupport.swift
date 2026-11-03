@@ -170,6 +170,8 @@ final class FidelityBench {
         var linkTarget: [UInt8]?
         /// The extended attributes the format carries.
         var carriedXattrs: [[UInt8]: [UInt8]]
+        /// The resource fork as the file shows it; nil for none.
+        var resourceFork: [UInt8]? = nil
         /// Every extended attribute name.
         var xattrNames: Set<[UInt8]>
         /// 512-byte blocks allocated, `st_blocks`.
@@ -224,6 +226,7 @@ final class FidelityBench {
                 offset += count
             }
             facts.digest = SHA256.hash(content)
+            facts.resourceFork = try resourceFork(of: descriptor, showingCompression: false)
             if let holeSize = fileSystem.holeSize(of: descriptor) {
                 var start: Int64 = 0
                 while let run = try fileSystem.dataRun(in: descriptor, from: start) {
@@ -248,6 +251,26 @@ final class FidelityBench {
             break
         }
         found[here] = facts
+    }
+}
+
+extension FidelityBench {
+    /// The open file's resource fork, read as the reader reads it, in pieces; nil for none.
+    func resourceFork(of descriptor: Int32, showingCompression: Bool) throws -> [UInt8]? {
+        let size = try fileSystem.resourceForkSize(of: descriptor, showingCompression: showingCompression)
+        guard size > 0 else { return nil }
+        var fork = [UInt8](repeating: 0, count: Int(size))
+        var offset = 0
+        while offset < fork.count {
+            let count = try fork.withUnsafeMutableBytes { buffer in
+                try fileSystem.readResourceFork(
+                    descriptor, into: UnsafeMutableRawBufferPointer(rebasing: buffer[offset...]),
+                    at: UInt64(offset), showingCompression: showingCompression)
+            }
+            try #require(count > 0)
+            offset += count
+        }
+        return fork
     }
 }
 

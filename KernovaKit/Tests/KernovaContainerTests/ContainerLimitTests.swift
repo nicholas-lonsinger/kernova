@@ -416,6 +416,20 @@ struct DecmpfsStorageTests {
         let header = decmpfsFile("c", depth: 0, attribute: decmpfsAttribute(type: 4, size: 100), resourceForkSize: 3)
         let decoded = decode(headerRecord(header) + record(.chunk, Data([7, 8, 9])) + endRecord(entries: 1, bytes: 3))
         #expect(decoded.error == nil)
-        #expect(content(of: decoded.events) == Data([7, 8, 9]))
+        #expect(decoded.events == [.beginFile(header), .resourceFork, .bytes(Data([7, 8, 9])), .finishFile, .end])
+    }
+
+    @Test("decmpfs storage carries no data: a chunk is the resource fork's, and with none declared there is none")
+    func noDataStream() {
+        let attributeOnly = decmpfsFile(
+            "c", depth: 0, attribute: decmpfsAttribute(type: 3, size: 100, tail: Data([0x78])), resourceForkSize: 0)
+        let accepting = ContainerAcceptance(storage: .file, byteCeiling: 1 << 20, decmpfsTypes: [3], acceptsLZ4: true)
+        let decoded = decode(headerRecord(attributeOnly) + endRecord(entries: 1, bytes: 0), accepting: accepting)
+        #expect(decoded.error == nil)
+        #expect(decoded.events == [.beginFile(attributeOnly), .finishFile, .end])
+        #expect(
+            decodingError(
+                headerRecord(attributeOnly) + record(.chunk, Data([1])) + endRecord(entries: 1, bytes: 1),
+                accepting: accepting) == .chunkOutsideEntry)
     }
 }

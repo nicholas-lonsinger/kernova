@@ -120,29 +120,5 @@ struct TreeReaderTests {
                     path: [bytes("item"), bytes("far")], reason: .notCarried(.entry(.invalidSymlinkTarget))))
     }
     #endif
-
-    #if canImport(Darwin)
-    @Test("a resource fork that fits a header record travels; a larger one fails the read naming its file")
-    func resourceForkLimit() throws {
-        let bench = try FidelityBench()
-        let fits = Array(randomBytes(60 << 10, seed: 2))
-        try bench.makeDirectory([bytes("item")])
-        try bench.makeFile([bytes("item"), bytes("fits")], Data("data fork".utf8))
-        try bench.setExtendedAttribute([bytes("item"), bytes("fits")], "com.apple.ResourceFork", fits)
-        let landed = try bench.roundTrip(bytes("item"), accepting: Self.folder, policy: .never)
-        let facts = try bench.facts(of: landed, in: bench.destinationPath)
-        #expect(facts[[bytes("item"), bytes("fits")]]?.carriedXattrs[bytes("com.apple.ResourceFork")] == fits)
-
-        try bench.makeDirectory([bytes("large")])
-        try bench.makeFile([bytes("large"), bytes("icon")], Data())
-        try bench.setExtendedAttribute(
-            [bytes("large"), bytes("icon")], "com.apple.ResourceFork", Array(randomBytes(70 << 10, seed: 3)))
-        let failure = try Self.failure("large", on: bench)
-        #expect(
-            failure == TreeReadFailure(path: [bytes("large"), bytes("icon")], reason: .notCarried(.metadataTooLarge)))
-        #expect(failure?.wireError.code == .tooLarge)
-        #expect(failure?.wireError.limit == UInt64(ContainerRecord.maxHeaderPayload))
-    }
-    #endif
 }
 #endif

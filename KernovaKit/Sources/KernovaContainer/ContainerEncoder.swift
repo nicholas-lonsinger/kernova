@@ -32,8 +32,9 @@ public struct ChunkCompressionPolicy: Equatable, Sendable {
 }
 
 /// Writes a container's records from its entries: `entry(_:)` for each header in depth-first pre-order,
-/// `bytes(_:)` for a file's bytes until it has all it declared, then `end()`. It holds the container to the
-/// same rules as `ContainerDecoder`, so what it writes the decoder accepts. After it throws, discard it.
+/// `bytes(_:)` for a file's data until it has all it declared and then for its resource fork's, then `end()`.
+/// It holds the container to the same rules as `ContainerDecoder`, so what it writes the decoder accepts.
+/// After it throws, discard it.
 public struct ContainerEncoder {
     /// The most bytes one chunk carries.
     public static let chunkByteCount = 262_144
@@ -73,15 +74,16 @@ public struct ContainerEncoder {
         return records
     }
 
-    /// The records carrying the current entry's next bytes: one per chunk, with consecutive all-zero chunks
-    /// as one zero run, written once a non-zero chunk follows or the entry has all its bytes.
+    /// The records carrying the current entry's next bytes — its data's, then once those are whole its
+    /// resource fork's: one per chunk, with consecutive all-zero chunks as one zero run, written once a
+    /// non-zero chunk follows or the data or the fork has all its bytes.
     ///
-    /// - Parameter bytes: The entry's next bytes, no more than it still owes.
+    /// - Parameter bytes: The entry's next bytes, no more than its data, or its fork, still owes.
     /// - Returns: The records' bytes, possibly none while zeros are pending.
     /// - Throws: `ContainerError` when no entry owes bytes or `bytes` is more than it owes.
     public mutating func bytes(_ bytes: Data) throws(ContainerError) -> Data {
         guard !bytes.isEmpty else { return Data() }
-        if let remaining = grammar.remainingBytes, UInt64(bytes.count) > remaining {
+        if let remaining = grammar.owed?.current, UInt64(bytes.count) > remaining {
             throw .chunkPastEntrySize(count: UInt64(bytes.count), remaining: remaining)
         }
         var records = Data()
@@ -91,9 +93,9 @@ public struct ContainerEncoder {
             let chunk = bytes[start..<end]
             start = end
             if Self.isAllZero(chunk) {
-                let complete = try grammar.admitChunk(count: UInt64(chunk.count), lz4: false)
+                let progress = try grammar.admitChunk(count: UInt64(chunk.count), lz4: false)
                 pendingZeros += UInt64(chunk.count)
-                if complete { flushZeros(into: &records) }
+                if progress != .continuing { flushZeros(into: &records) }
                 continue
             }
             flushZeros(into: &records)
@@ -119,24 +121,24 @@ public struct ContainerEncoder {
     }
 
     /// The records carrying the current entry's next `count` bytes, all zero, as a zero run: merged with any
-    /// zeros pending, and written once a non-zero chunk follows or the entry has all its bytes. A producer
-    /// that knows where a file's holes are passes each one here, so it lands as exactly that hole.
+    /// zeros pending, and written once a non-zero chunk follows or the data or the fork has all its bytes. A
+    /// producer that knows where a file's holes are passes each one here, so it lands as exactly that hole.
     ///
-    /// - Parameter count: The zero bytes, no more than the entry still owes.
+    /// - Parameter count: The zero bytes, no more than the entry's data, or its fork, still owes.
     /// - Returns: The records' bytes, possibly none while zeros are pending.
     /// - Throws: `ContainerError` when no entry owes bytes or `count` is more than it owes.
     public mutating func zeros(_ count: UInt64) throws(ContainerError) -> Data {
         guard count > 0 else { return Data() }
-        let complete = try grammar.admitChunk(count: count, lz4: false)
+        let progress = try grammar.admitChunk(count: count, lz4: false)
         pendingZeros += count
         var records = Data()
-        if complete { flushZeros(into: &records) }
+        if progress != .continuing { flushZeros(into: &records) }
         return records
     }
 
     /// The records `event` adds: an entry's header, its bytes or zeros, or the end record. A leave adds
-    /// nothing, since the next header's depth carries it, and nor does a file's finish, which the grammar
-    /// confirms.
+    /// nothing, since the next header's depth carries it, and nor does a resource fork's start or a file's
+    /// finish, which the grammar confirms.
     ///
     /// - Parameter event: The next event of a tree in depth-first pre-order.
     /// - Returns: The records' bytes, possibly none.
@@ -146,8 +148,12 @@ public struct ContainerEncoder {
         case .enterDirectory(let header), .beginFile(let header), .symlink(let header): return try entry(header)
         case .bytes(let bytes): return try self.bytes(bytes)
         case .zeros(let count): return try zeros(count)
+        case .resourceFork:
+            guard let owed = grammar.owed else { throw .resourceForkUndeclared }
+            if owed.data > 0 { throw .entryIncomplete(remaining: owed.data) }
+            return Data()
         case .finishFile:
-            if let remaining = grammar.remainingBytes { throw .entryIncomplete(remaining: remaining) }
+            if let owed = grammar.owed { throw .entryIncomplete(remaining: owed.total) }
             return Data()
         case .leaveDirectory: return Data()
         case .end: return try end()

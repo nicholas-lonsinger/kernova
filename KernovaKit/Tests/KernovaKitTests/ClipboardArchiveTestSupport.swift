@@ -123,6 +123,20 @@ final class InterposedArchiveVolume: MutableTreeFileSystem {
         try base.extendedAttribute(name, of: target, maxByteCount: maxByteCount)
     }
 
+    func compressedStorage(of descriptor: Int32, maxByteCount: Int) throws(TreeFileSystemError) -> [UInt8]? {
+        try base.compressedStorage(of: descriptor, maxByteCount: maxByteCount)
+    }
+
+    func resourceForkSize(of descriptor: Int32, showingCompression: Bool) throws(TreeFileSystemError) -> UInt64 {
+        try base.resourceForkSize(of: descriptor, showingCompression: showingCompression)
+    }
+
+    func readResourceFork(
+        _ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: UInt64, showingCompression: Bool
+    ) throws(TreeFileSystemError) -> Int {
+        try base.readResourceFork(descriptor, into: buffer, at: offset, showingCompression: showingCompression)
+    }
+
     func setMode(_ mode: UInt32, of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
         try interpose(.setMode(mode, name: name))
         try base.setMode(mode, of: name, in: directory)
@@ -174,6 +188,24 @@ final class InterposedArchiveVolume: MutableTreeFileSystem {
         throws(TreeFileSystemError)
     {
         try base.setExtendedAttribute(name, to: value, of: target)
+    }
+
+    func writeResourceFork(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: UInt64)
+        throws(TreeFileSystemError) -> Bool
+    {
+        try base.writeResourceFork(descriptor, from: buffer, at: offset)
+    }
+
+    func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool {
+        try base.volumeStoresCompressedFiles(directory)
+    }
+
+    func setCompressedStorage(_ attribute: [UInt8], of descriptor: Int32) throws(TreeFileSystemError) {
+        try base.setCompressedStorage(attribute, of: descriptor)
+    }
+
+    func setCompressedFlags(_ flags: UInt32, of descriptor: Int32) throws(TreeFileSystemError) {
+        try base.setCompressedFlags(flags, of: descriptor)
     }
 
     func setAttributes(_ attributes: TreeEntryAttributes, of target: TreeEntryTarget) throws(TreeFileSystemError) {

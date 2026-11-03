@@ -22,7 +22,8 @@ public struct ContainerDecoder {
     /// Input not yet decoded; it begins at a record boundary.
     private var buffer = Data()
     private var leavesDue = 0
-    /// Events of the last record, after `leavesDue`: at most an entry or its bytes, then `finishFile`.
+    /// Events of the last record, after `leavesDue`: at most an entry or its bytes, then `resourceFork` or
+    /// `finishFile`.
     private var due: [TreeEvent] = []
     private var failure: ContainerError?
 
@@ -128,17 +129,17 @@ public struct ContainerDecoder {
             switch entry {
             case .directory: due = [.enterDirectory(header)]
             case .symlink: due = [.symlink(header)]
-            case .file(let complete): due = complete ? [.beginFile(header), .finishFile] : [.beginFile(header)]
+            case .file(let progress): due = [.beginFile(header)] + Self.events(after: progress)
             }
         case .chunk:
-            let complete = try grammar.admitChunk(count: UInt64(payload.count), lz4: false)
-            due = complete ? [.bytes(payload), .finishFile] : [.bytes(payload)]
+            let progress = try grammar.admitChunk(count: UInt64(payload.count), lz4: false)
+            due = [.bytes(payload)] + Self.events(after: progress)
         case .lz4Chunk:
             let declared = Int(littleEndian(UInt32.self, in: payload, at: 0))
             guard declared <= ContainerRecord.maxChunkPayload else {
                 throw .lz4(.sizeOutOfRange(declared: declared, ceiling: ContainerRecord.maxChunkPayload))
             }
-            let complete = try grammar.admitChunk(count: UInt64(declared), lz4: true)
+            let progress = try grammar.admitChunk(count: UInt64(declared), lz4: true)
             let block = payload.dropFirst(ContainerRecord.lz4SizeByteCount)
             let bytes: Data
             do {
@@ -146,11 +147,11 @@ public struct ContainerDecoder {
             } catch {
                 throw .lz4(error)
             }
-            due = complete ? [.bytes(bytes), .finishFile] : [.bytes(bytes)]
+            due = [.bytes(bytes)] + Self.events(after: progress)
         case .zeroRun:
             let count = littleEndian(UInt64.self, in: payload, at: 0)
-            let complete = try grammar.admitChunk(count: count, lz4: false)
-            due = complete ? [.zeros(count), .finishFile] : [.zeros(count)]
+            let progress = try grammar.admitChunk(count: count, lz4: false)
+            due = [.zeros(count)] + Self.events(after: progress)
         case .end:
             let end: EndRecord
             do {
@@ -160,6 +161,15 @@ public struct ContainerDecoder {
             }
             leavesDue = try grammar.admitEnd(end)
             due = [.end]
+        }
+    }
+
+    /// The events that mark where a file's bytes stand.
+    private static func events(after progress: ContainerGrammar.Progress) -> [TreeEvent] {
+        switch progress {
+        case .continuing: []
+        case .resourceForkFollows: [.resourceFork]
+        case .complete: [.finishFile]
         }
     }
 }

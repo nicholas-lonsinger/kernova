@@ -163,12 +163,88 @@ struct WriterEventTests {
         let ceiling = Self.failure(
             writing: [root, .beginFile(file("f", depth: 1, size: 11))], to: try landing.writer(ceiling: 10))
         #expect(ceiling == TreeWriteFailure(path: f, reason: .event(.exceedsByteCeiling(10))))
-        var decmpfs = file("f", depth: 1, size: 0)
-        decmpfs.decmpfs.attribute = Data(count: 16)
+        let decmpfs = compressedFile("f", depth: 1, type: 4, logicalSize: 1, resourceForkSize: 1)
         let compressed = Self.failure(writing: [root, .beginFile(decmpfs)], to: try landing.writer())
-        #expect(compressed == TreeWriteFailure(path: f, reason: .event(.decmpfsNotLanded)))
+        #expect(compressed == TreeWriteFailure(path: f, reason: .event(.decmpfsTypeNotAccepted(4))))
         #expect(compressed?.wireError.code == .itemDecmpfsRefused)
+        let forkCeiling = Self.failure(
+            writing: [root, .beginFile(withResourceFork(file("f", depth: 1, size: 6), size: 5))],
+            to: try landing.writer(ceiling: 10))
+        #expect(forkCeiling == TreeWriteFailure(path: f, reason: .event(.exceedsByteCeiling(10))))
         try landing.expectNothingOutside()
+    }
+
+    @Test("a resource fork's bytes follow its data's, after the event that starts them", arguments: bothLayers)
+    func resourceForkOrder(kernelContainment: Bool) throws {
+        let landing = try Landing(kernelContainment: kernelContainment)
+        let root = TreeEvent.enterDirectory(directory("r", depth: 0))
+        let f = [bytes("r"), bytes("f")]
+        for size in [UInt64(2), largeFileSize] {
+            let forked = TreeEvent.beginFile(withResourceFork(file("f", depth: 1, size: size), size: 3))
+            let early = Self.failure(
+                writing: [root, forked, .zeros(size - 1), .resourceFork], to: try landing.writer())
+            #expect(
+                early == TreeWriteFailure(path: f, reason: .event(.sizeMismatch(declared: size, carried: size - 1))))
+            let missing = Self.failure(writing: [root, forked, .zeros(size), .finishFile], to: try landing.writer())
+            #expect(missing == TreeWriteFailure(path: f, reason: .event(.sizeMismatch(declared: 3, carried: 0))))
+            let past = Self.failure(
+                writing: [root, forked, .zeros(size), .resourceFork, .zeros(4)], to: try landing.writer())
+            #expect(past == TreeWriteFailure(path: f, reason: .event(.sizeMismatch(declared: 3, carried: 4))))
+            let twice = Self.failure(
+                writing: [root, forked, .zeros(size), .resourceFork, .resourceFork], to: try landing.writer())
+            #expect(twice == TreeWriteFailure(path: f, reason: .event(.outOfOrder)))
+        }
+        let unforked = Self.failure(
+            writing: [root, .beginFile(file("f", depth: 1, size: 1)), .zeros(1), .resourceFork],
+            to: try landing.writer())
+        #expect(unforked == TreeWriteFailure(path: f, reason: .event(.sizeMismatch(declared: 1, carried: 1))))
+        let onDirectory = Self.failure(
+            writing: [root, .enterDirectory(withResourceFork(directory("d", depth: 1), size: 1))],
+            to: try landing.writer())
+        #expect(
+            onDirectory
+                == TreeWriteFailure(
+                    path: [bytes("r"), bytes("d")], reason: .event(.invalidEntry(.resourceForkNotAllowed(.directory)))))
+        try landing.expectNothingOutside()
+    }
+
+    @Test("a resource fork lands where the OS keeps one, and is left out, the data landing whole, where it keeps none")
+    func resourceForkLandsOrIsLeftOut() throws {
+        let landing = try Landing(kernelContainment: true)
+        let writer = try landing.writer()
+        let fork = pattern(Int(largeFileSize), seed: 9)
+        for event in [
+            TreeEvent.enterDirectory(directory("r", depth: 0)),
+            .beginFile(withResourceFork(file("held", depth: 1, size: 4), size: 3)), .bytes(Data("data".utf8)),
+            .resourceFork, .bytes(Data("ico".utf8)), .finishFile,
+            .beginFile(withResourceFork(file("written", depth: 1, size: largeFileSize), size: largeFileSize)),
+            .bytes(pattern(Int(largeFileSize))), .resourceFork, .bytes(fork), .finishFile, .leaveDirectory, .end,
+        ] {
+            try writer.write(event)
+        }
+        #expect(try writer.publish() == bytes("r"))
+        let directory = try landing.fileSystem.openDirectory(bytes(landing.destinationPath + "/r"), in: AT_FDCWD)
+        defer { landing.fileSystem.close(directory) }
+        for (name, expected) in [("held", Data("ico".utf8)), ("written", fork)] {
+            let descriptor = try landing.fileSystem.openFile(bytes(name), in: directory)
+            defer { landing.fileSystem.close(descriptor) }
+            let size = try landing.fileSystem.resourceForkSize(of: descriptor, showingCompression: false)
+            #if canImport(Darwin)
+            var read = [UInt8](repeating: 0, count: Int(size))
+            var offset = 0
+            while offset < read.count {
+                offset += try read.withUnsafeMutableBytes { buffer in
+                    try landing.fileSystem.readResourceFork(
+                        descriptor, into: UnsafeMutableRawBufferPointer(rebasing: buffer[offset...]),
+                        at: UInt64(offset), showingCompression: false)
+                }
+            }
+            #expect(Data(read) == expected, "the fork of \(name)")
+            #else
+            #expect(size == 0, "\(name) holds none of its \(expected.count)-byte fork on Linux")
+            #endif
+        }
+        #expect(try landing.landedEntries(bytes("r")).contains("./written: regular \(largeFileSize)"))
     }
 
     @Test("a tree written as events lands only once published", arguments: bothLayers)

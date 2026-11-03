@@ -13,9 +13,30 @@ struct ContainerGrammar {
     /// What an admitted header is.
     enum Entry {
         case directory
-        /// A file or INLINE data; `complete` when it carries no bytes, so no chunk follows.
-        case file(complete: Bool)
+        /// A file or INLINE data, and how far its bytes already are: complete when it carries none, at its
+        /// resource fork when it carries only a fork.
+        case file(Progress)
         case symlink
+    }
+
+    /// Where a file's bytes stand after a header or chunk.
+    enum Progress: Equatable {
+        /// More bytes of the same part follow.
+        case continuing
+        /// The data has all its bytes and the resource fork's follow.
+        case resourceForkFollows
+        /// The file has all its bytes.
+        case complete
+    }
+
+    /// The bytes the current entry still owes: its data's, then its resource fork's.
+    struct Owed: Equatable {
+        var data: UInt64
+        var resourceFork: UInt64
+
+        /// What the next chunk counts against: the data until it is whole, then the fork.
+        var current: UInt64 { data > 0 ? data : resourceFork }
+        var total: UInt64 { data &+ resourceFork }
     }
 
     let acceptance: ContainerAcceptance
@@ -23,7 +44,7 @@ struct ContainerGrammar {
     /// The directories entered and not yet left; an entry at depth d lies inside the first d of them.
     private(set) var enteredDirectories = 0
     /// The bytes the current entry still owes, or nil when no entry owes any.
-    private(set) var remainingBytes: UInt64?
+    private(set) var owed: Owed?
     /// Whether the current entry's storage is LZ4, so its chunks may be LZ4 blocks.
     private(set) var currentIsLZ4 = false
     private(set) var counted = ContainerError.Counts(entries: 0, bytes: 0)
@@ -39,12 +60,9 @@ struct ContainerGrammar {
     mutating func admit(_ header: EntryHeader) throws(ContainerError) -> (leaving: Int, entry: Entry) {
         try requireBetweenEntries()
         let leaving = try place(header)
-        let size = try storageSize(of: header)
-        _ = try ValidatedEntry(header)
-        if size.landed > acceptance.byteCeiling - landedBytes {
-            throw .exceedsByteCeiling(declared: landedBytes &+ size.landed, ceiling: acceptance.byteCeiling)
-        }
-        landedBytes += size.landed
+        let entry = try ValidatedEntry(header)
+        if entry.isLZ4 && !acceptance.acceptsLZ4 { throw .lz4NotAccepted }
+        landedBytes = try acceptance.admitLanding(entry, after: landedBytes)
         counted.entries += 1
         enteredDirectories = Int(header.depth)
         switch header.type {
@@ -54,22 +72,32 @@ struct ContainerGrammar {
         case .symlink:
             return (leaving, .symlink)
         default:
-            if case .lz4 = header.storage { currentIsLZ4 = true } else { currentIsLZ4 = false }
-            remainingBytes = size.carried == 0 ? nil : size.carried
-            return (leaving, .file(complete: size.carried == 0))
+            currentIsLZ4 = entry.isLZ4
+            let owing = Owed(data: entry.dataByteCount, resourceFork: entry.resourceForkByteCount)
+            owed = owing.total == 0 ? nil : owing
+            return (leaving, .file(Self.progress(owing)))
         }
     }
 
-    /// Admits a chunk carrying `count` bytes of the current entry, returning whether the entry is now complete.
-    mutating func admitChunk(count: UInt64, lz4: Bool) throws(ContainerError) -> Bool {
+    /// Admits a chunk carrying `count` bytes of the current entry's data, or of its resource fork once the
+    /// data is whole, returning where the entry's bytes then stand.
+    mutating func admitChunk(count: UInt64, lz4: Bool) throws(ContainerError) -> Progress {
         guard !ended else { throw .bytesAfterEnd }
-        guard let remaining = remainingBytes else { throw .chunkOutsideEntry }
+        guard var owing = owed else { throw .chunkOutsideEntry }
         guard !lz4 || currentIsLZ4 else { throw .lz4ChunkOutsideLZ4Storage }
         guard count > 0 else { throw .emptyChunk }
-        guard count <= remaining else { throw .chunkPastEntrySize(count: count, remaining: remaining) }
+        guard count <= owing.current else { throw .chunkPastEntrySize(count: count, remaining: owing.current) }
         counted.bytes += count
-        remainingBytes = remaining == count ? nil : remaining - count
-        return remainingBytes == nil
+        let progress: Progress
+        if owing.data > 0 {
+            owing.data -= count
+            progress = Self.progress(owing)
+        } else {
+            owing.resourceFork -= count
+            progress = owing.resourceFork > 0 ? .continuing : .complete
+        }
+        owed = owing.total == 0 ? nil : owing
+        return progress
     }
 
     /// Admits the end record, returning how many directories to leave before the end.
@@ -84,9 +112,15 @@ struct ContainerGrammar {
         return enteredDirectories
     }
 
+    /// Where a file owing `owing` stands once its data has all its bytes.
+    private static func progress(_ owing: Owed) -> Progress {
+        if owing.data > 0 { return .continuing }
+        return owing.resourceFork > 0 ? .resourceForkFollows : .complete
+    }
+
     private func requireBetweenEntries() throws(ContainerError) {
         guard !ended else { throw .bytesAfterEnd }
-        if let remainingBytes { throw .entryIncomplete(remaining: remainingBytes) }
+        if let owed { throw .entryIncomplete(remaining: owed.total) }
     }
 
     /// The directories to leave before `header`, whose parent is then the innermost one entered.
@@ -117,37 +151,6 @@ struct ContainerGrammar {
         case .file: .file
         case .folder: .directory
         case .unspecified, .UNRECOGNIZED: nil
-        }
-    }
-
-    /// The bytes `header`'s chunks carry and the logical bytes it lands, once its storage is checked against
-    /// its type and the acceptance. A decmpfs file lands the larger of its attribute's uncompressed size and
-    /// its resource fork, so neither can pass the ceiling.
-    private func storageSize(of header: EntryHeader) throws(ContainerError) -> (carried: UInt64, landed: UInt64) {
-        switch (header.type, header.storage) {
-        case (.data, .plain(let plain)?), (.file, .plain(let plain)?):
-            guard plain.unknownFields.data.isEmpty else { throw .unknownFields }
-            return (plain.size, plain.size)
-        case (.data, .lz4(let lz4)?), (.file, .lz4(let lz4)?):
-            guard lz4.unknownFields.data.isEmpty else { throw .unknownFields }
-            guard acceptance.acceptsLZ4 else { throw .lz4NotAccepted }
-            return (lz4.size, lz4.size)
-        case (.file, .decmpfs(let decmpfs)?):
-            guard decmpfs.unknownFields.data.isEmpty else { throw .unknownFields }
-            let attributeHeader: DecmpfsHeader
-            do {
-                attributeHeader = try DecmpfsHeader(attribute: decmpfs.attribute)
-            } catch {
-                throw .malformedDecmpfsAttribute(error)
-            }
-            guard acceptance.decmpfsTypes.contains(attributeHeader.compressionType) else {
-                throw .decmpfsTypeNotAccepted(attributeHeader.compressionType)
-            }
-            return (decmpfs.resourceForkSize, max(decmpfs.resourceForkSize, attributeHeader.uncompressedSize))
-        case (.directory, nil), (.symlink, nil):
-            return (0, 0)
-        default:
-            throw .storageNotAllowed(header.type)
         }
     }
 }

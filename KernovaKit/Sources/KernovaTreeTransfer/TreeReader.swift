@@ -14,7 +14,13 @@ import KernovaWire
 /// Each entry is reached by one name relative to the descriptor of the directory it lies in, through a
 /// ``DirectoryCursor``, and is described from the descriptor it is read through, confirmed to be the entry
 /// the directory listed. A file's holes come out as `zeros`, exactly where the volume reports them, and its
-/// stored bytes as `bytes` of at most `ContainerEncoder.chunkByteCount`.
+/// stored bytes as `bytes` of at most `ContainerEncoder.chunkByteCount`; its resource fork follows, read in
+/// pieces of the same size.
+///
+/// A file stored compressed whose decmpfs type the pull accepts is read as its compressed storage — its
+/// `com.apple.decmpfs` attribute and the resource fork that holds its compressed bytes — and lands as it was
+/// stored. Any other file, compressed or not, is read as the bytes it holds, which the kernel decompresses;
+/// a compressed file then shows no resource fork.
 ///
 /// Every event is one `ContainerEncoder` takes: an entry the format cannot carry — a FIFO, device or socket,
 /// a name or symlink target past the format's limits, extended attributes too large for a header record, or
@@ -24,9 +30,8 @@ import KernovaWire
 /// `ValidatedEntry.allowedDarwinFlags` of an entry's flags.
 public final class TreeReader<FileSystem: TreeFileSystem> {
     private let fileSystem: FileSystem
-    private let acceptsLZ4: Bool
-    private let byteCeiling: UInt64
-    /// The bytes of every file so far.
+    private let acceptance: ContainerAcceptance
+    /// The logical bytes every file so far lands.
     private var landedBytes: UInt64 = 0
 
     private enum Step {
@@ -66,8 +71,7 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         fileSystem: FileSystem, item name: [UInt8], in parent: Int32, accepting acceptance: ContainerAcceptance
     ) throws(TreeReadFailure) {
         self.fileSystem = fileSystem
-        acceptsLZ4 = acceptance.acceptsLZ4
-        byteCeiling = acceptance.byteCeiling
+        self.acceptance = acceptance
         step = .ended
         let path = [name]
         // The item's name is the one name not read from a directory, so it is held to one path component
@@ -259,24 +263,60 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         }
         do throws(TreeReadFailure) {
             let status = try opened(descriptor, listed: listed, path: path)
-            let size = UInt64(max(0, status.size))
-            guard size <= byteCeiling - landedBytes else {
-                throw TreeReadFailure(path: path, reason: .exceedsByteCeiling(byteCeiling))
-            }
             var header = try header(
                 name, depth: depth, type: .file, status: status, attributesOf: .descriptor(descriptor), path: path)
-            if acceptsLZ4 {
-                header.lz4.size = size
+            let compressedStorage = try compressedStorage(of: descriptor, status: status, path: path)
+            let dataSize: UInt64
+            if let compressedStorage {
+                header.decmpfs.attribute = Data(compressedStorage)
+                dataSize = 0
+            } else if acceptance.acceptsLZ4 {
+                dataSize = UInt64(max(0, status.size))
+                header.lz4.size = dataSize
             } else {
-                header.plain.size = size
+                dataSize = UInt64(max(0, status.size))
+                header.plain.size = dataSize
             }
-            try Self.admit(header, path: path)
-            landedBytes += size
-            return (FileRead(descriptor: descriptor, path: path, status: status), header)
+            let showingCompression = compressedStorage != nil
+            header.resourceForkSize = try Self.system(path) { () throws(TreeFileSystemError) in
+                try fileSystem.resourceForkSize(of: descriptor, showingCompression: showingCompression)
+            }
+            let entry = try Self.admit(header, path: path)
+            do {
+                landedBytes = try acceptance.admitLanding(entry, after: landedBytes)
+            } catch .exceedsByteCeiling {
+                throw TreeReadFailure(path: path, reason: .exceedsByteCeiling(acceptance.byteCeiling))
+            } catch {
+                throw TreeReadFailure(path: path, reason: .notCarried(.entry(error)))
+            }
+            let read = FileRead(
+                descriptor: descriptor, path: path, status: status, dataSize: Int64(dataSize),
+                resourceForkSize: header.resourceForkSize, showingCompression: showingCompression)
+            return (read, header)
         } catch {
             fileSystem.close(descriptor)
             throw error
         }
+    }
+
+    /// The `com.apple.decmpfs` attribute of the open file `descriptor` of `status`, when it is stored
+    /// compressed in a type the pull accepts and its resource fork can be read in pieces; nil to read it as
+    /// the bytes it holds.
+    private func compressedStorage(of descriptor: Int32, status: FileStatus, path: [[UInt8]])
+        throws(TreeReadFailure) -> [UInt8]?
+    {
+        guard status.isCompressed, !acceptance.decmpfsTypes.isEmpty else { return nil }
+        let attribute = try Self.system(path) { () throws(TreeFileSystemError) in
+            try fileSystem.compressedStorage(of: descriptor, maxByteCount: DecmpfsHeader.maxAttributeByteCount)
+        }
+        guard let attribute, let header = try? DecmpfsHeader(attribute: Data(attribute)),
+            acceptance.decmpfsTypes.contains(header.compressionType),
+            header.uncompressedSize == UInt64(max(0, status.size))
+        else { return nil }
+        let forkSize = try Self.system(path) { () throws(TreeFileSystemError) in
+            try fileSystem.resourceForkSize(of: descriptor, showingCompression: true)
+        }
+        return forkSize <= ValidatedEntry.maxResourceForkByteCount ? attribute : nil
     }
 
     /// The status of `descriptor`, just opened by the name its directory listed as `listed`, confirmed to be
@@ -324,13 +364,16 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
     }
 
     /// Holds `header` to the rules every entry keeps and to one header record.
-    private static func admit(_ header: EntryHeader, path: [[UInt8]]) throws(TreeReadFailure) {
+    @discardableResult
+    private static func admit(_ header: EntryHeader, path: [[UInt8]]) throws(TreeReadFailure) -> ValidatedEntry {
+        let entry: ValidatedEntry
         do {
-            _ = try ValidatedEntry(header)
+            entry = try ValidatedEntry(header)
         } catch {
             throw TreeReadFailure(path: path, reason: .notCarried(.entry(error)))
         }
         guard header.fitsHeaderRecord else { throw TreeReadFailure(path: path, reason: .notCarried(.metadataTooLarge)) }
+        return entry
     }
 
     /// Runs a file-system call for the entry at `path`.
@@ -346,21 +389,62 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
 
     // MARK: - Files
 
-    /// A regular file being read, from the descriptor its status came from.
+    /// A regular file being read, from the descriptor its status came from: its data, then its resource fork.
     private struct FileRead {
         let descriptor: Int32
         let path: [[UInt8]]
         /// The status its header described.
         let status: FileStatus
-        /// The bytes read and the holes passed so far.
+        /// The bytes of its data: its size, or none when it is read as its compressed storage.
+        let dataSize: Int64
+        let resourceForkSize: UInt64
+        /// Whether the resource fork is read as its compressed storage holds it.
+        let showingCompression: Bool
+        /// The data's bytes read and holes passed so far.
         var offset: Int64 = 0
         /// The end of the stored run `offset` lies in.
-        var runEnd: Int64 = 0
+        var runEnd: Int64
+        /// The resource fork's bytes read so far, once its data is all read; nil before.
+        var resourceForkOffset: UInt64?
 
-        /// The file's next stored bytes or hole, or nil once it has all its size.
+        init(
+            descriptor: Int32, path: [[UInt8]], status: FileStatus, dataSize: Int64, resourceForkSize: UInt64,
+            showingCompression: Bool
+        ) {
+            self.descriptor = descriptor
+            self.path = path
+            self.status = status
+            self.dataSize = dataSize
+            self.resourceForkSize = resourceForkSize
+            self.showingCompression = showingCompression
+            // A compressed file's data fork stores nothing, so `lseek(2)` reports its whole size a hole
+            // (`SEEK_DATA` fails with `ENXIO` on `/bin/ls`, macOS 27.2) while `read(2)` returns every byte: it is
+            // read as one stored run.
+            runEnd = status.isCompressed ? dataSize : 0
+        }
+
+        /// The file's next stored bytes or hole, the start of its resource fork, or nil once it has all its
+        /// bytes.
         mutating func next(on fileSystem: FileSystem) throws(TreeReadFailure) -> TreeEvent? {
-            let size = status.size
-            guard offset < size else { return nil }
+            if offset < dataSize { return try nextData(on: fileSystem) }
+            guard let forkOffset = resourceForkOffset else {
+                guard resourceForkSize > 0 else { return nil }
+                resourceForkOffset = 0
+                return .resourceFork
+            }
+            guard forkOffset < resourceForkSize else { return nil }
+            let count = Int(min(UInt64(ContainerEncoder.chunkByteCount), resourceForkSize - forkOffset))
+            let showing = showingCompression
+            let bytes = try read(count) { buffer throws(TreeFileSystemError) in
+                try fileSystem.readResourceFork(descriptor, into: buffer, at: forkOffset, showingCompression: showing)
+            }
+            resourceForkOffset = forkOffset + UInt64(bytes.count)
+            return .bytes(bytes)
+        }
+
+        /// The data's next stored bytes or hole.
+        private mutating func nextData(on fileSystem: FileSystem) throws(TreeReadFailure) -> TreeEvent {
+            let size = dataSize
             if offset >= runEnd {
                 let start = offset
                 let run = try TreeReader.system(path) { () throws(TreeFileSystemError) in
@@ -375,32 +459,49 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
                 runEnd = min(run.upperBound, size)
             }
             let count = Int(min(Int64(ContainerEncoder.chunkByteCount), runEnd - offset))
+            let at = offset
+            let bytes = try read(count) { buffer throws(TreeFileSystemError) in
+                try fileSystem.read(descriptor, into: buffer, at: at)
+            }
+            offset += Int64(bytes.count)
+            return .bytes(bytes)
+        }
+
+        /// Up to `count` bytes from one `read`, which must return some: a file ending before the size its
+        /// header declared changed.
+        private func read(_ count: Int, _ read: (UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int)
+            throws(TreeReadFailure) -> Data
+        {
             var bytes = Data(count: count)
             // `withUnsafeMutableBytes` rethrows untyped, so the failure crosses it as a value.
             var failure: TreeFileSystemError?
-            let at = offset
             let got = bytes.withUnsafeMutableBytes { buffer in
                 do throws(TreeFileSystemError) {
-                    return try fileSystem.read(descriptor, into: buffer, at: at)
+                    return try read(buffer)
                 } catch {
                     failure = error
                     return 0
                 }
             }
             if let failure { throw TreeReadFailure(path: path, reason: .system(failure)) }
-            // The file ending before the size its header declared.
             guard got > 0 else { throw TreeReadFailure(path: path, reason: .changed) }
-            offset += Int64(got)
-            return .bytes(got == count ? bytes : bytes.prefix(got))
+            return got == count ? bytes : bytes.prefix(got)
         }
 
-        /// Closes the file, confirming its size and modification time are still those its header declared.
+        /// Closes the file, confirming its size, modification time and resource fork are still those its
+        /// header declared.
         func finish(on fileSystem: FileSystem) throws(TreeReadFailure) {
             defer { fileSystem.close(descriptor) }
-            let now = try TreeReader.system(path) { () throws(TreeFileSystemError) in
-                try fileSystem.status(of: descriptor)
+            let showing = showingCompression
+            let (now, forkSize) = try TreeReader.system(path) { () throws(TreeFileSystemError) in
+                (
+                    try fileSystem.status(of: descriptor),
+                    try fileSystem.resourceForkSize(of: descriptor, showingCompression: showing)
+                )
             }
-            guard now.size == status.size, now.modificationTime == status.modificationTime else {
+            guard now.size == status.size, now.modificationTime == status.modificationTime,
+                now.isCompressed == status.isCompressed, forkSize == resourceForkSize
+            else {
                 throw TreeReadFailure(path: path, reason: .changed)
             }
         }

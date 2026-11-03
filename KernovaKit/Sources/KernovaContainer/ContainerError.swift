@@ -58,13 +58,17 @@ public enum ContainerError: Error, Equatable, Sendable {
     case nanosecondsOutOfRange(UInt32)
     /// An extended attribute's name is empty, longer than 255 bytes, or holds NUL.
     case invalidXattrName
-    /// An extended attribute the format does not carry: not Finder tags, the resource fork outside decmpfs
-    /// storage, or a `user.` attribute.
+    /// An extended attribute the format does not carry: not Finder tags or a `user.` attribute. A resource
+    /// fork is one: it travels as the entry's own chunks.
     case xattrNotAllowed(Data)
     /// Two of an entry's extended attributes share a name.
     case duplicateXattrName(Data)
     /// A header or end record holds a field the current schema does not define.
     case unknownFields
+    /// An entry other than a regular file declares a resource fork.
+    case resourceForkNotAllowed(EntryHeader.TypeEnum)
+    /// A resource fork is larger than `ValidatedEntry.maxResourceForkByteCount`.
+    case resourceForkTooLarge(UInt64)
     /// A decmpfs storage's attribute is not a well-formed `decmpfs_disk_header`.
     case malformedDecmpfsAttribute(DecmpfsHeaderError)
     /// A decmpfs storage's compression type is not one the pull accepted.
@@ -78,9 +82,11 @@ public enum ContainerError: Error, Equatable, Sendable {
     case entryIncomplete(remaining: UInt64)
     /// A chunk or zero run arrives with no entry owing bytes.
     case chunkOutsideEntry
+    /// A file's resource fork begins, but its header declares none.
+    case resourceForkUndeclared
     /// A zero run, or an LZ4 chunk, of no bytes.
     case emptyChunk
-    /// A chunk carries more bytes than its entry still owes.
+    /// A chunk carries more bytes than its entry's data, or its resource fork, still owes.
     case chunkPastEntrySize(count: UInt64, remaining: UInt64)
     /// An LZ4 chunk in an entry whose storage is not LZ4.
     case lz4ChunkOutsideLZ4Storage

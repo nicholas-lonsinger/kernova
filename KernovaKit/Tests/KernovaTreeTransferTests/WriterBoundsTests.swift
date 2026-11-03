@@ -137,26 +137,33 @@ struct WriterBoundsTests {
         try landing.expectNothingOutside()
     }
 
-    @Test("a held file's bytes are copied into storage of their own, keeping none of the producer's buffer")
+    @Test(
+        "a held file's data and resource fork are copied into storage of their own, keeping none of the producer's buffer"
+    )
     func heldBytesAreOwned() throws {
         let landing = try Landing(kernelContainment: true)
         let writer = try landing.writer()
         let buffer = pattern(1 << 20)
         try writer.write(.enterDirectory(directory("r", depth: 0)))
-        try writer.write(.beginFile(file("f", depth: 1, size: 3)))
+        try writer.write(.beginFile(withResourceFork(file("f", depth: 1, size: 3), size: 3)))
         try writer.write(.bytes(buffer[1000..<1002]))
         try writer.write(.zeros(1))
+        try writer.write(.resourceFork)
+        try writer.write(.zeros(1))
+        try writer.write(.bytes(buffer[2000..<2002]))
         try writer.write(.finishFile)
-        guard case .file(let held) = try #require(writer.batch.entries.first).content else {
+        guard case .file(let held, let fork) = try #require(writer.batch.entries.first).content else {
             Issue.record("the file was not held")
             return
         }
         #expect(held == buffer[1000..<1002] + Data([0]))
-        let heldRange = held.withUnsafeBytes { UInt(bitPattern: $0.baseAddress) }
+        #expect(fork == Data([0]) + buffer[2000..<2002])
         let bufferRange = buffer.withUnsafeBytes {
             UInt(bitPattern: $0.baseAddress)..<(UInt(bitPattern: $0.baseAddress) + UInt($0.count))
         }
-        #expect(!bufferRange.contains(heldRange))
+        for owned in [held, fork] {
+            #expect(!bufferRange.contains(owned.withUnsafeBytes { UInt(bitPattern: $0.baseAddress) }))
+        }
     }
 
     @Test("a held file arriving a byte at a time costs no more than a written one")

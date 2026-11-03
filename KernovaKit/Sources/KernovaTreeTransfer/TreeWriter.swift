@@ -35,7 +35,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private let fileSystem: FileSystem
     private let destination: Int32
     private let destinationPathByteCount: Int
-    private let byteCeiling: UInt64
+    private let acceptance: ContainerAcceptance
     private let logger: KernovaLogger
 
     private enum Phase {
@@ -62,7 +62,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private var file: OpenFile?
     /// The folder's symlinks and small files waiting to be created.
     private(set) var batch = FolderBatch()
-    /// The declared bytes of every file so far.
+    /// The logical bytes every file so far lands.
     private var landedBytes: UInt64 = 0
     /// The hole size of the destination's volume, once read: `.some(nil)` for one that makes none.
     private var volumeHoleSize: Int??
@@ -84,25 +84,62 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         let metadata: EntryMetadata
     }
 
-    /// A file whose bytes are arriving. It is changed only in place through ``file``, never through a copy,
-    /// so appending to a held file's bytes never copies them.
+    /// A file whose bytes are arriving: its data's, then its resource fork's. It is changed only in place
+    /// through ``file``, never through a copy, so appending to a held file's bytes never copies them.
     private struct OpenFile {
         let name: [UInt8]
         let path: [[UInt8]]
         let metadata: EntryMetadata
-        let declared: UInt64
+        let dataSize: UInt64
+        let resourceForkSize: UInt64
+        /// The `com.apple.decmpfs` attribute and logical size of a file landing compressed.
+        let compressedStorage: (attribute: [UInt8], logicalSize: UInt64)?
+        /// Whether the resource fork's bytes are arriving, the data's all carried.
+        var inResourceFork = false
+        /// The bytes carried of the data, or of the resource fork once it is arriving.
         var carried: UInt64 = 0
-        /// A file held for the folder's batch: its bytes so far, copied into storage of their own, so they
-        /// keep nothing of the producer's buffers alive. Empty for a written file.
+        /// A file held for the folder's batch: its data and its resource fork so far, copied into storage of
+        /// their own, so they keep nothing of the producer's buffers alive. Empty for a written file.
         var held = Data()
-        /// The file written as its bytes arrive; `nil` for a held one.
+        var heldResourceFork = Data()
+        /// A plain file written as its bytes arrive; `nil` for a held or compressed one.
         var written: SparseFile<FileSystem>?
+        /// Whether the volume refused the written plain file's resource fork, which is then left out.
+        var resourceForkDropped = false
+        /// A compressed file written as its resource fork arrives; `nil` for a held or plain one.
+        var compressed: CompressedFile<FileSystem>?
+
+        /// The size of the part whose bytes are arriving.
+        var declared: UInt64 { inResourceFork ? resourceForkSize : dataSize }
     }
 
     /// One run of a file's bytes, as an event carries it.
     private enum Piece {
         case bytes(Data)
         case zeros(UInt64)
+
+        /// Runs `body` on the piece's bytes, in buffers of at most 64 KiB for zeros.
+        func withBuffers<Failure: Error>(_ body: (UnsafeRawBufferPointer) throws(Failure) -> Void) throws(Failure) {
+            switch self {
+            case .bytes(let bytes):
+                // `withUnsafeBytes` rethrows untyped, so the failure crosses it as a value.
+                var failure: Failure?
+                bytes.withUnsafeBytes { buffer in
+                    do throws(Failure) {
+                        try body(buffer)
+                    } catch {
+                        failure = error
+                    }
+                }
+                if let failure { throw failure }
+            case .zeros(var count):
+                while count > 0 {
+                    let piece = Int(min(count, UInt64(zeroBlock.count)))
+                    try body(UnsafeRawBufferPointer(rebasing: zeroBlock[..<piece]))
+                    count -= UInt64(piece)
+                }
+            }
+        }
     }
 
     /// A writer landing an item in `destination`.
@@ -112,16 +149,18 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///   - destination: An open directory, which the writer takes ownership of and closes when it ends.
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path, against which
     ///     this OS's limit on a landed entry's path is measured.
-    ///   - byteCeiling: The most bytes the files' declared sizes may total.
+    ///   - acceptance: What the destination accepts: the byte ceiling the files' landed bytes total within, and
+    ///     the decmpfs types it lands compressed. Its codecs do not reach the writer, whose events are
+    ///     decompressed.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
-        fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int, byteCeiling: UInt64,
-        logger: KernovaLogger = TreeWriterLog.logger
+        fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
+        accepting acceptance: ContainerAcceptance, logger: KernovaLogger = TreeWriterLog.logger
     ) {
         self.fileSystem = fileSystem
         self.destination = destination
         self.destinationPathByteCount = destinationPathByteCount
-        self.byteCeiling = byteCeiling
+        self.acceptance = acceptance
         self.logger = logger
         var generator = SystemRandomNumberGenerator()
         let suffix = (0..<16).map { _ in Array("0123456789abcdef".utf8)[Int(generator.next() % 16)] }
@@ -190,6 +229,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     /// Removes everything the writer created, unless it was published.
     func discard() {
         if let written = file?.written { fileSystem.close(written.descriptor) }
+        // A compressed file closes itself as it goes.
         file = nil
         cursor = nil
         _ = batch.take()
@@ -213,6 +253,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         switch event {
         case .enterDirectory(let header): try enterDirectory(header)
         case .beginFile(let header): try beginFile(header)
+        case .resourceFork: try beginResourceFork()
         case .bytes(let bytes): try carry(UInt64(bytes.count), .bytes(bytes))
         case .zeros(let count): try carry(count, .zeros(count))
         case .finishFile: try finishFile()
@@ -257,50 +298,86 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
 
     private func beginFile(_ header: EntryHeader) throws(TreeWriteFailure) {
         let (entry, name, path, _) = try admit(header, as: .file)
-        let declared: UInt64
-        switch header.storage {
-        case .plain(let plain): declared = plain.size
-        case .lz4(let lz4): declared = lz4.size
-        case .decmpfs: throw TreeWriteFailure(path: path, reason: .event(.decmpfsNotLanded))
-        case nil: throw TreeWriteFailure(path: path, reason: .event(.typeNotLanded))
+        do {
+            landedBytes = try acceptance.admitLanding(entry, after: landedBytes)
+        } catch .exceedsByteCeiling {
+            throw TreeWriteFailure(path: path, reason: .event(.exceedsByteCeiling(acceptance.byteCeiling)))
+        } catch .decmpfsTypeNotAccepted(let type) {
+            throw TreeWriteFailure(path: path, reason: .event(.decmpfsTypeNotAccepted(type)))
+        } catch {
+            throw TreeWriteFailure(path: path, reason: .event(.invalidEntry(error)))
         }
-        guard declared <= byteCeiling - landedBytes, declared <= UInt64(Int64.max) else {
-            throw TreeWriteFailure(path: path, reason: .event(.exceedsByteCeiling(byteCeiling)))
+        guard entry.dataByteCount <= UInt64(Int64.max) else {
+            throw TreeWriteFailure(path: path, reason: .event(.exceedsByteCeiling(acceptance.byteCeiling)))
         }
-        landedBytes += declared
         let metadata = EntryMetadata(entry)
-        let written: SparseFile<FileSystem>?
-        if case .awaitingRoot = phase {
-            let descriptor = try system(path) { () throws(TreeFileSystemError) in
-                try fileSystem.createFile(stagingName, in: destination)
-            }
-            phase = .rootComplete
-            written = sparseFile(descriptor)
-            do {
-                root = Root(name: name, identity: FolderBatch.Identity(try fileSystem.status(of: descriptor)))
-            } catch {
-                fileSystem.close(descriptor)
-                throw TreeWriteFailure(path: path, reason: .system(error))
-            }
-        } else if declared <= FolderBatch.largestFile {
-            written = nil
-        } else {
-            let descriptor = try withCursor { cursor throws(TreeWriteFailure) in
-                try createBatch(in: cursor.descriptor)
-                let parent = cursor.descriptor
-                return try system(path) { () throws(TreeFileSystemError) in
-                    try fileSystem.createFile(name, in: parent)
-                }
-            }
-            written = sparseFile(descriptor)
+        let compressedStorage = entry.decmpfs.map {
+            (attribute: Array(header.decmpfs.attribute), logicalSize: $0.uncompressedSize)
         }
-        file = OpenFile(name: name, path: path, metadata: metadata, declared: declared, written: written)
+        var open = OpenFile(
+            name: name, path: path, metadata: metadata, dataSize: entry.dataByteCount,
+            resourceForkSize: entry.resourceForkByteCount, compressedStorage: compressedStorage)
+        let directory: Int32
+        let created: [UInt8]
+        if case .awaitingRoot = phase {
+            (directory, created) = (destination, stagingName)
+        } else if entry.carriedByteCount <= FolderBatch.largestFile {
+            file = open
+            return
+        } else {
+            directory = try withCursor { cursor throws(TreeWriteFailure) in
+                try createBatch(in: cursor.descriptor)
+                return cursor.descriptor
+            }
+            created = name
+        }
+        do {
+            if let compressedStorage {
+                open.compressed = try CompressedFile(
+                    creating: created, in: directory, attribute: compressedStorage.attribute,
+                    logicalSize: compressedStorage.logicalSize, extendedAttributes: metadata.extendedAttributes,
+                    on: fileSystem)
+            } else {
+                open.written = sparseFile(try fileSystem.createFile(created, in: directory))
+            }
+        } catch {
+            throw TreeWriteFailure(path: path, reason: .system(error))
+        }
+        file = open
+        guard created == stagingName else { return }
+        phase = .rootComplete
+        do {
+            let status: FileStatus
+            if let compressed = open.compressed {
+                status = try compressed.status()
+            } else if let written = open.written {
+                status = try fileSystem.status(of: written.descriptor)
+            } else {
+                preconditionFailure("the root file is written as it arrives")
+            }
+            root = Root(name: name, identity: FolderBatch.Identity(status))
+        } catch {
+            throw TreeWriteFailure(path: path, reason: .system(error))
+        }
+    }
+
+    /// The current file's data is all carried, and its resource fork's bytes follow.
+    private func beginResourceFork() throws(TreeWriteFailure) {
+        guard let open = file, !open.inResourceFork else { throw outOfOrder }
+        guard open.carried == open.dataSize, open.resourceForkSize > 0 else {
+            throw TreeWriteFailure(
+                path: open.path, reason: .event(.sizeMismatch(declared: open.dataSize, carried: open.carried)))
+        }
+        file?.inResourceFork = true
+        file?.carried = 0
     }
 
     private func carry(_ count: UInt64, _ piece: Piece) throws(TreeWriteFailure) {
         // Only scalars are read out of `file`: a copy of it would share the held bytes, and the append below
         // would then copy them all.
-        guard let declared = file?.declared, let carried = file?.carried, let path = file?.path else {
+        guard let declared = file?.declared, let carried = file?.carried, let path = file?.path,
+            let inResourceFork = file?.inResourceFork
+        else {
             throw outOfOrder
         }
         guard count > 0 else { throw TreeWriteFailure(path: path, reason: .event(.emptyPiece)) }
@@ -309,6 +386,10 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
                 path: path, reason: .event(.sizeMismatch(declared: declared, carried: carried &+ count)))
         }
         file?.carried += count
+        if inResourceFork {
+            try carryResourceFork(piece, at: carried, path: path)
+            return
+        }
         guard var sparse = file?.written else {
             switch piece {
             case .bytes(let bytes):
@@ -329,17 +410,72 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         }
     }
 
+    /// Lands `piece` of the current file's resource fork at `offset`: held, written into the plain file's
+    /// fork, or appended to the compressed file's.
+    private func carryResourceFork(_ piece: Piece, at offset: UInt64, path: [[UInt8]]) throws(TreeWriteFailure) {
+        if let compressed = file?.compressed {
+            do {
+                try piece.withBuffers { buffer throws(CompressedFileFailure) in
+                    try compressed.appendResourceFork(buffer)
+                }
+            } catch {
+                throw TreeWriteFailure(path: path, reason: Self.reason(error))
+            }
+            return
+        }
+        guard let descriptor = file?.written?.descriptor else {
+            switch piece {
+            case .bytes(let bytes):
+                bytes.withUnsafeBytes { buffer in
+                    buffer.withMemoryRebound(to: UInt8.self) { file?.heldResourceFork.append($0) }
+                }
+            case .zeros(let count):
+                file?.heldResourceFork.count += Int(count)
+            }
+            return
+        }
+        guard file?.resourceForkDropped == false else { return }
+        var position = offset
+        var held = true
+        try system(path) { () throws(TreeFileSystemError) in
+            try piece.withBuffers { buffer throws(TreeFileSystemError) in
+                guard held else { return }
+                held = try fileSystem.writeResourceFork(descriptor, from: buffer, at: position)
+                position += UInt64(buffer.count)
+            }
+        }
+        // A volume that holds no resource fork leaves it out, as it does any attribute it cannot hold.
+        if !held { file?.resourceForkDropped = true }
+    }
+
     private func finishFile() throws(TreeWriteFailure) {
         guard let open = file.take() else { throw outOfOrder }
-        guard open.carried == open.declared else {
-            throw TreeWriteFailure(
-                path: open.path, reason: .event(.sizeMismatch(declared: open.declared, carried: open.carried)))
+        guard open.carried == open.declared, open.inResourceFork || open.resourceForkSize == 0 else {
+            let (declared, carried) =
+                open.carried == open.declared ? (open.resourceForkSize, 0) : (open.declared, open.carried)
+            throw TreeWriteFailure(path: open.path, reason: .event(.sizeMismatch(declared: declared, carried: carried)))
+        }
+        if let compressed = open.compressed {
+            do {
+                _ = try compressed.finish(open.metadata.attributes)
+            } catch {
+                throw TreeWriteFailure(path: open.path, reason: Self.reason(error))
+            }
+            return
         }
         guard var sparse = open.written else {
+            let content: FolderBatch.Entry.Content
+            if let storage = open.compressedStorage {
+                content = .compressedFile(
+                    attribute: storage.attribute, logicalSize: storage.logicalSize,
+                    resourceFork: open.heldResourceFork)
+            } else {
+                content = .file(open.held, resourceFork: open.heldResourceFork)
+            }
             try hold(
                 FolderBatch.Entry(
-                    name: open.name, path: open.path, metadata: open.metadata, content: .file(open.held),
-                    byteCount: Int(open.declared)))
+                    name: open.name, path: open.path, metadata: open.metadata, content: content,
+                    byteCount: Int(open.dataSize + open.resourceForkSize)))
             return
         }
         let descriptor = sparse.descriptor
@@ -351,6 +487,14 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             throw TreeWriteFailure(path: open.path, reason: .system(error))
         }
         try system(open.path) { () throws(TreeFileSystemError) in try fileSystem.closeWritten(descriptor) }
+    }
+
+    /// The reason a compressed file's `failure` fails its entry for.
+    static func reason(_ failure: CompressedFileFailure) -> TreeWriteFailure.Reason {
+        switch failure {
+        case .system(let error): .system(error)
+        case .notCompressed(let refusal): .notCompressed(refusal)
+        }
     }
 
     private func symlink(_ header: EntryHeader) throws(TreeWriteFailure) {
@@ -443,7 +587,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         let entries = batch.take()
         let holeSize = holeSize(of: directory)
         if let (position, failure) = FolderBatch.create(entries, in: directory, holeSize: holeSize, on: fileSystem) {
-            throw TreeWriteFailure(path: entries[position].path, reason: .system(failure))
+            throw TreeWriteFailure(path: entries[position].path, reason: Self.reason(failure))
         }
     }
 

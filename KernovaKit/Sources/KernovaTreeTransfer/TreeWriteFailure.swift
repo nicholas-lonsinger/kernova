@@ -23,6 +23,9 @@ public struct TreeWriteFailure: Error, Equatable, Sendable {
         case system(TreeFileSystemError)
         /// A directory the writer created was moved or replaced while the writer was inside it.
         case moved
+        /// The volume did not take a file compressed: its decmpfs storage does not land, while the same file
+        /// sent plain would.
+        case notCompressed(NotCompressed)
     }
 
     /// The entry's path as byte components, first the item's own name: the entry that failed, or, for a
@@ -53,8 +56,11 @@ public struct TreeWriteFailure: Error, Equatable, Sendable {
         case .event(.exceedsByteCeiling(let ceiling)):
             error.code = .tooLarge
             error.limit = ceiling
-        case .event(.decmpfsNotLanded):
+        case .event(.decmpfsTypeNotAccepted):
             error.code = .itemDecmpfsRefused
+        case .notCompressed(let refusal):
+            error.code = .itemDecmpfsRefused
+            if case .flagRefused(let failure) = refusal { item.posixErrno = failure.code }
         case .event:
             error.code = .itemContainerMalformed
         case .refused(let failure):
@@ -82,12 +88,12 @@ public enum TreeEventViolation: Equatable, Sendable {
     case invalidEntry(ContainerError)
     /// The entry's depth is not the number of directories the writer is inside.
     case depthMismatch(depth: UInt32, entered: Int)
-    /// A file's bytes ran past, or ended short of, the size its header declared.
+    /// A file's data or resource fork ran past, or ended short of, the size its header declared.
     case sizeMismatch(declared: UInt64, carried: UInt64)
     /// The entries' declared sizes total more than the writer's byte ceiling.
     case exceedsByteCeiling(UInt64)
-    /// A file's storage is decmpfs, which this writer does not land.
-    case decmpfsNotLanded
+    /// A file's storage is decmpfs of a type the destination does not land compressed.
+    case decmpfsTypeNotAccepted(UInt32)
     /// The entry is not the file, directory or symlink the event creates, or a file has no storage.
     case typeNotLanded
     /// A file's bytes or zeros of no length.
