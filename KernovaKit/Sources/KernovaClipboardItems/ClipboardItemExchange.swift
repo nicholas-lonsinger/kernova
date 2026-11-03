@@ -64,11 +64,6 @@ public final class ClipboardItemExchange {
     /// Whether a connection can carry the clipboard now.
     public var isLinked: Bool { link != nil }
 
-    /// Whether `url` is a file this exchange landed: the far side's, which this side never offers back.
-    public func landed(_ url: URL) -> Bool {
-        staging.isInStagingRoot(url)
-    }
-
     // MARK: The connection
 
     /// Runs over `link` from now on, or over nothing. Offers open on the connection before are ended by it, or

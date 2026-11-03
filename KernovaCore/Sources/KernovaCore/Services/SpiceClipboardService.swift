@@ -36,7 +36,7 @@ final class SpiceClipboardService: ClipboardServicing {
     var carriesClipboard = true {
         didSet {
             guard !carriesClipboard else { return }
-            pendingOutboundText = nil
+            outbound = nil
             lastGrabbedText = nil
         }
     }
@@ -54,8 +54,16 @@ final class SpiceClipboardService: ClipboardServicing {
     private let outputPipe: Pipe  // guest writes → host reads
     private var parser = SpiceAgentParser()
 
-    /// Holds the text for the guest's `CLIPBOARD_REQUEST` response.
-    private var pendingOutboundText: String?
+    /// What the host last grabbed, which the guest's `CLIPBOARD_REQUEST` is answered from.
+    private var outbound: Outbound?
+
+    /// The source of the host's grab.
+    private enum Outbound {
+        /// The buffer's text, as the window edited it.
+        case text(String)
+        /// A copy on the Mac, its text read only when the guest requests it.
+        case copy(ClipboardOfferSource)
+    }
 
     /// Tracks the last text we sent via GRAB to avoid redundant grabs.
     private var lastGrabbedText: String?
@@ -88,7 +96,7 @@ final class SpiceClipboardService: ClipboardServicing {
     func stop() {
         disconnect()
         outputPipe.fileHandleForReading.readabilityHandler = nil
-        pendingOutboundText = nil
+        outbound = nil
         guestSupportsByDemand = false
         Self.logger.log(.info, "SPICE clipboard service stopped")
     }
@@ -126,7 +134,7 @@ final class SpiceClipboardService: ClipboardServicing {
         // Only update state after successful write — otherwise a failed grab
         // would permanently prevent retries (text == lastGrabbedText).
         lastGrabbedText = text
-        pendingOutboundText = text
+        outbound = .text(text)
 
         if !guestSupportsByDemand {
             // Reset lastGrabbedText on failure so the next call retries.
@@ -143,12 +151,20 @@ final class SpiceClipboardService: ClipboardServicing {
         return .settled
     }
 
-    /// Takes the copy's UTF-8 text into the buffer and grabs it: the one representation this transport
-    /// carries, read now because the buffer holds what a grab sends. A copy with no text has nothing to send.
+    /// Grabs the copy's UTF-8 text, the one representation this transport carries, reading it only when the
+    /// guest requests it; a legacy guest, which never requests, is sent it now. A copy with no text has nothing
+    /// to send. The buffer keeps what it shows, since showing the copy would read it.
     func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
-        guard let text = await copy.utf8Text() else { return .settled }
-        clipboardContent = ClipboardContent(text: text, isConcealed: copy.concealed)
-        return grabIfChanged()
+        guard copy.offersUTF8Text else { return .settled }
+        guard isConnected, carriesClipboard else { return .undelivered }
+        guard writeToGuest(SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])) else { return .undelivered }
+        outbound = .copy(copy)
+        if !guestSupportsByDemand {
+            guard await reply(from: .copy(copy)) else { return .undelivered }
+        }
+        Self.logger.log(
+            .notice, "Grabbed the Mac's copy (byDemand: \(self.guestSupportsByDemand, privacy: .public))")
+        return .settled
     }
 
     // MARK: - Reading
@@ -174,12 +190,12 @@ final class SpiceClipboardService: ClipboardServicing {
             logger.log(.debug, "Received \(data.count, privacy: .public) bytes from guest SPICE agent")
 
             Task { @MainActor [weak self] in
-                self?.handleIncomingData(data)
+                await self?.handleIncomingData(data)
             }
         }
     }
 
-    func handleIncomingData(_ data: Data) {
+    func handleIncomingData(_ data: Data) async {
         let messages = parser.feed(data)
 
         if parser.didReset {
@@ -195,7 +211,7 @@ final class SpiceClipboardService: ClipboardServicing {
                 handleClipboardGrab(types: types)
 
             case .clipboardRequest(let type):
-                handleClipboardRequest(type: type)
+                await handleClipboardRequest(type: type)
 
             case .clipboardData(let type, let data):
                 handleClipboardData(type: type, data: data)
@@ -261,7 +277,7 @@ final class SpiceClipboardService: ClipboardServicing {
     }
 
     /// Guest is requesting clipboard data from us (response to our GRAB).
-    private func handleClipboardRequest(type: SpiceClipboardType) {
+    private func handleClipboardRequest(type: SpiceClipboardType) async {
         Self.logger.log(.debug, "Guest requested clipboard data (type: \(type.rawValue, privacy: .public))")
 
         guard type == .utf8Text else {
@@ -269,13 +285,27 @@ final class SpiceClipboardService: ClipboardServicing {
             return
         }
 
-        guard carriesClipboard, let text = pendingOutboundText else {
+        guard carriesClipboard, let outbound else {
             Self.logger.log(.debug, "No pending outbound text for clipboard request")
             return
         }
 
-        // Keep pendingOutboundText intact — the guest agent may retry the request
-        sendClipboardText(text)
+        // Keep outbound intact — the guest agent may retry the request
+        await reply(from: outbound)
+    }
+
+    /// Sends the guest `outbound`'s text, or — a copy whose clipboard has moved on — `VD_AGENT_CLIPBOARD_NONE`,
+    /// SPICE's answer that no data is available.
+    @discardableResult
+    private func reply(from outbound: Outbound) async -> Bool {
+        switch outbound {
+        case .text(let text):
+            return sendClipboardText(text)
+        case .copy(let copy):
+            if let text = await copy.utf8Text() { return sendClipboardText(text) }
+            Self.logger.log(.notice, "The Mac's copy moved on before the guest requested it")
+            return writeToGuest(SpiceMessageBuilder.buildClipboardData(type: .none, data: Data()))
+        }
     }
 
     /// Guest delivered clipboard data — update our observable state.
@@ -342,14 +372,24 @@ final class SpiceClipboardService: ClipboardServicing {
 }
 
 extension ClipboardOfferSource {
+    /// Whether the offer has an INLINE UTF-8 text representation, from its metadata alone.
+    var offersUTF8Text: Bool { utf8TextIndex != nil }
+
     /// The first INLINE UTF-8 text representation's text, read now; nil when the offer has none or it can no
     /// longer be served.
     func utf8Text() async -> String? {
+        guard let (item, index) = utf8TextIndex,
+            case .bytes(let data)? = try? await serve(item: item, representation: index)
+        else { return nil }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private var utf8TextIndex: (item: Int, representation: Int)? {
         for (item, offered) in items.enumerated() {
-            for (index, representation) in offered.representations.enumerated()
-            where representation.storage == .inline && representation.type.appleUTI == ClipboardContent.utf8TextUTI {
-                guard case .bytes(let data)? = try? await serve(item: item, representation: index) else { return nil }
-                return String(decoding: data, as: UTF8.self)
+            if let index = offered.representations.firstIndex(where: {
+                $0.storage == .inline && $0.type.appleUTI == ClipboardContent.utf8TextUTI
+            }) {
+                return (item, index)
             }
         }
         return nil

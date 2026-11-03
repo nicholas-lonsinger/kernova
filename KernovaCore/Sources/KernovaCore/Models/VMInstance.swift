@@ -1216,15 +1216,10 @@ package final class VMInstance {
     /// This instance's current policy.
     var agentPolicySnapshot: AgentPolicySnapshot { agentPolicySnapshot(for: configuration) }
 
-    /// The ceiling the **host** enforces: the user's value, always.
-    ///
-    /// Each direction has exactly one enforcer, and it is the receiver — the side
-    /// whose paste deadline is at risk. This governs guest→host only
-    /// (`materializeForCopy` / `pasteBoundSnapshot`); the guest's own
-    /// `allowsFileURLPull` governs host→guest, and neither side caps what it
-    /// *sends*. So the guest's capability, and the control channel's health, say
-    /// nothing about what belongs here: clamping on either would drop the user's
-    /// setting over a peer that is only ever the sender in this direction.
+    /// The paste ceiling the user set, which both ends enforce on what lands
+    /// there: the host on guest→host pastes, and the guest agent, which the
+    /// hub's policy carries it to as `ClipboardPolicy.max_paste_bytes`, on
+    /// host→guest ones.
     package var effectiveClipboardMaxPasteBytes: Int { preferences.clipboardMaxPasteBytes }
 
     /// Asks any live passthrough session to replay an offer a lower ceiling
