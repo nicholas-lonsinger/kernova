@@ -1,7 +1,7 @@
 /// A regular file being created in its decmpfs-compressed form: the one way a compressed file is written.
 ///
 /// Creating it writes its extended attributes and then its `com.apple.decmpfs` attribute into the new, empty
-/// file; ``appendResourceFork(_:)`` writes the resource fork, in positional pieces; ``finish(_:)`` sets the
+/// file; ``appendResourceFork(_:)`` writes the resource fork, through a ``ResourceForkWriter``; ``finish(_:)`` sets the
 /// flags with `UF_COMPRESSED` in one write, confirms the system took the file compressed, then sets the mode and the times, which the flag write resets, and closes it.
 /// Attributes before the flag is the order the kernel takes: the flag set first does not stick
 /// (docs/research/2026-10-24-decmpfs-pass-through.md, finding 3).
@@ -15,8 +15,8 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
     private var descriptor: Int32?
     /// The logical size its `com.apple.decmpfs` attribute declares.
     public let logicalSize: UInt64
-    /// The resource fork bytes written so far.
-    public private(set) var resourceForkByteCount: UInt64 = 0
+    /// The resource fork, written as it arrives.
+    private var resourceFork: ResourceForkWriter
 
     /// Creates the regular file `name` in `directory` — failing when anything already has the name — and
     /// writes `extendedAttributes`, each dropped where the volume cannot hold it, then its compressed
@@ -27,15 +27,17 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
     ///   - directory: An open directory.
     ///   - attribute: The `com.apple.decmpfs` attribute.
     ///   - logicalSize: The logical size `attribute`'s header declares.
+    ///   - resourceForkLength: The length of the resource fork ``appendResourceFork(_:)`` writes.
     ///   - extendedAttributes: The file's other extended attributes.
     ///   - fileSystem: The calls it makes.
     /// - Throws: `TreeFileSystemError` from the creation or a write; nothing it created then remains.
     public init(
         creating name: [UInt8], in directory: Int32, attribute: [UInt8], logicalSize: UInt64,
-        extendedAttributes: [ExtendedAttribute], on fileSystem: FileSystem
+        resourceForkLength: UInt64, extendedAttributes: [ExtendedAttribute], on fileSystem: FileSystem
     ) throws(TreeFileSystemError) {
         self.fileSystem = fileSystem
         self.logicalSize = logicalSize
+        resourceFork = ResourceForkWriter(length: resourceForkLength)
         let descriptor = try fileSystem.createFile(name, in: directory)
         do {
             for extended in extendedAttributes {
@@ -60,20 +62,18 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
         if let descriptor { fileSystem.close(descriptor) }
     }
 
-    /// Appends `bytes` to the resource fork; only before ``finish(_:)``.
+    /// Appends `bytes` to the resource fork, within the length it was created with; only before ``finish(_:)``.
     ///
     /// - Throws: ``CompressedFileFailure``.
     public func appendResourceFork(_ bytes: UnsafeRawBufferPointer) throws(CompressedFileFailure) {
         guard let descriptor else { preconditionFailure("a resource fork appended to a finished file") }
-        guard !bytes.isEmpty else { return }
         let held: Bool
         do {
-            held = try fileSystem.writeResourceFork(descriptor, from: bytes, at: resourceForkByteCount)
+            held = try resourceFork.append(bytes, to: descriptor, on: fileSystem)
         } catch {
             throw .system(error)
         }
         guard held else { throw .notCompressed(.resourceForkNotHeld) }
-        resourceForkByteCount += UInt64(bytes.count)
     }
 
     /// Sets the flags with `UF_COMPRESSED`, confirms the system took the file compressed, sets the mode
