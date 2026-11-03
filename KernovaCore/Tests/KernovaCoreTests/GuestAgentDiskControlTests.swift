@@ -23,7 +23,7 @@ struct GuestAgentDiskControlTests {
         let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .operating(.saving, from: .running(sessionID: UUID())))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(instance.agentPresentation?.status == .waiting)
 
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)
@@ -34,7 +34,7 @@ struct GuestAgentDiskControlTests {
         let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
 
         #expect(
             GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
@@ -50,7 +50,7 @@ struct GuestAgentDiskControlTests {
                 guestAgents: .none))
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(viewModel.capabilities.isAvailable(.toggleGuestAgentDisk, on: instance))
 
         #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities) == Self.withheld)

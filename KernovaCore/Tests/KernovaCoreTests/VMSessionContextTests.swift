@@ -62,7 +62,6 @@ struct VMSessionContextTests {
         instance.clipboardDataSink.set(RetainingAcceptor())
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.warnedAgentScopes = [.login]
-        context.hasSeenAgentThisSession = true
         context.networkAttachmentPending = true
         context.vsock.livePolicyApplication = Task<Void, Never> {}
 
@@ -80,7 +79,6 @@ struct VMSessionContextTests {
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
         #expect(context.warnedAgentScopes.isEmpty)
-        #expect(context.hasSeenAgentThisSession == false)
         #expect(context.networkAttachmentPending == false)
         #expect(context.session == nil)
         #expect(context.agentAbsenceTimer == nil)
@@ -109,7 +107,6 @@ struct VMSessionContextTests {
         #expect(instance.liveUSBAccessories.isEmpty)
         #expect(instance.bootedIntoRecovery == false)
         #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.hasSeenAgentThisSession == false)
     }
 
     // MARK: - USB Accessories
@@ -296,6 +293,7 @@ struct VMSessionContextTests {
         let sessionID = UUID()
         let instance = makeInstance(phase: .running(sessionID: sessionID))
         let context = instance.beginSessionContextForTesting()
+        context.hasAgentTransport = true
 
         #expect(
             observationFires(reading: { _ = instance.networkAttachmentPending }) {

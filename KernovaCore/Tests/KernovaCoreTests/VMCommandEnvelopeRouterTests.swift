@@ -706,6 +706,7 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, name: "Stub", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let selector = VMSelector.id(instance.id)
 
         // A mount naming no scopes waits for every scope the guest OS has.

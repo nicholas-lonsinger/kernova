@@ -70,8 +70,9 @@ package struct SidebarLayout {
     /// What the projection reads besides the entries and the options.
     @MainActor
     package struct Context {
-        /// The guest-agent version this build bundles, `nil` when unknown.
-        let bundledAgentVersion: String?
+        /// The guest agents this build bundles, which a VM's agents stand
+        /// against.
+        let bundledAgents: BundledGuestAgents
         /// The library's named networks: a VM naming any other is on
         /// ``VMLibraryFilter/Network/unlisted``.
         let networks: VMNetworkDirectory.State
@@ -87,15 +88,15 @@ package struct SidebarLayout {
         /// What a filter reads of `entry`, `nil` for a bundle Kernova can't
         /// read.
         package func subject(of entry: LibraryEntry) -> VMLibraryFilter.Subject? {
-            entry.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
+            entry.filterSubject(bundledAgents: bundledAgents, networks: networks, tags: tags ?? [])
         }
 
         func subject(of instance: VMInstance) -> VMLibraryFilter.Subject {
-            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
+            instance.filterSubject(bundledAgents: bundledAgents, networks: networks, tags: tags ?? [])
         }
 
         func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
-            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags ?? [])
+            arrival.filterSubject(bundledAgents: bundledAgents, networks: networks, tags: tags ?? [])
         }
     }
 

@@ -14,35 +14,44 @@ extension GuestAgentDiskCache {
 
 extension BundledGuestAgents {
     /// No agent at all.
-    package static let none = BundledGuestAgents(entries: [:], linuxDisk: .testing)
+    package static let none = BundledGuestAgents(entries: [:], macOSInstallerDiskImageURL: nil, linuxDisk: .testing)
+
+    /// The entries of one payload file at `url` serving both scopes of `os` on arm64.
+    private static func entries(
+        _ os: OSFamily, _ format: PayloadFormat, at url: URL, versionLabel: String
+    ) -> [BundledGuestAgentKey: BundledGuestAgentEntry] {
+        var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
+        for scope in [InstallScope.user, .system] {
+            entries[BundledGuestAgentKey(os, .arm64, scope)] = BundledGuestAgentEntry(
+                fileURL: url, format: format, versionLabel: versionLabel)
+        }
+        return entries
+    }
 
     /// Only a Linux agent, the file at `agent`, whose disk `disk` writes.
     package static func linux(agent: URL, disk: GuestAgentDiskCache, versionLabel: String = "1.0 (1)")
         -> BundledGuestAgents
     {
-        var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
-        for scope in [InstallScope.user, .system] {
-            entries[BundledGuestAgentKey(.linux, .arm64, scope)] = BundledGuestAgentEntry(
-                fileURL: agent, kind: .payload(.executable, versionLabel: versionLabel))
-        }
-        return BundledGuestAgents(entries: entries, linuxDisk: disk)
+        BundledGuestAgents(
+            entries: entries(.linux, .executable, at: agent, versionLabel: versionLabel),
+            macOSInstallerDiskImageURL: nil, linuxDisk: disk)
     }
 
-    /// A macOS agent at version 2.0 whose installer image stands in as a small
-    /// file every Mac holds: the core only reads it, copying it into a VM's
-    /// bundle when the disk is attached. No Linux agent.
+    /// A macOS agent labelled `1.0 (1)`, as ``AppBundleProducts/testing`` labels its build, whose payload and
+    /// installer image stand in as a small file every Mac holds: the core only reads them, hashing the
+    /// payload and copying the image into a VM's bundle when the disk is attached. No Linux agent.
     package static let testing = macOS(
-        version: "2.0", installerDiskImageURL: URL(filePath: "/System/Library/CoreServices/SystemVersion.plist"))
+        versionLabel: "1.0 (1)",
+        installerDiskImageURL: URL(filePath: "/System/Library/CoreServices/SystemVersion.plist"))
 
-    /// Only a macOS agent at `version` with its installer at
-    /// `installerDiskImageURL`, or no agent at all when that is `nil`.
-    package static func macOS(version: String, installerDiskImageURL: URL?) -> BundledGuestAgents {
-        var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
-        if let installerDiskImageURL {
-            entries[BundledGuestAgentKey(.macOS, .arm64, .user)] = BundledGuestAgentEntry(
-                fileURL: installerDiskImageURL, kind: .installerDisk(version: version))
-        }
-        return BundledGuestAgents(entries: entries, linuxDisk: .testing)
+    /// Only a macOS agent labelled `versionLabel` with its installer at `installerDiskImageURL`, or no
+    /// agent at all when that is `nil`; the installer image stands in as the payload too.
+    package static func macOS(versionLabel: String, installerDiskImageURL: URL?) -> BundledGuestAgents {
+        BundledGuestAgents(
+            entries: installerDiskImageURL.map {
+                entries(.macOS, .containerTree, at: $0, versionLabel: versionLabel)
+            } ?? [:],
+            macOSInstallerDiskImageURL: installerDiskImageURL, linuxDisk: .testing)
     }
 }
 

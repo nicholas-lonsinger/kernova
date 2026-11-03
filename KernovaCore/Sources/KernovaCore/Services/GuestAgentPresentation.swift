@@ -4,25 +4,17 @@ import KernovaAgentHost
 import KernovaCommandModel
 import KernovaWire
 
-/// What every surface shows of a VM's Kernova guest agent: one status, which
-/// the icons, status lines and automation read, and — for a guest whose agents
-/// the agent hub serves — each agent and each capability.
+/// What every surface shows of a VM's Kernova guest agents, as the agent hub
+/// reports them: one status, which the icons, status lines and automation
+/// read, then each agent and each capability.
 package struct GuestAgentPresentation: Equatable, Sendable {
-    /// The agent's state as one value.
+    /// The agents' state as one value.
     package var status: AgentStatus
-    /// The hub's agents and capabilities, `nil` for the macOS agent, which
-    /// reports only `status`.
-    package var hub: Hub?
-
-    /// What the agent hub reports of a guest's agents.
-    package struct Hub: Equatable, Sendable {
-        /// One line per agent: the connected ones newest first, then the away
-        /// ones most recently gone first, then each scope that didn't
-        /// reconnect.
-        package var agents: [AgentLine]
-        /// One row per capability, in the order shown.
-        package var capabilities: [CapabilityRow]
-    }
+    /// One line per agent: the connected ones newest first, then the away ones
+    /// most recently gone first, then each scope that didn't reconnect.
+    package var agents: [AgentLine]
+    /// One row per capability, in the order shown.
+    package var capabilities: [CapabilityRow]
 
     /// One agent, which the status window and `kernova info` both show.
     package struct AgentLine: Equatable, Sendable {
@@ -141,14 +133,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         package var detail: String
     }
 
-    /// The macOS agent's presentation: its control channel's `status`, nothing
-    /// more.
-    package init(macOSAgent status: AgentStatus) {
-        self.status = status
-        hub = nil
-    }
-
-    /// The presentation of the agents in `snapshot`, on the macOS agent's terms
+    /// The presentation of the agents in `snapshot`
     /// (``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``):
     /// with no agent connected, a VM that has had one — `lastSeenAgentVersion`
     /// — is connecting to it; never waiting for an install. With `missing` —
@@ -174,18 +159,16 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 standing: away.relaunching
                     ? .relaunching(away.summary.standing, isResponsive: away.summary.isResponsive) : .reconnecting)
         }
-        hub = Hub(
-            agents: snapshot.peers.map {
-                AgentLine($0, standing: .connected($0.standing, isResponsive: $0.isResponsive))
-            }
-                + away + missing.map(AgentLine.init(missing:)),
-            capabilities: [
-                snapshot.peers.isEmpty
-                    ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))
-                    : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
-                Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
-                Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
-            ])
+        agents =
+            snapshot.peers.map { AgentLine($0, standing: .connected($0.standing, isResponsive: $0.isResponsive)) }
+            + away + missing.map(AgentLine.init(missing:))
+        capabilities = [
+            snapshot.peers.isEmpty
+                ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))
+                : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
+            Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
+            Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
+        ]
     }
 
     /// The row titled `title` for a feature whose merged status is `status`.

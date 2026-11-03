@@ -68,8 +68,9 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "Guest Agent Status")
     var agentStatus: String?
 
-    /// How the guest agent stands against the bundled one — a
-    /// ``VMGuestAgentBucket`` wire name — `nil` for a Linux guest.
+    /// How the guest agents stand against the bundled ones — a
+    /// ``VMGuestAgentBucket`` wire name — `nil` when an agent has connected
+    /// and this build bundles none for the guest's OS.
     @Property(title: "Guest Agent Version")
     var guestAgentVersion: String?
 

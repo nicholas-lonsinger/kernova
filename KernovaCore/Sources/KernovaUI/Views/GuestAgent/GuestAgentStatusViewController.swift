@@ -1,4 +1,5 @@
 import AppKit
+import KernovaAgentHost
 import KernovaCore
 import KernovaKit
 
@@ -6,11 +7,11 @@ import KernovaKit
 /// opens, and the content of the Guest Agent Status window
 /// (``GuestAgentStatusWindowController``).
 ///
-/// The macOS agent's status reads as a title and a paragraph; the agent hub's
-/// agents add a line per agent and a row per capability.
+/// The status reads as a title, then a line per agent and a row per
+/// capability.
 ///
 /// State is mutable in place via
-/// ``update(presentation:isInstallerMounted:diskControl:vmName:hasDismissAction:)``
+/// ``update(presentation:diskControl:hasDismissAction:)``
 /// so the host can refresh the panel when any input flips while it is open,
 /// without dismiss/re-present flicker.
 @MainActor
@@ -45,18 +46,14 @@ final class GuestAgentStatusViewController: NSViewController {
     var onDismiss: (() -> Void)?
 
     /// Current presentation driving the panel's title, body and rows.
-    private(set) var presentation = GuestAgentPresentation(macOSAgent: .waiting)
+    private(set) var presentation = GuestAgentPresentation(hub: .empty)
     /// The presentation's status.
     var status: AgentStatus { presentation.status }
-    /// Whether the bundled installer disk is attached to the VM.
-    private(set) var isInstallerMounted = false
     /// The trailing button, resolved from the guest-agent disk control.
     private(set) var actionButtonRole = ActionButton.done
     /// The command the attached disk installs from, shown with a Copy button;
     /// `nil` hides the row.
     private(set) var installCommand: String?
-    /// VM name interpolated into the body text.
-    private(set) var vmName: String = ""
     /// When `true`, surfaces the "Don't show again" link in the action row.
     private(set) var hasDismissAction: Bool = false
 
@@ -72,8 +69,7 @@ final class GuestAgentStatusViewController: NSViewController {
     // MARK: - Subviews (held for in-place updates)
 
     private let titleLabel = NSTextField(labelWithString: "")
-    private let bodyLabel = NSTextField(wrappingLabelWithString: "")
-    /// The hub's agent lines and capability rows; hidden for the macOS agent.
+    /// The agent lines and capability rows.
     private let rowsStack = NSStackView()
     /// ``installCommand`` under what it needs, and its Copy button.
     private let commandRow = NSStackView()
@@ -97,7 +93,6 @@ final class GuestAgentStatusViewController: NSViewController {
         let container = NSView()
 
         configureTitleLabel()
-        configureBodyLabel()
         configureActionButton()
         configureDismissButton()
         configureCommandRow()
@@ -121,7 +116,7 @@ final class GuestAgentStatusViewController: NSViewController {
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = Spacing.small
-        stack.setViews([titleLabel, bodyLabel, rowsStack, commandRow, actionRow], in: .leading)
+        stack.setViews([titleLabel, rowsStack, commandRow, actionRow], in: .leading)
 
         container.addSubview(stack)
         let padding = Self.padding
@@ -145,18 +140,14 @@ final class GuestAgentStatusViewController: NSViewController {
         }
     }
 
-    /// Replaces the panel's presentation, installer state, disk control, VM
-    /// name, and dismiss-action flag and refreshes every label and button in
-    /// place.
+    /// Replaces the panel's presentation, disk control, and dismiss-action flag
+    /// and refreshes every label and button in place.
     func update(
-        presentation: GuestAgentPresentation, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
-        vmName: String, hasDismissAction: Bool
+        presentation: GuestAgentPresentation, diskControl: GuestAgentDiskControl.Model, hasDismissAction: Bool
     ) {
         self.presentation = presentation
-        self.isInstallerMounted = isInstallerMounted
         actionButtonRole = ActionButton(diskControl)
         installCommand = diskControl.installCommand
-        self.vmName = vmName
         self.hasDismissAction = hasDismissAction
         if isViewLoaded {
             applyContent()
@@ -171,16 +162,6 @@ final class GuestAgentStatusViewController: NSViewController {
         titleLabel.maximumNumberOfLines = 0
         titleLabel.preferredMaxLayoutWidth = Self.bodyWidth
         titleLabel.isSelectable = false
-    }
-
-    private func configureBodyLabel() {
-        bodyLabel.font = .preferredFont(forTextStyle: .callout)
-        bodyLabel.textColor = .secondaryLabelColor
-        bodyLabel.lineBreakMode = .byWordWrapping
-        bodyLabel.maximumNumberOfLines = 0
-        bodyLabel.preferredMaxLayoutWidth = Self.bodyWidth
-        // Non-selectable: only `.code`-style snippets are selectable.
-        bodyLabel.isSelectable = false
     }
 
     private func configureActionButton() {
@@ -224,17 +205,7 @@ final class GuestAgentStatusViewController: NSViewController {
 
     private func applyContent() {
         titleLabel.stringValue = Self.title(for: status)
-        if let hub = presentation.hub {
-            bodyLabel.isHidden = true
-            rowsStack.isHidden = false
-            rowsStack.setViews(Self.rows(hub).map(makeRow), in: .leading)
-        } else {
-            bodyLabel.isHidden = false
-            bodyLabel.stringValue = Self.bodyText(
-                for: status, isInstallerMounted: isInstallerMounted, vmName: vmName)
-            rowsStack.isHidden = true
-            rowsStack.setViews([], in: .leading)
-        }
+        rowsStack.setViews(Self.rows(presentation).map(makeRow), in: .leading)
         commandRow.isHidden = installCommand == nil
         commandLabel.stringValue = installCommand ?? ""
         copyCommandButton.value = installCommand
@@ -242,10 +213,10 @@ final class GuestAgentStatusViewController: NSViewController {
         dismissButton.isHidden = !hasDismissAction
     }
 
-    /// The hub's agent lines, then its capability rows, each as a title and the
+    /// The agent lines, then the capability rows, each as a title and the
     /// value beside it.
-    static func rows(_ hub: GuestAgentPresentation.Hub) -> [(title: String, value: String)] {
-        hub.agents.map { ($0.title, $0.state) } + hub.capabilities.map { ($0.title, $0.detail) }
+    static func rows(_ presentation: GuestAgentPresentation) -> [(title: String, value: String)] {
+        presentation.agents.map { ($0.title, $0.state) } + presentation.capabilities.map { ($0.title, $0.detail) }
     }
 
     private func makeRow(_ row: (title: String, value: String)) -> NSView {
@@ -290,42 +261,6 @@ final class GuestAgentStatusViewController: NSViewController {
         case .current, .connected: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
         case .expectedMissing: "Guest agent didn't reconnect"
-        }
-    }
-
-    /// The panel's body; where it tells the user how to install, it says the
-    /// installer is already attached when it is, since the button then ejects.
-    static func bodyText(
-        for status: AgentStatus, isInstallerMounted: Bool, vmName: String
-    ) -> String {
-        let attachedStep =
-            "The installer disk is attached to \(vmName) — inside the VM, open it in Finder and run install.command."
-        let mountStep =
-            "Mounting the installer presents it as a disk inside the VM — open it in Finder and run install.command."
-        switch status {
-        case .waiting:
-            return
-                "The Kernova guest agent enables clipboard sync with \(vmName). \(isInstallerMounted ? attachedStep : mountStep)"
-        case .outdated(let installed, let bundled):
-            return
-                "\(vmName) is running guest agent \(installed). Kernova bundles \(bundled). \(isInstallerMounted ? attachedStep : mountStep)"
-        case .updating(let installed, let bundled):
-            return "\(vmName) is updating guest agent \(installed) to \(bundled)."
-        case .connecting(let expected):
-            return
-                "Waiting for guest agent \(expected) on \(vmName) to connect."
-        case .current(let version), .connected(let version):
-            return "\(vmName) is connected with guest agent \(version)."
-        case .unresponsive(let version):
-            return
-                "\(vmName) (guest agent \(version)) stopped responding to heartbeats. The control connection will reset automatically; if it persists, restart the agent inside the VM."
-        case .expectedMissing(let expected):
-            let reinstallStep =
-                isInstallerMounted
-                ? attachedStep
-                : "Reinstalling presents the installer as a disk — open it in Finder and run install.command."
-            return
-                "\(vmName) had guest agent \(expected) installed, but it isn't connected now. \(reinstallStep)"
         }
     }
 }

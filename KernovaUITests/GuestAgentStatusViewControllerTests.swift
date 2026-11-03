@@ -16,42 +16,31 @@ struct GuestAgentStatusViewControllerTests {
     private static let withheld = GuestAgentDiskControl.Model(
         title: GuestAgentDiskControl.unavailableTitle, isEnabled: false, action: .mount(.install))
 
-    @Test("default state — title/body/action-button reflect .waiting")
+    @Test("default state — title and action button reflect .waiting")
     func defaultState() {
         let vc = GuestAgentStatusViewController()
         vc.update(
-            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
-            diskControl: Self.install, vmName: "TestVM",
-            hasDismissAction: true)
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install, hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         #expect(titleLabel(in: vc.view)?.stringValue == "Set up the Kernova guest agent")
         #expect(actionButton(in: vc.view)?.title == "Install Guest Agent…")
-        #expect(bodyLabel(in: vc.view)?.stringValue.contains("TestVM") == true)
     }
 
-    @Test("update() swaps title and body per status")
-    func updatePerStatus() {
-        let vc = GuestAgentStatusViewController()
-        vc.loadViewIfNeeded()
-
-        let cases: [(status: AgentStatus, title: String, bodyContains: String)] = [
-            (.waiting, "Set up the Kernova guest agent", "clipboard sync"),
-            (.outdated(installed: "0.9.1", bundled: "0.9.2"), "Update available", "0.9.1"),
-            (.updating(installed: "0.9.1", bundled: "0.9.2"), "Updating guest agent", "updating guest agent 0.9.1"),
-            (.current(version: "0.9.2"), "Guest agent connected", "0.9.2"),
-            (.unresponsive(version: "0.9.2"), "Guest agent unresponsive", "stopped responding"),
-            (.connecting(expected: "0.9.2"), "Connecting to guest agent", "Waiting for guest agent"),
-            (.expectedMissing(expected: "0.9.2"), "Guest agent didn't reconnect", "isn't connected now"),
+    @Test("Each status has its own title")
+    func titlePerStatus() {
+        let cases: [(status: AgentStatus, title: String)] = [
+            (.waiting, "Set up the Kernova guest agent"),
+            (.outdated(installed: "0.9.1", bundled: "0.9.2"), "Update available"),
+            (.updating(installed: "0.9.1", bundled: "0.9.2"), "Updating guest agent"),
+            (.current(version: "0.9.2"), "Guest agent connected"),
+            (.connected(version: "0.9.2"), "Guest agent connected"),
+            (.unresponsive(version: "0.9.2"), "Guest agent unresponsive"),
+            (.connecting(expected: "0.9.2"), "Connecting to guest agent"),
+            (.expectedMissing(expected: "0.9.2"), "Guest agent didn't reconnect"),
         ]
-
         for testCase in cases {
-            vc.update(
-                presentation: GuestAgentPresentation(macOSAgent: testCase.status), isInstallerMounted: false,
-                diskControl: Self.install,
-                vmName: "TestVM", hasDismissAction: false)
-            #expect(titleLabel(in: vc.view)?.stringValue == testCase.title)
-            #expect(bodyLabel(in: vc.view)?.stringValue.contains(testCase.bodyContains) == true)
+            #expect(GuestAgentStatusViewController.title(for: testCase.status) == testCase.title)
         }
     }
 
@@ -67,26 +56,9 @@ struct GuestAgentStatusViewControllerTests {
         ]
         for (control, title) in cases {
             vc.update(
-                presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
-                diskControl: control, vmName: "TestVM",
-                hasDismissAction: false)
+                presentation: GuestAgentPresentation(hub: .empty), diskControl: control, hasDismissAction: false)
             #expect(actionButton(in: vc.view)?.title == title)
         }
-    }
-
-    @Test("Body copy for a missing agent describes no particular cause")
-    func absentAgentCopyIsCauseAgnostic() {
-        // Both states are reached after a mid-session death as well as after a
-        // boot, so neither may claim a boot happened, nor guess why the agent
-        // is gone.
-        let connecting = GuestAgentStatusViewController.bodyText(
-            for: .connecting(expected: "0.9.2"), isInstallerMounted: false, vmName: "TestVM")
-        #expect(!connecting.contains("boot"))
-
-        let missing = GuestAgentStatusViewController.bodyText(
-            for: .expectedMissing(expected: "0.9.2"), isInstallerMounted: false, vmName: "TestVM")
-        #expect(!missing.contains("boot"))
-        #expect(!missing.contains("LaunchAgent"))
     }
 
     @Test("Don't show again button visibility tracks hasDismissAction")
@@ -95,15 +67,11 @@ struct GuestAgentStatusViewControllerTests {
         vc.loadViewIfNeeded()
 
         vc.update(
-            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
-            diskControl: Self.install, vmName: "TestVM",
-            hasDismissAction: true)
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install, hasDismissAction: true)
         #expect(dismissButton(in: vc.view)?.isHidden == false)
 
         vc.update(
-            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
-            diskControl: Self.install, vmName: "TestVM",
-            hasDismissAction: false)
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install, hasDismissAction: false)
         #expect(dismissButton(in: vc.view)?.isHidden == true)
     }
 
@@ -118,9 +86,8 @@ struct GuestAgentStatusViewControllerTests {
         vc.onDiskControl = { diskControlCount += 1 }
         vc.onDone = { doneCount += 1 }
         vc.update(
-            presentation: GuestAgentPresentation(macOSAgent: .waiting),
-            isInstallerMounted: diskControl.action == .eject,
-            diskControl: diskControl, vmName: "TestVM", hasDismissAction: false)
+            presentation: GuestAgentPresentation(hub: .empty),
+            diskControl: diskControl, hasDismissAction: false)
         vc.loadViewIfNeeded()
         let button = actionButton(in: vc.view)
         button?.performClick(nil)
@@ -143,21 +110,6 @@ struct GuestAgentStatusViewControllerTests {
         #expect(diskControlCount == 0)
     }
 
-    @Test(
-        "With the installer attached the body says so instead of telling the user to mount it",
-        arguments: [
-            AgentStatus.waiting,
-            .outdated(installed: "0.9.1", bundled: "0.9.2"),
-            .expectedMissing(expected: "0.9.2"),
-        ])
-    func installerAttachedBody(status: AgentStatus) {
-        let body = GuestAgentStatusViewController.bodyText(
-            for: status, isInstallerMounted: true, vmName: "TestVM")
-        #expect(body.contains("installer disk is attached"))
-        #expect(!body.contains("Mounting"))
-        #expect(!body.contains("Reinstalling presents"))
-    }
-
     @Test("dismiss button click fires onDismiss")
     func dismissFiresCallback() {
         let vc = GuestAgentStatusViewController()
@@ -168,9 +120,7 @@ struct GuestAgentStatusViewControllerTests {
         vc.onDone = { doneCount += 1 }
         vc.onDismiss = { dismissCount += 1 }
         vc.update(
-            presentation: GuestAgentPresentation(macOSAgent: .waiting), isInstallerMounted: false,
-            diskControl: Self.install, vmName: "TestVM",
-            hasDismissAction: true)
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install, hasDismissAction: true)
         vc.loadViewIfNeeded()
 
         dismissButton(in: vc.view)?.performClick(nil)
@@ -179,7 +129,7 @@ struct GuestAgentStatusViewControllerTests {
         #expect(doneCount == 0)
     }
 
-    @Test("A hub presentation shows a line per agent and its capability rows in place of the body")
+    @Test("A presentation shows a line per agent and its capability rows")
     func hubRows() {
         let vc = GuestAgentStatusViewController()
         vc.loadViewIfNeeded()
@@ -191,23 +141,15 @@ struct GuestAgentStatusViewControllerTests {
             ], features: FeatureStatusTable([(feature: .logs, status: .absent(.disabledByPolicy, debugDetail: ""))]))
 
         vc.update(
-            presentation: GuestAgentPresentation(hub: snapshot), isInstallerMounted: false,
-            diskControl: Self.withheld, vmName: "TestVM", hasDismissAction: false)
+            presentation: GuestAgentPresentation(hub: snapshot), diskControl: Self.withheld, hasDismissAction: false)
 
         #expect(titleLabel(in: vc.view)?.stringValue == "Guest agent connected")
-        #expect(bodyLabel(in: vc.view)?.isHidden == true)
         #expect(
             visibleTexts(in: vc.view) == [
                 "Guest agent connected", "Session agent — pbear", "Up to date", "Status", "Connected",
                 "Guest logs in Console", "Turned off in Settings.", "Automatic agent updates",
                 "This agent doesn't offer it.",
             ])
-
-        vc.update(
-            presentation: GuestAgentPresentation(macOSAgent: .current(version: "0.9.2")), isInstallerMounted: false,
-            diskControl: Self.withheld, vmName: "TestVM", hasDismissAction: false)
-        #expect(bodyLabel(in: vc.view)?.isHidden == false)
-        #expect(!visibleTexts(in: vc.view).contains("Status"))
     }
 
     @Test("An attached disk opened from a terminal shows its command with a Copy button; none otherwise")
@@ -218,8 +160,8 @@ struct GuestAgentStatusViewControllerTests {
         var eject = Self.eject
         eject.installCommand = command
         vc.update(
-            presentation: GuestAgentPresentation(hub: .empty), isInstallerMounted: true, diskControl: eject,
-            vmName: "Ubuntu", hasDismissAction: false)
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: eject,
+            hasDismissAction: false)
         #expect(visibleTexts(in: vc.view).contains(command))
         #expect(visibleTexts(in: vc.view).contains(LinuxAgentDisk.installCommandPrecondition))
         let copy = firstSubview(NSButton.self, in: vc.view) { $0.accessibilityLabel() == "Copy Install Command" }
@@ -227,8 +169,8 @@ struct GuestAgentStatusViewControllerTests {
         #expect(vc.installCommand == command)
 
         vc.update(
-            presentation: GuestAgentPresentation(hub: .empty), isInstallerMounted: false, diskControl: Self.install,
-            vmName: "Ubuntu", hasDismissAction: false)
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install,
+            hasDismissAction: false)
         #expect(!visibleTexts(in: vc.view).contains(command))
         #expect(vc.installCommand == nil)
     }
@@ -251,14 +193,6 @@ struct GuestAgentStatusViewControllerTests {
         // one rendered with the `.headline` font.
         firstSubview(NSTextField.self, in: view) {
             $0.font == .preferredFont(forTextStyle: .headline)
-        }
-    }
-
-    @MainActor
-    private func bodyLabel(in view: NSView) -> NSTextField? {
-        // Body label uses `.callout` font.
-        firstSubview(NSTextField.self, in: view) {
-            $0.font == .preferredFont(forTextStyle: .callout)
         }
     }
 

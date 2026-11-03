@@ -1,6 +1,9 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -1381,6 +1384,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
 
         #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .attached(.usb))
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
@@ -1439,7 +1443,7 @@ struct VMCommandCoreAttachmentTests {
         let harness = makeHarness()
         let sessionID = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS)
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
         try await waitForChange { instance.phase == .running(sessionID: sessionID) }
         let copy = instance.bundleLayout.guestAgentDiskCopyURL(
@@ -1462,7 +1466,7 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS) {
             $0.removableMedia = [item]
         }
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
         try FileManager.default.createDirectory(
             at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -1505,6 +1509,7 @@ struct VMCommandCoreAttachmentTests {
         ) {
             $0.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         }
+        instance.beginSessionContextForTesting().hasAgentTransport = true
 
         #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.virtio))
         #expect(instance.configuration.removableMedia == nil)
@@ -1521,6 +1526,7 @@ struct VMCommandCoreAttachmentTests {
         ) {
             $0.removableMedia = [RemovableMediaItem(path: installerPath, readOnly: true)]
         }
+        instance.beginSessionContextForTesting().hasAgentTransport = true
 
         try harness.core.unmountGuestAgentDisk(.id(instance.id))
         #expect(instance.configuration.removableMedia == nil)
@@ -1547,7 +1553,7 @@ struct VMCommandCoreAttachmentTests {
                 RemovableMediaItem(path: installerPath, readOnly: true, awaitedAgentScopes: [.login])
             ]
         }
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
 
         instance.onCurrentAgentsArrived?([.login])
 
@@ -1664,6 +1670,7 @@ struct VMCommandCoreAttachmentTests {
 
         let harness = makeHarness()
         let macOS = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        macOS.beginSessionContextForTesting().hasAgentTransport = true
         let refusal = try await #require(throws: CommandError.self) {
             try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: [.system])
         }
@@ -1711,31 +1718,38 @@ struct VMCommandCoreAttachmentTests {
         #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
-    @Test("A macOS install waits for the agent, and a same-version Hello ejects it")
-    func macOSInstallEjectsOnASameVersionHello() async throws {
-        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
+    /// The hub snapshot of one session agent running the bundled payload.
+    private static let currentSessionAgent = AgentHubSnapshot(
+        peers: [
+            PeerSummary(
+                handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .macOS, sessionID: "2",
+                userName: "pbear", console: .on, versionLabel: AppBundleProducts.testing.versionLabel,
+                standing: .current, isResponsive: true)
+        ], features: FeatureStatus.merge([]))
+
+    @Test("A macOS install waits for the agent, and a session agent of the bundled payload ejects it")
+    func macOSInstallEjectsOnACurrentSessionAgent() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS) {
-            $0.lastSeenAgentVersion = bundled
+            $0.lastSeenAgentVersion = AppBundleProducts.testing.versionLabel
         }
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login])
         #expect(instance.guestAgentInstallerAwaits == [.login])
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
+        instance.publishAgentHubSnapshotForTesting(Self.currentSessionAgent)
 
         #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
-    @Test("A macOS manage mount stays through the agent's Hello")
-    func macOSManageMountStaysThroughAHello() async throws {
-        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
+    @Test("A macOS manage mount stays through the agent's arrival")
+    func macOSManageMountStaysThroughAnArrival() async throws {
         let harness = makeHarness()
         let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
+        instance.publishAgentHubSnapshotForTesting(Self.currentSessionAgent)
 
         #expect(instance.guestAgentInstallerAwaits == [])
     }

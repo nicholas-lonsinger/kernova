@@ -42,8 +42,7 @@ struct VMInstanceDisplayDropTests {
         func attachControl() throws -> VsockChannel {
             let (guest, host) = try makePair()
             let control = VsockControlService(
-                channel: host, label: "drop-test", hostVersion: AppBundleProducts.testing.hostVersion,
-                bundledAgentVersion: BundledGuestAgents.testing.macOSVersion)
+                channel: host, label: "drop-test", hostVersion: AppBundleProducts.testing.hostVersion)
             instance.sessionContext?.vsock.control = control
             control.start()
             return guest

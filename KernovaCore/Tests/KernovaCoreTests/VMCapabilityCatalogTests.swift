@@ -548,9 +548,9 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: linux))
         let runningMac = makeInstance(
             in: harness, name: "Running macOS", phase: .running(sessionID: UUID()), guestOS: .macOS)
-        runningMac.beginSessionContextForTesting()
+        runningMac.beginSessionContextForTesting().hasAgentTransport = true
         #expect(harness.catalog.isApplicable(.toggleGuestAgentDisk, to: runningMac))
-        // A Linux session reaches its agents only through the hub's transport.
+        // A session reaches its agents only through the hub's transport.
         let runningLinux = makeInstance(in: harness, name: "Running Linux", phase: .running(sessionID: UUID()))
         runningLinux.beginSessionContextForTesting()
         #expect(!harness.catalog.isApplicable(.toggleGuestAgentDisk, to: runningLinux))

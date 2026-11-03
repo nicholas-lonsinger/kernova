@@ -16,17 +16,23 @@ struct AppBundleProductsTests {
         products = AppBundleProducts(bundle: try BuiltProducts.bundle(named: "Kernova.app"))
     }
 
-    @Test("The guest agent's version sidecar names the agent the build packaged")
-    func guestAgentVersionNamesTheAgentBuilt() throws {
-        let agent = try BuiltProducts.bundle(named: "Kernova Guest Agent.app")
-        let built = try #require(agent.infoDictionary?["CFBundleShortVersionString"] as? String)
-        #expect(products.guestAgents.macOSVersion == built)
+    @Test("The built app carries the macOS agent's payload for both scopes, labelled as the host's build")
+    func builtAppCarriesTheMacOSPayload() throws {
+        let agents = products.guestAgents
+        let user = try #require(agents.entry(.macOS, .arm64, .user))
+        #expect(agents.entry(.macOS, .arm64, .system) == user)
+        #expect(user.format == .containerTree)
+        #expect(user.versionLabel == products.versionLabel)
+        let path = user.fileURL.path(percentEncoded: false)
+        #expect(path.hasSuffix("Contents/Resources/GuestAgents/macos-arm64/agent.payload"))
+        #expect(FileManager.default.fileExists(atPath: path))
     }
 
     @Test("isInstallerDisk(path:) matches the app's bundled installer image path only")
     func installerImageMatchesThePathOnly() throws {
         let agents = products.guestAgents
         let path = try #require(agents.macOSInstallerDiskImageURL).path(percentEncoded: false)
+        #expect(path.hasSuffix("Contents/Resources/KernovaMacOSAgent.dmg"))
         #expect(FileManager.default.fileExists(atPath: path))
         #expect(agents.isInstallerDisk(path: path))
         #expect(!agents.isInstallerDisk(path: "/tmp/other.iso"))

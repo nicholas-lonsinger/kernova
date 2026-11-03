@@ -94,10 +94,7 @@ package final class VMSessionContext {
     /// own.
     var warnedAgentScopes: Set<GuestAgentScope> = []
 
-    /// What this session's latest Hello reported, `nil` before one arrives.
-    var observedAgentInfo: ObservedAgentInfo?
-
-    /// The versions a Linux guest's session and system peers reported this
+    /// The versions the guest's session and system peers reported this
     /// session, `nil` before each connects: what the session knows whether or
     /// not the write recording them landed.
     var observedSessionAgentVersion: String?
@@ -112,13 +109,6 @@ package final class VMSessionContext {
     /// where to — what its configuration build reads
     /// (`VMInstance.effectiveConfiguration`).
     @ObservationIgnored var heals: [ExternalReferenceHeal] = []
-
-    /// `true` once a `Hello` has arrived on this VM session.
-    ///
-    /// Separates a mid-session agent disappearance from an agent that never
-    /// appeared: only the latter is evidence about what is installed in the
-    /// guest, so only the latter may rewrite persisted agent state.
-    var hasSeenAgentThisSession = false
 
     /// When the guest last began running under the absence watchdog — a start
     /// or a hot resume, or after a restore the first presence change the
@@ -212,7 +202,6 @@ package final class VMSessionContext {
         warnedAgentScopes = []
         expiredAwayOrders = []
         agentAbsenceFloor = nil
-        hasSeenAgentThisSession = false
         serialInputPipe = nil
         serialOutputPipe = nil
         liveRemovableMedia = []

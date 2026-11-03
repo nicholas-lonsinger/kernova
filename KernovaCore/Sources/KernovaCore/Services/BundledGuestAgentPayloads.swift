@@ -12,11 +12,7 @@ struct BundledGuestAgentPayloads: BundledPayloadProvider {
     /// The payloads `agents` bundles for a VM of `guestOS`.
     init(_ agents: BundledGuestAgents, guestOS: VMGuestOS) {
         self.agents = agents
-        self.os =
-            switch guestOS {
-            case .macOS: .macOS
-            case .linux: .linux
-            }
+        self.os = OSFamily(guestOS)
     }
 
     /// Answers ``BundledGuestAgents/payloads(for:)`` for the VM's OS, off the caller's thread.

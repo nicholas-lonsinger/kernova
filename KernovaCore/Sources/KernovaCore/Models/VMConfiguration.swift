@@ -225,30 +225,29 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Guest Agent
 
-    /// When `true`, the macOS guest agent forwards `os.Logger` records to the
-    /// host over vsock so they appear in Console.app under `app.kernova.guest`.
+    /// When `true`, the guest agents forward their log records to the host so
+    /// they appear in Console.app under `app.kernova.guest`.
     ///
-    /// Opt-in. Linux guests have no Kernova agent and ignore this flag.
+    /// Opt-in.
     package var agentLogForwardingEnabled: Bool
 
-    /// The version the guest agent that runs in a user's session last
-    /// reported — the macOS agent's Hello, or a Linux session peer's — or
-    /// `nil` until the host has seen one.
+    /// The version the guest agent that runs in a user's session — the agent
+    /// hub's session peer — last reported, or `nil` until the host has seen
+    /// one.
     ///
     /// Persisted, never reset on stop: it suppresses the sidebar install nudge
     /// for stopped VMs, a session that has not met its agent yet reads as
     /// connecting to it, and `MissingAgentRule` decides when it warns.
     var lastSeenAgentVersion: String?
 
-    /// The version a Linux guest's system peer last reported, or `nil` until
-    /// the host has seen one; persisted and read as ``lastSeenAgentVersion``
-    /// is.
+    /// The version the guest's system peer last reported, or `nil` until the
+    /// host has seen one; persisted and read as ``lastSeenAgentVersion`` is.
     var lastSeenSystemAgentVersion: String?
 
-    /// The most recent guest-reported OS version observed on this VM's control
-    /// channel (`Hello.agent_info.os_version`), or `nil` when no agent has
-    /// vouched for one — a fresh VM, an agent that reported no version, or the
-    /// absence watchdog concluding a previously-seen agent is gone.
+    /// The most recent OS version a guest agent reported on this VM, or `nil`
+    /// when no agent has vouched for one — a fresh VM, an agent that reported
+    /// no version, or the absence watchdog concluding a previously-seen agent
+    /// is gone.
     var lastSeenGuestOSVersion: String?
 
     // MARK: - macOS-specific
@@ -900,9 +899,9 @@ extension VMConfiguration {
     /// The best available reading of what macOS the guest is running, or `nil`
     /// when nothing has vouched for one.
     ///
-    /// ``lastSeenGuestOSVersion`` wins: the agent rewrites it whenever the
-    /// guest reports something new, so it survives an in-guest upgrade that
-    /// leaves ``installedImage`` describing a release no longer installed. It
+    /// ``lastSeenGuestOSVersion`` wins: it is what the guest itself reported,
+    /// so it survives an in-guest upgrade that leaves ``installedImage``
+    /// describing a release no longer installed. It
     /// is peer-supplied free text, though, so a report that parses to nothing
     /// falls through to the install record rather than erasing its vote.
     var effectiveGuestMacOSVersion: MacOSVersion? {

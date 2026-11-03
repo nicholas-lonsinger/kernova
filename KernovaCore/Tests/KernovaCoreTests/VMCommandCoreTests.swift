@@ -2424,7 +2424,7 @@ struct VMCommandCoreTests {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, name: "Watched", phase: .running(sessionID: UUID()), guestOS: .macOS)
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(instance.agentPresentation?.status == .waiting)
 
         var events = VMLibraryEventReader(harness.core.events())
