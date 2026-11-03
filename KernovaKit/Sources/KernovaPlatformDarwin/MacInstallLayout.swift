@@ -79,7 +79,9 @@ public struct MacInstallLayout: Equatable, Sendable {
     /// The session peer's property list.
     public var sessionPlist: String { agentsDirectory + "/" + sessionLabel + ".plist" }
     /// The system peer's property list; nil in the user scope.
-    public var systemPlist: String? { scope == .system ? Self.daemonsDirectory + "/" + Self.systemLabel + ".plist" : nil }
+    public var systemPlist: String? {
+        scope == .system ? Self.daemonsDirectory + "/" + Self.systemLabel + ".plist" : nil
+    }
     /// The rollback check's property list.
     public var rollbackPlist: String {
         (scope == .system ? Self.daemonsDirectory : agentsDirectory) + "/" + rollbackLabel + ".plist"
@@ -99,6 +101,7 @@ public enum MacInstallRefusal: Error, CustomStringConvertible, Equatable {
     /// Nothing says where the user's files go.
     case noHome
 
+    /// What the user is told.
     public var description: String {
         switch self {
         case .wrongUser(let detail): detail

@@ -20,6 +20,7 @@ public struct DarwinVsockDialer: TransportDialer {
         self.port = port
     }
 
+    /// Connects on the dialer's queue, completing there.
     public func dial(_ completion: @escaping @Sendable (Result<any ByteStream, DialFailure>) -> Void) {
         queue.async { [port] in
             switch DarwinVsockConnect.connect(port: port, label: Self.label) {

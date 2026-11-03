@@ -414,7 +414,8 @@ targets += [
     .testTarget(
         name: "KernovaPlatformDarwinTests",
         dependencies: [
-            "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentCore", "KernovaPortableTestSupport",
+            "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentCore", "KernovaSynchronization",
+            "KernovaTestSupport",
         ],
         swiftSettings: sharedSwiftSettings
     ),

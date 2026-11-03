@@ -301,6 +301,7 @@ public final class BlockingConnectHandoff: Sendable {
 
     private let state = Locked(State())
 
+    /// A handoff with nothing recorded.
     public init() {}
 
     /// Records the syscall's `errno` (`0` on success): `true` while the waiter is still there — it takes the
@@ -348,6 +349,7 @@ public final class BlockingConnectGate: Sendable {
     public static let maxParkedAttempts = 3
     /// Wait before the first admission past the cap, doubled per parked attempt beyond it.
     public static let backoffFloor: TimeInterval = 10
+    /// The longest wait between admissions past the cap.
     public static let backoffCeiling: TimeInterval = 600
 
     /// The process's gate, which every connect shares unless it is given its own.

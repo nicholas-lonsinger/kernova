@@ -16,6 +16,7 @@ public struct LaunchdServiceManager: ServiceManager {
         self.label = label
     }
 
+    /// The peer's process, from `launchctl list`; 0 when its job is not running.
     public func peerProcessID() throws -> UInt32 {
         let arguments = ["launchctl", "list"]
         let (status, output) = Installer.capture(arguments)

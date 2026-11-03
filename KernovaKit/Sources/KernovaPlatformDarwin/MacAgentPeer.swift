@@ -82,7 +82,11 @@ public final class MacAgentPeer: Sendable {
 
     /// Closes the connection with `SHUTTING_DOWN`, then exits with `status`; once, whoever asks first.
     public func exit(status: Int32) {
-        guard !exiting.withLock({ exiting in defer { exiting = true }; return exiting }) else { return }
+        guard
+            !exiting.withLock({ exiting in
+                defer { exiting = true }; return exiting
+            })
+        else { return }
         watcher.withLock { $0 }?.cancel()
         guard let runtime = runtime.withLock({ $0 }) else { Darwin.exit(status) }
         runtime.close { Darwin.exit(status) }

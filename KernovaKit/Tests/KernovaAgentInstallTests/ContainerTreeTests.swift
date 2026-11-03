@@ -79,7 +79,9 @@ final class BundleFixture {
             switch info.st_mode & S_IFMT {
             case S_IFDIR:
                 entries[name] = "d" + mode
-                pending += try FileManager.default.contentsOfDirectory(atPath: item + "/" + name).map { name + "/" + $0 }
+                pending += try FileManager.default.contentsOfDirectory(atPath: item + "/" + name).map {
+                    name + "/" + $0
+                }
             case S_IFREG:
                 let bytes = Array(try Data(contentsOf: URL(fileURLWithPath: item + "/" + name)))
                 entries[name] = "f" + mode + ":" + hex(bytes)
@@ -127,7 +129,8 @@ struct ContainerTreeTests {
         var offset = 0
         let bytes = Array(frozen)
         while offset < bytes.count {
-            let length = Int(bytes[offset + 1]) | Int(bytes[offset + 2]) << 8 | Int(bytes[offset + 3]) << 16
+            let length =
+                Int(bytes[offset + 1]) | Int(bytes[offset + 2]) << 8 | Int(bytes[offset + 3]) << 16
                 | Int(bytes[offset + 4]) << 24
             kinds.append(bytes[offset])
             offset += 9 + length
@@ -144,7 +147,9 @@ struct ContainerTreeTests {
         let ran = Inbox<String>()
         let lander = ContainerTreeLander(
             itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { ran.put($0); return .passed }))
+            system: .init(selfTest: {
+                ran.put($0); return .passed
+            }))
         let landing = try lander.beginUpdate(in: "b", of: fixture.slotRoot())
         for start in stride(from: 0, to: frozen.count, by: 4096) {
             let piece = frozen[start..<min(start + 4096, frozen.count)]

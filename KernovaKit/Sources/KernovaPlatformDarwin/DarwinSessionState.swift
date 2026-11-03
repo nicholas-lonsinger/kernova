@@ -98,7 +98,11 @@ public final class ConsoleUserWatcher: Sendable {
 
     /// Stops watching.
     public func cancel() {
-        guard !cancelled.withLock({ cancelled in defer { cancelled = true }; return cancelled }) else { return }
+        guard
+            !cancelled.withLock({ cancelled in
+                defer { cancelled = true }; return cancelled
+            })
+        else { return }
         SCDynamicStoreSetDispatchQueue(store, nil)
     }
 
@@ -121,7 +125,11 @@ public final class SlotLinkWatcher: Sendable {
         let fired = Locked(false)
         let check: @Sendable () -> Void = {
             guard Self.slot(linkedFrom: root + "/current") != runningSlot else { return }
-            guard !fired.withLock({ fired in defer { fired = true }; return fired }) else { return }
+            guard
+                !fired.withLock({ fired in
+                    defer { fired = true }; return fired
+                })
+            else { return }
             source.cancel()
             onMoved()
         }

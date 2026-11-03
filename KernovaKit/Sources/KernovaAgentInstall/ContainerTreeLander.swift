@@ -48,6 +48,7 @@ public struct ContainerTreeLander: PayloadLander {
         self.system = system
     }
 
+    /// `PAYLOAD_FORMAT_CONTAINER_TREE`.
     public var format: PayloadFormat { .containerTree }
 
     /// What a landing accepts: the update profile's folder, plain chunks, no decmpfs storage.
@@ -62,7 +63,8 @@ public struct ContainerTreeLander: PayloadLander {
         guard slot.owner == nil else {
             throw .system(operation: "hand to the account", path: slot.path + "/" + name, errno: ENOTSUP)
         }
-        let landing = try Self.landing(in: slot.descriptor, path: slot.path) { operation, errno throws(Installer.Failure) in
+        let landing = try Self.landing(in: slot.descriptor, path: slot.path) {
+            operation, errno throws(Installer.Failure) in
             Installer.Failure.system(operation: operation, path: slot.path, errno: errno)
         }
         while let piece = try payload.next() {
@@ -79,6 +81,7 @@ public struct ContainerTreeLander: PayloadLander {
         }
     }
 
+    /// Begins landing an update in `slot` of `root`, staged beside the slot's item.
     public func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
         let directory = try root.openSlot(slot)
         defer { close(directory) }
@@ -182,7 +185,7 @@ final class TreeLanding {
         do {
             try fileSystem.rename(bytes, in: directory, to: aside, in: directory)
             movedAside = true
-        } catch where error.code == ENOENT {
+        } catch  where error.code == ENOENT {
             movedAside = false
         } catch {
             throw PayloadRefusal(

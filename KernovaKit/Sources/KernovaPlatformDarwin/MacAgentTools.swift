@@ -121,7 +121,9 @@ public enum MacAgentTools {
                 stagingRoot: "", runsCommands: true, payloadSource: request.payload ?? payloadBeside(tool),
                 lander: MacAgentPeer.lander, versionLabel: label, account: nil)
             try installer.run(plan) { print("Kernova Guest Agent: \($0)") }
-            print(uninstalling ? "Kernova Guest Agent: removed \(scope)." : "Kernova Guest Agent: installed \(scope), \(label).")
+            print(
+                uninstalling
+                    ? "Kernova Guest Agent: removed \(scope)." : "Kernova Guest Agent: installed \(scope), \(label).")
             exit(0)
         } catch {
             writeError("Kernova Guest Agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")

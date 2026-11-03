@@ -38,6 +38,7 @@ public enum UpdatePayloadPacker {
         /// What failed.
         public var detail: String
 
+        /// The entry and what failed.
         public var description: String { path.isEmpty ? detail : "\(path): \(detail)" }
     }
 

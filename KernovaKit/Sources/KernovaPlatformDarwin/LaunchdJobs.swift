@@ -12,6 +12,7 @@ import KernovaAgentInstall
 /// `gui/<uid>`, the system scope's daemons into `system` and its LaunchAgent into the console user's
 /// `gui/<uid>` when there is one, every other user's at their next login.
 public struct LaunchdJobs: ServiceDefinitions {
+    /// The scope's files.
     public let layout: MacInstallLayout
     /// The agent executable whose `stop-service` stops a job and waits for launchd to let it go.
     public let stopTool: String
@@ -22,6 +23,7 @@ public struct LaunchdJobs: ServiceDefinitions {
         self.stopTool = stopTool
     }
 
+    /// The property lists, each directory first.
     public var writes: [InstallPlan.Write] {
         var writes: [InstallPlan.Write] = [.directory(path: layout.agentsDirectory, mode: 0o755)]
         writes.append(.file(path: layout.sessionPlist, mode: 0o644, text: LaunchdPlists.session(layout)))
@@ -45,8 +47,10 @@ public struct LaunchdJobs: ServiceDefinitions {
         return commands
     }
 
+    /// Stops the rollback check, then the peers.
     public var beforeUninstall: [InstallPlan.Command] { stops }
 
+    /// None: the jobs went with their stops.
     public var afterUninstall: [InstallPlan.Command] { [] }
 
     /// None: launchd reads a loaded job's property list only when it loads it, at the next login or boot.
@@ -173,7 +177,8 @@ public enum LaunchdPlists {
         case .bool(let flag): return indent + (flag ? "<true/>" : "<false/>")
         case .integer(let number): return indent + "<integer>\(number)</integer>"
         case .strings(let texts):
-            return ([indent + "<array>"] + texts.map { render(.string($0), indent: indent + "\t") }
+            return
+                ([indent + "<array>"] + texts.map { render(.string($0), indent: indent + "\t") }
                 + [indent + "</array>"]).joined(separator: "\n")
         case .dictionary(let entries):
             var lines = [indent + "<dict>"]

@@ -2,11 +2,12 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentInstall
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaPlatformDarwin
 
-@Suite("The macOS install plan and its launchd property lists")
+@Suite("The macOS install plan and its launchd property lists", .caseScoped)
 struct LaunchdJobsTests {
     static let user = MacInstallLayout.user(home: "/Users/pbear", userID: 501)
     static let system = MacInstallLayout.system(consoleUserID: 501)
@@ -68,9 +69,11 @@ struct LaunchdJobsTests {
     func systemPlanWithoutConsoleUser() {
         let plan = InstallPlan.install(MacInstallLayout.system(consoleUserID: nil), stopTool: Self.tool)
         #expect(!plan.steps.map(\.description).contains { $0.contains("gui/") })
-        #expect(plan.writes.contains(.file(
-            path: "/Library/LaunchAgents/app.kernova.macosagent.session.plist", mode: 0o644,
-            text: LaunchdPlists.session(.system(consoleUserID: nil)))))
+        #expect(
+            plan.writes.contains(
+                .file(
+                    path: "/Library/LaunchAgents/app.kernova.macosagent.session.plist", mode: 0o644,
+                    text: LaunchdPlists.session(.system(consoleUserID: nil)))))
     }
 
     @Test("An uninstall stops every job, then removes every property list and the root")
@@ -170,8 +173,7 @@ struct LaunchdJobsTests {
 
     @Test("The rollback script runs nothing without a pending switch, and the rollback agent with one")
     func rollbackScript() throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("kernova-rollback-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: directory) }
+        let directory = TestScratchDirectory(prefix: "kernova-rollback").url
         let agent = directory.appendingPathComponent("rollback/Kernova Guest Agent.app/Contents/MacOS")
         try FileManager.default.createDirectory(at: agent, withIntermediateDirectories: true)
         let executable = agent.appendingPathComponent("KernovaMacOSAgent")
@@ -198,10 +200,12 @@ struct LaunchdJobsTests {
     @Test("The user scope refuses root, the system scope needs it, and a dry run needs neither")
     func refusals() {
         #expect(throws: MacInstallRefusal.self) {
-            try MacInstallLayout.layout(for: .user, dryRun: false, effectiveUID: 0, home: "/var/root", consoleUserID: 501)
+            try MacInstallLayout.layout(
+                for: .user, dryRun: false, effectiveUID: 0, home: "/var/root", consoleUserID: 501)
         }
         #expect(throws: MacInstallRefusal.self) {
-            try MacInstallLayout.layout(for: .system, dryRun: false, effectiveUID: 501, home: "/Users/a", consoleUserID: 501)
+            try MacInstallLayout.layout(
+                for: .system, dryRun: false, effectiveUID: 501, home: "/Users/a", consoleUserID: 501)
         }
         #expect(
             (try? MacInstallLayout.layout(

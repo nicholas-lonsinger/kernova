@@ -32,6 +32,7 @@ public enum MacAgentCommand: Equatable, Sendable {
         /// `--payload <file>`: the payload to install; nil for the one beside the app bundle.
         public var payload: String?
 
+        /// A request for `scope`, a dry run when `dryRun`, installing `payload`.
         public init(scope: InstallScope = .user, dryRun: Bool = false, payload: String? = nil) {
             self.scope = scope
             self.dryRun = dryRun

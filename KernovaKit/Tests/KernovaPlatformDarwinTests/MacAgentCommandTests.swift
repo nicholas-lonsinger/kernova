@@ -1,10 +1,11 @@
 #if os(macOS)
 import KernovaAgentCore
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaPlatformDarwin
 
-@Suite("The macOS agent's command line")
+@Suite("The macOS agent's command line", .caseScoped)
 struct MacAgentCommandTests {
     @Test("No arguments, or only Launch Services' process serial number, run the session peer")
     func session() {
@@ -30,9 +31,12 @@ struct MacAgentCommandTests {
     func tools() {
         #expect(MacAgentCommand.parse(["rollback-check", "--scope", "system"]) == .rollbackCheck(.system))
         #expect(MacAgentCommand.parse(["rollback-check"]) == nil)
-        #expect(MacAgentCommand.parse(["stop-service", "gui/501/app.kernova.macosagent"]) == .stopService("gui/501/app.kernova.macosagent"))
-        #expect(MacAgentCommand.parse(["pack-payload", "/a/Kernova Guest Agent.app", "/b/agent.payload"])
-            == .packPayload(app: "/a/Kernova Guest Agent.app", output: "/b/agent.payload"))
+        #expect(
+            MacAgentCommand.parse(["stop-service", "gui/501/app.kernova.macosagent"])
+                == .stopService("gui/501/app.kernova.macosagent"))
+        #expect(
+            MacAgentCommand.parse(["pack-payload", "/a/Kernova Guest Agent.app", "/b/agent.payload"])
+                == .packPayload(app: "/a/Kernova Guest Agent.app", output: "/b/agent.payload"))
         #expect(MacAgentCommand.parse(["pack-payload", "a", "/b"]) == nil)
         #expect(MacAgentCommand.parse(["--help"]) == nil)
     }

@@ -3,11 +3,12 @@ import Darwin
 import Foundation
 import KernovaAgentCore
 import KernovaSynchronization
+import KernovaTestSupport
 import Testing
 
 @testable import KernovaPlatformDarwin
 
-@Suite("The macOS peer's identity and session state")
+@Suite("The macOS peer's identity and session state", .caseScoped)
 struct DarwinPeerTests {
     static let executable = "/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent"
 
@@ -51,9 +52,8 @@ struct DarwinPeerTests {
 
     @Test("The watcher reports once a slot link points away from the running slot, and only once")
     func slotLinkWatcher() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("kernova-link-\(UUID())").path
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(atPath: root) }
+        let root = TestScratchDirectory(prefix: "kernova-link").url.path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
         let moved = DispatchSemaphore(value: 0)
         let count = Locked(0)
@@ -77,7 +77,7 @@ struct DarwinPeerTests {
     }
 }
 
-@Suite("The bounded blocking connect: socket ownership and the parked-attempt gate")
+@Suite("The bounded blocking connect: socket ownership and the parked-attempt gate", .caseScoped)
 struct BlockingConnectTests {
     /// A clock the test advances by hand.
     final class Clock: Sendable {
@@ -239,7 +239,8 @@ struct BlockingConnectTests {
         close(pipeEnds[1])
         // The worker owns the abandoned descriptor and closes it once the call returns.
         #expect(
-            DarwinVsockConnect.boundedBlockingConnect(fd: pipeEnds[0], label: "t", port: 1, gate: gate, deadline: 0.05) {
+            DarwinVsockConnect.boundedBlockingConnect(fd: pipeEnds[0], label: "t", port: 1, gate: gate, deadline: 0.05)
+            {
                 release.wait()
                 return 0
             } == .abandoned)
