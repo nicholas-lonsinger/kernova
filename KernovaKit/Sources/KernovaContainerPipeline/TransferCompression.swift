@@ -42,21 +42,26 @@ public struct TransferCompression: Equatable, Sendable {
     /// Every file plain, every chunk raw, nothing handed to a lane.
     public static let uncompressed = TransferCompression(storesLZ4: false, chunkPolicy: .never, encodingWorkers: 0)
 
-    // PROVISIONAL: no constant below has been measured in a guest; #1707 tracks the measurement.
+    // Each constant below is derived in docs/research/2026-11-03-transfer-compression-policy.md: compression has
+    // to beat plain bytes end to end over the ~750 MiB/s guest-to-host link, for every payload the guest sends.
 
-    /// The fewest cores a sender compresses with. From the Swift codec's single-thread rates, text and binaries
-    /// pass break-even between two and three encoding cores and code-like payloads at two
-    /// (docs/research/2026-11-02-swift-lz4-against-lz4-raw.md, finding 5).
-    public static let minimumEncodingCores = 3
+    // PROVISIONAL: guests were measured at 1, 2 and 4 vCPUs only. At 4, a Linux guest's text encode (716 MiB/s)
+    // falls short of the link, so compressing there loses; 6 rests on extrapolating that guest's per-core gain
+    // (the note's finding 2), and a Linux guest run at 6 vCPUs would confirm it.
+    /// The fewest cores a sender compresses with.
+    public static let minimumEncodingCores = 6
 
-    /// The most lanes a sender tries chunks on; each adds two chunks to the pipeline's window.
+    /// The most lanes a sender tries chunks on. At the host's per-core rates, eight lanes put code, text and binaries
+    /// past the link's rate divided by their ratio, so a ninth lane cannot raise throughput (the note's finding 3).
     public static let maximumEncodingWorkers = 8
 
-    /// Tried chunks of one entry in a row that did not shrink, after which its remaining chunks go raw: 1 MiB of
-    /// 256 KiB chunks.
+    /// Tried chunks of one entry in a row that did not shrink, after which its remaining chunks go raw. With 4, media
+    /// still encodes at 1,400 MiB/s or more in every guest measured, so it never holds a transfer below the link (the
+    /// note's finding 4).
     public static let abandonAfterUnshrunkChunks = 4
 
-    /// The most lanes a receiver decompresses on.
+    /// The most lanes a receiver decompresses on. Four keep the host's decode at 1.98 times the link's rate divided
+    /// by the ratio or more, for every compressible payload measured (the note's finding 5).
     public static let maximumDecodingWorkers = 4
 
     /// The compression a sender uses for one transfer.

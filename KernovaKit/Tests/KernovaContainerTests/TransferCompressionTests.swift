@@ -23,6 +23,8 @@ struct TransferCompressionTests {
         }
         return [
             (.guestToHost, true, 1, .uncompressed),
+            // Four vCPUs, the most measured: a Linux guest's text encode falls short of the link there.
+            (.guestToHost, true, 4, .uncompressed),
             (.guestToHost, true, minimum - 1, .uncompressed),
             (.guestToHost, true, minimum, lz4(minimum)),
             (.guestToHost, true, maximum, lz4(maximum)),
