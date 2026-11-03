@@ -7,6 +7,8 @@ import Testing
 @Suite("ClipboardRichTextPreviewView Tests", .caseScoped)
 @MainActor
 struct ClipboardRichTextPreviewViewTests {
+    private let scratch = TestScratchDirectory(prefix: "rich-text-preview")
+
     /// How the source colored the previewed text.
     enum SourceColor: CaseIterable, Sendable {
         // periphery:ignore - reached through `allCases`, as a test argument
@@ -70,5 +72,16 @@ struct ClipboardRichTextPreviewViewTests {
         } else {
             #expect(brightness < 0.2, "text on the light well draws as the source wrote it")
         }
+    }
+
+    @Test("RTFD whose file wrappers link to a file on this machine is never decoded", arguments: [0, 2])
+    func linkedRTFDIsRefused(depth: Int) throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let hostFile = scratch.url.appendingPathComponent("secret.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: hostFile)
+        let preview = ClipboardRichTextPreviewView()
+
+        #expect(!preview.configure(data: try flatRTFD(linkingTo: hostFile, depth: depth), uti: "com.apple.flat-rtfd"))
+        #expect(preview.configure(data: try flatRTFD(depth: depth), uti: "com.apple.flat-rtfd"))
     }
 }
