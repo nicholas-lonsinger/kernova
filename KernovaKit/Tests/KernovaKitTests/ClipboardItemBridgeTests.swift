@@ -331,6 +331,17 @@ struct ClipboardItemBridgeTests {
         #expect(try Data(contentsOf: landed.appendingPathComponent("a.txt")) == Data("a".utf8))
     }
 
+    @Test(
+        "a promise whose name is no single path component is offered under its type's extension",
+        arguments: ["..", ".", "a/b", "a\u{0}b", String(repeating: "x", count: PathComponent.maxByteCount + 1)])
+    func misnamedPromiseIsUntitled(name: String) async throws {
+        let receiver = FakeFilePromiseReceiver(name: name, fileType: "public.png", contents: .file(pngBytes))
+
+        let source = try await readOffer(promisePasteboard(), promises: [receiver])
+
+        #expect(source.items.map { $0.representations.first?.name } == [Data("Untitled.png".utf8)])
+    }
+
     @Test("a promise whose source fails is refused read-failed")
     func failedPromiseIsReadFailed() async throws {
         let receiver = FakeFilePromiseReceiver(name: "x.png", fileType: "public.png", contents: .failure)

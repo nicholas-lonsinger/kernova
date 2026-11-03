@@ -144,17 +144,14 @@ extension ClipboardPasteboardReader {
     }
 
     /// A promise's representation: FOLDER when its first file type is a
-    /// directory, FILE otherwise, named by its first file name or, while it
-    /// names none, `Untitled` with its type's extension.
+    /// directory, FILE otherwise, named by its first file name as
+    /// `Representation.make` names one.
     private static func promisedRepresentation(_ receiver: any FilePromiseReceiving) -> Representation {
         let contentType = receiver.fileTypes.first.flatMap { UTType($0) }
         let isFolder = contentType?.conforms(to: .directory) == true
         let fallbackType: UTType = isFolder ? .folder : .data
-        let name =
-            receiver.fileNames.first(where: { !$0.isEmpty })
-            ?? contentType?.preferredFilenameExtension.map { "Untitled.\($0)" } ?? "Untitled"
         return .make(
             TypeDescriptor(appleUTI: (contentType ?? fallbackType).identifier), isFolder ? .folder : .file,
-            size: 0, name: name, promised: true)
+            size: 0, name: receiver.fileNames.first(where: { !$0.isEmpty }) ?? "", promised: true)
     }
 }

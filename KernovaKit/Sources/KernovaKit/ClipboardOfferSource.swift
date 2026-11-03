@@ -228,8 +228,11 @@ extension OfferedItem {
 }
 
 extension Representation {
-    /// A representation of `type` stored as `storage`, with its size estimate
-    /// and, for FILE and FOLDER, the item's name.
+    /// A representation of `type` stored as `storage`, with its size estimate.
+    ///
+    /// FILE and FOLDER are named `name` when it is one path component
+    /// (``PathComponent/isValid(_:)``), and otherwise `Untitled` with `type`'s
+    /// extension; INLINE is unnamed.
     static func make(
         _ type: TypeDescriptor, _ storage: Storage, size: Int, name: String = "", promised: Bool = false
     ) -> Representation {
@@ -237,8 +240,15 @@ extension Representation {
         representation.type = type
         representation.storage = storage
         representation.sizeEstimate = UInt64(max(size, 0))
-        representation.name = Data(name.utf8)
+        if storage != .inline {
+            let named = Data(name.utf8)
+            representation.name = PathComponent.isValid(named) ? named : Data(untitledName(of: type).utf8)
+        }
         representation.promised = promised
         return representation
+    }
+
+    private static func untitledName(of type: TypeDescriptor) -> String {
+        type.appleUTI.flatMap { UTType($0)?.preferredFilenameExtension }.map { "Untitled.\($0)" } ?? "Untitled"
     }
 }
