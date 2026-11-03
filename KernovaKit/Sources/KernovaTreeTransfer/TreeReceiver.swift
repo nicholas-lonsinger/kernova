@@ -53,7 +53,9 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
             accepting: acceptance, logger: logger)
     }
 
-    /// Takes the container's next bytes, landing every entry they complete.
+    /// Takes the container's next bytes, landing the entries they complete as their decompression completes: an entry
+    /// can land in a later call, and lands by ``finish()`` at the latest. A chunk that fails to decompress can likewise
+    /// fail a later call rather than this one.
     ///
     /// - Parameter bytes: The bytes following those received before.
     /// - Throws: ``TreeWriteFailure``; everything created is then removed, and every later call throws it.
@@ -64,7 +66,8 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// Confirms the container ended whole and publishes the item under its own name.
+    /// Lands every entry still decompressing, confirms the container ended whole, and publishes the item under its own
+    /// name.
     ///
     /// - Returns: The name the item landed under in the destination.
     /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an item that could not take

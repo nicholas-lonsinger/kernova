@@ -15,11 +15,16 @@ import KernovaContainer
 /// oldest first, a refusal taking its place in that order. While the window is full, the caller waits for its oldest
 /// item.
 ///
-/// `feed(_:)` the container's bytes as they arrive and take events from `next()` until it returns nil, which it
-/// does once nothing more can be decoded until more is fed; call `finish()` once the input ends, and keep taking
-/// events: `next()` then waits for the work still out, and the container is whole only once it returns nil after
-/// `finish()`. Fed after each nil, the pipeline holds at most one incomplete record, the latest feed, and the
-/// window.
+/// `feed(_:)` the container's bytes as they arrive and take events from `next()` until it returns nil; call
+/// `finish()` once the input ends, and keep taking events until it returns nil again, which confirms the container
+/// whole. Before `finish()`, `next()` never waits for a lane: its nil means no event is ready without waiting for
+/// work in flight or more input, so the events a feed completes come out as their work completes — from a later
+/// call, and from the calls after `finish()` at the latest — and a chunk that fails to decompress is thrown from
+/// the call that reaches it, which can be a later one. Order and where a refusal falls are the sequential
+/// decoder's either way.
+///
+/// Fed after each nil, the pipeline holds at most one incomplete record, the latest feed, and the window, whose
+/// items own their bytes: an event's, or an LZ4 chunk's block and its decompression.
 ///
 /// Releasing the pipeline drops what it holds and returns once no work it handed out is still running. After it
 /// throws, it throws the same error from every call; it has then dropped everything.
@@ -75,8 +80,8 @@ public final class ContainerDecodePipeline {
         inputEnded = true
     }
 
-    /// The next event, or nil: before `finish()`, when nothing more can be decoded until more is fed; after it,
-    /// once the container is confirmed whole.
+    /// The next event, or nil: before `finish()`, when no event is ready without waiting for a lane or more input;
+    /// after it, once the container is confirmed whole.
     ///
     /// - Returns: The event, or nil.
     /// - Throws: `ContainerError` when the container breaks a rule — after `finish()`, `.truncated` when the end

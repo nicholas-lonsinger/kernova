@@ -45,7 +45,8 @@ public enum DecodedItem: Equatable, Sendable {
 /// 5-byte prefix, an entry's size against the byte ceiling from its header, and an LZ4 chunk's declared
 /// size against its entry before decompressing. So, fed after each nil from `next()`, the decoder holds at
 /// most one incomplete record and the latest feed, and no event carries more than
-/// `ContainerRecord.maxChunkPayload` bytes. After it throws, it throws the same error from every call.
+/// `ContainerRecord.maxChunkPayload` bytes. Every event and item owns the bytes it carries, so holding one holds
+/// those bytes alone, never the feed they arrived in. After it throws, it throws the same error from every call.
 ///
 /// `nextItem()` is `next()` with each LZ4 chunk handed back admitted and not yet decompressed, so a caller can
 /// decompress it elsewhere.
@@ -184,7 +185,7 @@ public struct ContainerDecoder {
             }
         case .chunk:
             let progress = try grammar.admitChunk(count: UInt64(payload.count), lz4: false)
-            due = [.event(.bytes(payload))] + Self.items(after: progress)
+            due = [.event(.bytes(Data(payload)))] + Self.items(after: progress)
         case .lz4Chunk:
             let declared = Int(littleEndian(UInt32.self, in: payload, at: 0))
             guard declared <= ContainerRecord.maxChunkPayload else {
@@ -192,7 +193,7 @@ public struct ContainerDecoder {
             }
             let progress = try grammar.admitChunk(count: UInt64(declared), lz4: true)
             let chunk = AdmittedLZ4Chunk(
-                block: payload.dropFirst(ContainerRecord.lz4SizeByteCount), decompressedSize: declared)
+                block: Data(payload.dropFirst(ContainerRecord.lz4SizeByteCount)), decompressedSize: declared)
             due = [.lz4Chunk(chunk)] + Self.items(after: progress)
         case .zeroRun:
             let count = littleEndian(UInt64.self, in: payload, at: 0)

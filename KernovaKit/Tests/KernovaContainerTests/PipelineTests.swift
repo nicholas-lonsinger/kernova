@@ -246,6 +246,117 @@ struct PipelineTests {
         #expect(encodeLanes.running == 0)
     }
 
+    @Test("held items own their bytes: an earlier feed is freed once decoded, and the window counts what it holds")
+    func heldItemsOwnTheirBytes() throws {
+        // Each feed its own allocation, so the test can count the feed storage still alive.
+        let liveFeedBytes = Locked(0)
+        func trackedFeed(_ bytes: Data) -> Data {
+            let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 16)
+            bytes.copyBytes(to: pointer.assumingMemoryBound(to: UInt8.self), count: bytes.count)
+            liveFeedBytes.withLock { $0 += bytes.count }
+            return Data(
+                bytesNoCopy: pointer, count: bytes.count,
+                deallocator: .custom { pointer, count in
+                    liveFeedBytes.withLock { $0 -= count }
+                    pointer.deallocate()
+                })
+        }
+        // Feed A: raw chunks the consumer takes and drops, an LZ4 chunk whose lane is held, a 1-byte raw chunk.
+        // Feed B: another 1-byte raw chunk and the end. Each feed ends on a record boundary.
+        let raw = Data(repeating: 0x41, count: ContainerRecord.maxChunkPayload)
+        let piece = Data(repeating: 0x62, count: 4_096)
+        let block = try #require(LZ4Block.compress(piece))
+        let size = UInt64(8 * raw.count + piece.count + 2)
+        var feedA = headerRecord(lz4File("pinned", depth: 0, size: size))
+        for _ in 0..<8 { feedA += record(.chunk, raw) }
+        feedA += lz4ChunkRecord(declaredSize: UInt32(piece.count), block: block) + record(.chunk, Data([1]))
+        let feedB = record(.chunk, Data([2])) + endRecord(entries: 1, bytes: size)
+        let expected = sequentiallyDecoded([feedA, feedB], accepting: generous(.file))
+
+        let gate = DispatchSemaphore(value: 0)
+        // Four lanes, a window of eight: the held chunk never blocks an append here.
+        let workers = ChunkWorkers(count: 4) { _, work in
+            gate.wait()
+            work()
+        }
+        let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
+        var events: [TreeEvent] = []
+        pipeline.feed(trackedFeed(feedA))
+        while let event = try pipeline.next() { events.append(event) }
+        #expect(liveFeedBytes.withLock { $0 } <= pipeline.bufferedByteCount)
+        pipeline.feed(trackedFeed(feedB))
+        while let event = try pipeline.next() { events.append(event) }
+        #expect(liveFeedBytes.withLock { $0 } <= pipeline.bufferedByteCount)
+        // Held: the LZ4 chunk's block and decompression, the two 1-byte chunks, the finish and the end.
+        #expect(pipeline.heldItems == 5)
+        #expect(pipeline.heldBytes == block.count + piece.count + 2)
+
+        gate.signal()
+        pipeline.finish()
+        while let event = try pipeline.next() { events.append(event) }
+        #expect(events == expected.events)
+        #expect(liveFeedBytes.withLock { $0 } == 0)
+    }
+
+    @Test("before finish, a feed's events come out as their work completes, and by finish at the latest")
+    func eventsArriveAsWorkCompletes() throws {
+        let piece = Data(String(repeating: "timing ", count: 600).utf8)
+        let size = UInt64(piece.count + 1)
+        let container =
+            headerRecord(lz4File("t", depth: 0, size: size))
+            + lz4ChunkRecord(declaredSize: UInt32(piece.count), block: try #require(LZ4Block.compress(piece)))
+            + record(.chunk, Data([9])) + endRecord(entries: 1, bytes: size)
+        let expected = sequentiallyDecoded([container], accepting: generous(.file))
+        #expect(expected.error == nil)
+
+        let gate = DispatchSemaphore(value: 0)
+        // Two lanes, a window of four: room for every item behind the held chunk.
+        let workers = ChunkWorkers(count: 2) { _, work in
+            gate.wait()
+            work()
+        }
+        let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
+        pipeline.feed(container)
+        var events: [TreeEvent] = []
+        while let event = try pipeline.next() { events.append(event) }
+        // The whole container was fed, yet only the header came out: the rest waits on the held chunk.
+        #expect(events == Array(expected.events.prefix(1)))
+        #expect(pipeline.heldItems == expected.events.count - 1)
+
+        gate.signal()
+        pipeline.finish()
+        while let event = try pipeline.next() { events.append(event) }
+        #expect(events == expected.events)
+    }
+
+    @Test("a chunk that fails to decompress can fail a later call than the feed that held it, at the same point")
+    func decompressionRefusalCanSurfaceLater() throws {
+        let piece = Data(String(repeating: "timing ", count: 600).utf8)
+        // A block that decompresses short of the size the chunk declares.
+        let container =
+            headerRecord(lz4File("t", depth: 0, size: UInt64(piece.count)))
+            + lz4ChunkRecord(
+                declaredSize: UInt32(piece.count), block: try #require(LZ4Block.compress(piece.prefix(4_000))))
+        let expected = sequentiallyDecoded([container], accepting: generous(.file))
+        let refusal = try #require(expected.error)
+
+        let gate = DispatchSemaphore(value: 0)
+        let workers = ChunkWorkers(count: 2) { _, work in
+            gate.wait()
+            work()
+        }
+        let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
+        pipeline.feed(container)
+        var events: [TreeEvent] = []
+        // The sequential decoder refuses in this call; the pipeline, its chunk still held, yields the header alone.
+        while let event = try pipeline.next() { events.append(event) }
+        #expect(events == expected.events)
+
+        gate.signal()
+        pipeline.finish()
+        #expect(throws: refusal) { try pipeline.next() }
+    }
+
     @Test("with lanes, encoding and decoding compressible bytes is no slower than in the caller")
     func parallelIsNotSlower() throws {
         let size = ContainerEncoder.chunkByteCount
