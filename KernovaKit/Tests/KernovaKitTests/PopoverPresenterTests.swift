@@ -148,14 +148,14 @@ struct PopoverPresenterTests {
         #expect(window.firstResponder === textView)
     }
 
-    @Test("content with nothing that takes the keyboard has it held for it")
-    func holdsTheKeyboardForContentWithoutAFocusableView() throws {
+    @Test("with no view holding the keyboard there is nothing to take")
+    func leavesTheKeyboardWhenNoViewHoldsIt() {
         let (content, window) = makeContent()
 
         PopoverPresenter().takeKeyboard(for: content, behavior: .transient)
 
-        let focused = try #require(window.firstResponder as? NSView)
-        #expect(focused.isDescendant(of: content.view))
+        #expect(window.firstResponder === window)
+        #expect(content.view.subviews.isEmpty)
     }
 
     @Test("a view in the content that took the keyboard keeps it")
@@ -199,11 +199,14 @@ struct PopoverPresenterTests {
     @Test("showing the same content again keeps one holder")
     func aSecondTakeReusesTheHolder() {
         let (content, window) = makeContent()
+        let elsewhere = FocusableView()
+        window.contentView?.addSubview(elsewhere)
         let presenter = PopoverPresenter()
 
+        #expect(window.makeFirstResponder(elsewhere))
         presenter.takeKeyboard(for: content, behavior: .transient)
         let holder = window.firstResponder
-        #expect(window.makeFirstResponder(nil))
+        #expect(window.makeFirstResponder(elsewhere))
         presenter.takeKeyboard(for: content, behavior: .transient)
 
         #expect(window.firstResponder === holder)
@@ -213,11 +216,13 @@ struct PopoverPresenterTests {
     @Test("an application-defined popover leaves the keyboard alone")
     func applicationDefinedLeavesTheKeyboardAlone() {
         let (content, window) = makeContent()
-        let before = window.firstResponder
+        let elsewhere = FocusableView()
+        window.contentView?.addSubview(elsewhere)
+        #expect(window.makeFirstResponder(elsewhere))
 
         PopoverPresenter().takeKeyboard(for: content, behavior: .applicationDefined)
 
-        #expect(window.firstResponder === before)
+        #expect(window.firstResponder === elsewhere)
         #expect(content.view.subviews.isEmpty)
     }
 }

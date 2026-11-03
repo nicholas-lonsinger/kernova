@@ -34,11 +34,11 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
     /// fields. A `nil` `contentSize` preserves the content controller's own
     /// `preferredContentSize`.
     ///
-    /// A `.transient` or `.semitransient` popover, which the user asks for, has
-    /// the keyboard while it is up: it ends a text field's edit as any click
-    /// elsewhere does, and AppKit returns the keyboard to the parent window's
-    /// first responder as the popover closes. An `.applicationDefined` one, which
-    /// comes up on its own, leaves the keyboard and any edit alone.
+    /// A `.transient` or `.semitransient` popover, which the user asks for, ends a
+    /// text field's edit as any click elsewhere does and takes the keyboard from
+    /// the view holding it; AppKit returns it to that view as the popover closes.
+    /// An `.applicationDefined` one, which comes up on its own, leaves the keyboard
+    /// and any edit alone.
     public func show(
         content: NSViewController,
         from anchor: NSView,
@@ -49,16 +49,16 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
         if let contentSize {
             content.preferredContentSize = contentSize
         }
-        endTextEdit(around: anchor, behavior: behavior)
 
         if let popover, popover.isShown {
             popover.contentViewController = content
             if let contentSize {
                 popover.contentSize = contentSize
             }
-            takeKeyboard(for: content, behavior: popover.behavior)
             return
         }
+
+        endTextEdit(around: anchor, behavior: behavior)
 
         let popover = NSPopover()
         popover.behavior = behavior
@@ -100,13 +100,15 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Gives `content`'s popover the keyboard, unless `behavior` is
-    /// `.applicationDefined` or a view in `content` already took it.
+    /// Takes the keyboard for `content`'s popover from the view holding it, unless
+    /// `behavior` is `.applicationDefined` or that view is in `content`.
     func takeKeyboard(for content: NSViewController, behavior: NSPopover.Behavior) {
-        guard behavior != .applicationDefined, let window = content.view.window else { return }
-        if let focused = window.firstResponder as? NSView, focused.isDescendant(of: content.view) {
-            return
-        }
+        // With no view holding the keyboard there is nothing to take, and taking it
+        // has AppKit return it at close to a text field it picks, all its text
+        // selected (observed on macOS 26.7 and 27.2).
+        guard behavior != .applicationDefined, let window = content.view.window,
+            let focused = window.firstResponder as? NSView, !focused.isDescendant(of: content.view)
+        else { return }
         // With nothing in the popover accepting first responder, keys go to the
         // parent window's first responder (observed on macOS 26.7 and 27.2 with
         // Full Keyboard Access off). A popover then closes on Escape only if that
