@@ -76,12 +76,12 @@ enum ItemScenarios {
             for ended in host.pullsEnded {
                 guard ended.result == .landed,
                     let request = host.pulls.first(where: { (try? $0.result.get()) == ended.id })?.request,
-                    let offered = host.offersReceived.first?.offer
+                    let offered = link.host?.remoteOfferItem(token: request.token, index: 0)
                 else {
                     failures.append("pull \(ended.id.stream.rawValue) ended \(ended.result)")
                     continue
                 }
-                let representation = offered.items[0].representations[Int(request.representation)]
+                let representation = offered.representations[Int(request.representation)]
                 failures += expectThat(
                     host.sink.landed[ended.id] == SimItems.digest(request, representation),
                     "pull \(ended.id.stream.rawValue) landed other bytes")
@@ -220,14 +220,15 @@ enum ItemScenarios {
         expect: { world in
             let pull = onePull(world, .host)
             let served = world.links.first?.items(.peer).servesEnded.first?.result
-            let offerEnds = world.links.first?.items(.host).offersEnded.map(\.closure) ?? []
+            let offerEnds =
+                world.links.first?.items(.host).offersEnded.filter { $0.origin == .remote }.map(\.closure) ?? []
             return expectThat(
                 pull.map { resetCode($0.1) } == .itemOfferStale, "the host's pull: \(ended(world, .host))")
                 + expectThat(
                     resetCode(served) == .itemOfferStale, "the peer reset its serve: \(String(describing: served))")
                 + expectThat(
-                    offerEnds == [.resetByPeer(WireError(.cancelled))], "the host saw the offer withdrawn: \(offerEnds)"
-                )
+                    offerEnds == [.resetByPeer(WireError(.cancelled))],
+                    "the host saw the peer's offer withdrawn: \(offerEnds)")
         })
 
     static let releasedMidPull = Scenario(
@@ -243,7 +244,8 @@ enum ItemScenarios {
             world.at(in: .ms(1_500) ... .ms(2_500)) { world in world.releaseOffer(SimItems.token(1), by: .host) }
         },
         expect: { world in
-            let offerEnds = world.links.first?.items(.peer).offersEnded.map(\.closure) ?? []
+            let offerEnds =
+                world.links.first?.items(.peer).offersEnded.filter { $0.origin == .local }.map(\.closure) ?? []
             return expectThat(
                 onePull(world, .host).map { resetCode($0.1) } == .itemOfferStale,
                 "the host's pull: \(ended(world, .host))")

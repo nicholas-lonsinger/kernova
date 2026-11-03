@@ -245,6 +245,11 @@ public struct HostEndpoint: Sendable {
         route(now)
     }
 
+    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
+    public func remoteOfferItem(token: Data, index: Int) -> OfferedItem? {
+        itemTransfer.remoteItem(token: token, index: index)
+    }
+
     /// The next output for the item source, the item sink or the owner.
     public mutating func pollItemTransfer() -> ItemTransferOutput? {
         itemOutputs.poll()

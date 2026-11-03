@@ -57,6 +57,41 @@ extension Connection {
         if configuration.recordsTrace { trace.append(.sent(id, isMessage: false, data)) }
     }
 
+    /// Reserves up to `maxBytes` of what `id` may send now, for one later `send(reserved:on:)`: no other
+    /// send spends them, so an answer within the reservation always fits. Returns the bytes reserved.
+    public mutating func reserveRawData(_ maxBytes: Int, on id: StreamID) -> Int {
+        guard let index = index(of: id), streams[index].reservedRaw == 0 else {
+            misuse("reserve on stream \(id.rawValue), which holds a reservation or is gone")
+            return 0
+        }
+        let reserved = min(maxBytes, writableData(at: index), WireConstants.maxRawDataPayload)
+        guard reserved > 0 else { return 0 }
+        streams[index].reservedRaw = reserved
+        reservedRawTotal += reserved
+        return reserved
+    }
+
+    /// Queues `data` from `id`'s reservation, 1 byte up to all of it, and returns the rest.
+    public mutating func send(reserved data: Data, on id: StreamID) {
+        guard let index = index(of: id), !data.isEmpty, data.count <= streams[index].reservedRaw else {
+            return misuse("send \(data.count) raw bytes past the reservation on stream \(id.rawValue)")
+        }
+        releaseReservation(at: index)
+        send(data: data, on: id)
+    }
+
+    /// Returns `id`'s unspent reservation.
+    public mutating func releaseReservation(on id: StreamID) {
+        guard let index = index(of: id) else { return }
+        releaseReservation(at: index)
+    }
+
+    mutating func releaseReservation(at index: Int) {
+        guard streams[index].reservedRaw > 0 else { return }
+        reservedRawTotal -= streams[index].reservedRaw
+        streams[index].reservedRaw = 0
+    }
+
     /// Queues this side's END on `id` with the kind's END body.
     public mutating func end(_ id: StreamID, body: Data) {
         guard isAcceptingInput, let index = index(of: id), streams[index].canSend,
@@ -155,6 +190,7 @@ extension Connection {
     /// raw bytes back to the connection.
     private mutating func markClosed(at index: Int, _ closure: StreamClosure) {
         let record = streams[index]
+        releaseReservation(at: index)
         streams[index].phase = .closed
         streams[index].pendingWindow = 0
         streams[index].returnBucket = nil
@@ -222,7 +258,9 @@ extension Connection {
         guard record.canSend, isAcceptingInput else { return false }
         switch record.sending {
         case .rawData:
-            let writable = min(record.sendWindow, connectionSendCredit, policy.senderRawBudget - queuedRawTotal)
+            let writable = Self.unreserved(
+                record, credit: connectionSendCredit, budget: policy.senderRawBudget - queuedRawTotal,
+                reserved: reservedRawTotal)
             return writable >= Limits.writableLowWater
         case .messages:
             return record.sendWindow >= Limits.writableLowWater && record.unsentMessages == 0

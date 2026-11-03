@@ -41,6 +41,13 @@ enum HostileItems {
         return (run, try? run.pullItem(request)?.get())
     }
 
+    /// The codes of the serves that ended reset by this side, in order.
+    static func servesResetLocally(_ run: HostileRun) -> [ErrorCode] {
+        run.itemEnds.compactMap {
+            if case .serveEnded(_, .closed(.resetLocally(let error))) = $0 { error.code } else { nil }
+        }
+    }
+
     /// The host's END on the pull, as a `PullOutcome`.
     static func outcome(_ run: HostileRun) -> Kernova_V2_PullOutcome? {
         run.written.last { $0.type == .end && $0.streamID.rawValue == pullStream }
@@ -151,12 +158,7 @@ extension HostileRows {
         } expect: { run in
             let ends = run.itemEnds
             return expectThat(
-                ends == [
-                    .serveEnded(
-                        ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 1)),
-                        .closed(.resetLocally(WireError(.streamProtocolError))))
-                ],
-                "ends: \(ends)")
+                HostileItems.servesResetLocally(run) == [.streamProtocolError] && ends.count == 1, "ends: \(ends)")
                 + expectThat(run.itemSource.heldCount == 0, "the source holds the pull")
         },
         HostileRow(

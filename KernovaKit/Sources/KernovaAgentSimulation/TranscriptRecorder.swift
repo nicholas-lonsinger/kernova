@@ -687,10 +687,10 @@ package enum TranscriptEvents {
     package static func describe(_ event: ItemTransferEvent, side: SimSide) -> String {
         let prefix = side == .host ? "host item" : "peer item"
         return switch event {
-        case .offerReceived(let offer):
-            "\(prefix) offerReceived token=\(FrozenFields.hex(offer.token)) items=\(offer.items.count)"
-        case .offerEnded(let token, let closure):
-            "\(prefix) offerEnded token=\(FrozenFields.hex(token)) \(describe(closure))"
+        case .offerReceived(let header):
+            "\(prefix) offerReceived token=\(FrozenFields.hex(header.token)) items=\(header.count)"
+        case .offerEnded(let origin, let token, let closure):
+            "\(prefix) offerEnded \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
         case .pullEnded(let id, let result): "\(prefix) pullEnded id=\(id.stream.rawValue) \(describe(result))"
         case .serveEnded(let id, let result): "\(prefix) serveEnded id=\(id.stream.rawValue) \(describe(result))"
         }

@@ -36,6 +36,10 @@ struct StreamRecord: Sendable {
     var openHandedOut: Bool
     var pendingReset: WireError?
     var queuedRaw = 0
+    /// Raw DATA a machine reserved and has not yet sent; no other send may spend it.
+    var reservedRaw = 0
+    /// This side's END has been handed out.
+    var endHandedOut = false
     var unsentMessages = 0
     /// The S4 predicate held at the last check, so `.writable` fires on its rising edge.
     var wasWritable = false

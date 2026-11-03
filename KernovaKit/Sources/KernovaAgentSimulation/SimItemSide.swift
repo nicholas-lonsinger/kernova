@@ -21,8 +21,9 @@ package final class SimItemSide {
     package private(set) var offerRefusals: [WireError] = []
     package private(set) var pullsEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
     package private(set) var servesEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
-    package private(set) var offersReceived: [(time: SimTime, offer: ItemOffer)] = []
-    package private(set) var offersEnded: [(time: SimTime, token: Data, closure: StreamClosure)] = []
+    package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
+    package private(set) var offersEnded:
+        [(time: SimTime, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
 
     init() {}
 
@@ -42,8 +43,9 @@ package final class SimItemSide {
             world.itemInput(.sink(input), link: link, side: side, after: .us(20))
         case .event(let event):
             switch event {
-            case .offerReceived(let offer): offersReceived.append((world.now, offer))
-            case .offerEnded(let token, let closure): offersEnded.append((world.now, token, closure))
+            case .offerReceived(let header): offersReceived.append((world.now, header))
+            case .offerEnded(let origin, let token, let closure):
+                offersEnded.append((world.now, origin, token, closure))
             case .pullEnded(let id, let result): pullsEnded.append((world.now, id, result))
             case .serveEnded(let id, let result): servesEnded.append((world.now, id, result))
             }

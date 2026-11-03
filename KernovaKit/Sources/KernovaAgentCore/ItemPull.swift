@@ -7,24 +7,22 @@ import Foundation
 import KernovaWire
 
 /// The serving side of ITEM_PULL: checks the pull against this side's open offers, then sends exactly the
-/// container its source produces, a read at a time as the stream's credit allows, and ENDs once the source
-/// reports it finished. A pull exists from its `.serve` to its stream's close, which alone emits its
+/// container its source produces, a read at a time, and ENDs once the source reports it finished. Each read
+/// is a reservation of the connection's raw budget, so however many pulls are served at once, an answer
+/// within its read always fits; the connection refuses a puller's END that precedes this side's
+/// (`acceptorEndsFirst`). A pull exists from its `.serve` to its stream's close, which alone emits its
 /// `.release` and its one `.serveEnded`.
 struct ItemPullServer: Sendable {
     private struct Pull: Sendable {
         var id: ItemPullID
         var token: Data
-        /// The most bytes the outstanding read may return; nil when none is outstanding.
+        /// The bytes the outstanding read reserved, the most it may return; nil when none is outstanding.
         var granted: Int?
         /// The source finished and this side's END is queued.
         var ended = false
     }
 
     private var pulls: [Pull] = []
-
-    func serves(_ stream: StreamID) -> Bool {
-        pulls.contains { $0.id.stream == stream }
-    }
 
     /// The far side opened a pull: serve it when it names a representation of an open offer, RESET otherwise.
     mutating func opened(
@@ -47,9 +45,8 @@ struct ItemPullServer: Sendable {
         guard let index = pulls.firstIndex(where: { $0.id.stream == stream }), !pulls[index].ended,
             pulls[index].granted == nil, connection.canQueue(on: stream)
         else { return }
-        let writable = connection.writableData(stream)
-        guard writable >= Limits.writableLowWater else { return }
-        let grant = min(writable, WireConstants.maxRawDataPayload)
+        guard connection.writableData(stream) >= Limits.writableLowWater else { return }
+        let grant = connection.reserveRawData(WireConstants.maxRawDataPayload, on: stream)
         pulls[index].granted = grant
         outbox.append(.source(.read(pulls[index].id, maxBytes: grant)))
     }
@@ -70,12 +67,12 @@ struct ItemPullServer: Sendable {
                     id, "the item source sent \(data.count) bytes no read asked for", &connection, &diagnostics)
             }
             pulls[index].granted = nil
-            guard !data.isEmpty, data.count <= granted, data.count <= connection.writableData(id.stream) else {
+            guard !data.isEmpty, data.count <= granted else {
                 return sourceFailed(
                     id, "the item source returned \(data.count) bytes for a \(granted)-byte read", &connection,
                     &diagnostics)
             }
-            connection.send(data: data, on: id.stream)
+            connection.send(reserved: data, on: id.stream)
             serve(id.stream, connection: &connection, outbox: &outbox)
         case .finished(let id):
             guard let index = index(id, generation), !pulls[index].ended, connection.canQueue(on: id.stream) else {
@@ -86,6 +83,7 @@ struct ItemPullServer: Sendable {
             }
             pulls[index].granted = nil
             pulls[index].ended = true
+            connection.releaseReservation(on: id.stream)
             connection.end(id.stream, body: Data())
         case .failed(let id, let error):
             guard let index = index(id, generation), !pulls[index].ended, connection.canReset(id.stream) else {
@@ -93,14 +91,6 @@ struct ItemPullServer: Sendable {
             }
             connection.reset(id.stream, error)
         }
-    }
-
-    /// The puller ENDed: after this side's END that is its outcome, which the close reports; before it, a
-    /// violation.
-    mutating func remoteEnded(_ stream: StreamID, connection: inout Connection, diagnostics: inout [Diagnostic]) {
-        guard let pull = pulls.first(where: { $0.id.stream == stream }), !pull.ended else { return }
-        diagnostics.append(.remoteViolation("the puller ended ITEM_PULL before the container"))
-        if connection.canReset(stream) { connection.reset(stream, WireError(.streamProtocolError)) }
     }
 
     /// The registry changed: a pull of an offer no longer open is stale.
@@ -143,8 +133,9 @@ struct ItemPullServer: Sendable {
 /// The pulling side of ITEM_PULL: opens a pull of the far side's open offer, hands the container's bytes to
 /// its sink as they arrive, asks it to finish at the far side's END, and ENDs with the sink's verdict as a
 /// `PullOutcome`; a verified container is committed at once. A sink refusal before the END RESETs the pull
-/// with the sink's code. A pull exists from the `.success` `pull` returns to its stream's close, which alone
-/// emits its one `.pullEnded`, after the sink's `.abort` unless it was told to commit.
+/// with the sink's code, and so does the end of the offer it names, with `ITEM_OFFER_STALE`. A pull exists
+/// from the `.success` `pull` returns to its stream's close, which alone emits its one `.pullEnded`, after the
+/// sink's `.abort` unless it was told to commit.
 struct ItemPullClient: Sendable {
     private enum Sink: Sendable, Equatable {
         /// Container bytes are arriving.
@@ -159,6 +150,7 @@ struct ItemPullClient: Sendable {
 
     private struct Pull: Sendable {
         var id: ItemPullID
+        var token: Data
         var sink: Sink = .receiving
     }
 
@@ -178,9 +170,20 @@ struct ItemPullClient: Sendable {
         let stream = connection.open(kind, body: request.encoded)
         guard stream != .session else { return .failure(WireError(.internal, debugDetail: "the open failed")) }
         let id = ItemPullID(generation: generation, stream: stream)
-        pulls.append(Pull(id: id))
+        pulls.append(Pull(id: id, token: request.token))
         outbox.append(.sink(.begin(id, request, representation)))
         return .success(id)
+    }
+
+    /// The registry changed: a pull of an offer no longer open ends `ITEM_OFFER_STALE`, uncommitted.
+    mutating func offersChanged(_ offers: ItemOfferRegistry, connection: inout Connection) {
+        let open = offers.remoteTokens
+        for pull in pulls
+        where !open.contains(pull.token) && pull.sink != .committed
+            && connection.canReset(pull.id.stream)
+        {
+            connection.reset(pull.id.stream, WireError(.itemOfferStale))
+        }
     }
 
     mutating func cancel(_ stream: StreamID, connection: inout Connection) {

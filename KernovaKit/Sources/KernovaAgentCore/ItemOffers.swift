@@ -6,14 +6,22 @@ import Foundation
 
 import KernovaWire
 
-/// Every open offer on one connection, this side's and the far side's, by token, and the item-set message
-/// stream that carries each: an `ItemSetHeader` OPEN, one `Item` MESSAGE per item, then the opener's END. An
-/// offer is in the registry exactly while its stream is open; the opener's RESET withdraws it, and the
-/// receiver's END or RESET releases it.
+/// Every open offer on one connection, this side's and the far side's, and the item-set message stream that
+/// carries each: an `ItemSetHeader` OPEN, one `Item` MESSAGE per item, then the opener's END. An offer is in
+/// the registry exactly while its stream is open; the opener's RESET withdraws it, and the receiver's END or
+/// RESET releases it. This side's tokens and the far side's are separate namespaces: a pull of this side's
+/// offer is looked up among this side's, and one this side opens among the far side's.
+///
+/// The far side's items are held as their encoded bytes, each an exact-size copy, and decoded one at a time
+/// when a pull or the owner names it, so what they hold is what is charged: an offer's OPEN reserves
+/// `remoteItemOverhead` per item its header counts, and each item its bytes as it arrives. An offer the
+/// budget cannot hold is reset `TOO_LARGE`.
 package struct ItemOfferRegistry: Sendable {
-    /// The most `Item` bytes the far side's open offers hold at once; an offer that would pass it is reset
-    /// `TOO_LARGE`.
+    /// The most the far side's open offers may hold at once: their reserved overhead and their items' bytes.
     package static let remoteItemByteLimit = 16 << 20
+    /// What one held item costs beyond its bytes, at most: its array slot, its `Data` storage object, and
+    /// allocation rounding.
+    package static let remoteItemOverhead = 128
 
     struct Local: Sendable {
         var stream: StreamID
@@ -25,15 +33,17 @@ package struct ItemOfferRegistry: Sendable {
 
     struct Remote: Sendable {
         var stream: StreamID
-        var offer: ItemOffer
-        var count: Int
-        var bytes = 0
+        var header: ItemSetHeaderValue
+        /// Each item's encoded bytes, as received.
+        var items: [Data] = []
+        /// What this offer holds against `remoteItemByteLimit`.
+        var charged: Int
         var complete = false
     }
 
     private var local: [Local] = []
     private var remote: [Remote] = []
-    private var remoteBytes = 0
+    private var remoteCharged = 0
 
     package init() {}
 
@@ -45,6 +55,17 @@ package struct ItemOfferRegistry: Sendable {
     /// The tokens of this side's open offers.
     package var localTokens: [Data] { local.map(\.offer.token) }
 
+    /// The tokens of the far side's open offers.
+    package var remoteTokens: [Data] { remote.map(\.header.token) }
+
+    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
+    func remoteItem(_ token: Data, _ index: Int) -> OfferedItem? {
+        guard let entry = remote.first(where: { $0.header.token == token }), index < entry.items.count else {
+            return nil
+        }
+        return try? OfferedItem(serializedBytes: entry.items[index])
+    }
+
     /// The representation a pull of this side's offer names, or the code refusing it.
     func localRepresentation(_ request: PullRequest) -> Result<Representation, WireError> {
         guard let offer = local.first(where: { $0.offer.token == request.token })?.offer else {
@@ -55,18 +76,29 @@ package struct ItemOfferRegistry: Sendable {
 
     /// The representation a pull of the far side's offer names, among the items received so far.
     func remoteRepresentation(_ request: PullRequest) -> Result<Representation, WireError> {
-        guard let offer = remote.first(where: { $0.offer.token == request.token })?.offer else {
+        guard remote.contains(where: { $0.header.token == request.token }) else {
             return .failure(WireError(.itemOfferStale))
         }
-        return Self.representation(request, in: offer.items)
+        guard let item = remoteItem(request.token, Int(request.item)) else {
+            return .failure(WireError(.itemRepresentationUnavailable))
+        }
+        return Self.representation(request, of: item)
     }
 
     private static func representation(_ request: PullRequest, in items: [OfferedItem]) -> Result<
         Representation, WireError
     > {
-        guard request.item < items.count, request.representation < items[Int(request.item)].representations.count
-        else { return .failure(WireError(.itemRepresentationUnavailable)) }
-        let representation = items[Int(request.item)].representations[Int(request.representation)]
+        guard request.item < items.count else { return .failure(WireError(.itemRepresentationUnavailable)) }
+        return representation(request, of: items[Int(request.item)])
+    }
+
+    private static func representation(_ request: PullRequest, of item: OfferedItem) -> Result<
+        Representation, WireError
+    > {
+        guard request.representation < item.representations.count else {
+            return .failure(WireError(.itemRepresentationUnavailable))
+        }
+        let representation = item.representations[Int(request.representation)]
         switch representation.storage {
         case .inline, .file, .folder: return .success(representation)
         case .unspecified, .UNRECOGNIZED: return .failure(WireError(.itemRepresentationUnavailable))
@@ -109,7 +141,7 @@ package struct ItemOfferRegistry: Sendable {
 
     /// Ends the far side's offer of `token` from this side: END once the set is whole, RESET CANCELLED before.
     mutating func release(_ token: Data, connection: inout Connection) {
-        guard let entry = remote.first(where: { $0.offer.token == token }) else { return }
+        guard let entry = remote.first(where: { $0.header.token == token }) else { return }
         if entry.complete, connection.canQueue(on: entry.stream) {
             connection.end(entry.stream, body: Data())
         } else if connection.canReset(entry.stream) {
@@ -141,12 +173,12 @@ package struct ItemOfferRegistry: Sendable {
             item(stream, message, &connection)
         case .remoteEnded(let stream, _):
             if let index = remote.firstIndex(where: { $0.stream == stream }) {
-                guard remote[index].offer.items.count == remote[index].count else {
+                guard remote[index].items.count == remote[index].header.count else {
                     return refuse(
-                        stream, .streamProtocolError, "END after \(remote[index].offer.items.count) items", &connection)
+                        stream, .streamProtocolError, "END after \(remote[index].items.count) items", &connection)
                 }
                 remote[index].complete = true
-                events.append(.event(.offerReceived(remote[index].offer)))
+                events.append(.event(.offerReceived(remote[index].header)))
             } else if let entry = local.first(where: { $0.stream == stream }), !entry.ended,
                 connection.canReset(stream)
             {
@@ -157,11 +189,11 @@ package struct ItemOfferRegistry: Sendable {
             pump(stream, &connection)
         case .streamClosed(let stream, let closure):
             if let index = local.firstIndex(where: { $0.stream == stream }) {
-                events.append(.event(.offerEnded(token: local[index].offer.token, closure)))
+                events.append(.event(.offerEnded(.local, token: local[index].offer.token, closure)))
                 local.remove(at: index)
             } else if let index = remote.firstIndex(where: { $0.stream == stream }) {
-                events.append(.event(.offerEnded(token: remote[index].offer.token, closure)))
-                remoteBytes -= remote[index].bytes
+                events.append(.event(.offerEnded(.remote, token: remote[index].header.token, closure)))
+                remoteCharged -= remote[index].charged
                 remote.remove(at: index)
             }
         case .data, .sessionEstablished, .usabilityChanged, .policyChanged, .slotFreed, .deadline:
@@ -170,28 +202,36 @@ package struct ItemOfferRegistry: Sendable {
     }
 
     private mutating func received(_ stream: StreamID, _ body: Data, _ connection: inout Connection) {
-        let header = (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader()
-        guard !remote.contains(where: { $0.offer.token == header.token }) else {
-            return connection.reset(stream, WireError(.streamProtocolError, debugDetail: "a token already open"))
+        let header = ItemSetHeaderValue(
+            (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader())
+        guard !remote.contains(where: { $0.header.token == header.token }) else {
+            return refuse(stream, .streamProtocolError, "a token the far side already offers", &connection)
         }
-        let offer = ItemOffer(token: header.token, concealed: header.concealed, transient: header.transient, items: [])
-        remote.append(Remote(stream: stream, offer: offer, count: Int(header.count)))
+        // The header's claim is reserved whole, so no count can outrun the budget.
+        guard header.count <= (Self.remoteItemByteLimit - remoteCharged) / Self.remoteItemOverhead else {
+            return connection.reset(stream, WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit)))
+        }
+        let reserved = header.count * Self.remoteItemOverhead
+        remoteCharged += reserved
+        remote.append(Remote(stream: stream, header: header, charged: reserved))
     }
 
     private mutating func item(_ stream: StreamID, _ message: Data, _ connection: inout Connection) {
         guard let index = remote.firstIndex(where: { $0.stream == stream }) else { return }
-        guard remote[index].offer.items.count < remote[index].count else {
+        guard remote[index].items.count < remote[index].header.count else {
             return refuse(stream, .streamProtocolError, "more items than the header's count", &connection)
         }
-        guard remoteBytes + message.count <= Self.remoteItemByteLimit else {
+        guard remoteCharged + message.count <= Self.remoteItemByteLimit else {
             return connection.reset(stream, WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit)))
         }
-        guard let item = try? OfferedItem(serializedBytes: message) else {
+        guard (try? OfferedItem(serializedBytes: message)) != nil else {
             return refuse(stream, .malformedMessage, "an Item that does not decode", &connection)
         }
-        remote[index].offer.items.append(item)
-        remote[index].bytes += message.count
-        remoteBytes += message.count
+        // A copy, so the item holds exactly its bytes rather than the received buffer it was cut from.
+        let held = message.isEmpty ? Data() : message.withUnsafeBytes { Data(bytes: $0.baseAddress!, count: $0.count) }
+        remote[index].items.append(held)
+        remote[index].charged += held.count
+        remoteCharged += held.count
     }
 
     private func refuse(_ stream: StreamID, _ code: ErrorCode, _ detail: String, _ connection: inout Connection) {

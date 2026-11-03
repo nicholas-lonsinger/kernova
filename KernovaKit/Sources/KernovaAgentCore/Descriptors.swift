@@ -49,6 +49,9 @@ public struct StreamKindDescriptor: Sendable {
     public var maxPerConnection: Int?
     /// The RESET code for an OPEN past `maxPerConnection`.
     public var duplicateCode: ErrorCode
+    /// The opener's END answers the acceptor's: one the acceptor receives before its own END was handed out
+    /// is a violation, which the connection resets `STREAM_PROTOCOL_ERROR`.
+    public var acceptorEndsFirst: Bool
     /// The machine serving accepted streams of the kind; nil only for the
     /// placeholder row a refused OPEN of an unknown kind carries.
     package var owner: KindOwner?
@@ -57,7 +60,8 @@ public struct StreamKindDescriptor: Sendable {
     package init(
         kind: StreamKind, feature: FeatureID?, owner: KindOwner?, openerRole: OpenerRole,
         openerToAcceptor: StreamDirection, acceptorToOpener: StreamDirection, maxPerConnection: Int?,
-        duplicateCode: ErrorCode = .streamProtocolError, isValidOpenBody: @escaping @Sendable (Data) -> Bool
+        duplicateCode: ErrorCode = .streamProtocolError, acceptorEndsFirst: Bool = false,
+        isValidOpenBody: @escaping @Sendable (Data) -> Bool
     ) {
         self.kind = kind
         self.feature = feature
@@ -67,6 +71,7 @@ public struct StreamKindDescriptor: Sendable {
         self.acceptorToOpener = acceptorToOpener
         self.maxPerConnection = maxPerConnection
         self.duplicateCode = duplicateCode
+        self.acceptorEndsFirst = acceptorEndsFirst
         self.isValidOpenBody = isValidOpenBody
     }
 
@@ -78,7 +83,7 @@ public struct StreamKindDescriptor: Sendable {
             isValidOpenBody: { (try? Kernova_V2_PowerRequest(serializedBytes: $0)) != nil }),
         StreamKindDescriptor(
             kind: .updatePull, feature: .update, owner: .update, openerRole: .peer, openerToAcceptor: .nothing,
-            acceptorToOpener: .rawData, maxPerConnection: 1, duplicateCode: .updateInProgress,
+            acceptorToOpener: .rawData, maxPerConnection: 1, duplicateCode: .updateInProgress, acceptorEndsFirst: true,
             isValidOpenBody: { (try? Kernova_V2_UpdatePull(serializedBytes: $0)) != nil }),
         StreamKindDescriptor(
             kind: .logForward, feature: .logs, owner: .logs, openerRole: .peer, openerToAcceptor: .messages,
@@ -86,11 +91,11 @@ public struct StreamKindDescriptor: Sendable {
             isValidOpenBody: { (try? Kernova_V2_LogOpen(serializedBytes: $0)) != nil }),
         StreamKindDescriptor(
             kind: .itemPullByHost, feature: .itemTransfer, owner: .itemTransfer, openerRole: .host,
-            openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil,
+            openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
             isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
         StreamKindDescriptor(
             kind: .itemPullByPeer, feature: .itemTransfer, owner: .itemTransfer, openerRole: .peer,
-            openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil,
+            openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
             isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
     ]
 

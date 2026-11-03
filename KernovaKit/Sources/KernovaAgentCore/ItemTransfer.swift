@@ -40,6 +40,33 @@ public struct ItemOffer: Sendable, Equatable {
     }
 }
 
+/// An item-set offer's header: what the far side's OPEN announced.
+public struct ItemSetHeaderValue: Sendable, Equatable {
+    /// The 16 bytes naming the offer, which a pull quotes.
+    public var token: Data
+    /// The receiver keeps the content out of history and logs.
+    public var concealed: Bool
+    /// The receiver keeps the content out of history.
+    public var transient: Bool
+    /// The items the offer sends.
+    public var count: Int
+
+    init(_ header: Kernova_V2_ItemSetHeader) {
+        token = header.token
+        concealed = header.concealed
+        transient = header.transient
+        count = Int(header.count)
+    }
+}
+
+/// Whose offer an event is about: this side's or the far side's. Their tokens are separate namespaces.
+public enum ItemOfferOrigin: Sendable, Equatable {
+    /// This side offered it.
+    case local
+    /// The far side offered it.
+    case remote
+}
+
 /// How one pull ended, on either side.
 public enum ItemPullResult: Sendable, Equatable {
     /// The container landed: on the pulling side, the sink verified it and was told to commit; on the
@@ -100,10 +127,10 @@ public enum ItemSinkInput: Sendable, Equatable {
 
 /// What the item-transfer machine tells its owner.
 public enum ItemTransferEvent: Sendable, Equatable {
-    /// The far side's offer arrived whole.
-    case offerReceived(ItemOffer)
-    /// An offer, this side's or the far side's, is no longer valid. Once per offer.
-    case offerEnded(token: Data, StreamClosure)
+    /// The far side's offer arrived whole; `ItemTransfer.remoteItem` decodes each item when asked.
+    case offerReceived(ItemSetHeaderValue)
+    /// An offer is no longer valid. Once per offer.
+    case offerEnded(ItemOfferOrigin, token: Data, StreamClosure)
     /// A pull this side opened ended. Once per pull `pull` returned.
     case pullEnded(ItemPullID, ItemPullResult)
     /// A pull this side served ended. Once per `.serve`.
@@ -130,8 +157,8 @@ public enum ItemTransferInput: Sendable, Equatable {
 
 /// ITEM_TRANSFER on one connection: the offer registry, and the pull server and
 /// client over it. A pull is valid only while the offer it names is open, so
-/// after every change to the registry the server resets the pulls of offers it
-/// no longer holds.
+/// after every change to the registry both the server and the client reset the
+/// pulls of offers it no longer holds, before any later input can commit one.
 public struct ItemTransfer: FeatureMachine {
     /// ITEM_TRANSFER.
     public static let feature = FeatureID.itemTransfer
@@ -176,11 +203,8 @@ public struct ItemTransfer: FeatureMachine {
         case .data(let stream, let bytes):
             client.data(stream, bytes, outbox: &outbox)
         case .remoteEnded(let stream, _):
-            if server.serves(stream) {
-                server.remoteEnded(stream, connection: &connection, diagnostics: &diagnostics)
-            } else {
-                client.remoteEnded(stream, outbox: &outbox)
-            }
+            // A server's pull completes at its close; the connection refuses an early END.
+            client.remoteEnded(stream, outbox: &outbox)
         case .writable(let stream):
             server.serve(stream, connection: &connection, outbox: &outbox)
         case .streamClosed(let stream, let closure):
@@ -195,6 +219,12 @@ public struct ItemTransfer: FeatureMachine {
     package mutating func handleOffer(_ event: FeatureEvent, connection: inout Connection) {
         offers.handle(event, connection: &connection, events: &outbox)
         server.offersChanged(offers, connection: &connection)
+        client.offersChanged(offers, connection: &connection)
+    }
+
+    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
+    public func remoteItem(token: Data, index: Int) -> OfferedItem? {
+        offers.remoteItem(token, index)
     }
 
     /// Opens an offer of `offer` on a stream of `kind`; nil when sent, or why not.
