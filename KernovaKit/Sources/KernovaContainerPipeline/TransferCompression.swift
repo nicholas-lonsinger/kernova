@@ -45,11 +45,10 @@ public struct TransferCompression: Equatable, Sendable {
     // Each constant below is derived in docs/research/2026-11-03-transfer-compression-policy.md: compression has
     // to beat plain bytes end to end over the ~750 MiB/s guest-to-host link, for every payload the guest sends.
 
-    // PROVISIONAL: guests were measured at 1, 2 and 4 vCPUs only. At 4, a Linux guest's text encode (716 MiB/s)
-    // falls short of the link, so compressing there loses; 6 rests on extrapolating that guest's per-core gain
-    // (the note's finding 2), and a Linux guest run at 6 vCPUs would confirm it.
-    /// The fewest cores a sender compresses with.
-    public static let minimumEncodingCores = 6
+    /// The fewest cores a sender compresses with. At 4, a Linux guest's text encode stays short of the link (716 and
+    /// 737 MiB/s in two runs); at 5 it reaches 888 MiB/s, and every compressible payload measured gains 1.18× or
+    /// more (the note's finding 2).
+    public static let minimumEncodingCores = 5
 
     /// The most lanes a sender tries chunks on. At the host's per-core rates, eight lanes put code, text and binaries
     /// past the link's rate divided by their ratio, so a ninth lane cannot raise throughput (the note's finding 3).
