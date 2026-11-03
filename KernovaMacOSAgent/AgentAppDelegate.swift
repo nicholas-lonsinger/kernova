@@ -69,9 +69,18 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     /// Retained so the signal source stays armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
 
-    /// Opt-out-of-App-Nap token, held only while clipboard sharing is enabled so
-    /// the 0.5 s clipboard poll isn't throttled when the agent is backgrounded.
-    private var appNapActivity: NSObjectProtocol?
+    /// Keeps App Nap off for as long as the session peer runs, without
+    /// keeping the guest awake. App Nap throttles the timers of an app the
+    /// user isn't looking at, an accessory app included (Energy Efficiency
+    /// Guide for Mac Apps, "App Nap"), which would let the connection's PING
+    /// and the clipboard poll slip past the host's unresponsive mark. An
+    /// activity begun with `NSActivityUserInitiatedAllowingIdleSystemSleep`
+    /// exempts the process from App Nap while it is held, and still lets the
+    /// system idle-sleep (`NSProcessInfo`
+    /// `beginActivityWithOptions:reason:`;
+    /// `NSActivityUserInitiatedAllowingIdleSystemSleep`).
+    private let appNapActivity = ProcessInfo.processInfo.beginActivity(
+        options: .userInitiatedAllowingIdleSystemSleep, reason: "Kernova guest agent connection")
 
     // MARK: - Entry point
 
@@ -133,15 +142,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // host has a drop listener at all, and whether it takes drags out.
         let logForwardingEnabled = self.logForwardingEnabled
         let controlAgent = VsockGuestControlAgent(
-            onPolicy: { [weak self] policy in
+            onPolicy: { policy in
                 logForwardingEnabled.withLock { $0 = policy.logForwardingEnabled }
                 clipboardAgent.applyPolicy(
                     enabled: policy.clipboardSharingEnabled,
                     maxPasteBytes: ClipboardPasteLimit.fromPolicy(policy.clipboardMaxPasteBytes))
                 dropAgent.applyPolicy(enabled: policy.dropFilesEnabled)
-                Task { @MainActor in
-                    self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
-                }
             },
             onStateChange: { [weak self] _ in
                 // Called off-main; hop to the main actor to touch the status item.
@@ -193,8 +199,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         controlAgent?.stop()
         clipboardAgent?.stop()
         dropAgent?.stop()
-        // Balance any held App-Nap activity so begin/end stays paired.
-        updateAppNap(clipboardEnabled: false)
     }
 
     // MARK: - Session state
@@ -207,19 +211,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             center.addObserver(forName: name, object: nil, queue: nil) { _ in
                 peer.setPeerState(DarwinSessionState.sessionPeer())
             }
-        }
-    }
-
-    // MARK: - App Nap
-
-    private func updateAppNap(clipboardEnabled: Bool) {
-        if clipboardEnabled {
-            guard appNapActivity == nil else { return }
-            appNapActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated], reason: "Kernova clipboard sync polling")
-        } else if let activity = appNapActivity {
-            ProcessInfo.processInfo.endActivity(activity)
-            appNapActivity = nil
         }
     }
 
