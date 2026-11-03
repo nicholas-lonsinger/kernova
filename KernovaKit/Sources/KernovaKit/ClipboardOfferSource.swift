@@ -31,7 +31,8 @@ public enum ClipboardServeError: Error, Equatable, Sendable {
 /// representation's bytes come from when a peer pulls it.
 ///
 /// Built by ``ClipboardPasteboardReader/readOffer(from:promises:promiseDestination:sizeOf:)``
-/// from a pasteboard, or by ``init(content:)`` from content already held. No
+/// or ``ClipboardPasteboardReader/readDropOffer(from:promises:sizeOf:)`` from a
+/// pasteboard, or by ``init(content:)`` from content already held. No
 /// byte is read until ``serve(item:representation:)``.
 @MainActor
 public final class ClipboardOfferSource {
@@ -68,7 +69,7 @@ public final class ClipboardOfferSource {
     init(
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
-        promises: [any FilePromiseReceiving],
+        promises: [any FilePromiseReceiving], calledIn: [Int: Task<URL, any Error>] = [:],
         promiseDestination: @escaping @MainActor () throws -> URL
     ) {
         self.items = items
@@ -77,6 +78,7 @@ public final class ClipboardOfferSource {
         self.pasteboard = pasteboard
         self.changeCount = changeCount
         self.promises = promises
+        self.calledIn = calledIn
         self.promiseDestination = promiseDestination
     }
 
@@ -130,10 +132,11 @@ public final class ClipboardOfferSource {
     /// Serves one representation for a pull, reading its bytes now.
     ///
     /// A pasteboard type is read only while the pasteboard still holds the
-    /// snapshot that was offered. A promise is called in on its first pull,
-    /// into a fresh directory from the reader's `promiseDestination`, and
-    /// every later pull of it serves what that call-in wrote; its source sets
-    /// no deadline, so neither does this.
+    /// snapshot that was offered. A drop's promise was called in before its
+    /// offer was read, and a clipboard's is called in on its first pull, into
+    /// a fresh directory from the reader's `promiseDestination`; every pull of
+    /// it serves what that call-in wrote, waiting for it as long as its source
+    /// takes.
     public func serve(item: Int, representation: Int) async throws(ClipboardServeError)
         -> ClipboardServedRepresentation
     {
@@ -170,31 +173,16 @@ public final class ClipboardOfferSource {
         }
     }
 
-    /// The call-in of promise `index`, started on its first pull.
+    /// The call-in of promise `index`: the one made before the offer was read, or else one started on its
+    /// first pull.
     private func callIn(_ index: Int) -> Task<URL, any Error> {
         if let task = calledIn[index] { return task }
         let receiver = promises[index]
-        let destination = Result { try promiseDestination() }
-        let task = Task<URL, any Error> { @MainActor in
-            let folder = try destination.get()
-            return try await withCheckedThrowingContinuation { continuation in
-                let once = Locked(false)
-                receiver.receivePromisedFiles(
-                    atDestination: folder, options: [:], operationQueue: OperationQueue()
-                ) { url, error in
-                    // A receiver writing several files reports each; the item is its first.
-                    let first = once.withLock { resumed -> Bool in
-                        defer { resumed = true }
-                        return !resumed
-                    }
-                    guard first else { return }
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: url)
-                    }
-                }
-            }
+        let task: Task<URL, any Error>
+        do {
+            task = CalledInFilePromise.callIn(receiver, into: try promiseDestination()).landed
+        } catch {
+            task = Task { throw error }
         }
         calledIn[index] = task
         return task
@@ -211,6 +199,57 @@ public final class ClipboardOfferSource {
         case .file where values.isRegularFile == true: return .file(url)
         case .folder where values.isDirectory == true: return .folder(url)
         default: throw .readFailed
+        }
+    }
+}
+
+/// A file promise called in: its receiver, which names its file once called in, and the file it lands.
+@MainActor
+public struct CalledInFilePromise {
+    /// The promise.
+    public let receiver: any FilePromiseReceiving
+    /// The file its source writes, its first if it writes several, or why it wrote none. Its source sets no
+    /// deadline, so neither does this.
+    public let landed: Task<URL, any Error>
+
+    /// Calls `receiver` in now, its file landing in `folder`.
+    public static func callIn(_ receiver: any FilePromiseReceiving, into folder: URL) -> CalledInFilePromise {
+        let first = FirstFile()
+        receiver.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: OperationQueue()) {
+            url, error in
+            // A receiver writing several files reports each; the item is its first.
+            first.resolve(error.map { .failure($0) } ?? .success(url))
+        }
+        return CalledInFilePromise(receiver: receiver, landed: Task { try await first.value() })
+    }
+
+    /// The first file a call-in reports, whether it reports before or after it is awaited.
+    private final class FirstFile: Sendable {
+        private struct State {
+            var result: Result<URL, any Error>?
+            var waiter: CheckedContinuation<URL, any Error>?
+        }
+
+        private let state = Locked(State())
+
+        func resolve(_ result: Result<URL, any Error>) {
+            let waiter = state.withLock { state -> CheckedContinuation<URL, any Error>? in
+                guard state.result == nil else { return nil }
+                state.result = result
+                defer { state.waiter = nil }
+                return state.waiter
+            }
+            waiter?.resume(with: result)
+        }
+
+        func value() async throws -> URL {
+            try await withCheckedThrowingContinuation { continuation in
+                let result = state.withLock { state -> Result<URL, any Error>? in
+                    if state.result == nil { state.waiter = continuation }
+                    return state.result
+                }
+                if let result { continuation.resume(with: result) }
+            }
         }
     }
 }

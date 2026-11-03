@@ -36,19 +36,25 @@ public final class MacAgentPeer: Sendable {
     private let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
 
     /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
-    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`.
-    public init(role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?) {
+    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer lands what the
+    /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`.
+    public init(
+        role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?,
+        revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in }
+    ) {
         claim = DarwinIdentity.current(role: role, versionLabel: label)
         let running = DarwinIdentity.runningSlot()
         let peer = Locked<MacAgentPeer?>(nil)
         let (adapter, installer) = Self.updateInstaller(for: claim, running: running, peer: peer)
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
-        let itemRouter = ItemFeatureRouter<Void>()
+        let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+        let drop = role == .sessionPeer ? Self.dropReceiver(sink: itemSink, reveal: revealDrop) : nil
+        let itemRouter = ItemFeatureRouter<Void>(drop: drop?.owner)
         let items =
             role == .sessionPeer
             ? ItemAdapters(
                 source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
-                sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), features: itemRouter.features)
+                sink: itemSink, features: itemRouter.features)
             : nil
         runtime = PeerAgentRuntime(
             claim: claim, state: state, registry: PeerFeatureRegistry(logs: logs, update: adapter, items: items),
@@ -64,6 +70,7 @@ public final class MacAgentPeer: Sendable {
                     Darwin.exit(0)
                 }))
         peer.withLock { $0 = self }
+        drop?.attach(runtime)
         if let running, claim.scope != .unspecified {
             let watcher = SlotLinkWatcher(root: running.root, runningSlot: running.slot, queue: queue) {
                 [self] change in
@@ -107,6 +114,25 @@ public final class MacAgentPeer: Sendable {
         else { return }
         watcher.withLock { $0 }?.cancel()
         runtime.close { Darwin.exit(status) }
+    }
+
+    /// DROP's receiver: it lands each drop in the user's Downloads folder, which the agent, unsandboxed, reads
+    /// as the real one, and hands what landed to `reveal`.
+    private static func dropReceiver(
+        sink: ItemSinkAdapter<POSIXTreeFileSystem>, reveal: @escaping @Sendable ([URL]) -> Void
+    ) -> DropReceiver<POSIXTreeFileSystem> {
+        let downloads =
+            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        return DropReceiver(
+            directory: downloads.path, sink: sink,
+            logger: KernovaLogger(subsystem: "app.kernova.macosagent", category: "Drop")
+        ) { names in
+            reveal(
+                names.map { name in
+                    downloads.appendingPathComponent(String(decoding: name, as: UTF8.self))
+                })
+        }
     }
 
     /// The update adapter `claim` registers, and the installer behind it when it has one.

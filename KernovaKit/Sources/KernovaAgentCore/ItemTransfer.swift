@@ -311,6 +311,11 @@ public struct ItemTransfer: FeatureMachine {
         offers.release(token, connection: &connection)
     }
 
+    /// Refuses the far side's offer of `token` with `error`: this side pulls nothing of it, and says why.
+    public mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+        offers.refuse(token, error, connection: &connection)
+    }
+
     /// Pulls one representation of the far side's open offer, as `order` says.
     public mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
         client.pull(order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)

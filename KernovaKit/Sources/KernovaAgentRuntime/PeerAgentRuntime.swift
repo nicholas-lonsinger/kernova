@@ -166,6 +166,12 @@ public final class PeerAgentRuntime: Sendable {
         send(.release(token: token))
     }
 
+    /// Refuses the host's offer of `token` with `error`: this side pulls nothing of it, and the host's
+    /// `.offerEnded` closes `.resetByPeer(error)`.
+    public func refuseOffer(_ token: Data, _ error: WireError) {
+        send(.refuse(token: token, error))
+    }
+
     /// Pulls one representation of the host's open offer as `order` says, and calls `completion` once with the
     /// pull's id, whose one `.pullEnded` follows, or why it was not opened.
     public func pullItem(

@@ -160,6 +160,11 @@ struct ItemMachines: Sendable {
         transfer.release(token, connection: &connection)
     }
 
+    /// Refuses the far side's offer of `token` with `error`.
+    mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+        transfer.refuse(token, error, connection: &connection)
+    }
+
     /// Host: takes the peer's open drag offer of `token`.
     mutating func takeDrag(_ token: Data, connection: inout Connection) -> Result<DragTakeID, WireError> {
         drag.take(token, items: transfer, connection: &connection)

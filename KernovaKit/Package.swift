@@ -190,7 +190,7 @@ var targets: [Target] = [
         name: "KernovaItemTransfer",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaTreeTransfer", "KernovaContainer",
-            "KernovaContainerPipeline", "KernovaFileTree", "KernovaWire", "KernovaSynchronization",
+            "KernovaContainerPipeline", "KernovaFileTree", "KernovaWire", "KernovaSynchronization", "KernovaLogging",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -307,7 +307,7 @@ var targets: [Target] = [
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
             "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost", "KernovaItemTransfer",
-            "KernovaFileTree", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaFileTree", "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),

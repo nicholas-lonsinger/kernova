@@ -31,6 +31,9 @@ public enum ItemCommand: Sendable, Equatable {
     /// Release the far side's offer of `token`: this side pulls nothing more of it. Releasing a taken drag
     /// offer completes the drag.
     case release(token: Data)
+    /// Refuse the far side's offer of `token`: RESET with `error`, so its opener hears why this side pulls
+    /// nothing of it.
+    case refuse(token: Data, WireError)
     /// Pull one representation of the far side's open offer, landing it as the order says; answered `.pulled`.
     case pull(ItemRequestID, ItemPullOrder)
     /// Cancel a pull this side opened; its `.pullEnded` follows.
@@ -65,6 +68,8 @@ extension ItemMachines {
             withdraw(token, connection: &connection)
         case .release(let token):
             release(token, connection: &connection)
+        case .refuse(let token, let error):
+            refuse(token, error, connection: &connection)
         case .pull(let id, let order):
             return (id, .pulled(pull(order, connection: &connection)))
         case .cancel(let pull):

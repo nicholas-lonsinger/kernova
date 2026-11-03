@@ -8,8 +8,8 @@ import KernovaSynchronization
 
 // Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
 // `session`, it is the session peer: an `.accessory` menu-bar app holding the
-// v2 peer's connection to the host beside the clipboard, drop and control
-// channels. Every other command — the system peer, the installer, the
+// v2 peer's connection to the host, which lands drops, beside the clipboard,
+// drag-out and control channels. Every other command — the system peer, the installer, the
 // rollback check — runs headless (`MacAgentTools`).
 
 @main
@@ -113,7 +113,10 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         Self.logger.log(.notice, "Kernova Guest Agent \(Self.versionLabel, privacy: .public) started")
 
         let peer = MacAgentPeer(
-            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer())
+            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer(),
+            revealDrop: { urls in
+                DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            })
         self.peer = peer
         followSession(peer)
 

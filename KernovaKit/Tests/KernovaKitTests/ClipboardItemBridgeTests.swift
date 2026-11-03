@@ -410,6 +410,76 @@ struct ClipboardItemBridgeTests {
         #expect(first.callIns == 0)
     }
 
+    // MARK: - Drops
+
+    /// What a drop of `pasteboard` offers, its `promises` called in first into a fresh directory.
+    private func readDropOffer(
+        _ pasteboard: FakePasteboard, promises: [any FilePromiseReceiving] = []
+    ) async throws -> ClipboardOfferSource {
+        let folder = try directory("drop-\(UUID().uuidString)")
+        let called = promises.map { CalledInFilePromise.callIn($0, into: folder) }
+        let outcome = await ClipboardPasteboardReader.readDropOffer(from: pasteboard, promises: called, sizeOf: nil)
+        guard case .offer(let source, _) = outcome else {
+            Issue.record("expected a drop offer, got \(outcome)")
+            throw CancellationError()
+        }
+        return source
+    }
+
+    @Test("a drop's promise is called in before its offer is read, and offered under the name it gives then")
+    func dropPromiseIsCalledInFirst() async throws {
+        let receiver = FakeFilePromiseReceiver(
+            name: "IMG_0001.png", fileType: "public.png", contents: .file(pngBytes), named: false)
+
+        let source = try await readDropOffer(promisePasteboard(), promises: [receiver])
+
+        #expect(receiver.callIns == 1)
+        let representation = try #require(single(source).first)
+        #expect(representation.name == Data("IMG_0001.png".utf8))
+        #expect(representation.promised)
+        guard case .file(let landed) = try await source.serve(item: 0, representation: 0) else {
+            Issue.record("expected the promised file")
+            return
+        }
+        #expect(try Data(contentsOf: landed) == pngBytes)
+        #expect(receiver.callIns == 1)
+    }
+
+    @Test("a dropped item carrying a promise beside a file on disk offers the promise")
+    func dropPrefersThePromise() async throws {
+        let derivative = try directory("library").appendingPathComponent("derivative.jpeg")
+        try Data("smaller".utf8).write(to: derivative)
+        let pasteboard = FakePasteboard()
+        pasteboard.setItem(
+            [(type: .fileURL, data: Data(derivative.absoluteString.utf8))]
+                + promiseTypes.map { (type: $0, data: Data()) })
+        let receiver = FakeFilePromiseReceiver(
+            name: "IMG_0001.heic", fileType: "public.heic", contents: .file(pngBytes))
+
+        let source = try await readDropOffer(pasteboard, promises: [receiver])
+
+        #expect(source.items.map { $0.representations.map(\.name) } == [[Data("IMG_0001.heic".utf8)]])
+    }
+
+    @Test("a drop offers its files and folders, one representation each, and nothing else it carries")
+    func dropOffersTreesOnly() async throws {
+        let image = try directory("dropped").appendingPathComponent("picture.png")
+        try pngBytes.write(to: image)
+        let folder = try directory("dropped/Album")
+        let pasteboard = FakePasteboard()
+        pasteboard.setItems([
+            [(type: .string, data: Data("hello".utf8))],
+            [(type: .fileURL, data: Data(image.absoluteString.utf8))],
+            [(type: .fileURL, data: Data(folder.absoluteString.utf8))],
+        ])
+
+        let source = try await readDropOffer(pasteboard)
+
+        #expect(source.items.map { $0.representations.map(\.storage) } == [[.file], [.folder]])
+        #expect(
+            source.items.map { $0.representations.map(\.name) } == [[Data("picture.png".utf8)], [Data("Album".utf8)]])
+    }
+
     // MARK: - Markers
 
     @Test("a concealed copy is offered concealed and published with the marker, which reads back concealed")

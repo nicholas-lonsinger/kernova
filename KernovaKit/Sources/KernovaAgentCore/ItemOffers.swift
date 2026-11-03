@@ -181,6 +181,14 @@ package struct ItemOfferRegistry: Sendable {
         }
     }
 
+    /// Resets the far side's offer of `token` with `error`.
+    mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+        guard let entry = remote.first(where: { $0.header.token == token }), connection.canReset(entry.stream) else {
+            return
+        }
+        connection.reset(entry.stream, error)
+    }
+
     private mutating func pump(_ stream: StreamID, _ connection: inout Connection) {
         guard let index = local.firstIndex(where: { $0.stream == stream }), !local[index].ended else { return }
         while local[index].sent < local[index].encoded.count {
