@@ -237,7 +237,7 @@ public enum ClipboardPasteboardReader {
     ///
     /// `stat(2)` alone answers none of this — a mode-`000` file stats exactly
     /// like a readable one — so the open permission is asked for separately.
-    nonisolated private static func readableSource(for url: URL) -> URL? {
+    nonisolated static func readableSource(for url: URL) -> URL? {
         let isSymbolicLink =
             (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
         let source = isSymbolicLink ? url.resolvingSymlinksInPath() : url
@@ -250,7 +250,7 @@ public enum ClipboardPasteboardReader {
     // MARK: - Classifying one item
 
     /// What one pasteboard item contributes to the file enumeration.
-    private enum FileURLResolution {
+    enum FileURLResolution {
         /// A concrete `public.file-url` or a `promised-file-url` that already
         /// points at an on-disk file.
         case resolved(URL)
@@ -270,7 +270,7 @@ public enum ClipboardPasteboardReader {
     /// `.vanished` needs a `public.file-url` that *decoded* and then missed:
     /// declaring the type is not enough, because a lazy provider may vend no
     /// URL at all while the item's inline flavors remain readable.
-    private static func fileURLResolution(
+    static func fileURLResolution(
         in item: any ClipboardPasteboardItemReading
     ) -> FileURLResolution {
         let candidates: [NSPasteboard.PasteboardType] = [
@@ -278,7 +278,9 @@ public enum ClipboardPasteboardReader {
             NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"),
         ]
         var missedConcreteURL = false
-        for type in candidates {
+        // Only a declared type is read, so an item naming no file is never read at all.
+        let declared = Set(item.types)
+        for type in candidates where declared.contains(type) {
             guard let string = item.string(forType: type),
                 let url = URL(string: string), url.isFileURL
             else { continue }
@@ -295,7 +297,7 @@ public enum ClipboardPasteboardReader {
 
     /// `true` when the item advertises a file promise, whose asynchronous
     /// receipt can still produce the file.
-    private static func promisesFile(_ item: any ClipboardPasteboardItemReading) -> Bool {
+    static func promisesFile(_ item: any ClipboardPasteboardItemReading) -> Bool {
         item.types.contains {
             $0.rawValue.hasPrefix("com.apple.pasteboard.promised-file")
                 || $0.rawValue.hasPrefix("com.apple.NSFilePromise")
@@ -303,7 +305,7 @@ public enum ClipboardPasteboardReader {
     }
 
     /// `true` for the types that mark a snapshot as a file or file promise.
-    private static func isFileOrPromiseType(_ uti: String) -> Bool {
+    static func isFileOrPromiseType(_ uti: String) -> Bool {
         uti == "public.file-url" || uti == "NSFilenamesPboardType"
             || uti.hasPrefix("com.apple.pasteboard.promised-file")
             || uti.hasPrefix("com.apple.NSFilePromise")
@@ -311,7 +313,7 @@ public enum ClipboardPasteboardReader {
 
     /// `true` for text/URL types that, in a file/promise snapshot, merely
     /// describe the file's path or name rather than being real content.
-    private static func isPathFallbackType(_ uti: String) -> Bool {
+    static func isPathFallbackType(_ uti: String) -> Bool {
         uti == "public.url" || uti == "public.utf8-plain-text"
             || uti == "Apple URL pasteboard type"
     }
