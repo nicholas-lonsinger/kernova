@@ -265,7 +265,8 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
-    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
+    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held. Each FILE and
+    /// FOLDER representation's name passes `PathComponent.isValid`, and each INLINE one's is empty.
     public func remoteOfferItem(token: Data, index: Int) -> OfferedItem? {
         items.transfer.remoteItem(token: token, index: index)
     }

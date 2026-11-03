@@ -138,8 +138,12 @@ package struct ItemOfferRegistry: Sendable {
         guard let descriptor = connection.descriptor(for: kind), descriptor.owner == .itemOffer,
             let feature = descriptor.feature
         else { return WireError(.unsupportedKind, debugDetail: "\(kind) is no item-set offer kind") }
+        if let refusal = connection.openRefusal(kind) { return refusal }
         guard offer.token.count == 16, !local.contains(where: { $0.offer.token == offer.token }) else {
             return WireError(.internal, debugDetail: "an offer token is 16 bytes no open offer holds")
+        }
+        guard offer.items.allSatisfy(Self.isNamedByContract) else {
+            return WireError(.internal, debugDetail: "a representation's name breaks Representation.name's contract")
         }
         let encoded = offer.items.map(\.encoded)
         var header = Kernova_V2_ItemSetHeader()
@@ -152,7 +156,6 @@ package struct ItemOfferRegistry: Sendable {
             return WireError(
                 .tooLarge, limit: UInt64(WireConstants.maxControlPayload), debugDetail: "\(oversize.count) bytes")
         }
-        if let refusal = connection.openRefusal(kind) { return refusal }
         let stream = connection.open(kind, body: body)
         guard stream != .session else { return WireError(.internal) }
         local.append(Local(stream: stream, feature: feature, offer: offer, encoded: encoded))
@@ -256,14 +259,30 @@ package struct ItemOfferRegistry: Sendable {
         guard remoteCharged + message.count <= Self.remoteItemByteLimit else {
             return connection.reset(stream, WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit)))
         }
-        guard (try? OfferedItem(serializedBytes: message)) != nil else {
+        guard let item = try? OfferedItem(serializedBytes: message) else {
             return refuse(stream, .malformedMessage, "an Item that does not decode", &connection)
+        }
+        guard Self.isNamedByContract(item) else {
+            return refuse(stream, .malformedMessage, "an Item whose names break their contract", &connection)
         }
         // A copy, so the item holds exactly its bytes rather than the received buffer it was cut from.
         let held = message.withUnsafeBytes { Data($0) }
         remote[index].items.append(held)
         remote[index].charged += held.count
         remoteCharged += held.count
+    }
+
+    /// Whether every representation of `item` is named as `Representation.name` requires: a FILE or FOLDER by
+    /// one path component, an INLINE not at all. The registry holds no other item, this side's or the far
+    /// side's.
+    private static func isNamedByContract(_ item: OfferedItem) -> Bool {
+        item.representations.allSatisfy { representation in
+            switch representation.storage {
+            case .file, .folder: PathComponent.isValid(representation.name)
+            case .inline: representation.name.isEmpty
+            case .unspecified, .UNRECOGNIZED: true
+            }
+        }
     }
 
     private func refuse(_ stream: StreamID, _ code: ErrorCode, _ detail: String, _ connection: inout Connection) {
