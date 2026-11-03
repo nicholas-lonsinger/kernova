@@ -73,15 +73,46 @@ struct SidebarFilterSortGroupTests {
 
     // MARK: - Filter through the projection
 
+    @Test("The guest agent bucket judges an agent by its payload hash, not by the label it reports")
+    func agentBucketByHash() {
+        let rebuilt = Data(repeating: 0xB2, count: 32)
+        let entries = [
+            vm("Current", guestOS: .macOS) {
+                $0.lastSeenAgentVersion = "0.9 (1)"
+                $0.lastSeenAgentPayloadHash = .testingPayloadHash
+            },
+            vm("Same label, other payload", guestOS: .macOS) {
+                $0.lastSeenAgentVersion = "1.0 (1)"
+                $0.lastSeenAgentPayloadHash = rebuilt
+            },
+            vm("One scope behind", guestOS: .macOS) {
+                $0.lastSeenAgentVersion = "1.0 (1)"
+                $0.lastSeenAgentPayloadHash = .testingPayloadHash
+                $0.lastSeenSystemAgentVersion = "1.0 (1)"
+                $0.lastSeenSystemAgentPayloadHash = rebuilt
+            },
+        ]
+        #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate]))) == ["Current"])
+        #expect(
+            shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion])))
+                == ["Same label, other payload", "One scope behind"])
+        // Before the bundled payload is hashed, no recorded agent is judged.
+        let unhashed = SidebarLayout.Context.testing(bundledPayloadHashes: [:])
+        #expect(
+            shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate, .olderVersion])), context: unhashed)
+                .isEmpty)
+    }
+
     @Test("Each attribute narrows the library section by what each VM is")
     func filterAttributes() {
         let baseline = VMSnapshot(name: "Baseline", macAddress: nil)
         let kept = VMSnapshot(name: "Kept", macAddress: nil)
         let entries = [
             vm("Mac", guestOS: .macOS, phase: .running(sessionID: UUID())) {
-                $0.lastSeenAgentVersion = "2.0"
+                $0.lastSeenAgentVersion = "1.0 (1)"
+                $0.lastSeenAgentPayloadHash = .testingPayloadHash
             },
-            vm("Old Mac", guestOS: .macOS) { $0.lastSeenAgentVersion = "1.0" },
+            vm("Old Mac", guestOS: .macOS) { $0.lastSeenAgentVersion = "0.9 (1)" },
             vm("Bare Mac", guestOS: .macOS) {
                 $0.networkEnabled = false
             },
@@ -101,7 +132,9 @@ struct SidebarFilterSortGroupTests {
         #expect(shownNames(entries, options(VMLibraryFilter(networks: [net(.hostOnly)]))) == ["Snapshotted"])
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate]))) == ["Mac"])
         #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion]))) == ["Old Mac"])
-        #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.neverConnected]))) == ["Bare Mac"])
+        #expect(
+            shownNames(entries, options(VMLibraryFilter(guestAgents: [.neverConnected])))
+                == ["Bare Mac", "Ephemeral", "Snapshotted"])
         #expect(shownNames(entries, options(VMLibraryFilter(ephemeralOnly: true))) == ["Ephemeral"])
         // The Ephemeral baseline counts, as every surface counts it.
         #expect(

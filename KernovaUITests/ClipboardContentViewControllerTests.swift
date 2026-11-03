@@ -598,7 +598,7 @@ struct ClipboardAgentDiskControlTests {
         let instance = viewModel.library.admitFixture(
             guestOS: .macOS, phase: .running(sessionID: UUID()),
             mutate: clipboardConfiguration(passthroughEnabled: false))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         let vc = ClipboardContentViewController(
             instance: instance, viewModel: viewModel,
             publisher: HostClipboardPublisher(pasteboard: FakePasteboard(), stagingRoot: stagingRoot.root))

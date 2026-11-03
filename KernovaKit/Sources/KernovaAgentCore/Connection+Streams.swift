@@ -204,15 +204,20 @@ extension Connection {
         }
     }
 
-    /// Closes every open stream with `closure`, then drops every FIFO. Pending
-    /// RESETs survive a local close for streams whose OPEN left; everything else
-    /// is dropped.
-    mutating func closeAllStreams(_ closure: StreamClosure, keepPendingResets: Bool) {
+    /// Closes every open stream with `closure`, then drops every FIFO. A local close (`keepsCommitted`) keeps
+    /// what this side already committed: the pending RESETs of streams whose OPEN left, and the whole FIFO of a
+    /// stream that had completed, whose END its machine was told is sent. Everything else is dropped.
+    mutating func closeAllStreams(_ closure: StreamClosure, keepsCommitted: Bool) {
+        var completed = Set<StreamID>()
         for index in streams.indices {
-            if !keepPendingResets { streams[index].pendingReset = nil }
-            if streams[index].phase != .closed { markClosed(at: index, closure) }
+            if !keepsCommitted { streams[index].pendingReset = nil }
+            if streams[index].phase == .closed {
+                completed.insert(streams[index].id)
+            } else {
+                markClosed(at: index, closure)
+            }
         }
-        for index in streams.indices {
+        for index in streams.indices where !(keepsCommitted && completed.contains(streams[index].id)) {
             discardQueue(at: index)
         }
         if isAcceptingInput { returnConnectionCredit() }
@@ -289,7 +294,7 @@ extension Connection {
     mutating func fatal(_ code: ErrorCode, _ detail: String) {
         guard isAcceptingInput else { return }
         let error = WireError(code, debugDetail: detail)
-        closeAllStreams(.connectionClosedLocally(error), keepPendingResets: false)
+        closeAllStreams(.connectionClosedLocally(error), keepsCommitted: false)
         dropAllQueues()
         enterClosing(error, drainsQueue: false)
     }

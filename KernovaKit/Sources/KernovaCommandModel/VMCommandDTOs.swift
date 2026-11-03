@@ -133,8 +133,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let snapshotCount: Int
     /// Whether the bundle holds any snapshot — ``snapshotCount`` is not zero.
     public let hasSnapshots: Bool
-    /// How a macOS guest's agent stands against the one the app bundles, `nil`
-    /// for a guest no Kernova agent runs in.
+    /// How the guest's agents stand against the ones the app bundles, `nil`
+    /// when an agent has connected and nothing is bundled to judge it against.
     public let guestAgent: VMGuestAgentBucket?
     /// The coarse state the VM is in, by whether a session is live in the
     /// copy answering.

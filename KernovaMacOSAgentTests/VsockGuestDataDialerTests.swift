@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import KernovaPlatformDarwin
 import Testing
 import KernovaSynchronization
 
@@ -71,7 +72,7 @@ struct VsockGuestDataDialerTests {
 
     @Test("a connect that never completes is thrown, not returned as a descriptor")
     func rethrowsAProviderFailure() {
-        #expect(throws: VsockProviderError.transient("no host")) {
+        #expect(throws: VsockConnectFailure.transient("no host")) {
             _ = try VsockGuestDataDialer.connect(port: 49_156) { _, _ in
                 .failure(.transient("no host"))
             }

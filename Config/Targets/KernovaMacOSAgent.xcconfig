@@ -5,10 +5,7 @@ PRODUCT_MODULE_NAME = KernovaMacOSAgent
 EXECUTABLE_NAME = KernovaMacOSAgent
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova.macosagent
 
-// The guest agent's own version, independent of the app's. Bump it whenever a
-// change means a running guest needs the agent reinstalled — AGENTS.md
-// "Build & Test".
-MARKETING_VERSION = 0.92.1
+MARKETING_VERSION = $(KERNOVA_MARKETING_VERSION)
 
 MACOSX_DEPLOYMENT_TARGET = $(KERNOVA_AGENT_DEPLOYMENT_TARGET)
 
@@ -17,7 +14,7 @@ MACOSX_DEPLOYMENT_TARGET = $(KERNOVA_AGENT_DEPLOYMENT_TARGET)
 GENERATE_INFOPLIST_FILE = NO
 INFOPLIST_FILE = KernovaMacOSAgent/Info.plist
 INFOPLIST_PREPROCESS = YES
-INFOPLIST_PREFIX_HEADER = $(DERIVED_FILE_DIR)/AgentBuildNumber.h
+INFOPLIST_PREFIX_HEADER = $(DERIVED_FILE_DIR)/KernovaBuildNumber.h
 
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks @loader_path/../Frameworks

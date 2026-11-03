@@ -18,7 +18,7 @@ extension ConfigurationBuilder {
         ConfigurationBuilder(
             bridgedInterfaces: HostBridgedInterfaceProvider(), vmnetNetworks: networks.service,
             vmnetAttachments: attachments.maker, entitlements: entitlements,
-            guestAgents: BundledGuestAgents.macOS(version: "2.0", installerDiskImageURL: guestAgentInstaller))
+            guestAgents: BundledGuestAgents.macOS(versionLabel: "1.0 (1)", installerDiskImageURL: guestAgentInstaller))
     }
 }
 

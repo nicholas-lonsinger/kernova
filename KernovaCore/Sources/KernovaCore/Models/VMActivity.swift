@@ -1476,7 +1476,7 @@ package final class VMActivity {
         dropSessionFollowUps()
         guard let owner else { return }
         accessoryHolders?.releaseAll(of: owner, AccessoryHoldersKey())
-        owner.sessionDidEnd(afterRunning: ended?.runningSince != nil)
+        if let ended { owner.sessionDidEnd(ended) }
     }
 
     // MARK: - USB Accessories

@@ -31,26 +31,26 @@ public enum VMStateBucket: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// How a macOS guest's agent stands against the one this build bundles, by
-/// the version the guest last reported.
+/// How a guest's agents stand against the ones this build bundles, by the
+/// version labels they last reported.
 public enum VMGuestAgentBucket: String, Codable, CaseIterable, Sendable {
     case upToDate
     case olderVersion
     case neverConnected
 
-    /// The bucket for an agent last seen reporting `lastSeenVersion` (`nil`
-    /// when none ever connected), against `bundledVersion`; `nil` when an agent
-    /// has connected and the build does not know the version it bundles, so
-    /// nothing says how the agent stands.
-    public init?(lastSeenVersion: String?, bundledVersion: String?) {
-        guard let lastSeenVersion else {
+    /// The bucket of a VM whose agents last claimed the payload hashes
+    /// `lastSeen`, one per scope on record — `nil` for a record kept without
+    /// one — against the hash of the payload bundled for its guest OS: up to
+    /// date only when each is that hash, the identity the agent hub judges a
+    /// peer current by and offers any other the bundled payload; `nil` when an
+    /// agent is on record and no bundled hash is known to judge it against.
+    public init?(lastSeen: [Data?], bundled: Data?) {
+        guard !lastSeen.isEmpty else {
             self = .neverConnected
             return
         }
-        guard let bundledVersion else { return nil }
-        self =
-            KernovaVersionComparison.isAtLeast(lastSeenVersion, bundledVersion)
-            ? .upToDate : .olderVersion
+        guard let bundled else { return nil }
+        self = lastSeen.allSatisfy { $0 == bundled } ? .upToDate : .olderVersion
     }
 
     /// What a person reads for this bucket.
@@ -257,8 +257,7 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
     /// Admits only the networks some value in the set admits
     /// (``Network/admits(_:)``).
     public var networks: Set<Network>
-    /// Admits only guests with an agent bucket in the set, so a Linux guest
-    /// never passes a non-empty one.
+    /// Admits only guests with an agent bucket in the set.
     public var guestAgents: Set<VMGuestAgentBucket>
     /// Admits only VMs with Ephemeral Mode on.
     public var ephemeralOnly: Bool

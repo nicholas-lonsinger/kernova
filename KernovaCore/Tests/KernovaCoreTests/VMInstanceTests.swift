@@ -1,9 +1,11 @@
 import Foundation
-import KernovaCommandModel
+import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaAgentRuntime
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import SwiftProtobuf
 import Testing
 
@@ -828,12 +830,9 @@ struct VMInstanceTests {
 
     // MARK: - agentPresentation dispatch
     //
-    // `VMInstance.agentPresentation` is the single read site for the UI; it
-    // dispatches by `configuration.guestOS`:
-    //   - macOS guests source it from `vsockControlService` (the always-on
-    //     control channel, independent of clipboard sharing).
-    //   - Linux guests source it from the agent hub's snapshot, never from the
-    //     SPICE clipboard's agent.
+    // `VMInstance.agentPresentation` is the single read site for the UI; every
+    // guest sources it from the agent hub's snapshot once its session attached
+    // the hub a transport, never from the SPICE clipboard's agent.
 
     @Test("agentStatus is nil on a Linux instance with no session")
     func agentStatusLinuxWithoutSessionIsNil() {
@@ -842,9 +841,9 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == nil)
     }
 
-    @Test("A Linux session without a socket device has no agent channel, so no presentation")
-    func agentPresentationLinuxSessionWithoutTransportIsNil() {
-        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
+    @Test("A session without a socket device has no agent channel, so no presentation", arguments: VMGuestOS.allCases)
+    func agentPresentationSessionWithoutTransportIsNil(guestOS: VMGuestOS) {
+        let instance = VMInstanceFixture.make(guestOS: guestOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
         #expect(instance.agentPresentation == nil)
     }
@@ -857,21 +856,19 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == nil)
     }
 
-    @Test("A macOS session with no control channel reports .connecting for a VM that has seen an agent")
-    func agentStatusMacOSSessionWithoutControlIsConnecting() {
+    @Test("A macOS session with no agent connected reports .connecting for a VM that has seen an agent")
+    func agentStatusMacOSSessionWithoutAgentIsConnecting() {
         let instance = VMInstanceFixture.make(
             guestOS: .macOS, phase: .running(sessionID: UUID()),
             mutate: { $0.lastSeenAgentVersion = "0.9.2" })
-        instance.beginSessionContextForTesting()
-        #expect(instance.vsockControlService == nil)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
     }
 
-    @Test("A macOS session with no control channel reports .waiting for a VM that has never seen an agent")
-    func agentStatusMacOSSessionWithoutControlNeverSeenIsWaiting() {
+    @Test("A macOS session with no agent connected reports .waiting for a VM that has never seen an agent")
+    func agentStatusMacOSSessionWithoutAgentNeverSeenIsWaiting() {
         let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        #expect(instance.vsockControlService == nil)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         #expect(instance.agentPresentation?.status == .waiting)
     }
 
@@ -886,31 +883,16 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == nil)
     }
 
-    @Test("agentStatus on macOS does NOT fall through to clipboardService — control is the only source")
-    func agentStatusMacOSIgnoresClipboardService() {
-        // Set a SpiceClipboardService on a macOS instance — an obvious
-        // misconfiguration the dispatch shouldn't dignify. macOS should still
-        // report `.waiting` because vsockControlService is nil; if dispatch
-        // accidentally fell through to clipboardService, this would surface
-        // the SPICE service's own `.waiting` (same value, but for the wrong
-        // reason — and `.current` if the SPICE service were connected).
-        let instance = VMInstanceFixture.make(guestOS: .macOS)
-        instance.beginSessionContextForTesting().clipboardService = SpiceClipboardService(
-            inputPipe: Pipe(),
-            outputPipe: Pipe()
-        )
-        #expect(instance.vsockControlService == nil)
-        #expect(instance.agentPresentation?.status == .waiting)
-    }
-
-    @Test("A Linux session's agent status ignores the SPICE agent, which only the Clipboard window's line reads")
-    func agentPresentationLinuxIgnoresSpice() {
-        let instance = VMInstanceFixture.make(guestOS: .linux)
+    @Test(
+        "A session's agent status ignores a SPICE agent, which only the Clipboard window's line reads",
+        arguments: VMGuestOS.allCases)
+    func agentPresentationIgnoresSpice(guestOS: VMGuestOS) {
+        let instance = VMInstanceFixture.make(guestOS: guestOS)
         let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
         let context = instance.beginSessionContextForTesting()
         context.clipboardService = spice
         context.hasAgentTransport = true
-        #expect(instance.agentPresentation?.hub != nil)
+        #expect(instance.agentPresentation == GuestAgentPresentation(hub: .empty))
         #expect(instance.agentPresentation?.status == .waiting)
         #expect(instance.clipboardChannelStatus == spice.agentStatus)
     }
@@ -1062,18 +1044,17 @@ struct VMInstanceTests {
     // MARK: - Agent Absence Watchdog
     //
     // The watchdog warns (`agentExpectedButMissing`) after a grace period when:
-    //   - The guest is macOS,
     //   - The VM is `.running` (a frozen guest can't answer),
     //   - `lastSeenAgentVersion` is set (so we have a baseline expectation),
-    //   - No agent is connected on the control channel already,
+    //   - No session peer is connected to the agent hub already,
     //   - No `setupState` is in progress, and
-    //   - No Hello arrives during the grace window.
+    //   - No session peer connects during the grace window.
     // The watchdog task is the only writer of what it flips, so a no-op test
     // proves no task was armed, and a cancel test awaits the task's return.
 
     /// Builds a macOS VMInstance with a known `lastSeenAgentVersion` and an
-    /// open session context — the watchdog is session state, so it arms into
-    /// one or not at all.
+    /// open session context whose agent hub has a transport — the watchdog is
+    /// session state, so it arms into one or not at all.
     ///
     /// Registered with `library` when one is passed — what a test whose VM
     /// writes its settings needs.
@@ -1093,6 +1074,7 @@ struct VMInstanceTests {
         let hostState = VMHostState(agentInstallNudgeDismissed: agentInstallNudgeDismissed)
         let recordAgent: (inout VMConfiguration) -> Void = {
             $0.lastSeenAgentVersion = lastSeen
+            $0.lastSeenAgentPayloadHash = Self.agentHash
             $0.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         }
         let instance =
@@ -1101,24 +1083,33 @@ struct VMInstanceTests {
             ?? VMInstanceFixture.make(
                 name: name, guestOS: .macOS, phase: phase, hostState: hostState, mutate: recordAgent)
         instance.setupState = setupState
-        instance.beginSessionContextForTesting(bootedIntoRecovery: bootedIntoRecovery)
+        instance.beginSessionContextForTesting(bootedIntoRecovery: bootedIntoRecovery).hasAgentTransport = true
         return instance
     }
 
-    /// Guest-side `Hello` for tests that drive a real `VsockControlService`.
-    private func makeGuestHelloFrame(agentVersion: String) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = KernovaCapability.controlChannelDefaults
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.osVersion = "26.0"
-                $0.agentVersion = agentVersion
-            }
-        }
-        return frame
+    /// Lands a hub snapshot whose only peer is a session agent reporting
+    /// `version`, standing `standing`, on the connection `handle`.
+    private func connectSessionAgent(
+        to instance: VMInstance, version: String = "0.9.2", standing: PeerSummary.Standing = .current,
+        handle: UInt64 = 1
+    ) {
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [
+                    PeerSummary(
+                        handle: PeerHandle(rawValue: handle), role: .sessionPeer, scope: .user, os: .macOS,
+                        sessionID: "2", userName: "pbear", console: .on, versionLabel: version, standing: standing,
+                        isResponsive: true, payloadHash: Self.agentHash)
+                ], features: FeatureStatus.merge([])))
+    }
+
+    /// The payload hash the agent ``makeMacOSInstanceWithAgentInstalled(in:lastSeen:lastSeenGuestOSVersion:setupState:bootedIntoRecovery:agentInstallNudgeDismissed:)``
+    /// records claimed, and ``connectSessionAgent(to:version:standing:handle:)``'s claims.
+    private static let agentHash = Data(repeating: 0x7E, count: 32)
+
+    /// Lands a hub snapshot with no peer: every agent went away.
+    private func disconnectAgents(from instance: VMInstance) {
+        instance.publishAgentHubSnapshotForTesting(.empty)
     }
 
     private static let testWatchdogGrace: Duration = .milliseconds(200)
@@ -1158,10 +1149,10 @@ struct VMInstanceTests {
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting != nil)
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
+        connectSessionAgent(to: instance)
         #expect(instance.agentAbsenceTimerForTesting == nil)
-        // The channel goes away, and the guest is resumed later: nothing waits.
-        instance.agentPresenceChanged()
+        // The agent goes away, and the guest is resumed later: nothing waits.
+        disconnectAgents(from: instance)
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting == nil)
         #expect(instance.agentExpectedButMissing == false)
@@ -1183,7 +1174,7 @@ struct VMInstanceTests {
         #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
-    @Test("A Linux session agent seen before arms the watchdog on the same rule as the macOS agent")
+    @Test("A Linux session agent seen before arms the watchdog on the same rule as a macOS one")
     func watchdogArmsForLinuxSessionAgent() {
         let instance = VMInstanceFixture.make(
             name: "Linux VM", phase: .running(sessionID: UUID())
@@ -1268,26 +1259,11 @@ struct VMInstanceTests {
 
     @Test("Watchdog is a no-op while the agent is connected")
     func watchdogNoopWhileAgentConnected() async throws {
-        // Re-arm sites (resume, and the control channel dying) fire without
+        // Re-arm sites (resume, and the hub's agents changing) fire without
         // checking whether an agent is already talking; nothing to wait for
         // means nothing to arm.
         let instance = makeMacOSInstanceWithAgentInstalled()
-        let (guestFd, hostFd) = try makeRawSocketPair()
-        let guest = VsockChannel(fileDescriptor: guestFd)
-        let host = VsockChannel(fileDescriptor: hostFd)
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let control = VsockControlService(
-            channel: host, label: "watchdog-test", hostVersion: AppBundleProducts.testing.hostVersion,
-            bundledAgentVersion: BundledGuestAgents.testing.macOSVersion)
-        instance.sessionContext?.vsock.control = control
-        control.start()
-        defer { control.stop() }
-
-        try guest.send(makeGuestHelloFrame(agentVersion: "0.9.2"))
-        try await waitForChange { control.agentVersion != nil }
+        connectSessionAgent(to: instance)
 
         instance.agentAbsenceGrace = Self.testWatchdogGrace
 
@@ -1402,7 +1378,7 @@ struct VMInstanceTests {
         #expect(instance.effectiveConfiguration.effectiveGuestMacOSVersion == nil)
     }
 
-    @Test("Row 3: once the agent said Hello this session, its absence never warns, and nothing persisted moves")
+    @Test("Row 3: once the agent connected this session, its absence never warns, and nothing persisted moves")
     func watchdogPreservesPersistedStateAfterAMidSessionDeath() async throws {
         // A login agent that connected this session demonstrably exists: a
         // logout or crash is not a missing install, so nothing arms, nothing
@@ -1410,16 +1386,16 @@ struct VMInstanceTests {
         // moves.
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library, agentInstallNudgeDismissed: true)
+        let instance = makeMacOSInstanceWithAgentInstalled(
+            in: library, lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)", agentInstallNudgeDismissed: true)
         defer { withExtendedLifetime(library) {} }
 
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
-        #expect(instance.hasSeenAgentThisSession)
+        connectSessionAgent(to: instance)
         let persistsAfterHello = storage.saveConfigurationCallCount
         let hostStatePersistsAfterHello = storage.saveHostStateCallCount
 
         // The agent goes away mid-session and never comes back.
+        disconnectAgents(from: instance)
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting == nil)
@@ -1429,19 +1405,6 @@ struct VMInstanceTests {
         #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(storage.saveConfigurationCallCount == persistsAfterHello)
         #expect(storage.saveHostStateCallCount == hostStatePersistsAfterHello)
-    }
-
-    @Test("A session's end clears hasSeenAgentThisSession")
-    func sessionEndClearsSeenAgentFlag() throws {
-        // The flag is per-session: the next boot's no-show must be free to
-        // rewrite persisted agent state again.
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "26.0"))
-        #expect(instance.hasSeenAgentThisSession)
-        let context = try #require(instance.sessionContext)
-
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(!context.hasSeenAgentThisSession)
     }
 
     @Test("A session's end clears agentExpectedButMissing and cancels the watchdog")
@@ -1455,7 +1418,8 @@ struct VMInstanceTests {
 
         instance.handleSessionEvent(.guestDidStop)
 
-        #expect(context.warnedAgentScopes.isEmpty)
+        #expect(instance.agentExpectedButMissing == false)
+        #expect(context.agentAbsenceTimer == nil)
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
@@ -1504,7 +1468,7 @@ struct VMInstanceTests {
         #expect(staleContext !== instance.sessionContext)
     }
 
-    @Test("agentStatus surfaces .expectedMissing only when both the flag and persisted version are set")
+    @Test("The status surfaces .expectedMissing only when both the flag and persisted version are set")
     func agentStatusExpectedMissingRequiresBoth() {
         let library = makeWiredLibrary()
         let instance = makeMacOSInstanceWithAgentInstalled(in: library)
@@ -1552,155 +1516,82 @@ struct VMInstanceTests {
         #expect(instance.configuration == before)
     }
 
-    // MARK: - recordObservedAgentInfo
+    // MARK: - Session peers recorded
 
-    @Test("recordObservedAgentInfo persists when the version changes")
-    func recordObservedPersistsOnChange() {
+    @Test("A session peer's version is recorded when it differs from the committed one")
+    func sessionPeerPersistsOnChange() {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.9.0")
         defer { withExtendedLifetime(library) {} }
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
+        connectSessionAgent(to: instance, version: "0.9.2")
 
         #expect(instance.configuration.lastSeenAgentVersion == "0.9.2")
         #expect(storage.bundles[instance.bundleURL]?.lastSeenAgentVersion == "0.9.2")
-    }
-
-    @Test("recordObservedAgentInfo populates both last-seen fields for fresh VMs")
-    func recordObservedSetsFromNil() {
-        // Simulates the very first time an agent connects to a fresh VM —
-        // the persisted fields start nil and the observer must seed them,
-        // in a single write.
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = library.registerFixture(
-            name: "Fresh", guestOS: .macOS, phase: .running(sessionID: UUID()))
-        defer { withExtendedLifetime(library) {} }
-
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: "0.9.0", osVersion: "Version 26.0 (Build 25A123)"))
-
-        #expect(instance.configuration.lastSeenAgentVersion == "0.9.0")
-        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
         #expect(storage.saveConfigurationCallCount == 1)
     }
 
-    @Test("recordObservedAgentInfo does not persist when both fields are unchanged")
-    func recordObservedSkipsRedundantWrites() {
+    @Test("A session peer reporting the committed version writes nothing")
+    func sessionPeerSkipsRedundantWrites() {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            in: library,
-            lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.9.2")
         defer { withExtendedLifetime(library) {} }
 
-        let info = ObservedAgentInfo(
-            agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)")
-        instance.recordObservedAgentInfo(info)
-        instance.recordObservedAgentInfo(info)
+        connectSessionAgent(to: instance, handle: 1)
+        connectSessionAgent(to: instance, handle: 2)
 
-        // Two identical Hellos must not produce a single disk write.
         // Storage churn would re-fire VMDirectoryWatcher reconcile on every
-        // heartbeat-driven reconnect.
+        // reconnect.
         #expect(storage.saveConfigurationCallCount == 0)
     }
 
-    @Test("recordObservedAgentInfo persists an OS-version change on a same-agent-version reconnect")
-    func recordObservedPersistsOSVersionChangeAlone() {
-        // The guest took a macOS update; the agent survived it at the same
-        // version. The new OS version must still land on disk.
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            in: library,
-            lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        defer { withExtendedLifetime(library) {} }
-
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.1 (Build 25B456)"))
-
-        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.1 (Build 25B456)")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("recordObservedAgentInfo overwrites a stored OS version with nil when the agent reports none")
-    func recordObservedNilOSVersionOverwrites() {
-        // An agent that stops vouching for an OS version must clear the stored
-        // one — Unknown beats stale.
+    @Test("A session peer running the bundled payload reports the login scope arriving, each time it connects")
+    func sessionPeerReportsLoginWhenCurrent() {
         let library = makeWiredLibrary()
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            in: library,
-            lastSeen: "0.9.2", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        defer { withExtendedLifetime(library) {} }
-
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
-
-        #expect(instance.configuration.lastSeenGuestOSVersion == nil)
-    }
-
-    @Test("recordObservedAgentInfo reports the login scope arriving for a current version")
-    func recordObservedReportsLoginOnCurrentVersion() throws {
-        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
-        let library = makeWiredLibrary()
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.0.0")
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library)
         defer { withExtendedLifetime(library) {} }
         var arrivals: [Set<GuestAgentScope>] = []
         instance.onCurrentAgentsArrived = { arrivals.append($0) }
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
+        connectSessionAgent(to: instance, handle: 1)
+        disconnectAgents(from: instance)
+        // What the disk was mounted for decides whether this ejects it, so a
+        // reinstall of the same payload is an arrival like any other.
+        connectSessionAgent(to: instance, handle: 2)
 
-        #expect(arrivals == [[.login]])
+        #expect(arrivals == [[.login], [.login]])
     }
 
-    @Test("recordObservedAgentInfo reports no arrival for an outdated version")
-    func recordObservedReportsNothingOnOutdated() throws {
-        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
-        // Only meaningful when the bundled version is strictly newer than the
-        // sentinel, so "0.0.1" genuinely classifies as outdated.
-        try #require(bundled.compare("0.0.1", options: .numeric) == .orderedDescending)
+    @Test("A session peer running another payload reports no arrival")
+    func sessionPeerReportsNothingWhenOutdated() {
         let library = makeWiredLibrary()
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.0.0")
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library)
         defer { withExtendedLifetime(library) {} }
         var arrivals: [Set<GuestAgentScope>] = []
         instance.onCurrentAgentsArrived = { arrivals.append($0) }
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.0.1", osVersion: nil))
+        connectSessionAgent(
+            to: instance, version: "0.0.1", standing: .outdated(offeredVersionLabel: "1.0 (1)", update: .updating))
 
         #expect(arrivals.isEmpty)
     }
 
-    @Test("recordObservedAgentInfo reports the login scope on a same-version reconnect too")
-    func recordObservedReportsLoginOnAnUnchangedVersion() throws {
-        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
-        // What the disk was mounted for decides whether this ejects it, so a
-        // reinstall of the same version is an arrival like any other.
-        let library = makeWiredLibrary()
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: bundled)
-        defer { withExtendedLifetime(library) {} }
-        var arrivals: [Set<GuestAgentScope>] = []
-        instance.onCurrentAgentsArrived = { arrivals.append($0) }
-
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: bundled, osVersion: "Version 26.0 (Build 25A123)"))
-
-        #expect(arrivals == [[.login]])
-        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-    }
-
-    @Test("recordObservedAgentInfo cancels the watchdog and clears expected-missing, for the rest of the session")
-    func recordObservedClearsWatchdogState() async throws {
+    @Test("A session peer connecting cancels the watchdog and clears expected-missing, for the rest of the session")
+    func sessionPeerClearsWatchdogState() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
         instance.agentAbsenceGrace = .seconds(10)
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting != nil)
         instance.sessionContext?.warnedAgentScopes = [.login]
 
-        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil))
+        connectSessionAgent(to: instance)
 
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.agentAbsenceTimerForTesting == nil)
         // The agent connected this session, so nothing arms again.
+        disconnectAgents(from: instance)
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting == nil)
@@ -1710,7 +1601,7 @@ struct VMInstanceTests {
     func macOSRowOneNeverSeen() {
         let instance = VMInstanceFixture.make(
             name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting == nil)
@@ -1728,33 +1619,160 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9.2") == true)
-        // (d) macOS unchanged: no per-agent lines, in the popover or `kernova info`.
-        #expect(instance.agentPresentation?.hub == nil)
-        #expect(VMCommandCore.agentLines(of: instance).isEmpty)
+        // Every surface names it: the popover's line, and `kernova info`'s.
+        #expect(
+            VMCommandCore.agentLines(of: instance) == [
+                VMAgentLine(role: "session", user: nil, version: "0.9.2", status: "expectedMissing")
+            ])
     }
 
     @Test(
-        "A Hello whose record cannot be saved leaves the configuration as the bundle holds it, and the surfaces show the reported versions"
+        "A session peer whose record cannot be saved leaves the configuration as the bundle holds it, and the surfaces show the reported version"
     )
-    func helloWhoseRecordFailsShowsTheReportedVersions() {
+    func sessionPeerWhoseRecordFailsShowsTheReportedVersion() {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            in: library,
-            lastSeen: "0.9.0", lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.9.0")
         defer { withExtendedLifetime(library) {} }
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let held = instance.configuration
 
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 26.1 (Build 25B456)"))
+        connectSessionAgent(to: instance, version: "0.9.2")
 
         #expect(instance.configuration == held)
         #expect(storage.bundles[instance.bundleURL] == held)
         #expect(instance.lastSeenAgentVersion == "0.9.2")
-        #expect(instance.guestOSVersionDisplay == "26.1")
         #expect(instance.effectiveConfiguration.lastSeenAgentVersion == "0.9.2")
-        #expect(instance.effectiveConfiguration.effectiveGuestMacOSVersion == MacOSVersion("26.1"))
+    }
+
+    // MARK: - Agent records replaced per run
+
+    /// Lands a hub snapshot of `peers`, each `(role, version, payload hash)`, connected now.
+    private func connectAgents(to instance: VMInstance, _ peers: [(PeerRole, String, Data)]) {
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: peers.enumerated().map { index, peer in
+                    PeerSummary(
+                        handle: PeerHandle(rawValue: UInt64(index + 1)), role: peer.0,
+                        scope: peer.0 == .systemPeer ? .system : .user, os: .macOS, sessionID: "2",
+                        userName: peer.0 == .systemPeer ? "" : "pbear", console: .on, versionLabel: peer.1,
+                        standing: .current, isResponsive: true, payloadHash: peer.2)
+                }, features: FeatureStatus.merge([])))
+    }
+
+    /// Ends `instance`'s run as the guest stopping does, then starts its next one, its agents not yet back.
+    private func runAgain(_ instance: VMInstance) {
+        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        instance.publishAgentHubSnapshotForTesting(.empty)
+    }
+
+    private static let systemHash = Data(repeating: 0x5A, count: 32)
+
+    @Test("A scope the guest stopped running warns in one run at most, then is no longer expected")
+    func scopeSwitchWarnsOnce() async {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+
+        // The guest now runs only the install for everyone's system peer: the login agent it ran last time warns.
+        connectAgents(to: instance, [(.systemPeer, "2.0", Self.systemHash)])
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+
+        // The run that saw it replaces the records: the system peer only.
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.configuration.lastSeenAgent(.login) == nil)
+        #expect(
+            instance.configuration.lastSeenAgent(.system)
+                == GuestAgentSighting(versionLabel: "2.0", payloadHash: Self.systemHash))
+        #expect(storage.bundles[instance.bundleURL]?.lastSeenAgentVersion == nil)
+
+        // Every later run expects the system peer alone, so nothing warns again.
+        for _ in 0..<2 {
+            instance.activity.placeForTesting(.running(sessionID: UUID()))
+            instance.beginSessionContextForTesting().hasAgentTransport = true
+            connectAgents(to: instance, [(.systemPeer, "2.0", Self.systemHash)])
+            instance.startAgentAbsenceWatch()
+            #expect(instance.agentAbsenceTimerForTesting == nil)
+            #expect(instance.warnedMissingAgents.isEmpty)
+            instance.handleSessionEvent(.guestDidStop)
+        }
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+    }
+
+    @Test("A scope that leaves the guest during a run warns in that run only")
+    func scopeLeavingDuringARunWarnsOnce() async {
+        let library = makeWiredLibrary()
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+        let session = (PeerRole.sessionPeer, "1.0", Self.agentHash)
+        connectAgents(to: instance, [session, (.systemPeer, "1.0", Self.systemHash)])
+
+        // The install for everyone goes, and one just for the user takes its place: the system peer never returns.
+        connectAgents(to: instance, [session])
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
+
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.configuration.lastSeenAgent(.system) == nil)
+        #expect(instance.configuration.lastSeenAgent(.login)?.versionLabel == "1.0")
+
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        connectAgents(to: instance, [session])
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+    }
+
+    @Test("A run that saw no agent — a boot into Recovery, a guest that never got far — keeps the records")
+    func runWithoutAgentKeepsRecords() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+        connectAgents(to: instance, [(.sessionPeer, "1.0", Self.systemHash), (.systemPeer, "1.0", Self.systemHash)])
+        runAgain(instance)
+        let recorded = instance.configuration
+        let saves = storage.saveConfigurationCallCount
+        #expect(recorded.lastSeenAgent(.login) != nil && recorded.lastSeenAgent(.system) != nil)
+
+        // This run sees nothing.
+        instance.handleSessionEvent(.guestDidStop)
+
+        #expect(instance.configuration == recorded)
+        #expect(storage.saveConfigurationCallCount == saves)
+    }
+
+    @Test("The Library's bucket and the install choice follow the scopes the last run saw")
+    func bucketAndInstallChoiceFollowTheRun() async throws {
+        let library = makeWiredLibrary()
+        let bundled = try #require(await AppBundleProducts.testing.guestAgents.payloadHashes()[.macOS])
+        try await waitForChange { library.bundledPayloadHashes[.macOS] == bundled }
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+        // A login agent of an older payload last time, and both scopes on record.
+        connectAgents(
+            to: instance, [(.sessionPeer, "1.0", Self.systemHash), (.systemPeer, "1.0", Self.systemHash)])
+        runAgain(instance)
+        #expect(instance.seenAgentScopes == [.login, .system])
+        #expect(library.sidebarContext.subject(of: instance).guestAgent == .olderVersion)
+
+        // This run sees only a current system peer: the stale login record goes with it.
+        connectAgents(to: instance, [(.systemPeer, "1.0", bundled)])
+        runAgain(instance)
+
+        #expect(instance.seenAgentScopes == [.system])
+        #expect(LinuxAgentInstallChoice(seen: instance.seenAgentScopes) == .systemService)
+        #expect(library.sidebarContext.subject(of: instance).guestAgent == .upToDate)
     }
 
     // MARK: - guestOSVersionDisplay

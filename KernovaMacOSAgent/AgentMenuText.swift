@@ -5,11 +5,6 @@ import KernovaKit
 enum AgentMenuText {
     static func about() -> String { "About Kernova Guest Agent" }
 
-    /// Shown only when the host bundles a newer agent.
-    static func updateAvailableLine(bundled: String) -> String {
-        "Update available — host bundles \(bundled)"
-    }
-
     static func hostStatusLine(_ state: HostConnectionState) -> String {
         switch state {
         case .connecting: return "Connecting to host…"

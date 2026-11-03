@@ -424,7 +424,6 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let clipService = self.instance.clipboardService
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
-                _ = self.instance.vsockControlService?.agentStatus
                 _ = self.instance.agentPresentation
                 _ = self.diskControl
                 _ = self.instance.configuration.clipboardPassthroughEnabled

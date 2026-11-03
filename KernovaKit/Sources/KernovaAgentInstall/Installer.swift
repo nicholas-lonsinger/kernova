@@ -41,6 +41,8 @@ public struct Installer {
         case command(arguments: [String], status: Int32)
         /// The account the system scope's root belongs to does not exist.
         case noAccount(String)
+        /// The directory at `path` could not be packed as the payload.
+        case packing(path: String, detail: String)
 
         /// The failure as the installer prints it.
         public var description: String {
@@ -54,6 +56,7 @@ public struct Installer {
                     ? "cannot run \(arguments.joined(separator: " "))"
                     : "\(arguments.joined(separator: " ")) exited \(status)"
             case .noAccount(let name): "the \(name) account does not exist"
+            case .packing(let path, let detail): "cannot pack \(path): \(detail)"
             }
         }
     }
@@ -62,8 +65,8 @@ public struct Installer {
     let stagingRoot: String
     /// Whether commands run.
     let runsCommands: Bool
-    /// The file holding the payload a `.payload` write lands.
-    let payloadSource: String
+    /// The payload a `.payload` write lands; nil for an installer whose plans write none.
+    let payloadSource: InstallPayloadSource?
     /// What lands it.
     let lander: any PayloadLander
     /// The display version the payload reports.
@@ -76,7 +79,7 @@ public struct Installer {
     /// `runsCommands`, whose `.payload` write lands `payloadSource` through `lander`, recorded as `versionLabel`,
     /// and whose root belongs to `account`.
     public init(
-        stagingRoot: String, runsCommands: Bool, payloadSource: String, lander: any PayloadLander,
+        stagingRoot: String, runsCommands: Bool, payloadSource: InstallPayloadSource?, lander: any PayloadLander,
         versionLabel: String, account: String?
     ) {
         self.stagingRoot = stagingRoot
@@ -94,14 +97,17 @@ public struct Installer {
     }
 
     /// Runs `plan`'s ``InstallPlan/steps`` in order, handing `report` each one's description just before it
-    /// takes it; a command not run, as with `runsCommands` false or its path absent, is not reported.
-    public func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) {
+    /// takes it; a command not run, as with `runsCommands` false or its path absent, is not reported. Answers
+    /// the paths of the files it wrote: a file outside the root that already held its text is not among them.
+    @discardableResult
+    public func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) -> [String] {
         let source = try openPayload(plan)
         defer { if let source { close(source) } }
         // The root open for the steps below it: as found until the plan makes it, then as made and handed to
         // its owner, whose account the commands before it create.
         var root: Int32?
         var owner: Owner?
+        var written: [String] = []
         defer { if let root { close(root) } }
         for step in plan.steps {
             if case .run(let command) = step, !willRun(command) { continue }
@@ -121,8 +127,9 @@ public struct Installer {
             case .writeBelowRoot(let write):
                 guard let root else { preconditionFailure("\(step) before the root is made") }
                 try performBelow(root, plan.root, write, owner: owner, source: source)
+                if case .file(let path, _, _) = write { written.append(path) }
             case .write(let write):
-                try perform(write, source: source)
+                if try perform(write, source: source), case .file(let path, _, _) = write { written.append(path) }
             case .remove(let path):
                 try remove(path)
             case .removeRoot:
@@ -131,6 +138,7 @@ public struct Installer {
                 try removeRoot(plan.root)
             }
         }
+        return written
     }
 
     /// Empties the agent's root and removes it; a missing one is skipped.
@@ -146,10 +154,18 @@ public struct Installer {
         }
     }
 
+    /// Opens the payload `plan` writes, before any step, so a missing one changes nothing: the file, or the
+    /// directory that is packed.
     private func openPayload(_ plan: InstallPlan) throws(Failure) -> Int32? {
-        guard plan.treeWrites.contains(where: { if case .payload = $0 { true } else { false } }) else { return nil }
-        let source = open(payloadSource, O_RDONLY | O_CLOEXEC)
-        guard source >= 0 else { throw .system(operation: "open", path: payloadSource, errno: errno) }
+        guard plan.treeWrites.contains(where: { if case .freshSlot = $0 { true } else { false } }) else { return nil }
+        guard let payloadSource else { preconditionFailure("a plan writing a payload, given none") }
+        let flags =
+            switch payloadSource {
+            case .file: O_RDONLY | O_CLOEXEC
+            case .packedDirectory: O_RDONLY | O_DIRECTORY | O_CLOEXEC
+            }
+        let source = open(payloadSource.path, flags)
+        guard source >= 0 else { throw .system(operation: "open", path: payloadSource.path, errno: errno) }
         return source
     }
 
@@ -163,19 +179,48 @@ public struct Installer {
 
     private func staged(_ path: String) -> String { stagingRoot + path }
 
-    private func perform(_ write: InstallPlan.Write, source: Int32?) throws(Failure) {
+    /// Carries out `write`: false when it found the file already holding its text, and wrote nothing.
+    private func perform(_ write: InstallPlan.Write, source: Int32?) throws(Failure) -> Bool {
         switch write {
         case .directory(let path, let mode):
             try makeDirectory(path, mode: mode)
+            return true
         case .file(let path, let mode, let text):
             let (parent, name) = try openParent(of: path)
             defer { close(parent) }
+            let bytes = Array(text.utf8)
+            // A service manager may act on any write to its files: on macOS 27.2, writing a launchd property list
+            // raised a "Background Activity" notification (docs/research/2026-10-27-macos-guest-shutdown-via-loginwindow.md).
+            guard !Self.holds(parent, name, bytes, mode: mode) else { return false }
             try Self.writeFile(in: parent, name, path: path, mode: mode, owner: nil) { descriptor throws(Failure) in
-                try Self.writeAll(Array(text.utf8), to: descriptor, path: path)
+                try Self.writeAll(bytes, to: descriptor, path: path)
             }
-        case .payload, .link:
+            return true
+        case .freshSlot:
             preconditionFailure("\(write) is written only below the agent's root")
         }
+    }
+
+    /// Whether `name` in `directory` is already what writing `bytes` with `mode` leaves: a regular file of this
+    /// process's effective user, with that mode, holding exactly those bytes.
+    static func holds(_ directory: Int32, _ name: String, _ bytes: [UInt8], mode: UInt16) -> Bool {
+        let file = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard file >= 0 else { return false }
+        defer { close(file) }
+        var info = stat()
+        guard fstat(file, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o7777 == mode_t(mode),
+            info.st_uid == geteuid(), info.st_size == off_t(bytes.count)
+        else { return false }
+        var found: [UInt8] = []
+        found.reserveCapacity(bytes.count)
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while found.count <= bytes.count {
+            let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress, $0.count) }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { break }
+            found += buffer[0..<count]
+        }
+        return found == bytes
     }
 
     /// Makes `path` and any missing ancestor, the ancestors `0o755`, `path` itself `mode` when this makes it;
@@ -311,29 +356,47 @@ public struct Installer {
                     try Self.writeAll(Array(text.utf8), to: descriptor, path: path)
                 }
             }
-        case .payload(let path, let state):
-            guard let source else { throw .system(operation: "open", path: payloadSource, errno: EBADF) }
-            let payload = InstallPayloadReader(source, path: payloadSource)
-            try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                let slot = InstallDirectory(
-                    descriptor: parent, path: String(path.dropLast(name.count + 1)), owner: owner)
-                try lander.install(payload, as: name, in: slot)
+        case .freshSlot(let installRoot, let payloadName):
+            guard let source, let payloadSource else { preconditionFailure("a payload write with no payload open") }
+            precondition(installRoot.path == rootPath, "a fresh slot of \(installRoot.path) below \(rootPath)")
+            let slot = Self.freshSlotName(in: root)
+            let slotPath = installRoot.slot(slot)
+            guard
+                let directory = try openDirectory(
+                    components(of: slotPath, below: rootPath), below: root, path: slotPath, creating: true,
+                    mode: 0o755, owner: owner)
+            else { preconditionFailure("\(slotPath) not made") }
+            let payload = InstallPayloadReader(payloadSource, descriptor: source)
+            do throws(Failure) {
+                try lander.install(
+                    payload, as: payloadName, in: InstallDirectory(descriptor: directory, path: slotPath, owner: owner))
+            } catch {
+                close(directory)
+                throw error
             }
+            close(directory)
             let hash = try payload.finish()
-            let record = InstallState.fresh(payloadSHA256: lowercaseHex(hash), versionLabel: versionLabel)
+            let record = InstallState.fresh(slot: slot, payloadSHA256: lowercaseHex(hash), versionLabel: versionLabel)
             let bytes: [UInt8]
             do { bytes = try record.encoded() } catch { throw .encoding(String(describing: error)) }
-            try withParent(of: state, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try Self.writeFile(in: parent, name, path: state, mode: 0o644, owner: owner) {
-                    descriptor throws(Failure) in
-                    try Self.writeAll(bytes, to: descriptor, path: state)
-                }
+            try Self.writeFile(in: root, InstallRoot.stateName, path: installRoot.state, mode: 0o644, owner: owner) {
+                descriptor throws(Failure) in
+                try Self.writeAll(bytes, to: descriptor, path: installRoot.state)
             }
-        case .link(let path, let target):
-            try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try replaceLink(in: parent, name, path: path, target: target)
-            }
+            try replaceLink(
+                in: root, InstallRoot.rollbackLinkName, path: installRoot.rollback,
+                target: InstallRoot.slotsName + "/" + slot)
+            try replaceLink(
+                in: root, InstallRoot.currentLinkName, path: installRoot.current,
+                target: InstallRoot.slotsName + "/" + slot)
         }
+    }
+
+    /// The slot of the root open at `root` that a fresh install fills: the one `current` does not name, so no
+    /// running peer's slot is written; ``InstallRoot/firstSlotName`` when it names none.
+    static func freshSlotName(in root: Int32) -> String {
+        SlotRoot.slot(linkedFrom: InstallRoot.currentLinkName, in: root).map(InstallState.spare(of:))
+            ?? InstallRoot.firstSlotName
     }
 
     /// Runs `body` with the directory `path` is in, below `root`, open, and `path`'s last component. That

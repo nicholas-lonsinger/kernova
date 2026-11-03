@@ -1,5 +1,7 @@
-#if os(Linux)
-#if canImport(Glibc)
+#if canImport(Darwin) || os(Linux)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
 import Musl
@@ -15,11 +17,11 @@ import Foundation
 @preconcurrency import Dispatch
 import KernovaSynchronization
 
-/// Runs a staged agent's `self-test`, which only a binary that executes on this kernel and reads its own
-/// file passes.
-enum SelfTest {
+/// Runs a staged agent's `self-test`, which only a binary that executes on this system and reads its own
+/// identity passes.
+public enum SelfTest {
     /// How a run ended.
-    enum Outcome: Equatable, Sendable {
+    public enum Outcome: Equatable, Sendable {
         /// It exited 0 within the limit.
         case passed
         /// It exited with this nonzero status.
@@ -33,11 +35,11 @@ enum SelfTest {
     }
 
     /// How long a self-test may take.
-    static let limit = DispatchTimeInterval.seconds(10)
+    public static let limit = DispatchTimeInterval.seconds(10)
 
     /// Runs `executable self-test`, its output discarded, killing it at `limit`.
-    static func run(_ executable: String, limit: DispatchTimeInterval = limit) -> Outcome {
-        var actions = posix_spawn_file_actions_t()
+    public static func run(_ executable: String, limit: DispatchTimeInterval = limit) -> Outcome {
+        var actions = emptyFileActions()
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         for descriptor: Int32 in [0, 1, 2] {
@@ -80,5 +82,12 @@ enum SelfTest {
         let code = (raw >> 8) & 0xFF
         return code == 0 ? .passed : .exited(code)
     }
+
+    #if canImport(Darwin)
+    /// Darwin's `posix_spawn_file_actions_t` is a pointer, which `posix_spawn_file_actions_init` fills.
+    private static func emptyFileActions() -> posix_spawn_file_actions_t? { nil }
+    #else
+    private static func emptyFileActions() -> posix_spawn_file_actions_t { posix_spawn_file_actions_t() }
+    #endif
 }
 #endif

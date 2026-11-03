@@ -4,15 +4,6 @@ import Testing
 
 @Suite("AgentMenuText", .caseScoped)
 struct AgentMenuTextTests {
-    // MARK: - updateAvailableLine
-
-    @Test("updateAvailableLine names the host's bundled version")
-    func updateAvailable() {
-        #expect(
-            AgentMenuText.updateAvailableLine(bundled: "0.25.0")
-                == "Update available — host bundles 0.25.0")
-    }
-
     // MARK: - hostStatusLine
 
     @Test("hostStatusLine for each connection state")

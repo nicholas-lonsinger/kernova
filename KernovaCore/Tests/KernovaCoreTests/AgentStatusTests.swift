@@ -4,12 +4,8 @@ import Testing
 @testable import KernovaCore
 
 /// Unit tests for `AgentStatus.synthesize(...)` — the pure function that
-/// folds the upstream service value and persisted host context into the
-/// final UI-facing `AgentStatus` of a session.
-///
-/// The function is
-/// extracted from `VMInstance.agentStatus` specifically to make this logic
-/// testable without standing up a `VZVirtualMachine`.
+/// folds the hub's agents' status and persisted host context into the final
+/// UI-facing `AgentStatus` of a session.
 @Suite("AgentStatus.synthesize", .caseScoped)
 struct AgentStatusTests {
     // MARK: - Pass-through (no synthesis)
@@ -102,9 +98,8 @@ struct AgentStatusTests {
 
     @Test("Empty lastSeenAgentVersion is treated like nil for .expectedMissing")
     func missingFlagWithEmptyVersionFallsThrough() {
-        // VsockControlService filters empty `agent_version` strings before
-        // they ever reach `lastSeenAgentVersion`, but a hand-edited
-        // config.json could still contain `""`. Synthesizing
+        // An agent reporting no version label, or a hand-edited config.json,
+        // leaves `""` in `lastSeenAgentVersion`. Synthesizing
         // `.expectedMissing("")` would render as an empty-version-string
         // badge in the UI ("guest agent  didn't reconnect"), so the
         // synthesizer treats `""` the same as `nil` and falls through.
