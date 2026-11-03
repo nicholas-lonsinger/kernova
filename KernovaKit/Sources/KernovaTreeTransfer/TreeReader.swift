@@ -77,7 +77,7 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         let path = [name]
         // The item's name is the one name not read from a directory, so it is held to one path component
         // before anything resolves it.
-        guard ValidatedEntry.isValidName(Data(name)) else {
+        guard PathComponent.isValid(name) else {
             throw TreeReadFailure(path: path, reason: .notCarried(.entry(.invalidName)))
         }
         let status = try Self.system(path) { () throws(TreeFileSystemError) in

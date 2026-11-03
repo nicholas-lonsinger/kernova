@@ -15,10 +15,6 @@ import KernovaWire
 /// The rules that depend on a pull — the codecs, decmpfs types and byte ceiling it accepts — and an entry's
 /// place in the tree are the sequence's.
 public struct ValidatedEntry: Sendable {
-    /// The longest name a POSIX file system takes, `NAME_MAX`; extended attribute names share it
-    /// (`XATTR_MAXNAMELEN` on Darwin, `XATTR_NAME_MAX` on Linux).
-    static let maxNameByteCount = 255
-
     /// The longest symlink target: Darwin's `PATH_MAX` of 1,024 bytes (`sys/syslimits.h`) less the NUL that
     /// ends it, beyond which `symlink(2)` fails with `ENAMETOOLONG`. Darwin's is the smallest of the supported
     /// guest and host OSes, so every writer can create any target the format carries.
@@ -129,7 +125,7 @@ public struct ValidatedEntry: Sendable {
         if header.depth == 0 {
             guard header.name.isEmpty else { throw .rootEntryNamed }
         } else {
-            guard isValidName(header.name) else { throw .invalidName }
+            guard PathComponent.isValid(header.name) else { throw .invalidName }
         }
         guard header.mode <= maxMode else { throw .modeOutOfRange(header.mode) }
         guard header.darwinFlags & ~allowedDarwinFlags == 0 else {
@@ -179,7 +175,8 @@ public struct ValidatedEntry: Sendable {
         for xattr in header.xattrs {
             guard xattr.unknownFields.data.isEmpty else { throw .unknownFields }
             let name = xattr.name
-            guard !name.isEmpty, name.count <= maxNameByteCount, !name.contains(0) else {
+            // Extended attribute names share `NAME_MAX` (`XATTR_MAXNAMELEN` on Darwin, `XATTR_NAME_MAX` on Linux).
+            guard !name.isEmpty, name.count <= PathComponent.maxByteCount, !name.contains(0) else {
                 throw .invalidXattrName
             }
             guard isAllowedXattrName(name) else { throw .xattrNotAllowed(name) }
@@ -191,12 +188,5 @@ public struct ValidatedEntry: Sendable {
     public static func isAllowedXattrName(_ name: Data) -> Bool {
         allowedXattrNames.contains(name)
             || (name.count > allowedXattrPrefix.count && name.starts(with: allowedXattrPrefix))
-    }
-
-    /// Whether `name` is one path component a POSIX file system takes as it is.
-    public static func isValidName(_ name: Data) -> Bool {
-        guard !name.isEmpty, name.count <= maxNameByteCount else { return false }
-        guard name != Data([0x2E]), name != Data([0x2E, 0x2E]) else { return false }
-        return !name.contains(0x2F) && !name.contains(0)
     }
 }

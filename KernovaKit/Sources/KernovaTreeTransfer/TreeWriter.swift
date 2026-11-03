@@ -248,7 +248,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         while true {
             let candidate = KeepBothName.candidate(name, number)
             // A counted name past the container's name limit is one no OS here lands.
-            guard ValidatedEntry.isValidName(Data(candidate)) else {
+            guard PathComponent.isValid(candidate) else {
                 throw fail(.system(TreeFileSystemError(code: ENAMETOOLONG)), at: [candidate])
             }
             do {
@@ -599,7 +599,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         let name = header.depth == 0 ? self.name : Array(header.name)
         let path = entered.map(\.name) + [name]
         // The sequence held every header's name to one path component; the caller's is held here.
-        guard header.depth > 0 || ValidatedEntry.isValidName(Data(name)) else {
+        guard header.depth > 0 || PathComponent.isValid(name) else {
             throw TreeWriteFailure(path: path, reason: .container(.invalidName))
         }
         // A Keep Both name can publish up to the longest count longer, which every path below it carries.

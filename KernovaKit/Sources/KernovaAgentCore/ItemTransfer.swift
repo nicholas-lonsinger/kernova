@@ -20,7 +20,8 @@ public struct ItemPullID: Hashable, Sendable {
     }
 }
 
-/// An item set as an offer stream carries it.
+/// An item set as an offer stream carries it. An offer is refused `INTERNAL` unless its token is 16 bytes no
+/// open offer of this side holds and its every representation is named as `Representation.name` requires.
 public struct ItemOffer: Sendable, Equatable {
     /// The 16 bytes naming the offer, which a pull quotes.
     public var token: Data

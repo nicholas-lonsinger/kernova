@@ -495,7 +495,7 @@ enum HostileRows {
         },
     ]
 
-    static let all = fatalRows + streamRows + itemRows
+    static let all = fatalRows + streamRows + itemRows + misnamedRows
 }
 
 @Suite("Hostile scenarios")

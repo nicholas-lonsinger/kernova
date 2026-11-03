@@ -61,6 +61,35 @@ enum HostileItems {
         return (run, try? run.pullItem(request)?.get())
     }
 
+    /// A representation of `storage` named `name`.
+    static func named(_ storage: Representation.Storage, _ name: String) -> Representation {
+        var representation = SimItems.representation(storage, size: 64)
+        representation.name = Data(name.utf8)
+        return representation
+    }
+
+    /// The three ways a representation breaks `Representation.name`'s contract.
+    static let misnamed: [(label: String, representation: Representation)] = [
+        ("a FILE named with a path", named(.file, "../../Library/LaunchAgents/evil.plist")),
+        ("an unnamed FOLDER", named(.folder, "")),
+        ("a named INLINE", named(.inline, "note.txt")),
+    ]
+
+    /// A real host that received a DRAG_OFFER of one item, `representation`, from the far peer on stream 1.
+    static func offered(_ representation: Representation) -> HostileRun {
+        let run = HostileRun(local: .host, seed: 1, items: true)
+        run.feed(
+            [
+                peerHello, WireFrames.open(1, .dragOffer, body: header(count: 1)),
+                WireFrames.message(1, SimItems.offer(7, [[representation]]).items[0]), Unit.end(1),
+            ], preamble: true)
+        return run
+    }
+
+    static func offerReceived(_ run: HostileRun) -> Bool {
+        run.itemOutputs.contains { if case .event(.offerReceived) = $0 { true } else { false } }
+    }
+
     /// The codes of the serves that ended reset by this side, in order.
     static func servesResetLocally(_ run: HostileRun) -> [ErrorCode] {
         run.itemEnds.compactMap {
@@ -150,7 +179,77 @@ struct ItemHostileTests {
     }
 }
 
+@Suite("Item names held to Representation.name's contract")
+struct ItemNameAdmissionTests {
+    @Test("A far side's Item that breaks the contract is reset MALFORMED_MESSAGE and never received")
+    func misnamedRemoteItemIsRefused() {
+        for (label, representation) in HostileItems.misnamed {
+            let run = HostileItems.offered(representation)
+            #expect(run.streamResets.map(\.code) == [.malformedMessage], "\(label): \(run.streamResets)")
+            #expect(!HostileItems.offerReceived(run), "\(label) was received")
+            #expect(run.closure == nil, "\(label) closed the connection")
+        }
+    }
+
+    @Test(
+        "A far side's FILE or FOLDER named by one path component, and an unnamed INLINE, are received as named",
+        arguments: [
+            SimItems.representation(.file, size: 64), SimItems.representation(.folder, size: 64),
+            SimItems.representation(.inline, size: 64),
+        ])
+    func wellNamedRemoteItemIsReceived(representation: Representation) {
+        let run = HostileItems.offered(representation)
+        #expect(run.streamResets.isEmpty, "\(run.streamResets)")
+        #expect(HostileItems.offerReceived(run))
+        #expect(
+            run.host?.remoteOfferItem(token: SimItems.token(7), index: 0)?.representations.map(\.name)
+                == [representation.name])
+    }
+
+    @Test("This side's offer that breaks the contract is refused INTERNAL, and nothing opens")
+    func misnamedLocalOfferIsRefused() {
+        for (label, representation) in HostileItems.misnamed {
+            let run = HostileRun(local: .host, seed: 1, items: true)
+            run.feed([HostileItems.peerHello], preamble: true)
+            let refusal = run.offerItems(
+                SimItems.offer(9, [[SimItems.representation(.file, size: 64), representation]]))
+            #expect(refusal?.code == .internal, "\(label): \(String(describing: refusal))")
+            #expect(!run.written.contains { $0.type == .open }, "\(label) opened a stream")
+        }
+    }
+
+    @Test("A role offering a kind it never opens is refused UNSUPPORTED_KIND before its token or names are read")
+    func wrongRoleLocalOfferIsUnsupported() {
+        let run = HostileRun(local: .host, seed: 1, items: true)
+        run.feed([HostileItems.peerHello], preamble: true)
+        var offer = SimItems.offer(9, [[HostileItems.misnamed[0].representation]])
+        offer.token = Data([1])
+        let refusal = run.offerItems(offer, feature: .drag)
+        #expect(refusal?.code == .unsupportedKind, "\(String(describing: refusal))")
+    }
+}
+
 extension HostileRows {
+    /// A far side's DRAG_OFFER whose one Item breaks `Representation.name`'s contract, one row per way.
+    static let misnamedRows = HostileItems.misnamed.map { misnamed($0.label, $0.representation) }
+
+    /// A far side's DRAG_OFFER whose one Item holds `representation`, which breaks `Representation.name`'s
+    /// contract.
+    static func misnamed(_ label: String, _ representation: Representation) -> HostileRow {
+        HostileRow(
+            name: "an offer Item holding \(label) → RESET MALFORMED_MESSAGE", local: .host, items: true,
+            outcome: .streamReset(.malformedMessage)
+        ) { run in
+            run.feed(
+                [
+                    HostileItems.peerHello, WireFrames.open(1, .dragOffer, body: HostileItems.header(count: 1)),
+                    WireFrames.message(1, SimItems.offer(7, [[representation]]).items[0]), Unit.end(1),
+                ], preamble: true)
+        } expect: { run in
+            expectThat(!HostileItems.offerReceived(run), "the misnamed offer was received")
+        }
+    }
+
     /// A far side opening `kind`, which its role never opens.
     static func wrongRole(_ kind: StreamKind, at local: SimSide, body: some SwiftProtobuf.Message) -> HostileRow {
         HostileRow(
