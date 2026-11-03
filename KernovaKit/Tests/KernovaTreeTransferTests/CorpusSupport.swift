@@ -34,7 +34,7 @@ func directory(_ name: [UInt8], depth: UInt32, mode: UInt32 = 0o755) -> EntryHea
     return header
 }
 
-func directory(_ name: String, depth: UInt32, mode: UInt32 = 0o755) -> EntryHeader {
+func directory(_ name: String = "", depth: UInt32, mode: UInt32 = 0o755) -> EntryHeader {
     directory(bytes(name), depth: depth, mode: mode)
 }
 
@@ -48,11 +48,11 @@ func file(_ name: [UInt8], depth: UInt32, size: UInt64, mode: UInt32 = 0o644) ->
     return header
 }
 
-func file(_ name: String, depth: UInt32, size: UInt64, mode: UInt32 = 0o644) -> EntryHeader {
+func file(_ name: String = "", depth: UInt32, size: UInt64, mode: UInt32 = 0o644) -> EntryHeader {
     file(bytes(name), depth: depth, size: size, mode: mode)
 }
 
-func symlinkEntry(_ name: String, depth: UInt32, target: String) -> EntryHeader {
+func symlinkEntry(_ name: String = "", depth: UInt32, target: String) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = Data(name.utf8)
@@ -197,31 +197,35 @@ final class Landing {
         try fileSystem.openDirectory(bytes(destinationPath), in: AT_FDCWD)
     }
 
-    /// A receiver landing what `acceptance` admits in the destination.
-    func receiver(_ acceptance: ContainerAcceptance) throws -> TreeReceiver<POSIXTreeFileSystem> {
+    /// A receiver landing what `acceptance` admits in the destination as the item `name`.
+    func receiver(_ acceptance: ContainerAcceptance, as name: [UInt8] = bytes("r")) throws
+        -> TreeReceiver<POSIXTreeFileSystem>
+    {
         TreeReceiver(
-            accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem, destination: try openDestination(),
+            name: name, accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem,
+            destination: try openDestination(),
             destinationPathByteCount: destinationPath.utf8.count)
     }
 
-    /// A writer landing in the destination, driven by events directly.
+    /// A writer landing the item `name` in the destination, driven by events directly.
     func writer(
-        _ storage: Representation.Storage = .folder, ceiling: UInt64 = 1 << 30, decmpfsTypes: Set<UInt32> = [],
-        logger: KernovaLogger = TreeWriterLog.logger
+        _ storage: Representation.Storage = .folder, as name: [UInt8] = bytes("r"), ceiling: UInt64 = 1 << 30,
+        decmpfsTypes: Set<UInt32> = [], logger: KernovaLogger = TreeWriterLog.logger
     ) throws -> TreeWriter<POSIXTreeFileSystem> {
         var accepted = acceptance(storage, ceiling: ceiling)
         accepted.decmpfsTypes = decmpfsTypes
         return TreeWriter(
-            fileSystem: fileSystem, destination: try openDestination(),
+            name: name, fileSystem: fileSystem, destination: try openDestination(),
             destinationPathByteCount: destinationPath.utf8.count, accepting: accepted, logger: logger)
     }
 
-    /// Feeds `container` in pieces of `pieceSize` bytes, then finishes, returning the landed name or the
-    /// failure.
+    /// Feeds `container` in pieces of `pieceSize` bytes as the item `name`, then finishes, returning the landed
+    /// name or the failure.
     func land(
-        _ container: Data, accepting acceptance: ContainerAcceptance = acceptance(), pieceSize: Int? = nil
+        _ container: Data, as name: [UInt8] = bytes("r"), accepting acceptance: ContainerAcceptance = acceptance(),
+        pieceSize: Int? = nil
     ) throws -> Result<[UInt8], TreeWriteFailure> {
-        let receiver = try receiver(acceptance)
+        let receiver = try receiver(acceptance, as: name)
         return Result { () throws(TreeWriteFailure) in
             let step = max(1, pieceSize ?? container.count)
             var start = container.startIndex

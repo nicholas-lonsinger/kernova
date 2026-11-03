@@ -91,6 +91,29 @@ struct TreeReaderTests {
         #expect(throws: expected) { try reader.next() }
     }
 
+    @Test("the item's own header carries no name, whether it is a folder or a file; the entries in it carry theirs")
+    func rootUnnamed() throws {
+        let bench = try FidelityBench()
+        try bench.makeDirectory([bytes("folder")])
+        try bench.makeFile([bytes("folder"), bytes("a")], Data("a".utf8))
+        try bench.makeFile([bytes("file")], Data("x".utf8))
+        let folder = try bench.events(bytes("folder"), accepting: Self.folder)
+        guard case .enterDirectory(let root)? = folder.first, case .beginFile(let child)? = folder.dropFirst().first
+        else {
+            Issue.record("events \(folder)")
+            return
+        }
+        #expect(root.name.isEmpty)
+        #expect(child.name == Data("a".utf8))
+        let fileAcceptance = ContainerAcceptance(
+            storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
+        guard case .beginFile(let file)? = try bench.events(bytes("file"), accepting: fileAcceptance).first else {
+            Issue.record("no file entry")
+            return
+        }
+        #expect(file.name.isEmpty)
+    }
+
     @Test("every event the reader produces of a tree is one the encoder takes, and the tree decodes back whole")
     func eventsEncode() throws {
         let bench = try FidelityBench()

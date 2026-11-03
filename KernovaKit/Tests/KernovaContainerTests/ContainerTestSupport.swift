@@ -40,7 +40,7 @@ func generous(for container: Data) -> ContainerAcceptance {
 
 func name(_ text: String) -> Data { Data(text.utf8) }
 
-func plainFile(_ fileName: String, depth: UInt32, size: UInt64) -> EntryHeader {
+func plainFile(_ fileName: String = "", depth: UInt32, size: UInt64) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = name(fileName)
@@ -50,13 +50,13 @@ func plainFile(_ fileName: String, depth: UInt32, size: UInt64) -> EntryHeader {
     return header
 }
 
-func lz4File(_ fileName: String, depth: UInt32, size: UInt64) -> EntryHeader {
+func lz4File(_ fileName: String = "", depth: UInt32, size: UInt64) -> EntryHeader {
     var header = plainFile(fileName, depth: depth, size: size)
     header.lz4.size = size
     return header
 }
 
-func directory(_ directoryName: String, depth: UInt32) -> EntryHeader {
+func directory(_ directoryName: String = "", depth: UInt32) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = name(directoryName)
@@ -65,7 +65,7 @@ func directory(_ directoryName: String, depth: UInt32) -> EntryHeader {
     return header
 }
 
-func symlink(_ linkName: String, depth: UInt32, target: String) -> EntryHeader {
+func symlink(_ linkName: String = "", depth: UInt32, target: String) -> EntryHeader {
     var header = EntryHeader()
     header.depth = depth
     header.name = name(linkName)
@@ -92,7 +92,7 @@ func decmpfsAttribute(type: UInt32, size: UInt64, magic: UInt32 = DecmpfsHeader.
     return attribute
 }
 
-func decmpfsFile(_ fileName: String, depth: UInt32, attribute: Data, resourceForkSize: UInt64) -> EntryHeader {
+func decmpfsFile(_ fileName: String = "", depth: UInt32, attribute: Data, resourceForkSize: UInt64) -> EntryHeader {
     var header = plainFile(fileName, depth: depth, size: 0)
     header.decmpfs.attribute = attribute
     header.resourceForkSize = resourceForkSize
@@ -257,7 +257,7 @@ struct TreeFixture {
         let text = Data(String(repeating: "the guest agent streams a container. ", count: 20_000).utf8)
         let fork = generator.bytes(5_000)
         return TreeFixture(entries: [
-            (directory("root", depth: 0), Data()),
+            (directory(depth: 0), Data()),
             (plainFile("random", depth: 1, size: UInt64(random.count)), random),
             (directory("nested", depth: 1), Data()),
             (plainFile("sparse", depth: 2, size: UInt64(sparse.count)), sparse),

@@ -48,26 +48,27 @@ package enum TranscriptFixture {
         default:
             return nil
         }
+        let policy = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
         var configuration = HostConfiguration(
             claim: PeerClaim(role: .host, versionLabel: "Kernova"), sessionToken: token,
-            policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
+            policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
         let version = protocolVersion
-        let testKinds = items
         configuration.tweak = { connection in
             connection.recordsTrace = true
             connection.protocolVersion = version
-            if testKinds { connection.addTestKinds() }
         }
-        if items { configuration.itemTransfer = .available(NoParams()) }
+        if items { configuration.items = SimItems.served }
         return configuration
     }
 
-    /// The offer a `peer offer fixture=<name>` input makes.
+    /// The offer an `offer fixture=<name>` input makes.
     package static func offer(_ name: String) -> ItemOffer? {
         switch name {
         case "file-2k":
             SimItems.offer(
                 1, [[SimItems.representation(.file, size: 2048), SimItems.representation(.inline, size: 64)]])
+        case "text-64": SimItems.offer(2, [[SimItems.representation(.inline, size: 64)]])
+        case "folder-4k": SimItems.offer(3, [[SimItems.representation(.folder, size: 4096)]])
         default: nil
         }
     }
@@ -111,13 +112,11 @@ package enum TranscriptFixture {
         }
         var tweaked = configuration
         let version = protocolVersion
-        let testKinds = items
         tweaked.tweak = { connection in
             connection.recordsTrace = true
             connection.protocolVersion = version
-            if testKinds { connection.addTestKinds() }
         }
-        if items { tweaked.itemTransfer = .available(NoParams()) }
+        if items { tweaked.items = SimItems.served }
         return tweaked
     }
 }

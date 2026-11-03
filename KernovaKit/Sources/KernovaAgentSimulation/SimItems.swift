@@ -14,12 +14,28 @@ package enum SimItems {
     /// The 16-byte token `tag` names.
     package static func token(_ tag: UInt8) -> Data { Data(repeating: tag, count: 16) }
 
-    /// A representation of `storage` whose tree carries `size` bytes.
+    /// Every item feature available.
+    package static let served = ItemFeatureAvailability(
+        itemTransfer: .available(NoParams()), clipboard: .available(NoParams()), drop: .available(NoParams()),
+        drag: .available(NoParams()))
+
+    /// `policy` with clipboard, drop and drag enabled too.
+    package static func policy(_ policy: PolicySnapshot) -> PolicySnapshot {
+        PolicySnapshot(
+            policy.entries + [FeatureID.clipboard, .drop, .drag].map { FeaturePolicyValue(feature: $0, enabled: true) })
+    }
+
+    /// A representation of `storage` whose tree carries `size` bytes, a FILE named `item` and a FOLDER `folder`.
     package static func representation(_ storage: Representation.Storage, size: Int) -> Representation {
         var representation = Representation()
         representation.type.mime = storage == .inline ? "text/plain" : "application/octet-stream"
         representation.storage = storage
         representation.sizeEstimate = UInt64(size)
+        switch storage {
+        case .file: representation.name = Data("item".utf8)
+        case .folder: representation.name = Data("folder".utf8)
+        default: break
+        }
         return representation
     }
 
@@ -47,7 +63,8 @@ package enum SimItems {
     }
 
     /// The entries `representation` sends for `request`, each with the bytes it carries: INLINE one DATA
-    /// entry; FILE one file; FOLDER a folder holding a file and a subfolder holding the other half.
+    /// entry; FILE one file; FOLDER a folder holding a file and a subfolder holding the other half. The item's own
+    /// entry is unnamed, as every container's root is.
     package static func tree(_ request: PullRequest, _ representation: Representation) -> [(EntryHeader, Data)] {
         var hash = FNV64()
         hash.add(request.token)
@@ -62,13 +79,13 @@ package enum SimItems {
         case .folder:
             let half = content.count / 2
             return [
-                (directory("folder", depth: 0), Data()),
+                (directory(depth: 0), Data()),
                 (file("a", depth: 1, size: half), content.prefix(half)),
                 (directory("sub", depth: 1), Data()),
                 (file("b", depth: 2, size: content.count - half), content.dropFirst(half)),
             ]
         default:
-            return [(file("item", depth: 0, size: content.count), content)]
+            return [(file(depth: 0, size: content.count), content)]
         }
     }
 
@@ -100,7 +117,7 @@ package enum SimItems {
             debugDetail: "\(error)")
     }
 
-    static func file(_ name: String, depth: UInt32, size: Int) -> EntryHeader {
+    static func file(_ name: String = "", depth: UInt32, size: Int) -> EntryHeader {
         var header = EntryHeader()
         header.depth = depth
         header.name = Data(name.utf8)
@@ -110,7 +127,7 @@ package enum SimItems {
         return header
     }
 
-    static func directory(_ name: String, depth: UInt32) -> EntryHeader {
+    static func directory(_ name: String = "", depth: UInt32) -> EntryHeader {
         var header = EntryHeader()
         header.depth = depth
         header.name = Data(name.utf8)

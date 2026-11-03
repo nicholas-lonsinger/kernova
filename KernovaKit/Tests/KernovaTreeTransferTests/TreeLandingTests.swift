@@ -29,13 +29,15 @@ struct TreeLandingTests {
     @Test("a FILE representation lands under its own name with its bytes, mode and time", arguments: bothLayers)
     func fileLands(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
-        var header = file("report.txt", depth: 0, size: 5, mode: 0o640)
+        var header = file(depth: 0, size: 5, mode: 0o640)
         header.modificationTime.seconds = 1_700_000_000
         header.modificationTime.nanoseconds = 5000
         var container = RawContainer()
         container.file(header, Data("hello".utf8))
         container.end()
-        #expect(try landing.land(container.data, accepting: acceptance(.file)).get() == bytes("report.txt"))
+        #expect(
+            try landing.land(container.data, as: bytes("report.txt"), accepting: acceptance(.file)).get()
+                == bytes("report.txt"))
         let path = landing.destinationPath + "/report.txt"
         #expect(try Self.contents(of: path) == Data("hello".utf8))
         let status = try landing.fileSystem.status(of: bytes(path), in: AT_FDCWD)
@@ -50,7 +52,7 @@ struct TreeLandingTests {
     func folderLands(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
         var container = RawContainer()
-        container.header(directory("r", depth: 0, mode: 0o555))
+        container.header(directory(depth: 0, mode: 0o555))
         container.header(directory("sealed", depth: 1, mode: 0))
         container.file(file("inner", depth: 2, size: 2, mode: 0o444), Data("in".utf8))
         container.header(symlinkEntry("out", depth: 1, target: landing.outsidePath + "/sentinel"))
@@ -76,7 +78,7 @@ struct TreeLandingTests {
         let landing = try Landing(kernelContainment: kernelContainment)
         let count = FolderBatch.entryBudget * 2 + 7
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         for index in 0..<count {
             container.file(file("f\(index)", depth: 1, size: 3), Data("\(index % 1000)".utf8.prefix(3)).padded(to: 3))
         }
@@ -91,12 +93,14 @@ struct TreeLandingTests {
         let landing = try Landing(kernelContainment: kernelContainment)
         let run: UInt64 = 8 << 20
         var container = RawContainer()
-        container.header(file("sparse", depth: 0, size: 5 + run + 5))
+        container.header(file(depth: 0, size: 5 + run + 5))
         container.chunk(Data("head!".utf8))
         container.zeros(run)
         container.chunk(Data("tail!".utf8))
         container.end()
-        #expect(try landing.land(container.data, accepting: acceptance(.file)).get() == bytes("sparse"))
+        #expect(
+            try landing.land(container.data, as: bytes("sparse"), accepting: acceptance(.file)).get() == bytes("sparse")
+        )
         let path = landing.destinationPath + "/sparse"
         let landed = try Self.contents(of: path)
         #expect(landed == Data("head!".utf8) + Data(count: Int(run)) + Data("tail!".utf8))
@@ -122,7 +126,7 @@ struct TreeLandingTests {
         }
         let landing = try Landing(kernelContainment: true)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         var expected: [String: Data] = [:]
         for (index, pieces) in cases.enumerated() {
             container.header(file("c\(index)", depth: 1, size: UInt64(pieces.reduce(0) { $0 + $1.count })))
@@ -157,7 +161,7 @@ struct TreeLandingTests {
     func zeroBytesBecomeHoles() throws {
         let landing = try Landing(kernelContainment: true)
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         for (name, size) in [("held", 256 * 1024), ("written", 4 << 20)] {
             container.file(file(name, depth: 1, size: UInt64(size + 1)), Data(count: size) + Data([1]))
         }
@@ -176,10 +180,10 @@ struct TreeLandingTests {
         let name = String(repeating: "d", count: 200)
         let fits = (Int(PATH_MAX) - 1 - landing.destinationPath.utf8.count) / 201
         var container = RawContainer()
-        container.header(directory(name, depth: 0))
+        container.header(directory(depth: 0))
         for depth in 1...fits { container.header(directory(name, depth: UInt32(depth))) }
         container.end()
-        let failure = try #require(try landing.land(container.data).failure)
+        let failure = try #require(try landing.land(container.data, as: bytes(name)).failure)
         #expect(failure.reason == .refused(.init(code: ENAMETOOLONG)))
         #expect(failure.path == Array(repeating: bytes(name), count: fits + 1))
         try landing.expectNothingOutside()
@@ -190,7 +194,7 @@ struct TreeLandingTests {
         let landing = try Landing(kernelContainment: true)
         let name: [UInt8] = [0x66, 0xFF, 0x66]
         var container = RawContainer()
-        container.header(directory("r", depth: 0))
+        container.header(directory(depth: 0))
         container.file(file(name, depth: 1, size: 1), Data("x".utf8))
         container.end()
         let result = try landing.land(container.data)
@@ -220,7 +224,7 @@ struct TreeLandingTests {
             return header
         }
         var container = RawContainer()
-        container.header(tagged(directory("r", depth: 0)))
+        container.header(tagged(directory(depth: 0)))
         container.file(tagged(file("file", depth: 1, size: 1)), Data("t".utf8))
         container.header(tagged(symlinkEntry("link", depth: 1, target: "file")))
         container.end()

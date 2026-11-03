@@ -23,12 +23,13 @@ package enum WireFrames {
         return Self.message(0, message)
     }
 
-    /// A Hello for `role`, POWER, UPDATE and LOGS available, and ITEM_TRANSFER when `itemTransfer`.
+    /// A Hello for `role`, POWER, UPDATE and LOGS available, and with `items` ITEM_TRANSFER, CLIPBOARD, DROP
+    /// and DRAG.
     package static func hello(
         role: Kernova_V2_PeerIdentity.Role, scope: Kernova_V2_PeerIdentity.InstallScope = .user,
         sessionID: String = "c1", protocolVersion: UInt32 = 1, powerActions: [PowerAction] = [.shutdown, .restart],
         instanceID: Data = Data(repeating: 0x11, count: 16), payloadHash: Data = Data(repeating: 0xA1, count: 32),
-        itemTransfer: Bool = false
+        items: Bool = false
     ) -> Frame {
         session { message in
             var hello = Kernova_V2_Hello()
@@ -64,12 +65,14 @@ package enum WireFrames {
             logs.version = 1
             logs.params = Data()
             hello.features = [power, update, logs]
-            if itemTransfer {
-                var items = Kernova_V2_FeatureAdvert()
-                items.feature = .itemTransfer
-                items.version = 1
-                items.params = Data()
-                hello.features.append(items)
+            if items {
+                for feature in [FeatureID.itemTransfer, .clipboard, .drop, .drag] {
+                    var advert = Kernova_V2_FeatureAdvert()
+                    advert.feature = feature
+                    advert.version = 1
+                    advert.params = Data()
+                    hello.features.append(advert)
+                }
             }
             message.hello = hello
         }
@@ -136,9 +139,10 @@ package final class HostileRun {
     package private(set) var itemSink = DecodingItemSink()
 
     /// A real host endpoint (`local == .host`) holding `bundles`, or a real
-    /// session peer whose process's power ledger is `powerLedger`.
+    /// session peer whose process's power ledger is `powerLedger`; with `items`, serving every item feature,
+    /// and a host's policy enabling them.
     package init(
-        local: SimSide, seed: UInt64, testKinds: Bool = false, itemTransfer: Bool = false,
+        local: SimSide, seed: UInt64, testKinds: Bool = false, items: Bool = false,
         bundles: [BundledPayload] = [SimHub.bundle(size: 100_000, tag: 1)], powerLedger: PowerLedger = PowerLedger(),
         tweak: @escaping @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     ) {
@@ -151,11 +155,12 @@ package final class HostileRun {
         }
         switch local {
         case .host:
+            let policy = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
             var configuration = HostConfiguration(
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
-                policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
+                policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
             configuration.tweak = configure
-            if itemTransfer { configuration.itemTransfer = .available(NoParams()) }
+            if items { configuration.items = SimItems.served }
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         case .peer:
             var spec = PeerSpec.session()
@@ -165,7 +170,7 @@ package final class HostileRun {
                 update: .available(UpdateOffer(formats: [.executable])))
             configuration.powerLedger = powerLedger
             configuration.tweak = configure
-            if itemTransfer { configuration.itemTransfer = .available(NoParams()) }
+            if items { configuration.items = SimItems.served }
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         }
         drain()
@@ -256,9 +261,10 @@ package final class HostileRun {
         return result
     }
 
-    /// Offers `offer` on the local side's test offer kind; nil when opened.
-    package func offerItems(_ offer: ItemOffer) -> WireError? {
-        let refusal = host?.offerTestItems(offer, now: now) ?? peer?.offerTestItems(offer, now: now)
+    /// Offers `offer` as the local side's offer of `feature`; nil when opened.
+    package func offerItems(_ offer: ItemOffer, feature: FeatureID = .clipboard) -> WireError? {
+        let refusal =
+            host?.offerItems(offer, feature: feature, now: now) ?? peer?.offerItems(offer, feature: feature, now: now)
         drain()
         return refusal
     }
