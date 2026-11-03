@@ -125,7 +125,7 @@ struct InstallerTests {
 
     private static func checkFiles(_ scratch: Scratch, _ layout: InstallLayout) throws {
         let binary = FileManager.default.contents(
-            atPath: scratch.root + layout.installRoot.installSlot + "/kernova-agent")
+            atPath: scratch.root + layout.installRoot.slot("a") + "/kernova-agent")
         #expect(binary.map(Array.init) == scratch.payloadBytes)
         let state = try JSONDecoder().decode(
             InstallState.self, from: Data(try #require(scratch.contents(layout.installRoot.state)).utf8))

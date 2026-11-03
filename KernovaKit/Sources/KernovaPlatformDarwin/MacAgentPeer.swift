@@ -14,8 +14,8 @@ import KernovaSynchronization
 ///
 /// A peer relaunches by exiting 75 (EX_TEMPFAIL), which launchd restarts through `current` (`KeepAlive`
 /// `SuccessfulExit` false): after the update it installed itself, and whenever `current` moves away from the
-/// slot it runs from — another peer's switch, or the rollback check's revert — so each process runs the slot
-/// its install runs.
+/// slot it runs from — another peer's switch, a fresh install, or the rollback check's revert — so each process
+/// runs the slot its install runs. It exits 0, staying stopped, once `current` is gone with its install.
 public final class MacAgentPeer: Sendable {
     /// The status a peer exits with to relaunch.
     public static let relaunchStatus: Int32 = 75
@@ -54,9 +54,17 @@ public final class MacAgentPeer: Sendable {
                 }))
         peer.withLock { $0 = self }
         if let running, claim.scope != .unspecified {
-            let watcher = SlotLinkWatcher(root: running.root, runningSlot: running.slot, queue: queue) { [self] in
-                Self.logger.log(.notice, "The install's current slot moved: the peer relaunches into it")
-                exit(status: Self.relaunchStatus)
+            let watcher = SlotLinkWatcher(root: running.root, runningSlot: running.slot, queue: queue) {
+                [self] change in
+                switch change {
+                case .moved:
+                    Self.logger.log(.notice, "The install's current slot moved: the peer relaunches into it")
+                    exit(status: Self.relaunchStatus)
+                case .removed:
+                    // Exiting 0 is what keeps launchd from restarting it (`KeepAlive` `SuccessfulExit` false).
+                    Self.logger.log(.notice, "The install was removed: the peer stops")
+                    exit(status: 0)
+                }
             }
             self.watcher.withLock { $0 = watcher }
         }

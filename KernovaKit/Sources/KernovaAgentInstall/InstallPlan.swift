@@ -10,13 +10,14 @@ public struct InstallPlan: Equatable, Sendable {
     public enum Write: Equatable, Sendable {
         /// A directory, made with `mode` when missing; one already there keeps its own.
         case directory(path: String, mode: UInt16)
-        /// A file holding `text`, replaced whole.
+        /// A file holding `text` with `mode`, replaced whole unless it already is exactly that.
         case file(path: String, mode: UInt16, text: String)
-        /// The payload the installer carries, landed at `path` by its format's ``PayloadLander``, then the slot
-        /// metadata recording it at `state`.
-        case payload(path: String, state: String)
-        /// A symbolic link to `target`, replaced whole.
-        case link(path: String, target: String)
+        /// The payload the installer carries, landed as `payloadName` by its format's ``PayloadLander`` in the
+        /// slot of `root` that `current` does not name — ``InstallRoot/firstSlotName`` when it names none — then
+        /// recorded alone in the slot metadata, then `current` switched to it, last, as an update's switch moves
+        /// it: no slot a running peer runs from is written, and every peer running from the root follows the
+        /// switch.
+        case freshSlot(root: InstallRoot, payloadName: String)
     }
 
     /// One command run, from `PATH`, unless the installer was asked to run none.
@@ -79,12 +80,11 @@ public struct InstallPlan: Equatable, Sendable {
         return steps + after.map(Step.run)
     }
 
-    /// The install of one scope: the agent's root laid out at `root`, its payload landed as `payloadName` in the
-    /// install slot, and `definitions` around it.
+    /// The install of one scope: the agent's root laid out at `root`, its payload landed as `payloadName` in a
+    /// fresh slot (``Write/freshSlot(root:payloadName:)``), and `definitions` around it.
     ///
-    /// A fresh install fills the install slot and points `current` at it. Before it writes anything it clears any
-    /// switch an update left pending, or reverted, so no rollback check judges the fresh install
-    /// (``ServiceDefinitions/beforeInstall`` has stopped the check by then).
+    /// Before it writes anything it clears any switch an update left pending, or reverted, so no rollback check
+    /// judges the fresh install (``ServiceDefinitions/beforeInstall`` has stopped the check by then).
     public static func install(
         root: InstallRoot, payloadName: String, definitions: some ServiceDefinitions
     ) -> InstallPlan {
@@ -93,9 +93,7 @@ public struct InstallPlan: Equatable, Sendable {
         plan.treeRemovals = [root.switchPending, root.switchRejected]
         plan.treeWrites = [
             .directory(path: root.slots, mode: 0o755),
-            .directory(path: root.installSlot, mode: 0o755),
-            .payload(path: root.installSlot + "/" + payloadName, state: root.state),
-            .link(path: root.current, target: InstallRoot.installSlotLink),
+            .freshSlot(root: root, payloadName: payloadName),
         ]
         plan.writes = definitions.writes
         plan.after = definitions.afterInstall
@@ -107,9 +105,7 @@ public struct InstallPlan: Equatable, Sendable {
     public static func uninstall(root: InstallRoot, definitions: some ServiceDefinitions) -> InstallPlan {
         var plan = InstallPlan(root: root.path)
         plan.before = definitions.beforeUninstall
-        plan.removals = definitions.writes.compactMap { write in
-            if case .file(let path, _, _) = write { path } else { nil }
-        }
+        plan.removals = definitions.files
         plan.removesRoot = true
         plan.after = definitions.afterUninstall
         return plan
@@ -143,8 +139,10 @@ extension InstallPlan.Step: CustomStringConvertible {
             switch write {
             case .directory(let path, _): return "make directory \(path), if missing"
             case .file(let path, _, _): return "write \(path)"
-            case .payload(let path, let state): return "write \(path), the agent, and \(state)"
-            case .link(let path, let target): return "link \(path) -> \(target)"
+            case .freshSlot(let root, let payloadName):
+                return
+                    "write the agent as \(payloadName) in the slot under \(root.slots) that \(root.current) does not "
+                    + "name, record it in \(root.state), and switch \(root.current) to it"
             }
         case .remove(let path): return "remove \(path), if present"
         case .removeRoot(let path): return "remove \(path) and everything in it, if present"

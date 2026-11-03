@@ -142,7 +142,7 @@ struct InstallerTests {
 
     private static func checkFiles(_ scratch: Scratch, _ definitions: TestDefinitions) throws {
         let root = definitions.root
-        let payload = FileManager.default.contents(atPath: scratch.root + root.installSlot + "/" + TestLander.name)
+        let payload = FileManager.default.contents(atPath: scratch.root + root.slot("a") + "/" + TestLander.name)
         #expect(payload.map(Array.init) == scratch.payloadBytes)
         let state = try InstallState.decoded(Array(try #require(scratch.contents(root.state)).utf8))
         #expect(state.active == "a")
@@ -218,8 +218,8 @@ struct InstallerTests {
         // A directory the account could never write, as /etc is.
         let outside = scratch.directory.path + "/outside"
         try FileManager.default.createDirectory(atPath: outside, withIntermediateDirectories: false)
-        let slot = scratch.root + Self.systemRoot.installSlot
-        try FileManager.default.removeItem(atPath: slot)
+        // The slot the next install fills: the one `current` does not name.
+        let slot = scratch.root + Self.systemRoot.slot("b")
         try FileManager.default.createSymbolicLink(atPath: slot, withDestinationPath: outside)
         let planted = try #require(getpwnam(Self.account)?.pointee)
         #expect(lchown(slot, planted.pw_uid, planted.pw_gid) == 0)
@@ -283,18 +283,56 @@ struct InstallerTests {
         #expect(FileManager.default.fileExists(atPath: dotfiles + "/agent.service"))
     }
 
-    @Test("A reinstall over a pending switch leaves the same files, the switch cleared")
+    /// `tree` after a reinstall over it: the spare slot filled and `current` switched to it.
+    private static func reinstalled(_ tree: [String: String], root: InstallRoot, into slot: String) -> [String: String]
+    {
+        tree.merging([
+            root.slot(slot): "d0755", root.slot(slot) + "/" + TestLander.name: "f0755",
+            root.current: "lslots/" + slot,
+        ]) { $1 }
+    }
+
+    /// The slot metadata `scratch` holds for `root`: only `slot`, holding the scratch payload, active.
+    private static func checkState(_ scratch: Scratch, _ root: InstallRoot, active slot: String) throws {
+        let state = try InstallState.decoded(Array(try #require(scratch.contents(root.state)).utf8))
+        #expect(state.active == slot)
+        #expect(Array(state.slots.keys) == [slot])
+        #expect(state.pendingSwitch == nil)
+        let payload = FileManager.default.contents(atPath: scratch.root + root.slot(slot) + "/" + TestLander.name)
+        #expect(payload.map(Array.init) == scratch.payloadBytes)
+    }
+
+    @Test(
+        "A reinstall over a live root lands in the slot current does not name, then switches current, the pending switch cleared"
+    )
     func reinstallUser() throws {
         let scratch = try Scratch()
         try scratch.installer().run(Self.install(Self.user))
         let first = try scratch.tree()
+        // A running peer's slot is never written: the agent in it stays as it was.
+        let running = scratch.root + Self.userRoot.slot("a") + "/" + TestLander.name
+        var before = stat()
+        #expect(stat(running, &before) == 0)
         #expect(FileManager.default.createFile(atPath: scratch.root + Self.userRoot.switchPending, contents: Data()))
+
         try scratch.installer().run(Self.install(Self.user))
-        #expect(try scratch.tree() == first)
+        #expect(try scratch.tree() == Self.reinstalled(first, root: Self.userRoot, into: "b"))
+        try Self.checkState(scratch, Self.userRoot, active: "b")
+        var after = stat()
+        #expect(stat(running, &after) == 0)
+        #expect(after.st_ino == before.st_ino)
+
+        // The next one goes back to the first slot.
+        try scratch.installer().run(Self.install(Self.user))
+        #expect(
+            try scratch.tree()
+                == Self.reinstalled(first, root: Self.userRoot, into: "b").merging([Self.userRoot.current: "lslots/a"])
+            { $1 })
+        try Self.checkState(scratch, Self.userRoot, active: "a")
     }
 
     @Test(
-        "A system reinstall over a pending switch leaves the same files and owners, the switch cleared",
+        "A system reinstall over a pending switch fills the spare slot with the same owners, the switch cleared",
         .enabled(if: runsAsRoot, "handing files to another account needs root"))
     func reinstallSystem() throws {
         let scratch = try Scratch()
@@ -302,7 +340,36 @@ struct InstallerTests {
         let first = try scratch.tree(owner: Self.systemOwner)
         #expect(FileManager.default.createFile(atPath: scratch.root + Self.systemRoot.switchPending, contents: Data()))
         try scratch.installer(account: Self.account).run(Self.install(Self.system))
-        #expect(try scratch.tree(owner: Self.systemOwner) == first)
+        #expect(
+            try scratch.tree(owner: Self.systemOwner) == Self.reinstalled(first, root: Self.systemRoot, into: "b"))
+        try Self.checkState(scratch, Self.systemRoot, active: "b")
+    }
+
+    @Test("A refresh over files already holding what it writes writes nothing, and rewrites one that differs")
+    func unchangedRefresh() throws {
+        let scratch = try Scratch()
+        try scratch.installer().run(Self.install(Self.user))
+        let definition = scratch.root + Self.user.definition
+        var before = stat()
+        #expect(stat(definition, &before) == 0)
+
+        try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
+        var unchanged = stat()
+        #expect(stat(definition, &unchanged) == 0)
+        #expect(unchanged.st_ino == before.st_ino)
+        #expect(!FileManager.default.fileExists(atPath: definition + ".kernova-new"))
+
+        #expect(chmod(definition, 0o600) == 0)
+        try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
+        var rewritten = stat()
+        #expect(stat(definition, &rewritten) == 0)
+        #expect(rewritten.st_ino != before.st_ino)
+        #expect(rewritten.st_mode & 0o7777 == 0o644)
+        #expect(scratch.contents(Self.user.definition) == Self.user.text)
+
+        try Data("stale\n".utf8).write(to: URL(fileURLWithPath: definition))
+        try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
+        #expect(scratch.contents(Self.user.definition) == Self.user.text)
     }
 
     @Test("An uninstall removes every file the install wrote, leaving only the shared directories")

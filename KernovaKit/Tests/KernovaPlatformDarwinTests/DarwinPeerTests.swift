@@ -57,10 +57,12 @@ struct DarwinPeerTests {
         try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
         let moved = DispatchSemaphore(value: 0)
         let count = Locked(0)
+        let changes = Locked<[SlotLinkWatcher.Change]>([])
         let queue = DispatchQueue(label: "test.watcher")
         let watcher = try #require(
-            SlotLinkWatcher(root: root, runningSlot: "a", queue: queue) {
+            SlotLinkWatcher(root: root, runningSlot: "a", queue: queue) { change in
                 count.withLock { $0 += 1 }
+                changes.withLock { $0.append(change) }
                 moved.signal()
             })
         defer { watcher.cancel() }
@@ -74,6 +76,28 @@ struct DarwinPeerTests {
         #expect(rename(root + "/current.new", root + "/current") == 0)
         queue.sync {}
         #expect(count.withLock { $0 } == 1)
+        #expect(changes.withLock { $0 } == [.moved])
+    }
+
+    @Test("The watcher reports the link's removal — an uninstall — apart from a move, so the peer stops for good")
+    func slotLinkWatcherRemoval() throws {
+        let root = TestScratchDirectory(prefix: "kernova-link").url.path
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
+        let changed = DispatchSemaphore(value: 0)
+        let changes = Locked<[SlotLinkWatcher.Change]>([])
+        let queue = DispatchQueue(label: "test.watcher")
+        let watcher = try #require(
+            SlotLinkWatcher(root: root, runningSlot: "a", queue: queue) { change in
+                changes.withLock { $0.append(change) }
+                changed.signal()
+            })
+        defer { watcher.cancel() }
+        queue.sync {}
+        #expect(changes.withLock { $0 }.isEmpty)
+        #expect(unlink(root + "/current") == 0)
+        changed.wait()
+        #expect(changes.withLock { $0 } == [.removed])
     }
 }
 

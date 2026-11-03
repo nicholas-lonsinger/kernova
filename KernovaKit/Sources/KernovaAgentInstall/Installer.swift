@@ -152,7 +152,7 @@ public struct Installer {
     /// Opens the payload `plan` writes, before any step, so a missing one changes nothing: the file, or the
     /// directory that is packed.
     private func openPayload(_ plan: InstallPlan) throws(Failure) -> Int32? {
-        guard plan.treeWrites.contains(where: { if case .payload = $0 { true } else { false } }) else { return nil }
+        guard plan.treeWrites.contains(where: { if case .freshSlot = $0 { true } else { false } }) else { return nil }
         guard let payloadSource else { preconditionFailure("a plan writing a payload, given none") }
         let flags =
             switch payloadSource {
@@ -181,12 +181,38 @@ public struct Installer {
         case .file(let path, let mode, let text):
             let (parent, name) = try openParent(of: path)
             defer { close(parent) }
+            let bytes = Array(text.utf8)
+            // A service manager may act on any write to its files: macOS posts a Background Items notification
+            // for each launchd property list written (docs/research/2026-10-27-macos-guest-shutdown-via-loginwindow.md).
+            guard !Self.holds(parent, name, bytes, mode: mode) else { return }
             try Self.writeFile(in: parent, name, path: path, mode: mode, owner: nil) { descriptor throws(Failure) in
-                try Self.writeAll(Array(text.utf8), to: descriptor, path: path)
+                try Self.writeAll(bytes, to: descriptor, path: path)
             }
-        case .payload, .link:
+        case .freshSlot:
             preconditionFailure("\(write) is written only below the agent's root")
         }
+    }
+
+    /// Whether `name` in `directory` is already what writing `bytes` with `mode` leaves: a regular file of this
+    /// process's effective user, with that mode, holding exactly those bytes.
+    static func holds(_ directory: Int32, _ name: String, _ bytes: [UInt8], mode: UInt16) -> Bool {
+        let file = openat(directory, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard file >= 0 else { return false }
+        defer { close(file) }
+        var info = stat()
+        guard fstat(file, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_mode & 0o7777 == mode_t(mode),
+            info.st_uid == geteuid(), info.st_size == off_t(bytes.count)
+        else { return false }
+        var found: [UInt8] = []
+        found.reserveCapacity(bytes.count)
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while found.count <= bytes.count {
+            let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress, $0.count) }
+            if count < 0, errno == EINTR { continue }
+            guard count > 0 else { break }
+            found += buffer[0..<count]
+        }
+        return found == bytes
     }
 
     /// Makes `path` and any missing ancestor, the ancestors `0o755`, `path` itself `mode` when this makes it;
@@ -322,29 +348,44 @@ public struct Installer {
                     try Self.writeAll(Array(text.utf8), to: descriptor, path: path)
                 }
             }
-        case .payload(let path, let state):
+        case .freshSlot(let installRoot, let payloadName):
             guard let source, let payloadSource else { preconditionFailure("a payload write with no payload open") }
+            precondition(installRoot.path == rootPath, "a fresh slot of \(installRoot.path) below \(rootPath)")
+            let slot = Self.freshSlotName(in: root)
+            let slotPath = installRoot.slot(slot)
+            guard
+                let directory = try openDirectory(
+                    components(of: slotPath, below: rootPath), below: root, path: slotPath, creating: true,
+                    mode: 0o755, owner: owner)
+            else { preconditionFailure("\(slotPath) not made") }
             let payload = InstallPayloadReader(payloadSource, descriptor: source)
-            try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                let slot = InstallDirectory(
-                    descriptor: parent, path: String(path.dropLast(name.count + 1)), owner: owner)
-                try lander.install(payload, as: name, in: slot)
+            do throws(Failure) {
+                try lander.install(
+                    payload, as: payloadName, in: InstallDirectory(descriptor: directory, path: slotPath, owner: owner))
+            } catch {
+                close(directory)
+                throw error
             }
+            close(directory)
             let hash = try payload.finish()
-            let record = InstallState.fresh(payloadSHA256: lowercaseHex(hash), versionLabel: versionLabel)
+            let record = InstallState.fresh(slot: slot, payloadSHA256: lowercaseHex(hash), versionLabel: versionLabel)
             let bytes: [UInt8]
             do { bytes = try record.encoded() } catch { throw .encoding(String(describing: error)) }
-            try withParent(of: state, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try Self.writeFile(in: parent, name, path: state, mode: 0o644, owner: owner) {
-                    descriptor throws(Failure) in
-                    try Self.writeAll(bytes, to: descriptor, path: state)
-                }
+            try Self.writeFile(in: root, InstallRoot.stateName, path: installRoot.state, mode: 0o644, owner: owner) {
+                descriptor throws(Failure) in
+                try Self.writeAll(bytes, to: descriptor, path: installRoot.state)
             }
-        case .link(let path, let target):
-            try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try replaceLink(in: parent, name, path: path, target: target)
-            }
+            try replaceLink(
+                in: root, InstallRoot.currentLinkName, path: installRoot.current,
+                target: InstallRoot.slotsName + "/" + slot)
         }
+    }
+
+    /// The slot of the root open at `root` that a fresh install fills: the one `current` does not name, so no
+    /// running peer's slot is written; ``InstallRoot/firstSlotName`` when it names none.
+    static func freshSlotName(in root: Int32) -> String {
+        SlotRoot.slot(linkedFrom: InstallRoot.currentLinkName, in: root).map(InstallState.spare(of:))
+            ?? InstallRoot.firstSlotName
     }
 
     /// Runs `body` with the directory `path` is in, below `root`, open, and `path`'s last component. That

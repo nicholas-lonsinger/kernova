@@ -75,10 +75,24 @@ public struct LaunchdJobs: ServiceDefinitions {
 
 extension InstallPlan {
     /// The install of `layout`'s scope, its jobs stopped through `stopTool`.
-    public static func install(_ layout: MacInstallLayout, stopTool: String) -> InstallPlan {
-        .install(
+    ///
+    /// A "For everyone" install replaces `replacing`'s "Just for me" jobs — the user it was asked for by — once
+    /// its own are loaded: they are stopped and their property lists removed, so that user never runs two
+    /// session peers. The jobs go whatever wrote them, an earlier per-user install under the same labels
+    /// included; the user's own root stays.
+    public static func install(
+        _ layout: MacInstallLayout, stopTool: String, replacing user: MacInstallLayout? = nil
+    ) -> InstallPlan {
+        var plan = InstallPlan.install(
             root: layout.installRoot, payloadName: MacInstallLayout.appName,
             definitions: LaunchdJobs(layout, stopTool: stopTool))
+        if let user {
+            precondition(layout.scope == .system && user.scope == .user, "only a system install replaces a user's")
+            let jobs = LaunchdJobs(user, stopTool: stopTool)
+            plan.removals += jobs.files
+            plan.after += jobs.beforeUninstall
+        }
+        return plan
     }
 
     /// The uninstall of `layout`'s scope.

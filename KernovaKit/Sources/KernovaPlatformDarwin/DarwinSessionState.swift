@@ -4,6 +4,7 @@ import Darwin
 import Dispatch
 import Foundation
 import KernovaAgentCore
+import KernovaAgentInstall
 import KernovaSynchronization
 import SystemConfiguration
 
@@ -112,26 +113,38 @@ public final class ConsoleUserWatcher: Sendable {
 }
 
 /// Watches an install root for its `current` link to point away from the slot this process runs from, as an
-/// update's switch or the rollback check's revert moves it, and calls `onMoved` once, on `queue`.
+/// update's switch, a fresh install's or the rollback check's revert moves it, or to go, as an uninstall removes
+/// it, and calls `onChange` once, on `queue`.
 public final class SlotLinkWatcher: Sendable {
+    /// What happened to the link.
+    public enum Change: Sendable, Equatable {
+        /// It points at another slot.
+        case moved
+        /// It is gone, or names no slot.
+        case removed
+    }
+
     private let source: any DispatchSourceFileSystemObject
 
     /// A watcher of `root`, whose process runs from `runningSlot`; nil when the root cannot be opened.
-    public init?(root: String, runningSlot: String, queue: DispatchQueue, onMoved: @escaping @Sendable () -> Void) {
+    public init?(
+        root: String, runningSlot: String, queue: DispatchQueue, onChange: @escaping @Sendable (Change) -> Void
+    ) {
         let directory = open(root, O_EVTONLY | O_DIRECTORY | O_CLOEXEC)
         guard directory >= 0 else { return nil }
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: directory, eventMask: [.write, .delete, .rename], queue: queue)
         let fired = Locked(false)
         let check: @Sendable () -> Void = {
-            guard Self.slot(linkedFrom: root + "/current") != runningSlot else { return }
+            let slot = SlotRoot.slot(linkedFrom: root + "/" + InstallRoot.currentLinkName, in: AT_FDCWD)
+            guard slot != runningSlot else { return }
             guard
                 !fired.withLock({ fired in
                     defer { fired = true }; return fired
                 })
             else { return }
             source.cancel()
-            onMoved()
+            onChange(slot == nil ? .removed : .moved)
         }
         source.setEventHandler(handler: check)
         source.setCancelHandler { close(directory) }
@@ -144,16 +157,6 @@ public final class SlotLinkWatcher: Sendable {
     /// Stops watching.
     public func cancel() {
         source.cancel()
-    }
-
-    /// The slot the link at `path` points at, `slots/<slot>`; nil when it is missing or points elsewhere.
-    static func slot(linkedFrom path: String) -> String? {
-        var buffer = [CChar](repeating: 0, count: 256)
-        let count = readlink(path, &buffer, buffer.count - 1)
-        guard count > 0 else { return nil }
-        let target = String(decoding: buffer[0..<count].map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        guard target.hasPrefix("slots/") else { return nil }
-        return String(target.dropFirst("slots/".count))
     }
 }
 #endif

@@ -123,14 +123,15 @@ public final class SlotRoot: Sendable {
         try syncDirectory()
     }
 
-    /// The slot the link `name` points at, `slots/<slot>`; nil when it is missing or points elsewhere.
-    func slot(linkedFrom name: String) -> String? {
+    /// The slot the link `name`, relative to the directory open at `directory` — `AT_FDCWD` for a path —
+    /// points at, `slots/<slot>`; nil when it is missing or points elsewhere.
+    public static func slot(linkedFrom name: String, in directory: Int32) -> String? {
         var buffer = [CChar](repeating: 0, count: 256)
-        let count = readlinkat(descriptor, name, &buffer, buffer.count - 1)
+        let count = readlinkat(directory, name, &buffer, buffer.count - 1)
         guard count > 0 else { return nil }
         let target = String(decoding: buffer[0..<count].map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        guard target.hasPrefix("slots/") else { return nil }
-        let slot = String(target.dropFirst("slots/".count))
+        guard target.hasPrefix(InstallRoot.slotsName + "/") else { return nil }
+        let slot = String(target.dropFirst(InstallRoot.slotsName.count + 1))
         return slot.isEmpty || slot.contains("/") ? nil : slot
     }
 

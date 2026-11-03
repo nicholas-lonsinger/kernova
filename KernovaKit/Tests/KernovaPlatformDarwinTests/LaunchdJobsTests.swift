@@ -27,9 +27,9 @@ struct LaunchdJobsTests {
                 "  remove \(Self.userRoot)/switch-rejected, if present",
                 "  make directory \(Self.userRoot), if missing",
                 "  make directory \(Self.userRoot)/slots, if missing",
-                "  make directory \(Self.userRoot)/slots/a, if missing",
-                "  write \(Self.userRoot)/slots/a/Kernova Guest Agent.app, the agent, and \(Self.userRoot)/state.json",
-                "  link \(Self.userRoot)/current -> slots/a",
+                "  write the agent as Kernova Guest Agent.app in the slot under \(Self.userRoot)/slots that "
+                    + "\(Self.userRoot)/current does not name, record it in \(Self.userRoot)/state.json, and switch "
+                    + "\(Self.userRoot)/current to it",
                 "  make directory /Users/pbear/Library/LaunchAgents, if missing",
                 "  write /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
                 "  write /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
@@ -51,9 +51,9 @@ struct LaunchdJobsTests {
                 "  remove \(Self.systemRoot)/switch-rejected, if present",
                 "  make directory \(Self.systemRoot), if missing",
                 "  make directory \(Self.systemRoot)/slots, if missing",
-                "  make directory \(Self.systemRoot)/slots/a, if missing",
-                "  write \(Self.systemRoot)/slots/a/Kernova Guest Agent.app, the agent, and \(Self.systemRoot)/state.json",
-                "  link \(Self.systemRoot)/current -> slots/a",
+                "  write the agent as Kernova Guest Agent.app in the slot under \(Self.systemRoot)/slots that "
+                    + "\(Self.systemRoot)/current does not name, record it in \(Self.systemRoot)/state.json, and switch "
+                    + "\(Self.systemRoot)/current to it",
                 "  make directory /Library/LaunchAgents, if missing",
                 "  write /Library/LaunchAgents/app.kernova.macosagent.session.plist",
                 "  make directory /Library/LaunchDaemons, if missing",
@@ -63,6 +63,27 @@ struct LaunchdJobsTests {
                 "  run launchctl bootstrap system /Library/LaunchDaemons/app.kernova.macosagent.system.plist",
                 "  run launchctl bootstrap gui/501 /Library/LaunchAgents/app.kernova.macosagent.session.plist",
             ])
+    }
+
+    @Test(
+        "\"For everyone\" asked for by a user stops and removes that user's \"Just for me\" jobs once its own are loaded"
+    )
+    func systemPlanReplacesUserJobs() {
+        let plain = InstallPlan.install(Self.system, stopTool: Self.tool)
+        let plan = InstallPlan.install(Self.system, stopTool: Self.tool, replacing: Self.user)
+        #expect(plan.before == plain.before && plan.treeWrites == plain.treeWrites && plan.writes == plain.writes)
+        #expect(
+            plan.removals == [
+                "/Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
+                "/Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
+            ])
+        #expect(
+            plan.after == plain.after + [
+                InstallPlan.Command([Self.tool, "stop-service", "gui/501/app.kernova.macosagent.rollback"]),
+                InstallPlan.Command([Self.tool, "stop-service", "gui/501/app.kernova.macosagent"]),
+            ])
+        // The user's own root stays.
+        #expect(!plan.removesRoot && plan.treeRemovals.allSatisfy { $0.hasPrefix(Self.systemRoot + "/") })
     }
 
     @Test("With no user at the console, \"For everyone\" leaves the session agent to the next login")

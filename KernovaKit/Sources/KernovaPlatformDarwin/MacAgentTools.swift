@@ -111,7 +111,9 @@ public enum MacAgentTools {
                 for: request.scope, dryRun: request.dryRun, effectiveUID: geteuid(),
                 home: ProcessInfo.processInfo.environment["HOME"], consoleUserID: DarwinSessionState.consoleUserID())
             let plan: InstallPlan =
-                uninstalling ? .uninstall(layout, stopTool: tool) : .install(layout, stopTool: tool)
+                uninstalling
+                ? .uninstall(layout, stopTool: tool)
+                : .install(layout, stopTool: tool, replacing: layout.scope == .system ? invokingUser() : nil)
             if request.dryRun {
                 let verb = uninstalling ? "uninstall" : "install"
                 let heading = "KernovaMacOSAgent \(verb)\(request.scope == .system ? " --system" : "") will:"
@@ -130,6 +132,15 @@ public enum MacAgentTools {
             writeError("Kernova Guest Agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")
             exit(1)
         }
+    }
+
+    /// The "Just for me" scope of the user who asked for this run: the one `sudo` ran it for (sudo(8),
+    /// `SUDO_UID`), or the process's own user when it is not root; nil for root itself.
+    private static func invokingUser() -> MacInstallLayout? {
+        let uid = geteuid() == 0 ? ProcessInfo.processInfo.environment["SUDO_UID"].flatMap { uid_t($0) } : getuid()
+        guard let uid, uid != 0, let entry = getpwuid(uid) else { return nil }
+        let home = String(cString: entry.pointee.pw_dir)
+        return home.hasPrefix("/") ? .user(home: home, userID: uid) : nil
     }
 
     /// The app bundle `executable` runs from.

@@ -215,7 +215,7 @@ struct ContainerTreeTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b").isEmpty)
     }
 
-    @Test("An install lands the payload as the item in the install slot and records its SHA-256")
+    @Test("An install lands the payload as the item in the slot current does not name and records its SHA-256")
     func installLandsGolden() throws {
         let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
         let scratch = try PortableScratchDirectory(prefix: "kernova-container-install")
@@ -229,14 +229,16 @@ struct ContainerTreeTests {
             stagingRoot: stage, runsCommands: false, payloadSource: .file(payload), lander: lander,
             versionLabel: "9.9 (99)", account: nil)
         let definitions = TestDefinitions(root: root, directory: "/services")
-        for _ in 0..<2 {
+        for slot in ["a", "b", "a"] {
             try installer.run(.install(root: root, payloadName: Self.itemName, definitions: definitions))
-            #expect(try BundleFixture.describe(stage + "/agent/slots/a/" + Self.itemName) == BundleFixture.expected)
-            #expect(try FileManager.default.contentsOfDirectory(atPath: stage + "/agent/slots/a") == [Self.itemName])
+            let directory = stage + "/agent/slots/" + slot
+            #expect(try BundleFixture.describe(directory + "/" + Self.itemName) == BundleFixture.expected)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: directory) == [Self.itemName])
+            let state = try InstallState.decoded(
+                Array(try Data(contentsOf: URL(fileURLWithPath: stage + "/agent/state.json"))))
+            #expect(state.active == slot)
+            #expect(state.slots[slot]?.payloadSHA256 == lowercaseHex(Data(SHA256.hash(Array(frozen)))))
         }
-        let state = try InstallState.decoded(
-            Array(try Data(contentsOf: URL(fileURLWithPath: stage + "/agent/state.json"))))
-        #expect(state.slots["a"]?.payloadSHA256 == lowercaseHex(Data(SHA256.hash(Array(frozen)))))
     }
 
     @Test("An install from a directory packs it as it lands, recording the SHA-256 of the packed tree")

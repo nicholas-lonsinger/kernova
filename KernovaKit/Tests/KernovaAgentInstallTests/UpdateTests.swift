@@ -29,7 +29,7 @@ final class SlotFixture {
         try FileManager.default.createDirectory(atPath: root + "/slots/a", withIntermediateDirectories: true)
         try Data("installed agent".utf8).write(to: URL(fileURLWithPath: root + "/slots/a/" + TestLander.name))
         try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
-        try write(InstallState.fresh(payloadSHA256: "aa", versionLabel: "1.0"))
+        try write(InstallState.fresh(slot: "a", payloadSHA256: "aa", versionLabel: "1.0"))
     }
 
     func slotRoot() throws -> SlotRoot { try SlotRoot(path: root) }
@@ -511,10 +511,11 @@ struct SlotMetadataTests {
     @Test("A fresh install's state.json names no switch and no rejected hash; both round-trip under their keys")
     func stateKeys() throws {
         let fresh = String(
-            decoding: try InstallState.fresh(payloadSHA256: "aa", versionLabel: "1").encoded(), as: UTF8.self)
+            decoding: try InstallState.fresh(slot: "a", payloadSHA256: "aa", versionLabel: "1").encoded(), as: UTF8.self
+        )
         #expect(!fresh.contains("switch"))
         #expect(!fresh.contains("rejected"))
-        var state = InstallState.fresh(payloadSHA256: "aa", versionLabel: "1")
+        var state = InstallState.fresh(slot: "a", payloadSHA256: "aa", versionLabel: "1")
         state.pendingSwitch = InstallState.Switch(from: "a", to: "b", payloadSHA256: "bb")
         state.rejectedSHA256 = "cc"
         let encoded = try state.encoded()

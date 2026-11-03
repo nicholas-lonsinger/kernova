@@ -13,8 +13,6 @@ public struct InstallRoot: Equatable, Sendable {
     public var slots: String { path + "/" + Self.slotsName }
     /// Slot `slot`.
     public func slot(_ slot: String) -> String { slots + "/" + slot }
-    /// The slot a fresh install fills.
-    public var installSlot: String { slot(Self.installSlotName) }
     /// The link the service manager runs the agent through, to the slot in use.
     public var current: String { path + "/" + Self.currentLinkName }
     /// The link to the previous slot, whose agent the rollback check runs.
@@ -28,10 +26,8 @@ public struct InstallRoot: Equatable, Sendable {
     public var switchRejected: String { path + "/" + Self.switchRejectedName }
 
     static let slotsName = "slots"
-    /// The slot a fresh install fills.
-    public static let installSlotName = "a"
-    /// What `current` points at after a fresh install, relative to the root.
-    public static let installSlotLink = slotsName + "/" + installSlotName
+    /// The slot an install fills when `current` names none.
+    public static let firstSlotName = "a"
     /// ``current``'s name in the root.
     public static let currentLinkName = "current"
     /// ``rollback``'s name in the root.
