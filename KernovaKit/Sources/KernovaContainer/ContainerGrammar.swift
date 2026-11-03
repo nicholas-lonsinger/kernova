@@ -18,38 +18,6 @@ struct ContainerGrammar {
         case symlink
     }
 
-    /// The longest name a POSIX file system takes, `NAME_MAX`; extended attribute names share it
-    /// (`XATTR_MAXNAMELEN` on Darwin, `XATTR_NAME_MAX` on Linux).
-    static let maxNameByteCount = 255
-
-    /// The longest symlink target: Darwin's `PATH_MAX` of 1,024 bytes (`sys/syslimits.h`) less the NUL that
-    /// ends it, beyond which `symlink(2)` fails with `ENAMETOOLONG`. Darwin's is the smallest of the supported
-    /// guest and host OSes, so every writer can create any target the format carries.
-    static let maxSymlinkTargetByteCount = 1_023
-
-    /// The permission bits, `07777`.
-    static let maxMode: UInt32 = 0o7777
-
-    static let maxNanoseconds: UInt32 = 999_999_999
-
-    /// The `darwin_flags` an entry may carry: the owner flags `UF_NODUMP` (0x1), `UF_OPAQUE` (0x8) and
-    /// `UF_HIDDEN` (0x8000), as Darwin's `sys/stat.h` numbers them. Every other bit is refused:
-    /// `UF_IMMUTABLE`, `UF_APPEND` and `UF_DATAVAULT` block removal of the landed tree or need an entitlement,
-    /// the superuser and synthetic flags need privilege the receiver lacks, `UF_COMPRESSED` is implied by
-    /// decmpfs storage alone, and `UF_TRACKED` marks a document ID that does not travel.
-    static let allowedDarwinFlags: UInt32 = 0x0000_8009
-
-    /// The extended attributes the format carries, by exact name: Finder tags and the resource fork.
-    static let allowedXattrNames: Set<Data> = [
-        Data("com.apple.metadata:_kMDItemUserTags".utf8), resourceForkName,
-    ]
-
-    /// The extended attribute namespace the format carries whole: Linux's `user.*`.
-    static let allowedXattrPrefix = Data("user.".utf8)
-
-    /// The resource fork, which an entry with decmpfs storage carries as its chunks instead.
-    static let resourceForkName = Data("com.apple.ResourceFork".utf8)
-
     let acceptance: ContainerAcceptance
 
     /// The directories entered and not yet left; an entry at depth d lies inside the first d of them.
@@ -72,7 +40,7 @@ struct ContainerGrammar {
         try requireBetweenEntries()
         let leaving = try place(header)
         let size = try storageSize(of: header)
-        try checkMetadata(of: header)
+        _ = try ValidatedEntry(header)
         if size.landed > acceptance.byteCeiling - landedBytes {
             throw .exceedsByteCeiling(declared: landedBytes &+ size.landed, ceiling: acceptance.byteCeiling)
         }
@@ -181,91 +149,5 @@ struct ContainerGrammar {
         default:
             throw .storageNotAllowed(header.type)
         }
-    }
-
-    private func checkMetadata(of header: EntryHeader) throws(ContainerError) {
-        guard header.unknownFields.data.isEmpty else { throw .unknownFields }
-        if header.type == .data {
-            let bare =
-                header.depth == 0 && header.name.isEmpty && header.mode == 0 && header.darwinFlags == 0
-                && !header.hasModificationTime && !header.hasBirthTime && header.xattrs.isEmpty
-                && header.symlinkTarget.isEmpty
-            guard bare else { throw .dataEntryNotBare }
-            return
-        }
-        guard Self.isValidName(header.name) else { throw .invalidName }
-        guard header.mode <= Self.maxMode else { throw .modeOutOfRange(header.mode) }
-        guard header.darwinFlags & ~Self.allowedDarwinFlags == 0 else {
-            throw .darwinFlagsNotAllowed(header.darwinFlags & ~Self.allowedDarwinFlags)
-        }
-        for time in [header.modificationTime, header.birthTime] {
-            guard time.unknownFields.data.isEmpty else { throw .unknownFields }
-            guard time.nanoseconds <= Self.maxNanoseconds else { throw .nanosecondsOutOfRange(time.nanoseconds) }
-        }
-        if header.type == .symlink {
-            guard Self.isValidSymlinkTarget(header.symlinkTarget) else { throw .invalidSymlinkTarget }
-        } else {
-            guard header.symlinkTarget.isEmpty else { throw .invalidSymlinkTarget }
-        }
-        try checkXattrs(of: header)
-    }
-
-    private func checkXattrs(of header: EntryHeader) throws(ContainerError) {
-        var names = Set<Data>()
-        let decmpfs: Bool
-        if case .decmpfs = header.storage { decmpfs = true } else { decmpfs = false }
-        for xattr in header.xattrs {
-            guard xattr.unknownFields.data.isEmpty else { throw .unknownFields }
-            let name = xattr.name
-            guard !name.isEmpty, name.count <= Self.maxNameByteCount, !name.contains(0) else {
-                throw .invalidXattrName
-            }
-            guard Self.isAllowedXattrName(name), !(decmpfs && name == Self.resourceForkName) else {
-                throw .xattrNotAllowed(name)
-            }
-            guard names.insert(name).inserted else { throw .duplicateXattrName(name) }
-        }
-    }
-
-    /// Whether the format carries an extended attribute named `name`.
-    static func isAllowedXattrName(_ name: Data) -> Bool {
-        allowedXattrNames.contains(name)
-            || (name.count > allowedXattrPrefix.count && name.starts(with: allowedXattrPrefix))
-    }
-
-    /// Whether a symlink entry may point at `target`.
-    static func isValidSymlinkTarget(_ target: Data) -> Bool {
-        !target.isEmpty && target.count <= maxSymlinkTargetByteCount && !target.contains(0)
-    }
-
-    /// Whether `name` is one path component a POSIX file system takes as it is.
-    static func isValidName(_ name: Data) -> Bool {
-        guard !name.isEmpty, name.count <= maxNameByteCount else { return false }
-        guard name != Data([0x2E]), name != Data([0x2E, 0x2E]) else { return false }
-        return !name.contains(0x2F) && !name.contains(0)
-    }
-}
-
-extension EntryHeader {
-    /// Whether `name` is one path component a POSIX file system takes as it is: not empty, `.` or `..`, at
-    /// most 255 bytes, and free of `/` and NUL — the rule every container entry's name keeps.
-    public static func isValidName(_ name: Data) -> Bool { ContainerGrammar.isValidName(name) }
-
-    /// The `darwin_flags` bits an entry may carry: `UF_NODUMP`, `UF_OPAQUE` and `UF_HIDDEN`.
-    public static let carriedDarwinFlags = ContainerGrammar.allowedDarwinFlags
-
-    /// Whether an entry may carry the extended attribute `name`: Finder tags, the resource fork, or a name in
-    /// Linux's `user.` namespace.
-    public static func isCarriedXattrName(_ name: Data) -> Bool {
-        !name.isEmpty && name.count <= ContainerGrammar.maxNameByteCount && !name.contains(0)
-            && ContainerGrammar.isAllowedXattrName(name)
-    }
-
-    /// Whether a symlink entry may point at `target`: not empty, at most 1,023 bytes, and free of NUL.
-    public static func isValidSymlinkTarget(_ target: Data) -> Bool { ContainerGrammar.isValidSymlinkTarget(target) }
-
-    /// Whether the header fits one header record, at most `ContainerRecord.maxHeaderPayload` bytes.
-    public var fitsHeaderRecord: Bool {
-        ContainerRecordKind.header.payloadLengths.contains(ContainerEncoder.serialized(self).count)
     }
 }

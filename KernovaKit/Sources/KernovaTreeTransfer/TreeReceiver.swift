@@ -6,14 +6,22 @@ import Foundation
 
 import KernovaContainer
 import KernovaFileTree
+import KernovaLogging
 
 /// Lands a pulled FILE or FOLDER representation from its container's bytes: a `ContainerDecoder` feeding a
 /// ``TreeWriter``. The item takes its own name in the destination only in ``finish()``, once the decoder
 /// has confirmed the container whole; any failure, or the receiver ending first, removes everything it
 /// created.
+///
+/// Once a call has failed, the receiver takes no more bytes: whether the decoder or the writer failed, every
+/// later call throws that failure before anything is fed or held.
 public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     private var decoder: ContainerDecoder
     private let writer: TreeWriter<FileSystem>
+    private var failure: TreeWriteFailure?
+
+    /// The container bytes held and not yet decoded.
+    var heldByteCount: Int { decoder.bufferedByteCount }
 
     /// The name the item has in the destination until it is published.
     public var stagingName: [UInt8] { writer.stagingName }
@@ -25,14 +33,15 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     ///   - fileSystem: The calls the writer makes.
     ///   - destination: An open directory, which the receiver takes ownership of and closes when it ends.
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path.
+    ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
         accepting acceptance: ContainerAcceptance, fileSystem: FileSystem, destination: Int32,
-        destinationPathByteCount: Int
+        destinationPathByteCount: Int, logger: KernovaLogger = TreeWriterLog.logger
     ) {
         decoder = ContainerDecoder(accepting: acceptance)
         writer = TreeWriter(
             fileSystem: fileSystem, destination: destination, destinationPathByteCount: destinationPathByteCount,
-            byteCeiling: acceptance.byteCeiling)
+            byteCeiling: acceptance.byteCeiling, logger: logger)
     }
 
     /// Takes the container's next bytes, landing every entry they complete.
@@ -40,16 +49,18 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     /// - Parameter bytes: The bytes following those received before.
     /// - Throws: ``TreeWriteFailure``; everything created is then removed, and every later call throws it.
     public func receive(_ bytes: Data) throws(TreeWriteFailure) {
-        decoder.feed(bytes)
-        while true {
-            let event: TreeEvent?
-            do {
-                event = try decoder.next()
-            } catch {
-                throw writer.failHere(.container(error))
+        try latching { () throws(TreeWriteFailure) in
+            decoder.feed(bytes)
+            while true {
+                let event: TreeEvent?
+                do throws(ContainerError) {
+                    event = try decoder.next()
+                } catch {
+                    throw writer.failHere(.container(error))
+                }
+                guard let event else { return }
+                try writer.write(event)
             }
-            guard let event else { return }
-            try writer.write(event)
         }
     }
 
@@ -59,11 +70,24 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an item that could not take
     ///   its name — `EEXIST` when the destination already holds it; nothing created then remains.
     public func finish() throws(TreeWriteFailure) -> [UInt8] {
-        do {
-            try decoder.finish()
-        } catch {
-            throw writer.failHere(.container(error))
+        try latching { () throws(TreeWriteFailure) in
+            do throws(ContainerError) {
+                try decoder.finish()
+            } catch {
+                throw writer.failHere(.container(error))
+            }
+            return try writer.publish()
         }
-        return try writer.publish()
+    }
+
+    /// Runs `body` unless a call already failed, keeping the failure it throws.
+    private func latching<Result>(_ body: () throws(TreeWriteFailure) -> Result) throws(TreeWriteFailure) -> Result {
+        if let failure { throw failure }
+        do {
+            return try body()
+        } catch {
+            failure = error
+            throw error
+        }
     }
 }

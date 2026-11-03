@@ -116,7 +116,8 @@ struct TreeReaderTests {
         try bench.makeSymlink([bytes("item"), bytes("far")], to: Array(repeating: 0x61, count: 2_000))
         #expect(
             try Self.failure("item", on: bench)
-                == TreeReadFailure(path: [bytes("item"), bytes("far")], reason: .notCarried(.symlinkTarget)))
+                == TreeReadFailure(
+                    path: [bytes("item"), bytes("far")], reason: .notCarried(.entry(.invalidSymlinkTarget))))
     }
     #endif
 

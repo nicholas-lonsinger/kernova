@@ -13,6 +13,7 @@ import Foundation
 #endif
 import KernovaContainer
 import KernovaFileTree
+import KernovaLogging
 import KernovaPortableTestSupport
 import KernovaWire
 import SwiftProtobuf
@@ -176,10 +177,12 @@ final class Landing {
     }
 
     /// A writer landing in the destination, driven by events directly.
-    func writer(ceiling: UInt64 = 1 << 30) throws -> TreeWriter<POSIXTreeFileSystem> {
+    func writer(ceiling: UInt64 = 1 << 30, logger: KernovaLogger = TreeWriterLog.logger) throws
+        -> TreeWriter<POSIXTreeFileSystem>
+    {
         TreeWriter(
             fileSystem: fileSystem, destination: try openDestination(),
-            destinationPathByteCount: destinationPath.utf8.count, byteCeiling: ceiling)
+            destinationPathByteCount: destinationPath.utf8.count, byteCeiling: ceiling, logger: logger)
     }
 
     /// Feeds `container` in pieces of `pieceSize` bytes, then finishes, returning the landed name or the

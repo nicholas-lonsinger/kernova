@@ -174,6 +174,8 @@ final class FidelityBench {
         var xattrNames: Set<[UInt8]>
         /// 512-byte blocks allocated, `st_blocks`.
         var blocks: Int64
+        /// The 512-byte blocks of the whole hole-sized blocks the file stores that hold only zeros.
+        var storedZeroBlocks: Int64 = 0
         var digest: [UInt8]?
     }
 
@@ -202,7 +204,7 @@ final class FidelityBench {
         func readXattrs(_ target: TreeEntryTarget) throws {
             for attribute in try fileSystem.extendedAttributeNames(of: target) {
                 facts.xattrNames.insert(attribute)
-                guard EntryHeader.isCarriedXattrName(Data(attribute)) else { continue }
+                guard ValidatedEntry.isAllowedXattrName(Data(attribute)) else { continue }
                 facts.carriedXattrs[attribute] = try fileSystem.extendedAttribute(
                     attribute, of: target, maxByteCount: 1 << 20)
             }
@@ -212,14 +214,26 @@ final class FidelityBench {
             let descriptor = try fileSystem.openFile(name, in: directory)
             defer { fileSystem.close(descriptor) }
             try readXattrs(.descriptor(descriptor))
-            var digest = SHA256()
-            var buffer = [UInt8](repeating: 0, count: 1 << 16)
-            while true {
-                let count = try buffer.withUnsafeMutableBytes { try fileSystem.read(descriptor, into: $0) }
-                guard count > 0 else { break }
-                buffer.withUnsafeBytes { digest.update(UnsafeRawBufferPointer(rebasing: $0[..<count])) }
+            var content = [UInt8](repeating: 0, count: Int(status.size))
+            var offset = 0
+            while offset < content.count {
+                let count = try content.withUnsafeMutableBytes { buffer in
+                    try fileSystem.read(descriptor, into: UnsafeMutableRawBufferPointer(rebasing: buffer[offset...]))
+                }
+                try #require(count > 0)
+                offset += count
             }
-            facts.digest = digest.finalize()
+            facts.digest = SHA256.hash(content)
+            if let holeSize = fileSystem.holeSize(of: descriptor) {
+                var start: Int64 = 0
+                while let run = try fileSystem.dataRun(in: descriptor, from: start) {
+                    let whole = stride(from: Int(run.lowerBound), to: Int(run.upperBound), by: holeSize).filter {
+                        $0 + holeSize <= content.count && !content[$0..<($0 + holeSize)].contains { $0 != 0 }
+                    }
+                    facts.storedZeroBlocks += Int64(whole.count * holeSize / 512)
+                    start = run.upperBound
+                }
+            }
         case .directory:
             let descriptor = try fileSystem.openDirectory(name, in: directory)
             defer { fileSystem.close(descriptor) }

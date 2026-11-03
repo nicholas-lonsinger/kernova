@@ -32,10 +32,9 @@ public struct TreeReadFailure: Error, Equatable, Sendable {
         case rootType(FileKind)
         /// The entry is a FIFO, device, socket, or another type that is not a file, directory or symlink.
         case type(FileKind)
-        /// The name is longer than 255 bytes.
-        case name
-        /// The symlink's target is longer than 1,023 bytes or empty.
-        case symlinkTarget
+        /// The entry's header breaks a rule of `ValidatedEntry`: a name or symlink target past its limits, or
+        /// an extended attribute name the format refuses.
+        case entry(ContainerError)
         /// The entry's extended attributes do not fit one header record — a resource fork near 64 KiB or
         /// larger, most often.
         case metadataTooLarge

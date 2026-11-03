@@ -19,8 +19,9 @@ import KernovaWire
 /// Every event is one `ContainerEncoder` takes: an entry the format cannot carry — a FIFO, device or socket,
 /// a name or symlink target past the format's limits, extended attributes too large for a header record, or
 /// a file past the pull's byte ceiling — fails the read naming it, rather than leaving the item without it.
-/// Only the extended attributes `EntryHeader.isCarriedXattrName(_:)` admits are read, and only the
-/// `EntryHeader.carriedDarwinFlags` of an entry's flags.
+/// Every header is admitted through `ValidatedEntry`, the rules the decoder and writer hold it to; only the
+/// extended attributes `ValidatedEntry.isAllowedXattrName(_:)` names are read, and only the
+/// `ValidatedEntry.allowedDarwinFlags` of an entry's flags.
 public final class TreeReader<FileSystem: TreeFileSystem> {
     private let fileSystem: FileSystem
     private let acceptsLZ4: Bool
@@ -69,7 +70,11 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         byteCeiling = acceptance.byteCeiling
         step = .ended
         let path = [name]
-        guard EntryHeader.isValidName(Data(name)) else { throw TreeReadFailure(path: path, reason: .notCarried(.name)) }
+        // The item's name is the one name not read from a directory, so it is held to one path component
+        // before anything resolves it.
+        guard ValidatedEntry.isValidName(Data(name)) else {
+            throw TreeReadFailure(path: path, reason: .notCarried(.entry(.invalidName)))
+        }
         let status = try Self.system(path) { () throws(TreeFileSystemError) in
             try fileSystem.status(of: name, in: parent)
         }
@@ -167,7 +172,6 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         -> TreeEvent
     {
         let path = entered + [name]
-        guard EntryHeader.isValidName(Data(name)) else { throw TreeReadFailure(path: path, reason: .notCarried(.name)) }
         let directory = cursor.descriptor
         let status = try Self.system(path) { () throws(TreeFileSystemError) in
             try fileSystem.status(of: name, in: directory)
@@ -187,14 +191,11 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             let target = try Self.system(path) { () throws(TreeFileSystemError) in
                 try fileSystem.linkTarget(of: name, in: directory)
             }
-            guard EntryHeader.isValidSymlinkTarget(Data(target)) else {
-                throw TreeReadFailure(path: path, reason: .notCarried(.symlinkTarget))
-            }
             var header = try header(
                 name, depth: depth, type: .symlink, status: status, attributesOf: .symlink(name, in: directory),
                 path: path)
             header.symlinkTarget = Data(target)
-            try Self.requireFits(header, path: path)
+            try Self.admit(header, path: path)
             return .symlink(header)
         default:
             throw TreeReadFailure(path: path, reason: .notCarried(.type(status.kind)))
@@ -239,7 +240,7 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             let header = try header(
                 name, depth: depth, type: .directory, status: status, attributesOf: .descriptor(descriptor),
                 path: path)
-            try Self.requireFits(header, path: path)
+            try Self.admit(header, path: path)
             return OpenedDirectory(
                 descriptor: descriptor, status: status, header: header,
                 names: names.sorted { $1.lexicographicallyPrecedes($0) })
@@ -269,7 +270,7 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             } else {
                 header.plain.size = size
             }
-            try Self.requireFits(header, path: path)
+            try Self.admit(header, path: path)
             landedBytes += size
             return (FileRead(descriptor: descriptor, path: path, status: status), header)
         } catch {
@@ -302,14 +303,14 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         header.name = Data(name)
         header.type = type
         header.mode = status.permissions
-        header.darwinFlags = status.flags & EntryHeader.carriedDarwinFlags
+        header.darwinFlags = status.flags & ValidatedEntry.allowedDarwinFlags
         header.modificationTime = Kernova_V2_Timespec(status.modificationTime)
         if let birth = status.birthTime { header.birthTime = Kernova_V2_Timespec(birth) }
         let names = try Self.system(path) { () throws(TreeFileSystemError) in
             try fileSystem.extendedAttributeNames(of: target)
         }
         for attribute in names.sorted(by: { $0.lexicographicallyPrecedes($1) })
-        where EntryHeader.isCarriedXattrName(Data(attribute)) {
+        where ValidatedEntry.isAllowedXattrName(Data(attribute)) {
             let value = try Self.system(path) { () throws(TreeFileSystemError) in
                 try fileSystem.extendedAttribute(attribute, of: target, maxByteCount: ContainerRecord.maxHeaderPayload)
             }
@@ -322,7 +323,13 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
         return header
     }
 
-    private static func requireFits(_ header: EntryHeader, path: [[UInt8]]) throws(TreeReadFailure) {
+    /// Holds `header` to the rules every entry keeps and to one header record.
+    private static func admit(_ header: EntryHeader, path: [[UInt8]]) throws(TreeReadFailure) {
+        do {
+            _ = try ValidatedEntry(header)
+        } catch {
+            throw TreeReadFailure(path: path, reason: .notCarried(.entry(error)))
+        }
         guard header.fitsHeaderRecord else { throw TreeReadFailure(path: path, reason: .notCarried(.metadataTooLarge)) }
     }
 

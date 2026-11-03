@@ -195,9 +195,13 @@ struct RoundTripFidelityTests {
         var source = try #require(try bench.facts(of: name, in: bench.sourcePath)[[name]])
         var landed = try #require(try bench.facts(of: name, in: bench.destinationPath)[[name]])
         try #require(source.blocks * 512 < Int64(size) / 4, "the source is sparse")
-        // Names the format does not carry, such as an OS's own provenance attribute, are not compared.
+        #expect(landed.blocks == source.blocks - source.storedZeroBlocks)
+        // Names the format does not carry, such as an OS's own provenance attribute, are not compared, and
+        // the blocks are compared above.
         source.xattrNames = []
         landed.xattrNames = []
+        source.blocks = landed.blocks
+        source.storedZeroBlocks = landed.storedZeroBlocks
         #expect(landed == source)
     }
 
@@ -236,19 +240,15 @@ struct RoundTripFidelityTests {
             guard let landed = destination[components] else { continue }
             #expect(landed.kind == read.kind, "type of \(where_)")
             #expect(landed.permissions == read.permissions, "mode of \(where_)")
-            #expect(landed.flags == read.flags & EntryHeader.carriedDarwinFlags, "flags of \(where_)")
+            #expect(landed.flags == read.flags & ValidatedEntry.allowedDarwinFlags, "flags of \(where_)")
             #expect(landed.modificationTime == read.modificationTime, "mtime of \(where_)")
             #expect(landed.birthTime == read.birthTime, "birth time of \(where_)")
             #expect(landed.size == read.size, "size of \(where_)")
             #expect(landed.linkTarget == read.linkTarget, "symlink target of \(where_)")
             #expect(landed.carriedXattrs == read.carriedXattrs, "xattrs of \(where_)")
             #expect(landed.digest == read.digest, "SHA-256 of \(where_)")
-            if components == expected.storedZeros {
-                // Stored zeros become a hole by the encoder's scan of whole chunks.
-                #expect(landed.blocks <= read.blocks, "st_blocks of \(where_)")
-            } else {
-                #expect(landed.blocks == read.blocks, "st_blocks of \(where_)")
-            }
+            // The writer leaves every whole all-zero block a hole, whether the source stored it or not.
+            #expect(landed.blocks == read.blocks - read.storedZeroBlocks, "st_blocks of \(where_)")
         }
         for (components, name, value) in expected.xattrs {
             #expect(destination[components]?.carriedXattrs[bytes(name)] == value, "\(name) landed on \(components)")
@@ -259,12 +259,14 @@ struct RoundTripFidelityTests {
         }
         for (components, flags) in expected.flags {
             try #require(source[components]?.flags == flags, "flags given to \(components)")
-            #expect(destination[components]?.flags == flags & EntryHeader.carriedDarwinFlags)
+            #expect(destination[components]?.flags == flags & ValidatedEntry.allowedDarwinFlags)
         }
         for components in expected.sparse {
             let read = try #require(source[components])
             try #require(read.blocks * 512 < read.size, "\(components) is sparse in the source")
         }
+        let stored = try #require(source[expected.storedZeros])
+        try #require(stored.storedZeroBlocks > 0, "the source stores its zeros")
         #if canImport(Darwin)
         #expect(source.values.allSatisfy { $0.birthTime != nil }, "the source keeps birth times")
         #endif

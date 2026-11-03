@@ -155,7 +155,7 @@ public struct ContainerEncoder {
     }
 
     /// A proto3 message's bytes; with no required fields, serializing it cannot fail.
-    static func serialized(_ message: some SwiftProtobuf.Message) -> Data {
+    fileprivate static func serialized(_ message: some SwiftProtobuf.Message) -> Data {
         do {
             return try message.serializedBytes()
         } catch {
@@ -198,5 +198,12 @@ public struct ContainerEncoder {
             }
             return true
         }
+    }
+}
+
+extension EntryHeader {
+    /// Whether the header fits one header record, whose payload lengths `ContainerRecordKind.header` states.
+    public var fitsHeaderRecord: Bool {
+        ContainerRecordKind.header.payloadLengths.contains(ContainerEncoder.serialized(self).count)
     }
 }

@@ -6,11 +6,14 @@ import Foundation
 
 import KernovaContainer
 import KernovaFileTree
+import KernovaLogging
 import KernovaWire
 
 /// Lands a tree from its `TreeEvent`s, never resolving a path.
 ///
-/// Every entry is created by one validated name relative to the descriptor of the directory it lies in —
+/// Every entry's header is held to `ValidatedEntry`'s rules, the ones the container grammar holds it to, so
+/// no producer lands a name, flag, extended attribute, mode or time the format does not carry. Every entry
+/// is created by one name relative to the descriptor of the directory it lies in —
 /// `O_CREAT | O_EXCL | O_NOFOLLOW` for a file, `mkdirat` for a directory, `symlinkat` for a symlink, none
 /// of which follows a symlink or replaces what has the name — and the only directories ever entered are
 /// ones the writer just created. The directory an entry lies in is the top of the writer's stack, so no
@@ -33,6 +36,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private let destination: Int32
     private let destinationPathByteCount: Int
     private let byteCeiling: UInt64
+    private let logger: KernovaLogger
 
     private enum Phase {
         /// No entry yet: the next is the item's own.
@@ -56,7 +60,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private var entered: [Entered] = []
     /// The file whose bytes are arriving.
     private var file: OpenFile?
-    private var batch = FolderBatch()
+    /// The folder's symlinks and small files waiting to be created.
+    private(set) var batch = FolderBatch()
     /// The declared bytes of every file so far.
     private var landedBytes: UInt64 = 0
     /// The hole size of the destination's volume, once read: `.some(nil)` for one that makes none.
@@ -79,20 +84,25 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         let metadata: EntryMetadata
     }
 
+    /// A file whose bytes are arriving. It is changed only in place through ``file``, never through a copy,
+    /// so appending to a held file's bytes never copies them.
     private struct OpenFile {
-        enum Sink {
-            /// Held for the folder's batch.
-            case held([FolderBatch.FilePiece])
-            /// Written as it arrives, to `descriptor`.
-            case written(SparseFile<FileSystem>)
-        }
-
         let name: [UInt8]
         let path: [[UInt8]]
         let metadata: EntryMetadata
         let declared: UInt64
         var carried: UInt64 = 0
-        var sink: Sink
+        /// A file held for the folder's batch: its bytes so far, copied into storage of their own, so they
+        /// keep nothing of the producer's buffers alive. Empty for a written file.
+        var held = Data()
+        /// The file written as its bytes arrive; `nil` for a held one.
+        var written: SparseFile<FileSystem>?
+    }
+
+    /// One run of a file's bytes, as an event carries it.
+    private enum Piece {
+        case bytes(Data)
+        case zeros(UInt64)
     }
 
     /// A writer landing an item in `destination`.
@@ -103,13 +113,16 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path, against which
     ///     this OS's limit on a landed entry's path is measured.
     ///   - byteCeiling: The most bytes the files' declared sizes may total.
+    ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
-        fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int, byteCeiling: UInt64
+        fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int, byteCeiling: UInt64,
+        logger: KernovaLogger = TreeWriterLog.logger
     ) {
         self.fileSystem = fileSystem
         self.destination = destination
         self.destinationPathByteCount = destinationPathByteCount
         self.byteCeiling = byteCeiling
+        self.logger = logger
         var generator = SystemRandomNumberGenerator()
         let suffix = (0..<16).map { _ in Array("0123456789abcdef".utf8)[Int(generator.next() % 16)] }
         stagingName = Array(".kernova-".utf8) + suffix
@@ -127,7 +140,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     public func write(_ event: TreeEvent) throws(TreeWriteFailure) {
         switch phase {
         case .failed(let failure): throw failure
-        case .published, .ended: throw fail(.event(.outOfOrder), at: [])
+        case .published, .ended: throw failHere(.event(.outOfOrder))
         case .awaitingRoot, .writing, .rootComplete: break
         }
         do {
@@ -137,9 +150,17 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// Fails the transfer at the writer's place in the tree: the file open, or else the directory it is in.
+    /// Fails the transfer at the writer's place in the tree.
     func failHere(_ reason: TreeWriteFailure.Reason) -> TreeWriteFailure {
-        fail(reason, at: file?.path ?? entered.map(\.name))
+        fail(reason, at: position)
+    }
+
+    /// The writer's place in the tree: the file open, else the directory it is in, else the item's own
+    /// entry once it has begun.
+    private var position: [[UInt8]] {
+        if let file { return file.path }
+        if !entered.isEmpty { return entered.map(\.name) }
+        return root.map { [$0.name] } ?? []
     }
 
     /// Gives the item's own entry its own name in the destination, exclusively.
@@ -168,7 +189,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
 
     /// Removes everything the writer created, unless it was published.
     func discard() {
-        if case .written(let sparse) = file?.sink { fileSystem.close(sparse.descriptor) }
+        if let written = file?.written { fileSystem.close(written.descriptor) }
         file = nil
         cursor = nil
         _ = batch.take()
@@ -176,9 +197,14 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         case .published, .failed, .awaitingRoot: return
         default: break
         }
-        // The failure being reported is the transfer's; a staging root that cannot be removed — moved away
-        // by another process — holds only what the transfer wrote, and is no landed item.
-        try? TreeRemoval.remove(stagingName, in: destination, on: fileSystem)
+        do {
+            try TreeRemoval.remove(stagingName, in: destination, on: fileSystem)
+        } catch {
+            let name = String(decoding: stagingName, as: UTF8.self)
+            let reason = String(describing: error)
+            logger.log(
+                .error, "Could not remove the staging root \(name, privacy: .public): \(reason, privacy: .public)")
+        }
     }
 
     // MARK: - Events
@@ -188,7 +214,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         case .enterDirectory(let header): try enterDirectory(header)
         case .beginFile(let header): try beginFile(header)
         case .bytes(let bytes): try carry(UInt64(bytes.count), .bytes(bytes))
-        case .zeros(let count): try carry(count, .zeros(Int64(clamping: count)))
+        case .zeros(let count): try carry(count, .zeros(count))
         case .finishFile: try finishFile()
         case .symlink(let header): try symlink(header)
         case .leaveDirectory: try leaveDirectory()
@@ -199,12 +225,12 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     }
 
     private var outOfOrder: TreeWriteFailure {
-        TreeWriteFailure(path: file?.path ?? entered.map(\.name), reason: .event(.outOfOrder))
+        TreeWriteFailure(path: position, reason: .event(.outOfOrder))
     }
 
     private func enterDirectory(_ header: EntryHeader) throws(TreeWriteFailure) {
-        let (name, path, pathByteCount) = try admit(header, as: .directory)
-        let metadata = EntryMetadata(header)
+        let (entry, name, path, pathByteCount) = try admit(header, as: .directory)
+        let metadata = EntryMetadata(entry)
         if case .awaitingRoot = phase {
             try system(path) { () throws(TreeFileSystemError) in
                 try fileSystem.makeDirectory(stagingName, in: destination)
@@ -230,7 +256,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     }
 
     private func beginFile(_ header: EntryHeader) throws(TreeWriteFailure) {
-        let (name, path, _) = try admit(header, as: .file)
+        let (entry, name, path, _) = try admit(header, as: .file)
         let declared: UInt64
         switch header.storage {
         case .plain(let plain): declared = plain.size
@@ -242,14 +268,14 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             throw TreeWriteFailure(path: path, reason: .event(.exceedsByteCeiling(byteCeiling)))
         }
         landedBytes += declared
-        let metadata = EntryMetadata(header)
-        let sink: OpenFile.Sink
+        let metadata = EntryMetadata(entry)
+        let written: SparseFile<FileSystem>?
         if case .awaitingRoot = phase {
             let descriptor = try system(path) { () throws(TreeFileSystemError) in
                 try fileSystem.createFile(stagingName, in: destination)
             }
             phase = .rootComplete
-            sink = .written(sparseFile(descriptor))
+            written = sparseFile(descriptor)
             do {
                 root = Root(name: name, identity: FolderBatch.Identity(try fileSystem.status(of: descriptor)))
             } catch {
@@ -257,7 +283,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
                 throw TreeWriteFailure(path: path, reason: .system(error))
             }
         } else if declared <= FolderBatch.largestFile {
-            sink = .held([])
+            written = nil
         } else {
             let descriptor = try withCursor { cursor throws(TreeWriteFailure) in
                 try createBatch(in: cursor.descriptor)
@@ -266,72 +292,73 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
                     try fileSystem.createFile(name, in: parent)
                 }
             }
-            sink = .written(sparseFile(descriptor))
+            written = sparseFile(descriptor)
         }
-        file = OpenFile(name: name, path: path, metadata: metadata, declared: declared, sink: sink)
+        file = OpenFile(name: name, path: path, metadata: metadata, declared: declared, written: written)
     }
 
-    private func carry(_ count: UInt64, _ piece: FolderBatch.FilePiece) throws(TreeWriteFailure) {
-        guard var open = file.take() else { throw outOfOrder }
-        defer { file = open }
-        guard count <= open.declared - open.carried else {
-            throw TreeWriteFailure(
-                path: open.path, reason: .event(.sizeMismatch(declared: open.declared, carried: open.carried &+ count)))
+    private func carry(_ count: UInt64, _ piece: Piece) throws(TreeWriteFailure) {
+        // Only scalars are read out of `file`: a copy of it would share the held bytes, and the append below
+        // would then copy them all.
+        guard let declared = file?.declared, let carried = file?.carried, let path = file?.path else {
+            throw outOfOrder
         }
-        open.carried += count
-        switch open.sink {
-        case .held(var pieces):
-            pieces.append(piece)
-            open.sink = .held(pieces)
-        case .written(var sparse):
-            defer { open.sink = .written(sparse) }
-            try system(open.path) { () throws(TreeFileSystemError) in
-                switch piece {
-                case .bytes(let bytes):
-                    try sparse.append(bytes)
-                case .zeros(let count):
-                    try sparse.appendZeros(count)
+        guard count > 0 else { throw TreeWriteFailure(path: path, reason: .event(.emptyPiece)) }
+        guard count <= declared - carried else {
+            throw TreeWriteFailure(
+                path: path, reason: .event(.sizeMismatch(declared: declared, carried: carried &+ count)))
+        }
+        file?.carried += count
+        guard var sparse = file?.written else {
+            switch piece {
+            case .bytes(let bytes):
+                bytes.withUnsafeBytes { buffer in
+                    buffer.withMemoryRebound(to: UInt8.self) { file?.held.append($0) }
                 }
+            case .zeros(let count):
+                file?.held.count += Int(count)
+            }
+            return
+        }
+        defer { file?.written = sparse }
+        try system(path) { () throws(TreeFileSystemError) in
+            switch piece {
+            case .bytes(let bytes): try sparse.append(bytes)
+            case .zeros(let count): try sparse.appendZeros(Int64(count))
             }
         }
     }
 
     private func finishFile() throws(TreeWriteFailure) {
-        guard let open = file else { throw outOfOrder }
+        guard let open = file.take() else { throw outOfOrder }
         guard open.carried == open.declared else {
             throw TreeWriteFailure(
                 path: open.path, reason: .event(.sizeMismatch(declared: open.declared, carried: open.carried)))
         }
-        switch open.sink {
-        case .held(let pieces):
-            file = nil
+        guard var sparse = open.written else {
             try hold(
                 FolderBatch.Entry(
-                    name: open.name, path: open.path, metadata: open.metadata, content: .file(pieces),
+                    name: open.name, path: open.path, metadata: open.metadata, content: .file(open.held),
                     byteCount: Int(open.declared)))
-        case .written(var sparse):
-            let descriptor = sparse.descriptor
-            file = nil
-            do {
-                try sparse.finish()
-                try open.metadata.apply(to: .descriptor(descriptor), on: fileSystem)
-            } catch {
-                fileSystem.close(descriptor)
-                throw TreeWriteFailure(path: open.path, reason: .system(error))
-            }
-            try system(open.path) { () throws(TreeFileSystemError) in try fileSystem.closeWritten(descriptor) }
+            return
         }
+        let descriptor = sparse.descriptor
+        do {
+            try sparse.finish()
+            try open.metadata.apply(to: .descriptor(descriptor), on: fileSystem)
+        } catch {
+            fileSystem.close(descriptor)
+            throw TreeWriteFailure(path: open.path, reason: .system(error))
+        }
+        try system(open.path) { () throws(TreeFileSystemError) in try fileSystem.closeWritten(descriptor) }
     }
 
     private func symlink(_ header: EntryHeader) throws(TreeWriteFailure) {
-        let (name, path, _) = try admit(header, as: .symlink)
-        let target = Array(header.symlinkTarget)
-        guard !target.isEmpty, !target.contains(0) else {
-            throw TreeWriteFailure(path: path, reason: .event(.invalidSymlinkTarget))
-        }
+        let (entry, name, path, _) = try admit(header, as: .symlink)
+        let target = Array(entry.header.symlinkTarget)
         try hold(
             FolderBatch.Entry(
-                name: name, path: path, metadata: EntryMetadata(header), content: .symlink(target: target),
+                name: name, path: path, metadata: EntryMetadata(entry), content: .symlink(target: target),
                 byteCount: target.count))
     }
 
@@ -371,10 +398,10 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
 
     // MARK: - Steps
 
-    /// Checks `header` against the writer's place and this OS, returning its name, its path, and its
-    /// landing path's length.
+    /// Checks `header` against the format's rules, the writer's place and this OS, returning it validated,
+    /// its name, its path, and its landing path's length.
     private func admit(_ header: EntryHeader, as type: EntryHeader.TypeEnum) throws(TreeWriteFailure) -> (
-        name: [UInt8], path: [[UInt8]], pathByteCount: Int
+        entry: ValidatedEntry, name: [UInt8], path: [[UInt8]], pathByteCount: Int
     ) {
         guard file == nil else { throw outOfOrder }
         switch phase {
@@ -389,14 +416,17 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             throw TreeWriteFailure(
                 path: path, reason: .event(.depthMismatch(depth: header.depth, entered: entered.count)))
         }
-        guard EntryHeader.isValidName(header.name) else {
-            throw TreeWriteFailure(path: path, reason: .event(.invalidName))
+        let entry: ValidatedEntry
+        do {
+            entry = try ValidatedEntry(header)
+        } catch {
+            throw TreeWriteFailure(path: path, reason: .event(.invalidEntry(error)))
         }
         let pathByteCount = (entered.last?.pathByteCount ?? destinationPathByteCount) + 1 + name.count
         if let refusal = fileSystem.landingRefusal(of: name, pathByteCount: pathByteCount) {
             throw TreeWriteFailure(path: path, reason: .refused(refusal))
         }
-        return (name, path, pathByteCount)
+        return (entry, name, path, pathByteCount)
     }
 
     /// Holds `entry` in the folder's batch, creating the batch first when it has no room for it.
@@ -484,4 +514,10 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         phase = .failed(failure)
         return failure
     }
+}
+
+/// The logger a ``TreeWriter`` reports to unless it is given another.
+public enum TreeWriterLog {
+    /// Category `TreeWriter` in the `app.kernova` subsystem.
+    public static let logger = KernovaLogger(subsystem: "app.kernova", category: "TreeWriter")
 }
