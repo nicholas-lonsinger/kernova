@@ -19,7 +19,8 @@ struct CLIVerbWireTests {
             memoryBytes: 8 << 30, networkMode: "nat", networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: .observed("192.168.64.4"),
-            agentStatus: "current", hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false,
+            agentStatus: "current", hasSavedState: false, savedStateKernovaVersion: nil, isEphemeral: true,
+            snapshotCount: 2, hasSnapshots: false,
             guestAgent: nil, stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
     }

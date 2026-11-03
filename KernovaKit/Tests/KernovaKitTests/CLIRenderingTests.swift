@@ -18,15 +18,16 @@ struct CLIRenderingTests {
     private func info(
         ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
         networkMembership: String = "common", networkName: VMNetworkName? = nil,
-        agentStatus: String? = "current", agents: [VMAgentLine] = []
+        agentStatus: String? = "current", agents: [VMAgentLine] = [],
+        hasSavedState: Bool = false, savedStateKernovaVersion: String? = nil
     ) -> VMInfo {
         VMInfo(
             id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
             memoryBytes: memoryBytes, networkMode: "nat", networkMembership: networkMembership,
             networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: ipAddress, agentStatus: agentStatus,
-            hasSavedState: false, isEphemeral: true, snapshotCount: 2, hasSnapshots: false, guestAgent: nil,
-            stateBucket: .stopped,
+            hasSavedState: hasSavedState, savedStateKernovaVersion: savedStateKernovaVersion, isEphemeral: true,
+            snapshotCount: 2, hasSnapshots: false, guestAgent: nil, stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: agents)
     }
 
@@ -110,7 +111,8 @@ struct CLIRenderingTests {
             cpuCount: base.cpuCount, memoryBytes: base.memoryBytes,
             networkMode: base.networkMode, networkMembership: base.networkMembership, networkName: nil,
             macAddress: base.macAddress, ipAddress: .notObserved,
-            agentStatus: base.agentStatus, hasSavedState: false, isEphemeral: base.isEphemeral,
+            agentStatus: base.agentStatus, hasSavedState: false, savedStateKernovaVersion: nil,
+            isEphemeral: base.isEphemeral,
             snapshotCount: base.snapshotCount, hasSnapshots: base.hasSnapshots, guestAgent: base.guestAgent,
             stateBucket: .heldByAnotherCopy,
             bundlePath: base.bundlePath, heldByAnotherCopy: true)
@@ -176,6 +178,31 @@ struct CLIRenderingTests {
         #expect(start.map { lines[$0].hasSuffix("  current") } == true)
         #expect(start.map { lines[$0 + 1].hasSuffix("  System service: current, 1.0 (9)") } == true)
         #expect(start.map { lines[$0 + 2].hasSuffix("  Session agent — pbear: outdated, 0.9 (8)") } == true)
+    }
+
+    @Test("A saved state names the Kernova that saved it on a line after Saved State")
+    func infoNamesWhoSavedTheState() throws {
+        let lines = TableRenderer.render(
+            report(info(hasSavedState: true, savedStateKernovaVersion: "0.10.0 (412)"))
+        ).components(separatedBy: "\n")
+        let saved = try #require(lines.firstIndex { $0.hasPrefix("Saved State") })
+        #expect(lines[saved].hasSuffix("  Yes"))
+        #expect(lines[saved + 1].hasPrefix("Saved By"))
+        #expect(lines[saved + 1].hasSuffix("  Kernova 0.10.0 (412)"))
+
+        let data = Data(
+            try JSONRenderer.render(info(hasSavedState: true, savedStateKernovaVersion: "0.10.0 (412)")).utf8)
+        #expect(try JSONDecoder().decode(VMInfo.self, from: data).savedStateKernovaVersion == "0.10.0 (412)")
+    }
+
+    @Test("A saved state with no recorded version names no saver, in text or JSON")
+    func infoWithoutAVersionNamesNoSaver() throws {
+        let unrecorded = info(hasSavedState: true, savedStateKernovaVersion: nil)
+        #expect(!TableRenderer.render(report(unrecorded)).contains("Saved By"))
+
+        let data = Data(try JSONRenderer.render(unrecorded).utf8)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["savedStateKernovaVersion"] == nil)
     }
 
     @Test("A VM with no session omits the agent status from its JSON")

@@ -123,6 +123,10 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let agentStatus: String?
     /// Whether the bundle holds a suspended session.
     public let hasSavedState: Bool
+    /// The Kernova version and build that wrote that session's saved state,
+    /// as `0.10.0 (412)`; `nil` when the bundle holds none, or one saved
+    /// before Kernova recorded its version.
+    public let savedStateKernovaVersion: String?
     /// Whether the VM returns to a baseline snapshot every time it shuts down; a restart keeps its session.
     public let isEphemeral: Bool
     /// How many named restore points the bundle holds.
@@ -161,6 +165,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         ipAddress: GuestIPAddress,
         agentStatus: String?,
         hasSavedState: Bool,
+        savedStateKernovaVersion: String?,
         isEphemeral: Bool,
         snapshotCount: Int,
         hasSnapshots: Bool,
@@ -183,6 +188,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.ipAddress = ipAddress
         self.agentStatus = agentStatus
         self.hasSavedState = hasSavedState
+        self.savedStateKernovaVersion = savedStateKernovaVersion
         self.isEphemeral = isEphemeral
         self.snapshotCount = snapshotCount
         self.hasSnapshots = hasSnapshots

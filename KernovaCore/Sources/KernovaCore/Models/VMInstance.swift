@@ -524,6 +524,16 @@ package final class VMInstance {
     /// Whether the bundle holds a suspend slot.
     package var hasSaveFile: Bool { bundleLayout.hasSaveFile }
 
+    /// The Kernova build that wrote the suspend slot, `nil` when the bundle
+    /// holds none or it predates the record.
+    package var savedStateVersion: String? { bundleLayout.savedStateVersion }
+
+    /// The Kernova build that wrote snapshot `id`'s saved state, `nil` for a
+    /// cold snapshot or one that predates the record.
+    package func savedStateVersion(ofSnapshot id: UUID) -> String? {
+        bundleLayout.snapshotLayout(id: id).savedStateVersion
+    }
+
     // MARK: - Machine Identity
 
     /// The macOS machine identifier this VM boots with — the configuration field

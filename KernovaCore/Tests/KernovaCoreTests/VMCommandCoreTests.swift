@@ -128,6 +128,21 @@ struct VMCommandCoreTests {
         #expect(try harness.core.info(.id(paused.id)).status == "paused")
     }
 
+    @Test("info names the Kernova that wrote a suspended VM's saved state, and none for a state without a record")
+    func infoNamesTheSavedStateVersion() throws {
+        let harness = makeHarness()
+        let recorded = makeInstance(in: harness, name: "Recorded", phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: recorded)
+        try SavedStateVersion.record("0.10.0 (412)", at: recorded.bundleLayout.saveFileURL)
+        let unrecorded = makeInstance(in: harness, name: "Unrecorded", phase: .suspended)
+        try VMInstanceFixture.writeSaveFile(for: unrecorded)
+        let stopped = makeInstance(in: harness, name: "Stopped")
+
+        #expect(try harness.core.info(.id(recorded.id)).savedStateKernovaVersion == "0.10.0 (412)")
+        #expect(try harness.core.info(.id(unrecorded.id)).savedStateKernovaVersion == nil)
+        #expect(try harness.core.info(.id(stopped.id)).savedStateKernovaVersion == nil)
+    }
+
     @Test("info reports the VM's shape and status")
     func infoReportsTheVM() throws {
         let harness = makeHarness()

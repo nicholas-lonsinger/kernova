@@ -543,6 +543,44 @@ struct VMCommandCoreArrivalTests {
         #expect(harness.virtualization.copyLiveCallCount == 0)
     }
 
+    @Test("An Exact Copy keeps the version that wrote each saved state it carries")
+    func exactCopyKeepsEachSavedStatesVersion() async throws {
+        let harness = makeHarness()
+        let snapshot = VMSnapshot(name: "Warm", kind: .warm, macAddress: nil)
+        let source = RegisteredVMInstanceFixture.register(
+            name: "Source", phase: .suspended, guestOS: .linux, snapshots: [snapshot],
+            library: harness.library, preferences: preferences)
+        try VMInstanceFixture.writeSaveFile(for: source)
+        try SavedStateVersion.record("0.9.0 (300)", at: source.bundleLayout.saveFileURL)
+        let captured = source.bundleLayout.snapshotLayout(id: snapshot.id).saveFileURL
+        try FileManager.default.createDirectory(
+            at: captured.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("captured-state".utf8).write(to: captured)
+        try SavedStateVersion.record("0.8.0 (200)", at: captured)
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
+
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        #expect(clone.phase == .suspended)
+        #expect(clone.savedStateVersion == "0.9.0 (300)")
+        #expect(clone.savedStateVersion(ofSnapshot: snapshot.id) == "0.8.0 (200)")
+    }
+
+    @Test("An Exact Copy of a live VM records the copying Kernova on the state it saves")
+    func liveExactCopyRecordsTheVersion() async throws {
+        let harness = makeHarness()
+        let source = register(.running(sessionID: UUID()), in: harness)
+        harness.virtualization.liveCopySession = MockSnapshotSession(guestState: .running, writesStateFile: true)
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
+
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        #expect(clone.phase == .suspended)
+        #expect(clone.savedStateVersion == source.bundleProducts.versionLabel)
+    }
+
     @Test("A New Machine of a suspended VM arrives stopped, and the source keeps its saved state")
     func newMachineOfASuspendedVMBootsCold() async throws {
         let harness = makeHarness()

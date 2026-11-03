@@ -189,10 +189,15 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     /// replacement in, so `destination` resolves to the old file or the new one
     /// and never to nothing. Creates no directory, so a move into a bundle that
     /// is not there fails rather than inventing one.
+    ///
+    /// `destination` ends with `source`'s metadata only: without
+    /// `.usingNewMetadataOnly`, `replaceItemAt` keeps an extended attribute the
+    /// replaced file has and `source` lacks — a saved state's
+    /// ``SavedStateVersion`` among them.
     private func move(_ source: URL, replacing destination: URL) throws {
         let manager = FileManager.default
         if manager.fileExists(atPath: destination.path(percentEncoded: false)) {
-            _ = try manager.replaceItemAt(destination, withItemAt: source)
+            _ = try manager.replaceItemAt(destination, withItemAt: source, options: .usingNewMetadataOnly)
         } else {
             // `replaceItemAt` needs an original to replace.
             try manager.moveItem(at: source, to: destination)
