@@ -91,19 +91,16 @@ public enum GuestAgentDiskEdit: Codable, Sendable, Hashable {
 
 /// When a guest agent starts, which is also which agent it is.
 public enum GuestAgentScope: String, Codable, Sendable, Hashable, CaseIterable {
-    /// At a user's login: the macOS agent, a Linux session agent.
+    /// At a user's login: a session agent.
     case login
-    /// At boot: the Linux system service.
+    /// At boot: the system service.
     case system
 }
 
 extension VMGuestOS {
-    /// The scopes this guest OS's agents run in: the macOS agent alone, or a
-    /// Linux guest's session agent and system service.
+    /// The scopes a guest's agents run in: its session agents and its system
+    /// service, on every guest OS.
     public var guestAgentScopes: Set<GuestAgentScope> {
-        switch self {
-        case .macOS: [.login]
-        case .linux: [.login, .system]
-        }
+        [.login, .system]
     }
 }

@@ -96,20 +96,3 @@ extension VMLibraryFilter.Subject {
             tags: Set(tags.assigned(hostState.tags).map(\.id)))
     }
 }
-
-extension VMGuestAgentBucket {
-    /// The bucket of a VM whose agents last reported the version labels
-    /// `lastSeen`, one per scope that ever connected, against the label of the
-    /// payloads bundled for its guest OS: up to date only when each is that
-    /// label — the agent hub offers any other agent the bundled payload — and
-    /// `nil` when an agent has connected and nothing is bundled to judge it
-    /// against.
-    init?(lastSeen: [String], bundled: String?) {
-        guard !lastSeen.isEmpty else {
-            self = .neverConnected
-            return
-        }
-        guard let bundled else { return nil }
-        self = lastSeen.allSatisfy { $0 == bundled } ? .upToDate : .olderVersion
-    }
-}

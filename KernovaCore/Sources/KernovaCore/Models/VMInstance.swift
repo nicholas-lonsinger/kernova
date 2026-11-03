@@ -315,20 +315,24 @@ package final class VMInstance {
     }
 
     /// Records the version each scope's connected peer reports, the newest
-    /// session peer's for the session agent: in the session at once, and in the
-    /// configuration whenever it differs from the committed record.
+    /// session peer's for the session agent, and the guest OS version the
+    /// newest peer reports: in the session at once, and in the configuration
+    /// whenever it differs from the committed record.
     private func recordHubPeers(_ context: VMSessionContext) {
         let session = publishedAgentHubSnapshot.peers.first { $0.role == .sessionPeer }?.versionLabel
         let system = publishedAgentHubSnapshot.peers.first { $0.role == .systemPeer }?.versionLabel
+        let osVersion = publishedAgentHubSnapshot.peers.first { !$0.osVersion.isEmpty }?.osVersion
         if let session { context.observedSessionAgentVersion = session }
         if let system { context.observedSystemAgentVersion = system }
         let recordsSession = session.map { $0 != configuration.lastSeenAgentVersion } ?? false
         let recordsSystem = system.map { $0 != configuration.lastSeenSystemAgentVersion } ?? false
-        guard recordsSession || recordsSystem else { return }
+        let recordsOS = osVersion.map { $0 != configuration.lastSeenGuestOSVersion } ?? false
+        guard recordsSession || recordsSystem || recordsOS else { return }
         recordObservation("the agents' Hello") {
             _ = $0.updateConfiguration { config in
                 if let session { config.lastSeenAgentVersion = session }
                 if let system { config.lastSeenSystemAgentVersion = system }
+                if let osVersion { config.lastSeenGuestOSVersion = osVersion }
             }
         }
     }

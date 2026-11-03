@@ -137,7 +137,7 @@ struct AgentHubState: Sendable {
             handle: record.handle, role: record.claim.role, scope: record.claim.scope,
             os: record.claim.os, sessionID: record.state.sessionID, userName: record.state.userName,
             console: record.state.console, versionLabel: record.claim.versionLabel,
-            standing: standing, isResponsive: record.isResponsive)
+            standing: standing, isResponsive: record.isResponsive, osVersion: record.claim.osVersion)
     }
 
     /// Whether `record`'s peer is updating itself to `offered`.

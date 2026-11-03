@@ -67,6 +67,8 @@ public struct PeerSummary: Sendable, Equatable {
     public var console: ConsoleState
     /// The version it reports.
     public var versionLabel: String
+    /// The guest OS version it reports, as the OS spells it.
+    public var osVersion: String
     /// How it stands against the payload the host offers it.
     public var standing: Standing
     /// Whether the host judges it responsive.
@@ -99,7 +101,7 @@ public struct PeerSummary: Sendable, Equatable {
     /// Creates a summary.
     public init(
         handle: PeerHandle, role: PeerRole, scope: InstallScope, os: OSFamily, sessionID: String, userName: String,
-        console: ConsoleState, versionLabel: String, standing: Standing, isResponsive: Bool
+        console: ConsoleState, versionLabel: String, standing: Standing, isResponsive: Bool, osVersion: String = ""
     ) {
         self.handle = handle
         self.role = role
@@ -109,6 +111,7 @@ public struct PeerSummary: Sendable, Equatable {
         self.userName = userName
         self.console = console
         self.versionLabel = versionLabel
+        self.osVersion = osVersion
         self.standing = standing
         self.isResponsive = isResponsive
     }

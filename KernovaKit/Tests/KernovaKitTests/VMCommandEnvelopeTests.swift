@@ -237,8 +237,7 @@ struct VMCommandEnvelopeTests {
         }
         let wire = try JSONEncoder().encode(GuestAgentDiskEdit.mount(awaiting: [.system]))
         #expect(String(decoding: wire, as: UTF8.self) == #"{"mount":{"awaiting":["system"]}}"#)
-        #expect(VMGuestOS.macOS.guestAgentScopes == [.login])
-        #expect(VMGuestOS.linux.guestAgentScopes == [.login, .system])
+        #expect(VMGuestOS.allCases.allSatisfy { $0.guestAgentScopes == [.login, .system] })
     }
 
     @Test("Every response result round-trips")
