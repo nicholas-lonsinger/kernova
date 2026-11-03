@@ -69,6 +69,9 @@ package enum TranscriptFixture {
                 1, [[SimItems.representation(.file, size: 2048), SimItems.representation(.inline, size: 64)]])
         case "text-64": SimItems.offer(2, [[SimItems.representation(.inline, size: 64)]])
         case "folder-4k": SimItems.offer(3, [[SimItems.representation(.folder, size: 4096)]])
+        case "file-2k-reoffer":
+            SimItems.offer(
+                4, [[SimItems.representation(.file, size: 2048), SimItems.representation(.inline, size: 64)]])
         default: nil
         }
     }

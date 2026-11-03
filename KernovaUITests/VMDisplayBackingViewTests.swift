@@ -174,10 +174,36 @@ struct VMDisplayBackingViewTests {
 
     // MARK: - Files dragged out of a VM
 
-    @Test("files dragged out of this same VM are refused with the reject cursor, their promises unread")
-    func refusesItsOwnDragOut() throws {
+    @Test("files dragged out of this same VM that its take does not carry here are refused, with the reject cursor")
+    func refusesItsOwnUncarriedDragOut() throws {
         let backing = makeBacking()
         host.displayDropAvailability = .available
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.txt"])])
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
+        var offered = false
+        host.onDropFiles = { _, _ in
+            offered = true
+            return true
+        }
+        let take = FakeTake(items: [])
+        let source = DisplayDragOutSource(vmID: host.id, take: take)
+        let drag = makeTextDrag("promise", source: source)
+
+        #expect(backing.draggingEntered(drag) == [])
+        #expect(pushes == [true])
+        #expect(!backing.performDragOperation(drag))
+        #expect(!offered)
+        #expect(take.events == [.hostSessionOver(.zero), .hostSessionDropped(.zero)])
+    }
+
+    @Test("files dragged out of this same VM go back into the guest, the promises unread")
+    func carriesItsOwnDragOutIntoTheGuest() throws {
+        let backing = makeBacking()
+        // The drop goes to the guest over its display, not the drop channel.
+        host.displayDropAvailability = .disconnected
+        var pushes: [Bool] = []
+        backing.applyRejectCursor = { pushes.append($0) }
         var promisesRead = false
         backing.promiseSource = DisplayDropPromiseSource(
             carriesPromises: { _ in
@@ -188,26 +214,41 @@ struct VMDisplayBackingViewTests {
                 promisesRead = true
                 return []
             })
-        var pushes: [Bool] = []
-        backing.applyRejectCursor = { pushes.append($0) }
-        var offered = false
-        host.onDropFiles = { _, _ in
-            offered = true
-            return true
-        }
         let take = FakeTake(items: [])
+        take.carriesOverDisplay = true
         let drag = makeTextDrag("promise", source: DisplayDragOutSource(vmID: host.id, take: take))
+        drag.draggingLocation = NSPoint(x: 30, y: 40)
+        let point = backing.machineView.convert(drag.draggingLocation, from: nil)
 
-        #expect(backing.draggingEntered(drag) == [])
-        #expect(pushes == [true])
-        #expect(!backing.performDragOperation(drag))
-        #expect(!offered)
+        #expect(backing.draggingEntered(drag) == .copy)
+        #expect(backing.draggingUpdated(drag) == .copy)
+        backing.draggingExited(drag)
+        #expect(backing.draggingEntered(drag) == .copy)
+        #expect(backing.performDragOperation(drag))
+
+        #expect(
+            take.events == [
+                .hostSessionOver(point), .hostSessionOver(point), .hostSessionLeft,
+                .hostSessionOver(point), .hostSessionDropped(point),
+            ])
+        #expect(pushes.allSatisfy { !$0 })
         #expect(!promisesRead)
-        #expect(take.events.isEmpty)
+        // The guest's own drag lands its promises itself: nothing names them.
+        #expect(!take.events.contains(.namedItemsForInAppDestination))
     }
 
-    @Test("files dragged out of another VM take the promise path, and are called in")
-    func acceptsAnotherVMsDragOut() async throws {
+    @Test("files dragged out of another VM take the promise path")
+    func acceptsAnotherVMsDragOut() throws {
+        let backing = makeBacking()
+        host.displayDropAvailability = .available
+        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.txt"])])
+        let source = DisplayDragOutSource(vmID: UUID(), take: FakeTake(items: []))
+
+        #expect(backing.draggingEntered(makeTextDrag("promise", source: source)) == .copy)
+    }
+
+    @Test("another VM's drag out has its promised items named before anything calls them in")
+    func anotherVMsDragOutIsNamedFirst() async throws {
         let backing = makeBacking()
         host.displayDropAvailability = .available
         let receiver = StubPromiseReceiver(fileNames: ["IMG_0001.jpeg"])
@@ -219,13 +260,36 @@ struct VMDisplayBackingViewTests {
             gate.notify()
             return true
         }
-        let drag = makeTextDrag("promise", source: DisplayDragOutSource(vmID: UUID(), take: FakeTake(items: [])))
+        let take = FakeTake(items: [])
+        var calledInFirst: Bool?
+        take.onNameItems = {
+            calledInFirst = receiver.destination != nil
+            return true
+        }
+        let drag = makeTextDrag("promise", source: DisplayDragOutSource(vmID: UUID(), take: take))
 
-        #expect(backing.draggingEntered(drag) == .copy)
         #expect(backing.performDragOperation(drag))
 
+        #expect(calledInFirst == false)
+        #expect(take.events == [.namedItemsForInAppDestination])
         try await gate.wait { !offered.isEmpty }
         #expect(offered.map(\.lastPathComponent) == ["IMG_0001.jpeg"])
+    }
+
+    @Test("another VM's drag out whose promised items could not be named is refused, nothing called in")
+    func unnamedDragOutIsRefused() throws {
+        let backing = makeBacking()
+        host.displayDropAvailability = .available
+        let receiver = StubPromiseReceiver(fileNames: ["File.jpeg"])
+        backing.promiseSource = makePromiseSource([receiver])
+        let take = FakeTake(items: [])
+        take.onNameItems = { false }
+        let drag = makeTextDrag("promise", source: DisplayDragOutSource(vmID: UUID(), take: take))
+
+        #expect(!backing.performDragOperation(drag))
+
+        #expect(receiver.destination == nil)
+        #expect(take.events == [.namedItemsForInAppDestination])
     }
 
     @Test("a VM that never ran the agent is not a drag destination at all")

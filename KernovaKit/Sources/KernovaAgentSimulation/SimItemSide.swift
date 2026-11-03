@@ -28,14 +28,20 @@ package final class SimItemSide {
     package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
-    /// Peer: how its owner answers each take, after 20 µs; nil leaves takes unanswered.
-    package var takeAnswer: DragTakeAnswer? = .taken
+    /// Peer: how its owner ends each take, after 20 µs; nil leaves takes unanswered.
+    package var takeAnswer: DragTakeAnswer? = .caught(reoffer: nil)
     /// Every take `takeDrag` asked for, and what it returned.
     package private(set) var takes: [(time: SimTime, token: Data, result: Result<DragTakeID, WireError>)] = []
     /// Peer: every take its owner was asked about.
     package private(set) var takesRequested: [(time: SimTime, id: DragTakeID, token: Data)] = []
     /// Host: every take that ended.
     package private(set) var takesEnded: [(time: SimTime, id: DragTakeID, result: DragTakeResult)] = []
+    /// Host: every step a take reported.
+    package private(set) var takeReports: [(time: SimTime, id: DragTakeID, report: DragTakeReport)] = []
+    /// Peer: every control the host sent on a take.
+    package private(set) var takeControls: [(time: SimTime, id: DragTakeID, control: DragTakeControl)] = []
+    /// Peer: every take that closed before its owner ended it.
+    package private(set) var takesCancelled: [(time: SimTime, id: DragTakeID)] = []
     /// Every item `.read` answered, by the token and item it named.
     package private(set) var reads: [(time: SimTime, token: Data, item: UInt32, result: OfferedItem?)] = []
 
@@ -156,9 +162,24 @@ package final class SimItemSide {
             takesRequested.append((world.now, id, token))
             guard let answer = takeAnswer else { return }
             world.peerInput(.dragTake(id, answer), link: link, after: .us(20))
+        case .control(let id, let control):
+            takeControls.append((world.now, id, control))
+        case .cancelled(let id):
+            takesCancelled.append((world.now, id))
+        case .report(let id, let report):
+            takeReports.append((world.now, id, report))
         case .ended(let id, let result):
             takesEnded.append((world.now, id, result))
             answered(id, in: &answeredTakes, "take \(id.stream.rawValue)", link: link, side: side, world: world)
+        }
+    }
+
+    /// Host: the takes `takeDrag` opened that have not ended.
+    var openTakes: [DragTakeID] {
+        let ended = Set(takesEnded.map(\.id))
+        return takes.compactMap { take in
+            guard case .success(let id) = take.result, !ended.contains(id) else { return nil }
+            return id
         }
     }
 
@@ -246,6 +267,16 @@ extension SimWorld {
         itemCommand(.host, link: index) { items in
             [items.command(.take(token: token)) { .takeDrag($0, token: token) }]
         }
+    }
+
+    /// The host tells the peer `control` on every take it opened on link `index` that has not ended.
+    package func controlTakes(_ control: DragTakeControl, link index: Int = 0) {
+        itemCommand(.host, link: index) { items in items.openTakes.map { .controlTake($0, control) } }
+    }
+
+    /// The host calls off every take it opened on link `index` that has not ended.
+    package func cancelTakes(link index: Int = 0) {
+        itemCommand(.host, link: index) { items in items.openTakes.map { .cancelTake($0) } }
     }
 
     /// `side` pulls `request` on link `index`, landing it as `DecodingItemSink.landing(_:)` takes the storage

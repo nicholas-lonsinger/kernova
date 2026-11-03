@@ -14,7 +14,7 @@ import KernovaWire
 public enum HubItemEvent: Sendable, Equatable {
     /// An offer or pull on `PeerHandle`'s connection changed.
     case items(PeerHandle, ItemTransferEvent)
-    /// A take of `PeerHandle`'s drag ended.
+    /// A take of `PeerHandle`'s drag reported a step or ended.
     case dragTake(PeerHandle, DragTakeEvent)
     /// `FeatureID`'s console peer changed to this one, or to none. Once per change, after the ends of the
     /// offers the change took from the peer that lost it.
@@ -82,9 +82,11 @@ extension AgentHubState {
     /// Whether the owner hears `event` of `handle`'s connection's drag takes.
     mutating func admit(_ event: DragTakeEvent, from handle: PeerHandle) -> Bool {
         switch event {
-        case .requested:
+        case .requested, .control, .cancelled:
             // A peer's event: its host never emits one.
             return false
+        case .report(let id, _):
+            return connections[handle]?.items.takes.contains(id) ?? false
         case .ended(let id, _):
             return connections[handle]?.items.takes.removeFirst(where: { $0 == id }) ?? false
         }

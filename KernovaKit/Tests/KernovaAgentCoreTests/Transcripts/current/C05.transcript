@@ -1,4 +1,4 @@
-# C05 drag: the host takes the peer's drag → TAKEN, pulls its FILE → LANDED, and releases it — duet
+# C05 drag: the host takes the peer's drag → ARMED, TARGETED, then CAUGHT; it pulls the FILE → LANDED and releases it — duet
 host fixture=host-items
 peer fixture=linux-session-items
 end 1000
@@ -16,11 +16,17 @@ t=500    p>h     00000003 02 00 00000000
 t=501    ev      host item offerReceived feature=12 token=01010101010101010101010101010101 items=1
 t=600    in      host take token=01010101010101010101010101010101
 t=600    h>p     00000002 01 00 00000017 08ed0712120a1001010101010101010101010101010101
-t=600    h>p     00000002 02 00 00000000
 t=601    ev      peer drag takeRequested id=2 token=01010101010101010101010101010101
-t=650    in      peer take taken
+t=620    in      peer take report armed
+t=620    p>h     00000002 00 01 00000002 0801
+t=621    ev      host drag takeReport id=2 armed
+t=630    in      peer take report targeted
+t=630    p>h     00000002 00 01 00000002 0802
+t=631    ev      host drag takeReport id=2 targeted
+t=650    in      peer take caught
 t=650    p>h     00000002 02 00 00000002 0801
-t=651    ev      host drag takeEnded id=2 taken
+t=651    ev      host drag takeEnded id=2 caught
+t=651    h>p     00000002 02 00 00000000
 t=700    in      host pull token=01010101010101010101010101010101 item=0 representation=0 ceiling=1048576
 t=700    h>p     00000004 01 00 0000001b 08e90712160a100101010101010101010101010101010120808040
 t=700    h>p     00000004 04 00 00000004 007c0000

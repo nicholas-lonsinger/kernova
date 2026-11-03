@@ -349,8 +349,8 @@ public final class AgentHub: Sendable {
         queue.async { [self] in send(.cancel(id), to: peer) }
     }
 
-    /// Takes `peer`'s open drag offer of `token`, and calls `completion` once with the take's id, whose one
-    /// `.dragTake(.ended)` follows, or why it was not opened.
+    /// Takes `peer`'s open drag offer of `token`, and calls `completion` once with the take's id, whose reports
+    /// and one `.dragTake(.ended)` follow, or why it was not opened.
     public func takeDrag(
         _ token: Data, of peer: PeerHandle, _ completion: @escaping @Sendable (Result<DragTakeID, WireError>) -> Void
     ) {
@@ -359,6 +359,16 @@ public final class AgentHub: Sendable {
                 from: peer, { .takeDrag($0, token: token) }, { if case .took(let result) = $0 { result } else { nil } },
                 unanswered: .failure(Self.connectionEnded), completion)
         }
+    }
+
+    /// Tells `peer` `control` on take `id`; dropped once the take has ended.
+    public func controlTake(_ id: DragTakeID, _ control: DragTakeControl, on peer: PeerHandle) {
+        queue.async { [self] in send(.controlTake(id, control), to: peer) }
+    }
+
+    /// Calls off take `id` of `peer`'s drag; its `.dragTake(.ended)` follows.
+    public func cancelTake(_ id: DragTakeID, on peer: PeerHandle) {
+        queue.async { [self] in send(.cancelTake(id), to: peer) }
     }
 
     /// Calls `completion` once with item `item` of `peer`'s open offer of `token`, decoded; nil when no such

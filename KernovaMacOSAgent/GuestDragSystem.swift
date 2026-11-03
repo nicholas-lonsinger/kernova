@@ -17,9 +17,14 @@ final class SystemGuestDragInput: GuestDragInput {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "GuestDragWatcher")
 
-    private let pasteboard = NSPasteboard(name: .drag)
+    let dragPasteboard: any ClipboardReadPasteboard = NSPasteboard(name: .drag)
 
-    var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
+    /// Sizes one folder by walking its tree.
+    private let measureFolder: @Sendable (URL) -> Int
+
+    init(measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) }) {
+        self.measureFolder = measureFolder
+    }
 
     var isPrimaryButtonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
 
@@ -66,8 +71,14 @@ final class SystemGuestDragInput: GuestDragInput {
         }
     }
 
-    func promiseReceivers() -> [any FilePromiseReceiving] {
-        pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver] ?? []
+    func measureFolders(
+        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
+    ) {
+        let measureFolder = measureFolder
+        DispatchQueue.global(qos: .userInitiated).async {
+            let sizes = folders.mapValues(measureFolder)
+            MainActorBridge.async { completion(sizes) }
+        }
     }
 }
 
@@ -192,7 +203,10 @@ private final class CatcherView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        catcher?.performDragOperation() ?? false
+        catcher?.performDragOperation {
+            sender.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])
+                as? [NSFilePromiseReceiver] ?? []
+        } ?? false
     }
 
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {

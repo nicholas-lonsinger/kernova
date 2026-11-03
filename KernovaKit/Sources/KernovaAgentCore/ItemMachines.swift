@@ -165,6 +165,16 @@ struct ItemMachines: Sendable {
         drag.take(token, items: transfer, connection: &connection)
     }
 
+    /// Host: tells the peer `control` on a take this side opened.
+    mutating func control(_ id: DragTakeID, _ control: DragTakeControl, connection: inout Connection) {
+        drag.control(id, control, connection: &connection)
+    }
+
+    /// Host: calls off a take this side opened.
+    mutating func cancelTake(_ id: DragTakeID, connection: inout Connection) {
+        drag.cancel(id, connection: &connection)
+    }
+
     /// Peer: answers a take of its drag.
     mutating func answer(_ id: DragTakeID, _ answer: DragTakeAnswer, connection: inout Connection) {
         drag.answer(id, answer, connection: &connection)

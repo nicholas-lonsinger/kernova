@@ -255,6 +255,7 @@ final class VMDisplayBackingView: NSView {
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
         showRejectCursor(false)
+        if let sender, let take = ownDragOut(sender) { take.hostSessionLeft(machineView) }
     }
 
     override func draggingEnded(_ sender: any NSDraggingInfo) {
@@ -283,16 +284,36 @@ final class VMDisplayBackingView: NSView {
 
     /// `.copy` when this drag can be sent to the guest, else the empty operation
     /// AppKit renders as "no" — no accept badge, and a release springs back.
+    ///
+    /// A drag out of this same VM is the guest's own drag, still live in the
+    /// guest: its take moves the guest pointer with it and says whether a drop
+    /// here goes to the guest. Its promises are never read — they would be
+    /// written by pulling from the guest that is to receive them.
     private func dragOperation(for sender: any NSDraggingInfo) -> NSDragOperation {
+        if let take = ownDragOut(sender) {
+            return take.hostSession(over: machineView, at: machineLocation(of: sender)) ? .copy : []
+        }
         guard acceptsDrop(of: sender), carriesFiles(sender.draggingPasteboard) else {
             return []
         }
         return .copy
     }
 
+    /// The take carrying `sender`, when it is a drag out of this same VM.
+    private func ownDragOut(_ sender: any NSDraggingInfo) -> (any GuestDragTaking)? {
+        guard let source = sender.draggingSource as? DisplayDragOutSource,
+            let host = transferHost(), source.vmID == host.id
+        else { return nil }
+        return source.take
+    }
+
+    /// Where `sender` is, in the machine view's coordinates.
+    private func machineLocation(of sender: any NSDraggingInfo) -> CGPoint {
+        machineView.convert(sender.draggingLocation, from: nil)
+    }
+
     /// Whether the guest can take a drop now from `sender`, a drag from
-    /// anywhere but this same VM: a drag out of it carries promises written by
-    /// pulling from the guest that would receive them.
+    /// anywhere but this same VM.
     private func acceptsDrop(of sender: any NSDraggingInfo) -> Bool {
         guard let host = transferHost(), host.displayDropAvailability == .available else {
             return false
@@ -311,6 +332,9 @@ final class VMDisplayBackingView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        if let take = ownDragOut(sender) {
+            return take.hostSessionDropped(on: machineView, at: machineLocation(of: sender))
+        }
         // Re-checked here rather than trusted from `draggingUpdated`: the guest
         // agent can go away between the last pointer move and the release.
         guard acceptsDrop(of: sender) else { return false }
@@ -321,6 +345,7 @@ final class VMDisplayBackingView: NSView {
             guard !urls.isEmpty else { return false }
             return sendToGuest(urls, stagedIn: nil)
         }
+        guard DisplayDragOutSource.nameItems(of: sender) else { return false }
         receivePromises(receivers, alongside: urls)
         // The promised files are written asynchronously, so the drag ends taken
         // and the offer follows once they land.

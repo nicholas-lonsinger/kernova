@@ -27,7 +27,12 @@ struct ItemTransferSchemaTests {
         #expect(StreamKind.clipboardOfferByPeer.rawValue == 1006)
         #expect(ErrorCode.dragNotCurrent.rawValue == 1005)
         #expect(ErrorCode.dragPressOver.rawValue == 1006)
-        #expect(Kernova_V2_DragTakeOutcome.Kind.taken.rawValue == 1)
+        #expect(Kernova_V2_DragTakeOutcome.Kind.caught.rawValue == 1)
+        #expect(Kernova_V2_DragTakeOutcome.Kind.returned.rawValue == 3)
+        #expect(Kernova_V2_DragTakeReport.Step.armed.rawValue == 1)
+        #expect(Kernova_V2_DragTakeReport.Step.targeted.rawValue == 2)
+        #expect(Kernova_V2_DragTakeReport.Step.delivering.rawValue == 3)
+        #expect(Kernova_V2_DragTakeReport.Step.deliverRefused.rawValue == 4)
         #expect(Kernova_V2_DragTakeOutcome.Kind.refused.rawValue == 2)
         #expect(ErrorCode.itemOfferStale.rawValue == 1000)
         #expect(ErrorCode.itemRepresentationUnavailable.rawValue == 1001)
@@ -154,6 +159,24 @@ struct ItemTransferSchemaTests {
         outcome.kind = .refused
         outcome.error = Kernova_V2_Error()
         #expect(try outcome.serializedBytes() == [0x08, 2, 0x12, 0])
+
+        var caught = Kernova_V2_DragTakeOutcome()
+        caught.kind = .caught
+        caught.reoffer = Data([0xBB])
+        #expect(try caught.serializedBytes() == [0x08, 1, 0x1A, 1, 0xBB])
+
+        var report = Kernova_V2_DragTakeReport()
+        report.step = .targeted
+        #expect(try report.serializedBytes() == [0x08, 2])
+
+        var shown = Kernova_V2_DragCatcher()
+        shown.shown = true
+        var control = Kernova_V2_DragTakeControl()
+        control.catcher = shown
+        #expect(try control.serializedBytes() == [0x0A, 2, 0x08, 1])
+        var deliver = Kernova_V2_DragTakeControl()
+        deliver.deliver = Kernova_V2_DragDeliver()
+        #expect(try deliver.serializedBytes() == [0x12, 0])
     }
 }
 

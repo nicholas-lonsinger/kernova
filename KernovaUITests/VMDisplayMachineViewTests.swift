@@ -158,10 +158,7 @@ struct VMDisplayMachineViewTests {
     func sessionBeginsFromTheWithheldDrag() throws {
         let view = makeView()
         let take = makeTake()
-        take.onWithheldDrag = {
-            #expect(view.beginHostSession(carrying: take))
-            view.injectRelease()
-        }
+        take.onWithheldDrag = { #expect(view.beginHostSession(carrying: take)) }
         host.nextTake = take
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
@@ -175,12 +172,47 @@ struct VMDisplayMachineViewTests {
         // Framed around the pointer, outside the view's own bounds.
         #expect(session.items.allSatisfy { $0.draggingFrame.midX == 270 && $0.draggingFrame.midY == 60 })
         // A later drag or mouse-up of the same press reaches neither the guest
-        // nor the take: the session owns it, and the guest's button was
-        // released onto its catcher.
+        // nor the take: the session owns it, and the guest's button stays held.
         view.mouseDragged(with: try event(.leftMouseDragged, x: 280))
         view.mouseUp(with: try event(.leftMouseUp, x: 280))
         #expect(take.events == [.withheldDrag])
-        #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseUp])
+        #expect(view.forwarded.map(\.type) == [.leftMouseDown])
+    }
+
+    @Test("a new press over a take a session carries ends that take first")
+    func newPressEndsACarriedTake() throws {
+        let view = makeView()
+        let take = makeTake()
+        take.onWithheldDrag = { #expect(view.beginHostSession(carrying: take)) }
+        host.nextTake = take
+        view.mouseDown(with: try event(.leftMouseDown, x: 50))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
+
+        view.mouseDown(with: try event(.leftMouseDown, x: 60))
+
+        #expect(take.events == [.withheldDrag, .displayAbandoned])
+        #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseDown])
+    }
+
+    @Test("session positions move the guest pointer, and the release goes where the last one put it")
+    func sessionPositionsLeadTheRelease() throws {
+        let view = makeView()
+        let take = makeTake()
+        host.nextTake = take
+        view.mouseDown(with: try event(.leftMouseDown, x: 50))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
+        view.injectNudge(.exitPoint)
+        let before = view.forwarded.count
+
+        view.injectDrag(at: NSPoint(x: 30, y: 40))
+        view.injectRelease()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: NSPoint(x: 30, y: 40)),
+                .init(type: .leftMouseUp, location: NSPoint(x: 30, y: 40)),
+            ])
     }
 
     // MARK: - The exit point
@@ -203,6 +235,24 @@ struct VMDisplayMachineViewTests {
             Array(view.forwarded.dropFirst(before)) == [
                 .init(type: .leftMouseDragged, location: NSPoint(x: 190, y: 70)),
                 .init(type: .leftMouseUp, location: NSPoint(x: 190, y: 70)),
+            ])
+    }
+
+    @Test("the exit point follows the session's last position over the display")
+    func exitPointFollowsTheSession() throws {
+        let view = makeView()
+        host.nextTake = makeTake()
+        view.mouseDown(with: try event(.leftMouseDown, x: 50))
+        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
+        view.injectDrag(at: NSPoint(x: 5, y: 6))
+        view.injectNudge(.exitPoint)
+        let before = view.forwarded.count
+
+        view.returnToExitPoint()
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: NSPoint(x: 5, y: 6))
             ])
     }
 
@@ -289,6 +339,21 @@ struct VMDisplayMachineViewTests {
             Array(view.forwarded.dropFirst(before)) == [
                 .init(type: .leftMouseDragged, location: NSPoint(x: 250, y: 50)),
                 .init(type: .leftMouseUp, location: NSPoint(x: 250, y: 50)),
+            ])
+    }
+
+    @Test("a nudge goes near the session's last position over the display")
+    func nudgeFollowsTheSession() throws {
+        let view = makeView()
+        try pressLeaving(at: NSPoint(x: 150, y: 60), view: view)
+        view.injectDrag(at: NSPoint(x: 197, y: 40))
+        let before = view.forwarded.count
+
+        view.injectNudge(.exitPoint)
+
+        #expect(
+            Array(view.forwarded.dropFirst(before)) == [
+                .init(type: .leftMouseDragged, location: NSPoint(x: 192, y: 40))
             ])
     }
 
@@ -452,6 +517,94 @@ struct DisplayDragOutSourceTests {
 
         #expect(answers.0 == "report.txt")
         #expect(answers.1 == 1)
+    }
+
+    /// A session holding its items' images, which hands out a fresh item for
+    /// each one on every pass, as `NSDraggingSession` does, and keeps what the
+    /// pass left on it.
+    ///
+    /// A fresh item each pass because an `NSDraggingItem` keeps the components
+    /// it first produced: neither a new provider nor `setDraggingFrame` after
+    /// a read changes what `imageComponents` returns.
+    @MainActor
+    final class FakeImageSession: DraggingItemImageSetting {
+        private var frames: [NSRect]
+        private var providers: [(() -> [NSDraggingImageComponent])?]
+
+        init(items: [NSDraggingItem]) {
+            frames = items.map(\.draggingFrame)
+            providers = items.map(\.imageComponentsProvider)
+        }
+
+        func forEachDraggingItem(_ body: (NSDraggingItem, Int) -> Void) {
+            for index in providers.indices {
+                let item = NSDraggingItem(pasteboardWriter: "item" as NSString)
+                item.draggingFrame = frames[index]
+                item.imageComponentsProvider = providers[index]
+                body(item, index)
+                frames[index] = item.draggingFrame
+                providers[index] = item.imageComponentsProvider
+            }
+        }
+
+        /// What each item draws now: its components' contents, by identity.
+        var drawn: [[ObjectIdentifier]] {
+            providers.map { provider in
+                (provider?() ?? []).compactMap { $0.contents.map { ObjectIdentifier($0 as AnyObject) } }
+            }
+        }
+    }
+
+    @Test("the session's images hide while it is over its display and come back each time it leaves")
+    func imagesFollowTheDisplay() throws {
+        let (source, take) = makeSource()
+        let session = FakeImageSession(items: source.draggingItems(centeredAt: .zero))
+        let original = session.drawn
+        #expect(original.count == 2)
+        #expect(original.allSatisfy { !$0.isEmpty })
+
+        source.followImages(of: session)
+        #expect(session.drawn == original)
+
+        for _ in 0..<2 {
+            take.sessionOverDisplay = true
+            #expect(session.drawn.allSatisfy { $0.isEmpty })
+
+            take.sessionOverDisplay = false
+            #expect(session.drawn == original)
+        }
+    }
+
+    @Test(
+        "following the images applies the take's state at once, over its display or off it",
+        arguments: [true, false])
+    func followingAppliesTheStateAtOnce(over: Bool) throws {
+        let (source, take) = makeSource()
+        let session = FakeImageSession(items: source.draggingItems(centeredAt: .zero))
+        let original = session.drawn
+        take.sessionOverDisplay = over
+
+        source.followImages(of: session)
+
+        #expect(session.drawn == (over ? original.map { _ in [] } : original))
+    }
+
+    @Test("the session ending stops its images following the take before the take hears the end")
+    func endingClearsTheHookFirst() throws {
+        let (source, take) = makeSource()
+        let session = FakeImageSession(items: source.draggingItems(centeredAt: .zero))
+        source.followImages(of: session)
+        take.sessionOverDisplay = true
+        take.onHostSessionEnded = { take.sessionOverDisplay = false }
+
+        source.sessionEnded(dropped: false)
+
+        #expect(take.events.last == .hostSessionEnded(dropped: false))
+        #expect(take.sessionOverDisplayChanged == nil)
+        #expect(session.drawn.allSatisfy { $0.isEmpty })
+        take.sessionOverDisplay = true
+        take.sessionOverDisplay = false
+        #expect(session.drawn.allSatisfy { $0.isEmpty })
     }
 
     @Test("writes run one at a time, off the main queue")

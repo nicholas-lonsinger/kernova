@@ -298,8 +298,8 @@ struct AgentHubItemTests {
                 if case .dragTake(.requested) = $0 { true } else { false }
             })
         else { Issue.record("no take asked"); return }
-        peer.driver.handle(.dragTake(asked, .taken))
-        _ = await log.next { $0 == .event(.dragTake(handle, .ended(take, .taken))) }
+        peer.driver.handle(.dragTake(asked, .caught(reoffer: nil)))
+        _ = await log.next { $0 == .event(.dragTake(handle, .ended(take, .caught(reoffer: nil)))) }
         harness.hub.close()
     }
 

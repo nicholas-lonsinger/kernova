@@ -4,9 +4,9 @@ import KernovaKit
 import KernovaLogging
 import KernovaWire
 
-/// The file promises of drags the host takes out of the guest, called in as
-/// the take arrives: each drag's staging folder, its receivers, and the reads
-/// still owed.
+/// The file promises of drags the host takes out of the guest, called in at
+/// the catcher's delivering drop: each drag's staging folder, its receivers,
+/// and the reads still owed.
 ///
 /// A call-in outlives its take: sources write their files seconds after the
 /// call-in, and a pull of a promise waits until its file has landed. The
@@ -76,7 +76,7 @@ final class GuestDragPromises {
 
     // MARK: - Calling in
 
-    /// Calls in the promises among `items`, read in drag order as
+    /// Calls in the promises among `items`, read off the drop in drag order as
     /// `receivers`, into a staging folder of their own; nil unless every one
     /// named a file as its call-in returned.
     ///

@@ -101,8 +101,8 @@ public struct StreamKindDescriptor: Sendable {
         itemOffer(.dropOffer, feature: .drop, openerRole: .host),
         itemOffer(.dragOffer, feature: .drag, openerRole: .peer),
         StreamKindDescriptor(
-            kind: .dragTake, feature: .drag, owner: .dragTake, openerRole: .host, openerToAcceptor: .nothing,
-            acceptorToOpener: .nothing, maxPerConnection: nil,
+            kind: .dragTake, feature: .drag, owner: .dragTake, openerRole: .host, openerToAcceptor: .messages,
+            acceptorToOpener: .messages, maxPerConnection: nil, acceptorEndsFirst: true,
             isValidOpenBody: { (try? Kernova_V2_DragTake(serializedBytes: $0))?.token.count == 16 }),
     ]
 

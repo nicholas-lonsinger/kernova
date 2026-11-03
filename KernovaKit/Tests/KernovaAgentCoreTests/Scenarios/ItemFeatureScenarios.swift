@@ -13,7 +13,7 @@ import KernovaWire
 enum ItemFeatureScenarios {
     static let all: [Scenario] = [
         clipboardReplaces, replacedMidPull, wrongRoleOffers, dragTaken, dragRefused, dragTakenOnce,
-        dragWithdrawnWhileAsked, systemPeerServesNone, policyOff,
+        dragWithdrawnWhileAsked, dragHandshake, dragStepsAtOnce, dragCalledOff, systemPeerServesNone, policyOff,
     ]
 
     static func options(_ options: inout SimOptions) {
@@ -129,7 +129,7 @@ enum ItemFeatureScenarios {
     }
 
     static let dragTaken = Scenario(
-        name: "drag: the host takes the peer's drag → TAKEN, pulls it → LANDED, and its release ends the offer",
+        name: "drag: the host takes the peer's drag → CAUGHT, pulls it → LANDED, and its release ends the offer",
         seeds: 20, end: .sec(3), options: options,
         script: { world in
             dragOffered(world)
@@ -145,8 +145,8 @@ enum ItemFeatureScenarios {
                     items(world, .peer)?.takesRequested.map(\.token) == [SimItems.token(1)],
                     "the peer was asked once")
                 + expectThat(
-                    host?.takesEnded.map(\.result) == [.taken] && host?.takesEnded.first?.id == id,
-                    "the take ended taken: \(String(describing: host?.takesEnded))")
+                    host?.takesEnded.map(\.result) == [.caught(reoffer: nil)] && host?.takesEnded.first?.id == id,
+                    "the take ended caught: \(String(describing: host?.takesEnded))")
                 + expectThat(
                     ItemScenarios.isLanded(ItemScenarios.onePull(world, .host)?.1),
                     "the pull: \(ItemScenarios.ended(world, .host))")
@@ -192,7 +192,7 @@ enum ItemFeatureScenarios {
         expect: { world in
             let host = items(world, .host)
             return expectThat(
-                host?.takesEnded.map(\.result) == [.taken, .refused(WireError(.dragNotCurrent))],
+                host?.takesEnded.map(\.result) == [.caught(reoffer: nil), .refused(WireError(.dragNotCurrent))],
                 "the takes: \(String(describing: host?.takesEnded))")
                 + expectThat(
                     host?.takes.last.map {
@@ -212,13 +212,112 @@ enum ItemFeatureScenarios {
             world.at(.ms(900)) { world in world.withdrawOffer(SimItems.token(1), from: .peer) }
             world.at(.ms(1_000)) { world in
                 guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
-                world.peerInput(.dragTake(id, .taken), link: link, after: 0)
+                world.peerInput(.dragTake(id, .caught(reoffer: nil)), link: link, after: 0)
             }
         },
         expect: { world in
             expectThat(
                 items(world, .host)?.takesEnded.map(\.result) == [.refused(WireError(.dragNotCurrent))],
                 "the take: \(String(describing: items(world, .host)?.takesEnded))")
+        })
+
+    /// The peer's owner answers takes by hand from here on.
+    static func answersByHand(_ world: SimWorld) {
+        world.at(.ms(600)) { world in world.links.first?.items(.peer).takeAnswer = nil }
+    }
+
+    /// The peer's owner says `answer` on the take it was asked about first.
+    static func answer(_ answer: DragTakeAnswer, _ world: SimWorld) {
+        guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
+        world.peerInput(.dragTake(id, answer), link: link, after: 0)
+    }
+
+    static let dragHandshake = Scenario(
+        name:
+            "drag: a take carries the host's controls and the peer's steps both ways until the peer's CAUGHT, which the host's END completes",
+        seeds: 20, end: .sec(2), options: options,
+        script: { world in
+            dragOffered(world)
+            answersByHand(world)
+            world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
+            world.at(.ms(800)) { world in answer(.report(.armed), world) }
+            world.at(.ms(850)) { world in answer(.report(.targeted), world) }
+            world.at(.ms(900)) { world in world.controlTakes(.catcher(shown: false)) }
+            world.at(.ms(950)) { world in world.controlTakes(.deliver) }
+            world.at(.ms(1_000)) { world in answer(.report(.delivering), world) }
+            world.at(.ms(1_050)) { world in answer(.caught(reoffer: nil), world) }
+            world.at(.ms(1_100)) { world in world.controlTakes(.catcher(shown: true)) }
+        },
+        expect: { world in
+            let host = items(world, .host)
+            let peer = items(world, .peer)
+            return expectThat(
+                host?.takeReports.map(\.report) == [.armed, .targeted, .delivering],
+                "the host heard: \(String(describing: host?.takeReports))")
+                + expectThat(
+                    peer?.takeControls.map(\.control) == [.catcher(shown: false), .deliver],
+                    "the peer heard, and nothing after its END: \(String(describing: peer?.takeControls))")
+                + expectThat(
+                    host?.takesEnded.map(\.result) == [.caught(reoffer: nil)],
+                    "the take: \(String(describing: host?.takesEnded))")
+                + expectThat(peer?.takesCancelled.isEmpty == true, "the peer heard its own END as a cancel")
+                + expectThat(ends(world, .host, .remote).isEmpty, "the drag offer ended with the take")
+        })
+
+    static let dragStepsAtOnce = Scenario(
+        name: "drag: steps and an END the peer says in one turn all reach the host, in order, the END last",
+        seeds: 20, end: .sec(2), options: options,
+        script: { world in
+            dragOffered(world)
+            answersByHand(world)
+            world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
+            world.at(.ms(800)) { world in
+                guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
+                link.peer?.handle(.dragTake(id, .report(.armed)), now: world.localNow(world.process(of: link, .peer)))
+                link.peer?.handle(
+                    .dragTake(id, .report(.targeted)), now: world.localNow(world.process(of: link, .peer)))
+                link.peer?.handle(
+                    .dragTake(id, .caught(reoffer: nil)), now: world.localNow(world.process(of: link, .peer)))
+                world.drain(link, .peer)
+            }
+        },
+        expect: { world in
+            let host = items(world, .host)
+            return expectThat(
+                host?.takeReports.map(\.report) == [.armed, .targeted],
+                "the host heard: \(String(describing: host?.takeReports))")
+                + expectThat(
+                    host?.takesEnded.map(\.result) == [.caught(reoffer: nil)],
+                    "the take: \(String(describing: host?.takesEnded))")
+                + expectThat(
+                    (host?.takeReports.last?.time).map { last in host?.takesEnded.first.map { $0.time >= last } ?? false
+                    }
+                        ?? false, "the END came after the steps")
+        })
+
+    static let dragCalledOff = Scenario(
+        name: "drag: the host calls a take off, the peer hears it once, and its later answer is dropped",
+        seeds: 20, end: .sec(2), options: options,
+        script: { world in
+            dragOffered(world)
+            answersByHand(world)
+            world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
+            world.at(.ms(800)) { world in answer(.report(.armed), world) }
+            world.at(.ms(900)) { world in world.cancelTakes() }
+            world.at(.ms(1_000)) { world in answer(.caught(reoffer: nil), world) }
+        },
+        expect: { world in
+            let host = items(world, .host)
+            let peer = items(world, .peer)
+            let calledOff = host?.takesEnded.map(\.result).allSatisfy {
+                if case .closed(.resetLocally(let error)) = $0 { error.code == .cancelled } else { false }
+            }
+            return expectThat(
+                host?.takesEnded.count == 1 && calledOff == true,
+                "the take: \(String(describing: host?.takesEnded))")
+                + expectThat(
+                    peer?.takesCancelled.count == 1, "the peer heard: \(String(describing: peer?.takesCancelled))")
+                + expectThat(ends(world, .host, .remote).isEmpty, "the drag offer ended with the take")
         })
 
     static let systemPeerServesNone = Scenario(

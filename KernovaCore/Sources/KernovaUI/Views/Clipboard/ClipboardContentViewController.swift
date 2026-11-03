@@ -841,6 +841,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
             if let receiver = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])?
                 .compactMap({ $0 as? NSFilePromiseReceiver }).first
             {
+                guard DisplayDragOutSource.nameItems(of: draggingInfo) else { return false }
                 receivePromisedFile(receiver)
                 return true
             }

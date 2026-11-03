@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaFileTree
 import KernovaItemTransfer
@@ -28,10 +29,14 @@ final class FakeDragOutHub: DragOutHub, Sendable {
             )] = []
         var cancels: [ItemPullID] = []
         var releases: [(token: Data, peer: PeerHandle)] = []
+        var controls: [(id: DragTakeID, control: DragTakeControl)] = []
+        var takeCancels: [DragTakeID] = []
     }
 
     let state = Locked(State())
     let changed = AsyncGate()
+    /// Fires on every `deliver`, so a thread off the main actor can wait for it.
+    let delivering = DispatchSemaphore(value: 0)
 
     func takeDrag(
         _ token: Data, of peer: PeerHandle,
@@ -54,6 +59,17 @@ final class FakeDragOutHub: DragOutHub, Sendable {
         changed.notify()
     }
 
+    func controlTake(_ id: DragTakeID, _ control: DragTakeControl, on peer: PeerHandle) {
+        state.withLock { $0.controls.append((id, control)) }
+        if control == .deliver { delivering.signal() }
+        changed.notify()
+    }
+
+    func cancelTake(_ id: DragTakeID, on peer: PeerHandle) {
+        state.withLock { $0.takeCancels.append(id) }
+        changed.notify()
+    }
+
     func releaseOffer(_ token: Data, of peer: PeerHandle) {
         state.withLock { $0.releases.append((token, peer)) }
         changed.notify()
@@ -73,6 +89,7 @@ final class FakeDragOutHub: DragOutHub, Sendable {
     var takeCount: Int { state.withLock { $0.takes.count } }
     var pullCount: Int { state.withLock { $0.pulls.count } }
     var releaseCount: Int { state.withLock { $0.releases.count } }
+    var controls: [DragTakeControl] { state.withLock { $0.controls.map(\.control) } }
 }
 /// DRAG's host owner over the agent hub: the console peer's drag offer read
 /// whole, its take, the pulls that fill a Mac destination's promises, and the
@@ -82,13 +99,19 @@ final class FakeDragOutHub: DragOutHub, Sendable {
 struct HubDragOutTests {
     // MARK: - Doubles
 
-    /// A display whose Mac session always begins.
+    /// A display whose Mac session always begins; each release also fires
+    /// `releases`, from whichever thread injects it.
     @MainActor
     final class SessionDisplay: GuestDragDisplay {
         private(set) var released = false
+        nonisolated let releases = DispatchSemaphore(value: 0)
         func injectNudge(_ nudge: GuestDragNudge) {}
+        func injectDrag(at point: CGPoint) {}
         func returnToExitPoint() {}
-        func injectRelease() { released = true }
+        func injectRelease() {
+            released = true
+            releases.signal()
+        }
         func resumeTracking() {}
         func beginHostSession(carrying take: any GuestDragTaking) -> Bool { true }
     }
@@ -100,6 +123,8 @@ struct HubDragOutTests {
     private let dragOut: HubDragOut
     private let peer = PeerHandle(rawValue: 7)
     private let token = Data(repeating: 0xAB, count: 16)
+    private let reoffer = Data(repeating: 0xCD, count: 16)
+    private let takeID = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
 
     init() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
@@ -109,11 +134,15 @@ struct HubDragOutTests {
         dragOut.hub = hub
     }
 
-    private static func item(_ name: String, storage: Representation.Storage, uti: String) -> OfferedItem {
+    private static func item(
+        _ name: String, storage: Representation.Storage, uti: String, promised: Bool = false, size: UInt64 = 0
+    ) -> OfferedItem {
         var representation = Representation()
         representation.type = TypeDescriptor(appleUTI: uti)
         representation.storage = storage
         representation.name = Data(name.utf8)
+        representation.promised = promised
+        representation.sizeEstimate = size
         var item = OfferedItem()
         item.representations = [representation]
         return item
@@ -137,24 +166,49 @@ struct HubDragOutTests {
 
     private static let twoItems = [
         item("notes.txt", storage: .file, uti: "public.plain-text"),
+        item("todo.txt", storage: .file, uti: "public.plain-text"),
+    ]
+
+    private static let promiseAndFolder = [
+        item("Untitled.jpeg", storage: .file, uti: "public.jpeg", promised: true),
         item("Photos", storage: .folder, uti: "public.folder"),
     ]
 
-    /// A take of the current offer the guest answered `TAKEN`, carried by a
-    /// Mac session a destination took.
-    private func carriedTake() async throws -> GuestDragTake {
-        try await offer(Self.twoItems)
+    private static let deliveredItems = [
+        item("IMG_0042.jpeg", storage: .file, uti: "public.jpeg", promised: true),
+        item("Photos", storage: .folder, uti: "public.folder", size: 4096),
+    ]
+
+    /// The take's event `event`, as the hub hands it to DRAG's owner: on the
+    /// hub's queue first, then a hop to the main queue.
+    private func deliver(_ event: DragTakeEvent) async {
+        dragOut.owner.takes(peer, event)
+        await MainActorTurn.next()
+    }
+
+    /// A take of the current offer of `items`, the hub having opened it and
+    /// the guest's catcher its target, carried by a Mac session.
+    private func carriedTake(_ items: [OfferedItem] = Self.twoItems) async throws -> GuestDragTake {
+        try await offer(items)
         let take = try takeOffer()
         try await hub.changed.wait { hub.takeCount == 1 }
-        let id = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
-        hub.state.withLock { $0.takes[0] }.completion(.success(id))
-        // The answer hops to the main queue, ahead of the take's end.
+        hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
+        // The answer hops to the main queue, ahead of the take's events.
         await MainActorTurn.next()
-        dragOut.takeEnded(id, .taken)
-        #expect(take.phase == .ready)
+        await deliver(.report(takeID, .armed))
+        await deliver(.report(takeID, .targeted))
+        try #require(take.phase == .ready)
         take.withheldDrag()
-        try #require(take.phase == .carried)
+        try #require(take.phase == .carried(.outside(targeted: true)))
+        return take
+    }
+
+    /// A carried take of plain files whose session a destination took, the
+    /// guest's drag caught.
+    private func droppedTake() async throws -> GuestDragTake {
+        let take = try await carriedTake()
         take.hostSessionEnded(dropped: true)
+        await deliver(.ended(takeID, .caught(reoffer: nil)))
         return take
     }
 
@@ -162,12 +216,13 @@ struct HubDragOutTests {
 
     @Test("a console peer's drag offer, read whole, is the drag the display may take, named as offered")
     func offerIsReadWhole() async throws {
-        try await offer(Self.twoItems)
+        try await offer([Self.twoItems[0]] + Self.promiseAndFolder)
 
         let offer = try #require(dragOut.offer)
         #expect(offer.peer == peer)
-        #expect(offer.items.map(\.filename) == ["notes.txt", "Photos"])
-        #expect(offer.items.map(\.isDirectory) == [false, true])
+        #expect(offer.items.map(\.filename) == ["notes.txt", "Untitled.jpeg", "Photos"])
+        #expect(offer.items.map(\.isDirectory) == [false, false, true])
+        #expect(offer.items.map(\.isPromised) == [false, true, false])
         #expect(offer.items[0].type == .plainText)
     }
 
@@ -212,6 +267,67 @@ struct HubDragOutTests {
         #expect(dragOut.takeGuestDrag(display: SessionDisplay(), while: Self.running) == nil)
     }
 
+    @Test("what a take says before the hub names it goes to the take once it does")
+    func heldControlsFollowTheID() async throws {
+        try await offer(Self.twoItems)
+        let take = try takeOffer()
+        try await hub.changed.wait { hub.takeCount == 1 }
+        take.pointerReturned()
+        #expect(hub.state.withLock { $0.takeCancels }.isEmpty)
+
+        hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
+        try await hub.changed.wait { hub.state.withLock { $0.takeCancels } == [takeID] }
+        await deliver(.ended(takeID, .closed(.resetLocally(WireError(.cancelled)))))
+        #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
+    }
+
+    @Test("a delivering catch's offer carries the drag on: its names and sizes, pulled from it, never a drag to take")
+    func reofferCarriesTheDragOn() async throws {
+        let take = try await carriedTake(Self.promiseAndFolder)
+        take.hostSessionEnded(dropped: true)
+        #expect(hub.controls == [.deliver])
+        await deliver(.report(takeID, .delivering))
+        #expect(take.phase == .released(at: .catcher))
+
+        // The guest offers the drag again, ends the take naming it, and
+        // withdraws the one it took.
+        hub.state.withLock { $0.items[reoffer] = Self.deliveredItems }
+        dragOut.offerReceived(reoffer, count: 2, from: peer)
+        await deliver(.ended(takeID, .caught(reoffer: reoffer)))
+        dragOut.offerEnded(token)
+        await MainActorTurn.next()
+        #expect(dragOut.offer == nil)
+        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
+
+        let outcome = TestOutcome()
+        take.writeItem(at: 1, to: scratch.url.appendingPathComponent("Photos")) { outcome.set($0) }
+        try await hub.changed.wait { hub.pullCount == 1 }
+        let pull = hub.state.withLock { $0.pulls[0] }
+        #expect(pull.order.request.token == reoffer)
+        #expect(pull.order.request.item == 1)
+    }
+
+    @Test("a promised name asked on the main thread waits on a delivery the hub's queue settles without it")
+    func nameAskOnMainSettlesOffMain() async throws {
+        let take = try await carriedTake(Self.promiseAndFolder)
+        hub.state.withLock { $0.items[reoffer] = Self.deliveredItems }
+        let owner = dragOut.owner
+        let (hub, display, peer, takeID, reoffer) = (hub, display, peer, takeID, reoffer)
+        // The hub's queue while the ask holds the main thread: the guest
+        // answers the ask, and once the release reached it, ends the take
+        // naming its new offer.
+        let hubQueue = Thread {
+            hub.delivering.wait()
+            owner.takes(peer, .report(takeID, .delivering))
+            display.releases.wait()
+            owner.takes(peer, .ended(takeID, .caught(reoffer: reoffer)))
+        }
+        hubQueue.start()
+
+        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
+        #expect(take.phase == .released(at: .catcher))
+    }
+
     @Test("a hub that cannot open the take hands the press back")
     func unopenedTakeAbandons() async throws {
         try await offer(Self.twoItems)
@@ -225,7 +341,7 @@ struct HubDragOutTests {
 
     @Test("a promise is filled by a pull of its item into the promise URL's directory under exactly its name")
     func writePullsIntoThePromiseURL() async throws {
-        let take = try await carriedTake()
+        let take = try await droppedTake()
         let destination = scratch.url.appendingPathComponent("notes 2.txt")
         let outcome = TestOutcome()
 
@@ -255,8 +371,8 @@ struct HubDragOutTests {
 
     @Test("a release completes the drag once every item is written")
     func releaseCompletesTheDrag() async throws {
-        let take = try await carriedTake()
-        for (index, name) in ["notes.txt", "Photos"].enumerated() {
+        let take = try await droppedTake()
+        for (index, name) in ["notes.txt", "todo.txt"].enumerated() {
             let outcome = TestOutcome()
             take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { outcome.set($0) }
             try await hub.changed.wait { hub.pullCount == index + 1 }
@@ -276,7 +392,7 @@ struct HubDragOutTests {
 
     @Test("a console move mid-write ends the pull and fails the write interrupted, releasing nothing")
     func consoleMoveMidWrite() async throws {
-        let take = try await carriedTake()
+        let take = try await droppedTake()
         let outcome = TestOutcome()
         take.writeItem(at: 0, to: scratch.url.appendingPathComponent("notes.txt")) { outcome.set($0) }
         try await hub.changed.wait { hub.pullCount == 1 }
@@ -304,6 +420,8 @@ struct HubDragOutTests {
 
         #expect(take.phase == .abandoned)
         #expect(hub.releaseCount == 0)
+        hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
+        try await hub.changed.wait { hub.state.withLock { $0.takeCancels } == [takeID] }
     }
 
     /// One write's outcome, announced on its own gate.
@@ -341,6 +459,7 @@ struct VMInstanceDragOutTests {
         let changed = AsyncGate()
 
         func injectNudge(_ nudge: GuestDragNudge) {}
+        func injectDrag(at point: CGPoint) {}
         func returnToExitPoint() {}
         func injectRelease() {}
         func beginHostSession(carrying take: any GuestDragTaking) -> Bool { false }

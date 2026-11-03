@@ -59,12 +59,9 @@ final class GuestDragWatcher {
         let items: [GuestDragItem]
         /// The file URLs' resolve the offer was made from.
         let intake: ClipboardPasteboardReader.FileIntake
-        /// Whether its promises were called in, so the offer names them.
-        let calledIn: Bool
 
         static func == (lhs: Claim, rhs: Claim) -> Bool {
             lhs.token == rhs.token && lhs.press == rhs.press && lhs.items == rhs.items
-                && lhs.calledIn == rhs.calledIn
         }
     }
 
@@ -92,7 +89,6 @@ final class GuestDragWatcher {
         let token: Data
         let items: [GuestDragItem]
         let intake: ClipboardPasteboardReader.FileIntake
-        let calledIn: Bool
         /// The change count the offer's items were last read at.
         var changeCount: Int
     }
@@ -232,22 +228,18 @@ final class GuestDragWatcher {
         // to the next tick: a host that took an offer whose press had already
         // ended would arm the catcher for a drag that is over.
         guard input.isPrimaryButtonHeld, case .watching = current.phase else { return }
-        guard
-            offer(
-                Offer(token: Self.token(), items: items, intake: intake, calledIn: false, changeCount: count),
-                promises: [:])
-        else {
+        guard offer(Offer(token: Self.token(), items: items, intake: intake, changeCount: count)) else {
             press?.unofferable = items
             return
         }
     }
 
-    /// Offers `offer`, its promises named by `promises`, and makes it the
+    /// Offers `offer`, its promises under stand-in names, and makes it the
     /// press's; false when it cannot be offered.
-    private func offer(_ offer: Offer, promises: [Int: (name: String, landing: GuestDragLanding)]) -> Bool {
-        guard
-            let offered = GuestDraggedItems.offerItems(offer.items, resolvedFiles: offer.intake, promises: promises)
-        else { return false }
+    private func offer(_ offer: Offer) -> Bool {
+        guard let offered = GuestDraggedItems.offerItems(offer.items, resolvedFiles: offer.intake) else {
+            return false
+        }
         let token = offer.token
         served.register(token, offered.map(\.source))
         press?.phase = .offered(offer)
@@ -262,7 +254,7 @@ final class GuestDragWatcher {
         let promised = offer.items.count { $0.fileURL == nil }
         Self.logger.log(
             .notice,
-            "Offered a drag of \(offer.items.count, privacy: .public) item(s), \(promised, privacy: .public) of them promised, to the host (named: \(offer.calledIn || promised == 0, privacy: .public))"
+            "Offered a drag of \(offer.items.count, privacy: .public) item(s), \(promised, privacy: .public) of them promised, to the host"
         )
         return true
     }
@@ -271,7 +263,7 @@ final class GuestDragWatcher {
         peer.withdrawDrag(offer.token)
     }
 
-    private static func token() -> Data {
+    static func token() -> Data {
         var generator = SystemRandomNumberGenerator()
         return Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
     }
@@ -285,23 +277,7 @@ final class GuestDragWatcher {
         else { return .failure(.notCurrent) }
         guard input.isPrimaryButtonHeld else { return .failure(.pressOver) }
         press?.phase = .settled
-        return .success(
-            Claim(
-                token: token, press: current.id, items: offer.items, intake: offer.intake,
-                calledIn: offer.calledIn))
-    }
-
-    /// Replaces the claimed offer `claim` with one naming its promises as
-    /// `callIn` does, withdrawing the claimed one; the new offer's token, or
-    /// nil when its press is over or it cannot be offered.
-    func reoffer(_ claim: Claim, naming callIn: GuestDragPromises.CallIn) -> Data? {
-        guard press?.id == claim.press else { return nil }
-        peer.withdrawDrag(claim.token)
-        let renamed = Offer(
-            token: Self.token(), items: claim.items, intake: claim.intake, calledIn: true,
-            changeCount: press?.lastObservedCount ?? 0)
-        guard offer(renamed, promises: callIn.offered) else { return nil }
-        return renamed.token
+        return .success(Claim(token: token, press: current.id, items: offer.items, intake: offer.intake))
     }
 
     /// Lets go of the offer of `token`, which has ended; the press offers

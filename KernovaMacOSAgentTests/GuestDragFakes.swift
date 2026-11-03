@@ -30,11 +30,11 @@ final class FakeGuestDragInput: GuestDragInput {
     private(set) var resolveCount = 0
     private var pendingResolves:
         [(urls: [URL], completion: @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)] = []
-    /// The file promises the drag pasteboard holds, as ``promiseReceivers()``
+    /// The file promises the drag pasteboard holds, as a drop on the catcher
     /// reads them.
     var receivers: [FakePromiseReceiver] = []
-    /// How many times the promises were read.
-    private(set) var receiverReads = 0
+    /// Every set of folders measured, by item index.
+    private(set) var measured: [[Int: URL]] = []
 
     /// How many connections have built a drag-out on this input.
     private(set) var connectionCount = 0
@@ -127,9 +127,13 @@ final class FakeGuestDragInput: GuestDragInput {
         changed.notify()
     }
 
-    func promiseReceivers() -> [any FilePromiseReceiving] {
-        receiverReads += 1
-        return receivers
+    /// Measures each folder as the live input does, and hands the sizes back
+    /// at once.
+    func measureFolders(
+        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
+    ) {
+        measured.append(folders)
+        completion(folders.mapValues { ClipboardArchive.estimatedByteCount(at: $0) })
     }
 }
 
@@ -168,9 +172,15 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         case answered(DragTakeID, DragTakeAnswer)
     }
 
-    /// A take's answer, a refusal by its code alone.
+    /// A take's answer: a step, or its end, a refusal by its code alone and a
+    /// catch by whether it named a new offer.
     enum Answer: Equatable {
-        case taken
+        case armed
+        case targeted
+        case delivering
+        case deliverRefused
+        case caught(reoffered: Bool)
+        case returned
         case refused(ErrorCode)
     }
 
@@ -188,7 +198,12 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         events.compactMap { event in
             guard case .answered(let answered, let answer) = event, answered == id else { return nil }
             switch answer {
-            case .taken: return .taken
+            case .report(.armed): return .armed
+            case .report(.targeted): return .targeted
+            case .report(.delivering): return .delivering
+            case .report(.deliverRefused): return .deliverRefused
+            case .caught(let reoffer): return .caught(reoffered: reoffer != nil)
+            case .returned: return .returned
             case .refused(let error): return .refused(error.code)
             }
         }
@@ -197,6 +212,12 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
     /// How many takes were answered, all told.
     var answerCount: Int {
         events.count { if case .answered = $0 { true } else { false } }
+    }
+
+    /// The new offer a catch of take `id` named, if any.
+    func reoffer(of id: DragTakeID) -> Data? {
+        for case .answered(let answered, .caught(let reoffer?)) in events where answered == id { return reoffer }
+        return nil
     }
 
     func offerDrag(_ offer: ItemOffer, _ completion: @escaping @MainActor (WireError?) -> Void) {
@@ -331,5 +352,12 @@ final class FakeGuestDragTypeIcons {
         let image = NSImage(size: NSSize(width: 128, height: 128))
         images.append(image)
         return image
+    }
+}
+
+extension GuestDragCatcher {
+    /// A drop on the surface whose pasteboard holds no file promises.
+    func performDragOperation() -> Bool {
+        performDragOperation(receivers: { [] })
     }
 }

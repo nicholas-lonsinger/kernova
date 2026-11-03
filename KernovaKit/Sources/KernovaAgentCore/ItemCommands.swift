@@ -38,6 +38,11 @@ public enum ItemCommand: Sendable, Equatable {
     /// Host: take the peer's open drag offer of `token`; answered `.took`, refused `ITEM_OFFER_STALE` when no
     /// drag offer of `token` is open.
     case takeDrag(ItemRequestID, token: Data)
+    /// Host: tell the peer `DragTakeControl` on a take this side opened; dropped once the take has ended.
+    case controlTake(DragTakeID, DragTakeControl)
+    /// Host: call off a take this side opened, before any release onto its catcher; its `.dragTake(.ended)`
+    /// follows.
+    case cancelTake(DragTakeID)
     /// Decode item `item` of the far side's open offer of `token`; answered `.read`.
     case read(ItemRequestID, token: Data, item: UInt32)
 }
@@ -48,7 +53,7 @@ public enum ItemReply: Sendable, Equatable {
     case offered(WireError?)
     /// The pull's id, whose one `.pullEnded` follows, or why it was not opened.
     case pulled(Result<ItemPullID, WireError>)
-    /// The take's id, whose one `.dragTake(.ended)` follows, or why it was not opened.
+    /// The take's id, whose reports and one `.dragTake(.ended)` follow, or why it was not opened.
     case took(Result<DragTakeID, WireError>)
     /// The item, decoded now; nil when no such item is held. Each FILE and FOLDER representation's name passes
     /// `PathComponent.isValid`, and each INLINE one's is empty.
@@ -71,6 +76,10 @@ extension ItemMachines {
             cancel(pull, connection: &connection)
         case .takeDrag(let id, let token):
             return (id, .took(takeDrag(token, connection: &connection)))
+        case .controlTake(let take, let control):
+            self.control(take, control, connection: &connection)
+        case .cancelTake(let take):
+            cancelTake(take, connection: &connection)
         case .read(let id, let token, let item):
             return (id, .read(transfer.offers.remoteItem(token, Int(item))))
         }

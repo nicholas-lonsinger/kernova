@@ -137,7 +137,7 @@ struct ItemFeatureRouterTests {
         await harness.attached()
         let runtime = Locked<PeerAgentRuntime?>(nil)
         let peerRouter: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: peerHeard) { event in
-            if case .requested(let id, _) = event { runtime.withLock { $0 }?.answerDragTake(id, .taken) }
+            if case .requested(let id, _) = event { runtime.withLock { $0 }?.answerDragTake(id, .caught(reoffer: nil)) }
         }
         let peer = PeerAgentRuntime(
             claim: Fixture.peerClaim, state: Fixture.peerState,
@@ -178,7 +178,7 @@ struct ItemFeatureRouterTests {
             harness.hub.takeDrag(SimItems.token(2), of: handle) { continuation.resume(returning: $0) }
         }
         guard case .success(let take) = took else { Issue.record("took \(took)"); return }
-        _ = await host.next { $0 == .take(.ended(take, .taken)) }
+        _ = await host.next { $0 == .take(.ended(take, .caught(reoffer: nil))) }
         let asked = peerHeard.elements.contains { heard in
             if case .take(.requested(_, SimItems.token(2))) = heard { true } else { false }
         }
