@@ -222,7 +222,7 @@ final class Bench: Sendable {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         }
         let fileSystem = POSIXTreeFileSystem()
-        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _ in .success(content) }
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _ in .success(content) }
         let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
         let order = try sink.order(
             token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30, landing: landing)
@@ -233,7 +233,7 @@ final class Bench: Sendable {
             ItemSourceReporter(ItemConnection(role: server), $0)
         }
         let (sinks, sinkReporter) = Inbox<ItemSinkInput>.make { ItemSinkReporter(ItemConnection(role: puller), $0) }
-        source.handle(.serve(Self.id, order.request, representation), reporter: sourceReporter)
+        source.handle(.serve(Self.id, .clipboard, order.request, representation), reporter: sourceReporter)
         sink.handle(.begin(Self.id, order, representation), reporter: sinkReporter)
         defer { source.handle(.release(Self.id), reporter: sourceReporter) }
         reading: while true {
@@ -257,14 +257,16 @@ final class Bench: Sendable {
 
     /// The container a side of role `server` serves of INLINE `content` for a pull that takes LZ4, read by read.
     static func container(_ content: ItemContent, servedBy server: PeerRole) async throws -> [Data] {
-        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), sendingCores: 8) { _, _ in .success(content) }
+        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), sendingCores: 8) { _, _, _ in
+            .success(content)
+        }
         var request = PullRequest()
         request.byteCeiling = 1 << 30
         request.codecs = [.lz4]
         var representation = Representation()
         representation.storage = .inline
         let (sources, reporter) = Inbox<ItemSourceInput>.make { ItemSourceReporter(ItemConnection(role: server), $0) }
-        source.handle(.serve(id, request, representation), reporter: reporter)
+        source.handle(.serve(id, .clipboard, request, representation), reporter: reporter)
         defer { source.handle(.release(id), reporter: reporter) }
         var reads: [Data] = []
         while true {
@@ -281,13 +283,13 @@ final class Bench: Sendable {
     func serveFailure(
         _ content: Result<ItemContent, WireError>, _ storage: Representation.Storage, ceiling: UInt64 = 1 << 30
     ) async throws -> WireError? {
-        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { _, _ in content }
+        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { _, _, _ in content }
         var request = PullRequest()
         request.byteCeiling = ceiling
         var representation = Representation()
         representation.storage = storage
         let (sources, reporter) = Inbox<ItemSourceInput>.make { ItemSourceReporter(ItemConnection(role: .host), $0) }
-        source.handle(.serve(Self.id, request, representation), reporter: reporter)
+        source.handle(.serve(Self.id, .clipboard, request, representation), reporter: reporter)
         while true {
             source.handle(.read(Self.id, maxBytes: WireConstants.maxRawDataPayload), reporter: reporter)
             switch await sources.next() {

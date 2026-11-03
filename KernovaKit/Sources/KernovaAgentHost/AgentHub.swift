@@ -374,8 +374,7 @@ public final class AgentHub: Sendable {
         }
     }
 
-    /// The error of an item call whose connection was gone, or ended before answering.
-    private static let connectionEnded = WireError(.shuttingDown, debugDetail: "the connection ended before answering")
+    private static var connectionEnded: WireError { ItemRequests<PeerHandle>.connectionEnded }
 
     /// Sends `peer`'s connection the command `command` builds around a fresh request id, and calls
     /// `completion` once with what `answer` reads from its reply — or with `unanswered`, at once or later, when
@@ -386,12 +385,7 @@ public final class AgentHub: Sendable {
         _ completion: @escaping @Sendable (Answer) -> Void
     ) {
         dispatchPrecondition(condition: .onQueue(queue))
-        let deliver: @Sendable (ItemReply?) -> Void = { reply in
-            let read = reply.flatMap(answer)
-            // The endpoint answers each command with that command's kind of reply.
-            assert(reply == nil || read != nil, "a reply answering another command")
-            completion(read ?? unanswered)
-        }
+        let deliver = ItemRequests<PeerHandle>.answering(answer, unanswered: unanswered, completion)
         let sent = state.withLock { state -> (any HostConnectionHandle, ItemCommand)? in
             guard let entry = state.connections[peer], entry.peer != nil else { return nil }
             let command = state.items.add(peer, command, feature: feature, deliver)
@@ -422,19 +416,22 @@ public final class AgentHub: Sendable {
         pending?.answer(reply)
     }
 
-    /// Carries out console authority: each command it sends, then each end it hands the owner, in order.
+    /// Carries out console authority: each command it sends, then each end it hands the owner, in order, and
+    /// then each console peer that changed.
     private func settleItems() {
         dispatchPrecondition(condition: .onQueue(queue))
-        let ended = state.withLock { state in
-            state.settleItems().map { end in
+        let (ended, changes) = state.withLock { state in
+            let ended = state.settleItems().map { end in
                 let connection = state.connections[end.handle]?.connection
                 return (send: end.command.flatMap { command in connection.map { ($0, command) } }, event: end.event)
             }
+            return (ended, state.consoleChanges())
         }
         for end in ended {
             if let (connection, command) = end.send { connection.send(.items(command)) }
             itemEvents(end.event)
         }
+        for change in changes { itemEvents(change) }
     }
 
     private func detachTransport() {

@@ -21,21 +21,13 @@ import KernovaFileTree
 import KernovaTreeTransfer
 import KernovaWire
 
-/// What an offered representation's container is made from, as its owner produces it when a pull names it.
-public enum ItemContent: Sendable, Equatable {
-    /// A FILE or FOLDER: the entry `name` in the directory at the absolute path `directory`.
-    case tree(directory: String, name: [UInt8])
-    /// An INLINE representation's bytes.
-    case inline(Data)
-}
-
 /// Serves this side's offers as `ItemSourceEffect` asks: each pull's container encoded from its content — a tree
 /// read by `TreeReader`, or INLINE bytes as one DATA entry — compressed as `TransferCompression` chooses for the
 /// direction this side's role on the pull's connection sends it. Each pull's work runs on a queue of its own.
 public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: ItemSource {
-    /// Produces the content of the offered representation a pull names, or why it cannot: called on the pull's
-    /// own queue, so it may wait, as a promise called in does.
-    public typealias Content = @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
+    /// Produces the content of the offered representation a pull names, of an offer of the feature it names, or
+    /// why it cannot: called on the pull's own queue, so it may wait, as a promise called in does.
+    public typealias Content = @Sendable (FeatureID, PullRequest, Representation) -> Result<ItemContent, WireError>
 
     private final class Serve {
         let events: any TreeEventSource
@@ -76,13 +68,13 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
     /// Carries out `effect` on its pull's queue, answering through `reporter`.
     public func handle(_ effect: ItemSourceEffect, reporter: ItemSourceReporter) {
         switch effect {
-        case .serve(let id, let request, let representation):
+        case .serve(let id, let feature, let request, let representation):
             let compression = TransferCompression.forSending(
                 TransferDirection(servedBy: reporter.connection.role), pullAcceptsLZ4: request.codecs.contains(.lz4),
                 sendingCores: sendingCores)
             let acceptance = compression.sending(ContainerAcceptance(request, storage: representation.storage))
             serves.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, content] in
-                switch Self.events(content(request, representation), acceptance, fileSystem) {
+                switch Self.events(content(feature, request, representation), acceptance, fileSystem) {
                 case .success(let events):
                     return Serve(
                         events: events,

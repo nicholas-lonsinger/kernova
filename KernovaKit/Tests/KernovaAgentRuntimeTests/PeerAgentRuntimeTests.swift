@@ -373,7 +373,7 @@ struct HostConnectionRuntimeTests {
         "Item transfer is advertised available with item adapters given, and absent NOT_IMPLEMENTED without",
         arguments: [true, false])
     func itemTransferAdvert(registered: Bool) async {
-        let harness = Harness(content: Data(), items: registered ? RegisteredItemAdapters.adapters() : nil)
+        let harness = Harness(content: Data(), items: registered ? RegisteredItemAdapters.adapters([.drop]) : nil)
         await harness.pump()
         let advert = harness.far.hostAdvert(.itemTransfer)
         if registered {
