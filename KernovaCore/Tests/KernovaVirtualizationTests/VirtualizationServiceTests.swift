@@ -69,6 +69,20 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .failed(message: "The disk is full."))
     }
 
+    @Test("A suspend records the Kernova that wrote the slot")
+    func suspendRecordsTheVersion() async throws {
+        let products = AppBundleProducts(
+            bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "0.10.0", buildNumber: "412",
+            guestAgents: .testing)
+        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()), bundleProducts: products)
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+
+        try await suspend(instance, over: session)
+
+        #expect(instance.phase == .suspended)
+        #expect(instance.savedStateVersion == "0.10.0 (412)")
+    }
+
     @Test("A guest that goes away mid-suspend drops the slot and rests where its end put it")
     func suspendOverAVanishingGuestDropsTheSlot() async throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
@@ -1000,6 +1014,39 @@ struct VirtualizationServiceTests {
         let bundleSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
         #expect(String(decoding: bundleSlot, as: UTF8.self) == "bundle-suspend-slot")
         #expect(fixture.instance.phase == .suspended)
+    }
+
+    @Test("A suspended-state capture keeps the version that wrote the slot, not the capturing Kernova's")
+    func suspendedCaptureKeepsTheSlotsWriter() async throws {
+        let fixture = try makeRevertFixture(phase: .suspended)
+        let slot = fixture.instance.bundleLayout.saveFileURL
+        try Data("bundle-suspend-slot".utf8).write(to: slot)
+        try SavedStateVersion.record("0.9.0 (300)", at: slot)
+        let snapshot = VMSnapshotCaptureRequest(name: "Suspended")
+
+        _ = try await capture(fixture.instance, snapshot)
+
+        #expect(fixture.instance.savedStateVersion(ofSnapshot: snapshot.id) == "0.9.0 (300)")
+        #expect(fixture.instance.savedStateVersion == "0.9.0 (300)")
+    }
+
+    @Test(
+        "A revert lands the snapshot's version on the suspend slot, or none when the snapshot has none",
+        arguments: ["0.9.0 (300)", nil] as [String?])
+    func revertCarriesTheSnapshotsVersion(captured: String?) async throws {
+        let fixture = try makeRevertFixture(phase: .suspended)
+        let layout = fixture.instance.bundleLayout
+        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
+        try SavedStateVersion.record("0.10.0 (412)", at: layout.saveFileURL)
+        if let captured {
+            try SavedStateVersion.record(captured, at: layout.snapshotLayout(id: fixture.snapshot.id).saveFileURL)
+        }
+
+        try await revert(fixture)
+
+        #expect(contents(of: layout.saveFileURL) == "captured-state")
+        #expect(fixture.instance.savedStateVersion == captured)
+        #expect(fixture.instance.savedStateVersion(ofSnapshot: fixture.snapshot.id) == captured)
     }
 
     /// The capture is offered by ``VMInstance/snapshotCaptureMode``, which reads

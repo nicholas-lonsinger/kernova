@@ -123,6 +123,10 @@ package struct VMBundleLayout: Sendable {
         FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false))
     }
 
+    /// The Kernova build that wrote the saved state here (``SavedStateVersion``),
+    /// `nil` when there is none or it predates the record.
+    package var savedStateVersion: String? { SavedStateVersion.read(at: saveFileURL) }
+
     // MARK: - Guest agent disks
 
     static let guestAgentDiskRelativePath = "GuestAgentDisk"

@@ -18,6 +18,10 @@ package struct AppBundleProducts: Sendable {
     /// Info.plist; `nil` is a build misconfiguration.
     package let buildNumber: String?
 
+    /// The version and build together, as `0.10.0 (412)`: how Kernova names
+    /// the build that wrote something.
+    package let versionLabel: String
+
     /// The guest agents this host bundles.
     package let guestAgents: BundledGuestAgents
 
@@ -34,7 +38,8 @@ package struct AppBundleProducts: Sendable {
             Self.logger.log(.fault, "CFBundleVersion not found in Info.plist")
             assertionFailure("CFBundleVersion not found in Info.plist")
         }
-        self.guestAgents = BundledGuestAgents(bundle: bundle, versionLabel: "\(hostVersion) (\(buildNumber ?? ""))")
+        self.versionLabel = Self.versionLabel(hostVersion, buildNumber)
+        self.guestAgents = BundledGuestAgents(bundle: bundle, versionLabel: versionLabel)
         self.resources = bundle
     }
 
@@ -46,11 +51,16 @@ package struct AppBundleProducts: Sendable {
         self.bundleURL = bundleURL
         self.hostVersion = hostVersion
         self.buildNumber = buildNumber
+        self.versionLabel = Self.versionLabel(hostVersion, buildNumber)
         self.guestAgents = guestAgents
         self.resources = Bundle(url: bundleURL)
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppBundleProducts")
+
+    private static func versionLabel(_ version: String, _ build: String?) -> String {
+        build.map { "\(version) (\($0))" } ?? version
+    }
 
     /// The compressed blank-disk template of `sizeInGB`, or `nil` if the
     /// bundle ships none of that size.
