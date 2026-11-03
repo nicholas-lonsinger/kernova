@@ -16,8 +16,8 @@ import KernovaWire
 
 /// A peer's DROP owner: it lands each offer the host drops into one directory, one item at a time in offer
 /// order, each item's FILE or FOLDER representation under the offer's name for it, Keep Both-named against
-/// what is already there. Once every item has ended it releases the offer and hands `landed` the names it
-/// published.
+/// what is already there. Once every item has ended it releases the offer, its END saying which items landed
+/// (``DropLanded``), and hands `landed` the names it published.
 ///
 /// An item the host cannot serve is skipped. A landing that fails, or a landing directory this side cannot
 /// open, stops the drop: it refuses the offer with that error, so the host hears why. An offer the host
@@ -30,7 +30,8 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         var count: Int
         var next = 0
         var pull: ItemPullID?
-        var landed: [Data] = []
+        /// Each landed item's index, and the name it was published under.
+        var landed: [(item: Int, name: Data)] = []
         var withdrawn = false
     }
 
@@ -152,10 +153,13 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         }
         switch result {
         case .landed(.named(let name)):
-            jobs.withLock { $0[token]?.landed.append(name) }
+            jobs.withLock { $0[token]?.landed.append((job.next, name)) }
             next(token)
         case .closed(.resetByPeer(let error)) where Self.unservable.contains(error.code):
-            logger.log(.warning, "The host could not serve a dropped item: it is skipped")
+            logger.log(
+                .warning,
+                "The host could not serve a dropped item, \(error.code, privacy: .public) errno \(error.posixErrno, privacy: .public): it is skipped"
+            )
             next(token)
         case .failed(let error), .closed(.resetByPeer(let error)), .closed(.resetLocally(let error)):
             logger.log(.error, "A dropped item did not land: \(error.code, privacy: .public)")
@@ -179,11 +183,15 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
     private func finish(_ token: Data, refusing error: WireError? = nil) {
         guard let job = jobs.withLock({ $0.removeValue(forKey: token) }) else { return }
         let runtime = runtime.withLock { $0 }
-        if let error { runtime?.refuseOffer(token, error) } else { runtime?.releaseOffer(token) }
+        if let error {
+            runtime?.refuseOffer(token, error)
+        } else {
+            runtime?.releaseOffer(token, endBody: DropLanded(items: job.landed.map(\.item)).endBody)
+        }
         logger.log(
             .notice,
             "A drop finished: \(job.landed.count, privacy: .public) of \(job.count, privacy: .public) items landed")
-        if !job.landed.isEmpty { landed(job.landed) }
+        if !job.landed.isEmpty { landed(job.landed.map(\.name)) }
     }
 }
 #endif

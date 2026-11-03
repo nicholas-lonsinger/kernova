@@ -133,9 +133,7 @@ final class FidelityBench {
     func roundTrip(_ name: [UInt8], accepting acceptance: ContainerAcceptance, policy: ChunkCompressionPolicy)
         throws -> [UInt8]
     {
-        let parent = try fileSystem.openDirectory(bytes(sourcePath), in: AT_FDCWD)
-        defer { fileSystem.close(parent) }
-        let reader = try TreeReader(fileSystem: fileSystem, item: name, in: parent, accepting: acceptance)
+        let reader = try TreeReader(fileSystem: fileSystem, root: path([name]), accepting: acceptance)
         var encoder = ContainerEncoder(accepting: acceptance, policy: policy)
         let receiver = TreeReceiver(
             name: .exactly(name), accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem,
@@ -150,9 +148,7 @@ final class FidelityBench {
 
     /// Every event the reader produces for the item `name` in the source.
     func events(_ name: [UInt8], accepting acceptance: ContainerAcceptance) throws -> [TreeEvent] {
-        let parent = try fileSystem.openDirectory(bytes(sourcePath), in: AT_FDCWD)
-        defer { fileSystem.close(parent) }
-        let reader = try TreeReader(fileSystem: fileSystem, item: name, in: parent, accepting: acceptance)
+        let reader = try TreeReader(fileSystem: fileSystem, root: path([name]), accepting: acceptance)
         var events: [TreeEvent] = []
         while let event = try reader.next() { events.append(event) }
         return events

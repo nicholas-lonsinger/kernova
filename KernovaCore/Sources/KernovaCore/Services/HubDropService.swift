@@ -10,18 +10,23 @@ import Synchronization
 /// The host's DROP owner: it offers what is dropped on a VM's display to the hub, which opens it on DROP's
 /// console peer, serves each pull of it, and reports on the VM's transfer report how each drop ended.
 ///
-/// A dropped file promise is called in as the drop is taken, so the offer carries the name its source gives,
-/// and every pull of it waits for its file. Each offer ends once, whichever end ends it: the peer releasing
-/// it once its items have landed, or refusing it with why it could not land them, or the hub withdrawing it
-/// when DROP's console peer changes. Nothing is offered again.
+/// A dropped file promise is called in as the drop is taken, so the offer carries an item per name its source
+/// gives, and every pull of one waits for its file. Each offer ends once, whichever end ends it: the peer
+/// releasing it once its items have landed or been skipped, saying which landed, or refusing it with why it
+/// could not land them, or the hub withdrawing it when DROP's console peer changes. The peer's word is the
+/// only one on what landed: every item the drop carried that it does not name is reported skipped. Nothing is
+/// offered again.
 package final class HubDropService: Sendable {
-    /// One open offer: what serves its pulls, where its promises land, and what its pulls could not serve.
+    /// One open offer: what serves its pulls, where its promises land, and what the drop carried.
     private struct Offer {
         let source: ClipboardOfferSource
         let peerName: String
         let promises: [CalledInFilePromise]
         let staging: URL?
-        var unservable = 0
+        /// The drop's items the offer leaves out: gone or unreadable before it was read.
+        let lost: Int
+        /// When the drop was taken.
+        let began: Date
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubDropService")
@@ -31,6 +36,9 @@ package final class HubDropService: Sendable {
     /// Read and written on the main actor only; a lock because the service is shared with the hub's queue.
     private let offers = Mutex<[Data: Offer]>([:])
     private let reporter: ClipboardTransferReporter
+    #if DEBUG
+    private let stagingReleases = Mutex<[Task<Void, Never>]>([])
+    #endif
 
     /// A service staging promises under `stagingRoot` and reporting to `reporter`.
     package init(stagingRoot: ProcessStagingRoot, reporter: ClipboardTransferReporter) {
@@ -62,6 +70,7 @@ package final class HubDropService: Sendable {
         _ pasteboard: any ClipboardReadPasteboard, promises receivers: [any FilePromiseReceiving], peerName: String
     ) -> Bool {
         guard let hub = hub.withLock({ $0 }) else { return false }
+        let began = Date()
         reporter.gestureBegan()
         var staging: URL?
         var promises: [CalledInFilePromise] = []
@@ -81,7 +90,7 @@ package final class HubDropService: Sendable {
         Task { @MainActor [self, staging, promises] in
             let outcome = await ClipboardPasteboardReader.readDropOffer(from: pasteboard, promises: promises)
             guard case .offer(let source, let lost) = outcome else {
-                Self.release(staging, after: promises)
+                release(staging, after: promises)
                 return report(.itemsUnreadable, to: peerName)
             }
             if lost > 0 {
@@ -90,7 +99,9 @@ package final class HubDropService: Sendable {
             }
             let token = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) })
             offers.withLock {
-                $0[token] = Offer(source: source, peerName: peerName, promises: promises, staging: staging)
+                $0[token] = Offer(
+                    source: source, peerName: peerName, promises: promises, staging: staging, lost: lost,
+                    began: began)
             }
             hub.offerItems(ItemOffer(token: token, items: source.items), feature: .drop) { [self] result in
                 guard case .failure(let error) = result else { return }
@@ -102,35 +113,87 @@ package final class HubDropService: Sendable {
         return true
     }
 
-    /// The hub did not open the offer of `token`: no peer takes drops now.
+    /// The hub did not open the offer of `token`, for `error`.
     @MainActor
     private func refused(_ token: Data, _ error: WireError, items: Int) {
         guard let offer = offers.withLock({ $0.removeValue(forKey: token) }) else { return }
         Self.logger.log(.warning, "A drop was not offered: \(error.code, privacy: .public)")
-        Self.release(offer.staging, after: offer.promises)
-        report(.interrupted(fileCount: items), to: offer.peerName)
+        release(offer.staging, after: offer.promises)
+        report(Self.stop(error).map { .dropStopped($0) } ?? .sendFailed, to: offer.peerName)
     }
 
     @MainActor
     private func handle(_ event: ItemTransferEvent) {
+        if case .serveEnded(_, _, let result) = event { return Self.log(served: result) }
         guard case .offerEnded(_, .local, let token, let closure) = event,
             let offer = offers.withLock({ $0.removeValue(forKey: token) })
         else { return }
-        Self.release(offer.staging, after: offer.promises)
+        release(offer.staging, after: offer.promises)
         let items = offer.source.items.count
-        switch closure {
-        case .completed where offer.unservable == items:
-            report(.itemsUnreadable, to: offer.peerName)
-        case .completed where offer.unservable > 0:
-            report(.itemsSkipped(count: offer.unservable), to: offer.peerName)
-        case .completed:
-            Self.logger.log(.notice, "A drop of \(items, privacy: .public) item(s) landed")
-        case .resetByPeer(let error):
-            Self.logger.log(.warning, "The guest could not land a drop: \(error.code, privacy: .public)")
-            report(.peerReported(Self.code(landing: error)), to: offer.peerName)
-        case .resetLocally, .connectionClosedLocally, .connectionClosedByPeer, .connectionLost:
+        guard case .completed(let body) = closure else {
             Self.logger.log(.warning, "A drop ended before it landed: \(String(describing: closure), privacy: .public)")
-            report(.interrupted(fileCount: nil), to: offer.peerName)
+            return report(Self.failure(ending: closure, items: items), to: offer.peerName)
+        }
+        guard let landed = DropLanded(endBody: body) else {
+            Self.logger.log(.error, "The guest released a drop with an END body that does not decode")
+            return report(.peerReported(.dropFailed), to: offer.peerName)
+        }
+        let landedCount = Set(landed.items).filter { offer.source.items.indices.contains($0) }.count
+        let skipped = items + offer.lost - landedCount
+        Self.logger.log(
+            .notice,
+            "A drop landed \(landedCount, privacy: .public) of \(items + offer.lost, privacy: .public) item(s)")
+        if landedCount == 0 {
+            report(.itemsUnreadable, to: offer.peerName)
+        } else if skipped > 0 {
+            report(.itemsSkipped(count: skipped), to: offer.peerName)
+        } else {
+            reporter.completed(.drop, startedAt: offer.began)
+        }
+    }
+
+    /// Logs a pull of a drop's item that this side did not serve whole: the code, and the errno and entry a
+    /// read failure names.
+    private static func log(served result: ItemServeResult) {
+        let error: WireError
+        switch result {
+        case .landed: return
+        case .failed(let failure): error = failure
+        case .closed(.resetLocally(let failure)), .closed(.resetByPeer(let failure)): error = failure
+        case .closed(let closure):
+            return logger.log(
+                .warning, "A dropped item's serve ended: \(String(describing: closure), privacy: .public)")
+        }
+        let path = (error.item?.path ?? []).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")
+        let reason = "\(error.code), errno \(error.posixErrno)"
+        let detail = "\(path) (\(error.debugDetail))"
+        logger.log(.error, "A dropped item was not served: \(reason, privacy: .public) at \(detail, privacy: .private)")
+    }
+
+    /// What a drop whose offer of `items` items ended by `closure`, before the peer released it, reports.
+    static func failure(ending closure: StreamClosure, items: Int) -> ClipboardTransferFailure {
+        switch closure {
+        case .resetByPeer(let error):
+            return stop(error).map { .dropStopped($0) } ?? .peerReported(code(landing: error))
+        case .resetLocally(let error):
+            if let stop = stop(error) { return .dropStopped(stop) }
+            // CANCELLED is the hub moving DROP to another console peer; the registry's other CANCELLED reset,
+            // of an offer ENDed before it is whole, follows nothing a DropReceiver sends.
+            return error.code == .cancelled ? .dropStopped(.movedToAnotherAgent) : .peerReported(.dropFailed)
+        case .connectionClosedLocally, .connectionClosedByPeer, .connectionLost:
+            return .interrupted(fileCount: items)
+        case .completed:
+            return .peerReported(.dropFailed)
+        }
+    }
+
+    /// Why DROP was not usable, when `error` says it was not.
+    static func stop(_ error: WireError) -> ClipboardDropStop? {
+        switch error.code {
+        case .disabledByPolicy: .turnedOff
+        case .featureUnavailable where error.absence == .disabledByPolicy: .turnedOff
+        case .featureUnavailable, .capabilityWithdrawn: .noAgent
+        default: nil
         }
     }
 
@@ -158,7 +221,6 @@ package final class HubDropService: Sendable {
         do throws(ClipboardServeError) {
             served = try await source.serve(item: Int(request.item), representation: Int(request.representation))
         } catch {
-            offers.withLock { $0[request.token]?.unservable += 1 }
             return .failure(
                 error == .unavailable
                     ? WireError(.itemRepresentationUnavailable, debugDetail: "the dropped item is gone")
@@ -166,8 +228,7 @@ package final class HubDropService: Sendable {
         }
         switch served {
         case .file(let url), .folder(let url):
-            return .success(
-                .tree(directory: url.deletingLastPathComponent().path, name: Array(url.lastPathComponent.utf8)))
+            return .success(.tree(path: url.path))
         case .bytes(let data):
             return .success(.inline(data))
         }
@@ -176,6 +237,9 @@ package final class HubDropService: Sendable {
     #if DEBUG
     /// How many offers are open; tests only.
     var openOffersForTesting: Int { offers.withLock(\.count) }
+
+    /// Each removal of a drop's promise staging, in the order it was begun; tests only.
+    var stagingReleasesForTesting: [Task<Void, Never>] { stagingReleases.withLock { $0 } }
     #endif
 
     /// The code a drop's surfaces word a peer's failure to land it with.
@@ -193,18 +257,24 @@ package final class HubDropService: Sendable {
         reporter.finish(ClipboardTransferFinish(gesture: .drop, outcome: .failed(failure), peerName: peerName))
     }
 
-    /// Removes a drop's promise staging once each of its promises has written or failed.
+    /// Removes a drop's promise staging once each file of each of its promises has landed or failed.
     @MainActor
-    private static func release(_ staging: URL?, after promises: [CalledInFilePromise]) {
+    private func release(_ staging: URL?, after promises: [CalledInFilePromise]) {
         guard let staging else { return }
-        Task {
-            for promise in promises { _ = try? await promise.landed.value }
+        let files = promises.flatMap(\.files)
+        let removal = Task {
+            for file in files { _ = try? await file.landed.value }
             do {
                 try StagedItemRemoval.remove(at: staging)
             } catch {
-                logger.log(
+                Self.logger.log(
                     .warning, "Cannot remove a drop's staged promises: \(String(describing: error), privacy: .public)")
             }
         }
+        #if DEBUG
+        stagingReleases.withLock { $0.append(removal) }
+        #else
+        _ = removal
+        #endif
     }
 }

@@ -445,6 +445,31 @@ struct ClipboardItemBridgeTests {
         #expect(receiver.callIns == 1)
     }
 
+    @Test("a drop's promise naming several files offers one item per name, each served once its own file lands")
+    func dropPromiseOffersEachFile() async throws {
+        let receiver = FakeFilePromiseReceiver(
+            files: [("a.png", .file(pngBytes)), ("b.png", .file(Data("b".utf8)))], fileType: "public.png",
+            named: false, deferred: true)
+
+        let source = try await readDropOffer(promisePasteboard(), promises: [receiver])
+
+        #expect(source.items.map { $0.representations.map(\.name) } == [[Data("a.png".utf8)], [Data("b.png".utf8)]])
+        // The source reports its second file first: it lands on that file's item, not the first one owed.
+        receiver.deliver(1)
+        guard case .file(let second) = try await source.serve(item: 1, representation: 0) else {
+            Issue.record("expected the second file")
+            return
+        }
+        #expect(try Data(contentsOf: second) == Data("b".utf8))
+        receiver.deliver(0)
+        guard case .file(let first) = try await source.serve(item: 0, representation: 0) else {
+            Issue.record("expected the first file")
+            return
+        }
+        #expect(try Data(contentsOf: first) == pngBytes)
+        #expect(receiver.callIns == 1)
+    }
+
     @Test("a dropped item carrying a promise beside a file on disk offers the promise")
     func dropPrefersThePromise() async throws {
         let derivative = try directory("library").appendingPathComponent("derivative.jpeg")

@@ -155,9 +155,9 @@ struct ItemMachines: Sendable {
         transfer.withdraw(token, connection: &connection)
     }
 
-    /// Releases the far side's offer of `token`.
-    mutating func release(_ token: Data, connection: inout Connection) {
-        transfer.release(token, connection: &connection)
+    /// Releases the far side's offer of `token`, END carrying `endBody` once it is whole.
+    mutating func release(_ token: Data, endBody: Data, connection: inout Connection) {
+        transfer.release(token, endBody: endBody, connection: &connection)
     }
 
     /// Refuses the far side's offer of `token` with `error`.

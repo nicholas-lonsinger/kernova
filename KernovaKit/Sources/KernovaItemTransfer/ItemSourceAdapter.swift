@@ -127,19 +127,11 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
             return .failure(error)
         case (.success(.inline(let bytes)), .inline):
             return .success(InlineEvents(bytes, acceptance: acceptance))
-        case (.success(.tree(let directory, let name)), .file), (.success(.tree(let directory, let name)), .folder):
-            do {
-                let parent = try fileSystem.openDirectory(Array(directory.utf8), in: AT_FDCWD)
-                defer { fileSystem.close(parent) }
-                return .success(
-                    try TreeReader(fileSystem: fileSystem, item: name, in: parent, accepting: acceptance))
-            } catch let error as TreeFileSystemError {
-                return .failure(
-                    WireError(.readFailed, posixErrno: error.code, debugDetail: "the item's directory: \(error)"))
-            } catch let error as TreeReadFailure {
-                return .failure(WireError(received: error.wireError))
+        case (.success(.tree(let path)), .file), (.success(.tree(let path)), .folder):
+            do throws(TreeReadFailure) {
+                return .success(try TreeReader(fileSystem: fileSystem, root: Array(path.utf8), accepting: acceptance))
             } catch {
-                return .failure(WireError(.readFailed, debugDetail: "\(error)"))
+                return .failure(WireError(received: error.wireError))
             }
         case (.success(let content), let storage):
             return .failure(

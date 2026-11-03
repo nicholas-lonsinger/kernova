@@ -134,11 +134,31 @@ package struct ClipboardTransferWording: Equatable {
                 mentionsMacClipboardKept: false)
 
         case (.interrupted(let fileCount), .drop):
+            // The connection ending is all a drop observes: the VM stopping, the
+            // agent quitting and the host letting go each end it the same way.
             let subject = fileCount == 1 ? "The file" : "The files"
             return ClipboardTransferWording(
                 headline: "Files not copied to \(vm).",
-                message: "\(subject) stopped transferring when the VM disconnected.",
+                message: "\(subject) stopped transferring when the connection to the VM ended.",
                 menuLine: "Drop: the files didn't reach the VM",
+                mentionsMacClipboardKept: false)
+
+        case (.dropStopped(let stop), _):
+            let message: String
+            let menuLine: String
+            switch stop {
+            case .turnedOff:
+                message = "\u{201C}Drag and drop files\u{201D} was off in the VM's settings, so the drop didn't finish."
+                menuLine = "Drop: \u{201C}Drag and drop files\u{201D} was off"
+            case .noAgent:
+                message = "No guest agent in the VM was taking drops, so the drop didn't finish."
+                menuLine = "Drop: no guest agent was taking drops"
+            case .movedToAnotherAgent:
+                message = "Another guest agent in the VM took over drops, so the drop didn't finish."
+                menuLine = "Drop: another guest agent took over drops"
+            }
+            return ClipboardTransferWording(
+                headline: "Files not copied to \(vm).", message: message, menuLine: menuLine,
                 mentionsMacClipboardKept: false)
 
         case (.interrupted, _):
@@ -266,7 +286,7 @@ package struct ClipboardTransferWording: Equatable {
         case (.sendFailed, _):
             return ClipboardTransferWording(
                 headline: "Files not copied to \(vm).",
-                message: "The connection to the VM dropped, so the files weren't sent.",
+                message: "The files couldn't be offered to the VM, so none were sent.",
                 menuLine: "Drop: the files didn't reach the VM",
                 mentionsMacClipboardKept: false)
 
@@ -343,7 +363,7 @@ package struct ClipboardTransferWording: Equatable {
             message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
             menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
         case .tooLarge, .supersededCopyRetracted, .incompleteFileSet, .transferFailed,
-            .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed:
+            .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed, .dropStopped:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }

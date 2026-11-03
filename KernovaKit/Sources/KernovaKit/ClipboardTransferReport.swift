@@ -98,12 +98,24 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case itemsUnreadable
     /// The drop offer itself could not be sent.
     case sendFailed
+    /// This side ended a drop the VM had not finished landing, for the reason given.
+    case dropStopped(ClipboardDropStop)
     /// The peer never asked for a single item of an offered drop, so the batch
     /// was called off rather than left waiting forever.
     case unclaimed
     /// A Mac destination asked for a promised item of a guest drag that the
     /// guest never named, so it holds a stand-in name nothing is written to.
     case dragItemUnnamed
+}
+
+/// Why this side ended a drop the VM had not finished landing, as this side observed it.
+public enum ClipboardDropStop: Equatable, Sendable {
+    /// The VM's settings had file drops off.
+    case turnedOff
+    /// No guest agent in the VM was taking drops.
+    case noAgent
+    /// Another guest agent in the VM took the VM's drops over.
+    case movedToAnotherAgent
 }
 
 extension ClipboardTransferFailure {

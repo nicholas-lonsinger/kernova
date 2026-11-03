@@ -32,6 +32,8 @@ extension ClipboardPasteboardReader {
         case file(URL, inliningImage: Bool)
         /// A file promise: the index of its receiver, and its representation.
         case promise(Int, Representation)
+        /// A file a called-in promise lands, and its representation.
+        case landing(Task<URL, any Error>, Representation)
     }
 
     /// Reads what `pasteboard` offers, one offered item per pasteboard item,
@@ -62,25 +64,25 @@ extension ClipboardPasteboardReader {
         promiseDestination: @escaping @MainActor () throws -> URL = { throw ClipboardServeError.unavailable },
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
     ) async -> OfferOutcome {
-        await read(pasteboard, promises: promises, calledIn: [:], rule: .clipboard, sizeOf: sizeOf) {
+        await read(pasteboard, promises: promises, calledIn: [], rule: .clipboard, sizeOf: sizeOf) {
             try promiseDestination()
         }
     }
 
-    /// Reads what a drop of `pasteboard` offers: one item per pasteboard item that carries a file promise or
-    /// names a file or folder on disk, each a single FILE or FOLDER representation, reading no content.
+    /// Reads what a drop of `pasteboard` offers: one item per file or folder a pasteboard item names on disk,
+    /// and one per file a pasteboard item's file promise names, each a single FILE or FOLDER representation,
+    /// reading no content.
     ///
     /// `promises` are the drop's promises, called in already (``CalledInFilePromise/callIn(_:into:)``), so
-    /// each is offered under the name its source gave once called in. An item carrying a promise offers
+    /// each file is offered under the name its source gave once called in. An item carrying a promise offers
     /// it even beside a file URL: the promise is what the source means to hand over, where a Photos asset's
     /// URL names the library's smaller derivative of it. An item that is neither is not offered.
     public static func readDropOffer(
         from pasteboard: any ClipboardReadPasteboard, promises: [CalledInFilePromise],
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
     ) async -> OfferOutcome {
-        let calledIn = Dictionary(uniqueKeysWithValues: promises.enumerated().map { ($0.offset, $0.element.landed) })
-        return await read(
-            pasteboard, promises: promises.map(\.receiver), calledIn: calledIn, rule: .drop, sizeOf: sizeOf
+        await read(
+            pasteboard, promises: promises.map(\.receiver), calledIn: promises, rule: .drop, sizeOf: sizeOf
         ) { throw ClipboardServeError.unavailable }
     }
 
@@ -95,7 +97,7 @@ extension ClipboardPasteboardReader {
 
     private static func read(
         _ pasteboard: any ClipboardReadPasteboard, promises: [any FilePromiseReceiving],
-        calledIn: [Int: Task<URL, any Error>], rule: Rule, sizeOf: (@Sendable (URL) -> Int)?,
+        calledIn: [CalledInFilePromise], rule: Rule, sizeOf: (@Sendable (URL) -> Int)?,
         promiseDestination: @escaping @MainActor () throws -> URL
     ) async -> OfferOutcome {
         let pasteboardItems = pasteboard.items
@@ -116,7 +118,11 @@ extension ClipboardPasteboardReader {
                 nextPromise += 1
             }
             if rule == .drop, let receiver {
-                pending.append(.promise(receiver, promisedRepresentation(promises[receiver])))
+                let promise = calledIn[receiver]
+                for (index, file) in promise.files.enumerated() {
+                    let representation = promisedRepresentation(promise.receiver, file: index, named: file.name)
+                    pending.append(.landing(file.landed, representation))
+                }
                 continue
             }
             let resolution = fileURLResolution(in: item)
@@ -159,7 +165,7 @@ extension ClipboardPasteboardReader {
         guard !items.isEmpty else { return .nothingOfferable(lost: lost) }
         let source = ClipboardOfferSource(
             items: items, origins: origins, concealed: markers.concealed,
-            pasteboard: pasteboard, changeCount: changeCount, promises: promises, calledIn: calledIn,
+            pasteboard: pasteboard, changeCount: changeCount, promises: promises,
             promiseDestination: promiseDestination)
         return .offer(source, lost: lost)
     }
@@ -176,6 +182,8 @@ extension ClipboardPasteboardReader {
             return (item, types.map { .pasteboard(item: index, type: $0) })
         case .promise(let index, let representation):
             return (.with(representation), [.promise(index)])
+        case .landing(let file, let representation):
+            return (.with(representation), [.landing(file)])
         case .file(let url, let inliningImage):
             // Named as the user copied it, its bytes read from what it resolves to.
             guard let source = readableSource(for: url),
@@ -198,15 +206,25 @@ extension ClipboardPasteboardReader {
         }
     }
 
-    /// A promise's representation: FOLDER when its first file type is a
-    /// directory, FILE otherwise, named by its first file name as
-    /// `Representation.make` names one.
+    /// A promise's representation of its first file, named by the first name
+    /// it gives so far.
     private static func promisedRepresentation(_ receiver: any FilePromiseReceiving) -> Representation {
-        let contentType = receiver.fileTypes.first.flatMap { UTType($0) }
+        promisedRepresentation(receiver, file: 0, named: receiver.fileNames.first(where: { !$0.isEmpty }) ?? "")
+    }
+
+    /// A promise's representation of its file `index`: FOLDER when the file
+    /// type the promise declares for it — its first when it declares fewer —
+    /// is a directory, FILE otherwise, named `name` as `Representation.make`
+    /// names one.
+    private static func promisedRepresentation(
+        _ receiver: any FilePromiseReceiving, file index: Int, named name: String
+    ) -> Representation {
+        let types = receiver.fileTypes
+        let contentType = (types.indices.contains(index) ? types[index] : types.first).flatMap { UTType($0) }
         let isFolder = contentType?.conforms(to: .directory) == true
         let fallbackType: UTType = isFolder ? .folder : .data
         return .make(
             TypeDescriptor(appleUTI: (contentType ?? fallbackType).identifier), isFolder ? .folder : .file,
-            size: 0, name: receiver.fileNames.first(where: { !$0.isEmpty }) ?? "", promised: true)
+            size: 0, name: name, promised: true)
     }
 }

@@ -161,9 +161,10 @@ public final class PeerAgentRuntime: Sendable {
         send(.withdraw(token: token))
     }
 
-    /// Releases the host's offer of `token`: this side pulls nothing more of it.
-    public func releaseOffer(_ token: Data) {
-        send(.release(token: token))
+    /// Releases the host's offer of `token`: this side pulls nothing more of it. Once the offer is whole the
+    /// release is END with `endBody`, its kind's acceptor END body.
+    public func releaseOffer(_ token: Data, endBody: Data = Data()) {
+        send(.release(token: token, endBody: endBody))
     }
 
     /// Refuses the host's offer of `token` with `error`: this side pulls nothing of it, and the host's

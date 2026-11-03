@@ -58,7 +58,8 @@ struct DropReceiverTests {
                     content: { _, representation in
                         served.record(String(decoding: representation.name, as: UTF8.self))
                         if held.withLock({ $0 }) { released.wait() }
-                        return .success(.tree(directory: source, name: Array(representation.name)))
+                        return .success(
+                            .tree(path: source + "/" + String(decoding: representation.name, as: UTF8.self)))
                     }))
             harness = HubHarness(
                 policy: SimItems.policy(PolicySnapshot()),
@@ -147,7 +148,7 @@ struct DropReceiverTests {
         #expect(bench.read("a.txt") == "old")
         #expect(bench.read("a 2.txt") == "new")
         #expect(bench.read("Album/p.jpg") == "photo")
-        #expect(await bench.offerEnd() == .completed(remoteEndBody: Data()))
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
         await bench.close()
     }
 
@@ -168,7 +169,8 @@ struct DropReceiverTests {
         await bench.close()
     }
 
-    @Test("An item the host cannot serve is skipped, and the rest of the drop lands")
+    @Test(
+        "An item the host cannot serve is skipped, the rest of the drop lands, and the release names only what landed")
     func unservableItemIsSkipped() async throws {
         let bench = try await Bench()
         try bench.write("b", to: "b.txt")
@@ -177,7 +179,27 @@ struct DropReceiverTests {
 
         var landed = bench.landed.waiter()
         #expect(await landed.next { _ in true } == ["b.txt"])
-        #expect(await bench.offerEnd() == .completed(remoteEndBody: Data()))
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
+        await bench.close()
+    }
+
+    @Test("A dropped folder the host cannot read all of, for an entry deep in it it may not open, is skipped")
+    func unreadableEntryInFolderIsSkipped() async throws {
+        let bench = try await Bench()
+        try FileManager.default.createDirectory(
+            atPath: bench.source + "/Album/Private", withIntermediateDirectories: true)
+        try bench.write("photo", to: "Album/p.jpg")
+        try bench.write("secret", to: "Album/Private/s.txt")
+        try bench.write("b", to: "b.txt")
+        try #require(chmod(bench.source + "/Album/Private/s.txt", 0) == 0)
+        defer { _ = chmod(bench.source + "/Album/Private/s.txt", 0o644) }
+
+        _ = try await bench.drop(["Album/", "b.txt"]).get()
+
+        var landed = bench.landed.waiter()
+        #expect(await landed.next { _ in true } == ["b.txt"])
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
+        #expect(bench.read("Album/p.jpg") == nil)
         await bench.close()
     }
 
