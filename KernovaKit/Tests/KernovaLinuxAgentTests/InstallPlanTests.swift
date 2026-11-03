@@ -100,8 +100,8 @@ struct InstallPlanTests {
                 "  make directory /opt/kernova-agent, if missing",
                 "  make directory /opt/kernova-agent/slots, if missing",
                 "  write the agent as kernova-agent in the slot under /opt/kernova-agent/slots that "
-                    + "/opt/kernova-agent/current does not name, record it in /opt/kernova-agent/state.json, and "
-                    + "switch /opt/kernova-agent/current to it",
+                    + "/opt/kernova-agent/current does not name, record it in /opt/kernova-agent/state.json, point "
+                    + "/opt/kernova-agent/rollback at it, and switch /opt/kernova-agent/current to it",
                 "  make directory /etc/systemd/system, if missing",
                 "  write /etc/systemd/system/kernova-agent-system.service",
                 "  write /etc/systemd/system/kernova-agent-rollback.timer",

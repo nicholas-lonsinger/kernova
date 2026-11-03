@@ -199,6 +199,21 @@ extension CoreUnits {
             #expect(!Self.effects(run).contains(.abort(Self.id())))
         }
 
+        @Test("The peer closing for its relaunch right after .installed still sends END STAGED, before RESET(0)")
+        func installedThenRelaunch() {
+            let run = Self.peer()
+            run.feed([Unit.raw(1, Data(repeating: 1, count: 1_000)), Unit.end(1)])
+            run.writerStalled = true
+            run.input(.update(.installed(Self.id())))
+            run.peer?.close(.shuttingDown, now: run.now)
+            run.writerStalled = false
+            run.drain()
+            #expect(Self.results(run.written).map(\.kind) == [.staged])
+            let end = run.written.firstIndex { $0.streamID.rawValue == 1 && $0.type == .end }
+            let close = run.written.firstIndex { $0.streamID == .session && $0.type == .reset }
+            #expect(end != nil && close != nil && end! < close!)
+        }
+
         @Test("installer .rejected → END REJECTED with its error")
         func rejected() {
             let run = Self.peer()
