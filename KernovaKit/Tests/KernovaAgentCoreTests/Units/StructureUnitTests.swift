@@ -13,19 +13,16 @@ import Testing
 extension CoreUnits {
     @Suite("Connection: stream ordering, slots and the shared send budget")
     struct ConnectionStructureUnitTests {
-        static let hostBulk = StreamKind.UNRECOGNIZED(9001)
-        static let peerBulk = StreamKind.UNRECOGNIZED(9000)
-
         @Test("OPENs leave in id order even when round-robin would start between them")
         func openOrderAcrossRoundRobin() {
             var wire = Wire.peer { $0.addTestKinds() }
             wire.establish()
-            wire.feed([WireFrames.open(2, Self.hostBulk, body: Kernova_V2_LogOpen())])
+            wire.feed([WireFrames.open(2, StreamKind.testBulkByHost, body: Kernova_V2_LogOpen())])
             wire.connection.send(data: Data(repeating: 1, count: 10), on: StreamID(rawValue: 2))
             #expect(wire.flush().shape == ["2:data"])
             #expect(wire.connection.roundRobinAfter == 2)
-            let first = wire.connection.open(Self.peerBulk, body: Data())
-            let second = wire.connection.open(Self.peerBulk, body: Data())
+            let first = wire.connection.open(StreamKind.testBulkByPeer, body: Data())
+            let second = wire.connection.open(StreamKind.testBulkByPeer, body: Data())
             #expect([first.rawValue, second.rawValue] == [1, 3])
             #expect(wire.flush().shape == ["1:open", "3:open", "3:window", "1:window"])
         }
@@ -34,8 +31,8 @@ extension CoreUnits {
         func droppedOpenBlocksNothing() {
             var wire = Wire.host { $0.addTestKinds() }
             wire.establish()
-            let dropped = wire.connection.open(Self.hostBulk, body: Data())
-            let kept = wire.connection.open(Self.hostBulk, body: Data())
+            let dropped = wire.connection.open(StreamKind.testBulkByHost, body: Data())
+            let kept = wire.connection.open(StreamKind.testBulkByHost, body: Data())
             wire.connection.reset(dropped, WireError(.cancelled))
             #expect(wire.flush().shape == ["\(kept.rawValue):open", "\(kept.rawValue):window"])
         }
@@ -103,8 +100,9 @@ extension CoreUnits {
             let held = StreamID(rawValue: 1)
             let waiting = StreamID(rawValue: 3)
             wire.feed([
-                WireFrames.open(1, Self.peerBulk, body: Kernova_V2_LogOpen()),
-                WireFrames.open(3, Self.peerBulk, body: Kernova_V2_LogOpen()), WireFrames.window(1, 8_000_000),
+                WireFrames.open(1, StreamKind.testBulkByPeer, body: Kernova_V2_LogOpen()),
+                WireFrames.open(3, StreamKind.testBulkByPeer, body: Kernova_V2_LogOpen()),
+                WireFrames.window(1, 8_000_000),
                 WireFrames.window(3, 8_000_000),
             ])
             wire.connection.send(data: Data(repeating: 1, count: 1_048_576), on: held)

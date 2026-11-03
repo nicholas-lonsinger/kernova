@@ -13,9 +13,6 @@ import Testing
 extension CoreUnits {
     @Suite("Connection: transmit order, credit, misuse, coalescing, diagnostics")
     struct ConnectionUnitTests {
-        static let hostBulk = StreamKind.UNRECOGNIZED(9001)
-        static let peerBulk = StreamKind.UNRECOGNIZED(9000)
-
         // MARK: Transmit order
 
         @Test("pollTransmit hands frames out in order: session, connection WINDOW, PING, RESETs, WINDOWs, FIFOs")
@@ -25,13 +22,13 @@ extension CoreUnits {
             policy.bulkReceiveTarget = 300_000
             var wire = Wire.host(policy: policy) { $0.addTestKinds() }
             wire.establish()
-            let first = wire.connection.open(Self.hostBulk, body: Data())
-            let second = wire.connection.open(Self.hostBulk, body: Data())
+            let first = wire.connection.open(StreamKind.testBulkByHost, body: Data())
+            let second = wire.connection.open(StreamKind.testBulkByHost, body: Data())
             #expect(wire.flush().shape == ["2:open", "4:open", "2:window", "4:window"])
             wire.feed([Unit.raw(first.rawValue, Data(repeating: 1, count: 80_000))])
             wire.connection.consumed(80_000, on: first)
             wire.connection.reset(second, WireError(.cancelled))
-            let third = wire.connection.open(Self.hostBulk, body: Data())
+            let third = wire.connection.open(StreamKind.testBulkByHost, body: Data())
             wire.connection.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: false)]))
             wire.advance(to: Unit.at(5_000))
             let frames = wire.flush()
@@ -120,9 +117,9 @@ extension CoreUnits {
         @Test("Connection credit is conserved after a RESET with raw DATA held, queued and in flight")
         func conservationAfterReset() {
             var pair = Pair()
-            let stream = pair.peer.connection.open(Self.peerBulk, body: Data())
+            let stream = pair.peer.connection.open(StreamKind.testBulkByPeer, body: Data())
             pair.peerToHost()
-            #expect(pair.hostEvents.contains(.opened(stream, Self.peerBulk, body: Data())))
+            #expect(pair.hostEvents.contains(.opened(stream, StreamKind.testBulkByPeer, body: Data())))
             let mebibyte = Data(repeating: 7, count: 1 << 20)
             pair.host.connection.send(data: mebibyte, on: stream)
             pair.host.connection.send(data: mebibyte, on: stream)
@@ -145,7 +142,7 @@ extension CoreUnits {
         @Test("Connection credit is conserved after a local close with raw DATA held and queued")
         func conservationAfterClose() {
             var pair = Pair()
-            let stream = pair.peer.connection.open(Self.peerBulk, body: Data())
+            let stream = pair.peer.connection.open(StreamKind.testBulkByPeer, body: Data())
             pair.peerToHost()
             let mebibyte = Data(repeating: 7, count: 1 << 20)
             pair.host.connection.send(data: mebibyte, on: stream)
@@ -163,7 +160,7 @@ extension CoreUnits {
         @Test("Consuming held raw DATA returns connection credit at 4 MiB and conserves it")
         func conservationAfterConsume() {
             var pair = Pair()
-            let stream = pair.peer.connection.open(Self.peerBulk, body: Data())
+            let stream = pair.peer.connection.open(StreamKind.testBulkByPeer, body: Data())
             pair.peerToHost()
             let mebibyte = Data(repeating: 7, count: 1 << 20)
             for _ in 0..<5 {
@@ -309,7 +306,7 @@ extension CoreUnits {
             case .messageOnSilentDirection:
                 wire.connection.send(message: Data([1]), on: power)
             case .rawPastWritable:
-                let bulk = wire.connection.open(Self.hostBulk, body: Data())
+                let bulk = wire.connection.open(StreamKind.testBulkByHost, body: Data())
                 wire.connection.send(data: Data([1]), on: bulk)
             case .sendAfterEnd:
                 wire.connection.end(power, body: Data())
@@ -320,7 +317,7 @@ extension CoreUnits {
             case .openOtherRolesKind:
                 wire.connection.open(.updatePull, body: Data())
             case .consumedPastHeld:
-                let bulk = wire.connection.open(Self.hostBulk, body: Data())
+                let bulk = wire.connection.open(StreamKind.testBulkByHost, body: Data())
                 wire.connection.consumed(1, on: bulk)
             case .peerStateOnHost:
                 wire.connection.setPeerState(PeerSessionState(sessionID: "x"))

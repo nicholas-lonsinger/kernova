@@ -84,6 +84,9 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
 
   /// current-only, version 1.
   case logs // = 3
+
+  /// current-only, version 1. Pulls of offered items.
+  case itemTransfer // = 13
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -96,6 +99,7 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
     case 1: self = .power
     case 2: self = .update
     case 3: self = .logs
+    case 13: self = .itemTransfer
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -106,6 +110,7 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
     case .power: return 1
     case .update: return 2
     case .logs: return 3
+    case .itemTransfer: return 13
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -116,6 +121,7 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
     .power,
     .update,
     .logs,
+    .itemTransfer,
   ]
 
 }
@@ -129,9 +135,12 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
 /// | POWER_REQUEST | POWER   | host   | PowerRequest | nothing            | PowerProgress msgs   | empty, at once | PowerOutcome  |
 /// | UPDATE_PULL   | UPDATE  | peer   | UpdatePull   | nothing            | raw DATA only        | UpdateResult   | empty         |
 /// | LOG_FORWARD   | LOGS    | peer   | LogOpen      | LogBatch msgs      | nothing              | empty          | empty         |
+/// | ITEM_PULL_BY_HOST | ITEM_TRANSFER | host | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
+/// | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 ///
 /// "Opener END: empty, at once" means the opener sends END right after OPEN.
-/// UPDATE_PULL's opener END is sent only after the acceptor's END.
+/// UPDATE_PULL's and both ITEM_PULLs' opener END is sent only after the
+/// acceptor's END.
 /// LOG_FORWARD's acceptor END answers the opener's END; at most one
 /// LOG_FORWARD is open per connection.
 /// A stream code a receiver does not expect on a stream RESET (a connection
@@ -147,6 +156,8 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
   /// FROZEN
   case updatePull // = 200
   case logForward // = 300
+  case itemPullByHost // = 1001
+  case itemPullByPeer // = 1002
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -159,6 +170,8 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     case 100: self = .powerRequest
     case 200: self = .updatePull
     case 300: self = .logForward
+    case 1001: self = .itemPullByHost
+    case 1002: self = .itemPullByPeer
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -169,6 +182,8 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     case .powerRequest: return 100
     case .updatePull: return 200
     case .logForward: return 300
+    case .itemPullByHost: return 1001
+    case .itemPullByPeer: return 1002
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -179,6 +194,8 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     .powerRequest,
     .updatePull,
     .logForward,
+    .itemPullByHost,
+    .itemPullByPeer,
   ]
 
 }
@@ -267,6 +284,21 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
   case updateFormatUnsupported // = 124
   case updateInstallFailed // = 125
   case updateInProgress // = 126
+
+  /// 1000-1199: item transfer.
+  case itemOfferStale // = 1000
+
+  /// the indexes name no representation, or its source is gone
+  case itemRepresentationUnavailable // = 1001
+
+  /// the container broke its grammar or a declared limit
+  case itemContainerMalformed // = 1002
+
+  /// the writer refused an entry; Error.item names it
+  case itemUnpackRefused // = 1003
+
+  /// the destination could not land a decmpfs entry; Error.item names it
+  case itemDecmpfsRefused // = 1004
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -311,6 +343,11 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case 124: self = .updateFormatUnsupported
     case 125: self = .updateInstallFailed
     case 126: self = .updateInProgress
+    case 1000: self = .itemOfferStale
+    case 1001: self = .itemRepresentationUnavailable
+    case 1002: self = .itemContainerMalformed
+    case 1003: self = .itemUnpackRefused
+    case 1004: self = .itemDecmpfsRefused
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -353,6 +390,11 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case .updateFormatUnsupported: return 124
     case .updateInstallFailed: return 125
     case .updateInProgress: return 126
+    case .itemOfferStale: return 1000
+    case .itemRepresentationUnavailable: return 1001
+    case .itemContainerMalformed: return 1002
+    case .itemUnpackRefused: return 1003
+    case .itemDecmpfsRefused: return 1004
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -395,6 +437,11 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     .updateFormatUnsupported,
     .updateInstallFailed,
     .updateInProgress,
+    .itemOfferStale,
+    .itemRepresentationUnavailable,
+    .itemContainerMalformed,
+    .itemUnpackRefused,
+    .itemDecmpfsRefused,
   ]
 
 }
@@ -638,6 +685,45 @@ public nonisolated enum Kernova_V2_LogLevel: SwiftProtobuf.Enum, Swift.CaseItera
     .warning,
     .error,
     .fault,
+  ]
+
+}
+
+/// The container codecs a destination decodes.
+public nonisolated enum Kernova_V2_Codec: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+
+  /// fallback: ignored
+  case unspecified // = 0
+
+  /// LZ4 block format chunks (KernovaWire LZ4Block)
+  case lz4 // = 1
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .lz4
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .lz4: return 1
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Kernova_V2_Codec] = [
+    .unspecified,
+    .lz4,
   ]
 
 }
@@ -1738,20 +1824,511 @@ public nonisolated struct Kernova_V2_LogBatch: Sendable {
   public init() {}
 }
 
+/// FeatureAdvert.params for ITEM_TRANSFER, both sides.
+public nonisolated struct Kernova_V2_ItemTransferCapability: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// What a representation's bytes are, in each vocabulary that names them.
+public nonisolated struct Kernova_V2_TypeDescriptor: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The canonical MIME type: lowercase, without parameters ("image/png").
+  /// Empty when no MIME type names it.
+  public var mime: String = String()
+
+  /// The native type names the sender's OS gave it, each prefixed with its
+  /// vocabulary's namespace: "apple-uti/public.png", "win-cf/PNG".
+  public var native: [String] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One form of an item.
+public nonisolated struct Kernova_V2_Representation: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var type: Kernova_V2_TypeDescriptor {
+    get {_type ?? Kernova_V2_TypeDescriptor()}
+    set {_type = newValue}
+  }
+  /// Returns true if `type` has been explicitly set.
+  public var hasType: Bool {self._type != nil}
+  /// Clears the value of `type`. Subsequent reads from it will return its default value.
+  public mutating func clearType() {self._type = nil}
+
+  public var storage: Kernova_V2_Representation.Storage = .unspecified
+
+  /// The sender produces the bytes only when pulled, so a pull may take long
+  /// or fail with ITEM_REPRESENTATION_UNAVAILABLE.
+  public var promised: Bool = false
+
+  /// The sender's estimate of EndRecord.bytes; 0 when unknown. Not a limit.
+  public var sizeEstimate: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum Storage: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+
+    /// fallback: the representation is not offered
+    case unspecified // = 0
+
+    /// bytes: the container holds one DATA entry
+    case inline // = 1
+
+    /// one file: the container holds one FILE entry
+    case file // = 2
+
+    /// a folder: the container holds a DIRECTORY entry and its tree
+    case folder // = 3
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .inline
+      case 2: self = .file
+      case 3: self = .folder
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .inline: return 1
+      case .file: return 2
+      case .folder: return 3
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V2_Representation.Storage] = [
+      .unspecified,
+      .inline,
+      .file,
+      .folder,
+    ]
+
+  }
+
+  public init() {}
+
+  fileprivate var _type: Kernova_V2_TypeDescriptor? = nil
+}
+
+/// One offered item. Item MESSAGE on an offer stream, at most 64 KiB.
+public nonisolated struct Kernova_V2_Item: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// In the sender's order of preference, best first.
+  public var representations: [Kernova_V2_Representation] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// OPEN body of every item-set offer kind.
+public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The content is sensitive (a password): the receiver keeps it out of
+  /// history and logs.
+  public var concealed: Bool = false
+
+  /// The content is momentary: the receiver keeps it out of history.
+  public var transient: Bool = false
+
+  /// The Item messages that follow.
+  public var count: UInt32 = 0
+
+  /// 16 random bytes naming this offer; a pull quotes it.
+  public var token: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// OPEN body of ITEM_PULL_BY_HOST and ITEM_PULL_BY_PEER. The acceptor answers
+/// RESET(ITEM_OFFER_STALE) when no offer of `token` is open on this
+/// connection, RESET(ITEM_REPRESENTATION_UNAVAILABLE) when the indexes name
+/// nothing or the source is gone, and RESET(TOO_LARGE, limit = byte_ceiling)
+/// once the container would carry more than `byte_ceiling`.
+public nonisolated struct Kernova_V2_PullRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var token: Data = Data()
+
+  /// Index into the offer's items, in the order they were sent.
+  public var item: UInt32 = 0
+
+  /// Index into the item's representations.
+  public var representation: UInt32 = 0
+
+  /// The most EndRecord.bytes the destination accepts.
+  public var byteCeiling: UInt64 = 0
+
+  /// The decmpfs compression types the destination lands as they are; a file
+  /// of any other type is sent decompressed. Empty: none.
+  public var decmpfsTypes: [UInt32] = []
+
+  /// Codecs the destination decodes besides plain bytes; at most one entry
+  /// each.
+  public var codecs: [Kernova_V2_Codec] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The opener's END body on ITEM_PULL_BY_HOST and ITEM_PULL_BY_PEER, sent
+/// after the acceptor's END.
+public nonisolated struct Kernova_V2_PullOutcome: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var kind: Kernova_V2_PullOutcome.Kind = .unspecified
+
+  public var error: Kernova_V2_Error {
+    get {_error ?? Kernova_V2_Error()}
+    set {_error = newValue}
+  }
+  /// Returns true if `error` has been explicitly set.
+  public var hasError: Bool {self._error != nil}
+  /// Clears the value of `error`. Subsequent reads from it will return its default value.
+  public mutating func clearError() {self._error = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum Kind: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+
+    /// fallback: treated as KIND_FAILED
+    case unspecified // = 0
+
+    /// every entry landed at the destination
+    case landed // = 1
+
+    /// nothing landed; `error` says why
+    case failed // = 2
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .landed
+      case 2: self = .failed
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .landed: return 1
+      case .failed: return 2
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V2_PullOutcome.Kind] = [
+      .unspecified,
+      .landed,
+      .failed,
+    ]
+
+  }
+
+  public init() {}
+
+  fileprivate var _error: Kernova_V2_Error? = nil
+}
+
+/// Seconds and nanoseconds since the Unix epoch, UTC.
+public nonisolated struct Kernova_V2_Timespec: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var seconds: Int64 = 0
+
+  /// 0 to 999,999,999
+  public var nanoseconds: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// One extended attribute. Only names on the sender's allowlist are sent, and
+/// the writer drops any name off its own.
+public nonisolated struct Kernova_V2_Xattr: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Bytes, not a string: Linux attribute names need not be valid UTF-8.
+  public var name: Data = Data()
+
+  public var value: Data = Data()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// An entry's bytes are its chunks, uncompressed.
+public nonisolated struct Kernova_V2_PlainStorage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// the logical size, which the chunks carry exactly
+  public var size: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// An entry's chunks may each be an LZ4 block; the chunk record says which.
+/// Sent only when the pull listed CODEC_LZ4.
+public nonisolated struct Kernova_V2_Lz4Storage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// the logical size, which the chunks decompress to exactly
+  public var size: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// A file landed with its decmpfs compression intact. Sent only for a type
+/// the pull listed in `decmpfs_types`.
+public nonisolated struct Kernova_V2_DecmpfsStorage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The com.apple.decmpfs attribute, at most 3,802 bytes. Its header holds
+  /// the compression type and the file's logical size; no other field
+  /// repeats them.
+  public var attribute: Data = Data()
+
+  /// The resource fork's size, which the chunks carry exactly; 0 when the
+  /// attribute holds the data.
+  public var resourceForkSize: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// The header record of one container entry, at most 64 KiB.
+public nonisolated struct Kernova_V2_EntryHeader: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The entry's parent by position: an entry at depth d lies in the directory
+  /// entered at depth d - 1, which is the most recent DIRECTORY entry at that
+  /// depth. Depth 0 is the representation's own entry.
+  public var depth: UInt32 = 0
+
+  /// One path component. Bytes, not a string: names need not be valid UTF-8.
+  public var name: Data = Data()
+
+  public var type: Kernova_V2_EntryHeader.TypeEnum = .unspecified
+
+  /// Permission bits (07777).
+  public var mode: UInt32 = 0
+
+  /// st_flags as Darwin defines them; 0 from any other OS.
+  public var darwinFlags: UInt32 = 0
+
+  /// Unset: the writer leaves the time it lands with.
+  public var modificationTime: Kernova_V2_Timespec {
+    get {_modificationTime ?? Kernova_V2_Timespec()}
+    set {_modificationTime = newValue}
+  }
+  /// Returns true if `modificationTime` has been explicitly set.
+  public var hasModificationTime: Bool {self._modificationTime != nil}
+  /// Clears the value of `modificationTime`. Subsequent reads from it will return its default value.
+  public mutating func clearModificationTime() {self._modificationTime = nil}
+
+  public var birthTime: Kernova_V2_Timespec {
+    get {_birthTime ?? Kernova_V2_Timespec()}
+    set {_birthTime = newValue}
+  }
+  /// Returns true if `birthTime` has been explicitly set.
+  public var hasBirthTime: Bool {self._birthTime != nil}
+  /// Clears the value of `birthTime`. Subsequent reads from it will return its default value.
+  public mutating func clearBirthTime() {self._birthTime = nil}
+
+  public var xattrs: [Kernova_V2_Xattr] = []
+
+  /// SYMLINK: the link's target, never followed.
+  public var symlinkTarget: Data = Data()
+
+  /// DATA and FILE: how the chunks carry the bytes. Unset on any other type.
+  public var storage: Kernova_V2_EntryHeader.OneOf_Storage? = nil
+
+  public var plain: Kernova_V2_PlainStorage {
+    get {
+      if case .plain(let v)? = storage {return v}
+      return Kernova_V2_PlainStorage()
+    }
+    set {storage = .plain(newValue)}
+  }
+
+  public var lz4: Kernova_V2_Lz4Storage {
+    get {
+      if case .lz4(let v)? = storage {return v}
+      return Kernova_V2_Lz4Storage()
+    }
+    set {storage = .lz4(newValue)}
+  }
+
+  public var decmpfs: Kernova_V2_DecmpfsStorage {
+    get {
+      if case .decmpfs(let v)? = storage {return v}
+      return Kernova_V2_DecmpfsStorage()
+    }
+    set {storage = .decmpfs(newValue)}
+  }
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  /// DATA and FILE: how the chunks carry the bytes. Unset on any other type.
+  public nonisolated enum OneOf_Storage: Equatable, Sendable {
+    case plain(Kernova_V2_PlainStorage)
+    case lz4(Kernova_V2_Lz4Storage)
+    case decmpfs(Kernova_V2_DecmpfsStorage)
+
+  }
+
+  public nonisolated enum TypeEnum: SwiftProtobuf.Enum, Swift.CaseIterable {
+    public typealias RawValue = Int
+
+    /// fallback: the container is malformed
+    case unspecified // = 0
+
+    /// an INLINE representation's bytes: depth 0, no name, no metadata
+    case data // = 1
+    case file // = 2
+    case directory // = 3
+    case symlink // = 4
+    case UNRECOGNIZED(Int)
+
+    public init() {
+      self = .unspecified
+    }
+
+    public init?(rawValue: Int) {
+      switch rawValue {
+      case 0: self = .unspecified
+      case 1: self = .data
+      case 2: self = .file
+      case 3: self = .directory
+      case 4: self = .symlink
+      default: self = .UNRECOGNIZED(rawValue)
+      }
+    }
+
+    public var rawValue: Int {
+      switch self {
+      case .unspecified: return 0
+      case .data: return 1
+      case .file: return 2
+      case .directory: return 3
+      case .symlink: return 4
+      case .UNRECOGNIZED(let i): return i
+      }
+    }
+
+    // The compiler won't synthesize support with the UNRECOGNIZED case.
+    public static let allCases: [Kernova_V2_EntryHeader.TypeEnum] = [
+      .unspecified,
+      .data,
+      .file,
+      .directory,
+      .symlink,
+    ]
+
+  }
+
+  public init() {}
+
+  fileprivate var _modificationTime: Kernova_V2_Timespec? = nil
+  fileprivate var _birthTime: Kernova_V2_Timespec? = nil
+}
+
+/// The container's last record.
+public nonisolated struct Kernova_V2_EndRecord: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The entries the container held.
+  public var entries: UInt64 = 0
+
+  /// The bytes every entry's chunks carry, after decompression.
+  public var bytes: UInt64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "kernova.v2"
 
 nonisolated extension Kernova_V2_FeatureId: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0FEATURE_ID_UNSPECIFIED\0\u{1}FEATURE_ID_POWER\0\u{1}FEATURE_ID_UPDATE\0\u{1}FEATURE_ID_LOGS\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0FEATURE_ID_UNSPECIFIED\0\u{1}FEATURE_ID_POWER\0\u{1}FEATURE_ID_UPDATE\0\u{1}FEATURE_ID_LOGS\0\u{2}\u{a}FEATURE_ID_ITEM_TRANSFER\0")
 }
 
 nonisolated extension Kernova_V2_StreamKind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAM_KIND_UNSPECIFIED\0\u{2}d\u{1}STREAM_KIND_POWER_REQUEST\0\u{2}d\u{1}STREAM_KIND_UPDATE_PULL\0\u{2}d\u{1}STREAM_KIND_LOG_FORWARD\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAM_KIND_UNSPECIFIED\0\u{2}d\u{1}STREAM_KIND_POWER_REQUEST\0\u{2}d\u{1}STREAM_KIND_UPDATE_PULL\0\u{2}d\u{1}STREAM_KIND_LOG_FORWARD\0\u{2}}\u{a}STREAM_KIND_ITEM_PULL_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_PEER\0")
 }
 
 nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0")
 }
 
 nonisolated extension Kernova_V2_AbsenceReason: SwiftProtobuf._ProtoNameProviding {
@@ -1768,6 +2345,10 @@ nonisolated extension Kernova_V2_PayloadFormat: SwiftProtobuf._ProtoNameProvidin
 
 nonisolated extension Kernova_V2_LogLevel: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0LOG_LEVEL_UNSPECIFIED\0\u{1}LOG_LEVEL_DEBUG\0\u{1}LOG_LEVEL_INFO\0\u{1}LOG_LEVEL_NOTICE\0\u{1}LOG_LEVEL_WARNING\0\u{1}LOG_LEVEL_ERROR\0\u{1}LOG_LEVEL_FAULT\0")
+}
+
+nonisolated extension Kernova_V2_Codec: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CODEC_UNSPECIFIED\0\u{1}CODEC_LZ4\0")
 }
 
 nonisolated extension Kernova_V2_Open: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -3069,6 +3650,619 @@ nonisolated extension Kernova_V2_LogBatch: SwiftProtobuf.Message, SwiftProtobuf.
   public static func ==(lhs: Kernova_V2_LogBatch, rhs: Kernova_V2_LogBatch) -> Bool {
     if lhs.records != rhs.records {return false}
     if lhs.droppedBefore != rhs.droppedBefore {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_ItemTransferCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ItemTransferCapability"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_ItemTransferCapability, rhs: Kernova_V2_ItemTransferCapability) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_TypeDescriptor: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TypeDescriptor"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}mime\0\u{1}native\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.mime) }()
+      case 2: try { try decoder.decodeRepeatedStringField(value: &self.native) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.mime.isEmpty {
+      try visitor.visitSingularStringField(value: self.mime, fieldNumber: 1)
+    }
+    if !self.native.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.native, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_TypeDescriptor, rhs: Kernova_V2_TypeDescriptor) -> Bool {
+    if lhs.mime != rhs.mime {return false}
+    if lhs.native != rhs.native {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_Representation: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Representation"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}type\0\u{1}storage\0\u{1}promised\0\u{3}size_estimate\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularMessageField(value: &self._type) }()
+      case 2: try { try decoder.decodeSingularEnumField(value: &self.storage) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.promised) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.sizeEstimate) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    try { if let v = self._type {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+    } }()
+    if self.storage != .unspecified {
+      try visitor.visitSingularEnumField(value: self.storage, fieldNumber: 2)
+    }
+    if self.promised != false {
+      try visitor.visitSingularBoolField(value: self.promised, fieldNumber: 3)
+    }
+    if self.sizeEstimate != 0 {
+      try visitor.visitSingularUInt64Field(value: self.sizeEstimate, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_Representation, rhs: Kernova_V2_Representation) -> Bool {
+    if lhs._type != rhs._type {return false}
+    if lhs.storage != rhs.storage {return false}
+    if lhs.promised != rhs.promised {return false}
+    if lhs.sizeEstimate != rhs.sizeEstimate {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_Representation.Storage: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STORAGE_UNSPECIFIED\0\u{1}STORAGE_INLINE\0\u{1}STORAGE_FILE\0\u{1}STORAGE_FOLDER\0")
+}
+
+nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Item"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}representations\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.representations) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.representations.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.representations, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_Item, rhs: Kernova_V2_Item) -> Bool {
+    if lhs.representations != rhs.representations {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{1}transient\0\u{1}count\0\u{1}token\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBoolField(value: &self.concealed) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.transient) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.count) }()
+      case 4: try { try decoder.decodeSingularBytesField(value: &self.token) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.concealed != false {
+      try visitor.visitSingularBoolField(value: self.concealed, fieldNumber: 1)
+    }
+    if self.transient != false {
+      try visitor.visitSingularBoolField(value: self.transient, fieldNumber: 2)
+    }
+    if self.count != 0 {
+      try visitor.visitSingularUInt32Field(value: self.count, fieldNumber: 3)
+    }
+    if !self.token.isEmpty {
+      try visitor.visitSingularBytesField(value: self.token, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_ItemSetHeader, rhs: Kernova_V2_ItemSetHeader) -> Bool {
+    if lhs.concealed != rhs.concealed {return false}
+    if lhs.transient != rhs.transient {return false}
+    if lhs.count != rhs.count {return false}
+    if lhs.token != rhs.token {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_PullRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PullRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}token\0\u{1}item\0\u{1}representation\0\u{3}byte_ceiling\0\u{3}decmpfs_types\0\u{1}codecs\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.token) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.item) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.representation) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.byteCeiling) }()
+      case 5: try { try decoder.decodeRepeatedUInt32Field(value: &self.decmpfsTypes) }()
+      case 6: try { try decoder.decodeRepeatedEnumField(value: &self.codecs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.token.isEmpty {
+      try visitor.visitSingularBytesField(value: self.token, fieldNumber: 1)
+    }
+    if self.item != 0 {
+      try visitor.visitSingularUInt32Field(value: self.item, fieldNumber: 2)
+    }
+    if self.representation != 0 {
+      try visitor.visitSingularUInt32Field(value: self.representation, fieldNumber: 3)
+    }
+    if self.byteCeiling != 0 {
+      try visitor.visitSingularUInt64Field(value: self.byteCeiling, fieldNumber: 4)
+    }
+    if !self.decmpfsTypes.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.decmpfsTypes, fieldNumber: 5)
+    }
+    if !self.codecs.isEmpty {
+      try visitor.visitPackedEnumField(value: self.codecs, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_PullRequest, rhs: Kernova_V2_PullRequest) -> Bool {
+    if lhs.token != rhs.token {return false}
+    if lhs.item != rhs.item {return false}
+    if lhs.representation != rhs.representation {return false}
+    if lhs.byteCeiling != rhs.byteCeiling {return false}
+    if lhs.decmpfsTypes != rhs.decmpfsTypes {return false}
+    if lhs.codecs != rhs.codecs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_PullOutcome: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PullOutcome"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}error\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.kind != .unspecified {
+      try visitor.visitSingularEnumField(value: self.kind, fieldNumber: 1)
+    }
+    try { if let v = self._error {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_PullOutcome, rhs: Kernova_V2_PullOutcome) -> Bool {
+    if lhs.kind != rhs.kind {return false}
+    if lhs._error != rhs._error {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_PullOutcome.Kind: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0KIND_UNSPECIFIED\0\u{1}KIND_LANDED\0\u{1}KIND_FAILED\0")
+}
+
+nonisolated extension Kernova_V2_Timespec: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Timespec"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seconds\0\u{1}nanoseconds\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularInt64Field(value: &self.seconds) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.nanoseconds) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.seconds != 0 {
+      try visitor.visitSingularInt64Field(value: self.seconds, fieldNumber: 1)
+    }
+    if self.nanoseconds != 0 {
+      try visitor.visitSingularUInt32Field(value: self.nanoseconds, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_Timespec, rhs: Kernova_V2_Timespec) -> Bool {
+    if lhs.seconds != rhs.seconds {return false}
+    if lhs.nanoseconds != rhs.nanoseconds {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_Xattr: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Xattr"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}value\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.value) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.name.isEmpty {
+      try visitor.visitSingularBytesField(value: self.name, fieldNumber: 1)
+    }
+    if !self.value.isEmpty {
+      try visitor.visitSingularBytesField(value: self.value, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_Xattr, rhs: Kernova_V2_Xattr) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.value != rhs.value {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_PlainStorage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".PlainStorage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}size\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.size) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.size != 0 {
+      try visitor.visitSingularUInt64Field(value: self.size, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_PlainStorage, rhs: Kernova_V2_PlainStorage) -> Bool {
+    if lhs.size != rhs.size {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_Lz4Storage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Lz4Storage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}size\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.size) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.size != 0 {
+      try visitor.visitSingularUInt64Field(value: self.size, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_Lz4Storage, rhs: Kernova_V2_Lz4Storage) -> Bool {
+    if lhs.size != rhs.size {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DecmpfsStorage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DecmpfsStorage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}attribute\0\u{3}resource_fork_size\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularBytesField(value: &self.attribute) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.resourceForkSize) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.attribute.isEmpty {
+      try visitor.visitSingularBytesField(value: self.attribute, fieldNumber: 1)
+    }
+    if self.resourceForkSize != 0 {
+      try visitor.visitSingularUInt64Field(value: self.resourceForkSize, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DecmpfsStorage, rhs: Kernova_V2_DecmpfsStorage) -> Bool {
+    if lhs.attribute != rhs.attribute {return false}
+    if lhs.resourceForkSize != rhs.resourceForkSize {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_EntryHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EntryHeader"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}depth\0\u{1}name\0\u{1}type\0\u{1}mode\0\u{3}darwin_flags\0\u{3}modification_time\0\u{3}birth_time\0\u{1}xattrs\0\u{3}symlink_target\0\u{1}plain\0\u{1}lz4\0\u{1}decmpfs\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.depth) }()
+      case 2: try { try decoder.decodeSingularBytesField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.type) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.mode) }()
+      case 5: try { try decoder.decodeSingularUInt32Field(value: &self.darwinFlags) }()
+      case 6: try { try decoder.decodeSingularMessageField(value: &self._modificationTime) }()
+      case 7: try { try decoder.decodeSingularMessageField(value: &self._birthTime) }()
+      case 8: try { try decoder.decodeRepeatedMessageField(value: &self.xattrs) }()
+      case 9: try { try decoder.decodeSingularBytesField(value: &self.symlinkTarget) }()
+      case 10: try {
+        var v: Kernova_V2_PlainStorage?
+        var hadOneofValue = false
+        if let current = self.storage {
+          hadOneofValue = true
+          if case .plain(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.storage = .plain(v)
+        }
+      }()
+      case 11: try {
+        var v: Kernova_V2_Lz4Storage?
+        var hadOneofValue = false
+        if let current = self.storage {
+          hadOneofValue = true
+          if case .lz4(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.storage = .lz4(v)
+        }
+      }()
+      case 12: try {
+        var v: Kernova_V2_DecmpfsStorage?
+        var hadOneofValue = false
+        if let current = self.storage {
+          hadOneofValue = true
+          if case .decmpfs(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.storage = .decmpfs(v)
+        }
+      }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if self.depth != 0 {
+      try visitor.visitSingularUInt32Field(value: self.depth, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularBytesField(value: self.name, fieldNumber: 2)
+    }
+    if self.type != .unspecified {
+      try visitor.visitSingularEnumField(value: self.type, fieldNumber: 3)
+    }
+    if self.mode != 0 {
+      try visitor.visitSingularUInt32Field(value: self.mode, fieldNumber: 4)
+    }
+    if self.darwinFlags != 0 {
+      try visitor.visitSingularUInt32Field(value: self.darwinFlags, fieldNumber: 5)
+    }
+    try { if let v = self._modificationTime {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 6)
+    } }()
+    try { if let v = self._birthTime {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 7)
+    } }()
+    if !self.xattrs.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.xattrs, fieldNumber: 8)
+    }
+    if !self.symlinkTarget.isEmpty {
+      try visitor.visitSingularBytesField(value: self.symlinkTarget, fieldNumber: 9)
+    }
+    switch self.storage {
+    case .plain?: try {
+      guard case .plain(let v)? = self.storage else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 10)
+    }()
+    case .lz4?: try {
+      guard case .lz4(let v)? = self.storage else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 11)
+    }()
+    case .decmpfs?: try {
+      guard case .decmpfs(let v)? = self.storage else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
+    }()
+    case nil: break
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_EntryHeader, rhs: Kernova_V2_EntryHeader) -> Bool {
+    if lhs.depth != rhs.depth {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.type != rhs.type {return false}
+    if lhs.mode != rhs.mode {return false}
+    if lhs.darwinFlags != rhs.darwinFlags {return false}
+    if lhs._modificationTime != rhs._modificationTime {return false}
+    if lhs._birthTime != rhs._birthTime {return false}
+    if lhs.xattrs != rhs.xattrs {return false}
+    if lhs.symlinkTarget != rhs.symlinkTarget {return false}
+    if lhs.storage != rhs.storage {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_EntryHeader.TypeEnum: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0TYPE_UNSPECIFIED\0\u{1}TYPE_DATA\0\u{1}TYPE_FILE\0\u{1}TYPE_DIRECTORY\0\u{1}TYPE_SYMLINK\0")
+}
+
+nonisolated extension Kernova_V2_EndRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".EndRecord"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}entries\0\u{1}bytes\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.entries) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.bytes) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.entries != 0 {
+      try visitor.visitSingularUInt64Field(value: self.entries, fieldNumber: 1)
+    }
+    if self.bytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.bytes, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_EndRecord, rhs: Kernova_V2_EndRecord) -> Bool {
+    if lhs.entries != rhs.entries {return false}
+    if lhs.bytes != rhs.bytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -669,7 +669,7 @@ package final class SimWorld {
         switch (side, kind) {
         case (.peer, .updatePull):
             peers[peer].consumerStall = fault
-        case (_, .UNRECOGNIZED(9000)), (_, .UNRECOGNIZED(9001)):
+        case (_, StreamKind.testBulkByPeer), (_, StreamKind.testBulkByHost):
             stalledTestConsumers.append((fault, side, kind, peer))
             setTestConsumes(false, side, kind, peer: peer)
         default:
