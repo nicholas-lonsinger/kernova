@@ -90,9 +90,11 @@ struct VMCommandCoreListingTests {
     // MARK: - Filter
 
     @Test("Every filter lists exactly what the sidebar's library section lists under it")
-    func filterMatchesTheSidebar() throws {
+    func filterMatchesTheSidebar() async throws {
         let harness = makeHarness()
         makeMixedLibrary(in: harness)
+        // The guest agent buckets judge against the bundled payload's hash, which the library computes as it starts.
+        try await waitForChange { harness.library.bundledPayloadHashes[.macOS] != nil }
         let filters: [VMLibraryFilter] = [
             VMLibraryFilter(guestOSes: [.linux]),
             VMLibraryFilter(states: [.running, .suspended]),

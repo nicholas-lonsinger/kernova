@@ -1,4 +1,5 @@
 import AppKit
+import KernovaAgentHost
 import KernovaAppKitShared
 import KernovaCore
 
@@ -26,11 +27,9 @@ final class SidebarAgentStatusButtonView: NSView {
     private let popoverPresenter = PopoverPresenter()
     private let contentVC = GuestAgentStatusViewController()
 
-    private(set) var presentation = GuestAgentPresentation(macOSAgent: .waiting)
+    private(set) var presentation = GuestAgentPresentation(hub: .empty)
     var status: AgentStatus { presentation.status }
-    private(set) var isInstallerMounted = false
     private(set) var diskControl: GuestAgentDiskControl.Model?
-    private(set) var vmName: String = ""
     private(set) var hasDismissAction: Bool = false
 
     init() {
@@ -68,27 +67,22 @@ final class SidebarAgentStatusButtonView: NSView {
         fatalError("SidebarAgentStatusButtonView does not support NSCoder")
     }
 
-    /// Applies a new presentation / installer state / disk control / VM name /
-    /// dismiss-availability snapshot.
+    /// Applies a new presentation / disk control / dismiss-availability
+    /// snapshot.
     ///
     /// An open popover is updated in place, so an in-flight change doesn't
     /// dismiss it.
     func configure(
-        presentation: GuestAgentPresentation, isInstallerMounted: Bool, diskControl: GuestAgentDiskControl.Model,
-        vmName: String, hasDismissAction: Bool
+        presentation: GuestAgentPresentation, diskControl: GuestAgentDiskControl.Model, hasDismissAction: Bool
     ) {
         self.presentation = presentation
-        self.isInstallerMounted = isInstallerMounted
         self.diskControl = diskControl
-        self.vmName = vmName
         self.hasDismissAction = hasDismissAction
 
         toolTip = Self.helpText(for: status)
         applyVisualState()
 
-        contentVC.update(
-            presentation: presentation, isInstallerMounted: isInstallerMounted, diskControl: diskControl,
-            vmName: vmName, hasDismissAction: hasDismissAction)
+        contentVC.update(presentation: presentation, diskControl: diskControl, hasDismissAction: hasDismissAction)
     }
 
     /// Closes any open popover and stops the spinner.

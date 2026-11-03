@@ -18,9 +18,6 @@ struct VsockControlServiceTests {
     }
 
     /// Builds a guest-side Hello frame with the given agent version.
-    ///
-    /// Tests use
-    /// this to drive the `agentStatus` numeric-comparison matrix.
     private func makeGuestHello(
         agentVersion: String, osVersion: String = "26.0", streamingCapable: Bool = true
     ) -> Frame {
@@ -89,19 +86,16 @@ struct VsockControlServiceTests {
 
     /// Builds a service with the test cadences applied.
     ///
-    /// Caller decides
-    /// `bundledAgentVersion`. The service is NOT started — caller invokes
-    /// `start()` after wiring the recorder.
+    /// The service is NOT started — caller invokes `start()` after wiring the
+    /// recorder.
     private func makeService(
         channel: VsockChannel,
         hostVersion: String = "1.0",
-        bundledAgentVersion: String? = "0.9.0",
         clock: any EngineClock = makePlatformEngineClock(),
         heartbeatInterval: TimeInterval? = nil,
         unresponsiveAfter: TimeInterval? = nil,
         terminateAfter: TimeInterval? = nil,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
-        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
         onChannelLost: (@MainActor () -> Void)? = nil
     ) -> VsockControlService {
@@ -109,14 +103,12 @@ struct VsockControlServiceTests {
             channel: channel,
             label: "test",
             hostVersion: hostVersion,
-            bundledAgentVersion: bundledAgentVersion,
             clock: clock,
             cadence: ControlChannelCadence(
                 heartbeatInterval: heartbeatInterval ?? Self.testHeartbeat,
                 unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
                 terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate),
             policyProvider: policyProvider,
-            onAgentInfoObserved: onAgentInfoObserved,
             isGuestSuspended: isGuestSuspended
         )
         service.onChannelLost = onChannelLost
@@ -169,14 +161,14 @@ struct VsockControlServiceTests {
         #expect(hello.agentInfo.osVersion.allSatisfy { $0.isNumber || $0 == "." })
     }
 
-    @Test("Host Hello advertises the host version and bundled agent version it was handed")
+    @Test("Host Hello advertises the host version it was handed, and no bundled agent version")
     func hostHelloAdvertisesHandedVersions() async throws {
         let (guest, host) = try makePair()
         guest.start()
         host.start()
         defer { guest.close() }
 
-        let service = makeService(channel: host, hostVersion: "7.3", bundledAgentVersion: "0.9.0")
+        let service = makeService(channel: host, hostVersion: "7.3")
         service.start()
         defer { service.stop() }
 
@@ -186,99 +178,7 @@ struct VsockControlServiceTests {
             return
         }
         #expect(hello.agentInfo.agentVersion == "7.3")
-        #expect(hello.bundledAgentVersion == "0.9.0")
-    }
-
-    // MARK: - agentStatus matrix
-
-    @Test("agentStatus is .waiting before guest Hello arrives")
-    func agentStatusWaitingBeforeHello() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host)
-        service.start()
-        defer { service.stop() }
-
-        #expect(service.agentStatus == .waiting)
-    }
-
-    @Test("agentStatus is .outdated when guest reports an older version")
-    func agentStatusOutdatedWhenGuestOlder() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.8.5"))
-        try await waitForChange { service.isConnected }
-
-        #expect(service.agentStatus == .outdated(installed: "0.8.5", bundled: "0.9.0"))
-    }
-
-    @Test("agentStatus is .current when guest reports a newer version")
-    func agentStatusCurrentWhenGuestNewer() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "1.0.0"))
-        try await waitForChange { service.isConnected }
-
-        // Newer-than-bundled should not flag .outdated against the user.
-        #expect(service.agentStatus == .current(version: "1.0.0"))
-    }
-
-    @Test("agentStatus is .connected, claiming no currency, when the bundled version is unavailable")
-    func agentStatusCurrentWhenBundledMissing() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host, bundledAgentVersion: nil)
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.5.0"))
-        try await waitForChange { service.isConnected }
-
-        // Without a bundled version to compare against, the status neither
-        // prompts an update nor claims the agent is current.
-        #expect(service.agentStatus == .connected(version: "0.5.0"))
-    }
-
-    @Test("agentStatus resets to .waiting on stop()")
-    func agentStatusResetsOnStop() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
-        service.start()
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-        #expect(service.agentStatus == .current(version: "0.9.0"))
-
-        service.stop()
-        #expect(service.agentStatus == .waiting)
+        #expect(hello.bundledAgentVersion.isEmpty)
     }
 
     // MARK: - Heartbeat
@@ -347,7 +247,7 @@ struct VsockControlServiceTests {
         }
     }
 
-    @Test("Inbound heartbeat keeps agentStatus .current past unresponsiveAfter")
+    @Test("Inbound heartbeat keeps the channel up past terminateAfter")
     func inboundHeartbeatPreservesLiveness() async throws {
         let (guest, host) = try makePair()
         guest.start()
@@ -358,7 +258,6 @@ struct VsockControlServiceTests {
         let handled = FrameHandledRecorder()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
@@ -379,69 +278,8 @@ struct VsockControlServiceTests {
             try guest.send(Frame.controlHeartbeat(nonce: UInt64(round)))
             try await handled.changed.wait { handled.count == round + 1 }
             try await runLoop(every: Self.gatedTick, times: 2, on: clock, of: service)
-            #expect(service.agentStatus == .current(version: "0.9.0"))
+            #expect(service.isConnected)
         }
-    }
-
-    @Test("Silence past unresponsiveAfter flips agentStatus to .unresponsive")
-    func silenceMarksUnresponsive() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let clock = GatedEngineClock()
-        let service = makeService(
-            channel: host,
-            bundledAgentVersion: "0.9.0",
-            clock: clock,
-            heartbeatInterval: Self.gatedHeartbeat,
-            unresponsiveAfter: Self.gatedUnresponsive,
-            terminateAfter: Self.gatedTerminate
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-
-        // Three ticks judge 60 s, still inside the window; the fourth judges 80 s.
-        try await runLoop(every: Self.gatedTick, times: 3, on: clock, of: service)
-        #expect(service.agentStatus == .current(version: "0.9.0"))
-        try await runLoop(every: Self.gatedTick, times: 1, on: clock, of: service)
-        #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
-    }
-
-    @Test("Resumed heartbeats restore agentStatus to .current")
-    func recoveryFromUnresponsive() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let clock = GatedEngineClock()
-        let service = makeService(
-            channel: host,
-            bundledAgentVersion: "0.9.0",
-            clock: clock,
-            heartbeatInterval: Self.gatedHeartbeat,
-            unresponsiveAfter: Self.gatedUnresponsive,
-            terminateAfter: Self.gatedTerminate
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.0"))
-        try await waitForChange { service.isConnected }
-
-        // Four ticks of silence: 80 s, past unresponsive and short of terminate.
-        try await runLoop(every: Self.gatedTick, times: 4, on: clock, of: service)
-        #expect(service.agentStatus == .unresponsive(version: "0.9.0"))
-
-        try guest.send(Frame.controlHeartbeat(nonce: 1))
-        try await waitForChange { service.agentStatus == .current(version: "0.9.0") }
     }
 
     @Test("Silence past terminateAfter settles the service and stops the watchdog")
@@ -454,7 +292,6 @@ struct VsockControlServiceTests {
         let clock = GatedEngineClock()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
@@ -482,8 +319,6 @@ struct VsockControlServiceTests {
         for task in lifecycleTasks {
             await task.value
         }
-        #expect(service.agentVersion == nil)
-        #expect(service.agentStatus == .waiting)
         // The channel went with it: the teardown closes before clearing
         // `isConnected`, so this is ordered, not racy.
         #expect(throws: VsockChannelError.closed) { try host.send(Frame.controlHeartbeat(nonce: 1)) }
@@ -498,7 +333,7 @@ struct VsockControlServiceTests {
 
         // Watchdog disabled (the makeService default), so only the consume
         // path can settle this one.
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
+        let service = makeService(channel: host)
         service.start()
         defer { service.stop() }
 
@@ -516,8 +351,6 @@ struct VsockControlServiceTests {
         for task in lifecycleTasks {
             await task.value
         }
-        #expect(service.agentVersion == nil)
-        #expect(service.agentStatus == .waiting)
 
         // Settle-then-explicit-stop: the owner still tears down normally.
         service.stop()
@@ -531,7 +364,7 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
+        let service = makeService(channel: host)
         service.start()
         defer { service.stop() }
 
@@ -564,8 +397,10 @@ struct VsockControlServiceTests {
         defer { guest.close() }
 
         let lost = ChannelLostRecorder()
+        let handled = FrameHandledRecorder()
         let service = makeService(
-            channel: host, bundledAgentVersion: "0.9.0", onChannelLost: { lost.record() })
+            channel: host, onChannelLost: { lost.record() })
+        service.onFrameHandledForTesting = { handled.record() }
         service.start()
         defer { service.stop() }
 
@@ -580,7 +415,7 @@ struct VsockControlServiceTests {
         // observation window needed for a "still up" assertion.
         try guest.send(makeGuestHello(agentVersion: "0.9.1"))
 
-        try await waitForChange { service.agentVersion == "0.9.1" }
+        try await handled.changed.wait { handled.count == 3 }
         #expect(service.isConnected)
         #expect(lost.count == 0)
     }
@@ -600,7 +435,6 @@ struct VsockControlServiceTests {
         let suspension = SuspensionFlag()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
@@ -619,7 +453,6 @@ struct VsockControlServiceTests {
         // sending nothing at all.
         try await runLoop(every: Self.gatedTick, times: 8, on: clock, of: service)
         #expect(service.isConnected)
-        #expect(service.agentStatus == .current(version: "0.9.0"))
     }
 
     @Test("A pause arms no deadline for a guest that has never spoken")
@@ -634,7 +467,6 @@ struct VsockControlServiceTests {
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
@@ -663,7 +495,6 @@ struct VsockControlServiceTests {
         // deadline to expire, held or judged.
         #expect(lost.count == 0)
         #expect(!service.isConnected)
-        #expect(service.agentStatus == .waiting)
     }
 
     @Test("Suspension defers the liveness deadline rather than disabling it")
@@ -677,7 +508,6 @@ struct VsockControlServiceTests {
         let suspension = SuspensionFlag()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
@@ -702,7 +532,6 @@ struct VsockControlServiceTests {
         suspension.isSuspended = false
         try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
         #expect(!service.isConnected)
-        #expect(service.agentStatus == .waiting)
     }
 
     @Test("No heartbeat is written to a suspended guest")
@@ -727,7 +556,6 @@ struct VsockControlServiceTests {
         let suspension = SuspensionFlag()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
@@ -767,14 +595,12 @@ struct VsockControlServiceTests {
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             clock: clock,
             heartbeatInterval: Self.gatedHeartbeat,
             unresponsiveAfter: Self.gatedUnresponsive,
             terminateAfter: Self.gatedTerminate,
             onChannelLost: { lost.record() }
         )
-        lost.sample = { [weak service] in service?.agentVersion }
         service.start()
         defer { service.stop() }
 
@@ -785,10 +611,6 @@ struct VsockControlServiceTests {
         // The seventh silent tick judges 140 s, past terminate.
         try await runLoop(every: Self.gatedTick, times: 7, on: clock, of: service)
         #expect(lost.count == 1)
-        // The callback runs on fully-settled state, which is what lets
-        // `VMInstance` re-arm its agent watchdog on a nil `agentVersion`
-        // instead of no-oping against the stale one.
-        #expect(lost.samples == [nil])
     }
 
     @Test("onChannelLost fires when the peer closes the channel")
@@ -800,10 +622,8 @@ struct VsockControlServiceTests {
         let lost = ChannelLostRecorder()
         let service = makeService(
             channel: host,
-            bundledAgentVersion: "0.9.0",
             onChannelLost: { lost.record() }
         )
-        lost.sample = { [weak service] in service?.agentVersion }
         service.start()
         defer { service.stop() }
 
@@ -815,7 +635,6 @@ struct VsockControlServiceTests {
         guest.close()
 
         try await lost.changed.wait { lost.count == 1 }
-        #expect(lost.samples == [nil])
     }
 
     // MARK: - Lifecycle
@@ -827,7 +646,7 @@ struct VsockControlServiceTests {
         host.start()
         defer { guest.close() }
 
-        let service = makeService(channel: host, bundledAgentVersion: "0.9.0")
+        let service = makeService(channel: host)
         service.start()
 
         _ = try await nextFrame(from: guest)
@@ -836,8 +655,6 @@ struct VsockControlServiceTests {
 
         service.stop()
         #expect(!service.isConnected)
-        #expect(service.agentVersion == nil)
-        #expect(service.agentStatus == .waiting)
 
         // Second stop() is a no-op.
         service.stop()
@@ -907,137 +724,6 @@ struct VsockControlServiceTests {
                 return
             }
         }
-    }
-
-    // MARK: - onAgentInfoObserved
-
-    @Test("onAgentInfoObserved is skipped when the guest reports an empty version")
-    func onAgentInfoObservedSkippedForEmpty() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let observed = ObservedRecorder()
-        let service = makeService(
-            channel: host,
-            onAgentInfoObserved: { observed.append($0) }
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: ""))
-        try await waitForChange { service.isConnected }
-
-        // Connection succeeds (isConnected is set unconditionally on Hello),
-        // but agentVersion stays nil and the observer must not fire — the
-        // host has no meaningful version to persist.
-        #expect(service.agentVersion == nil)
-        #expect(observed.values.isEmpty)
-    }
-
-    @Test("onAgentInfoObserved fires once per Hello (dedup is the caller's job)")
-    func onAgentInfoObservedFiresPerHello() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let observed = ObservedRecorder()
-        let service = makeService(
-            channel: host,
-            onAgentInfoObserved: { observed.append($0) }
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.2"))
-        try await waitForChange { service.isConnected }
-        try guest.send(makeGuestHello(agentVersion: "0.9.2"))
-
-        // Service fires the closure verbatim each time. Suppressing duplicate
-        // writes is `VMInstance`'s responsibility (it compares against the
-        // persisted value before invoking onUpdateConfiguration).
-        try await observed.changed.wait { observed.values.count == 2 }
-        #expect(observed.values.map(\.agentVersion) == ["0.9.2", "0.9.2"])
-    }
-
-    @Test("The callback payload carries the reported os_version verbatim")
-    func guestOSVersionCarriedVerbatim() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let observed = ObservedRecorder()
-        let service = makeService(
-            channel: host,
-            onAgentInfoObserved: { observed.append($0) }
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)  // host hello
-        try guest.send(makeGuestHello(agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)"))
-        try await waitForChange { service.isConnected }
-
-        #expect(
-            observed.values == [
-                ObservedAgentInfo(
-                    agentVersion: "0.9.2", osVersion: "Version 26.0 (Build 25A123)")
-            ])
-    }
-
-    @Test("An empty os_version is normalized to nil in the callback payload")
-    func guestOSVersionEmptyNormalizedToNil() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let observed = ObservedRecorder()
-        let service = makeService(
-            channel: host,
-            onAgentInfoObserved: { observed.append($0) }
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)
-        try guest.send(makeGuestHello(agentVersion: "0.9.2", osVersion: ""))
-        try await waitForChange { service.isConnected }
-
-        // The callback still fires (the agent version is meaningful) but must
-        // carry nil, not "" — the host persists the payload verbatim.
-        #expect(observed.values == [ObservedAgentInfo(agentVersion: "0.9.2", osVersion: nil)])
-    }
-
-    @Test("Over-long version fields are clipped before they reach the callback")
-    func oversizedAgentInfoFieldsAreBounded() async throws {
-        let (guest, host) = try makePair()
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        let observed = ObservedRecorder()
-        let service = makeService(
-            channel: host,
-            onAgentInfoObserved: { observed.append($0) }
-        )
-        service.start()
-        defer { service.stop() }
-
-        _ = try await nextFrame(from: guest)  // host hello
-        let flood = String(repeating: "9", count: 4096)
-        try guest.send(makeGuestHello(agentVersion: flood, osVersion: flood))
-        try await waitForChange { service.isConnected }
-
-        let bound = ObservedAgentInfo.maxFieldBytes
-        let expected = String(repeating: "9", count: bound)
-        #expect(service.agentVersion == expected)
-        #expect(observed.values == [ObservedAgentInfo(agentVersion: expected, osVersion: expected)])
     }
 
     @Test("sendPolicyUpdate emits a PolicyUpdate frame with the supplied snapshot")
@@ -1185,13 +871,13 @@ struct VsockControlServiceTests {
         #expect(try await pushCeiling(requested: raised) == UInt64(raised))
     }
 
-    // MARK: - ObservedAgentInfo.boundedField
+    // MARK: - VsockControlService.boundedField
 
     @Test("A field within the bound passes through verbatim")
     func boundedFieldWithinBoundIsVerbatim() {
-        #expect(ObservedAgentInfo.boundedField("26.0.1") == "26.0.1")
-        let atLimit = String(repeating: "a", count: ObservedAgentInfo.maxFieldBytes)
-        #expect(ObservedAgentInfo.boundedField(atLimit) == atLimit)
+        #expect(VsockControlService.boundedField("26.0.1") == "26.0.1")
+        let atLimit = String(repeating: "a", count: VsockControlService.maxFieldBytes)
+        #expect(VsockControlService.boundedField(atLimit) == atLimit)
     }
 
     @Test("A single grapheme cluster of many scalars is still bounded")
@@ -1199,15 +885,15 @@ struct VsockControlServiceTests {
         // A `Character`-based prefix would let this through whole — it is one
         // Character however many combining marks it carries.
         let combining = "e" + String(repeating: "\u{0301}", count: 100_000)
-        let bounded = try #require(ObservedAgentInfo.boundedField(combining))
-        #expect(bounded.utf8.count <= ObservedAgentInfo.maxFieldBytes)
+        let bounded = try #require(VsockControlService.boundedField(combining))
+        #expect(bounded.utf8.count <= VsockControlService.maxFieldBytes)
     }
 
     @Test("Newlines are stripped, so a version cannot forge a host log line")
     func boundedFieldStripsNewlines() {
         let forged = "1.0\nGuest agent connected for 'other-vm'"
         #expect(
-            ObservedAgentInfo.boundedField(forged)
+            VsockControlService.boundedField(forged)
                 == "1.0Guest agent connected for 'other-vm'")
     }
 
@@ -1215,14 +901,14 @@ struct VsockControlServiceTests {
     func boundedFieldStripsFormatCharacters() {
         // U+202E is Cf, not Cc: a bidi override reverses the run that follows
         // it in every label the host renders the version into.
-        #expect(ObservedAgentInfo.boundedField("26.\u{202E}0") == "26.0")
-        #expect(ObservedAgentInfo.boundedField("2\u{200D}6.0") == "26.0")
-        #expect(ObservedAgentInfo.boundedField("26.0\u{0000}") == "26.0")
+        #expect(VsockControlService.boundedField("26.\u{202E}0") == "26.0")
+        #expect(VsockControlService.boundedField("2\u{200D}6.0") == "26.0")
+        #expect(VsockControlService.boundedField("26.0\u{0000}") == "26.0")
     }
 
     @Test("A field of nothing but control characters normalizes to nil")
     func boundedFieldAllControlIsNil() {
-        #expect(ObservedAgentInfo.boundedField(String(repeating: "\n", count: 128)) == nil)
+        #expect(VsockControlService.boundedField(String(repeating: "\n", count: 128)) == nil)
     }
 
     @Test("The cut lands on a scalar boundary, never mid-scalar")
@@ -1231,27 +917,9 @@ struct VsockControlServiceTests {
         // result stops one byte short rather than splitting a scalar — which
         // would need a 3-byte U+FFFD to repair and overshoot the bound.
         let euros = String(repeating: "€", count: 100)
-        let bounded = try #require(ObservedAgentInfo.boundedField(euros))
+        let bounded = try #require(VsockControlService.boundedField(euros))
         #expect(bounded == String(repeating: "€", count: 21))
         #expect(!bounded.unicodeScalars.contains("\u{FFFD}"))
-    }
-}
-
-/// MainActor-isolated recorder for the `onAgentInfoObserved` closure.
-///
-/// Reference type so the observer's closure capture and the test's read site
-/// see the same buffer without `inout` shenanigans. Main-bound because
-/// `onAgentInfoObserved` is `@MainActor` in production, not by convenience.
-@MainActor
-private final class ObservedRecorder {
-    private(set) var values: [ObservedAgentInfo] = []
-
-    /// Fires on every `append`; await it instead of polling `values.count`.
-    let changed = AsyncGate()
-
-    func append(_ value: ObservedAgentInfo) {
-        values.append(value)
-        changed.notify()
     }
 }
 

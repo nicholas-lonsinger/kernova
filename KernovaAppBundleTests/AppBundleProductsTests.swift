@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import KernovaCommandModel
 import KernovaTestSupport
@@ -16,17 +17,48 @@ struct AppBundleProductsTests {
         products = AppBundleProducts(bundle: try BuiltProducts.bundle(named: "Kernova.app"))
     }
 
-    @Test("The guest agent's version sidecar names the agent the build packaged")
-    func guestAgentVersionNamesTheAgentBuilt() throws {
-        let agent = try BuiltProducts.bundle(named: "Kernova Guest Agent.app")
-        let built = try #require(agent.infoDictionary?["CFBundleShortVersionString"] as? String)
-        #expect(products.guestAgents.macOSVersion == built)
+    @Test("The built app carries the macOS agent's payload for both scopes, labelled as the host's build")
+    func builtAppCarriesTheMacOSPayload() throws {
+        let agents = products.guestAgents
+        let user = try #require(agents.entry(.macOS, .arm64, .user))
+        #expect(agents.entry(.macOS, .arm64, .system) == user)
+        #expect(user.format == .containerTree)
+        #expect(user.versionLabel == products.versionLabel)
+        let path = user.fileURL.path(percentEncoded: false)
+        #expect(path.hasSuffix("Contents/Resources/GuestAgents/macos-arm64/agent.payload"))
+        #expect(FileManager.default.fileExists(atPath: path))
+    }
+
+    /// The installer disk carries the app alone, and its install packs that
+    /// app as it lands it: the identity it records is the bundled payload's
+    /// only while packing the built app reproduces it.
+    @Test("Packing the built agent app reproduces the bundled macOS payload's SHA-256")
+    func packingTheBuiltAgentReproducesThePayload() async throws {
+        let bundled = try #require(products.guestAgents.entry(.macOS, .arm64, .user)).fileURL
+        let agent = try BuiltProducts.url(named: "Kernova Guest Agent.app")
+        let scratch = TestScratchDirectory.forCase(prefix: "AgentPayload")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let packed = scratch.url.appending(path: "agent.payload")
+
+        let pack = Process()
+        pack.executableURL = agent.appending(path: "Contents/MacOS/KernovaMacOSAgent")
+        pack.arguments = ["pack-payload", agent.path(percentEncoded: false), packed.path(percentEncoded: false)]
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+            pack.terminationHandler = { _ in continuation.resume() }
+            do { try pack.run() } catch { continuation.resume(throwing: error) }
+        }
+        #expect(pack.terminationStatus == 0)
+
+        #expect(
+            SHA256.hash(data: try Data(contentsOf: packed, options: .mappedIfSafe))
+                == SHA256.hash(data: try Data(contentsOf: bundled, options: .mappedIfSafe)))
     }
 
     @Test("isInstallerDisk(path:) matches the app's bundled installer image path only")
     func installerImageMatchesThePathOnly() throws {
         let agents = products.guestAgents
         let path = try #require(agents.macOSInstallerDiskImageURL).path(percentEncoded: false)
+        #expect(path.hasSuffix("Contents/Resources/KernovaMacOSAgent.dmg"))
         #expect(FileManager.default.fileExists(atPath: path))
         #expect(agents.isInstallerDisk(path: path))
         #expect(!agents.isInstallerDisk(path: "/tmp/other.iso"))
@@ -66,10 +98,17 @@ struct AppBundleProductsTests {
 /// dependency on the app builds first.
 private enum BuiltProducts {
     static func bundle(named name: String) throws -> Bundle {
+        try #require(Bundle(url: try url(named: name)))
+    }
+
+    /// The product `name`, which the build wrote beside this test bundle.
+    static func url(named name: String) throws -> URL {
         let directory = Bundle(for: Anchor.self).bundleURL.deletingLastPathComponent()
-        return try #require(
-            Bundle(url: directory.appendingPathComponent(name, isDirectory: true)),
+        let url = directory.appendingPathComponent(name, isDirectory: true)
+        try #require(
+            FileManager.default.fileExists(atPath: url.path(percentEncoded: false)),
             "\(name) is not in \(directory.path(percentEncoded: false))")
+        return url
     }
 
     private final class Anchor {}

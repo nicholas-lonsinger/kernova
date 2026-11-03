@@ -39,7 +39,7 @@ public final class SlotUpdateInstaller: UpdateInstaller {
     private let onSwitched: @Sendable () -> Void
     /// Runs once this version confirmed the switch to itself.
     private let onConfirmed: @Sendable () -> Void
-    private let queue = DispatchQueue(label: "app.kernova.agent.update")
+    private let queue: DispatchQueue
     private let state = Locked(State())
 
     private struct State: Sendable {
@@ -58,11 +58,16 @@ public final class SlotUpdateInstaller: UpdateInstaller {
     }
 
     /// The installer of the install at `root` whose running version sits in `runningSlot`, landing payloads
-    /// through `lander`.
+    /// through `lander` on the serial `queue`.
+    ///
+    /// A switch moves `current`, reports the payload installed and runs `onSwitched` in one block on `queue`, so
+    /// a watch on `current` that shares `queue` sees the move only once the report is on its way.
     public init(
         root: SlotRoot, runningSlot: String, lander: any PayloadLander, logger: KernovaLogger,
+        queue: DispatchQueue = DispatchQueue(label: "app.kernova.agent.update"),
         onSwitched: @escaping @Sendable () -> Void, onConfirmed: @escaping @Sendable () -> Void = {}
     ) {
+        self.queue = queue
         self.root = root
         self.runningSlot = runningSlot
         self.lander = lander

@@ -35,7 +35,7 @@ struct InstallerTests {
 
         func installer(account: String? = nil) -> Installer {
             Installer(
-                stagingRoot: root, runsCommands: false, payloadSource: payload, lander: ExecutableLander(),
+                stagingRoot: root, runsCommands: false, payloadSource: .file(payload), lander: ExecutableLander(),
                 versionLabel: "9.9 (99)", account: account)
         }
 
@@ -77,11 +77,11 @@ struct InstallerTests {
     }
 
     /// The account's uid for a directory or file in the system root, the invoker's for every other path. The
-    /// `current` link stays the invoker's: the installer gives a link no owner, since that could only be done by
-    /// name, and a link's owner grants nothing.
+    /// `current` and `rollback` links stay the invoker's: the installer gives a link no owner, since that could
+    /// only be done by name, and a link's owner grants nothing.
     static func systemOwner(_ path: String) -> uid_t {
         let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
-        guard path != "/opt/kernova-agent/current" else { return getuid() }
+        guard path != "/opt/kernova-agent/current", path != "/opt/kernova-agent/rollback" else { return getuid() }
         return path == "/opt/kernova-agent" || path.hasPrefix("/opt/kernova-agent/") ? account : getuid()
     }
 
@@ -98,6 +98,7 @@ struct InstallerTests {
             "/home/pbear/.local/share/kernova-agent/slots/a/kernova-agent": "f0755",
             "/home/pbear/.local/share/kernova-agent/state.json": "f0644",
             "/home/pbear/.local/share/kernova-agent/current": "lslots/a",
+            "/home/pbear/.local/share/kernova-agent/rollback": "lslots/a",
             "/home/pbear/.config/systemd/user/kernova-agent.service": "f0644",
             "/home/pbear/.config/systemd/user/kernova-agent-rollback.timer": "f0644",
             "/home/pbear/.config/systemd/user/kernova-agent-rollback.service": "f0644",
@@ -117,6 +118,7 @@ struct InstallerTests {
         "/opt/kernova-agent/slots/a/kernova-agent": "f0755",
         "/opt/kernova-agent/state.json": "f0644",
         "/opt/kernova-agent/current": "lslots/a",
+        "/opt/kernova-agent/rollback": "lslots/a",
         "/etc/systemd/system/kernova-agent-system.service": "f0644",
         "/etc/systemd/system/kernova-agent-rollback.timer": "f0644",
         "/etc/systemd/system/kernova-agent-rollback.service": "f0644",
@@ -125,7 +127,7 @@ struct InstallerTests {
 
     private static func checkFiles(_ scratch: Scratch, _ layout: InstallLayout) throws {
         let binary = FileManager.default.contents(
-            atPath: scratch.root + layout.installRoot.installSlot + "/kernova-agent")
+            atPath: scratch.root + layout.installRoot.slot("a") + "/kernova-agent")
         #expect(binary.map(Array.init) == scratch.payloadBytes)
         let state = try JSONDecoder().decode(
             InstallState.self, from: Data(try #require(scratch.contents(layout.installRoot.state)).utf8))

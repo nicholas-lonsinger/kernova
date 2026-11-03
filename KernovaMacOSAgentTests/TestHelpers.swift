@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaPlatformDarwin
 import KernovaSynchronization
 import KernovaTestSupport
 

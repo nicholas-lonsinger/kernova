@@ -686,12 +686,7 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         try require(.toggleGuestAgentDisk, on: instance)
         let guestOS = instance.configuration.guestOS
-        let awaited = awaiting ?? guestOS.guestAgentScopes
-        guard awaited.isSubset(of: guestOS.guestAgentScopes) else {
-            let names = awaited.subtracting(guestOS.guestAgentScopes).map(\.rawValue).sorted()
-            throw CommandError.invalidArgument(
-                "A \(guestOS.displayName) guest has no \(names.joined(separator: " or ")) agent to wait for.")
-        }
+        let awaited = awaiting ?? guestOS.installedAgentScopes
         let agents = instance.bundleProducts.guestAgents
         guard agents.bundlesInstallerDisk(for: guestOS) else {
             logger.log(

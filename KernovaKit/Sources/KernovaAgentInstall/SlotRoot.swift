@@ -71,6 +71,12 @@ public final class SlotRoot: Sendable {
         }
     }
 
+    /// The SHA-256 of the payload the slot metadata records `slot` holding, lowercase hex: the identity the
+    /// agent running from it claims. Nil when it records none there.
+    public func payloadSHA256(ofSlot slot: String) throws(Failure) -> String? {
+        try readState().slots[slot]?.payloadSHA256
+    }
+
     /// Replaces the slot metadata whole and durably: written beside it, flushed, renamed over it, then the
     /// directory flushed, so a crash leaves the old file or the new one.
     func writeState(_ state: InstallState) throws(Failure) {
@@ -117,15 +123,18 @@ public final class SlotRoot: Sendable {
         try syncDirectory()
     }
 
-    /// The slot the link `name` points at, `slots/<slot>`; nil when it is missing or points elsewhere.
-    func slot(linkedFrom name: String) -> String? {
+    /// The slot the link `name`, relative to the directory open at `directory` — `AT_FDCWD` for a path —
+    /// points at, `slots/<slot>`; nil when it is missing or points elsewhere.
+    public static func slot(linkedFrom name: String, in directory: Int32) -> String? {
         var buffer = [CChar](repeating: 0, count: 256)
-        let count = readlinkat(descriptor, name, &buffer, buffer.count - 1)
+        let count = readlinkat(directory, name, &buffer, buffer.count - 1)
         guard count > 0 else { return nil }
         let target = String(decoding: buffer[0..<count].map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        guard target.hasPrefix("slots/") else { return nil }
-        let slot = String(target.dropFirst("slots/".count))
-        return slot.isEmpty || slot.contains("/") ? nil : slot
+        guard target.hasPrefix(InstallRoot.slotsName + "/") else { return nil }
+        let slot = String(target.dropFirst(InstallRoot.slotsName.count + 1))
+        // Bytes, not `String.contains(_:)`: Foundation's, which a string argument picks, links ICU into the
+        // static Linux agent.
+        return slot.isEmpty || slot.utf8.contains(UInt8(ascii: "/")) ? nil : slot
     }
 
     // MARK: Markers

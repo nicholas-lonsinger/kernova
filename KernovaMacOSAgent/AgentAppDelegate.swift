@@ -1,11 +1,16 @@
 import AppKit
 import Foundation
+import KernovaAgentRuntime
 import KernovaKit
 import KernovaLogging
+import KernovaPlatformDarwin
+import KernovaSynchronization
 
-// Guest-side agent for macOS VMs managed by Kernova: an `.accessory` menu-bar
-// app holding four long-lived, self-reconnecting vsock connections to the host
-// — control, clipboard, drop, and log forwarding.
+// Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
+// `session`, it is the session peer: an `.accessory` menu-bar app holding the
+// v2 peer's connection to the host beside the clipboard, drop and control
+// channels. Every other command — the system peer, the installer, the
+// rollback check — runs headless (`MacAgentTools`).
 
 @main
 @MainActor
@@ -32,7 +37,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             assertionFailure("Build number not found in Info.plist")
             return "unknown"
         }
-        guard b != "AGENT_BUILD_NUMBER" else {
+        guard b != "KERNOVA_BUILD_NUMBER" else {
             logger.log(.fault, "Build number was not preprocessed — literal macro name found in Info.plist")
             assertionFailure("Build number was not preprocessed")
             return "unknown"
@@ -40,36 +45,54 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         return b
     }()
 
+    /// The display version the agent claims: "<version> (<build>)", the shape the host labels its bundled
+    /// payloads with.
+    private static var versionLabel: String { "\(version) (\(buildNumber))" }
+
     // MARK: - Services
 
-    private var vsockConnection: VsockHostConnection?
+    private var peer: MacAgentPeer?
     private var clipboardAgent: VsockGuestClipboardAgent?
     private var dropAgent: VsockGuestDropAgent?
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
+
+    /// Whether the host's policy forwards this guest's logs, as its control
+    /// channel last said.
+    private let logForwardingEnabled = Locked(false)
 
     /// This side's single transfer report, shared by every agent that moves
     /// files, so the one status item never has two sources deciding what it
     /// shows.
     private var transferReporter: ClipboardTransferReporter?
 
-    /// Retained so the signal sources stay armed for the process lifetime.
+    /// Retained so the signal source stays armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
-    private var sigtermSource: DispatchSourceSignal?
 
-    /// Opt-out-of-App-Nap token, held only while clipboard sharing is enabled so
-    /// the 0.5 s clipboard poll isn't throttled when the agent is backgrounded.
-    private var appNapActivity: NSObjectProtocol?
+    /// Keeps App Nap off for as long as the session peer runs, without
+    /// keeping the guest awake. App Nap throttles the timers of an app the
+    /// user isn't looking at, an accessory app included (Energy Efficiency
+    /// Guide for Mac Apps, "App Nap"), which would let the connection's PING
+    /// and the clipboard poll slip past the host's unresponsive mark. An
+    /// activity begun with `NSActivityUserInitiatedAllowingIdleSystemSleep`
+    /// exempts the process from App Nap while it is held, and still lets the
+    /// system idle-sleep (`NSProcessInfo`
+    /// `beginActivityWithOptions:reason:`;
+    /// `NSActivityUserInitiatedAllowingIdleSystemSleep`).
+    private let appNapActivity = ProcessInfo.processInfo.beginActivity(
+        options: .userInitiatedAllowingIdleSystemSleep, reason: "Kernova guest agent connection")
 
     // MARK: - Entry point
 
     static func main() {
-        // `--version` must work headless — install.command probes it — so it is
-        // handled before any NSApplication / window-server setup.
-        if CommandLine.arguments.contains("--version") {
-            print("kernova-agent \(version) (\(buildNumber))")
-            exit(0)
+        guard let command = MacAgentCommand.parse(Array(CommandLine.arguments.dropFirst())) else {
+            FileHandle.standardError.write(Data((MacAgentCommand.usage + "\n").utf8))
+            exit(64)  // EX_USAGE
         }
+        // Everything but the session peer runs headless, before any
+        // NSApplication or window-server setup: the system peer is a daemon
+        // with no window server (TN2083).
+        guard command == .session else { MacAgentTools.run(command, label: versionLabel) }
 
         let app = NSApplication.shared
         // `LSUIElement` in Info.plist is the primary mechanism for this; the call
@@ -85,15 +108,14 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Bootstrapped before the startup banner, so the banner itself buffers
         // into the pre-connect ring.
-        let vsockConnection = VsockHostConnection()
-        KernovaLogger.bootstrapProcessSink { level, subsystem, category, segments in
-            vsockConnection.forwardLog(
-                level: level, subsystem: subsystem, category: category, segments: segments)
-        }
-        Self.logger.log(
-            .notice,
-            "Kernova Guest Agent v\(Self.version, privacy: .public) (\(Self.buildNumber, privacy: .public)) started"
-        )
+        let logs = LogForwarding()
+        KernovaLogger.bootstrapProcessSink(logs.sink)
+        Self.logger.log(.notice, "Kernova Guest Agent \(Self.versionLabel, privacy: .public) started")
+
+        let peer = MacAgentPeer(
+            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer())
+        self.peer = peer
+        followSession(peer)
 
         // A live instance's sweep never reaches an exited agent's staging; only
         // this launch-time reclaim bounds its growth.
@@ -114,20 +136,18 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             })
         let dropAgent = VsockGuestDropAgent(stagingRoot: stagingRoot, reporter: transferReporter)
 
-        // `onPolicy` gates the log, clipboard and drop capabilities;
-        // `onStateChange` drives the status-item icon;
+        // `onPolicy` gates the clipboard and drop capabilities and says whether
+        // the host forwards logs; `onStateChange` drives the status-item icon;
         // `onHostCapabilitiesChanged` is what tells the drop agent whether this
         // host has a drop listener at all, and whether it takes drags out.
+        let logForwardingEnabled = self.logForwardingEnabled
         let controlAgent = VsockGuestControlAgent(
-            onPolicy: { [weak self] policy in
-                vsockConnection.setEnabled(policy.logForwardingEnabled)
+            onPolicy: { policy in
+                logForwardingEnabled.withLock { $0 = policy.logForwardingEnabled }
                 clipboardAgent.applyPolicy(
                     enabled: policy.clipboardSharingEnabled,
                     maxPasteBytes: ClipboardPasteLimit.fromPolicy(policy.clipboardMaxPasteBytes))
                 dropAgent.applyPolicy(enabled: policy.dropFilesEnabled)
-                Task { @MainActor in
-                    self?.updateAppNap(clipboardEnabled: policy.clipboardSharingEnabled)
-                }
             },
             onStateChange: { [weak self] _ in
                 // Called off-main; hop to the main actor to touch the status item.
@@ -140,34 +160,34 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             }
         )
 
-        self.vsockConnection = vsockConnection
         self.transferReporter = transferReporter
         self.clipboardAgent = clipboardAgent
         self.dropAgent = dropAgent
         self.controlAgent = controlAgent
 
+        // Must exit 0: the LaunchAgent's `KeepAlive={SuccessfulExit:false}`
+        // keeps only a clean exit stopped.
+        let stop: @Sendable () -> Void = {
+            Self.logger.log(.notice, "Shutting down")
+            controlAgent.stop()
+            clipboardAgent.stop()
+            dropAgent.stop()
+            peer.exit(status: 0)
+        }
+
         self.statusItemController = AgentStatusItemController(
-            version: Self.version,
             connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
-            hostBundledVersion: { [weak controlAgent] in controlAgent?.hostBundledAgentVersion ?? "" },
-            logForwardingEnabled: { [weak vsockConnection] in
-                vsockConnection?.isLogForwardingEnabled ?? false
-            },
+            logForwardingEnabled: { logForwardingEnabled.withLock { $0 } },
             clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
             onCancelTransfer: { [weak transferReporter] id in
                 transferReporter?.cancel(id)
             },
-            onQuit: { NSApp.terminate(nil) }
+            onQuit: stop
         )
 
-        installSignalHandlers(
-            vsockConnection: vsockConnection,
-            clipboardAgent: clipboardAgent,
-            dropAgent: dropAgent,
-            controlAgent: controlAgent
-        )
+        installSignalHandlers(stop)
 
-        vsockConnection.start()
+        peer.start()
         clipboardAgent.start()
         dropAgent.start()
         controlAgent.start()
@@ -175,60 +195,34 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         // Stop control first so heartbeat cessation is the cleanest going-away
-        // signal to the host; clipboard, drop and log follow.
+        // signal to the host; clipboard and drop follow.
         controlAgent?.stop()
         clipboardAgent?.stop()
         dropAgent?.stop()
-        vsockConnection?.stop()
-        // Balance any held App-Nap activity so begin/end stays paired.
-        updateAppNap(clipboardEnabled: false)
     }
 
-    // MARK: - App Nap
+    // MARK: - Session state
 
-    private func updateAppNap(clipboardEnabled: Bool) {
-        if clipboardEnabled {
-            guard appNapActivity == nil else { return }
-            appNapActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.userInitiated], reason: "Kernova clipboard sync polling")
-        } else if let activity = appNapActivity {
-            ProcessInfo.processInfo.endActivity(activity)
-            appNapActivity = nil
+    /// Reports the session's state again whenever a fast user switch moves this
+    /// session onto the console or off it.
+    private func followSession(_ peer: MacAgentPeer) {
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.sessionDidResignActiveNotification] {
+            center.addObserver(forName: name, object: nil, queue: nil) { _ in
+                peer.setPeerState(DarwinSessionState.sessionPeer())
+            }
         }
     }
 
     // MARK: - Signal handling
 
-    private func installSignalHandlers(
-        vsockConnection: VsockHostConnection,
-        clipboardAgent: VsockGuestClipboardAgent,
-        dropAgent: VsockGuestDropAgent,
-        controlAgent: VsockGuestControlAgent
-    ) {
+    /// Runs `stop` on SIGTERM — launchd's stop — and on SIGINT.
+    private func installSignalHandlers(_ stop: @escaping @Sendable () -> Void) {
+        MacAgentTools.installTermination(stop)
         signal(SIGINT, SIG_IGN)
-        signal(SIGTERM, SIG_IGN)
-
         let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-
-        // Captures the Sendable services rather than `self`, so the handler needs
-        // no main-actor isolation. Must exit 0 — the LaunchAgent's
-        // `KeepAlive={SuccessfulExit:false}` only keeps a clean exit quit.
-        let handler: @Sendable () -> Void = {
-            Self.logger.log(.notice, "Received termination signal, shutting down")
-            controlAgent.stop()
-            clipboardAgent.stop()
-            dropAgent.stop()
-            vsockConnection.stop()
-            exit(0)
-        }
-
-        sigintSource.setEventHandler(handler: handler)
-        sigtermSource.setEventHandler(handler: handler)
+        sigintSource.setEventHandler(handler: stop)
         sigintSource.resume()
-        sigtermSource.resume()
-
         self.sigintSource = sigintSource
-        self.sigtermSource = sigtermSource
     }
 }

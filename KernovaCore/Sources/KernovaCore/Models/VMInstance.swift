@@ -173,13 +173,6 @@ package final class VMInstance {
     /// (``warnedMissingAgents``).
     var agentExpectedButMissing: Bool { !warnedMissingAgents.isEmpty }
 
-    /// `true` once a `Hello` has arrived on this VM session.
-    ///
-    /// Separates a mid-session agent disappearance from an agent that never
-    /// appeared: only the latter is evidence about what is installed in the
-    /// guest, so only the latter may rewrite persisted agent state.
-    var hasSeenAgentThisSession: Bool { sessionContext?.hasSeenAgentThisSession ?? false }
-
     /// `true` when this session cold-booted into macOS Recovery, which never
     /// runs the guest agent — so agent silence is evidence of nothing for the
     /// whole session, not just at the moment of boot.
@@ -211,9 +204,8 @@ package final class VMInstance {
             ) -> VMLibrary.SettingsWrite
         )?
 
-    /// Fired with the scopes of the agents that just connected current: the
-    /// macOS agent's Hello of a version that matches or exceeds what the host
-    /// bundles, or a new agent hub peer whose payload is the bundled one.
+    /// Fired with the scopes of the agents that just connected current: new
+    /// agent hub peers whose payload is the bundled one.
     ///
     /// What the guest-agent installer disk waits for
     /// (``VMConfiguration/recordCurrentAgents(_:of:in:)``).
@@ -225,27 +217,28 @@ package final class VMInstance {
 
     // MARK: - Session Projection
 
-    /// The guest agent version this VM last reported: this session's Hello when
-    /// one arrived, the committed record otherwise.
-    package var lastSeenAgentVersion: String? {
-        if let observed = sessionContext?.observedAgentInfo { return observed.agentVersion }
-        if let observed = sessionContext?.observedSessionAgentVersion { return observed }
-        return configuration.lastSeenAgentVersion
+    /// What `scope`'s agent last reported on this VM: this session's when one
+    /// connected, the committed record otherwise.
+    ///
+    /// The committed records are the scopes the last run that saw any agent
+    /// saw, less any it ended warning about — each run that sees an agent
+    /// replaces them as it ends (``sessionDidEnd(_:)``) — so a scope the
+    /// guest stopped running warns in one run at most.
+    package func lastSeenAgent(_ scope: GuestAgentScope) -> GuestAgentSighting? {
+        sessionContext?.observedAgents[scope] ?? configuration.lastSeenAgent(scope)
     }
 
-    /// The version a Linux guest's system peer last reported, on the same terms
-    /// as ``lastSeenAgentVersion``.
-    package var lastSeenSystemAgentVersion: String? {
-        sessionContext?.observedSystemAgentVersion ?? configuration.lastSeenSystemAgentVersion
-    }
+    /// The version ``lastSeenAgent(_:)`` gives the session agent.
+    package var lastSeenAgentVersion: String? { lastSeenAgent(.login)?.versionLabel }
 
-    /// The guest OS version this VM last reported, on the same terms as
-    /// ``lastSeenAgentVersion`` — and unknown once this session's watchdog has
-    /// found no agent, since nothing vouched for the recorded one.
+    /// The version ``lastSeenAgent(_:)`` gives the system agent.
+    package var lastSeenSystemAgentVersion: String? { lastSeenAgent(.system)?.versionLabel }
+
+    /// The guest OS version an agent last reported on this VM, as recorded —
+    /// and unknown once this session's watchdog has found no agent, since
+    /// nothing vouched for the recorded one.
     var reportedGuestOSVersion: String? {
-        if let observed = sessionContext?.observedAgentInfo { return observed.osVersion }
-        if agentExpectedButMissing { return nil }
-        return configuration.lastSeenGuestOSVersion
+        agentExpectedButMissing ? nil : configuration.lastSeenGuestOSVersion
     }
 
     /// The committed configuration with what this session re-derived laid over
@@ -261,50 +254,26 @@ package final class VMInstance {
         for heal in context.heals {
             config.healExternalReference(heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
         }
-        config.lastSeenAgentVersion = lastSeenAgentVersion
-        config.lastSeenSystemAgentVersion = lastSeenSystemAgentVersion
+        for scope in GuestAgentScope.allCases { config.recordLastSeenAgent(lastSeenAgent(scope), scope) }
         config.lastSeenGuestOSVersion = reportedGuestOSVersion
         return config
     }
 
-    /// What every surface shows of the guest agent in this VM's session, `nil`
-    /// when the session has no channel to one.
-    ///
-    /// The single read site for the UI and automation. A macOS guest's comes
-    /// from its always-on `VsockControlService`, with `.expectedMissing` and
-    /// `.connecting` synthesized here because that service has no access to
-    /// persisted host state. A Linux guest's comes from ``agentHub``'s
-    /// snapshot, once this session attached the hub a transport: the Kernova
+    /// What every surface shows of the guest agents in this VM's session, from
+    /// ``agentHub``'s snapshot: `nil` until the session attached the hub a
+    /// transport. The single read site for the UI and automation: the Kernova
     /// agents, never the SPICE clipboard's own agent.
     package var agentPresentation: GuestAgentPresentation? {
-        guard let context = sessionContext else { return nil }
-        switch configuration.guestOS {
-        case .macOS:
-            return GuestAgentPresentation(
-                macOSAgent: AgentStatus.synthesize(
-                    upstream: context.vsock.control?.agentStatus ?? .waiting,
-                    lastSeenAgentVersion: lastSeenAgentVersion,
-                    agentExpectedButMissing: agentExpectedButMissing))
-        case .linux:
-            return reachesGuestAgent
-                ? GuestAgentPresentation(
-                    hub: agentHubSnapshot,
-                    lastSeenAgentVersion: lastSeenSystemAgentVersion ?? lastSeenAgentVersion,
-                    missing: warnedMissingAgents)
-                : nil
-        }
+        guard reachesGuestAgent else { return nil }
+        return GuestAgentPresentation(
+            hub: agentHubSnapshot, lastSeenAgentVersion: lastSeenSystemAgentVersion ?? lastSeenAgentVersion,
+            missing: warnedMissingAgents)
     }
 
-    /// Whether this VM's session has a channel to a guest agent: a macOS
-    /// session always does, through its control service; a Linux one once the
+    /// Whether this VM's session has a channel to the guest agents: once the
     /// session attached the agent hub a transport. Admission, and through
     /// ``agentPresentation`` every surface, decide the installer disk from it.
-    var reachesGuestAgent: Bool {
-        switch configuration.guestOS {
-        case .macOS: true
-        case .linux: sessionContext?.hasAgentTransport ?? false
-        }
-    }
+    var reachesGuestAgent: Bool { sessionContext?.hasAgentTransport ?? false }
 
     /// The status of whatever carries the Clipboard window's clipboard: the
     /// SPICE agent's own while it does, and the guest agent's otherwise.
@@ -322,8 +291,7 @@ package final class VMInstance {
     /// The hub's latest snapshot, as it publishes it to the main actor.
     ///
     /// Peers arriving whose payload is the one the host bundles for them fire
-    /// ``onCurrentAgentsArrived`` with their scopes, as the macOS agent's Hello
-    /// of a current version does.
+    /// ``onCurrentAgentsArrived`` with their scopes.
     private var publishedAgentHubSnapshot = AgentHubSnapshot.empty {
         didSet {
             let arrived = Self.currentPeerScopes(arriving: oldValue, to: publishedAgentHubSnapshot)
@@ -343,29 +311,46 @@ package final class VMInstance {
     }
 
     /// The hub's agents changed: each connected one is recorded by its scope,
-    /// as the macOS agent's Hello is, and the missing-agent rule reads them
-    /// again.
+    /// and the missing-agent rule reads them again.
     private func agentHubSnapshotDidChange() {
-        guard configuration.guestOS == .linux, let context = sessionContext else { return }
+        guard let context = sessionContext else { return }
         recordHubPeers(context)
         agentPresenceChanged()
     }
 
-    /// Records the version each scope's connected peer reports, the newest
-    /// session peer's for the session agent: in the session at once, and in the
+    /// Records what each scope's newest connected peer reports, and the guest
+    /// OS version the newest peer reports: in the session at once, and in the
     /// configuration whenever it differs from the committed record.
     private func recordHubPeers(_ context: VMSessionContext) {
-        let session = publishedAgentHubSnapshot.peers.first { $0.role == .sessionPeer }?.versionLabel
-        let system = publishedAgentHubSnapshot.peers.first { $0.role == .systemPeer }?.versionLabel
-        if let session { context.observedSessionAgentVersion = session }
-        if let system { context.observedSystemAgentVersion = system }
-        let recordsSession = session.map { $0 != configuration.lastSeenAgentVersion } ?? false
-        let recordsSystem = system.map { $0 != configuration.lastSeenSystemAgentVersion } ?? false
-        guard recordsSession || recordsSystem else { return }
-        recordObservation("the agents' Hello") {
+        for peer in publishedAgentHubSnapshot.peers.reversed() {
+            context.observedAgents[GuestAgentScope(of: peer)] = GuestAgentSighting(peer)
+        }
+        let osVersion = publishedAgentHubSnapshot.peers.first { !$0.osVersion.isEmpty }?.osVersion
+        commitAgentSightings(of: context, runEnded: false, osVersion: osVersion)
+    }
+
+    /// Brings the committed agent records up to what `context`'s run saw:
+    /// each scope seen recorded as seen, and — once the run has ended, if it
+    /// saw any agent — the records replaced by the scopes it saw and did not
+    /// end warning about, so a scope that left the guest is expected for the
+    /// one run that finds it gone. A run that saw no agent, as a boot into
+    /// Recovery or a guest that never got far enough, leaves them be.
+    private func commitAgentSightings(of context: VMSessionContext, runEnded: Bool, osVersion: String? = nil) {
+        let replaces = runEnded && !context.observedAgents.isEmpty
+        var records = configuration
+        for scope in GuestAgentScope.allCases {
+            let gone = runEnded && context.warnedAgentScopes.contains(scope)
+            let seen = gone ? nil : context.observedAgents[scope]
+            if seen != nil || replaces { records.recordLastSeenAgent(seen, scope) }
+        }
+        if let osVersion { records.lastSeenGuestOSVersion = osVersion }
+        guard records != configuration else { return }
+        recordObservation(runEnded ? "the agents the run saw" : "the agents' Hello") {
             _ = $0.updateConfiguration { config in
-                if let session { config.lastSeenAgentVersion = session }
-                if let system { config.lastSeenSystemAgentVersion = system }
+                for scope in GuestAgentScope.allCases {
+                    config.recordLastSeenAgent(records.lastSeenAgent(scope), scope)
+                }
+                config.lastSeenGuestOSVersion = records.lastSeenGuestOSVersion
             }
         }
     }
@@ -433,7 +418,7 @@ package final class VMInstance {
     let preferences: AppPreferences
 
     /// What the app bundle ships: the version this host's Hello advertises,
-    /// and the guest agent — the version a Hello is current against, and the
+    /// and the guest agents — the payloads the agent hub offers, and the
     /// installer image the VM can be handed.
     package let bundleProducts: AppBundleProducts
 
@@ -942,10 +927,12 @@ package final class VMInstance {
 
     // MARK: - Activity Callbacks
 
-    /// Called by ``activity`` once the session is released; `afterRunning`
-    /// is whether that session ever settled running.
-    func sessionDidEnd(afterRunning: Bool) {
-        if afterRunning { recordLastRun(at: Date()) }
+    /// Called by ``activity`` once the session `ended` is released: a run
+    /// that settled running records its end, and every run commits the agents
+    /// it saw (``commitAgentSightings(of:runEnded:osVersion:)``).
+    func sessionDidEnd(_ ended: VMSessionContext) {
+        if ended.runningSince != nil { recordLastRun(at: Date()) }
+        commitAgentSightings(of: ended, runEnded: true)
     }
 
     /// Called by ``activity`` when the presented phase enters or leaves a live
@@ -1197,22 +1184,18 @@ package final class VMInstance {
     }
 
     /// Builds the control service for one accepted channel, wired to this
-    /// instance's policy, agent-info and guest-suspension hooks. Channel loss is
+    /// instance's policy and guest-suspension hooks. Channel loss is
     /// the accept site's to wire, uniformly for every feature.
     ///
-    /// Every hook reads through `self` lazily, so all three track live
+    /// Every hook reads through `self` lazily, so both track live
     /// configuration edits and pause/resume without being re-pushed.
     func makeControlService(for channel: VsockChannel) -> VsockControlService {
         VsockControlService(
             channel: channel,
             label: name,
             hostVersion: bundleProducts.hostVersion,
-            bundledAgentVersion: bundleProducts.guestAgents.macOSVersion,
             policyProvider: { [weak self] in
                 self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
-            },
-            onAgentInfoObserved: { [weak self] info in
-                self?.recordObservedAgentInfo(info)
             },
             isGuestSuspended: { [weak self] in self?.isLivePaused ?? false },
             admissionGate: vsockAdmissionGate)
@@ -1231,32 +1214,21 @@ package final class VMInstance {
     /// watchdog's floor and deadlines share.
     private static var agentAbsenceNow: CoreInstant { SystemScheduler().now }
 
-    /// This VM's agent scopes as ``MissingAgentRule`` reads them: the macOS
-    /// agent alone, or a Linux guest's session and system peers. Gathering
-    /// them is all that differs by guest OS; the rule is one.
+    /// This VM's agent scopes as ``MissingAgentRule`` reads them: its session
+    /// and system peers.
     var agentScopePresences: [AgentScopePresence] {
         guard let context = sessionContext else { return [] }
-        switch configuration.guestOS {
-        case .macOS:
-            return [
-                AgentScopePresence(
-                    scope: .login, lastSeenVersion: lastSeenAgentVersion,
-                    seenThisSession: context.hasSeenAgentThisSession,
-                    isConnected: context.vsock.control?.agentVersion != nil)
-            ]
-        case .linux:
-            let peers = publishedAgentHubSnapshot.peers
-            return [
-                AgentScopePresence(
-                    scope: .login, lastSeenVersion: lastSeenAgentVersion,
-                    seenThisSession: context.observedSessionAgentVersion != nil,
-                    isConnected: peers.contains { $0.role == .sessionPeer }),
-                AgentScopePresence(
-                    scope: .system, lastSeenVersion: lastSeenSystemAgentVersion,
-                    seenThisSession: context.observedSystemAgentVersion != nil,
-                    isConnected: peers.contains { $0.role == .systemPeer }),
-            ]
-        }
+        let peers = publishedAgentHubSnapshot.peers
+        return [
+            AgentScopePresence(
+                scope: .login, lastSeenVersion: lastSeenAgentVersion,
+                seenThisSession: context.observedAgents[.login] != nil,
+                isConnected: peers.contains { $0.role == .sessionPeer }),
+            AgentScopePresence(
+                scope: .system, lastSeenVersion: lastSeenSystemAgentVersion,
+                seenThisSession: context.observedAgents[.system] != nil,
+                isConnected: peers.contains { $0.role == .systemPeer }),
+        ]
     }
 
     /// The scopes whose agent has ever reported on this VM.
@@ -1435,38 +1407,6 @@ package final class VMInstance {
     /// `agentExpectedButMissing`.
     var agentAbsenceTimerForTesting: Task<Void, Never>? { sessionContext?.agentAbsenceTimer }
     #endif
-
-    /// Reacts to a `Hello` whose `agent_version` is non-empty.
-    ///
-    /// Empty agent versions are filtered upstream by `VsockControlService`:
-    /// persisting "" would silence both the install nudge and the watchdog. The
-    /// OS version has no such filter — a `nil` overwrites a stored value, so a
-    /// guest that stops vouching for its version reads Unknown, not stale.
-    func recordObservedAgentInfo(_ info: ObservedAgentInfo) {
-        sessionContext?.hasSeenAgentThisSession = true
-        // The session holds what the guest reported, so every surface shows it
-        // whether or not the write below lands; the next Hello that differs
-        // from the committed record writes again.
-        sessionContext?.observedAgentInfo = info
-        // Any Hello proves the agent is alive: the rule finds nothing missing,
-        // which clears the warning and the watchdog.
-        agentPresenceChanged()
-        // Skip the no-op write: a `config.json` rewrite on every Hello would
-        // re-fire `VMDirectoryWatcher` reconcile.
-        if configuration.lastSeenAgentVersion != info.agentVersion
-            || configuration.lastSeenGuestOSVersion != info.osVersion
-        {
-            recordObservation("the agent's Hello") {
-                _ = $0.updateConfiguration {
-                    $0.lastSeenAgentVersion = info.agentVersion
-                    $0.lastSeenGuestOSVersion = info.osVersion
-                }
-            }
-        }
-        if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: bundleProducts.guestAgents.macOSVersion) {
-            onCurrentAgentsArrived?([.login])
-        }
-    }
 
     /// Records `date` as the last moment this VM was running
     /// (``VMHostState/lastRunAt``).

@@ -160,6 +160,8 @@ extension VMConfiguration {
         // What the guest reported.
         .field("lastSeenAgentVersion", \.lastSeenAgentVersion, .observations),
         .field("lastSeenSystemAgentVersion", \.lastSeenSystemAgentVersion, .observations),
+        .field("lastSeenAgentPayloadHash", \.lastSeenAgentPayloadHash, .observations),
+        .field("lastSeenSystemAgentPayloadHash", \.lastSeenSystemAgentPayloadHash, .observations),
         .field("lastSeenGuestOSVersion", \.lastSeenGuestOSVersion, .observations),
     ])
 }

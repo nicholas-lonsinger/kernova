@@ -43,10 +43,9 @@ struct InstallState: Codable, Equatable, Sendable {
         case rejectedSHA256 = "rejectedPayloadSHA256"
     }
 
-    /// The state after a fresh install of the payload hashing to `payloadSHA256` into the install slot.
-    static func fresh(payloadSHA256: String, versionLabel: String) -> InstallState {
-        let slot = InstallRoot.installSlotName
-        return InstallState(active: slot, slots: [slot: Slot(payloadSHA256: payloadSHA256, versionLabel: versionLabel)])
+    /// The state after a fresh install of the payload hashing to `payloadSHA256` into `slot`.
+    static func fresh(slot: String, payloadSHA256: String, versionLabel: String) -> InstallState {
+        InstallState(active: slot, slots: [slot: Slot(payloadSHA256: payloadSHA256, versionLabel: versionLabel)])
     }
 
     /// The JSON written, keys sorted.

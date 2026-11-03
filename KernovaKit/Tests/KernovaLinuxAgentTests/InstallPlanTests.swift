@@ -83,8 +83,8 @@ struct InstallPlanTests {
 
     private static func path(of write: InstallPlan.Write) -> String {
         switch write {
-        case .directory(let path, _), .file(let path, _, _), .link(let path, _): path
-        case .payload(let path, _): path
+        case .directory(let path, _), .file(let path, _, _): path
+        case .freshSlot(let root, _): root.slots + "/"
         }
     }
 
@@ -99,9 +99,9 @@ struct InstallPlanTests {
                 "  remove /opt/kernova-agent/switch-rejected, if present",
                 "  make directory /opt/kernova-agent, if missing",
                 "  make directory /opt/kernova-agent/slots, if missing",
-                "  make directory /opt/kernova-agent/slots/a, if missing",
-                "  write /opt/kernova-agent/slots/a/kernova-agent, the agent, and /opt/kernova-agent/state.json",
-                "  link /opt/kernova-agent/current -> slots/a",
+                "  write the agent as kernova-agent in the slot under /opt/kernova-agent/slots that "
+                    + "/opt/kernova-agent/current does not name, record it in /opt/kernova-agent/state.json, point "
+                    + "/opt/kernova-agent/rollback at it, and switch /opt/kernova-agent/current to it",
                 "  make directory /etc/systemd/system, if missing",
                 "  write /etc/systemd/system/kernova-agent-system.service",
                 "  write /etc/systemd/system/kernova-agent-rollback.timer",

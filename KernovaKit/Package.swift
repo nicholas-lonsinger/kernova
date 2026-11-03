@@ -221,7 +221,7 @@ var targets: [Target] = [
         name: "KernovaAgentInstall",
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaDigest", "KernovaLogging",
-            "KernovaSynchronization",
+            "KernovaSynchronization", "KernovaContainer", "KernovaTreeTransfer", "KernovaFileTree",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -275,14 +275,16 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its suites, like the target they test,
-    // compile only for Darwin and Linux.
+    // compile only for Darwin and Linux. The golden payload beside them is read from the source tree.
     .testTarget(
         name: "KernovaAgentInstallTests",
         dependencies: [
             "KernovaAgentInstall", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation",
-            "KernovaDigest", "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaDigest", "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport", "KernovaContainer",
+            "KernovaFileTree", "KernovaSynchronization",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
+        exclude: ["Golden"],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The
@@ -372,6 +374,14 @@ products += [
         targets: ["KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX"]),
     // The writer the app makes the Linux agent's disk with, for KernovaCore.
     .library(name: "KernovaISO9660", targets: ["KernovaISO9660"]),
+    // The macOS guest agent's peer, install and update, and the core it runs on. Static for the reasons
+    // `KernovaLogging`'s comment gives.
+    .library(
+        name: "KernovaPlatformDarwin", type: .static,
+        targets: [
+            "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire",
+            "KernovaPlatformPOSIX", "KernovaDigest",
+        ]),
 ]
 
 dependencies += [
@@ -410,6 +420,24 @@ targets += [
     .target(
         name: "KernovaAppKitShared",
         dependencies: ["KernovaKit", "KernovaLogging"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // What the macOS guest agent calls into macOS for: the vsock dial, its identity and session state, and
+    // launchd, which runs and updates it.
+    .target(
+        name: "KernovaPlatformDarwin",
+        dependencies: [
+            "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
+            "KernovaDigest", "KernovaLogging", "KernovaSynchronization",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    .testTarget(
+        name: "KernovaPlatformDarwinTests",
+        dependencies: [
+            "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentCore", "KernovaSynchronization",
+            "KernovaTestSupport",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // Reading Launch Services' registry and waiting for it to let an app

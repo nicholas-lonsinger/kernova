@@ -593,19 +593,26 @@ struct VMSettingsSharingPanelTests {
         }
     }
 
-    @Test("The Shared Directories info follows a guest version the agent reports after the panel is built")
+    @Test("The Shared Directories info follows a guest version recorded after the panel is built")
     func resumeNoteFollowsAReportAfterBuild() throws {
-        let (vc, instance) = makeSharingController([], guestOS: .macOS)
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.registerFixture(guestOS: .macOS, phase: .stopped)
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.sharing)
         let panel = try #require(vc.panelForTesting(.sharing))
         let info = try #require(infoButton(about: "Shared Directories", in: panel))
         #expect(!Self.mentionsResume(info.paragraphs))
 
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 13.7.8 (Build 22H730)"))
+        viewModel.library.editConfiguration(of: instance, as: .observations) {
+            $0.lastSeenGuestOSVersion = "Version 13.7.8 (Build 22H730)"
+        }
         #expect(Self.mentionsResume(info.paragraphs))
 
-        instance.recordObservedAgentInfo(
-            ObservedAgentInfo(agentVersion: "0.9.2", osVersion: "Version 14.8.9 (Build 23J100)"))
+        viewModel.library.editConfiguration(of: instance, as: .observations) {
+            $0.lastSeenGuestOSVersion = "Version 14.8.9 (Build 23J100)"
+        }
         #expect(!Self.mentionsResume(info.paragraphs))
     }
 }

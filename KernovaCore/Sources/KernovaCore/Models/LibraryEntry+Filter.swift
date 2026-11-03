@@ -31,12 +31,12 @@ extension VMInstance {
     /// What a ``VMLibraryFilter`` reads of this VM, with `networks` the
     /// library's named networks and `tags` its tags.
     func filterSubject(
-        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
+        bundledPayloadHashes: [VMGuestOS: Data], networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
-            configuration, lastSeenAgentVersion: lastSeenAgentVersion, state: stateBucket,
-            hostState: hostState, hasSnapshots: !snapshotManifest.isEmpty, tags: tags,
-            bundledAgentVersion: bundledAgentVersion, networks: networks)
+            configuration, lastSeenAgents: GuestAgentScope.allCases.compactMap(lastSeenAgent),
+            state: stateBucket, hostState: hostState, hasSnapshots: !snapshotManifest.isEmpty, tags: tags,
+            bundledPayloadHashes: bundledPayloadHashes, networks: networks)
     }
 }
 
@@ -46,12 +46,12 @@ extension VMArrival {
     /// becomes as far as ``starting`` knows them; `networks` is the library's
     /// named networks and `tags` its tags.
     func filterSubject(
-        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
+        bundledPayloadHashes: [VMGuestOS: Data], networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
-            configuration, lastSeenAgentVersion: configuration.lastSeenAgentVersion, state: .preparing,
-            hostState: starting.hostState, hasSnapshots: starting.hasSnapshots, tags: tags,
-            bundledAgentVersion: bundledAgentVersion, networks: networks)
+            configuration, lastSeenAgents: GuestAgentScope.allCases.compactMap(configuration.lastSeenAgent),
+            state: .preparing, hostState: starting.hostState, hasSnapshots: starting.hasSnapshots, tags: tags,
+            bundledPayloadHashes: bundledPayloadHashes, networks: networks)
     }
 }
 
@@ -60,13 +60,13 @@ extension LibraryEntry {
     /// library's named networks and `tags` its tags; `nil` for a bundle
     /// Kernova can't read, which holds nothing a filter reads.
     func filterSubject(
-        bundledAgentVersion: String?, networks: VMNetworkDirectory.State, tags: [VMTag]
+        bundledPayloadHashes: [VMGuestOS: Data], networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject? {
         switch self {
         case .vm(let instance):
-            instance.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+            instance.filterSubject(bundledPayloadHashes: bundledPayloadHashes, networks: networks, tags: tags)
         case .arriving(let arrival):
-            arrival.filterSubject(bundledAgentVersion: bundledAgentVersion, networks: networks, tags: tags)
+            arrival.filterSubject(bundledPayloadHashes: bundledPayloadHashes, networks: networks, tags: tags)
         case .unreadable: nil
         }
     }
@@ -74,10 +74,12 @@ extension LibraryEntry {
 
 extension VMLibraryFilter.Subject {
     /// The subject of a VM configured as `configuration` whose host state is
-    /// `hostState`, carrying the tags of `tags` — the library's — it assigns.
+    /// `hostState`, carrying the tags of `tags` — the library's — it assigns,
+    /// and whose agents last reported `lastSeenAgents`, one per scope on
+    /// record, judged against `bundledPayloadHashes`.
     fileprivate init(
-        _ configuration: VMConfiguration, lastSeenAgentVersion: String?, state: VMStateBucket,
-        hostState: VMHostState, hasSnapshots: Bool, tags: [VMTag], bundledAgentVersion: String?,
+        _ configuration: VMConfiguration, lastSeenAgents: [GuestAgentSighting], state: VMStateBucket,
+        hostState: VMHostState, hasSnapshots: Bool, tags: [VMTag], bundledPayloadHashes: [VMGuestOS: Data],
         networks: VMNetworkDirectory.State
     ) {
         self.init(
@@ -87,9 +89,8 @@ extension VMLibraryFilter.Subject {
                 // be one the library does not list.
                 networks.listed?.contains { $0.id == id && $0.kind == kind } ?? true
             },
-            guestAgent: configuration.guestOS == .macOS
-                ? VMGuestAgentBucket(lastSeenVersion: lastSeenAgentVersion, bundledVersion: bundledAgentVersion)
-                : nil,
+            guestAgent: VMGuestAgentBucket(
+                lastSeen: lastSeenAgents.map(\.payloadHash), bundled: bundledPayloadHashes[configuration.guestOS]),
             isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: hasSnapshots,
             tags: Set(tags.assigned(hostState.tags).map(\.id)))
     }

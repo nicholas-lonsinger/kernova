@@ -16,7 +16,7 @@ Keystrokes a screen-control tool sends into a VM's display can reach the guest a
 
 The guest agent installs with no prompt to answer, by SSH or a pasted line, once Virtual Machine ▸ Install Guest Agent… has mounted its disk:
 
-- macOS: `bash ./install.command --yes`, from `/Volumes/Kernova Guest Agent`. With no terminal and no `--yes`, it stops at its prompt with "An unexpected error occurred", having changed nothing.
+- macOS: `NONINTERACTIVE=1 bash "/Volumes/Kernova Guest Agent/install.command"` installs it just for the user; `--system` installs it for everyone. `NONINTERACTIVE` makes its sudo `sudo -n`, so for everyone the guest needs passwordless sudo.
 - Linux: `findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; NONINTERACTIVE=1 sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh" --system`. `NONINTERACTIVE` makes its sudo `sudo -n`, so the guest needs passwordless sudo.
 
 A run reaches past a guest's login screen without its password by setting the guest up first, in a guest it may change:

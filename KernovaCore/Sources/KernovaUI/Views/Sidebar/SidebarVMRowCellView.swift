@@ -310,11 +310,7 @@ final class SidebarVMRowCellView: NSTableCellView {
             agentButton.isHidden = false
             let dismissible = presentation.status == .waiting && (agentNudgeDismissible?() ?? false)
             agentButton.configure(
-                presentation: presentation,
-                isInstallerMounted: instance.hasGuestAgentInstallerMounted,
-                diskControl: diskControl,
-                vmName: instance.name, hasDismissAction: dismissible
-            )
+                presentation: presentation, diskControl: diskControl, hasDismissAction: dismissible)
         } else {
             // Dismiss any popover/spinner left from a prior state so nothing
             // lingers on the recycled view.

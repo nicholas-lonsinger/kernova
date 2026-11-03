@@ -17,55 +17,6 @@ struct AgentPolicySnapshot: Equatable, Sendable {
     var clipboardMaxPasteBytes: Int
 }
 
-/// Guest-reported identity from one `Hello.agent_info`, with each version field
-/// bounded and an empty one normalized to `nil`.
-///
-/// No default on `osVersion`: a `nil` overwrites the persisted value, so every
-/// construction site must say it means "clear", not omit it and mean "keep".
-struct ObservedAgentInfo: Equatable, Sendable {
-    var agentVersion: String
-    var osVersion: String?
-
-    /// Ceiling, in UTF-8 bytes, on either version field.
-    ///
-    /// `Hello.agent_info` is peer-supplied and bounded on the wire only by
-    /// `StreamFrame.maxPayloadSize`, while the host persists both fields to
-    /// `config.json`, renders them in its UI, interpolates them into its log,
-    /// and scans `os_version` with an `NSRegularExpression` on the main actor.
-    /// A dotted-decimal version — with room for a build suffix — needs nothing
-    /// like this much.
-    static let maxFieldBytes = 64
-
-    /// `reported` stripped of control and format characters and clipped to
-    /// ``maxFieldBytes``, or `nil` when nothing printable survives.
-    ///
-    /// The single intake normalization for both fields, so every downstream
-    /// consumer inherits it instead of defending itself. Both halves earn their
-    /// place: cutting by UTF-8 length rather than by `Character` is what makes
-    /// the bound hold, since one grapheme cluster can carry unboundedly many
-    /// combining scalars; and length alone leaves the host logging, persisting
-    /// and rendering 64 arbitrary bytes, where a newline forges a log line and
-    /// a bidi override rewrites the label the string appears in. A version
-    /// string has legitimate use for neither.
-    static func boundedField(_ reported: String) -> String? {
-        var bounded = String.UnicodeScalarView()
-        var byteCount = 0
-        // Bounded scan: nothing past `maxFieldBytes` scalars can widen the
-        // result, and this runs on the main actor against a payload the peer
-        // sizes. `controlCharacters` covers Unicode Cc and Cf both — the
-        // newlines and the bidi overrides.
-        for scalar in reported.unicodeScalars.prefix(maxFieldBytes)
-        where !CharacterSet.controlCharacters.contains(scalar) {
-            byteCount += UTF8.width(scalar)
-            // Whole scalars only — a cut landing mid-scalar would have to be
-            // repaired with U+FFFD, which is wider than the bytes it replaces.
-            guard byteCount <= maxFieldBytes else { break }
-            bounded.append(scalar)
-        }
-        return bounded.isEmpty ? nil : String(bounded)
-    }
-}
-
 /// Drives the always-on control channel between the host and the macOS guest
 /// agent.
 ///
@@ -86,32 +37,12 @@ package final class VsockControlService: VsockFeatureService {
     /// connection settles.
     private(set) var isConnected: Bool = false
 
-    /// The guest-reported `Hello.agent_info.agent_version`, `nil` until that
-    /// `Hello` arrives and again once the connection settles.
-    private(set) var agentVersion: String?
-
-    /// `true` when the inbound liveness watchdog has fired but the channel has not yet been torn down.
-    private(set) var isUnresponsive: Bool = false
-
-    /// Whether the guest agent is missing, current, outdated, or unresponsive relative to the bundled binary.
-    package var agentStatus: AgentStatus {
-        guard let installed = agentVersion else { return .waiting }
-        if isUnresponsive { return .unresponsive(version: installed) }
-        guard let bundled = bundledAgentVersion else {
-            return .connected(version: installed)
-        }
-        return AgentStatus.isObservedVersionCurrent(installed, bundled: bundled)
-            ? .current(version: installed)
-            : .outdated(installed: installed, bundled: bundled)
-    }
-
     // MARK: - Private state
 
     private let channel: VsockChannel
     private let label: String
     /// The version this host advertises in its Hello.
     private let hostVersion: String
-    private let bundledAgentVersion: String?
 
     /// Time source for both timer loops and every liveness measurement — one
     /// seam, so a test stepping the heartbeat cadence also holds the watchdog's
@@ -126,11 +57,6 @@ package final class VsockControlService: VsockFeatureService {
     ///
     /// Invoked once per guest `Hello` so the guest receives the current snapshot at every (re)connect.
     private let policyProvider: (@MainActor () -> AgentPolicySnapshot)?
-
-    /// Notified each time the guest reports a non-empty `agentVersion` in its `Hello`.
-    ///
-    /// Fire-and-forget — this service does not care whether the host persists the value.
-    private let onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)?
 
     /// Reports whether the guest is frozen (the VM is live-paused).
     ///
@@ -207,29 +133,57 @@ package final class VsockControlService: VsockFeatureService {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VsockControlService")
 
+    /// Ceiling, in UTF-8 bytes, on a version field ``boundedField(_:)`` lets
+    /// into the log: `Hello.agent_info` is peer-supplied and bounded on the
+    /// wire only by `StreamFrame.maxPayloadSize`, and a dotted-decimal version
+    /// — with room for a build suffix — needs nothing like that much.
+    static let maxFieldBytes = 64
+
+    /// `reported` stripped of control and format characters and clipped to
+    /// ``maxFieldBytes``, or `nil` when nothing printable survives.
+    ///
+    /// Both halves earn their place: cutting by UTF-8 length rather than by
+    /// `Character` is what makes the bound hold, since one grapheme cluster can
+    /// carry unboundedly many combining scalars; and length alone leaves the
+    /// host logging 64 arbitrary bytes, where a newline forges a log line and a
+    /// bidi override rewrites the label the string appears in.
+    static func boundedField(_ reported: String) -> String? {
+        var bounded = String.UnicodeScalarView()
+        var byteCount = 0
+        // Bounded scan: nothing past `maxFieldBytes` scalars can widen the
+        // result, and this runs on the main actor against a payload the peer
+        // sizes. `controlCharacters` covers Unicode Cc and Cf both — the
+        // newlines and the bidi overrides.
+        for scalar in reported.unicodeScalars.prefix(maxFieldBytes)
+        where !CharacterSet.controlCharacters.contains(scalar) {
+            byteCount += UTF8.width(scalar)
+            // Whole scalars only — a cut landing mid-scalar would have to be
+            // repaired with U+FFFD, which is wider than the bytes it replaces.
+            guard byteCount <= maxFieldBytes else { break }
+            bounded.append(scalar)
+        }
+        return bounded.isEmpty ? nil : String(bounded)
+    }
+
     // MARK: - Init
 
     init(
         channel: VsockChannel,
         label: String,
         hostVersion: String,
-        bundledAgentVersion: String?,
         clock: any EngineClock = makePlatformEngineClock(),
         cadence: ControlChannelCadence = .production,
         policyProvider: (@MainActor () -> AgentPolicySnapshot)? = nil,
-        onAgentInfoObserved: (@MainActor (ObservedAgentInfo) -> Void)? = nil,
         isGuestSuspended: (@MainActor () -> Bool)? = nil,
         admissionGate: VsockAdmissionGate? = nil
     ) {
         self.channel = channel
         self.label = label
         self.hostVersion = hostVersion
-        self.bundledAgentVersion = bundledAgentVersion
         self.clock = clock
         self.cadence = cadence
         self.liveness = ControlLivenessMonitor(cadence: cadence)
         self.policyProvider = policyProvider
-        self.onAgentInfoObserved = onAgentInfoObserved
         self.isGuestSuspended = isGuestSuspended
         self.admissionGate = admissionGate
     }
@@ -298,15 +252,13 @@ package final class VsockControlService: VsockFeatureService {
         for task in tasks { task.cancel() }
         channel.close()
         isConnected = false
-        agentVersion = nil
-        isUnresponsive = false
         liveness.reset()
         guestSupportsClipboardStreamingStorage = false
         guestSupportsDropFilesStorage = false
         admissionGate?.clear()
         Self.logger.log(.info, "Vsock control service stopped for '\(self.label, privacy: .public)'")
-        // Last, so the owner observes fully-settled state — notably a nil
-        // `agentVersion` — from inside the callback.
+        // Last, so the owner observes fully-settled state from inside the
+        // callback.
         if case .channelLost = reason {
             onChannelLost?()
         }
@@ -315,12 +267,9 @@ package final class VsockControlService: VsockFeatureService {
     // MARK: - Outbound
 
     private func sendHello() {
-        // Tell the guest which agent version this host bundles so it can show
-        // its own update state. Empty when the sidecar is missing — the guest
-        // treats empty as "unknown" and shows no update prompt.
-        let hello = Frame.controlHello(
-            agentVersion: hostVersion,
-            bundledAgentVersion: bundledAgentVersion ?? "")
+        // The agent's version is the hub's to judge, by payload hash: empty
+        // says "unknown", which the guest answers with no update prompt.
+        let hello = Frame.controlHello(agentVersion: hostVersion, bundledAgentVersion: "")
         do {
             try channel.send(hello)
         } catch {
@@ -403,9 +352,8 @@ package final class VsockControlService: VsockFeatureService {
         // the time the system spends asleep.
         if isGuestSuspended?() ?? false {
             // Not routed through `apply`: the guest did not resume responding,
-            // the host stopped judging it, so the stage lifts without the
-            // recovery notice.
-            if case .recovered = liveness.hold(at: clock.now) { isUnresponsive = false }
+            // the host stopped judging it, so no recovery notice is logged.
+            _ = liveness.hold(at: clock.now)
             return
         }
         apply(liveness.evaluate(at: clock.now))
@@ -418,21 +366,17 @@ package final class VsockControlService: VsockFeatureService {
     private func apply(_ verdict: ControlLivenessMonitor.Verdict) {
         switch verdict {
         case .unchanged:
-            // No inbound frame ever, or nothing changed — with no frame,
-            // `agentStatus` already reports `.waiting`.
             break
         case .becameUnresponsive(let silentFor):
             Self.logger.log(
                 .warning,
                 "Control channel for '\(self.label, privacy: .public)' silent for \(Int(silentFor.rounded()), privacy: .public) s — marking unresponsive"
             )
-            isUnresponsive = true
         case .recovered:
             Self.logger.log(
                 .notice,
                 "Control channel for '\(self.label, privacy: .public)' resumed responding"
             )
-            isUnresponsive = false
         case .expired(let silentFor):
             Self.logger.log(
                 .warning,
@@ -480,11 +424,8 @@ package final class VsockControlService: VsockFeatureService {
             )
         case .hello(let hello):
             isConnected = true
-            // Both version fields are peer-supplied — `boundedField` is the one
-            // intake every downstream consumer inherits.
-            let reportedVersion = ObservedAgentInfo.boundedField(hello.agentInfo.agentVersion)
-            agentVersion = reportedVersion
-            let reportedOSVersion = ObservedAgentInfo.boundedField(hello.agentInfo.osVersion)
+            // Peer-supplied: `boundedField` keeps it out of the log raw.
+            let reportedVersion = Self.boundedField(hello.agentInfo.agentVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardTransferV3)
             guestSupportsDropFilesStorage = hello.capabilities.contains(
@@ -500,13 +441,6 @@ package final class VsockControlService: VsockFeatureService {
                 .notice,
                 "Guest agent connected for '\(self.label, privacy: .public)' (service=\(hello.serviceVersion, privacy: .public), agent=\(reportedVersion ?? "?", privacy: .public), caps=\(KernovaCapability.logDescription(of: hello.capabilities), privacy: .public))"
             )
-            // An empty agent version means the agent didn't populate the field
-            // — skip those so the host doesn't persist a meaningless value.
-            if let reportedVersion {
-                onAgentInfoObserved?(
-                    ObservedAgentInfo(
-                        agentVersion: reportedVersion, osVersion: reportedOSVersion))
-            }
             // Push the current policy to the freshly connected guest so it
             // doesn't run on assumed defaults.
             if let provider = policyProvider {

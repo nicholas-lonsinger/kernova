@@ -52,9 +52,9 @@ struct GuestAgentStatusWindowTests {
     func opensForTheSelectedVM() throws {
         let fixture = makeFixture()
         makeMenuInstance(in: fixture.viewModel, name: "Other", phase: .running(sessionID: UUID()))
-            .beginSessionContextForTesting()
+            .beginSessionContextForTesting().hasAgentTransport = true
         let instance = makeMenuInstance(in: fixture.viewModel, name: "Selected", phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         fixture.registry.showLibrary(bringToFront: false)
         let library = try #require(fixture.registry.libraryWindow)
         let target = try #require(fixture.registry.workingInstance(keyWindow: library, mainWindow: library))
@@ -67,7 +67,6 @@ struct GuestAgentStatusWindowTests {
         #expect(window.title == "Selected — Guest Agent Status")
         let status = try content(of: window)
         #expect(status.presentation == instance.agentPresentation)
-        #expect(status.vmName == "Selected")
         #expect(findLabel(withText: "Set up the Kernova guest agent", in: status.view) != nil)
         // The window is that VM's: the menu bar acts on it while it is key.
         #expect(fixture.registry.workingInstance(keyWindow: window, mainWindow: library) === instance)
@@ -86,8 +85,8 @@ struct GuestAgentStatusWindowTests {
 
         let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
         let status = try content(of: window)
-        let hub = try #require(instance.agentPresentation?.hub)
-        for row in GuestAgentStatusViewController.rows(hub) {
+        let presentation = try #require(instance.agentPresentation)
+        for row in GuestAgentStatusViewController.rows(presentation) {
             #expect(findLabel(withText: row.title, in: status.view) != nil, "\(row.title)")
         }
     }
@@ -168,7 +167,7 @@ struct GuestAgentStatusWindowTests {
                 bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
                 guestAgents: .none))
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
+        instance.beginSessionContextForTesting().hasAgentTransport = true
         fixture.registry.showGuestAgentStatus(for: instance)
         let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
         let status = try content(of: window)
