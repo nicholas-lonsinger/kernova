@@ -202,7 +202,7 @@ final class Landing {
         -> TreeReceiver<POSIXTreeFileSystem>
     {
         TreeReceiver(
-            name: name, accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem,
+            name: .exactly(name), accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem,
             destination: try openDestination(),
             destinationPathByteCount: destinationPath.utf8.count)
     }
@@ -215,12 +215,12 @@ final class Landing {
         var accepted = acceptance(storage, ceiling: ceiling)
         accepted.decmpfsTypes = decmpfsTypes
         return TreeWriter(
-            name: name, fileSystem: fileSystem, destination: try openDestination(),
+            name: .exactly(name), fileSystem: fileSystem, destination: try openDestination(),
             destinationPathByteCount: destinationPath.utf8.count, accepting: accepted, logger: logger)
     }
 
-    /// Feeds `container` in pieces of `pieceSize` bytes as the item `name`, then finishes, returning the landed
-    /// name or the failure.
+    /// Feeds `container` in pieces of `pieceSize` bytes as the item `name`, then finishes and publishes it,
+    /// returning the landed name or the failure.
     func land(
         _ container: Data, as name: [UInt8] = bytes("r"), accepting acceptance: ContainerAcceptance = acceptance(),
         pieceSize: Int? = nil
@@ -234,7 +234,8 @@ final class Landing {
                 try receiver.receive(container[start..<end])
                 start = end
             }
-            return try receiver.finish()
+            try receiver.finish()
+            return try receiver.publish()
         }
     }
 

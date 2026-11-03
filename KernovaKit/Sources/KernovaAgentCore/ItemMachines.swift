@@ -146,10 +146,13 @@ struct ItemMachines: Sendable {
         drag.answer(id, answer, connection: &connection)
     }
 
-    /// Pulls one representation of the far side's open offer.
-    mutating func pull(_ request: PullRequest, connection: inout Connection) -> Result<ItemPullID, WireError> {
-        transfer.pull(request, connection: &connection)
+    /// Pulls one representation of the far side's open offer, as `order` says.
+    mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
+        transfer.pull(order, connection: &connection)
     }
+
+    /// Whether a committed pull's publish report is still owed.
+    var hasLandingsInFlight: Bool { transfer.hasLandingsInFlight }
 
     /// Cancels a pull this side opened.
     mutating func cancel(_ id: ItemPullID, connection: inout Connection) {
