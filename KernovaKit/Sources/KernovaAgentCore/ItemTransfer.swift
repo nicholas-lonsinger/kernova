@@ -189,7 +189,7 @@ public enum ItemSinkInput: Sendable, Equatable {
 
 /// What the item-transfer machine tells its owner.
 public enum ItemTransferEvent: Sendable, Equatable {
-    /// The far side's offer arrived whole; `ItemTransfer.remoteItem` decodes each item when asked.
+    /// The far side's offer arrived whole; `ItemCommand.read` decodes each item when asked.
     case offerReceived(ItemSetHeaderValue)
     /// An offer of `FeatureID`'s is no longer valid. Once per offer.
     case offerEnded(FeatureID, ItemOfferOrigin, token: Data, StreamClosure)
@@ -285,11 +285,6 @@ public struct ItemTransfer: FeatureMachine {
         offers.handle(event, connection: &connection, events: &outbox)
         server.offersChanged(offers, connection: &connection)
         client.offersChanged(offers, connection: &connection)
-    }
-
-    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
-    public func remoteItem(token: Data, index: Int) -> OfferedItem? {
-        offers.remoteItem(token, index)
     }
 
     /// Opens an offer of `offer` on a stream of `kind`, an item-set offer kind this role opens; nil when sent,

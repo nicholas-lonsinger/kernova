@@ -7,6 +7,7 @@ import Foundation
 import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
+import KernovaAgentSimulation
 import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
@@ -261,9 +262,15 @@ enum Fixture {
     }
 }
 
-/// A host endpoint the test runs by hand as the far side of a scripted stream.
+/// A host endpoint the test runs by hand as the far side of a scripted stream; it serves every pull of its
+/// offers with `SimItems` containers.
 final class FarHost: Sendable {
-    private let endpoint: Locked<HostEndpoint>
+    private struct Far: Sendable {
+        var endpoint: HostEndpoint
+        var source = ContainerItemSource()
+    }
+
+    private let far: Locked<Far>
     private let clock: ManualScheduler
     /// Everything the host endpoint told its hub.
     let events = Recorder<HostEvent>()
@@ -273,15 +280,22 @@ final class FarHost: Sendable {
         generation: ConnectionGeneration = ConnectionGeneration(rawValue: 1)
     ) {
         self.clock = clock
-        endpoint = Locked(HostEndpoint(configuration, generation: generation, now: clock.now))
+        far = Locked(Far(endpoint: HostEndpoint(configuration, generation: generation, now: clock.now)))
+    }
+
+    /// A far host offering items on every item feature, with each enabled by its policy.
+    static func offeringItems(clock: ManualScheduler) -> FarHost {
+        var configuration = Fixture.hostConfiguration(policy: SimItems.policy(PolicySnapshot()))
+        configuration.items = SimItems.served
+        return FarHost(clock: clock, configuration: configuration)
     }
 
     /// Feeds the host endpoint what the peer wrote.
     func read(_ bytes: Data) {
         let now = clock.now
-        let events = endpoint.withLock { endpoint in
-            endpoint.receive(bytes, now: now)
-            return Self.drain(&endpoint)
+        let events = far.withLock { far in
+            far.endpoint.receive(bytes, now: now)
+            return Self.drain(&far, now)
         }
         events.forEach(self.events.record)
     }
@@ -289,35 +303,49 @@ final class FarHost: Sendable {
     /// Runs a hub command on the host endpoint.
     func command(_ command: HostCommand) {
         let now = clock.now
-        let events = endpoint.withLock { endpoint in
-            endpoint.handle(command, now: now)
-            return Self.drain(&endpoint)
+        let events = far.withLock { far in
+            far.endpoint.handle(command, now: now)
+            return Self.drain(&far, now)
         }
         events.forEach(self.events.record)
     }
 
     /// What the peer's Hello advertised for `feature`; nil before the Hello.
     func peerAdvert(_ feature: FeatureID) -> Availability<Data>? {
-        endpoint.withLock { $0.connection.remoteHello?.adverts.first { $0.feature == feature }?.advert.availability }
+        far.withLock {
+            $0.endpoint.connection.remoteHello?.adverts.first { $0.feature == feature }?.advert.availability
+        }
     }
 
     /// Everything the host endpoint has to send.
     func output() -> Data {
-        let (bytes, events) = endpoint.withLock { endpoint in
+        let now = clock.now
+        let (bytes, events) = far.withLock { far in
             var bytes = Data()
-            while let transmit = endpoint.pollTransmit(maxBytes: 1 << 20) {
+            var events: [HostEvent] = []
+            while let transmit = far.endpoint.pollTransmit(maxBytes: 1 << 20) {
                 for chunk in transmit.chunks { bytes.append(chunk) }
+                events += Self.drain(&far, now)
             }
-            return (bytes, Self.drain(&endpoint))
+            return (bytes, events + Self.drain(&far, now))
         }
         events.forEach(self.events.record)
         return bytes
     }
 
-    private static func drain(_ endpoint: inout HostEndpoint) -> [HostEvent] {
+    /// The endpoint's events, its item source's effects answered until it asks nothing more.
+    private static func drain(_ far: inout Far, _ now: CoreInstant) -> [HostEvent] {
+        var answered = true
+        while answered {
+            answered = false
+            while let effect = far.endpoint.pollEffect() {
+                guard case .itemSource(let effect) = effect, let input = far.source.handle(effect) else { continue }
+                far.endpoint.handle(.source(input), now: now)
+                answered = true
+            }
+        }
         var events: [HostEvent] = []
-        while let event = endpoint.pollEvent() { events.append(event) }
-        while endpoint.pollEffect() != nil {}
+        while let event = far.endpoint.pollEvent() { events.append(event) }
         return events
     }
 }
@@ -370,6 +398,7 @@ final class PeerDriverHarness: Sendable {
         case .updateAvailable: "updateAvailable"
         case .items: "items"
         case .dragTake: "dragTake"
+        case .itemReply: "itemReply"
         case .diagnostic: "diagnostic"
         case .closed: "closed"
         }

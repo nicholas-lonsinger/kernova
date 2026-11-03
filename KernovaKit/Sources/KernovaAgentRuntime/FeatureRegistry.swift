@@ -32,23 +32,43 @@ public struct PeerFeatureRegistry: Sendable {
     }
 }
 
-/// The adapters that move items' bytes: the source serves this side's offers, the sink lands the far
-/// side's. Without them, item transfer is advertised absent `NOT_IMPLEMENTED`.
+/// The adapters that move items' bytes, and the features that offer items over them: the source serves this
+/// side's offers, the sink lands the far side's. Without them, item transfer is advertised absent
+/// `NOT_IMPLEMENTED`, and so is every feature that offers items.
 public struct ItemAdapters: Sendable {
     /// Serves this side's offers.
     public var source: any ItemSource
     /// Lands the far side's offers.
     public var sink: any ItemSink
+    /// The features this side's owner handles, each one of `ItemFeatureAvailability.offering`: each is
+    /// advertised available where listed, and absent `NOT_IMPLEMENTED` otherwise.
+    public let features: Set<FeatureID>
 
-    /// Creates the adapters.
-    public init(source: any ItemSource, sink: any ItemSink) {
+    /// Creates the adapters, serving `features`.
+    public init(source: any ItemSource, sink: any ItemSink, features: Set<FeatureID> = []) {
+        assert(
+            features.isSubset(of: ItemFeatureAvailability.offering),
+            "\(features.subtracting(ItemFeatureAvailability.offering)) offer no items")
         self.source = source
         self.sink = sink
+        self.features = features
     }
 
-    /// Item transfer's availability on a connection these adapters, or none, serve.
-    static func availability(_ adapters: ItemAdapters?) -> Availability<NoParams> {
-        adapters == nil ? .absent(.notImplemented, debugDetail: "no adapter registered") : .available(NoParams())
+    /// What a connection these adapters, or none, serve advertises of item transfer and the features over it.
+    static func availability(_ adapters: ItemAdapters?) -> ItemFeatureAvailability {
+        guard let adapters else {
+            var none = ItemFeatureAvailability.notImplemented
+            none.itemTransfer = .absent(.notImplemented, debugDetail: "no adapter registered")
+            return none
+        }
+        var availability = ItemFeatureAvailability.notImplemented
+        availability.itemTransfer = .available(NoParams())
+        for feature in ItemFeatureAvailability.offering {
+            availability[offering: feature] =
+                adapters.features.contains(feature)
+                ? .available(NoParams()) : .absent(.notImplemented, debugDetail: "no handler registered")
+        }
+        return availability
     }
 }
 

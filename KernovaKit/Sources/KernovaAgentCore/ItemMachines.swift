@@ -34,6 +34,30 @@ public struct ItemFeatureAvailability: Sendable, Equatable {
         self.drag = drag
     }
 
+    /// The features that offer items over ITEM_TRANSFER, each one of this availability's entries.
+    public static let offering: Set<FeatureID> = [.clipboard, .drop, .drag]
+
+    /// The entry of `feature`, one of `offering`; nil for any other feature, and setting one changes nothing.
+    public subscript(offering feature: FeatureID) -> Availability<NoParams>? {
+        get {
+            switch feature {
+            case .clipboard: clipboard
+            case .drop: drop
+            case .drag: drag
+            default: nil
+            }
+        }
+        set {
+            guard let newValue else { return }
+            switch feature {
+            case .clipboard: clipboard = newValue
+            case .drop: drop = newValue
+            case .drag: drag = newValue
+            default: break
+            }
+        }
+    }
+
     /// What `role` advertises of this: a system peer serves no feature that offers items, which needs a GUI
     /// session (TN2083: a daemon cannot use the window server), so it advertises CLIPBOARD, DROP and DRAG
     /// absent `NOT_SERVED_BY_ROLE`; and a feature that offers items is absent wherever ITEM_TRANSFER, which

@@ -50,12 +50,16 @@ final class PeerRuntimeHarness: Sendable {
     let events = Recorder<PeerEvent>()
     let stops = Recorder<StopReason>()
     let runtime: PeerAgentRuntime
+    /// The host on the far side of each dialed stream.
+    private let far: @Sendable (ManualScheduler) -> FarHost
 
     init(
         power: FakePowerAdapter = FakePowerAdapter(handsOff: false), items: ItemAdapters? = nil,
-        state: PeerSessionState? = Fixture.peerState
+        state: PeerSessionState? = Fixture.peerState,
+        far: @escaping @Sendable (ManualScheduler) -> FarHost = { FarHost(clock: $0) }
     ) {
         self.power = power
+        self.far = far
         let events = events
         let stops = stops
         runtime = PeerAgentRuntime(
@@ -73,7 +77,7 @@ final class PeerRuntimeHarness: Sendable {
     func connect(_ number: Int) async -> RuntimeLink {
         var dials = dialer.dials.waiter()
         _ = await dials.next { $0 == number }
-        let link = RuntimeLink(clock: scheduler)
+        let link = RuntimeLink(far: far(scheduler))
         dialer.answer(number, .success(link.stream))
         var calls = link.stream.calls.waiter()
         _ = await calls.next { $0 == "start" }
@@ -93,8 +97,8 @@ final class RuntimeLink: Sendable {
     let stream = ScriptedStream()
     let far: FarHost
 
-    init(clock: ManualScheduler) {
-        far = FarHost(clock: clock)
+    init(far: FarHost) {
+        self.far = far
     }
 }
 

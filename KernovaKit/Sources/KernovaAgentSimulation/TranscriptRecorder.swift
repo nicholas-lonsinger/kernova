@@ -406,6 +406,11 @@ package final class Duet {
     private var itemSink = DecodingItemSink()
     /// The take the peer was asked about last, which `.answerTake` answers.
     private var lastTake: DragTakeID?
+    /// The item commands sent and not yet answered, each with the step's text.
+    private var asked: [ItemRequestID: String] = [:]
+    /// The item the last `.read` answered.
+    private var read: OfferedItem?
+    private var nextRequest: UInt64 = 0
     private lazy var bundleContent: Data? = TranscriptFixture.host(exchange.hostFixture)?.bundles.first.map {
         SimHub.expectedContent($0.manifest)
     }
@@ -488,31 +493,19 @@ package final class Duet {
             if post { peer.handle(.logs(.recordsAvailable), now: instant) }
         case .offer(let side, let feature, let name):
             guard let offer = TranscriptFixture.offer(name) else { break }
-            let refusal =
-                side == .host
-                ? host.offerItems(offer, feature: feature, now: instant)
-                : peer.offerItems(offer, feature: feature, now: instant)
-            if let refusal { failures.append("t=\(now): `\(input.text)` refused: \(refusal)") }
+            item(side, ask(input) { .offer($0, offer, feature: feature) })
         case .itemPull(let side, let request):
-            let item =
-                side == .host
-                ? host.remoteOfferItem(token: request.token, index: Int(request.item))
-                : peer.remoteOfferItem(token: request.token, index: Int(request.item))
-            let storage = item?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
+            // The landing takes the storage of the representation the pull names, so the item is read first.
+            read = nil
+            item(side, ask(input) { .read($0, token: request.token, item: request.item) })
+            drainAll()
+            let storage = read?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
             let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
-            let result =
-                side == .host
-                ? host.pullItem(order, now: instant)
-                : peer.pullItem(order, now: instant)
-            if case .failure(let error) = result { failures.append("t=\(now): `\(input.text)` refused: \(error)") }
-        case .withdraw(.host, let token): host.withdrawOffer(token, now: instant)
-        case .withdraw(.peer, let token): peer.withdrawOffer(token, now: instant)
-        case .release(.host, let token): host.releaseOffer(token, now: instant)
-        case .release(.peer, let token): peer.releaseOffer(token, now: instant)
+            item(side, ask(input) { .pull($0, order) })
+        case .withdraw(let side, let token): item(side, .withdraw(token: token))
+        case .release(let side, let token): item(side, .release(token: token))
         case .takeDrag(let token):
-            if case .failure(let error) = host.takeDrag(token, now: instant) {
-                failures.append("t=\(now): `\(input.text)` refused: \(error)")
-            }
+            item(.host, ask(input) { .takeDrag($0, token: token) })
         case .answerTake(let answer):
             guard let lastTake else {
                 failures.append("t=\(now): `\(input.text)` with no take asked")
@@ -521,6 +514,36 @@ package final class Duet {
             peer.handle(.dragTake(lastTake, answer), now: instant)
         }
         drainAll()
+    }
+
+    /// The command `build` makes around a fresh request id, whose refusal fails `input`.
+    private func ask(_ input: TranscriptInput, _ build: (ItemRequestID) -> ItemCommand) -> ItemCommand {
+        nextRequest += 1
+        let id = ItemRequestID(rawValue: nextRequest)
+        asked[id] = input.text
+        return build(id)
+    }
+
+    private func item(_ side: SimSide, _ command: ItemCommand) {
+        switch side {
+        case .host: host.handle(.items(command), now: instant)
+        case .peer: peer.handle(.itemCommand(command), now: instant)
+        }
+    }
+
+    /// Fails the step whose command `reply` refused.
+    private func answered(_ id: ItemRequestID, _ reply: ItemReply) {
+        guard let text = asked.removeValue(forKey: id) else {
+            return failures.append("t=\(now): an answer to no step")
+        }
+        let refusal: WireError? =
+            switch reply {
+            case .offered(let refusal): refusal
+            case .pulled(.failure(let error)), .took(.failure(let error)): error
+            case .pulled, .took, .read: nil
+            }
+        if case .read(let item) = reply { read = item }
+        if let refusal { failures.append("t=\(now): `\(text)` refused: \(refusal)") }
     }
 
     private func drainAll() {
@@ -542,6 +565,7 @@ package final class Duet {
             while let event = host.pollEvent() {
                 progressed = true
                 if case .diagnostic(.localFault(let text)) = event { localFaults.append("host: \(text)") }
+                if case .itemReply(let id, let reply) = event { answered(id, reply) }
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .host, text: text))
                 }
@@ -568,6 +592,7 @@ package final class Duet {
                 progressed = true
                 if case .diagnostic(.localFault(let text)) = event { localFaults.append("peer: \(text)") }
                 if case .dragTake(.requested(let id, _)) = event { lastTake = id }
+                if case .itemReply(let id, let reply) = event { answered(id, reply) }
                 if let text = TranscriptEvents.describe(event) {
                     items.append(.event(time: now, side: .peer, text: text))
                 }

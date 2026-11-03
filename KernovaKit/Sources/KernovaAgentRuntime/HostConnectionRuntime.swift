@@ -23,7 +23,7 @@ public final class HostConnectionRuntime: Sendable {
     private let generations = Locked<UInt64>(0)
 
     /// A runtime whose Hello carries `claim`, whose update pulls read from `payloadSource`, and whose item
-    /// transfer `items` serves; without them, item transfer is advertised absent `NOT_IMPLEMENTED`.
+    /// transfer and the features over it `items` serves, as ``ItemAdapters`` says.
     public init(
         claim: PeerClaim, scheduler: any RuntimeScheduler, payloadSource: any UpdatePayloadSource,
         items: ItemAdapters? = nil, logger: KernovaLogger, receiverPolicy: ReceiverPolicy = .production
@@ -50,7 +50,7 @@ public final class HostConnectionRuntime: Sendable {
         let token = Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
         var configuration = HostConfiguration(claim: claim, sessionToken: token, policy: policy, bundles: bundles)
         configuration.receiverPolicy = receiverPolicy
-        configuration.items.itemTransfer = ItemAdapters.availability(items)
+        configuration.items = ItemAdapters.availability(items)
         let source = payloadSource
         let items = items
         let itemConnection = ItemConnection(role: claim.role)

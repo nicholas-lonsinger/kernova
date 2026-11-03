@@ -56,6 +56,8 @@ public enum PeerInput: Sendable, Equatable {
     case items(ItemTransferInput)
     /// The answer to a take of this side's drag; one to a take already ended is dropped.
     case dragTake(DragTakeID, DragTakeAnswer)
+    /// Offer, withdraw, release, pull, cancel or read items; answered as `ItemCommand` says.
+    case itemCommand(ItemCommand)
 }
 
 /// What a peer endpoint asks its adapters and runtime to do.
@@ -86,6 +88,8 @@ public enum PeerEvent: Sendable, Equatable {
     case items(ItemTransferEvent)
     /// The host takes this side's drag.
     case dragTake(DragTakeEvent)
+    /// The answer to the `.itemCommand` input of this id.
+    case itemReply(ItemRequestID, ItemReply)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -192,6 +196,11 @@ public struct PeerEndpoint: Sendable {
             items.handle(input, connection: &connection, now: now)
         case .dragTake(let id, let answer):
             items.answer(id, answer, connection: &connection)
+        case .itemCommand(let command):
+            // Queued before the route below collects what the command caused, so the answer comes first.
+            if let (id, reply) = items.perform(command, connection: &connection) {
+                events.append(.itemReply(id, reply))
+            }
         }
         route(now)
     }
@@ -224,56 +233,6 @@ public struct PeerEndpoint: Sendable {
     }
 
     // MARK: Items
-
-    /// Offers `offer` on `feature`'s offer kind: CLIPBOARD, withdrawing this side's previous clipboard offer,
-    /// or DRAG; nil when opened, or why not (`UNSUPPORTED_KIND` for DROP, which only the host offers).
-    public mutating func offerItems(_ offer: ItemOffer, feature: FeatureID, now: CoreInstant) -> WireError? {
-        connection.tick(now)
-        route(now)
-        let refusal = items.offer(offer, feature: feature, connection: &connection)
-        route(now)
-        return refusal
-    }
-
-    /// Withdraws this side's offer of `token`; its `.offerEnded` follows.
-    public mutating func withdrawOffer(_ token: Data, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        items.withdraw(token, connection: &connection)
-        route(now)
-    }
-
-    /// Releases the far side's offer of `token`: this side pulls nothing more of it.
-    public mutating func releaseOffer(_ token: Data, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        items.release(token, connection: &connection)
-        route(now)
-    }
-
-    /// Pulls one representation of the far side's open offer, as `order` says: the pull's id, whose one
-    /// `.pullEnded` follows, or why it was not opened.
-    public mutating func pullItem(_ order: ItemPullOrder, now: CoreInstant) -> Result<ItemPullID, WireError> {
-        connection.tick(now)
-        route(now)
-        let result = items.pull(order, connection: &connection)
-        route(now)
-        return result
-    }
-
-    /// Cancels a pull this side opened; its `.pullEnded` follows.
-    public mutating func cancelPull(_ id: ItemPullID, now: CoreInstant) {
-        connection.tick(now)
-        route(now)
-        items.cancel(id, connection: &connection)
-        route(now)
-    }
-
-    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held. Each FILE and
-    /// FOLDER representation's name passes `PathComponent.isValid`, and each INLINE one's is empty.
-    public func remoteOfferItem(token: Data, index: Int) -> OfferedItem? {
-        items.transfer.remoteItem(token: token, index: index)
-    }
 
     package var itemOffers: ItemOfferRegistry { items.transfer.offers }
 
