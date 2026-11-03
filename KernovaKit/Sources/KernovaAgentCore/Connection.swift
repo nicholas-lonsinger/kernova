@@ -154,7 +154,7 @@ public struct Connection: Sendable {
         case .closing:
             finish()
         case .handshaking, .established:
-            closeAllStreams(.connectionLost, keepPendingResets: false)
+            closeAllStreams(.connectionLost, keepsCommitted: false)
             dropAllQueues()
             finish()
             emit(.closed(.transportLost))
@@ -189,12 +189,14 @@ public struct Connection: Sendable {
     }
 
     /// Closes the connection: queued session messages and control frames go
-    /// first, then RESET(0) carrying `code`; every stream closes at once.
+    /// first, then what a stream that already completed still has queued — its
+    /// END among it — then RESET(0) carrying `code`; every other stream closes
+    /// at once.
     public mutating func close(_ code: ErrorCode, retryAfter: CoreDuration?, now: CoreInstant) {
         tick(now)
         guard isAcceptingInput else { return }
         let error = WireError(code, retryAfter: retryAfter)
-        closeAllStreams(.connectionClosedLocally(error), keepPendingResets: true)
+        closeAllStreams(.connectionClosedLocally(error), keepsCommitted: true)
         enterClosing(error, drainsQueue: true)
     }
 

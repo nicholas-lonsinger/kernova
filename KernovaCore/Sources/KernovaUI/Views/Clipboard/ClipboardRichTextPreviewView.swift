@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaKit
 import KernovaLogging
 import UniformTypeIdentifiers
 
@@ -72,8 +73,16 @@ final class ClipboardRichTextPreviewView: NSView {
     ///
     /// Decodes with the RTFD document type for an RTFD flavor (so an inline image
     /// renders in place) and plain RTF otherwise. Returns `false` when the bytes
-    /// can't be decoded — the caller falls back to the summary.
+    /// can't be decoded, or the pasteboard screen refuses them, since decoding
+    /// RTFD opens what its file wrappers name — the caller falls back to the
+    /// summary.
     func configure(data: Data, uti: String) -> Bool {
+        guard ClipboardSnapshotPolicy.admits(data, servedAs: uti) else {
+            Self.logger.log(
+                .warning,
+                "Refused rich-text preview the clipboard screen does not admit (uti=\(uti, privacy: .public))")
+            return false
+        }
         let documentType: NSAttributedString.DocumentType =
             UTType(uti)?.needsRTFDDocumentType == true ? .rtfd : .rtf
         guard

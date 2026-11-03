@@ -206,6 +206,54 @@ struct POSIXTreeFileSystemTests {
         #endif
     }
 
+    @Test(
+        "a resource fork a ResourceForkWriter lands in 256 KiB pieces reads back whole and, on APFS, takes the blocks of one written whole",
+        arguments: [300_000, 5_000_000])
+    func resourceForkWriterBlocks(length: Int) throws {
+        let fileSystem = POSIXTreeFileSystem()
+        let top = try openScratch(on: fileSystem)
+        defer { fileSystem.close(top) }
+        let fork = (0..<length).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ ($0 >> 9)) }
+        let pieced = try fileSystem.createFile(Self.bytes("pieced"), in: top)
+        defer { fileSystem.close(pieced) }
+        var writer = ResourceForkWriter(length: UInt64(length))
+        var held = true
+        for start in stride(from: 0, to: length, by: 262_144) {
+            held = try fork[start..<min(start + 262_144, length)].withUnsafeBytes {
+                try writer.append($0, to: pieced, on: fileSystem)
+            }
+            guard held else { break }
+        }
+        #if canImport(Darwin)
+        #expect(held)
+        #expect(writer.byteCount == UInt64(length))
+        var read = [UInt8](repeating: 0, count: length)
+        var offset = 0
+        while offset < length {
+            let count = try read.withUnsafeMutableBytes { buffer in
+                try fileSystem.readResourceFork(
+                    pieced, into: UnsafeMutableRawBufferPointer(rebasing: buffer[offset...]), at: UInt64(offset),
+                    showingCompression: false)
+            }
+            try #require(count > 0)
+            offset += count
+        }
+        #expect(read == fork)
+        let whole = try fileSystem.createFile(Self.bytes("whole"), in: top)
+        defer { fileSystem.close(whole) }
+        #expect(try fork.withUnsafeBytes { try fileSystem.writeResourceFork(whole, from: $0, at: 0) })
+        func forkBlocks(_ name: String) throws -> Int64 {
+            var status = stat()
+            try #require(stat(scratch.path + "/" + name + "/..namedfork/rsrc", &status) == 0)
+            return Int64(status.st_blocks)
+        }
+        #expect(try forkBlocks("pieced") <= forkBlocks("whole"))
+        #else
+        #expect(!held)
+        #expect(writer.byteCount == 0)
+        #endif
+    }
+
     @Test("the scratch volume stores compressed files on Darwin's APFS, and none on Linux")
     func volumeCompression() throws {
         let fileSystem = POSIXTreeFileSystem()

@@ -102,11 +102,11 @@ struct InstallerTests {
     }
 
     /// The account's uid for a directory or file in the system root, the invoker's for every other path. The
-    /// `current` link stays the invoker's: the installer gives a link no owner, since that could only be done by
-    /// name, and a link's owner grants nothing.
+    /// `current` and `rollback` links stay the invoker's: the installer gives a link no owner, since that could
+    /// only be done by name, and a link's owner grants nothing.
     static func systemOwner(_ path: String) -> uid_t {
         let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
-        guard path != systemRoot.current else { return getuid() }
+        guard path != systemRoot.current, path != systemRoot.rollback else { return getuid() }
         return path == systemRoot.path || path.hasPrefix(systemRoot.path + "/") ? account : getuid()
     }
 
@@ -123,6 +123,7 @@ struct InstallerTests {
             "/home/pbear/.local/share/kernova-agent/slots/a/agent": "f0755",
             "/home/pbear/.local/share/kernova-agent/state.json": "f0644",
             "/home/pbear/.local/share/kernova-agent/current": "lslots/a",
+            "/home/pbear/.local/share/kernova-agent/rollback": "lslots/a",
             "/home/pbear/.config/services/agent.service": "f0644",
         ]) { $1 }
 
@@ -137,6 +138,7 @@ struct InstallerTests {
         "/opt/kernova-agent/slots/a/agent": "f0755",
         "/opt/kernova-agent/state.json": "f0644",
         "/opt/kernova-agent/current": "lslots/a",
+        "/opt/kernova-agent/rollback": "lslots/a",
         "/etc/services/agent.service": "f0644",
     ]) { $1 }
 
@@ -283,12 +285,12 @@ struct InstallerTests {
         #expect(FileManager.default.fileExists(atPath: dotfiles + "/agent.service"))
     }
 
-    /// `tree` after a reinstall over it: the spare slot filled and `current` switched to it.
+    /// `tree` after a reinstall over it: the spare slot filled, and `rollback` and `current` pointed at it.
     private static func reinstalled(_ tree: [String: String], root: InstallRoot, into slot: String) -> [String: String]
     {
         tree.merging([
             root.slot(slot): "d0755", root.slot(slot) + "/" + TestLander.name: "f0755",
-            root.current: "lslots/" + slot,
+            root.current: "lslots/" + slot, root.rollback: "lslots/" + slot,
         ]) { $1 }
     }
 
@@ -326,9 +328,23 @@ struct InstallerTests {
         try scratch.installer().run(Self.install(Self.user))
         #expect(
             try scratch.tree()
-                == Self.reinstalled(first, root: Self.userRoot, into: "b").merging([Self.userRoot.current: "lslots/a"])
-            { $1 })
+                == Self.reinstalled(first, root: Self.userRoot, into: "a").merging([
+                    Self.userRoot.slot("b"): "d0755", Self.userRoot.slot("b") + "/" + TestLander.name: "f0755",
+                ]) { $1 })
         try Self.checkState(scratch, Self.userRoot, active: "a")
+    }
+
+    @Test("A fresh install points rollback at the slot it lands, never leaving it naming another")
+    func freshInstallReplacesRollback() throws {
+        let scratch = try Scratch()
+        try scratch.installer().run(Self.install(Self.user))
+        let root = try SlotRoot(path: scratch.root + Self.userRoot.path)
+        try root.point(InstallRoot.currentLinkName, at: "b")
+        try root.point(InstallRoot.rollbackLinkName, at: "b")
+
+        try scratch.installer().run(Self.install(Self.user))
+        let links = try scratch.tree().filter { $0.key == Self.userRoot.current || $0.key == Self.userRoot.rollback }
+        #expect(links == [Self.userRoot.current: "lslots/a", Self.userRoot.rollback: "lslots/a"])
     }
 
     @Test(
@@ -345,7 +361,9 @@ struct InstallerTests {
         try Self.checkState(scratch, Self.systemRoot, active: "b")
     }
 
-    @Test("A refresh over files already holding what it writes writes nothing, and rewrites one that differs")
+    @Test(
+        "A refresh over files already holding what it writes writes nothing and answers none, and rewrites and answers one that differs"
+    )
     func unchangedRefresh() throws {
         let scratch = try Scratch()
         try scratch.installer().run(Self.install(Self.user))
@@ -353,14 +371,16 @@ struct InstallerTests {
         var before = stat()
         #expect(stat(definition, &before) == 0)
 
-        try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
+        #expect(try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user)).isEmpty)
         var unchanged = stat()
         #expect(stat(definition, &unchanged) == 0)
         #expect(unchanged.st_ino == before.st_ino)
         #expect(!FileManager.default.fileExists(atPath: definition + ".kernova-new"))
 
         #expect(chmod(definition, 0o600) == 0)
-        try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
+        #expect(
+            try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
+                == [Self.user.definition])
         var rewritten = stat()
         #expect(stat(definition, &rewritten) == 0)
         #expect(rewritten.st_ino != before.st_ino)

@@ -97,14 +97,17 @@ public struct Installer {
     }
 
     /// Runs `plan`'s ``InstallPlan/steps`` in order, handing `report` each one's description just before it
-    /// takes it; a command not run, as with `runsCommands` false or its path absent, is not reported.
-    public func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) {
+    /// takes it; a command not run, as with `runsCommands` false or its path absent, is not reported. Answers
+    /// the paths of the files it wrote: a file outside the root that already held its text is not among them.
+    @discardableResult
+    public func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) -> [String] {
         let source = try openPayload(plan)
         defer { if let source { close(source) } }
         // The root open for the steps below it: as found until the plan makes it, then as made and handed to
         // its owner, whose account the commands before it create.
         var root: Int32?
         var owner: Owner?
+        var written: [String] = []
         defer { if let root { close(root) } }
         for step in plan.steps {
             if case .run(let command) = step, !willRun(command) { continue }
@@ -124,8 +127,9 @@ public struct Installer {
             case .writeBelowRoot(let write):
                 guard let root else { preconditionFailure("\(step) before the root is made") }
                 try performBelow(root, plan.root, write, owner: owner, source: source)
+                if case .file(let path, _, _) = write { written.append(path) }
             case .write(let write):
-                try perform(write, source: source)
+                if try perform(write, source: source), case .file(let path, _, _) = write { written.append(path) }
             case .remove(let path):
                 try remove(path)
             case .removeRoot:
@@ -134,6 +138,7 @@ public struct Installer {
                 try removeRoot(plan.root)
             }
         }
+        return written
     }
 
     /// Empties the agent's root and removes it; a missing one is skipped.
@@ -174,20 +179,23 @@ public struct Installer {
 
     private func staged(_ path: String) -> String { stagingRoot + path }
 
-    private func perform(_ write: InstallPlan.Write, source: Int32?) throws(Failure) {
+    /// Carries out `write`: false when it found the file already holding its text, and wrote nothing.
+    private func perform(_ write: InstallPlan.Write, source: Int32?) throws(Failure) -> Bool {
         switch write {
         case .directory(let path, let mode):
             try makeDirectory(path, mode: mode)
+            return true
         case .file(let path, let mode, let text):
             let (parent, name) = try openParent(of: path)
             defer { close(parent) }
             let bytes = Array(text.utf8)
             // A service manager may act on any write to its files: on macOS 27.2, writing a launchd property list
             // raised a "Background Activity" notification (docs/research/2026-10-27-macos-guest-shutdown-via-loginwindow.md).
-            guard !Self.holds(parent, name, bytes, mode: mode) else { return }
+            guard !Self.holds(parent, name, bytes, mode: mode) else { return false }
             try Self.writeFile(in: parent, name, path: path, mode: mode, owner: nil) { descriptor throws(Failure) in
                 try Self.writeAll(bytes, to: descriptor, path: path)
             }
+            return true
         case .freshSlot:
             preconditionFailure("\(write) is written only below the agent's root")
         }
@@ -375,6 +383,9 @@ public struct Installer {
                 descriptor throws(Failure) in
                 try Self.writeAll(bytes, to: descriptor, path: installRoot.state)
             }
+            try replaceLink(
+                in: root, InstallRoot.rollbackLinkName, path: installRoot.rollback,
+                target: InstallRoot.slotsName + "/" + slot)
             try replaceLink(
                 in: root, InstallRoot.currentLinkName, path: installRoot.current,
                 target: InstallRoot.slotsName + "/" + slot)
