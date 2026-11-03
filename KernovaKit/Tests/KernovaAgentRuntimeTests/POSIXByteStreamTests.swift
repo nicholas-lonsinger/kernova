@@ -268,7 +268,8 @@ extension SocketTests {
             let before = cpu()
             try await Task.sleep(nanoseconds: 2_000_000_000)
             let after = cpu()
-            print("DIAG cpu seconds over 2 s on an errored socket: \(after - before); events: \(observed.events.elements)")
+            print("DIAG cpu seconds over 2 s on an errored socket: \(after - before)")
+            print("DIAG events: \(observed.events.elements)")
             observed.stream.shutdown()
             await observed.waitForRelease()
         }
