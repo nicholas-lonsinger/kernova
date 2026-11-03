@@ -131,9 +131,11 @@ struct LZ4Bench {
                     shrunk.append((index, encoded))
                     digest.add(encoded)
                 }
-                for decoder in Coder.allCases where decoder.decoded(encoded, size: block.count, in: workspace) != block {
+                for decoder in Coder.allCases where decoder.decoded(encoded, size: block.count, in: workspace) != block
+                {
                     KernovaBench.fail(
-                        "\(name) block \(index): \(encoder.rawValue)'s block does not decode through \(decoder.rawValue)")
+                        "\(name) block \(index): \(encoder.rawValue)'s block does not decode through \(decoder.rawValue)"
+                    )
                 }
             }
         }
@@ -201,16 +203,16 @@ struct LZ4Bench {
                 let next = Locked(0)
                 let started = DispatchTime.now().uptimeNanoseconds
                 DispatchQueue.concurrentPerform(iterations: threads) { thread in
-                        let workspace = workspaces[thread]
-                        while true {
-                            let taken = next.withLock { taken -> Int in
-                                defer { taken += 1 }
-                                return taken
-                            }
-                            guard taken < sample.count else { return }
-                            workspace.sink &+= work(coder, sample[taken], workspace)
+                    let workspace = workspaces[thread]
+                    while true {
+                        let taken = next.withLock { taken -> Int in
+                            defer { taken += 1 }
+                            return taken
                         }
+                        guard taken < sample.count else { return }
+                        workspace.sink &+= work(coder, sample[taken], workspace)
                     }
+                }
                 let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started) * 1e-9
                 rates[coder] = Double(sampleBytes) / elapsed / Double(1 << 30)
             }

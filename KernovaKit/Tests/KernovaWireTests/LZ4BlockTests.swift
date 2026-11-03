@@ -64,7 +64,7 @@ enum LZ4Corpus {
             // The first 300 bytes are random.
             inputs.append(Input(name: "mixed", bytes: mixed(size, seed: UInt64(size)), compressible: size > 300))
         }
-        for period in [1, 2, 3, 7, 19] {
+        for period in [1, 2, 3, 7, 8, 12, 16, 19] {
             let pattern = generator.bytes(period)
             var bytes = Data()
             while bytes.count < 10_000 { bytes.append(pattern) }

@@ -36,14 +36,11 @@ public enum LZ4Block {
         guard count > matchStartLimit else { return nil }
         // Room for one byte less than the input, so a block that is not smaller
         // stops being written as soon as it overflows.
-        var scratch = [UInt8](repeating: 0, count: count - 1)
-        let written = bytes.withUnsafeBytes { input in
-            scratch.withUnsafeMutableBytes { output in
-                compress(input, into: output)
-            }
-        }
-        guard let written else { return nil }
-        return Data(scratch[0..<written])
+        let scratch = UnsafeMutableRawBufferPointer.allocate(byteCount: count - 1, alignment: 8)
+        defer { scratch.deallocate() }
+        guard let written = bytes.withUnsafeBytes({ compress($0, into: scratch) }), let base = scratch.baseAddress
+        else { return nil }
+        return Data(bytes: base, count: written)
     }
 
     /// The bytes `block` holds, which must be exactly `decompressedSize` of them.
@@ -59,20 +56,37 @@ public enum LZ4Block {
         guard decompressedSize >= 0, decompressedSize <= ceiling else {
             throw .sizeOutOfRange(declared: decompressedSize, ceiling: ceiling)
         }
-        var output = Data(count: decompressedSize)
-        let result = block.withUnsafeBytes { input in
-            output.withUnsafeMutableBytes { output in
-                decompress(input, into: output)
-            }
+        // Uninitialized: a block that decodes writes every byte, and one that does not is discarded.
+        let storage = UnsafeMutableRawPointer.allocate(byteCount: max(decompressedSize, 1), alignment: 16)
+        if let error = block.withUnsafeBytes({ decompress($0, into: storage, count: decompressedSize) }) {
+            storage.deallocate()
+            throw error
         }
-        if let error = result { throw error }
-        return output
+        return Data(
+            bytesNoCopy: storage, count: decompressedSize, deallocator: .custom { pointer, _ in pointer.deallocate() })
     }
 
     // MARK: - Compression
 
     private static func readUInt32(_ buffer: UnsafeRawBufferPointer, _ offset: Int) -> UInt32 {
         buffer.loadUnaligned(fromByteOffset: offset, as: UInt32.self)
+    }
+
+    /// How many bytes from `start` match those from `reference`, stopping at `limit`, compared a word at a time.
+    private static func commonPrefix(_ input: UnsafeRawBufferPointer, _ start: Int, _ reference: Int, limit: Int) -> Int
+    {
+        var length = 0
+        while start + length + 8 <= limit {
+            let difference =
+                input.loadUnaligned(fromByteOffset: start + length, as: UInt64.self)
+                ^ input.loadUnaligned(fromByteOffset: reference + length, as: UInt64.self)
+            if difference != 0 { return length + UInt64(littleEndian: difference).trailingZeroBitCount / 8 }
+            length += 8
+        }
+        while start + length < limit, input[start + length] == input[reference + length] {
+            length += 1
+        }
+        return length
     }
 
     private static func hash(_ sequence: UInt32) -> Int {
@@ -84,12 +98,12 @@ public enum LZ4Block {
         let count = input.count
         let lastMatchStart = count - matchStartLimit
         let matchEndLimit = count - lastLiterals
-        var table = [Int32](repeating: -1, count: 1 << hashBits)
         var writer = Writer(output: output)
         var anchor = 0
         var position = 0
 
-        return table.withUnsafeMutableBufferPointer { table -> Int? in
+        return withUnsafeTemporaryAllocation(of: Int32.self, capacity: 1 << hashBits) { table -> Int? in
+            table.initialize(repeating: -1)
             while true {
                 // Find a match; the stride grows over incompressible stretches.
                 var reference = -1
@@ -115,10 +129,8 @@ public enum LZ4Block {
                     position -= 1
                     reference -= 1
                 }
-                var length = minMatch
-                while position + length < matchEndLimit, input[position + length] == input[reference + length] {
-                    length += 1
-                }
+                let length =
+                    minMatch + commonPrefix(input, position + minMatch, reference + minMatch, limit: matchEndLimit)
                 guard
                     writer.writeSequence(
                         input, literalsFrom: anchor, to: position, offset: position - reference, matchLength: length)
@@ -192,12 +204,39 @@ public enum LZ4Block {
 
     // MARK: - Decompression
 
-    /// Nil on success. Every read is checked against `input` and every write against `output`.
+    /// Copies `count` bytes forward eight at a time, writing up to 7 bytes past `destination + count`.
+    ///
+    /// Sound for a match whose source starts at least 8 bytes before `destination`: each word it reads was
+    /// written before it is read.
+    private static func copyWords(_ destination: UnsafeMutableRawPointer, from source: UnsafeRawPointer, count: Int) {
+        var copied = 0
+        repeat {
+            destination.storeBytes(
+                of: source.loadUnaligned(fromByteOffset: copied, as: UInt64.self), toByteOffset: copied,
+                as: UInt64.self)
+            copied &+= 8
+        } while copied < count
+    }
+
+    /// `copyWords(_:from:count:)` sixteen bytes at a time, for a source at least 16 bytes before `destination`;
+    /// writes up to 15 bytes past `destination + count`.
+    private static func copyWides(_ destination: UnsafeMutableRawPointer, from source: UnsafeRawPointer, count: Int) {
+        var copied = 0
+        repeat {
+            destination.storeBytes(
+                of: source.loadUnaligned(fromByteOffset: copied, as: SIMD16<UInt8>.self), toByteOffset: copied,
+                as: SIMD16<UInt8>.self)
+            copied &+= 16
+        } while copied < count
+    }
+
+    /// Nil on success. Every read is checked against `input` and every write against the `outputCount` bytes
+    /// at `output`; nothing is written past them, and on success every one of them was written.
     private static func decompress(
-        _ input: UnsafeRawBufferPointer, into output: UnsafeMutableRawBufferPointer
+        _ input: UnsafeRawBufferPointer, into output: UnsafeMutableRawPointer, count outputEnd: Int
     ) -> LZ4BlockError? {
+        guard let inputBase = input.baseAddress else { return .truncated }
         let inputEnd = input.count
-        let outputEnd = output.count
         var source = 0
         var destination = 0
 
@@ -205,7 +244,7 @@ public enum LZ4Block {
         func readExtension(_ value: inout Int, limit: Int) -> LZ4BlockError? {
             while true {
                 guard source < inputEnd else { return .truncated }
-                let byte = Int(input[source])
+                let byte = Int(inputBase.load(fromByteOffset: source, as: UInt8.self))
                 source += 1
                 value += byte
                 guard value <= limit else { return .outputOverrun }
@@ -215,15 +254,17 @@ public enum LZ4Block {
 
         while true {
             guard source < inputEnd else { return .truncated }
-            let token = Int(input[source])
+            let token = Int(inputBase.load(fromByteOffset: source, as: UInt8.self))
             source += 1
 
             var literalCount = token >> 4
             if literalCount == 15, let error = readExtension(&literalCount, limit: outputEnd) { return error }
             guard literalCount <= inputEnd - source else { return .truncated }
             guard literalCount <= outputEnd - destination else { return .outputOverrun }
-            if literalCount > 0, let from = input.baseAddress, let to = output.baseAddress {
-                (to + destination).copyMemory(from: from + source, byteCount: literalCount)
+            if literalCount <= 16, inputEnd - source >= 16, outputEnd - destination >= 16 {
+                copyWords(output + destination, from: inputBase + source, count: 16)
+            } else if literalCount > 0 {
+                (output + destination).copyMemory(from: inputBase + source, byteCount: literalCount)
             }
             source += literalCount
             destination += literalCount
@@ -234,7 +275,9 @@ public enum LZ4Block {
             }
 
             guard inputEnd - source >= 2 else { return .truncated }
-            let offset = Int(input[source]) | Int(input[source + 1]) << 8
+            let offset =
+                Int(inputBase.load(fromByteOffset: source, as: UInt8.self))
+                | Int(inputBase.load(fromByteOffset: source + 1, as: UInt8.self)) << 8
             source += 2
             guard offset > 0, offset <= destination else { return .badOffset }
 
@@ -242,18 +285,30 @@ public enum LZ4Block {
             if matchLength == 15, let error = readExtension(&matchLength, limit: outputEnd) { return error }
             matchLength += minMatch
             guard matchLength <= outputEnd - destination else { return .outputOverrun }
-            if offset >= matchLength, let base = output.baseAddress {
-                (base + destination).copyMemory(from: base + destination - offset, byteCount: matchLength)
-                destination += matchLength
+            let target = output + destination
+            if matchLength <= 18, offset >= 8, outputEnd - destination >= 24 {
+                // The common short match, a fixed 24 bytes with no loop.
+                copyWords(target, from: target - offset, count: 24)
+            } else if offset >= 16, matchLength <= 64 || offset < matchLength,
+                outputEnd - destination - matchLength >= 16
+            {
+                copyWides(target, from: target - offset, count: matchLength)
+            } else if offset >= 8, matchLength <= 64 || offset < matchLength, outputEnd - destination - matchLength >= 8
+            {
+                copyWords(target, from: target - offset, count: matchLength)
+            } else if offset >= matchLength {
+                target.copyMemory(from: target - offset, byteCount: matchLength)
             } else {
-                // Byte by byte: the match overlaps the bytes it is producing.
-                var from = destination - offset
-                for _ in 0..<matchLength {
-                    output[destination] = output[from]
-                    destination += 1
-                    from += 1
+                // The match overlaps the bytes it produces, so it repeats the `offset` bytes before it. Each copy
+                // doubles what has been produced, reading only bytes already written.
+                var copied = 0
+                while copied < matchLength {
+                    let chunk = min(copied + offset, matchLength - copied)
+                    (target + copied).copyMemory(from: target - offset, byteCount: chunk)
+                    copied += chunk
                 }
             }
+            destination += matchLength
         }
     }
 }
