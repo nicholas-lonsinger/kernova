@@ -132,10 +132,45 @@ public enum FeatureStatus {
     }
 }
 
+// MARK: - Console authority
+
+/// The hub's view of one connected peer, for deciding whose session owns the console.
+public protocol ConsolePeer {
+    /// The hub's handle.
+    var handle: PeerHandle { get }
+    /// Its role.
+    var role: PeerRole { get }
+    /// Its latest state.
+    var state: PeerSessionState { get }
+    /// Its connection order; higher is newer.
+    var connectedOrder: UInt64 { get }
+}
+
+/// Which session peers speak for the guest's console. A system peer that knows the console names the
+/// session that owns it; without one, or with one that does not know, each session peer's own report
+/// decides.
+public enum ConsoleAuthority {
+    /// The session peers of the session that owns the console, newest first; none while the system peer
+    /// reports the console off.
+    public static func consolePeers<Peer: ConsolePeer>(_ peers: [Peer]) -> [Peer] {
+        let sessions = peers.filter { $0.role == .sessionPeer }
+        let owners: [Peer]
+        switch peers.first(where: { $0.role == .systemPeer })?.state {
+        case let system? where system.console == .on:
+            owners = sessions.filter { $0.state.sessionID == system.consoleSessionID }
+        case let system? where system.console == .off:
+            owners = []
+        default:
+            owners = sessions.filter { $0.state.console == .on }
+        }
+        return owners.sorted { $0.connectedOrder > $1.connectedOrder }
+    }
+}
+
 // MARK: - Power routing
 
 /// The hub's view of one connected peer, for routing.
-public struct RoutingPeer: Sendable, Equatable {
+public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
     /// The hub's handle.
     public var handle: PeerHandle
     /// Its role.
@@ -273,24 +308,13 @@ public struct PowerRouting: Sendable {
         outputs.isEmpty ? nil : outputs.removeFirst()
     }
 
-    /// The candidates for `action` in order, excluding `asked`.
+    /// The candidates for `action` in order, excluding `asked`: `ConsoleAuthority`'s console peers, then the
+    /// system peer.
     public static func candidates(for action: PowerAction, peers: [RoutingPeer], excluding asked: [PeerHandle])
         -> [PeerHandle]
     {
         let eligible = peers.filter { $0.powerUsable && $0.actions.contains(action) && !asked.contains($0.handle) }
-        let sessions = peers.filter { $0.role == .sessionPeer }
-        let consoleOwners: [RoutingPeer]
-        switch peers.first(where: { $0.role == .systemPeer })?.state {
-        case let system? where system.console == .on:
-            consoleOwners = sessions.filter { $0.state.sessionID == system.consoleSessionID }
-        case let system? where system.console == .off:
-            consoleOwners = []
-        default:
-            // No system peer, or one that does not know: no console authority, so
-            // each session peer's own report decides.
-            consoleOwners = sessions.filter { $0.state.console == .on }
-        }
-        let consoleHandles = consoleOwners.sorted { $0.connectedOrder > $1.connectedOrder }.map(\.handle)
+        let consoleHandles = ConsoleAuthority.consolePeers(peers).map(\.handle)
         let systemHandles = peers.filter { $0.role == .systemPeer }.map(\.handle)
         return (consoleHandles + systemHandles).filter { handle in eligible.contains { $0.handle == handle } }
     }

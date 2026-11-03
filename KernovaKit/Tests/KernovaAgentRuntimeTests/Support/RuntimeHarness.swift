@@ -52,13 +52,14 @@ final class PeerRuntimeHarness: Sendable {
     let runtime: PeerAgentRuntime
 
     init(
-        power: FakePowerAdapter = FakePowerAdapter(handsOff: false), state: PeerSessionState? = Fixture.peerState
+        power: FakePowerAdapter = FakePowerAdapter(handsOff: false), items: ItemAdapters? = nil,
+        state: PeerSessionState? = Fixture.peerState
     ) {
         self.power = power
         let events = events
         let stops = stops
         runtime = PeerAgentRuntime(
-            claim: Fixture.peerClaim, state: state, registry: PeerFeatureRegistry(power: power),
+            claim: Fixture.peerClaim, state: state, registry: PeerFeatureRegistry(power: power, items: items),
             dialer: dialer, scheduler: scheduler, logger: Fixture.logger,
             handlers: PeerAgentRuntime.Handlers(event: { events.record($0) }, stop: { stops.record($0) }))
     }
@@ -131,12 +132,17 @@ final class FarPeer: Sendable {
         }
     }
 
+    /// What the host's Hello advertised for `feature`; nil before the Hello.
+    func hostAdvert(_ feature: FeatureID) -> Availability<Data>? {
+        endpoint.withLock { $0.connection.remoteHello?.adverts.first { $0.feature == feature }?.advert.availability }
+    }
+
     private static func answer(_ endpoint: inout PeerEndpoint, _ now: CoreInstant) {
         while let effect = endpoint.pollEffect() {
             switch effect {
             case .update(.payload(let id, let bytes)): endpoint.handle(.update(.consumed(id, bytes.count)), now: now)
             case .update(.complete(let id, _)): endpoint.handle(.update(.installed(id)), now: now)
-            case .power, .logs, .update: break
+            case .power, .logs, .update, .itemSource, .itemSink: break
             }
         }
         while endpoint.pollEvent() != nil {}

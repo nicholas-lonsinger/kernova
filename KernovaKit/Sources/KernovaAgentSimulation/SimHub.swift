@@ -189,6 +189,8 @@ package final class SimHub {
             }
         case .update(let serve):
             handleUpdate(serve, link: link, world: world)
+        case .items(let event):
+            world.itemOutput(.event(event), link: link, side: .host)
         case .diagnostic(let diagnostic):
             world.log("host diagnostic: \(diagnostic)")
         case .closed(let closure):
@@ -250,12 +252,16 @@ package final class SimHub {
         }
     }
 
-    /// The payload source: each read is served from the content its manifest names.
+    /// The payload source, each read served from the content its manifest names, and the link's item side.
     func handle(_ effect: HostEffect, link: SimLink, world: SimWorld) {
         switch effect {
         case .read(let id, let manifest, let offset, let maxBytes):
             let bytes = FixturePayloadSource.read(world.content(of: manifest), offset: offset, maxBytes: maxBytes)
             world.hostPayload(.bytes(id, bytes), link: link, after: options.payloadSourceDelay)
+        case .itemSource(let effect):
+            world.itemOutput(.source(effect), link: link, side: .host)
+        case .itemSink(let effect):
+            world.itemOutput(.sink(effect), link: link, side: .host)
         }
     }
 

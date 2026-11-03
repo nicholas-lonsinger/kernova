@@ -123,14 +123,14 @@ package final class HostileRun {
     private var outbound = FrameDecoder()
     package private(set) var written: [Frame] = []
     package private(set) var hostEvents: [HostEvent] = []
-    /// The host endpoint's payload reads, in order.
+    /// The host endpoint's effects, in order.
     package private(set) var hostEffects: [HostEffect] = []
     package private(set) var peerEvents: [PeerEvent] = []
     package private(set) var peerEffects: [PeerEffect] = []
     package private(set) var trace: [ConnectionTrace] = []
     /// While set, nothing is taken from `pollTransmit`: the far side reads nothing.
     package var writerStalled = false
-    /// The endpoint's item-transfer outputs, in order; its source and sink answer each at once.
+    /// The endpoint's item-transfer effects and events; its source and sink answer each effect at once.
     package private(set) var itemOutputs: [ItemTransferOutput] = []
     package var itemSource = ContainerItemSource()
     package private(set) var itemSink = DecodingItemSink()
@@ -281,35 +281,34 @@ package final class HostileRun {
         var progressed = true
         while progressed {
             progressed = false
-            while let output = host?.pollItemTransfer() ?? peer?.pollItemTransfer() {
+            // Effects before events: a pull's `.commit` or `.abort` before its `.pullEnded`, as the machine emits them.
+            while let effect = host?.pollEffect() {
+                hostEffects.append(effect)
                 progressed = true
-                itemOutputs.append(output)
-                let input: ItemTransferInput?
-                switch output {
-                case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
-                case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
-                case .event: input = nil
+                switch effect {
+                case .itemSource(let effect): item(.source(effect))
+                case .itemSink(let effect): item(.sink(effect))
+                case .read: break
                 }
-                if let input {
-                    host?.handle(itemTransfer: input, now: now)
-                    peer?.handle(itemTransfer: input, now: now)
+            }
+            while let effect = peer?.pollEffect() {
+                peerEffects.append(effect)
+                progressed = true
+                switch effect {
+                case .itemSource(let effect): item(.source(effect))
+                case .itemSink(let effect): item(.sink(effect))
+                case .power, .logs, .update: break
                 }
             }
             while let event = host?.pollEvent() {
                 hostEvents.append(event)
                 progressed = true
+                if case .items(let event) = event { itemOutputs.append(.event(event)) }
             }
             while let event = peer?.pollEvent() {
                 peerEvents.append(event)
                 progressed = true
-            }
-            while let effect = peer?.pollEffect() {
-                peerEffects.append(effect)
-                progressed = true
-            }
-            while let effect = host?.pollEffect() {
-                hostEffects.append(effect)
-                progressed = true
+                if case .items(let event) = event { itemOutputs.append(.event(event)) }
             }
             while !writerStalled,
                 let transmit = host?.pollTransmit(maxBytes: 1 << 20) ?? peer?.pollTransmit(maxBytes: 1 << 20)
@@ -325,6 +324,20 @@ package final class HostileRun {
         }
         trace += host?.takeTrace() ?? []
         trace += peer?.takeTrace() ?? []
+    }
+
+    /// Records an item effect and answers it at once from the item source or sink.
+    private func item(_ output: ItemTransferOutput) {
+        itemOutputs.append(output)
+        let input: ItemTransferInput?
+        switch output {
+        case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
+        case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
+        case .event: input = nil
+        }
+        guard let input else { return }
+        host?.handle(input, now: now)
+        peer?.handle(.items(input), now: now)
     }
 
     /// Properties 1 and 3 over the endpoint's trace.
