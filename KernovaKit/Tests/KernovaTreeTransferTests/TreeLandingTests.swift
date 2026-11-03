@@ -130,7 +130,8 @@ struct TreeLandingTests {
             for (position, piece) in pieces.enumerated() {
                 // Every third run of zeros travels as bytes, so the writer finds those holes itself.
                 if piece.isBytes || position % 3 == 2 {
-                    let bytes = piece.isBytes ? pattern(piece.count, seed: UInt8(truncatingIfNeeded: index)) : Data(count: piece.count)
+                    let seed = UInt8(truncatingIfNeeded: index)
+                    let bytes = piece.isBytes ? pattern(piece.count, seed: seed) : Data(count: piece.count)
                     var start = 0
                     while start < bytes.count {
                         let end = min(start + ContainerRecord.maxChunkPayload, bytes.count)

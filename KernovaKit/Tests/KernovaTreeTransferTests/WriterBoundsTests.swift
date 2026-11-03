@@ -115,7 +115,8 @@ struct WriterBoundsTests {
             var link = symlinkEntry("s", depth: 1, target: "t")
             link.symlinkTarget = target
             #expect(
-                Self.failure(writing: [.enterDirectory(directory("r", depth: 0)), .symlink(link)], to: try landing.writer())
+                Self.failure(
+                    writing: [.enterDirectory(directory("r", depth: 0)), .symlink(link)], to: try landing.writer())
                     == TreeWriteFailure(
                         path: [bytes("r"), bytes("s")], reason: .event(.invalidEntry(.invalidSymlinkTarget))))
         }
@@ -125,11 +126,12 @@ struct WriterBoundsTests {
     @Test("zero-length bytes and zeros are refused, held or written", arguments: [UInt64(3), largeFileSize])
     func emptyPiecesAreRefused(size: UInt64) throws {
         let landing = try Landing(kernelContainment: true)
+        let opening: [TreeEvent] = [
+            .enterDirectory(directory("r", depth: 0)), .beginFile(file("f", depth: 1, size: size)),
+        ]
         for piece in [TreeEvent.bytes(Data()), .zeros(0)] {
             #expect(
-                Self.failure(
-                    writing: [.enterDirectory(directory("r", depth: 0)), .beginFile(file("f", depth: 1, size: size)), piece],
-                    to: try landing.writer())
+                Self.failure(writing: opening + [piece], to: try landing.writer())
                     == TreeWriteFailure(path: [bytes("r"), bytes("f")], reason: .event(.emptyPiece)))
         }
         try landing.expectNothingOutside()

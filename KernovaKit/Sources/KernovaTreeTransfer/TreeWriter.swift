@@ -201,7 +201,9 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             try TreeRemoval.remove(stagingName, in: destination, on: fileSystem)
         } catch {
             let name = String(decoding: stagingName, as: UTF8.self)
-            logger.log(.error, "Could not remove the staging root \(name, privacy: .public): \(String(describing: error), privacy: .public)")
+            let reason = String(describing: error)
+            logger.log(
+                .error, "Could not remove the staging root \(name, privacy: .public): \(reason, privacy: .public)")
         }
     }
 
