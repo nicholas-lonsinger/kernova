@@ -89,12 +89,11 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
 
     /// `readlinkat`.
     public func linkTarget(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> [UInt8] {
-        var buffer = [UInt8](repeating: 0, count: Int(PATH_MAX) + 1)
-        let count = try Self.call(name) { name in
-            buffer.withUnsafeMutableBytes { raw in readlinkat(directory, name, raw.baseAddress, raw.count) }
-        }
-        guard count < buffer.count else { throw TreeFileSystemError(code: ENAMETOOLONG) }
-        return Array(buffer[..<count])
+        let capacity = Int(PATH_MAX) + 1
+        var buffer = [CChar](repeating: 0, count: capacity)
+        let count = try Self.call(name) { name in readlinkat(directory, name, &buffer, capacity) }
+        guard count < capacity else { throw TreeFileSystemError(code: ENAMETOOLONG) }
+        return buffer[..<count].map { UInt8(truncatingIfNeeded: $0) }
     }
 
     /// `read(2)`.
