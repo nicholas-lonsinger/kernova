@@ -125,7 +125,7 @@ struct DecoderRobustnessTests {
 
     @Test("After an error the decoder repeats it")
     func errorIsSticky() {
-        var decoder = ContainerDecoder(accepting: generous)
+        var decoder = ContainerDecoder(accepting: generous())
         decoder.feed(Data([0x09]))
         #expect(throws: ContainerError.unknownRecordKind(9)) { try decoder.next() }
         decoder.feed(GoldenVectorTests.header)
@@ -163,13 +163,13 @@ struct DecoderMemoryCeilingTests {
     func oversizeRecordRefusedFromPrefix() {
         for kind in ContainerRecordKind.allCases {
             let length = UInt32(kind.payloadLengths.upperBound + 1)
-            var decoder = ContainerDecoder(accepting: generous)
+            var decoder = ContainerDecoder(accepting: generous())
             decoder.feed(Data([kind.rawValue]) + littleEndian(length))
             #expect(throws: ContainerError.recordLengthOutOfRange(kind: kind, length: Int(length))) {
                 try decoder.next()
             }
         }
-        var decoder = ContainerDecoder(accepting: generous)
+        var decoder = ContainerDecoder(accepting: generous())
         decoder.feed(Data([ContainerRecordKind.chunk.rawValue]) + littleEndian(UInt32.max))
         #expect(throws: ContainerError.recordLengthOutOfRange(kind: .chunk, length: Int(UInt32.max))) {
             try decoder.next()
@@ -188,7 +188,7 @@ struct DecoderMemoryCeilingTests {
 
     @Test("An entry whose size passes the ceiling is refused at its header, before any chunk")
     func ceilingCheckedAtHeader() {
-        let acceptance = ContainerAcceptance(byteCeiling: 100, decmpfsTypes: [], acceptsLZ4: false)
+        let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 100, decmpfsTypes: [], acceptsLZ4: false)
         var decoder = ContainerDecoder(accepting: acceptance)
         decoder.feed(headerRecord(plainFile("f", depth: 0, size: UInt64.max)))
         #expect(throws: ContainerError.exceedsByteCeiling(declared: UInt64.max, ceiling: 100)) { try decoder.next() }

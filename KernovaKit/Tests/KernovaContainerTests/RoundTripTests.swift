@@ -81,7 +81,7 @@ struct RoundTripTests {
 
     @Test("A zero run spans the encoder's calls")
     func zeroRunAcrossCalls() throws {
-        var encoder = ContainerEncoder(accepting: generous, policy: .never)
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         var container = try encoder.entry(plainFile("z", depth: 0, size: 300))
         for _ in 0..<3 {
             let records = try encoder.bytes(Data(count: 100))
@@ -102,7 +102,7 @@ struct RoundTripTests {
 
     @Test("The encoder refuses bytes past an entry's size, an end with an entry incomplete, and records after the end")
     func encoderRefusals() throws {
-        var encoder = ContainerEncoder(accepting: generous, policy: .never)
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         _ = try encoder.entry(plainFile("f", depth: 0, size: 3))
         #expect(throws: ContainerError.chunkPastEntrySize(count: 4, remaining: 3)) { try encoder.bytes(Data(count: 4)) }
         _ = try encoder.bytes(Data([1, 2]))
@@ -111,11 +111,11 @@ struct RoundTripTests {
         _ = try encoder.end()
         #expect(throws: ContainerError.bytesAfterEnd) { try encoder.entry(plainFile("g", depth: 1, size: 0)) }
 
-        var empty = ContainerEncoder(accepting: generous, policy: .never)
+        var empty = ContainerEncoder(accepting: generous(), policy: .never)
         #expect(throws: ContainerError.noEntry) { try empty.end() }
-        var orphan = ContainerEncoder(accepting: generous, policy: .never)
+        var orphan = ContainerEncoder(accepting: generous(), policy: .never)
         #expect(throws: ContainerError.chunkOutsideEntry) { try orphan.bytes(Data([1])) }
-        var deep = ContainerEncoder(accepting: generous, policy: .never)
+        var deep = ContainerEncoder(accepting: generous(.folder), policy: .never)
         _ = try deep.entry(directory("d", depth: 0))
         #expect(throws: ContainerError.depthBeyondParent(depth: 2, enteredDirectories: 1)) {
             try deep.entry(plainFile("f", depth: 2, size: 0))

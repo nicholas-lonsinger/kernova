@@ -19,6 +19,15 @@ struct ContainerLimitTests {
         return container + endRecord(entries: 1, bytes: UInt64(bytes.count))
     }
 
+    /// A folder container holding `header` at depth 1, carrying `bytes`.
+    static func inFolder(_ header: EntryHeader, bytes: Data = Data()) -> Data {
+        var entry = header
+        entry.depth = 1
+        var container = headerRecord(directory("root", depth: 0)) + headerRecord(entry)
+        if !bytes.isEmpty { container += record(.chunk, bytes) }
+        return container + endRecord(entries: 2, bytes: UInt64(bytes.count))
+    }
+
     // MARK: Record sizes
 
     /// A FILE header padded with an extended attribute to serialize to exactly `byteCount` bytes.
@@ -41,13 +50,13 @@ struct ContainerLimitTests {
         let edge = Self.header(serializingTo: ContainerRecord.maxHeaderPayload)
         #expect(serialized(edge).count == 65_536)
         #expect(decodingError(Self.single(edge)) == nil)
-        var encoder = ContainerEncoder(accepting: generous, policy: .never)
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         _ = try encoder.entry(edge)
 
         let past = Self.header(serializingTo: ContainerRecord.maxHeaderPayload + 1)
         let pastRecord = rawRecord(kind: ContainerRecordKind.header.rawValue, payload: serialized(past))
         #expect(decodingError(pastRecord) == .recordLengthOutOfRange(kind: .header, length: 65_537))
-        var refusing = ContainerEncoder(accepting: generous, policy: .never)
+        var refusing = ContainerEncoder(accepting: generous(), policy: .never)
         #expect(throws: ContainerError.recordLengthOutOfRange(kind: .header, length: 65_537)) {
             try refusing.entry(past)
         }
@@ -106,7 +115,7 @@ struct ContainerLimitTests {
 
     @Test("The byte ceiling counts every entry: a total at it decodes, one byte more is refused at the header")
     func byteCeiling() throws {
-        let acceptance = ContainerAcceptance(byteCeiling: 300, decmpfsTypes: [], acceptsLZ4: false)
+        let acceptance = ContainerAcceptance(storage: .folder, byteCeiling: 300, decmpfsTypes: [], acceptsLZ4: false)
         func container(secondSize: UInt64) -> Data {
             headerRecord(directory("d", depth: 0))
                 + headerRecord(plainFile("a", depth: 1, size: 200)) + zeroRunRecord(200)
@@ -134,8 +143,9 @@ struct ContainerLimitTests {
         pull.decmpfsTypes = [3, 4]
         pull.codecs = [.lz4]
         #expect(
-            ContainerAcceptance(pull) == ContainerAcceptance(byteCeiling: 12, decmpfsTypes: [3, 4], acceptsLZ4: true))
-        #expect(!ContainerAcceptance(PullRequest()).acceptsLZ4)
+            ContainerAcceptance(pull, storage: .file)
+                == ContainerAcceptance(storage: .file, byteCeiling: 12, decmpfsTypes: [3, 4], acceptsLZ4: true))
+        #expect(!ContainerAcceptance(PullRequest(), storage: .inline).acceptsLZ4)
     }
 
     // MARK: Counts
@@ -182,7 +192,7 @@ struct ContainerLimitTests {
 
     @Test("LZ4 storage needs the pull's codec, and an LZ4 chunk needs LZ4 storage")
     func lz4Acceptance() {
-        let noLZ4 = ContainerAcceptance(byteCeiling: 1 << 20, decmpfsTypes: [], acceptsLZ4: false)
+        let noLZ4 = ContainerAcceptance(storage: .file, byteCeiling: 1 << 20, decmpfsTypes: [], acceptsLZ4: false)
         #expect(decodingError(Self.single(lz4File("l", depth: 0, size: 0)), accepting: noLZ4) == .lz4NotAccepted)
         let plain = headerRecord(plainFile("f", depth: 0, size: 32))
         #expect(decodingError(plain + GoldenVectorTests.lz4Chunk) == .lz4ChunkOutsideLZ4Storage)
@@ -262,13 +272,13 @@ struct ContainerLimitTests {
         #expect(decodingError(Self.single(fileWithout)) == .storageNotAllowed(.file))
         var symlinkWithStorage = symlink("s", depth: 0, target: "t")
         symlinkWithStorage.plain.size = 0
-        #expect(decodingError(Self.single(symlinkWithStorage)) == .storageNotAllowed(.symlink))
+        #expect(decodingError(Self.inFolder(symlinkWithStorage)) == .storageNotAllowed(.symlink))
     }
 
     @Test("Symlink targets: present, without NUL, and only on symlinks")
     func symlinkTargets() {
-        #expect(decodingError(Self.single(symlink("s", depth: 0, target: ""))) == .invalidSymlinkTarget)
-        #expect(decodingError(Self.single(symlink("s", depth: 0, target: "a\0b"))) == .invalidSymlinkTarget)
+        #expect(decodingError(Self.inFolder(symlink("s", depth: 1, target: ""))) == .invalidSymlinkTarget)
+        #expect(decodingError(Self.inFolder(symlink("s", depth: 1, target: "a\0b"))) == .invalidSymlinkTarget)
         var file = plainFile("f", depth: 0, size: 0)
         file.symlinkTarget = name("t")
         #expect(decodingError(Self.single(file)) == .invalidSymlinkTarget)
@@ -293,7 +303,7 @@ struct ContainerLimitTests {
         var file = plainFile("", depth: 0, size: 0)
         file.name = refused
         #expect(decodingError(Self.single(file)) == .invalidName)
-        var encoder = ContainerEncoder(accepting: generous, policy: .never)
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         #expect(throws: ContainerError.invalidName) { try encoder.entry(file) }
     }
 
@@ -322,8 +332,8 @@ struct ContainerLimitTests {
         var decmpfs = inlineData(size: 0)
         decmpfs.decmpfs.attribute = decmpfsAttribute(type: 4, size: 1)
         #expect(decodingError(Self.single(decmpfs)) == .storageNotAllowed(.data))
-        let nested = headerRecord(directory("d", depth: 0)) + headerRecord(inlineData(size: 0))
-        #expect(decodingError(nested) == .secondRootEntry)
+        let atRoot = headerRecord(directory("d", depth: 0)) + headerRecord(inlineData(size: 0))
+        #expect(decodingError(atRoot) == .dataEntryNotRoot)
     }
 }
 
@@ -331,7 +341,8 @@ struct ContainerLimitTests {
 @Suite("decmpfs storage")
 struct DecmpfsStorageTests {
     static func container(_ attribute: Data, accepting types: Set<UInt32> = [4]) -> ContainerError? {
-        let acceptance = ContainerAcceptance(byteCeiling: 1 << 20, decmpfsTypes: types, acceptsLZ4: false)
+        let acceptance = ContainerAcceptance(
+            storage: .file, byteCeiling: 1 << 20, decmpfsTypes: types, acceptsLZ4: false)
         let header = decmpfsFile("c", depth: 0, attribute: attribute, resourceForkSize: 0)
         return decodingError(ContainerLimitTests.single(header), accepting: acceptance)
     }
@@ -397,7 +408,7 @@ struct DecmpfsStorageTests {
         xattr.name = name("com.apple.decmpfs")
         xattr.value = decmpfsAttribute(type: 4, size: 1)
         file.xattrs = [xattr]
-        #expect(decodingError(ContainerLimitTests.single(file)) == .decmpfsAttributeOutsideStorage)
+        #expect(decodingError(ContainerLimitTests.single(file)) == .xattrNotAllowed(name("com.apple.decmpfs")))
     }
 
     @Test("A decmpfs file's resource fork arrives as its chunks")

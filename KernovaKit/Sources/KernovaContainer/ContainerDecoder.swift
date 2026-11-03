@@ -8,7 +8,9 @@ import KernovaWire
 import SwiftProtobuf
 
 /// Reads a container incrementally: `feed(_:)` its bytes as they arrive, take `TreeEvent`s from `next()`
-/// until it returns nil, and call `finish()` once the input ends.
+/// until it returns nil, and call `finish()` once the input ends. The container is valid only once `finish()`
+/// returns: `.end` can come before bytes after the end record are seen, so a consumer commits a landed tree
+/// only after `finish()`.
 ///
 /// Every limit is checked before the bytes it governs are held or allocated: a record's length from its
 /// 5-byte prefix, an entry's size against the byte ceiling from its header, and an LZ4 chunk's declared

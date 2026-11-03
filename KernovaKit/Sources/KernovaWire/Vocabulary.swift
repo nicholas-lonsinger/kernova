@@ -22,6 +22,9 @@ public typealias TypeDescriptor = Kernova_V2_TypeDescriptor
 /// A container codec a destination decodes besides plain bytes.
 public typealias Codec = Kernova_V2_Codec
 
+/// One form of an offered item: its type, and whether it travels as bytes, a file or a folder.
+public typealias Representation = Kernova_V2_Representation
+
 /// What a pull asks for, and the limits its container must keep.
 public typealias PullRequest = Kernova_V2_PullRequest
 

@@ -9,8 +9,34 @@ import KernovaPortableTestSupport
 import KernovaWire
 import SwiftProtobuf
 
-/// A pull accepting LZ4, decmpfs type 4, and up to 1 GiB.
-let generous = ContainerAcceptance(byteCeiling: 1 << 30, decmpfsTypes: [4], acceptsLZ4: true)
+/// A pull of a `storage` representation accepting LZ4, decmpfs type 4, and up to 1 GiB.
+func generous(_ storage: Representation.Storage = .file) -> ContainerAcceptance {
+    ContainerAcceptance(storage: storage, byteCeiling: 1 << 30, decmpfsTypes: [4], acceptsLZ4: true)
+}
+
+/// The storage whose representation sends `type` as its root entry.
+func storage(sending type: EntryHeader.TypeEnum) -> Representation.Storage {
+    switch type {
+    case .data: .inline
+    case .directory: .folder
+    default: .file
+    }
+}
+
+/// `generous` for the representation a container's first record, a header, says it is; a file pull when the
+/// container does not start with a decodable header.
+func generous(for container: Data) -> ContainerAcceptance {
+    let prefix = ContainerRecord.prefixByteCount
+    guard container.count >= prefix, container[container.startIndex] == ContainerRecordKind.header.rawValue else {
+        return generous()
+    }
+    let length = (0..<4).reduce(0) { $0 | Int(container[container.startIndex + 1 + $1]) << ($1 * 8) }
+    let start = container.startIndex + prefix
+    guard container.count >= prefix + length,
+        let header = try? EntryHeader(serializedBytes: container[start..<(start + length)])
+    else { return generous() }
+    return generous(storage(sending: header.type))
+}
 
 func name(_ text: String) -> Data { Data(text.utf8) }
 
@@ -129,8 +155,9 @@ struct Decoded {
 }
 
 /// Decodes `container` fed in pieces of `pieceSize` bytes (all at once when nil), then finishes.
-func decode(_ container: Data, accepting acceptance: ContainerAcceptance = generous, pieceSize: Int? = nil) -> Decoded {
-    var decoder = ContainerDecoder(accepting: acceptance)
+/// Without `acceptance`, a generous pull of the representation the container's root header says it is.
+func decode(_ container: Data, accepting acceptance: ContainerAcceptance? = nil, pieceSize: Int? = nil) -> Decoded {
+    var decoder = ContainerDecoder(accepting: acceptance ?? generous(for: container))
     var result = Decoded()
     let step = max(1, pieceSize ?? container.count)
     var start = container.startIndex
@@ -158,7 +185,7 @@ func decode(_ container: Data, accepting acceptance: ContainerAcceptance = gener
 }
 
 /// The error decoding `container` ends with, or nil when it decodes.
-func decodingError(_ container: Data, accepting acceptance: ContainerAcceptance = generous) -> ContainerError? {
+func decodingError(_ container: Data, accepting acceptance: ContainerAcceptance? = nil) -> ContainerError? {
     decode(container, accepting: acceptance).error
 }
 
@@ -181,10 +208,11 @@ struct TreeFixture {
 
     /// The records of the whole tree, `bytes` fed to the encoder in pieces of `pieceSize`.
     func encoded(
-        accepting acceptance: ContainerAcceptance = generous, policy: ChunkCompressionPolicy = .never,
+        accepting acceptance: ContainerAcceptance? = nil, policy: ChunkCompressionPolicy = .never,
         pieceSize: Int = 100_000
     ) throws(ContainerError) -> Data {
-        var encoder = ContainerEncoder(accepting: acceptance, policy: policy)
+        let rootStorage = entries.first.map { storage(sending: $0.header.type) } ?? .file
+        var encoder = ContainerEncoder(accepting: acceptance ?? generous(rootStorage), policy: policy)
         var container = Data()
         for (header, bytes) in entries {
             container.append(try encoder.entry(header))

@@ -1,3 +1,9 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
+import Foundation
+#endif
+
 import KernovaWire
 
 /// Why a container was refused, by its decoder or by the encoder producing it.
@@ -40,8 +46,25 @@ public enum ContainerError: Error, Equatable, Sendable {
     case lz4NotAccepted
     /// A symlink's target is empty or holds NUL.
     case invalidSymlinkTarget
-    /// An entry lists `com.apple.decmpfs` among its extended attributes rather than as its storage.
-    case decmpfsAttributeOutsideStorage
+    /// The first entry's type is not the one the pulled representation's storage sends.
+    case rootTypeMismatch(EntryHeader.TypeEnum, expected: Representation.Storage)
+    /// A DATA entry other than the first: DATA is only ever an INLINE representation's sole entry.
+    case dataEntryNotRoot
+    /// An entry's mode has bits above `07777`.
+    case modeOutOfRange(UInt32)
+    /// An entry's `darwin_flags` hold these bits, which the format does not carry.
+    case darwinFlagsNotAllowed(UInt32)
+    /// A time's nanoseconds are above 999,999,999.
+    case nanosecondsOutOfRange(UInt32)
+    /// An extended attribute's name is empty, longer than 255 bytes, or holds NUL.
+    case invalidXattrName
+    /// An extended attribute the format does not carry: not Finder tags, the resource fork outside decmpfs
+    /// storage, or a `user.` attribute.
+    case xattrNotAllowed(Data)
+    /// Two of an entry's extended attributes share a name.
+    case duplicateXattrName(Data)
+    /// A header or end record holds a field the current schema does not define.
+    case unknownFields
     /// A decmpfs storage's attribute is not a well-formed `decmpfs_disk_header`.
     case malformedDecmpfsAttribute(DecmpfsHeaderError)
     /// A decmpfs storage's compression type is not one the pull accepted.

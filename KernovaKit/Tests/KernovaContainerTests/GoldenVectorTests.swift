@@ -38,7 +38,7 @@ struct GoldenVectorTests {
 
     @Test("The encoder writes a header, a chunk and an end record byte for byte")
     func encoderMatchesGoldenBytes() throws {
-        var encoder = ContainerEncoder(accepting: generous, policy: .never)
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         var header = EntryHeader()
         header.name = name("a")
         header.type = .file
@@ -51,7 +51,7 @@ struct GoldenVectorTests {
 
     @Test("The encoder writes a zero run byte for byte")
     func encoderZeroRun() throws {
-        var encoder = ContainerEncoder(accepting: generous, policy: .never)
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
         _ = try encoder.entry(plainFile("z", depth: 0, size: 4_096))
         #expect(try encoder.bytes(Data(count: 4_096)) == Self.zeroRun)
     }
@@ -86,7 +86,7 @@ struct GoldenVectorTests {
     @Test("A chunk LZ4 shrinks goes out as an LZ4 chunk record that decodes to it")
     func encoderLZ4Chunk() throws {
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
-        var encoder = ContainerEncoder(accepting: generous, policy: policy)
+        var encoder = ContainerEncoder(accepting: generous(), policy: policy)
         _ = try encoder.entry(lz4File("l", depth: 0, size: 32))
         let records = try encoder.bytes(Data(repeating: 0x61, count: 32))
         #expect(records.first == ContainerRecordKind.lz4Chunk.rawValue)
