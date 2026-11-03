@@ -28,6 +28,18 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Bumped once per inbound guest clipboard text.
     private(set) var inboundOfferSeq: UInt64 = 0
 
+    /// Whether this service carries the VM's clipboard, as `ClipboardRoute`
+    /// chooses: false while the guest agent's hub carries it, when the guest's
+    /// grabs are not asked for and nothing the host grabbed is sent. Turning it
+    /// off forgets the host's grab.
+    var carriesClipboard = true {
+        didSet {
+            guard !carriesClipboard else { return }
+            pendingOutboundText = nil
+            lastGrabbedText = nil
+        }
+    }
+
     /// The SPICE agent's state as the Clipboard window's status line shows it.
     /// SPICE agents are user-installed and version-tracked by the guest's
     /// package manager, so `.current` once connected is all there is to say.
@@ -95,7 +107,7 @@ final class SpiceClipboardService: ClipboardServicing {
     /// A by-demand guest answers with `CLIPBOARD_REQUEST` when something pastes;
     /// a legacy guest never will, so it is sent the data immediately.
     func grabIfChanged() -> ClipboardGrabOutcome {
-        guard isConnected else { return .undelivered }
+        guard isConnected, carriesClipboard else { return .undelivered }
         guard let text = clipboardContent.text, !text.isEmpty else {
             if !clipboardContent.isEmpty {
                 Self.logger.log(
@@ -226,6 +238,10 @@ final class SpiceClipboardService: ClipboardServicing {
     private func handleClipboardGrab(types: [SpiceClipboardType]) {
         Self.logger.log(.debug, "Guest clipboard grab: types=\(types.map(\.rawValue), privacy: .public)")
 
+        guard carriesClipboard else {
+            Self.logger.log(.debug, "Guest clipboard grab ignored: the guest agent carries the clipboard")
+            return
+        }
         guard types.contains(.utf8Text) else {
             Self.logger.log(.debug, "Guest clipboard has no UTF-8 text type, ignoring")
             return
@@ -244,7 +260,7 @@ final class SpiceClipboardService: ClipboardServicing {
             return
         }
 
-        guard let text = pendingOutboundText else {
+        guard carriesClipboard, let text = pendingOutboundText else {
             Self.logger.log(.debug, "No pending outbound text for clipboard request")
             return
         }
@@ -255,6 +271,7 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// Guest delivered clipboard data — update our observable state.
     private func handleClipboardData(type: SpiceClipboardType, data: Data) {
+        guard carriesClipboard else { return }
         guard type == .utf8Text else {
             Self.logger.log(
                 .debug,

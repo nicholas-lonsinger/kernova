@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import Synchronization
 import Testing
 
@@ -49,8 +50,8 @@ struct ClipboardPassthroughCoordinatorTests {
         /// simulate a send that never left.
         var grabOutcome: ClipboardGrabOutcome = .settled
 
-        /// Makes `materializeForCopy` refuse the way `VsockClipboardService` does
-        /// over the deadline-safe cap: every rep dropped, and the refusal
+        /// Makes `materializeForCopy` refuse the way `HubClipboardService` does
+        /// over the deadline-safe cap: every file dropped, and the refusal
         /// reported in the same step.
         var refusesOverCopyBudget = false
 
@@ -789,45 +790,60 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.pasteboard.string(forType: .string) == "previous host content")
     }
 
-    /// A promised-offer service: `materializeForCopy` returns metadata-only
-    /// promises, and the paste-time provider surface counts its fires so a test
-    /// can prove the publish itself moved no bytes.
+    /// A guest-offer service: `materializeForCopy` returns the offer whole, and
+    /// its puller counts the pulls a paste starts, so a test can prove the
+    /// publish itself moved no bytes.
     @MainActor
     @Observable
-    final class PromisedPassthroughService: ClipboardServicing, ClipboardPromiseServing {
+    final class PromisedPassthroughService: ClipboardServicing {
         var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
         private(set) var inboundOfferSeq: UInt64 = 0
-        /// What the next `materializeForCopy` promises.
-        var promises: [CopyToMacPromise] = []
+        /// What the next `materializeForCopy` offers.
+        var items: [OfferedItem] = []
+        @ObservationIgnored let puller = CountingPuller()
 
         func stop() {}
         func grabIfChanged() -> ClipboardGrabOutcome { .settled }
         func clearBuffer() { clipboardContent = .empty }
-        func materializeForCopy() -> [CopyToMacItem] { promises.map { .promised($0) } }
+        func materializeForCopy() -> [CopyToMacItem] {
+            [.offer(CopyToMacOffer(items: items, concealed: false, servingFileURLs: true, puller: puller))]
+        }
 
-        func simulateInboundOffer(promising promises: [CopyToMacPromise]) {
-            self.promises = promises
+        func simulateInboundOffer(_ items: [OfferedItem]) {
+            self.items = items
             inboundOfferSeq &+= 1
-        }
-
-        // Paste-time provider surface: every fire is a byte pull, counted here.
-        @ObservationIgnored private let fireCount = Mutex(0)
-        nonisolated var pasteFireCount: Int { fireCount.withLock { $0 } }
-        nonisolated private func recordFire() { fireCount.withLock { $0 += 1 } }
-
-        nonisolated func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-            recordFire()
-            return nil
-        }
-        nonisolated func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-            recordFire()
-            return Data("promised bytes".utf8)
         }
     }
 
-    @Test("A promised inbound offer auto-publishes without moving any bytes")
+    /// Answers every inline pull with the same bytes, and counts every pull.
+    final class CountingPuller: ClipboardItemPulling, Sendable {
+        private let pulls = Mutex(0)
+        var pullCount: Int { pulls.withLock { $0 } }
+
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            pulls.withLock { $0 += 1 }
+            completion(Data("promised bytes".utf8))
+        }
+
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            pulls.withLock { $0 += 1 }
+            completion(nil)
+        }
+    }
+
+    private static func representation(
+        _ uti: String, _ storage: Representation.Storage, name: String = ""
+    ) -> Representation {
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: uti)
+        representation.storage = storage
+        representation.name = Data(name.utf8)
+        return representation
+    }
+
+    @Test("A guest's inbound offer auto-publishes without moving any bytes")
     func inboundPromisedOfferPublishesWithoutPulling() async throws {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
@@ -847,14 +863,11 @@ struct ClipboardPassthroughCoordinatorTests {
         defer { coordinator.stop() }
 
         let baseline = pasteboard.changeCount
-        service.simulateInboundOffer(promising: [
-            CopyToMacPromise(
-                generation: 4, repIndex: 0, uti: ClipboardContent.utf8TextUTI, filename: "",
-                isInline: true),
-            CopyToMacPromise(
-                generation: 4, repIndex: 1, uti: "public.data", filename: "big.bin",
-                isInline: false),
-        ])
+        var text = OfferedItem()
+        text.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        var file = OfferedItem()
+        file.representations = [Self.representation("public.data", .file, name: "big.bin")]
+        service.simulateInboundOffer([text, file])
 
         // The auto-publish lands promised items on the pasteboard…
         try await published.wait { pasteboard.changeCount > baseline }
@@ -863,11 +876,14 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(types.contains(textType))
         #expect(types.contains(.fileURL))
         // …without a single byte pull: publishing is metadata-only.
-        #expect(service.pasteFireCount == 0)
+        #expect(service.puller.pullCount == 0)
 
-        // Only a consumer's flavor read fires a pull.
-        #expect(pasteboard.data(forType: textType) == Data("promised bytes".utf8))
-        #expect(service.pasteFireCount == 1)
+        // Only a consumer's flavor read fires a pull. Read off the main thread,
+        // where the publisher's hold parks rather than running an event loop.
+        nonisolated(unsafe) let consumer = pasteboard
+        let served = await Task.detached { consumer.data(forType: textType) }.value
+        #expect(served == Data("promised bytes".utf8))
+        #expect(service.puller.pullCount == 1)
     }
 
     @Test("After stop, a new inbound offer is not published")

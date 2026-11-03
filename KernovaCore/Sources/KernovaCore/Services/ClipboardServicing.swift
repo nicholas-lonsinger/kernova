@@ -1,11 +1,12 @@
 import Foundation
 import KernovaKit
+import KernovaWire
 
 /// Common surface shared by every clipboard transport.
 ///
-/// `SpiceClipboardService` (Linux guests) carries only the UTF-8 representation
-/// of `clipboardContent`; `VsockClipboardService` (macOS guests) carries every
-/// representation. Both implementations must be `@Observable` classes: the macro
+/// `SpiceClipboardService` carries only the UTF-8 representation of
+/// `clipboardContent`; `HubClipboardService`, over the guest agent's items,
+/// carries every representation. Both implementations must be `@Observable` classes: the macro
 /// installs the registrar on the concrete type, so reading or writing through the
 /// protocol witness still fires observation.
 @MainActor
@@ -74,10 +75,10 @@ package protocol ClipboardServicing: AnyObject {
     /// Prepares the items to write to the host pasteboard for "Copy to Mac" —
     /// metadata only, synchronously.
     ///
-    /// Every usable representation of a live guest offer becomes a `.promised`
-    /// item whose bytes are pulled when a paste consumes them; with no live
-    /// offer (local or user-edited content) the buffer's representations return
-    /// `.resolved`. Reps that can never be served are reported as `.droppedFile`.
+    /// A live guest offer becomes one `.offer` whose bytes are pulled when a
+    /// paste consumes them; with no live offer (local or user-edited content)
+    /// the buffer's representations return `.resolved`. Files that can never be
+    /// served are reported as `.droppedFile`.
     func materializeForCopy() -> [CopyToMacItem]
 }
 
@@ -92,33 +93,16 @@ package enum ClipboardGrabOutcome: Equatable, Sendable {
     case undelivered
 }
 
-/// A representation promised on the host pasteboard by its offer coordinates,
-/// carrying the metadata the publisher needs to plan its pasteboard item and
-/// route each flavor's paste-time pull.
-package struct CopyToMacPromise: Sendable, Equatable {
-    let generation: UInt64
-    let repIndex: Int
-    let uti: String
-    let filename: String
-    /// Whether the rep inlines onto the pasteboard (the offer's `is_inline`),
-    /// mirroring `shouldInlineOnPasteboard` for a resolved rep.
-    let isInline: Bool
-    /// Whether the publisher must leave `public.file-url` off the item it plans
-    /// for this rep — the over-cap refusal for an image file, whose inline
-    /// flavor keeps serving.
-    let withholdsFileURL: Bool
-
-    init(
-        generation: UInt64, repIndex: Int, uti: String, filename: String, isInline: Bool,
-        withholdsFileURL: Bool = false
-    ) {
-        self.generation = generation
-        self.repIndex = repIndex
-        self.uti = uti
-        self.filename = filename
-        self.isInline = isInline
-        self.withholdsFileURL = withholdsFileURL
-    }
+/// A guest's live offer as "Copy to Mac" places it on the host pasteboard:
+/// every item promised, its bytes pulled through `puller` only when a paste
+/// asks for them.
+package struct CopyToMacOffer: Sendable {
+    let items: [OfferedItem]
+    let concealed: Bool
+    /// `false` leaves `public.file-url` off every item — the over-cap refusal,
+    /// whose inline flavors keep serving.
+    let servingFileURLs: Bool
+    let puller: any ClipboardItemPulling
 }
 
 /// One item "Copy to Mac" places on the host pasteboard.
@@ -126,9 +110,9 @@ package enum CopyToMacItem: Sendable {
     /// A representation whose bytes are already local — the buffer's own content
     /// when no guest promise is live.
     case resolved(ClipboardContent.Representation)
-    /// A rep promised by its offer coordinates; its bytes cross the wire only
-    /// when a paste consumes them.
-    case promised(CopyToMacPromise)
+    /// A guest offer, promised whole; its bytes cross the wire only when a
+    /// paste consumes them.
+    case offer(CopyToMacOffer)
     /// A file payload that can't be served — the `reason` drives the
     /// user-facing message.
     case droppedFile(CopyToMacDropReason)

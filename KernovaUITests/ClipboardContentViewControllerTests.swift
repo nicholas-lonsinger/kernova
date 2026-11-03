@@ -1016,7 +1016,7 @@ private final class FakeClipboardService: ClipboardServicing {
     func stop() {}
 
     /// Mirrors both real send guards: `isConnected`, and a latch advanced only by
-    /// a successful send (`VsockClipboardService.lastGrabbedDigest` /
+    /// a successful send (`HubClipboardService`'s offered digest /
     /// `SpiceClipboardService.lastGrabbedText`).
     func grabIfChanged() -> ClipboardGrabOutcome {
         grabCallCount += 1

@@ -6,10 +6,10 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// What the live clipboard and log toggles move on the VM's socket device, and
+/// What the live drop and log toggles move on the VM's socket device, and
 /// what they leave behind on the instance. The session owns the listener hosts,
 /// so a port coming down and its host being released are one queue hop; these
-/// pin the ports each toggle moves and that the clipboard pair moves together.
+/// pin the ports each toggle moves and that the drop pair moves together.
 @Suite("VMInstance live vsock policy", .caseScoped)
 @MainActor
 struct VMInstanceLiveVsockPolicyTests {
@@ -82,47 +82,6 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(instance.vsockLogService == nil)
     }
 
-    // MARK: - Clipboard ports
-
-    @Test("Enabling clipboard sharing live installs the channel and data ports in one hop")
-    func enablingClipboardInstallsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        let installer = MockVsockListenerInstall()
-
-        try await coordinator(of: instance)
-            .applyLive(.clipboard, enabled: true, on: installer, sessionID: sessionID)
-
-        #expect(
-            installer.attached == [[KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData]])
-        #expect(installer.detached.isEmpty)
-    }
-
-    /// The data port must never outlive the channel port: a transfer admitted
-    /// onto 49156 after the clipboard service is gone has nothing to serve it.
-    @Test("Disabling clipboard sharing live withdraws the channel and data ports in one hop")
-    func disablingClipboardWithdrawsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        var guests: [VsockChannel] = []
-        defer { guests.forEach { $0.close() } }
-        try await connectGuest(
-            to: try framedHost(for: .clipboard, on: instance, sessionID: sessionID),
-            keptOpenBy: &guests)
-        #expect(instance.clipboardService != nil)
-        // A probe that would keep a forwarded descriptor open, so the EOF below
-        // proves the sink was cleared rather than never set.
-        instance.clipboardDataSink.set(RecordingAcceptor())
-
-        let installer = MockVsockListenerInstall()
-        try await coordinator(of: instance)
-            .applyLive(.clipboard, enabled: false, on: installer, sessionID: sessionID)
-
-        #expect(
-            installer.detached == [[KernovaVsockPort.clipboard, KernovaVsockPort.clipboardData]])
-        #expect(installer.attached.isEmpty)
-        #expect(instance.clipboardService == nil)
-        try expectSinkCleared(instance.clipboardDataSink)
-    }
-
     // MARK: - Drop ports
 
     @Test("Enabling drag and drop live installs the channel and data ports in one hop")
@@ -137,8 +96,8 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(installer.detached.isEmpty)
     }
 
-    /// Same rule as the clipboard pair: an item connection admitted onto the
-    /// data port after the drop service is gone has nothing to serve it.
+    /// The data port must never outlive the channel port: an item connection
+    /// admitted onto it after the drop service is gone has nothing to serve it.
     @Test("Disabling drag and drop live withdraws both ports and stops the service")
     func disablingDropWithdrawsBothPorts() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
@@ -180,25 +139,6 @@ struct VMInstanceLiveVsockPolicyTests {
         guests.forEach { $0.close() }
 
         try await waitForChange { instance.vsockLogService == nil }
-    }
-
-    /// The clipboard is the opposite call: a settled service's materialized
-    /// representations stay servable and the clipboard window reads its buffer
-    /// through `ClipboardServicing`, so the reference outlives the channel.
-    @Test("A clipboard channel dying under its service keeps the instance's reference")
-    func clipboardChannelDeathKeepsTheReference() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        var guests: [VsockChannel] = []
-        defer { guests.forEach { $0.close() } }
-        try await connectGuest(
-            to: try framedHost(for: .clipboard, on: instance, sessionID: sessionID),
-            keptOpenBy: &guests)
-        #expect(instance.clipboardService != nil)
-
-        guests.forEach { $0.close() }
-
-        try await waitForChange { instance.clipboardService?.isConnected == false }
-        #expect(instance.clipboardService != nil)
     }
 
     // MARK: - Hand-offs crossing a toggle-off
@@ -249,29 +189,6 @@ struct VMInstanceLiveVsockPolicyTests {
 
         #expect(instance.vsockDropService == nil)
         try expectSinkCleared(instance.dropDataSink)
-        await expectEOF(on: guest)
-    }
-
-    @Test("A clipboard hand-off queued before the toggle-off installs nothing")
-    func clipboardHandOffCrossingDisableIsRefused() async throws {
-        let library = makeWiredLibrary()
-        let (instance, sessionID) = library.registerInstanceWithLiveSession(named: "Live Policy VM")
-        let host = try framedHost(for: .clipboard, on: instance, sessionID: sessionID)
-        let (acceptedFd, guestFd) = try makeRawSocketPair()
-        let guest = VsockChannel(fileDescriptor: guestFd)
-        guest.start()
-        defer { guest.close() }
-
-        #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
-        // Cleared the way the disable branch clears it, so a hand-off that
-        // repointed the sink at a rebuilt service would show up below.
-        instance.clipboardDataSink.set(nil)
-        library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = false }
-
-        await drainMainQueue()
-
-        #expect(instance.clipboardService == nil)
-        try expectSinkCleared(instance.clipboardDataSink)
         await expectEOF(on: guest)
     }
 }

@@ -114,15 +114,38 @@ package final class VMInstance {
 
     // MARK: - Clipboard Sharing
 
-    /// Active clipboard service: `SpiceClipboardService` for Linux,
-    /// `VsockClipboardService` for macOS.
-    ///
-    /// Nil on macOS until the guest agent connects. The two transports are
-    /// owned separately — the vsock one by this session's feature coordinator,
-    /// the SPICE one by the session context — and projected into one existential
-    /// here, so no window controller branches on transport.
+    /// The clipboard service ``clipboardRoute`` names: ``hubClipboard`` while
+    /// a console peer carries CLIPBOARD, the session's SPICE service otherwise,
+    /// and nil with neither. One existential, so no window controller branches
+    /// on transport.
     package var clipboardService: (any ClipboardServicing)? {
-        sessionContext?.vsock.clipboard ?? sessionContext?.clipboardService
+        switch clipboardRoute {
+        case .hub: hubClipboard
+        case .spice: sessionContext?.clipboardService
+        case .none: nil
+        }
+    }
+
+    /// Which peer carries the clipboard now, from the session's devices and the
+    /// agent hub's snapshot.
+    package var clipboardRoute: ClipboardRoute {
+        ClipboardRoute.choose(
+            hasSpicePort: sessionContext?.clipboardService != nil,
+            consolePeer: agentHubSnapshot.consolePeers[.clipboard])
+    }
+
+    /// This VM's clipboard over the guest agent's CLIPBOARD items, for the
+    /// instance's whole life: its owner is the hub's.
+    @ObservationIgnored let hubClipboard: HubClipboardService
+
+    /// Tells the SPICE service whether it carries the clipboard, so a hub route
+    /// leaves it neither asking for the guest's copies nor answering for the
+    /// host's.
+    private func applyClipboardRoute() {
+        guard let spice = sessionContext?.clipboardService as? SpiceClipboardService else { return }
+        let carries = clipboardRoute == .spice
+        guard spice.carriesClipboard != carries else { return }
+        spice.carriesClipboard = carries
     }
 
     /// Host-pasteboard writer shared by the clipboard window's "Copy to Mac" and
@@ -162,10 +185,6 @@ package final class VMInstance {
     /// reads it without touching this instance. The live control service
     /// publishes into it; replaced or torn down, the gate is cleared.
     @ObservationIgnored let vsockAdmissionGate = VsockAdmissionGate()
-
-    /// Where the clipboard data listener lands each accepted transfer
-    /// connection, pointed at the live `VsockClipboardService`.
-    @ObservationIgnored let clipboardDataSink = VsockDataConnectionSink()
 
     /// Where the drop data listener lands each accepted item connection,
     /// pointed at the live `VsockDropService`.
@@ -280,7 +299,9 @@ package final class VMInstance {
     /// The status of whatever carries the Clipboard window's clipboard: the
     /// SPICE agent's own while it does, and the guest agent's otherwise.
     package var clipboardChannelStatus: AgentStatus? {
-        if let spice = sessionContext?.clipboardService as? SpiceClipboardService { return spice.agentStatus }
+        if clipboardRoute == .spice, let spice = sessionContext?.clipboardService as? SpiceClipboardService {
+            return spice.agentStatus
+        }
         return agentPresentation?.status
     }
 
@@ -315,6 +336,7 @@ package final class VMInstance {
     /// The hub's agents changed: each connected one is recorded by its scope,
     /// and the missing-agent rule reads them again.
     private func agentHubSnapshotDidChange() {
+        applyClipboardRoute()
         guard let context = sessionContext else { return }
         recordHubPeers(context)
         agentPresenceChanged()
@@ -373,9 +395,12 @@ package final class VMInstance {
     #endif
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
-    /// forwards guest logs.
+    /// forwards guest logs, CLIPBOARD exactly when it shares the clipboard.
     static func agentHubPolicy(for configuration: VMConfiguration) -> PolicySnapshot {
-        PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled)])
+        PolicySnapshot([
+            FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
+            FeaturePolicyValue(feature: .clipboard, enabled: configuration.clipboardSharingEnabled),
+        ])
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
@@ -445,7 +470,11 @@ package final class VMInstance {
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
-        let itemRouter = ItemFeatureRouter<PeerHandle>()
+        let hubClipboard = HubClipboardService(
+            sink: itemSink, stagingRoot: ClipboardFileStaging.processRoot,
+            stagingKey: bundle.configuration.id.uuidString)
+        self.hubClipboard = hubClipboard
+        let itemRouter = ItemFeatureRouter<PeerHandle>(clipboard: hubClipboard.owner())
         let items = ItemAdapters(
             source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
             sink: itemSink, features: itemRouter.features)
@@ -463,6 +492,28 @@ package final class VMInstance {
         snapshots.instance = self
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
+        }
+        wireHubClipboard()
+    }
+
+    /// Points ``hubClipboard`` at this VM's hub, report, paste ceiling and
+    /// host-pasteboard writer.
+    private func wireHubClipboard() {
+        let publisher = hostClipboardPublisher
+        hubClipboard.hub = agentHub
+        hubClipboard.reporter = clipboardTransfers
+        hubClipboard.label = { [weak self] in self?.name ?? "VM" }
+        hubClipboard.maxPasteBytes = { [weak self] in
+            self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
+        }
+        hubClipboard.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
+        hubClipboard.retractStaleHostWrite = { [weak self] in
+            // With passthrough on, the newer offer's automatic publish is what
+            // supersedes the stale write; retracting too would only flash an
+            // empty pasteboard and a Copy-to-Mac hint for a button passthrough
+            // hides.
+            guard let self, sessionContext?.clipboardPassthroughCoordinator == nil else { return false }
+            return publisher.retractPromisedWrite()
         }
     }
 
@@ -925,7 +976,6 @@ package final class VMInstance {
             vsock: VsockFeatureCoordinator(
                 instance: self,
                 admissionGate: vsockAdmissionGate,
-                clipboardDataSink: clipboardDataSink,
                 dropDataSink: dropDataSink),
             agentHub: agentHub)
         openRuntimeFileAccess(into: context)
@@ -1046,22 +1096,15 @@ package final class VMInstance {
 
     /// Starts clipboard sharing if enabled in this configuration.
     ///
-    /// Linux uses the SPICE agent over the console-port pipes set up at config
-    /// build. macOS constructs its `VsockClipboardService` only when the guest
-    /// agent connects to the listener installed in `startVsockServices()`.
+    /// A Linux guest's SPICE agent is served over the console-port pipes set
+    /// up at config build. The guest agent's clipboard needs nothing started:
+    /// ``hubClipboard`` carries it once the hub names a console peer.
     package func startClipboardService() {
         // Passthrough is host-side and gated on sharing internally, so it must
         // be refreshed even when sharing is off — hence before the guard.
         defer { refreshClipboardPassthrough() }
-        guard configuration.clipboardSharingEnabled else { return }
-        switch configuration.guestOS {
-        case .linux:
-            startSpiceClipboardService()
-        case .macOS:
-            Self.logger.log(
-                .info,
-                "Clipboard sharing armed (vsock) for '\(self.name, privacy: .public)' — awaiting guest agent")
-        }
+        guard configuration.clipboardSharingEnabled, configuration.guestOS == .linux else { return }
+        startSpiceClipboardService()
     }
 
     /// Starts or stops automatic clipboard passthrough to match the current
@@ -1097,6 +1140,7 @@ package final class VMInstance {
         let service = SpiceClipboardService(inputPipe: inputPipe, outputPipe: outputPipe)
         service.start()
         context.clipboardService = service
+        applyClipboardRoute()
         Self.logger.log(.info, "SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
@@ -1451,13 +1495,13 @@ package final class VMInstance {
     /// the guest agent.
     ///
     /// Only `agentLogForwardingEnabled`, `clipboardSharingEnabled` and
-    /// `dropFilesEnabled` are honored at runtime. A Linux guest's clipboard
-    /// sharing never changes here: its SPICE port is a device
+    /// `dropFilesEnabled` are honored at runtime. A Linux guest's SPICE port
+    /// never changes here: it is a device
     /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
-    /// The agent hub takes every log-forwarding change, running or not: it
+    /// The agent hub takes every change to its policy, running or not: it
     /// builds a later session's connections from the policy it holds.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
-        if oldConfig.agentLogForwardingEnabled != newConfig.agentLogForwardingEnabled {
+        if Self.agentHubPolicy(for: oldConfig) != Self.agentHubPolicy(for: newConfig) {
             agentHub.setPolicy(Self.agentHubPolicy(for: newConfig))
         }
 

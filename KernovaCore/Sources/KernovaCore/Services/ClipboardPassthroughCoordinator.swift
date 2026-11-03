@@ -32,7 +32,7 @@ final class ClipboardPassthroughCoordinator {
     /// inline is recorded.
     private let reporter: ClipboardTransferReporter
 
-    /// Poll cadence — matches `VsockGuestClipboardAgent.pollingInterval` so both
+    /// Poll cadence — matches `GuestClipboard.pollingInterval` so both
     /// ends of the boundary sample their pasteboards at the same rate.
     private static let pollInterval: TimeInterval = 0.5
 

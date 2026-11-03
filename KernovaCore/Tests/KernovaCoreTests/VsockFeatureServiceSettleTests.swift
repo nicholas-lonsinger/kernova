@@ -14,7 +14,6 @@ private enum ServiceKind: String, CaseIterable, Sendable, CustomStringConvertibl
     case control
     case log
     case drop
-    case clipboard
 
     var description: String { rawValue }
 }
@@ -46,11 +45,6 @@ struct VsockFeatureServiceSettleTests {
             return (VsockGuestLogService(channel: channel, label: label), nil)
         case .drop:
             let service = VsockDropService(
-                channel: channel, label: label, reporter: ClipboardTransferReporter(),
-                stagingRoot: stagingRoot.root, stagingKey: label)
-            return (service, { service.isConnected })
-        case .clipboard:
-            let service = VsockClipboardService(
                 channel: channel, label: label, reporter: ClipboardTransferReporter(),
                 stagingRoot: stagingRoot.root, stagingKey: label)
             return (service, { service.isConnected })

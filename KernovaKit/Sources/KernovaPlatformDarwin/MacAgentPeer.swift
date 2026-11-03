@@ -10,6 +10,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaLogging
 import KernovaSynchronization
+import KernovaWire
 
 /// This process's v2 peer: its claim, its connection to the host through `PeerAgentRuntime`, its update
 /// installer, and the watch on its install's `current` link.
@@ -36,19 +37,26 @@ public final class MacAgentPeer: Sendable {
     private let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
 
     /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
-    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`.
-    public init(role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?) {
+    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer serves the item
+    /// features `owners` builds owners for, each calling into the connection through the calls it is handed.
+    public init(
+        role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?,
+        owners: (PeerItemCalls) -> ItemFeatureOwners = { _ in ItemFeatureOwners() }
+    ) {
         claim = DarwinIdentity.current(role: role, versionLabel: label)
         let running = DarwinIdentity.runningSlot()
         let peer = Locked<MacAgentPeer?>(nil)
         let (adapter, installer) = Self.updateInstaller(for: claim, running: running, peer: peer)
+        let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+        let calls = PeerItemCalls(sink: sink)
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
-        let itemRouter = ItemFeatureRouter<Void>()
+        let built = role == .sessionPeer ? owners(calls) : ItemFeatureOwners()
+        let itemRouter = ItemFeatureRouter<Void>(clipboard: built.clipboard, drop: built.drop, drag: built.drag)
         let items =
             role == .sessionPeer
             ? ItemAdapters(
                 source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
-                sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), features: itemRouter.features)
+                sink: sink, features: itemRouter.features)
             : nil
         runtime = PeerAgentRuntime(
             claim: claim, state: state, registry: PeerFeatureRegistry(logs: logs, update: adapter, items: items),
@@ -63,6 +71,7 @@ public final class MacAgentPeer: Sendable {
                     Self.logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
                     Darwin.exit(0)
                 }))
+        calls.bind(runtime)
         peer.withLock { $0 = self }
         if let running, claim.scope != .unspecified {
             let watcher = SlotLinkWatcher(root: running.root, runningSlot: running.slot, queue: queue) {
@@ -157,6 +166,100 @@ public final class MacAgentPeer: Sendable {
         } catch {
             logger.log(.error, "Cannot rewrite the user's jobs: \(String(describing: error), privacy: .public)")
         }
+    }
+}
+
+/// The owners of the item features a session peer serves; a feature with none is advertised absent.
+public struct ItemFeatureOwners: Sendable {
+    /// CLIPBOARD's owner.
+    public var clipboard: ItemFeatureOwner<Void>?
+    /// DROP's owner.
+    public var drop: ItemFeatureOwner<Void>?
+    /// DRAG's owner.
+    public var drag: DragFeatureOwner<Void>?
+
+    /// Owners for the features given one.
+    public init(
+        clipboard: ItemFeatureOwner<Void>? = nil, drop: ItemFeatureOwner<Void>? = nil,
+        drag: DragFeatureOwner<Void>? = nil
+    ) {
+        self.clipboard = clipboard
+        self.drop = drop
+        self.drag = drag
+    }
+}
+
+/// A session peer's item calls into its connection to the host, for the owners of its item features: built
+/// before the runtime they reach, which the peer binds before it starts, so nothing calls through them unbound.
+public final class PeerItemCalls: Sendable {
+    private let runtime = Locked<PeerAgentRuntime?>(nil)
+    private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
+
+    init(sink: ItemSinkAdapter<POSIXTreeFileSystem>) {
+        self.sink = sink
+    }
+
+    func bind(_ runtime: PeerAgentRuntime) {
+        self.runtime.withLock { $0 = runtime }
+    }
+
+    private var bound: PeerAgentRuntime? {
+        let runtime = runtime.withLock { $0 }
+        if runtime == nil { assertionFailure("an item call before the peer bound its runtime") }
+        return runtime
+    }
+
+    /// ``PeerAgentRuntime/offerItems(_:feature:_:)``.
+    public func offerItems(
+        _ offer: ItemOffer, feature: FeatureID, _ completion: @escaping @Sendable (WireError?) -> Void
+    ) {
+        guard let runtime = bound else { return completion(WireError(.internal, debugDetail: "no runtime")) }
+        runtime.offerItems(offer, feature: feature, completion)
+    }
+
+    /// ``PeerAgentRuntime/withdrawOffer(_:)``.
+    public func withdrawOffer(_ token: Data) {
+        bound?.withdrawOffer(token)
+    }
+
+    /// ``PeerAgentRuntime/releaseOffer(_:)``.
+    public func releaseOffer(_ token: Data) {
+        bound?.releaseOffer(token)
+    }
+
+    /// ``PeerAgentRuntime/pullItem(_:_:)``.
+    public func pullItem(
+        _ order: ItemPullOrder, _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void
+    ) {
+        guard let runtime = bound else {
+            return completion(.failure(WireError(.internal, debugDetail: "no runtime")))
+        }
+        runtime.pullItem(order, completion)
+    }
+
+    /// ``PeerAgentRuntime/cancelPull(_:)``.
+    public func cancelPull(_ id: ItemPullID) {
+        bound?.cancelPull(id)
+    }
+
+    /// ``PeerAgentRuntime/readItem(_:item:_:)``.
+    public func readItem(_ token: Data, item: UInt32, _ completion: @escaping @Sendable (OfferedItem?) -> Void) {
+        guard let runtime = bound else { return completion(nil) }
+        runtime.readItem(token, item: item, completion)
+    }
+
+    /// ``PeerAgentRuntime/answerDragTake(_:_:)``.
+    public func answerDragTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
+        bound?.answerDragTake(id, answer)
+    }
+
+    /// The pull the peer's item sink lands, as ``ItemSinkAdapter/order(token:item:representation:byteCeiling:landing:)``
+    /// builds it.
+    public func order(
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
+    ) throws(WireError) -> ItemPullOrder {
+        try sink.order(
+            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing)
     }
 }
 

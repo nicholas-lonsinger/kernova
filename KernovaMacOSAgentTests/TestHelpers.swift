@@ -158,3 +158,19 @@ func makeLogFrame(message: String) -> Frame {
     }
     return frame
 }
+
+// MARK: - FdBox
+
+/// Sendable wrapper for an array of file descriptors used in socket provider closures.
+final class FdBox: Sendable {
+    private let fds: [Int32]
+
+    init(fds: [Int32]) {
+        self.fds = fds
+    }
+
+    func fd(at index: Int) -> Int32? {
+        guard index >= 0 && index < fds.count else { return nil }
+        return fds[index]
+    }
+}

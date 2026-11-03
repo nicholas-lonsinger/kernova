@@ -237,7 +237,7 @@ struct VMInstanceVsockAdmissionTests {
         #expect(Set(ports).count == ports.count)
     }
 
-    @Test("Tearing the vsock services down clears the gate and the data sinks")
+    @Test("Tearing the vsock services down clears the gate and the data sink")
     func stopClearsGateAndSinks() throws {
         let instance = makeInstance()
         instance.vsockAdmissionGate.publish(
@@ -246,15 +246,12 @@ struct VMInstanceVsockAdmissionTests {
                 capabilities: Set(KernovaCapability.controlChannelDefaults)))
         // A probe that would keep a forwarded descriptor open, so EOF below
         // proves the sink was cleared rather than never set.
-        instance.clipboardDataSink.set(RecordingAcceptor())
         instance.dropDataSink.set(RecordingAcceptor())
 
         instance.stopVsockServices()
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
-        for sink in [instance.clipboardDataSink, instance.dropDataSink] {
-            try expectSinkCleared(sink)
-        }
+        try expectSinkCleared(instance.dropDataSink)
     }
 
     // MARK: - Stale-session hand-offs

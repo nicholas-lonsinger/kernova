@@ -49,11 +49,16 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     /// The items the offer sends.
     public var count: Int
 
-    init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
+    /// A header announcing `count` items of `feature`'s offer `token`.
+    public init(feature: FeatureID, token: Data, concealed: Bool, count: Int) {
         self.feature = feature
-        token = header.token
-        concealed = header.concealed
-        count = Int(header.count)
+        self.token = token
+        self.concealed = concealed
+        self.count = count
+    }
+
+    init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
+        self.init(feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count))
     }
 }
 

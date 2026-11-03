@@ -373,7 +373,7 @@ products += [
         name: "KernovaAgentHost",
         targets: [
             "KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX",
-            "KernovaItemTransfer", "KernovaFileTree",
+            "KernovaItemTransfer", "KernovaFileTree", "KernovaClipboardItems",
         ]),
     // The writer the app makes the Linux agent's disk with, for KernovaCore.
     .library(name: "KernovaISO9660", targets: ["KernovaISO9660"]),
@@ -383,7 +383,7 @@ products += [
         name: "KernovaPlatformDarwin", type: .static,
         targets: [
             "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire",
-            "KernovaPlatformPOSIX", "KernovaDigest",
+            "KernovaPlatformPOSIX", "KernovaDigest", "KernovaClipboardItems",
         ]),
 ]
 
@@ -417,6 +417,16 @@ targets += [
     .target(
         name: "KernovaCommandModel",
         dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // The clipboard over the agent connection's items, the same at the host and the macOS guest agent: a
+    // pasteboard's offers, the far side's offers published lazily, and the pulls that land them.
+    .target(
+        name: "KernovaClipboardItems",
+        dependencies: [
+            "KernovaKit", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // The AppKit UI the app and the macOS guest agent share.
@@ -475,7 +485,7 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-            "KernovaFileTree", "KernovaWire",
+            "KernovaFileTree", "KernovaWire", "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime",
         ],
         swiftSettings: sharedSwiftSettings
     ),

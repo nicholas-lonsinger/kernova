@@ -136,7 +136,7 @@ extension VsockFeatureDescriptor {
     }
 }
 
-/// The four channels a session serves.
+/// The three channels a session serves.
 ///
 /// Static because a descriptor holds nothing: the table is the same for
 /// every VM, and every session drives it through its own coordinator.
@@ -144,7 +144,7 @@ extension VsockFeatureDescriptor {
 extension VsockFeatureDescriptor {
     /// Every vsock channel a session serves, in the order a session installs
     /// them and a live edit applies them.
-    static let all: [VsockFeatureDescriptor] = [control, log, clipboard, drop]
+    static let all: [VsockFeatureDescriptor] = [control, log, drop]
 
     static let control = channel(
         name: "control",
@@ -171,21 +171,6 @@ extension VsockFeatureDescriptor {
             VsockGuestLogService(channel: channel, label: instance.name)
         })
 
-    static let clipboard = streamingChannel(
-        name: "clipboard",
-        port: KernovaVsockPort.clipboard,
-        dataPort: KernovaVsockPort.clipboardData,
-        dataSink: \.clipboardDataSink,
-        requirement: .clipboardStreaming,
-        toggle: { $0.clipboardSharingEnabled },
-        slot: \.clipboard,
-        // The slot is kept on channel loss: a settled service's materialized
-        // representations stay servable, and the clipboard window reads its
-        // buffer through `ClipboardServicing`.
-        make: { instance, channel in
-            makeClipboardService(for: instance, channel: channel)
-        })
-
     static let drop = streamingChannel(
         name: "drop",
         port: KernovaVsockPort.drop,
@@ -202,35 +187,6 @@ extension VsockFeatureDescriptor {
                 stagingRoot: ClipboardFileStaging.processRoot,
                 stagingKey: instance.instanceID.uuidString)
         })
-
-    /// Builds the clipboard service for one accepted channel, wired to the VM's
-    /// transfer reporter, its live paste ceiling, and the host-pasteboard hooks
-    /// that keep a stale promised write from outliving the offer behind it.
-    private static func makeClipboardService(
-        for instance: VMInstance, channel: VsockChannel
-    ) -> VsockClipboardService {
-        // Read through the instance at each budget check, so a Settings change
-        // lands on the live session without restarting the service.
-        let service = VsockClipboardService(
-            channel: channel, label: instance.name, reporter: instance.clipboardTransfers,
-            maxPasteBytes: { [weak instance] in
-                instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-            },
-            stagingRoot: ClipboardFileStaging.processRoot,
-            stagingKey: instance.instanceID.uuidString)
-        let publisher = instance.hostClipboardPublisher
-        service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
-        service.retractStaleHostWrite = { [weak instance] in
-            // With passthrough on, the newer offer's automatic re-publish is
-            // what supersedes the stale write; retracting too would only flash
-            // an empty pasteboard and a Copy-to-Mac hint for a button
-            // passthrough hides.
-            guard let instance, instance.sessionContext?.clipboardPassthroughCoordinator == nil
-            else { return false }
-            return publisher.retractPromisedWrite()
-        }
-        return service
-    }
 }
 
 /// One session's vsock feature channels: the listeners it installs, the
@@ -238,7 +194,7 @@ extension VsockFeatureDescriptor {
 ///
 /// Created with a ``VMSessionContext`` and released with it, so the service
 /// slots below cannot outlive the `VZVirtualMachine` whose socket device the
-/// listeners are bound to. The admission gate and the two data sinks are the
+/// listeners are bound to. The admission gate and the drop data sink are the
 /// VM's and outlive every session: the accept path reads them from whatever
 /// queue VZ delivers on, so nothing there may reach this main-actor type.
 @MainActor
@@ -258,10 +214,6 @@ final class VsockFeatureCoordinator {
     /// Where the feature listeners read admission verdicts, off the main actor.
     @ObservationIgnored private let admissionGate: VsockAdmissionGate
 
-    /// Where the clipboard data listener lands each accepted transfer
-    /// connection.
-    @ObservationIgnored fileprivate let clipboardDataSink: VsockDataConnectionSink
-
     /// Where the drop data listener lands each accepted item connection.
     @ObservationIgnored fileprivate let dropDataSink: VsockDataConnectionSink
 
@@ -273,10 +225,6 @@ final class VsockFeatureCoordinator {
     /// Forwards guest log records for as long as its channel lives.
     var log: VsockGuestLogService?
 
-    /// The macOS guest's clipboard transport; the SPICE one lives on
-    /// ``VMSessionContext/clipboardService``.
-    var clipboard: VsockClipboardService?
-
     /// Serves files dropped on this VM's display; populated once the guest
     /// agent's drop client connects.
     var drop: VsockDropService?
@@ -286,12 +234,10 @@ final class VsockFeatureCoordinator {
     init(
         instance: VMInstance,
         admissionGate: VsockAdmissionGate,
-        clipboardDataSink: VsockDataConnectionSink,
         dropDataSink: VsockDataConnectionSink
     ) {
         self.instance = instance
         self.admissionGate = admissionGate
-        self.clipboardDataSink = clipboardDataSink
         self.dropDataSink = dropDataSink
     }
 
@@ -451,7 +397,7 @@ final class VsockFeatureCoordinator {
             guard let live = self, live.isLive(session) else { return }
             Self.logger.log(
                 .notice,
-                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
+                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
             )
         }
     }

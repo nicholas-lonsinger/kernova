@@ -293,6 +293,44 @@ struct SpiceClipboardServiceTests {
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
+    // MARK: - Another route carrying the clipboard
+
+    @Test("While the guest agent carries the clipboard, SPICE asks for no grab, answers no request and takes no data")
+    func notCarryingSendsNothing() {
+        let (service, inputPipe, _) = makeService()
+        connect(service, byDemand: true)
+        service.clipboardContent = ClipboardContent(text: "Hello")
+        _ = service.grabIfChanged()
+        drainPipe(inputPipe)
+
+        service.carriesClipboard = false
+        var text = Data()
+        text.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        service.handleIncomingData(buildGuestMessage(type: .clipboardGrab, payload: text))
+        service.handleIncomingData(buildGuestMessage(type: .clipboardRequest, payload: text))
+        service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: text + Data("From guest".utf8)))
+        service.clipboardContent = ClipboardContent(text: "Later")
+
+        #expect(service.grabIfChanged() == .undelivered)
+        #expect(drainPipe(inputPipe).isEmpty)
+        #expect(service.inboundOfferSeq == 0)
+    }
+
+    @Test("Carrying the clipboard again, SPICE grabs the host's content anew")
+    func carryingAgainGrabs() {
+        let (service, inputPipe, _) = makeService()
+        connect(service, byDemand: true)
+        service.clipboardContent = ClipboardContent(text: "Hello")
+        _ = service.grabIfChanged()
+        drainPipe(inputPipe)
+
+        service.carriesClipboard = false
+        service.carriesClipboard = true
+
+        #expect(service.grabIfChanged() == .settled)
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+    }
+
     // MARK: - Lifecycle
 
     @Test("stop() clears connected state")
