@@ -130,8 +130,6 @@ struct LaunchdJobsTests {
                 \t</dict>
                 \t<key>LimitLoadToSessionType</key>
                 \t<string>Aqua</string>
-                \t<key>ProcessType</key>
-                \t<string>Interactive</string>
                 </dict>
                 </plist>
 

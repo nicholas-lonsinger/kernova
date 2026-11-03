@@ -115,7 +115,6 @@ public enum LaunchdPlists {
             ("RunAtLoad", .bool(true)),
             ("KeepAlive", .dictionary([("SuccessfulExit", .bool(false))])),
             ("LimitLoadToSessionType", .string("Aqua")),
-            ("ProcessType", .string("Interactive")),
         ])
     }
 
