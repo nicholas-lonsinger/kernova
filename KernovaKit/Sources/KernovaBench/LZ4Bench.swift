@@ -22,11 +22,6 @@ import KernovaSynchronization
 /// clock. On a loaded machine the absolute rates move with the load; the per-pair ratio of the two coders,
 /// timed back to back over the same blocks, moves far less.
 struct LZ4Bench {
-    enum CorpusSource {
-        case file(String)
-        case zeros(Int)
-    }
-
     struct Options {
         var blockSize = 262_144
         var threads: [Int] = []
@@ -59,21 +54,11 @@ struct LZ4Bench {
                         threads.append(try positive(String(part), for: argument))
                     }
                 default:
-                    guard let equals = argument.firstIndex(of: "="), equals != argument.startIndex else {
-                        throw UsageError(message: "not an option or a corpus: \(argument)")
-                    }
-                    let name = String(argument[..<equals])
-                    let path = String(argument[argument.index(after: equals)...])
-                    corpora.append(
-                        (name, name == "zeros" ? .zeros(try positive(path, for: name)) : .file(path)))
+                    corpora.append(try CorpusSource.parse(argument))
                 }
             }
             guard !corpora.isEmpty else { throw UsageError(message: "no corpus named") }
-            if threads.isEmpty {
-                let cores = ProcessInfo.processInfo.activeProcessorCount
-                threads = [1, 2, 4, cores].filter { $0 <= cores }
-                threads = threads.enumerated().filter { !threads[..<$0.offset].contains($0.element) }.map(\.element)
-            }
+            if threads.isEmpty { threads = defaultThreadCounts() }
         }
     }
 
@@ -88,22 +73,9 @@ struct LZ4Bench {
         print("pairs per cell\t\(options.pairs)")
         let workspaces = (0..<(options.threads.max() ?? 1)).map { _ in Workspace(blockSize: options.blockSize) }
         for corpus in options.corpora {
-            run(corpus.name, load(corpus.source), workspaces: workspaces)
+            run(corpus.name, corpus.source.load(), workspaces: workspaces)
         }
         print("sink\t\(workspaces.reduce(0) { $0 &+ $1.sink })")
-    }
-
-    private func load(_ source: CorpusSource) -> Data {
-        switch source {
-        case .zeros(let count):
-            return Data(count: count)
-        case .file(let path):
-            do {
-                return try Data(contentsOf: URL(fileURLWithPath: path))
-            } catch {
-                KernovaBench.fail("cannot read \(path): \(error)")
-            }
-        }
     }
 
     private func run(_ name: String, _ bytes: Data, workspaces: [Workspace]) {
@@ -223,16 +195,6 @@ struct LZ4Bench {
             #endif
         }
         return result
-    }
-
-    private func loadAverage() -> String {
-        #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
-        var loads = [Double](repeating: 0, count: 3)
-        guard getloadavg(&loads, 3) == 3 else { return "unavailable" }
-        return loads.map { fixed($0, 2) }.joined(separator: " ")
-        #else
-        return "unavailable"
-        #endif
     }
 }
 

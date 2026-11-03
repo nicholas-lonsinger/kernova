@@ -127,7 +127,10 @@ var targets: [Target] = [
     // `kernova-bench`.
     .executableTarget(
         name: "KernovaBench",
-        dependencies: ["KernovaWire", "KernovaSynchronization"],
+        dependencies: [
+            "KernovaWire", "KernovaContainer", "KernovaContainerPipeline", "KernovaSynchronization",
+            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // The non-blocking `ByteStream` over a socket. Declared on every platform,
@@ -162,14 +165,21 @@ var targets: [Target] = [
         dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
         swiftSettings: sharedSwiftSettings
     ),
+    // The container codec around the sans-I/O encoder and decoder: LZ4 tried and decompressed on worker lanes,
+    // records kept in stream order, and the per-transfer compression choice.
+    .target(
+        name: "KernovaContainerPipeline",
+        dependencies: ["KernovaContainer", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // An item pull's landing: the writer that creates a tree from `TreeEvent`s through descriptors alone,
     // never resolving a path, and the receiver that feeds it a container. Its own target, so neither the
     // codec nor the file-tree layer takes on the other.
     .target(
         name: "KernovaTreeTransfer",
         dependencies: [
-            "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaLogging", "KernovaSynchronization",
-            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaContainer", "KernovaContainerPipeline", "KernovaFileTree", "KernovaWire", "KernovaLogging",
+            "KernovaSynchronization", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -215,7 +225,8 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaContainerTests",
         dependencies: [
-            "KernovaContainer", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaContainer", "KernovaContainerPipeline", "KernovaWire", "KernovaSynchronization",
+            "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings

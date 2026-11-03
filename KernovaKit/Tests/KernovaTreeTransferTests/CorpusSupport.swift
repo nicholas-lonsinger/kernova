@@ -200,7 +200,7 @@ final class Landing {
     /// A receiver landing what `acceptance` admits in the destination.
     func receiver(_ acceptance: ContainerAcceptance) throws -> TreeReceiver<POSIXTreeFileSystem> {
         TreeReceiver(
-            accepting: acceptance, fileSystem: fileSystem, destination: try openDestination(),
+            accepting: acceptance, decodingWorkers: 2, fileSystem: fileSystem, destination: try openDestination(),
             destinationPathByteCount: destinationPath.utf8.count)
     }
 
