@@ -107,7 +107,8 @@ public struct ContainerTreeLander: PayloadLander {
             throw try failure("dup", code)
         }
         let receiver = TreeReceiver(
-            name: Array(name.utf8), accepting: acceptance, decodingWorkers: 0, fileSystem: POSIXTreeFileSystem(),
+            name: .exactly(Array(name.utf8)), accepting: acceptance, decodingWorkers: 0,
+            fileSystem: POSIXTreeFileSystem(),
             destination: destination,
             destinationPathByteCount: path.utf8.count)
         return TreeLanding(receiver: receiver, name: name, directory: held)
@@ -200,7 +201,8 @@ final class TreeLanding {
             if movedAside { try? fileSystem.rename(aside, in: directory, to: bytes, in: directory) }
         }
         do throws(TreeWriteFailure) {
-            _ = try receiver.finish()
+            try receiver.finish()
+            _ = try receiver.publish()
         } catch {
             restore()
             let rejects = if case .container = error.reason { true } else { false }
