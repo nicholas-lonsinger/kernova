@@ -23,12 +23,15 @@ struct TransferCompressionTests {
         }
         return [
             (.guestToHost, true, 1, .uncompressed),
-            // At four vCPUs a Linux guest's text encode falls short of the link; at five every payload measured gains.
+            // At four vCPUs a Linux guest's text encode falls short of the link; at five, on four lanes, every payload
+            // measured gains. A lane for every core but one, which runs the caller.
             (.guestToHost, true, 4, .uncompressed),
-            (.guestToHost, true, 5, lz4(5)),
+            (.guestToHost, true, 5, lz4(4)),
+            (.guestToHost, true, 6, lz4(5)),
             (.guestToHost, true, minimum - 1, .uncompressed),
-            (.guestToHost, true, minimum, lz4(minimum)),
-            (.guestToHost, true, maximum, lz4(maximum)),
+            (.guestToHost, true, minimum, lz4(minimum - 1)),
+            (.guestToHost, true, maximum, lz4(maximum - 1)),
+            (.guestToHost, true, maximum + 1, lz4(maximum)),
             (.guestToHost, true, maximum * 4, lz4(maximum)),
             (.guestToHost, false, maximum, .uncompressed),
             (.hostToGuest, true, maximum * 4, .uncompressed),

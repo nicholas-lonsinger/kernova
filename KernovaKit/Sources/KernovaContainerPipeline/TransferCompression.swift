@@ -46,8 +46,8 @@ public struct TransferCompression: Equatable, Sendable {
     // to beat plain bytes end to end over the ~750 MiB/s guest-to-host link, for every payload the guest sends.
 
     /// The fewest cores a sender compresses with. At 4, a Linux guest's text encode stays short of the link (716 and
-    /// 737 MiB/s in two runs); at 5 it reaches 888 MiB/s, and every compressible payload measured gains 1.18× or
-    /// more (the note's finding 2).
+    /// 737 MiB/s in two runs, on 4 lanes); at 5, on the 4 lanes `forSending` gives it, text reaches 936 MiB/s and
+    /// every compressible payload measured gains 1.25× or more (the note's finding 2).
     public static let minimumEncodingCores = 5
 
     /// The most lanes a sender tries chunks on. At the host's per-core rates, eight lanes put code, text and binaries
@@ -66,8 +66,9 @@ public struct TransferCompression: Equatable, Sendable {
     /// The compression a sender uses for one transfer.
     ///
     /// Compresses only guest to host, only when the pull lists LZ4, and only on at least `minimumEncodingCores`;
-    /// then on one lane per core up to `maximumEncodingWorkers`, abandoning an entry after
-    /// `abandonAfterUnshrunkChunks` chunks in a row that did not shrink.
+    /// then on a lane for every core but one, up to `maximumEncodingWorkers`, abandoning an entry after
+    /// `abandonAfterUnshrunkChunks` chunks in a row that did not shrink. The core left over runs the caller, which
+    /// reads, admits and writes every record; at 6 vCPUs a lane on it encoded 6–14% slower (the note's finding 1).
     ///
     /// - Parameters:
     ///   - direction: Which way the transfer goes.
@@ -84,7 +85,7 @@ public struct TransferCompression: Equatable, Sendable {
             storesLZ4: true,
             chunkPolicy: ChunkCompressionPolicy(
                 attemptsLZ4: true, abandonAfterUnshrunkChunks: abandonAfterUnshrunkChunks),
-            encodingWorkers: min(sendingCores, maximumEncodingWorkers))
+            encodingWorkers: min(sendingCores - 1, maximumEncodingWorkers))
     }
 
     /// The lanes a receiver decompresses on: none on one core, where a lane would only take turns with the

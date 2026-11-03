@@ -8,7 +8,8 @@
 
 1. **In a guest, the LZ4 pipeline's encode scales with the guest's vCPUs: 2.9–3.0× on 4 lanes of a Linux guest
    and 3.5–3.6× on a macOS guest. Extra lanes on fewer vCPUs gain nothing.** Encode rates in MiB/s of input,
-   lanes equal to vCPUs, which is what `TransferCompression.forSending` runs:
+   lanes equal to vCPUs, as the first runs measured. `TransferCompression.forSending` leaves a vCPU to the caller,
+   from the last point below:
 
    | Corpus (ratio) | Linux 1 vCPU | 2 | 4 | macOS 1 vCPU | 2 | 4 | Host, 4 lanes | 8 lanes |
    |---|---|---|---|---|---|---|---|---|
@@ -23,12 +24,17 @@
    - *Lanes past the vCPUs:* on 1 vCPU, 2 and 4 lanes encode within 4% of 1 lane on code, text and binaries on
      both OSes. On a Linux guest at 2 vCPUs, 2 lanes give 841 MiB/s on code where 2 lanes at 4 vCPUs give 977.
      The caller's own thread takes a share of the vCPUs.
-   - *A lane on every vCPU, at 5 and 6:* on the Linux guest at 6 vCPUs, 5 lanes beat 6 lanes on code (2,192
-     against 2,065 MiB/s), text (1,180 against 1,038) and binaries (1,362 against 1,270), by 6–14%. At 5 vCPUs, 4
-     lanes against 5 is mixed: −2%, −5% and +3% for 5 lanes.
+   - *A lane for every vCPU but one, from 5 vCPUs up:*
+     - On the Linux guest at 6 vCPUs, 5 lanes beat 6 lanes on code (2,192 against 2,065 MiB/s), text (1,180
+       against 1,038) and binaries (1,362 against 1,270), by 6–14%.
+     - At 5 vCPUs, 4 lanes against 5 is mixed: 5 lanes are −2%, −5% and +3%, so the spare core costs nothing
+       measurable there.
      - The direction at 6 is the same on all three corpora, and the Linux 4-vCPU run repeats within 4.5% (finding
-       2), so this reads as the caller's thread contending with the lanes for the vCPUs rather than as noise.
-     - It is one run per count. No run measured fewer lanes than vCPUs below 5.
+       2). So this reads as the caller's thread contending with the lanes for the vCPUs, rather than as noise. That
+       thread reads, checks CRCs, admits and writes every record.
+     - `TransferCompression.forSending` therefore runs `min(cores − 1, maximumEncodingWorkers)` lanes. This rests
+       on one run at 6 vCPUs and one at 5. Fewer lanes than vCPUs was not measured below 5, where the policy does
+       not compress.
    - *Against the guest's vCPUs, a macOS guest runs at 0.93–0.98 of the host's 4-lane rate, and a Linux guest at
      0.71–0.84.*
    - *The plain path* encodes at 2,254 MiB/s or more in every guest cell but two macOS 1-vCPU cells (code 1,031,
@@ -43,9 +49,11 @@
      [the vsock transport note](2026-07-13-vsock-transport-throughput.md) measured it (summary table, "Raw vsock,
      stock"). [#1694](https://github.com/nicholas-lonsinger/kernova/issues/1694) asks whether more connections
      raise it.
-   - *Rates are the measured medians.* Guest encode is at lanes = vCPUs. Host decode is at 4 lanes; the last
-     column instead decodes in the caller, as `ContainerDecoder` alone did. The Linux rows at 4 (second run), 5
-     and 6 vCPUs are from the `f4546c2a` build:
+   - *Rates are the measured medians.*
+     - Guest encode runs on the lanes the policy would give. That is one per vCPU up to 4 vCPUs, the counts where
+       it does not compress, and one per vCPU but one from 5 up: 4 lanes at 5 vCPUs, 5 at 6.
+     - Host decode is at 4 lanes. The last column instead decodes in the caller, as `ContainerDecoder` alone did.
+     - The Linux rows at 4 (second run), 5 and 6 vCPUs are from the `f4546c2a` build.
 
    | Guest | vCPUs | Code | Text | Binaries | Media | Text, host decode in caller |
    |---|---|---|---|---|---|---|
@@ -53,8 +61,8 @@
    | | 2 | 1.12× | 0.58× | 0.72× | 1.01× | 0.58× |
    | | 4 | 1.92× | **0.95×** | 1.22× | 1.01× | 0.95× |
    | | 4, second run | 1.90× | **0.98×** | 1.17× | 1.01× | 0.98× |
-   | | 5 | 2.32× | 1.18× | 1.49× | 1.01× | 1.18× |
-   | | 6 | 2.75× | 1.38× | 1.69× | 1.01× | 1.18× |
+   | | 5, 4 lanes | 2.38× | 1.25× | 1.45× | 1.01× | 1.18× |
+   | | 6, 5 lanes | 2.92× | 1.57× | 1.82× | 1.01× | 1.18× |
    | macOS | 1 | 0.65× | 0.32× | 0.38× | 1.01× | 0.32× |
    | | 2 | 1.28× | 0.66× | 0.76× | 1.01× | 0.66× |
    | | 4 | 2.43× | 1.26× | 1.41× | 1.01× | 1.18× |
@@ -62,14 +70,15 @@
    - *Every compressed cell is guest-encode-bound,* except media, which is link-bound at 754 MiB/s (750 ÷ 0.995).
      The guest's encode rate on text, the slowest compressible corpus, decides the threshold: it must exceed 750
      MiB/s on both OSes.
-   - *The deciding rows*, Linux text encode on as many lanes as vCPUs:
-     - 4 vCPUs: 716 and 737 MiB/s, short of the link in both runs.
-     - 5 vCPUs: 888 MiB/s, 18% above it.
-     - 6 vCPUs: 1,038 MiB/s.
+   - *The deciding rows*, Linux text encode:
+     - 4 vCPUs on 4 lanes: 716 and 737 MiB/s, short of the link in both runs.
+     - 5 vCPUs on 4 lanes: 936 MiB/s, 25% above the link. On 5 lanes it was 888 (18%).
+     - 6 vCPUs on 5 lanes: 1,180 MiB/s.
 
-     Code and binaries already win at 4 (1,424–1,442 and 876–917 MiB/s).
+     Code and binaries already win at 4 vCPUs (1,424–1,442 and 876–917 MiB/s). At 5 on 4 lanes they encode 1,784
+     and 1,089.
    - *Noise against margin:* the two Linux 4-vCPU runs, on different builds, agree within 4.5% on every corpus:
-     code 1,442 → 1,424, text 716 → 737, binaries 917 → 876. Five's 18% text margin is four times that. It is one
+     code 1,442 → 1,424, text 716 → 737, binaries 917 → 876. Five's 25% text margin is more than five times that. It is one
      run, and the bench leaves out the reader's and the transport's CPU (Method).
    - *Plain stays link-bound with the decoder's copy (`f4546c2a`).*
      - Guest plain encode is 2,379–2,602 MiB/s.
@@ -84,10 +93,10 @@
      1,870.
    - *A Linux guest* that kept its 4-vCPU fraction of the host's rate (0.75, 0.71, 0.84) would encode about 2,578,
      1,222 and 1,718 MiB/s on 8 lanes. That is short of link-bound, so the cap of 8 can hold a Linux guest with
-     more than 8 vCPUs below the link's rate, though still above plain bytes. Neither case was measured in a guest.
+     more than 9 vCPUs below the link's rate, though still above plain bytes. Neither case was measured in a guest.
    - `maximumEncodingWorkers` is 8. The 5- and 6-vCPU runs in finding 1 do not move it: a cap of 8 only binds
-     above 8 vCPUs. What they bear on is the lane count below the cap, one per vCPU. At 6 vCPUs a lane fewer
-     encoded faster, which the policy does not take up on one run.
+     above 9 vCPUs once a core is left to the caller. What they bear on is the lane count below the cap, which
+     finding 1 sets at one per vCPU but one.
 
 4. **With entries abandoning LZ4 after 4 unshrunk chunks, media never holds a transfer below the link, and costs
    0.10–0.19 CPU seconds per GiB more than plain bytes in the caller.**
