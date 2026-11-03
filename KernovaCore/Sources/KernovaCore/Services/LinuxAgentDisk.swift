@@ -11,28 +11,46 @@ package enum LinuxAgentDisk {
     /// `/run/media/$USER/KERNOVA_AGENT`, and the label Kernova shows for the attachment.
     package static let volumeLabel = "KERNOVA_AGENT"
 
-    /// The command that installs the agent from the disk: where the disk is not mounted, it mounts it (udisks2's
+    /// The command that installs `choice` from the disk: where the disk is not mounted, it mounts it (udisks2's
     /// `udisksctl`, whose polkit default lets the active session mount a filesystem, and which says why when it
     /// can't), then finds it wherever it is mounted (util-linux's `findmnt`, on every systemd distribution).
-    /// `README.txt` gives the same command.
-    package static let installCommand = command("install.sh")
+    /// `README.txt` gives the same commands.
+    package static func installCommand(for choice: LinuxAgentInstallChoice) -> String {
+        "\(mountIfNeeded); \(invocation(of: mountedScript("install.sh"), installing: choice))"
+    }
 
-    /// The command that removes it.
-    package static let uninstallCommand = command("uninstall.sh")
+    /// The command that removes the agent for the user who runs it.
+    package static let uninstallCommand = "\(mountIfNeeded); sh \(mountedScript("uninstall.sh"))"
 
     /// What the install command needs, as the user reads it before the command.
     package static let installCommandPrecondition = "In a terminal in the guest, run:"
 
     /// The lines that mount the disk on a guest with no desktop, which mounts nothing on its own, and install
-    /// the system service from it: `README.txt` gives the same lines.
-    package static let mountAndInstallCommands = [
-        "sudo mkdir -p /mnt/kernova-agent",
-        "sudo mount -o ro LABEL=\(volumeLabel) /mnt/kernova-agent",
-        "sh /mnt/kernova-agent/install.sh --system",
-    ]
+    /// `choice` from it: `README.txt` gives the same lines for both agents.
+    package static func mountAndInstallCommands(for choice: LinuxAgentInstallChoice) -> [String] {
+        [
+            "sudo mkdir -p /mnt/kernova-agent",
+            "sudo mount -o ro LABEL=\(volumeLabel) /mnt/kernova-agent",
+            invocation(of: "/mnt/kernova-agent/install.sh", installing: choice),
+        ]
+    }
 
-    private static func command(_ script: String) -> String {
-        #"findmnt -n LABEL=\#(volumeLabel) >/dev/null || udisksctl mount -b /dev/disk/by-label/\#(volumeLabel) >/dev/null; sh "$(findmnt -nro TARGET LABEL=\#(volumeLabel))/\#(script)""#
+    private static let mountIfNeeded =
+        "findmnt -n LABEL=\(volumeLabel) >/dev/null || udisksctl mount -b /dev/disk/by-label/\(volumeLabel) >/dev/null"
+
+    private static func mountedScript(_ script: String) -> String {
+        #""$(findmnt -nro TARGET LABEL=\#(volumeLabel))/\#(script)""#
+    }
+
+    /// `script` run to install `choice`: as the user for the session agent, with `--system` for the system
+    /// service too, and as root through sudo for the system service alone — `agent-disk.sh` as root installs
+    /// only that.
+    private static func invocation(of script: String, installing choice: LinuxAgentInstallChoice) -> String {
+        switch choice {
+        case .sessionAgent: "sh \(script)"
+        case .both: "sh \(script) --system"
+        case .systemService: "sudo sh \(script) --system"
+        }
     }
 
     /// The date every record on the disk carries: fixed, so the image is a function of its files alone.

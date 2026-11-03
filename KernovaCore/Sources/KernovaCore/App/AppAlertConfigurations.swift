@@ -289,12 +289,16 @@ package struct AppAlertConfigurations {
     /// What the user does with the disk just put in front of `vmName`, a
     /// `guestOS` guest: open it in Finder for macOS; run its command in a
     /// terminal for Linux, which `copy` puts on the host pasteboard.
+    ///
+    /// A Linux install asks what to install before the disk is attached and
+    /// gives its command there (``linuxAgentInstallChoiceConfig(_:choice:copy:)``),
+    /// so a Linux disk is attached with this alert only to manage the agent.
     package func installerMountedConfig(
         _ vmName: String, guestOS: VMGuestOS, purpose: GuestAgentInstallerPurpose,
         delivery: GuestAgentDiskDelivery, copy: @escaping (String) -> Void
     ) -> AlertConfiguration {
         if guestOS == .linux {
-            return linuxInstallerMountedConfig(vmName, purpose: purpose, copy: copy)
+            return linuxInstallerMountedConfig(vmName, copy: copy)
         }
         let nextStep: String
         switch purpose {
@@ -325,38 +329,64 @@ package struct AppAlertConfigurations {
         )
     }
 
-    /// The Linux disk's alert: the commands that mount the disk where the
-    /// desktop has not and install or remove the agent from it, each with a
-    /// button that copies it, and the lines that mount it on a guest with no
-    /// desktop.
+    /// The Linux disk's alert after a manage attach: the commands that mount
+    /// the disk where the desktop has not and install or remove the agent from
+    /// it, each with a button that copies it, and the lines that mount it on a
+    /// guest with no desktop.
     private func linuxInstallerMountedConfig(
-        _ vmName: String, purpose: GuestAgentInstallerPurpose, copy: @escaping (String) -> Void
+        _ vmName: String, copy: @escaping (String) -> Void
     ) -> AlertConfiguration {
         let lead = "The Kernova guest agent disk has been attached to \(vmName) as a USB disk."
-        let install = LinuxAgentDisk.installCommand
+        let install = LinuxAgentDisk.installCommand(for: .sessionAgent)
+        let uninstall = LinuxAgentDisk.uninstallCommand
         let headless =
             "A guest with no desktop does not mount the disk. There, mount it and install the system service:\n\n"
-            + LinuxAgentDisk.mountAndInstallCommands.joined(separator: "\n")
-        switch purpose {
-        case .install:
-            return AlertConfiguration(
-                title: "Installer Mounted",
-                message: "\(lead) \(LinuxAgentDisk.installCommandPrecondition)\n\n\(install)\n\n\(headless)",
-                buttons: [
-                    AlertButton("Copy Command", role: .default) { copy(install) },
-                    AlertButton("Done", role: .cancel),
-                ])
-        case .manage:
-            let uninstall = LinuxAgentDisk.uninstallCommand
-            return AlertConfiguration(
-                title: "Guest Agent Disk Attached",
-                message:
-                    "\(lead) Open a terminal in the guest. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)\n\nAdding --system to either also installs or removes the system service.\n\n\(headless)",
-                buttons: [
-                    AlertButton("Copy Install Command", role: .default) { copy(install) },
-                    AlertButton("Done", role: .cancel),
-                    AlertButton("Copy Uninstall Command") { copy(uninstall) },
-                ])
-        }
+            + LinuxAgentDisk.mountAndInstallCommands(for: .both).joined(separator: "\n")
+        return AlertConfiguration(
+            title: "Guest Agent Disk Attached",
+            message:
+                "\(lead) Open a terminal in the guest. To reinstall the agent, run:\n\n\(install)\n\nTo remove it, run:\n\n\(uninstall)\n\nAdding --system to either also installs or removes the system service.\n\n\(headless)",
+            buttons: [
+                AlertButton("Copy Install Command", role: .default) { copy(install) },
+                AlertButton("Done", role: .cancel),
+                AlertButton("Copy Uninstall Command") { copy(uninstall) },
+            ])
+    }
+
+    /// The question an install on `vm`, a Linux guest, asks before anything is
+    /// attached: what to install, read from `choice` when the user answers.
+    ///
+    /// Attach and Copy Command copies the command that installs the choice and
+    /// attaches the disk waiting for those agents; Cancel changes nothing. The
+    /// choices and the steps for each are the accessory's to draw
+    /// (``linuxAgentInstallSteps(for:)``).
+    package func linuxAgentInstallChoiceConfig(
+        _ vm: VMInstance, choice: @escaping () -> LinuxAgentInstallChoice, copy: @escaping (String) -> Void
+    ) -> AlertConfiguration {
+        AlertConfiguration(
+            title: "What do you want to install in \u{201C}\(vm.name)\u{201D}?",
+            message:
+                "Kernova attaches the guest agent disk as a USB disk, and ejects it once each agent you choose connects.",
+            buttons: [
+                AlertButton("Attach and Copy Command", role: .default) { [weak viewModel] in
+                    let chosen = choice()
+                    copy(LinuxAgentDisk.installCommand(for: chosen))
+                    guard let viewModel else { return }
+                    Task { await viewModel.installLinuxGuestAgent(on: vm, choice: chosen) }
+                },
+                AlertButton("Cancel", role: .cancel),
+            ])
+    }
+
+    /// What the user runs in the guest to install `choice`: the command for a
+    /// guest with a desktop, then the lines for one without.
+    package static func linuxAgentInstallSteps(
+        for choice: LinuxAgentInstallChoice
+    ) -> (precondition: String, command: String, headless: String) {
+        (
+            LinuxAgentDisk.installCommandPrecondition, LinuxAgentDisk.installCommand(for: choice),
+            "A guest with no desktop does not mount the disk. There, run these instead:\n\n"
+                + LinuxAgentDisk.mountAndInstallCommands(for: choice).joined(separator: "\n")
+        )
     }
 }

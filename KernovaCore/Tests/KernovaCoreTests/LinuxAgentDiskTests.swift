@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaISO9660
 import KernovaTestSupport
 import Testing
@@ -43,17 +44,49 @@ struct LinuxAgentDiskTests {
         #expect(install.starts(with: Array("#!/bin/sh\n".utf8)))
     }
 
-    @Test("README.txt gives the commands the popover and the alert give")
+    @Test("README.txt gives the commands the popover and the alerts give")
     func readmeCommands() throws {
         let readme = String(
             decoding: try LinuxAgentDisk.resource("README.txt", in: LinuxAgentDisk.bundledFiles), as: UTF8.self)
-        #expect(readme.contains(LinuxAgentDisk.installCommand))
+        for choice in LinuxAgentInstallChoice.allCases {
+            #expect(readme.contains(LinuxAgentDisk.installCommand(for: choice)))
+        }
         #expect(readme.contains(LinuxAgentDisk.uninstallCommand))
-        #expect(readme.contains(LinuxAgentDisk.mountAndInstallCommands.map { "    " + $0 }.joined(separator: "\n")))
+        let headless = LinuxAgentDisk.mountAndInstallCommands(for: .both).map { "    " + $0 }
+        #expect(readme.contains(headless.joined(separator: "\n")))
+    }
+
+    @Test("Each choice's command installs exactly its agents: as the user, with --system, or as root through sudo")
+    func installCommandPerChoice() {
+        let mount =
+            "findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; "
+        let script = #""$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
+        #expect(LinuxAgentDisk.installCommand(for: .sessionAgent) == mount + "sh " + script)
+        #expect(LinuxAgentDisk.installCommand(for: .both) == mount + "sh " + script + " --system")
+        #expect(LinuxAgentDisk.installCommand(for: .systemService) == mount + "sudo sh " + script + " --system")
         #expect(
-            LinuxAgentDisk.installCommand
-                == #"findmnt -n LABEL=KERNOVA_AGENT >/dev/null || udisksctl mount -b /dev/disk/by-label/KERNOVA_AGENT >/dev/null; sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/install.sh""#
-        )
+            LinuxAgentDisk.uninstallCommand
+                == mount + #"sh "$(findmnt -nro TARGET LABEL=KERNOVA_AGENT)/uninstall.sh""#)
+        #expect(LinuxAgentDisk.mountAndInstallCommands(for: .sessionAgent).last == "sh /mnt/kernova-agent/install.sh")
+        #expect(
+            LinuxAgentDisk.mountAndInstallCommands(for: .both).last == "sh /mnt/kernova-agent/install.sh --system")
+        #expect(
+            LinuxAgentDisk.mountAndInstallCommands(for: .systemService).last
+                == "sudo sh /mnt/kernova-agent/install.sh --system")
+    }
+
+    @Test("A choice names its agents, starts on the ones the VM has run, and on both where it has run none")
+    func installChoice() {
+        let titles = ["Session agent and system service", "Session agent", "System service"]
+        #expect(LinuxAgentInstallChoice.allCases.map(\.title) == titles)
+        for choice in LinuxAgentInstallChoice.allCases {
+            #expect(LinuxAgentInstallChoice(installing: choice.scopes) == choice)
+        }
+        #expect(LinuxAgentInstallChoice(installing: []) == nil)
+        #expect(LinuxAgentInstallChoice(seen: []) == .both)
+        #expect(LinuxAgentInstallChoice(seen: [.login]) == .sessionAgent)
+        #expect(LinuxAgentInstallChoice(seen: [.system]) == .systemService)
+        #expect(LinuxAgentInstallChoice(seen: [.login, .system]) == .both)
     }
 
     @Test("LICENSES.txt carries Kernova's licence whole")

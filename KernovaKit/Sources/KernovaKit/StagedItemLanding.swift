@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import KernovaLogging
+import KernovaFileTree
 import System
 
 /// Moves an item a pull delivered out of staging to where the user wanted it.
@@ -26,18 +27,18 @@ public enum StagedItemLanding {
         _ representation: ClipboardContent.Representation, at destination: URL
     ) throws {
         guard let source = representation.fileURL else { throw CocoaError(.fileNoSuchFile) }
-        try land(source, at: destination, on: ClipboardArchiveLocalVolume())
+        try land(source, at: destination, on: POSIXTreeFileSystem())
     }
 
     /// ``land(_:at:)`` for the staged item at `source`, renamed and removed
-    /// through `volume`.
-    static func land<Volume: ClipboardArchiveWritableVolume>(
-        _ source: URL, at destination: URL, on volume: Volume
+    /// through `fileSystem`.
+    static func land<FileSystem: MutableTreeFileSystem>(
+        _ source: URL, at destination: URL, on fileSystem: FileSystem
     ) throws {
         do {
-            guard try !rename(source, to: destination, on: volume) else { return }
+            guard try !rename(source, to: destination, on: fileSystem) else { return }
         } catch {
-            throw POSIXErrorCode(rawValue: error.rawValue).map { POSIXError($0) } ?? error
+            throw POSIXErrorCode(rawValue: error.code).map { POSIXError($0) } ?? Errno(rawValue: error.code)
         }
         // `FileManager.copyItem` writes out every hole of a sparse file; with
         // `COPYFILE_DATA_SPARSE`, `copyfile(3)` keeps the holes where both
@@ -54,7 +55,7 @@ public enum StagedItemLanding {
         // (docs/research/2026-10-23-applearchive-extract-semantics.md,
         // finding 12).
         do {
-            try StagedItemRemoval.remove(at: source, on: volume)
+            try StagedItemRemoval.remove(at: source, on: fileSystem)
         } catch {
             logger.log(
                 .warning,
@@ -70,24 +71,25 @@ public enum StagedItemLanding {
     /// staged directory whose own mode withholds that from its owner is made
     /// writable for the rename, and given its own mode back after, wherever
     /// it then is.
-    private static func rename<Volume: ClipboardArchiveWritableVolume>(
-        _ source: URL, to destination: URL, on volume: Volume
-    ) throws(Errno) -> Bool {
+    private static func rename<FileSystem: MutableTreeFileSystem>(
+        _ source: URL, to destination: URL, on fileSystem: FileSystem
+    ) throws(TreeFileSystemError) -> Bool {
         let sourcePath = Array(source.path.utf8)
         let destinationPath = Array(destination.path.utf8)
-        let status = try volume.status(of: sourcePath, in: AT_FDCWD)
-        let mode = status.st_mode & 0o7777
-        let unwritable = (status.st_mode & S_IFMT) == S_IFDIR && mode & S_IWUSR == 0
+        let status = try fileSystem.status(of: sourcePath, in: AT_FDCWD)
+        let mode = status.permissions
+        let ownerWrite = UInt32(S_IWUSR)
+        let unwritable = status.kind == .directory && mode & ownerWrite == 0
         if unwritable {
-            try volume.setMode(mode | S_IWUSR, of: sourcePath, in: AT_FDCWD)
+            try fileSystem.setMode(mode | ownerWrite, of: sourcePath, in: AT_FDCWD)
         }
         do {
-            try volume.rename(sourcePath, in: AT_FDCWD, to: destinationPath, in: AT_FDCWD)
+            try fileSystem.rename(sourcePath, in: AT_FDCWD, to: destinationPath, in: AT_FDCWD)
         } catch {
-            let copies = error == .improperLink || error == .notSupported
+            let copies = error.code == EXDEV || error.code == ENOTSUP
             if unwritable {
                 do {
-                    try volume.setMode(mode, of: sourcePath, in: AT_FDCWD)
+                    try fileSystem.setMode(mode, of: sourcePath, in: AT_FDCWD)
                 } catch let restore {
                     // A copy would carry the added write permission.
                     if copies { throw restore }
@@ -102,7 +104,7 @@ public enum StagedItemLanding {
         }
         if unwritable {
             do {
-                try volume.setMode(mode, of: destinationPath, in: AT_FDCWD)
+                try fileSystem.setMode(mode, of: destinationPath, in: AT_FDCWD)
             } catch {
                 logger.log(
                     .error,

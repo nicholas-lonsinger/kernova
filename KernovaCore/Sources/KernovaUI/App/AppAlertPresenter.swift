@@ -94,6 +94,7 @@ final class AppAlertPresenter {
         case stopPaused(VMInstance)
         case cancelPreparing(ConfirmationPrompt, VMArrival)
         case installerMounted(VMInstance, GuestAgentInstallerPurpose, GuestAgentDiskDelivery)
+        case linuxAgentInstallChoice(VMInstance, LinuxAgentInstallChoice)
     }
 
     /// Every request waiting for its window.
@@ -286,7 +287,8 @@ final class AppAlertPresenter {
         case .startFailedAttachment(_, let instance), .startFailure(_, _, let instance),
             .takeSnapshot(let instance, _), .revertSnapshot(_, let instance),
             .deleteSnapshot(_, let instance), .forceStop(let instance), .recoveryBoot(let instance),
-            .stopPaused(let instance), .installerMounted(let instance, _, _):
+            .stopPaused(let instance), .installerMounted(let instance, _, _),
+            .linuxAgentInstallChoice(let instance, _):
             instance
         }
     }
@@ -354,6 +356,8 @@ final class AppAlertPresenter {
             return vm.isLivePaused
         case .installerMounted(let vm, _, _):
             return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm)
+        case .linuxAgentInstallChoice(let vm, _):
+            return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm) && !vm.hasGuestAgentInstallerMounted
         case .error, .startFailedAttachment, .startFailure, .startSummary, .deleteSheet,
             .cancelPreparing:
             return true
@@ -455,6 +459,12 @@ final class AppAlertPresenter {
                     instance.name, guestOS: instance.configuration.guestOS, purpose: purpose, delivery: delivery,
                     copy: { copyToPasteboard($0) }),
                 on: window, onWindowClose: .requeue(entry))
+        case .linuxAgentInstallChoice(let instance, let initial):
+            showAlert(
+                LinuxAgentInstallChoiceAlert.configuration(
+                    for: instance, initial: initial, configurations: configurations,
+                    copy: { copyToPasteboard($0) }),
+                on: window, onWindowClose: .cancel)
         case .deleteSheet(let delete):
             showDeleteSheet(delete, on: window)
         case .takeSnapshot(let instance, let purpose):
@@ -714,6 +724,10 @@ final class AppAlertPresenter {
         delivery: GuestAgentDiskDelivery
     ) {
         enqueue(.installerMounted(instance, purpose, delivery))
+    }
+
+    func presentLinuxAgentInstallChoice(for instance: VMInstance, initial: LinuxAgentInstallChoice) {
+        enqueue(.linuxAgentInstallChoice(instance, initial))
     }
 
     /// Asks the user to confirm what a verb they started refused without.

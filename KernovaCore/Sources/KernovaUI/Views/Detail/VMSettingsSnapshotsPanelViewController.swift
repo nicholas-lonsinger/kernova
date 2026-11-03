@@ -117,6 +117,7 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
             let content = SnapshotInfoPopoverContentViewController(
                 snapshot: snapshot,
                 size: sizes[snapshot.id],
+                savedStateVersion: self.instance.savedStateVersion(ofSnapshot: snapshot.id),
                 canEditNotes: self.viewModel.capabilities.isAvailable(
                     .setSnapshotNotes, on: self.instance),
                 onCommitNotes: { [weak self] notes in

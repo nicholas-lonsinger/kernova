@@ -696,6 +696,24 @@ struct VMBundleMachineFilesTests {
         #expect(contents(of: fixture.layout.spentSaveFileURL) == "slot")
     }
 
+    @Test("A saved state moved over another carries its own version, or none, never the one it replaced")
+    func replacingASlotKeepsOnlyTheReplacementsVersion() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        try Data("earlier".utf8).write(to: fixture.layout.spentSaveFileURL)
+        try SavedStateVersion.record("0.9.0 (300)", at: fixture.layout.spentSaveFileURL)
+        try Data("slot".utf8).write(to: fixture.layout.saveFileURL)
+
+        #expect(try store.spendSaveFile(bundleURL: fixture.bundleURL))
+        #expect(SavedStateVersion.read(at: fixture.layout.spentSaveFileURL) == nil)
+
+        try SavedStateVersion.record("0.10.0 (412)", at: fixture.layout.spentSaveFileURL)
+        try Data("newer".utf8).write(to: fixture.layout.saveFileURL)
+        try store.reinstateSpentSaveFile(bundleURL: fixture.bundleURL)
+        #expect(contents(of: fixture.layout.saveFileURL) == "slot")
+        #expect(fixture.layout.savedStateVersion == "0.10.0 (412)")
+    }
+
     @Test("Reinstating moves the spent slot back to the slot path")
     func reinstateSpentSaveFileMovesItBack() throws {
         let fixture = try makeFixture()

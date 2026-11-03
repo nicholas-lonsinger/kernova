@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaWire
 
 /// What every surface shows of a VM's Kernova guest agent: one status, which
@@ -166,7 +167,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             lastSeenAgentVersion: missing.first?.lastSeenVersion ?? lastSeenAgentVersion,
             agentExpectedButMissing: !missing.isEmpty)
         let missingScopes = missing.map(\.scope)
-        let away = snapshot.away.filter { !missingScopes.contains(AgentScopePresence.Scope(of: $0.summary)) }.map {
+        let away = snapshot.away.filter { !missingScopes.contains(GuestAgentScope(of: $0.summary)) }.map {
             away in
             AgentLine(
                 away.summary,

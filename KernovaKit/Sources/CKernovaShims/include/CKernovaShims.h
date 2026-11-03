@@ -24,6 +24,16 @@ uint64_t kernova_monotonic_nanoseconds(void);
 /// and 0 when it completed; returns -1 with `errno` set, holding nothing open,
 /// when creating the socket or starting the connect failed.
 int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress);
+
+/// `openat2(2)`, which neither glibc nor musl wraps: opens `name` in
+/// `directory` with `flags` and `mode`, and when `resolve_beneath` is nonzero
+/// with `RESOLVE_BENEATH`, so the kernel refuses any resolution that leaves
+/// `directory`. Returns the descriptor, or -1 with `errno` set.
+int kernova_openat2(int directory, const char *name, int flags, uint32_t mode, int resolve_beneath);
+
+/// `renameat2(2)` with `RENAME_NOREPLACE`, through the system call, since
+/// musl does not declare the wrapper. Returns 0, or -1 with `errno` set.
+int kernova_rename_exclusive(int directory, const char *name, int new_directory, const char *new_name);
 #endif
 
 #endif

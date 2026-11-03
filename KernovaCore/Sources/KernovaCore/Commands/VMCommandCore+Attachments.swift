@@ -671,14 +671,27 @@ extension VMCommandCore {
     /// user runs, or the Linux agent's disk, made off the main actor on this
     /// process's first mount, whose `install.sh` the user runs.
     ///
+    /// The disk waits for an agent of each scope in `awaiting` to connect
+    /// current, then ejects (``recordCurrentAgents(_:on:)``); `nil` waits for
+    /// every scope the guest OS has, and an empty set never ejects on its own.
+    /// A disk already attached takes `awaiting` as what it waits for now.
+    ///
     /// Answers how the disk reached the guest: a macOS guest whose kernel binds
     /// no USB mass storage driver already carries it on `storageDevices` for the
     /// whole session, so there the verb attaches nothing and says so.
     @discardableResult
-    func mountGuestAgentDisk(_ selector: VMSelector) async throws -> GuestAgentDiskMountOutcome {
+    func mountGuestAgentDisk(
+        _ selector: VMSelector, awaiting: Set<GuestAgentScope>?
+    ) async throws -> GuestAgentDiskMountOutcome {
         let instance = try resolve(selector)
         try require(.toggleGuestAgentDisk, on: instance)
         let guestOS = instance.configuration.guestOS
+        let awaited = awaiting ?? guestOS.guestAgentScopes
+        guard awaited.isSubset(of: guestOS.guestAgentScopes) else {
+            let names = awaited.subtracting(guestOS.guestAgentScopes).map(\.rawValue).sorted()
+            throw CommandError.invalidArgument(
+                "A \(guestOS.displayName) guest has no \(names.joined(separator: " or ")) agent to wait for.")
+        }
         let agents = instance.bundleProducts.guestAgents
         guard agents.bundlesInstallerDisk(for: guestOS) else {
             logger.log(
@@ -695,10 +708,16 @@ extension VMCommandCore {
             )
             return .alreadyPresent(delivery)
         }
+        let layout = instance.bundleLayout
         guard !instance.hasGuestAgentInstallerMounted else {
             logger.log(
                 .debug,
                 "Guest agent installer already mounted on '\(instance.name, privacy: .public)'")
+            if instance.guestAgentInstallerAwaits != awaited {
+                try writeConfiguration(of: instance, as: .toggleGuestAgentDisk, verb: .guestAgentDisk) {
+                    $0.setInstallerDisksAwaiting(awaited, of: agents, in: layout)
+                }
+            }
             return .alreadyPresent(delivery)
         }
         let disk: URL?
@@ -716,8 +735,7 @@ extension VMCommandCore {
         }
         let item = RemovableMediaItem(
             path: disk.path(percentEncoded: false), readOnly: true,
-            label: BundledGuestAgents.installerDiskLabel(for: guestOS))
-        let layout = instance.bundleLayout
+            label: BundledGuestAgents.installerDiskLabel(for: guestOS), awaitedAgentScopes: awaited)
         let copy = layout.guestAgentDiskCopyURL(for: item)
         do {
             // The guest gets the VM's own copy, never the app's shared file.
@@ -729,17 +747,21 @@ extension VMCommandCore {
         }
         logger.log(
             .notice,
-            "Mounting guest agent installer on '\(instance.name, privacy: .public)'")
+            "Mounting guest agent installer on '\(instance.name, privacy: .public)', waiting for \(Self.describe(awaited), privacy: .public)"
+        )
         var landed = false
         defer {
             // A copy no entry names is no installer's; leave none behind.
             if !landed { GuestAgentDiskCopies.discard(copy) }
         }
         try writeConfiguration(of: instance, as: .toggleGuestAgentDisk, verb: .guestAgentDisk) { config in
-            // A mount that raced this one across the disk's copy has attached one already.
+            // A mount that raced this one across the disk's copy has attached
+            // one already, which now waits for what this one asked.
             let media = config.removableMedia ?? []
-            guard !media.contains(where: { $0.id != item.id && $0.isInstaller(of: agents, in: layout) })
-            else { return }
+            guard !media.contains(where: { $0.id != item.id && $0.isInstaller(of: agents, in: layout) }) else {
+                config.setInstallerDisksAwaiting(awaited, of: agents, in: layout)
+                return
+            }
             config.removableMedia = media + [item]
         }
         landed = instance.configuration.removableMedia?.contains { $0.id == item.id } == true
@@ -756,27 +778,55 @@ extension VMCommandCore {
     /// Drops the installer's `removableMedia` entry when it is there, which
     /// takes the VM's copy of the disk with it; the reconcile pass performs the
     /// runtime detach.
-    ///
-    /// The auto-eject an agent handshake triggers calls this rather than
-    /// ``unmountGuestAgentDisk(_:)``: the Hello proves a live session, and the
-    /// eject finishes an install the user already asked for, so a state gate
-    /// between the two could only strand the disk.
     func detachGuestAgentDisk(from instance: VMInstance) {
         guard instance.hasGuestAgentInstallerMounted else { return }
-        let agents = instance.bundleProducts.guestAgents
-        let layout = instance.bundleLayout
         logger.log(
             .notice,
             "Unmounting guest agent installer from '\(instance.name, privacy: .public)'")
+        let agents = instance.bundleProducts.guestAgents
+        let layout = instance.bundleLayout
+        editInstallerDisk(of: instance) { $0.removeInstallerDisks(of: agents, in: layout) }
+    }
+
+    /// Records that agents of `scopes` connected current on `instance`: the
+    /// installer disk stops waiting for them, and ejects once it waits for
+    /// nothing (``VMConfiguration/recordCurrentAgents(_:of:in:)``).
+    ///
+    /// Not gated as ``unmountGuestAgentDisk(_:)`` is: the Hello proves a live
+    /// session, and the eject finishes an install the user already asked for,
+    /// so a state gate between the two could only strand the disk.
+    func recordCurrentAgents(_ scopes: Set<GuestAgentScope>, on instance: VMInstance) {
+        guard let awaited = instance.guestAgentInstallerAwaits, !awaited.isDisjoint(with: scopes) else { return }
+        let left = awaited.subtracting(scopes)
+        logger.log(
+            .notice,
+            left.isEmpty
+                ? "Unmounting guest agent installer from '\(instance.name, privacy: .public)': every agent it waited for connected"
+                : "Guest agent installer on '\(instance.name, privacy: .public)' still waits for \(Self.describe(left), privacy: .public)"
+        )
+        let agents = instance.bundleProducts.guestAgents
+        let layout = instance.bundleLayout
+        editInstallerDisk(of: instance) { $0.recordCurrentAgents(scopes, of: agents, in: layout) }
+    }
+
+    /// `scopes` as a log line names them.
+    private static func describe(_ scopes: Set<GuestAgentScope>) -> String {
+        scopes.isEmpty ? "nothing" : scopes.map(\.rawValue).sorted().joined(separator: ", ")
+    }
+
+    /// Writes `change` to the installer disk's entry as a hot-plug edit, the
+    /// reconcile pass carrying any detach to the live session; a write the
+    /// VM's state refuses leaves the disk as it is, and says so in the log.
+    private func editInstallerDisk(of instance: VMInstance, _ change: (inout VMConfiguration) -> Void) {
         let write: VMLibrary.SettingsWrite
         do {
             write = try instance.activity.edit(.hotPlugMedia) { permit in
-                library.updateConfiguration(permit) { $0.removeInstallerDisks(of: agents, in: layout) }
+                library.updateConfiguration(permit, mutate: change)
             }
         } catch {
             logger.log(
                 .notice,
-                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)' (\(instance.status.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)"
+                "Guest agent installer stays as it was on '\(instance.name, privacy: .public)' (\(instance.status.rawValue, privacy: .public)): \(String(describing: error), privacy: .public)"
             )
             return
         }
@@ -786,12 +836,12 @@ extension VMCommandCore {
         case .refused(let refusal):
             logger.log(
                 .notice,
-                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
+                "Guest agent installer stays as it was on '\(instance.name, privacy: .public)': \(refusal.localizedDescription, privacy: .public)"
             )
         case .notSaved:
             logger.log(
                 .notice,
-                "Guest agent installer stays mounted on '\(instance.name, privacy: .public)': the configuration was not saved"
+                "Guest agent installer stays as it was on '\(instance.name, privacy: .public)': the configuration was not saved"
             )
         }
     }

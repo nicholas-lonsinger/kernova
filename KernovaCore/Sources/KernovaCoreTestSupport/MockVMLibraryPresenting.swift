@@ -44,6 +44,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     /// Parallel to `installerMountedNames`: how each request said the disk
     /// reaches the guest.
     private(set) var installerMountedDeliveries: [GuestAgentDiskDelivery] = []
+    /// Each Linux install question asked: the VM and the choice it started on.
+    private(set) var linuxAgentInstallChoices: [(instance: VMInstance, initial: LinuxAgentInstallChoice)] = []
     private(set) var creationWizardCount = 0
     /// Pairing prompts raised, each still unanswered until a test answers it.
     private(set) var usbPairingRequests: [USBAccessoryPairingRequest] = []
@@ -117,6 +119,9 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
         installerMountedNames.append(instance.name)
         installerMountedPurposes.append(purpose)
         installerMountedDeliveries.append(delivery)
+    }
+    func presentLinuxAgentInstallChoice(for instance: VMInstance, initial: LinuxAgentInstallChoice) {
+        linuxAgentInstallChoices.append((instance, initial))
     }
     func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
         usbPairingRequests.append(request)

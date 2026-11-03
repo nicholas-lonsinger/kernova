@@ -1382,10 +1382,10 @@ struct VMCommandCoreAttachmentTests {
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
 
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .attached(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .attached(.usb))
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
 
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.usb))
         #expect(instance.configuration.removableMedia?.count == 1)
     }
 
@@ -1404,7 +1404,7 @@ struct VMCommandCoreAttachmentTests {
         instance.beginSessionContextForTesting()
         instance.attachAgentTransport(AgentHubProbe())
 
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .attached(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .attached(.usb))
         let item = try #require(instance.configuration.removableMedia?.first)
         #expect(instance.configuration.removableMedia?.count == 1)
         #expect(item.path == cache.url.path(percentEncoded: false))
@@ -1424,12 +1424,12 @@ struct VMCommandCoreAttachmentTests {
         try Data("a later build's disk".utf8).write(to: cache.url)
         #expect(try Data(contentsOf: copy) == image)
 
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.usb))
         // The disk is the app's, so a VM's delete never offers to trash it.
         #expect(await harness.core.externalAttachments(for: instance).isEmpty)
 
         // An eject takes the entry and the copy.
-        instance.onAgentBecameCurrent?()
+        instance.onCurrentAgentsArrived?([.login, .system])
         #expect(instance.configuration.removableMedia == nil)
         #expect(!FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
     }
@@ -1440,7 +1440,7 @@ struct VMCommandCoreAttachmentTests {
         let sessionID = UUID()
         let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS)
         instance.beginSessionContextForTesting()
-        try await harness.core.mountGuestAgentDisk(.id(instance.id))
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
         try await waitForChange { instance.phase == .running(sessionID: sessionID) }
         let copy = instance.bundleLayout.guestAgentDiskCopyURL(
             for: try #require(instance.configuration.removableMedia?.first))
@@ -1479,7 +1479,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.hasGuestAgentInstallerMounted)
         // The other build's DMG is the app's, never offered to the trash.
         #expect(await harness.core.externalAttachments(for: instance).isEmpty)
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.usb))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.usb))
     }
 
     @Test("The Storage panel's Eject and Remove take an installer entry's copy with it")
@@ -1506,7 +1506,7 @@ struct VMCommandCoreAttachmentTests {
             $0.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
         }
 
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id)) == .alreadyPresent(.virtio))
+        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.virtio))
         #expect(instance.configuration.removableMedia == nil)
         #expect(instance.configuration.storageDisks == nil)
     }
@@ -1525,10 +1525,10 @@ struct VMCommandCoreAttachmentTests {
         try harness.core.unmountGuestAgentDisk(.id(instance.id))
         #expect(instance.configuration.removableMedia == nil)
 
-        // The auto-eject the core wires onto the library fires the same detach
-        // when the agent it carries handshakes as current.
-        try await harness.core.mountGuestAgentDisk(.id(instance.id))
-        instance.onAgentBecameCurrent?()
+        // The eject the core wires onto the library fires the same detach
+        // when the agent it waits for connects current.
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
+        instance.onCurrentAgentsArrived?([.login])
         #expect(instance.configuration.removableMedia == nil)
     }
 
@@ -1543,11 +1543,13 @@ struct VMCommandCoreAttachmentTests {
             phase: .operating(.capturingSnapshot(.live), from: .running(sessionID: sessionID)),
             guestOS: .macOS
         ) {
-            $0.removableMedia = [RemovableMediaItem(path: installerPath, readOnly: true)]
+            $0.removableMedia = [
+                RemovableMediaItem(path: installerPath, readOnly: true, awaitedAgentScopes: [.login])
+            ]
         }
         instance.beginSessionContextForTesting()
 
-        instance.onAgentBecameCurrent?()
+        instance.onCurrentAgentsArrived?([.login])
 
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
         #expect(instance.hasGuestAgentInstallerMounted)
@@ -1562,7 +1564,7 @@ struct VMCommandCoreAttachmentTests {
     func autoEjectDuringAnAttachLandsAfterIt() async throws {
         let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
-        let installer = RemovableMediaItem(path: installerPath, readOnly: true)
+        let installer = RemovableMediaItem(path: installerPath, readOnly: true, awaitedAgentScopes: [.login])
         let harness = makeHarness(usbAccessoryPassthrough: .available(MockUSBAccessoryService()))
         let sessionID = UUID()
         let instance = makeInstance(
@@ -1581,7 +1583,7 @@ struct VMCommandCoreAttachmentTests {
         }
         try await gate.waitUntilEntered()
 
-        instance.onAgentBecameCurrent?()
+        instance.onCurrentAgentsArrived?([.login])
         #expect(instance.configuration.removableMedia == nil)
         #expect(harness.removableMedia.detachCallCount == 0)
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
@@ -1594,6 +1596,150 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase == .running(sessionID: sessionID))
     }
 
+    // MARK: - What the installer disk waits for
+
+    /// A harness bundling a Linux agent, and a running Linux VM in it whose
+    /// session reaches the agent hub.
+    private func linuxAgentVM() throws -> (Harness, VMInstance) {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 64).write(to: agent)
+        let cache = GuestAgentDiskCache(
+            directory: scratch.url.appending(path: "GuestAgentDisks"), files: LinuxAgentDisk.bundledFiles)
+        let harness = makeHarness(
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgents: .linux(agent: agent, disk: cache)))
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(AgentHubProbe())
+        return (harness, instance)
+    }
+
+    @Test("An install mount waits for each scope it names, and ejects once every one has connected current")
+    func installerWaitsForEveryScope() async throws {
+        let (harness, instance) = try linuxAgentVM()
+
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login, .system])
+        #expect(instance.guestAgentInstallerAwaits == [.login, .system])
+
+        instance.onCurrentAgentsArrived?([.login])
+        #expect(instance.guestAgentInstallerAwaits == [.system])
+        // The same scope again changes nothing.
+        instance.onCurrentAgentsArrived?([.login])
+        #expect(instance.guestAgentInstallerAwaits == [.system])
+
+        instance.onCurrentAgentsArrived?([.system])
+        #expect(instance.configuration.removableMedia == nil)
+        #expect(!instance.hasGuestAgentInstallerMounted)
+    }
+
+    @Test("An agent of a scope the disk does not wait for ejects nothing")
+    func unawaitedScopeEjectsNothing() async throws {
+        let (harness, instance) = try linuxAgentVM()
+
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.system])
+        instance.onCurrentAgentsArrived?([.login])
+
+        #expect(instance.guestAgentInstallerAwaits == [.system])
+    }
+
+    @Test("A manage mount waits for nothing, so no agent ejects it")
+    func manageMountNeverEjects() async throws {
+        let (harness, instance) = try linuxAgentVM()
+
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
+        instance.onCurrentAgentsArrived?([.login, .system])
+
+        #expect(instance.guestAgentInstallerAwaits == [])
+        try harness.core.unmountGuestAgentDisk(.id(instance.id))
+        #expect(!instance.hasGuestAgentInstallerMounted)
+    }
+
+    @Test("A mount that names no scopes waits for every one the guest OS has, and refuses one it has not")
+    func mountDefaultsToTheGuestsScopes() async throws {
+        let (linuxHarness, linux) = try linuxAgentVM()
+        try await linuxHarness.core.mountGuestAgentDisk(.id(linux.id), awaiting: nil)
+        #expect(linux.guestAgentInstallerAwaits == [.login, .system])
+
+        let harness = makeHarness()
+        let macOS = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: [.system])
+        }
+        guard case .invalidArgument = refusal else {
+            Issue.record("expected an invalid-argument refusal, got \(refusal)")
+            return
+        }
+        #expect(macOS.configuration.removableMedia == nil)
+
+        try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: nil)
+        #expect(macOS.guestAgentInstallerAwaits == [.login])
+    }
+
+    @Test("A mount on a disk already attached takes what it waits for, without attaching again")
+    func remountReplacesWhatTheDiskAwaits() async throws {
+        let (harness, instance) = try linuxAgentVM()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
+        let item = try #require(instance.configuration.removableMedia?.first)
+
+        #expect(
+            try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.system])
+                == .alreadyPresent(.usb))
+
+        #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
+        #expect(instance.guestAgentInstallerAwaits == [.system])
+    }
+
+    @Test("What the disk waits for survives a suspend and resume, and the eject follows the agent after it")
+    func awaitedScopesSurviveASuspend() async throws {
+        let (harness, instance) = try linuxAgentVM()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login, .system])
+        instance.onCurrentAgentsArrived?([.login])
+        try await instance.waitUntilIdle()
+
+        try await harness.core.suspend(.id(instance.id))
+        #expect(instance.phase == .suspended)
+        #expect(instance.guestAgentInstallerAwaits == [.system])
+
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        try await instance.waitUntilIdle()
+        #expect(instance.status == .running)
+        #expect(instance.guestAgentInstallerAwaits == [.system])
+
+        instance.onCurrentAgentsArrived?([.system])
+        #expect(!instance.hasGuestAgentInstallerMounted)
+    }
+
+    @Test("A macOS install waits for the agent, and a same-version Hello ejects it")
+    func macOSInstallEjectsOnASameVersionHello() async throws {
+        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS) {
+            $0.lastSeenAgentVersion = bundled
+        }
+        instance.beginSessionContextForTesting()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login])
+        #expect(instance.guestAgentInstallerAwaits == [.login])
+
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
+
+        #expect(!instance.hasGuestAgentInstallerMounted)
+    }
+
+    @Test("A macOS manage mount stays through the agent's Hello")
+    func macOSManageMountStaysThroughAHello() async throws {
+        let bundled = try #require(BundledGuestAgents.testing.macOSVersion)
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
+
+        instance.recordObservedAgentInfo(ObservedAgentInfo(agentVersion: bundled, osVersion: nil))
+
+        #expect(instance.guestAgentInstallerAwaits == [])
+    }
+
     @Test("A VM with no live session to look inside refuses the guest agent disk, as does a build without it")
     func guestAgentDiskNeedsALiveSession() async throws {
         let harness = makeHarness()
@@ -1604,7 +1750,7 @@ struct VMCommandCoreAttachmentTests {
 
         for instance in [stopped, stoppedLinux, unbundled] {
             await #expect(throws: CommandError.self) {
-                _ = try await harness.core.mountGuestAgentDisk(.id(instance.id))
+                _ = try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
             }
             #expect(instance.configuration.removableMedia == nil)
         }

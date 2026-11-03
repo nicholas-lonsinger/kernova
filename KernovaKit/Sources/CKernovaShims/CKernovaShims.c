@@ -86,6 +86,7 @@ uint64_t kernova_monotonic_nanoseconds(void) {
 #include <sys/socket.h>
 #include <unistd.h>
 #include <linux/vm_sockets.h>
+#include <sys/syscall.h>
 
 int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress) {
     int descriptor = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
@@ -109,5 +110,31 @@ int kernova_vsock_connect(uint32_t cid, uint32_t port, int *in_progress) {
     close(descriptor);
     errno = saved;
     return -1;
+}
+
+// `struct open_how` and `RESOLVE_BENEATH` from the kernel's
+// `include/uapi/linux/openat2.h`, which the static Linux SDK does not ship;
+// the layout and the value are kernel ABI.
+struct kernova_open_how {
+    uint64_t flags;
+    uint64_t mode;
+    uint64_t resolve;
+};
+#define KERNOVA_RESOLVE_BENEATH 0x08
+
+int kernova_openat2(int directory, const char *name, int flags, uint32_t mode, int resolve_beneath) {
+    struct kernova_open_how how;
+    memset(&how, 0, sizeof how);
+    how.flags = (uint64_t)(uint32_t)flags;
+    how.mode = mode;
+    how.resolve = resolve_beneath ? KERNOVA_RESOLVE_BENEATH : 0;
+    return (int)syscall(SYS_openat2, directory, name, &how, sizeof how);
+}
+
+// `RENAME_NOREPLACE` from the kernel's `include/uapi/linux/fs.h`.
+#define KERNOVA_RENAME_NOREPLACE 1
+
+int kernova_rename_exclusive(int directory, const char *name, int new_directory, const char *new_name) {
+    return (int)syscall(SYS_renameat2, directory, name, new_directory, new_name, KERNOVA_RENAME_NOREPLACE);
 }
 #endif

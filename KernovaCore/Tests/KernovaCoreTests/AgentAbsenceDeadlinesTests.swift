@@ -1,5 +1,6 @@
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaAgentRuntime
 import KernovaTestSupport
 import KernovaWire
@@ -27,12 +28,12 @@ struct AgentAbsenceDeadlinesTests {
     }
 
     /// A scope remembered on this VM, absent now; `seen` says whether it connected this session.
-    private static func absent(_ scope: AgentScopePresence.Scope, seen: Bool = false) -> AgentScopePresence {
+    private static func absent(_ scope: GuestAgentScope, seen: Bool = false) -> AgentScopePresence {
         AgentScopePresence(scope: scope, lastSeenVersion: "1.0", seenThisSession: seen, isConnected: false)
     }
 
     private static func pending(
-        _ presences: [AgentScopePresence], away: [AwayPeer] = [], warned: Set<AgentScopePresence.Scope> = [],
+        _ presences: [AgentScopePresence], away: [AwayPeer] = [], warned: Set<GuestAgentScope> = [],
         expired: Set<UInt64> = []
     ) -> [AgentAbsence.Subject: CoreInstant] {
         let absences = AgentAbsenceDeadlines.pending(

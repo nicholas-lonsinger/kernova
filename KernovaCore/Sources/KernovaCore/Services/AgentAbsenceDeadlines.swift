@@ -1,5 +1,6 @@
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 
 /// One absence the agent absence watchdog waits out, and when it stops waiting.
 package struct AgentAbsence: Equatable, Sendable {
@@ -8,7 +9,7 @@ package struct AgentAbsence: Equatable, Sendable {
         /// An away peer of the hub's snapshot, by its ``AwayPeer/order``: at the deadline its line goes.
         case away(order: UInt64)
         /// A scope ``MissingAgentRule`` finds missing: at the deadline it warns.
-        case scope(AgentScopePresence.Scope)
+        case scope(GuestAgentScope)
     }
 
     package var subject: Subject
@@ -31,7 +32,7 @@ package enum AgentAbsenceDeadlines {
     /// (``UpdateRollbackPolicy``).
     package static func pending(
         presences: [AgentScopePresence], away: [AwayPeer], floor: CoreInstant, grace: Duration,
-        warned: Set<AgentScopePresence.Scope>, expired: Set<UInt64>
+        warned: Set<GuestAgentScope>, expired: Set<UInt64>
     ) -> [AgentAbsence] {
         func deadline(since: CoreInstant, relaunching: Bool) -> CoreInstant {
             let allowance = relaunching ? grace + .seconds(UpdateRollbackPolicy.latestRevertSeconds) : grace
@@ -42,7 +43,7 @@ package enum AgentAbsenceDeadlines {
                 subject: .away(order: peer.order), deadline: deadline(since: peer.since, relaunching: peer.relaunching))
         }
         let scopes = MissingAgentRule.missing(presences).filter { !warned.contains($0.scope) }.map { presence in
-            let newest = away.filter { AgentScopePresence.Scope(of: $0.summary) == presence.scope }
+            let newest = away.filter { GuestAgentScope(of: $0.summary) == presence.scope }
                 .max { $0.order < $1.order }
             return AgentAbsence(
                 subject: .scope(presence.scope),
@@ -62,7 +63,7 @@ extension CoreDuration {
     }
 }
 
-extension AgentScopePresence.Scope {
+extension GuestAgentScope {
     /// The scope `peer` is an agent of.
     package init(of peer: PeerSummary) {
         self = peer.role == .systemPeer ? .system : .login

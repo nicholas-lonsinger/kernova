@@ -70,6 +70,73 @@ struct VMLiveStateCaptureTests {
         #expect(!captured)
     }
 
+    // MARK: - Recording the version that wrote the state
+
+    private let scratch = TestScratchDirectory(prefix: "VMLiveStateCaptureTests")
+
+    /// The products of a Kernova at version 0.10.0, build 412.
+    private let products = AppBundleProducts(
+        bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "0.10.0", buildNumber: "412",
+        guestAgents: .testing)
+
+    @Test("The version label is the version, then the build in parentheses")
+    func versionLabelFormat() {
+        #expect(products.versionLabel == "0.10.0 (412)")
+        let unbuilt = AppBundleProducts(
+            bundleURL: products.bundleURL, hostVersion: "0.10.0", buildNumber: nil, guestAgents: .testing)
+        #expect(unbuilt.versionLabel == "0.10.0")
+    }
+
+    /// Writes a live capture of a running VM from a Kernova at `products`
+    /// over `session` into `saveFileURL`.
+    private func captureState(to saveFileURL: URL, over session: MockSnapshotSession) async throws {
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: UUID()), bundleProducts: products)
+        try await instance.activity.launchedCapture(.live) { context in
+            try await VMLiveStateCapture.captureLiveState(
+                context, session: session, wasRunning: true, saveFileURL: saveFileURL
+            ) {}
+            return .rest(.asStarted, ())
+        }
+    }
+
+    @Test("A live capture records the Kernova that wrote its state")
+    func liveCaptureRecordsTheVersion() async throws {
+        let saveFileURL = scratch.url.appendingPathComponent("SaveFile.vzvmsave")
+        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
+
+        try await captureState(to: saveFileURL, over: session)
+
+        #expect(SavedStateVersion.read(at: saveFileURL) == "0.10.0 (412)")
+    }
+
+    @Test("A write that fails leaves what it part-wrote with no version")
+    func failedWriteRecordsNoVersion() async throws {
+        let saveFileURL = scratch.url.appendingPathComponent("SaveFile.vzvmsave")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        // However far VZ got before the write failed.
+        try Data("part-written".utf8).write(to: saveFileURL)
+        let session = MockSnapshotSession(guestState: .running)
+        await session.setSaveError(CocoaError(.fileWriteOutOfSpace))
+
+        await #expect(throws: CocoaError.self) {
+            try await captureState(to: saveFileURL, over: session)
+        }
+
+        #expect(FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false)))
+        #expect(SavedStateVersion.read(at: saveFileURL) == nil)
+    }
+
+    @Test("A file with no record, or no file at all, reads as no version")
+    func unrecordedStateReadsAsNoVersion() throws {
+        let saveFileURL = scratch.url.appendingPathComponent("SaveFile.vzvmsave")
+        #expect(SavedStateVersion.read(at: saveFileURL) == nil)
+
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        try Data("saved-state".utf8).write(to: saveFileURL)
+        #expect(SavedStateVersion.read(at: saveFileURL) == nil)
+    }
+
     // MARK: - Detaching passthrough accessories before a save
 
     /// A VM in a library whose live session holds `count` passthrough

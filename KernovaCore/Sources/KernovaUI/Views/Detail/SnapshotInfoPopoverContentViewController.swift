@@ -18,16 +18,20 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
     private let snapshot: VMSnapshot
     /// The snapshot's size, `nil` when it couldn't be read.
     private let size: SnapshotSize?
+    /// The Kernova build that wrote the snapshot's saved state, `nil` for a
+    /// cold snapshot or one saved before Kernova recorded it.
+    private let savedStateVersion: String?
     /// Whether the snapshot's note can be written right now.
     private let canEditNotes: Bool
     private var notesEditor: NotesEditorView?
 
     init(
-        snapshot: VMSnapshot, size: SnapshotSize?, canEditNotes: Bool,
+        snapshot: VMSnapshot, size: SnapshotSize?, savedStateVersion: String?, canEditNotes: Bool,
         onCommitNotes: @escaping (String) -> Void
     ) {
         self.snapshot = snapshot
         self.size = size
+        self.savedStateVersion = savedStateVersion
         self.canEditNotes = canEditNotes
         self.onCommitNotes = onCommitNotes
         super.init(nibName: nil, bundle: nil)
@@ -82,6 +86,9 @@ final class SnapshotInfoPopoverContentViewController: NSViewController {
         grid.addRow(with: [
             keyLabel("Captured"), valueLabel(SnapshotKindCopy.capturedContents(snapshot.kind)),
         ])
+        if let savedStateVersion {
+            grid.addRow(with: [keyLabel("Saved by"), valueLabel("Kernova \(savedStateVersion)")])
+        }
         grid.addRow(with: [
             keyLabel("Size"), valueLabel(size.map { DataFormatters.formatBytes($0.bytes) } ?? "\u{2014}"),
         ])

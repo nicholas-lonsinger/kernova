@@ -211,13 +211,13 @@ package final class VMInstance {
             ) -> VMLibrary.SettingsWrite
         )?
 
-    /// Fired when a guest agent the host bundles arrives — an install or
-    /// update just completed: the macOS agent handshaking a new version that is
-    /// current (matches or exceeds what the host bundles), or a peer of the
-    /// agent hub whose payload is the bundled one.
+    /// Fired with the scopes of the agents that just connected current: the
+    /// macOS agent's Hello of a version that matches or exceeds what the host
+    /// bundles, or a new agent hub peer whose payload is the bundled one.
     ///
-    /// The host uses it to auto-eject the guest-agent installer disk.
-    @ObservationIgnored var onAgentBecameCurrent: (@MainActor () -> Void)?
+    /// What the guest-agent installer disk waits for
+    /// (``VMConfiguration/recordCurrentAgents(_:of:in:)``).
+    @ObservationIgnored var onCurrentAgentsArrived: (@MainActor (Set<GuestAgentScope>) -> Void)?
 
     /// Fired once a power-off has rested the VM: its guest-agent disk and the
     /// VM's copy of it go with the session.
@@ -321,12 +321,13 @@ package final class VMInstance {
 
     /// The hub's latest snapshot, as it publishes it to the main actor.
     ///
-    /// A peer arriving whose payload is the one the host bundles for it fires
-    /// ``onAgentBecameCurrent``, as the macOS agent's Hello of a new current
-    /// version does.
+    /// Peers arriving whose payload is the one the host bundles for them fire
+    /// ``onCurrentAgentsArrived`` with their scopes, as the macOS agent's Hello
+    /// of a current version does.
     private var publishedAgentHubSnapshot = AgentHubSnapshot.empty {
         didSet {
-            if Self.connectsCurrentPeer(from: oldValue, to: publishedAgentHubSnapshot) { onAgentBecameCurrent?() }
+            let arrived = Self.currentPeerScopes(arriving: oldValue, to: publishedAgentHubSnapshot)
+            if !arrived.isEmpty { onCurrentAgentsArrived?(arrived) }
             agentHubSnapshotDidChange()
         }
     }
@@ -369,11 +370,12 @@ package final class VMInstance {
         }
     }
 
-    /// Whether `new` holds a peer `old` does not whose payload is the one the
-    /// host bundles.
-    static func connectsCurrentPeer(from old: AgentHubSnapshot, to new: AgentHubSnapshot) -> Bool {
+    /// The scopes of the peers `new` holds and `old` does not whose payload is
+    /// the one the host bundles.
+    static func currentPeerScopes(arriving old: AgentHubSnapshot, to new: AgentHubSnapshot) -> Set<GuestAgentScope> {
         let known = Set(old.peers.map(\.handle))
-        return new.peers.contains { $0.standing == .current && !known.contains($0.handle) }
+        return Set(
+            new.peers.filter { $0.standing == .current && !known.contains($0.handle) }.map(GuestAgentScope.init(of:)))
     }
 
     #if DEBUG
@@ -508,7 +510,13 @@ package final class VMInstance {
     /// `true` when a guest-agent installer disk is in this VM's
     /// `removableMedia` list (live-attached, pending attach, or cold).
     package var hasGuestAgentInstallerMounted: Bool {
-        (configuration.removableMedia ?? []).contains { isGuestAgentInstaller($0) }
+        guestAgentInstallerAwaits != nil
+    }
+
+    /// The agent scopes the installer disk in this VM's `removableMedia` list
+    /// still waits for; `nil` when no installer disk is there.
+    package var guestAgentInstallerAwaits: Set<GuestAgentScope>? {
+        (configuration.removableMedia ?? []).first { isGuestAgentInstaller($0) }?.awaitedAgentScopes
     }
 
     /// Whether `item` is a guest-agent installer disk on this VM
@@ -523,6 +531,16 @@ package final class VMInstance {
 
     /// Whether the bundle holds a suspend slot.
     package var hasSaveFile: Bool { bundleLayout.hasSaveFile }
+
+    /// The Kernova build that wrote the suspend slot, `nil` when the bundle
+    /// holds none or it predates the record.
+    package var savedStateVersion: String? { bundleLayout.savedStateVersion }
+
+    /// The Kernova build that wrote snapshot `id`'s saved state, `nil` for a
+    /// cold snapshot or one that predates the record.
+    package func savedStateVersion(ofSnapshot id: UUID) -> String? {
+        bundleLayout.snapshotLayout(id: id).savedStateVersion
+    }
 
     // MARK: - Machine Identity
 
@@ -1241,6 +1259,11 @@ package final class VMInstance {
         }
     }
 
+    /// The scopes whose agent has ever reported on this VM.
+    var seenAgentScopes: Set<GuestAgentScope> {
+        Set(agentScopePresences.filter { $0.lastSeenVersion != nil }.map(\.scope))
+    }
+
     /// The scopes the session warns about: ``MissingAgentRule``'s missing
     /// ones the absence watchdog has warned about — what every surface names.
     var warnedMissingAgents: [AgentScopePresence] {
@@ -1345,7 +1368,7 @@ package final class VMInstance {
     private func agentAbsenceDeadlinesPassed(_ armed: VMSessionContext) {
         let now = Self.agentAbsenceNow
         var expired: Set<UInt64> = []
-        var warned: Set<AgentScopePresence.Scope> = []
+        var warned: Set<GuestAgentScope> = []
         for absence in pendingAgentAbsences(armed) where absence.deadline <= now {
             switch absence.subject {
             case .away(let order): expired.insert(order)
@@ -1420,7 +1443,6 @@ package final class VMInstance {
     /// OS version has no such filter — a `nil` overwrites a stored value, so a
     /// guest that stops vouching for its version reads Unknown, not stale.
     func recordObservedAgentInfo(_ info: ObservedAgentInfo) {
-        let agentVersionChanged = lastSeenAgentVersion != info.agentVersion
         sessionContext?.hasSeenAgentThisSession = true
         // The session holds what the guest reported, so every surface shows it
         // whether or not the write below lands; the next Hello that differs
@@ -1441,12 +1463,8 @@ package final class VMInstance {
                 }
             }
         }
-        // Only on an agent-version change: a same-version reconnect (e.g. while
-        // the disk is mounted to run uninstall.command) must not yank the
-        // installer disk out from under the user.
-        guard agentVersionChanged else { return }
         if AgentStatus.isObservedVersionCurrent(info.agentVersion, bundled: bundleProducts.guestAgents.macOSVersion) {
-            onAgentBecameCurrent?()
+            onCurrentAgentsArrived?([.login])
         }
     }
 

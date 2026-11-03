@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import KernovaFileTree
 import KernovaTestSupport
 import System
 import Testing

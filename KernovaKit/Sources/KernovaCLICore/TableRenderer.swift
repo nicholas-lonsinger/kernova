@@ -54,6 +54,9 @@ enum TableRenderer {
         fields.append(contentsOf: [
             ("Guest Agent", [info.agentStatus ?? "\u{2013}"] + info.agents.map(render)),
             ("Saved State", [info.hasSavedState ? "Yes" : "No"]),
+        ])
+        if let version = info.savedStateKernovaVersion { fields.append(("Saved By", ["Kernova \(version)"])) }
+        fields.append(contentsOf: [
             ("Ephemeral", [info.isEphemeral ? "Yes" : "No"]),
             ("Snapshots", [String(info.snapshotCount)]),
             ("Bundle", [info.bundlePath]),

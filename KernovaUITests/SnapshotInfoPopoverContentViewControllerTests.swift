@@ -20,13 +20,14 @@ struct SnapshotInfoPopoverContentViewControllerTests {
     private func makeController(
         kind: VMSnapshotKind, name: String = "Before the update", notes: String = "",
         canEditNotes: Bool = true, recorder: NoteRecorder = NoteRecorder(),
-        size: SnapshotSize? = SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)
+        size: SnapshotSize? = SnapshotSize(bytes: 2_000_000_000, privateBytes: nil),
+        savedStateVersion: String? = nil
     ) -> SnapshotInfoPopoverContentViewController {
         let snapshot = VMSnapshot(
             name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: notes, kind: kind, macAddress: nil)
         let controller = SnapshotInfoPopoverContentViewController(
-            snapshot: snapshot, size: size, canEditNotes: canEditNotes,
+            snapshot: snapshot, size: size, savedStateVersion: savedStateVersion, canEditNotes: canEditNotes,
             onCommitNotes: { recorder.committed.append($0) })
         controller.loadViewIfNeeded()
         return controller
@@ -71,6 +72,19 @@ struct SnapshotInfoPopoverContentViewControllerTests {
         let unread = makeController(kind: .warm, size: nil)
         #expect(findLabel(withText: "\u{2014}", in: unread.view) != nil)
         #expect(findLabel(withText: "Private", in: unread.view) == nil)
+    }
+
+    @Test("The facts grid names the Kernova that saved a running-state snapshot's state")
+    func warmNamesWhoSavedIt() {
+        let controller = makeController(kind: .warm, savedStateVersion: "0.10.0 (412)")
+        #expect(findLabel(withText: "Saved by", in: controller.view) != nil)
+        #expect(findLabel(withText: "Kernova 0.10.0 (412)", in: controller.view) != nil)
+    }
+
+    @Test("A saved state with no recorded version names no saver")
+    func unrecordedVersionNamesNoSaver() {
+        let controller = makeController(kind: .warm, savedStateVersion: nil)
+        #expect(findLabel(withText: "Saved by", in: controller.view) == nil)
     }
 
     @Test("The facts grid says what a powered-off snapshot captured")

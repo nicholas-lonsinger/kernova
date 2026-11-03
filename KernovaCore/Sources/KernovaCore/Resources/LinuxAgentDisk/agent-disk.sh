@@ -13,7 +13,7 @@
 # where sudo would ask for a password.
 #
 # kernova-agent does the work. This copies it off the disk, which Kernova
-# ejects once an agent it bundles connects, and runs it from the copy. The
+# ejects once the agents it waits for connect, and runs it from the copy. The
 # --system step is the one that runs as root: sudo runs it here, printed first,
 # and a root shell runs it, and only it, without sudo.
 

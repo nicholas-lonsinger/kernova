@@ -77,9 +77,33 @@ public enum USBAccessoryEdit: Codable, Sendable, Hashable {
 }
 
 /// What to do with the bundled guest-agent installer disk.
-public enum GuestAgentDiskEdit: String, Codable, Sendable, Hashable, CaseIterable {
-    /// Put the installer image in front of the guest.
-    case mount
+public enum GuestAgentDiskEdit: Codable, Sendable, Hashable {
+    /// Put the installer image in front of the guest, waiting for an agent of
+    /// each scope in `awaiting` to connect current before it ejects; `nil`
+    /// waits for every scope the guest OS has (``VMGuestOS/guestAgentScopes``),
+    /// and an empty set never ejects on its own.
+    ///
+    /// On a disk already attached, `awaiting` replaces what it waits for.
+    case mount(awaiting: Set<GuestAgentScope>?)
     /// Take it away again.
     case unmount
+}
+
+/// When a guest agent starts, which is also which agent it is.
+public enum GuestAgentScope: String, Codable, Sendable, Hashable, CaseIterable {
+    /// At a user's login: the macOS agent, a Linux session agent.
+    case login
+    /// At boot: the Linux system service.
+    case system
+}
+
+extension VMGuestOS {
+    /// The scopes this guest OS's agents run in: the macOS agent alone, or a
+    /// Linux guest's session agent and system service.
+    public var guestAgentScopes: Set<GuestAgentScope> {
+        switch self {
+        case .macOS: [.login]
+        case .linux: [.login, .system]
+        }
+    }
 }

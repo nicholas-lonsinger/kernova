@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaLogging
 
 /// Everything scoped to the lifetime of one `VZVirtualMachine`, so a session's
@@ -91,7 +92,7 @@ package final class VMSessionContext {
     /// its absence outlasts its allowance, and leaves once ``MissingAgentRule``
     /// stops finding it missing, so its next absence gets an allowance of its
     /// own.
-    var warnedAgentScopes: Set<AgentScopePresence.Scope> = []
+    var warnedAgentScopes: Set<GuestAgentScope> = []
 
     /// What this session's latest Hello reported, `nil` before one arrives.
     var observedAgentInfo: ObservedAgentInfo?

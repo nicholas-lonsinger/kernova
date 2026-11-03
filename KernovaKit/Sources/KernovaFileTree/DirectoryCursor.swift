@@ -1,22 +1,10 @@
-import Darwin
-import System
-
 /// Why a ``DirectoryCursor`` could not move up.
-enum DirectoryCursorFailure: Error, Equatable {
-    /// Reopening the parent failed with this `errno`.
-    case system(Errno)
+public enum DirectoryCursorFailure: Error, Equatable {
+    /// Reopening the parent failed.
+    case system(TreeFileSystemError)
     /// The parent reached through `..` is not the directory the cursor came
     /// down from.
     case moved
-
-    /// The failure as one on the item at `path`.
-    func naming(_ path: [UInt8]) -> ClipboardItemFailure {
-        let display = ClipboardArchiveCodec.displayPath(path)
-        switch self {
-        case .system(let errno): return ClipboardItemFailure(itemPath: display, reason: .posix(errno.rawValue))
-        case .moved: return ClipboardItemFailure(itemPath: display, reason: .unknown)
-        }
-    }
 }
 
 /// A position in a directory tree held through descriptors alone.
@@ -29,49 +17,50 @@ enum DirectoryCursorFailure: Error, Equatable {
 ///
 /// The cursor owns every descriptor it holds, and closes the last one when it
 /// ends.
-struct DirectoryCursor<Volume: ClipboardArchiveVolume, Frame>: ~Copyable {
+public struct DirectoryCursor<FileSystem: TreeFileSystem, Frame>: ~Copyable {
     private struct Level {
-        let device: dev_t
-        let inode: ino_t
+        let device: UInt64
+        let inode: UInt64
         var frame: Frame
     }
 
-    let volume: Volume
+    /// The file system the cursor's descriptors belong to.
+    public let fileSystem: FileSystem
     /// The directory the cursor is at, open.
-    private(set) var descriptor: Int32
+    public private(set) var descriptor: Int32
     private var level: Level
     private var ancestors: [Level] = []
 
     /// What the caller keeps for the directory the cursor is at.
-    var frame: Frame {
+    public var frame: Frame {
         get { level.frame }
         set { level.frame = newValue }
     }
 
     /// The frame of the directory above the current one, or `nil` at the
     /// top.
-    var parentFrame: Frame? { ancestors.last?.frame }
+    public var parentFrame: Frame? { ancestors.last?.frame }
 
     /// Whether the cursor is at the directory it started from.
-    var isAtTop: Bool { ancestors.isEmpty }
+    public var isAtTop: Bool { ancestors.isEmpty }
 
     /// Starts at `descriptor`, an open directory whose status is `status`,
     /// taking ownership of it.
-    init(volume: Volume, descriptor: Int32, status: stat, frame: Frame) {
-        self.volume = volume
+    public init(fileSystem: FileSystem, descriptor: Int32, status: FileStatus, frame: Frame) {
+        self.fileSystem = fileSystem
         self.descriptor = descriptor
-        level = Level(device: status.st_dev, inode: status.st_ino, frame: frame)
+        level = Level(device: status.device, inode: status.inode, frame: frame)
     }
 
     /// Moves down into `child` — an open directory inside the current one,
     /// whose status is `status` — taking ownership of it and closing the
     /// current one.
-    mutating func descend(into child: Int32, status: stat, frame: Frame) {
+    public mutating func descend(into child: Int32, status: FileStatus, frame: Frame) {
         ancestors.append(level)
-        level = Level(device: status.st_dev, inode: status.st_ino, frame: frame)
+        level = Level(device: status.device, inode: status.inode, frame: frame)
         let left = descriptor
         descriptor = child
-        volume.close(left)
+        fileSystem.close(left)
     }
 
     /// Moves up to the parent, reopened through the current directory's `..`.
@@ -84,40 +73,40 @@ struct DirectoryCursor<Volume: ClipboardArchiveVolume, Frame>: ~Copyable {
     /// - Throws: ``DirectoryCursorFailure`` when the parent cannot be reached
     ///   or is not the directory the cursor came down from, or whatever
     ///   `leaving` throws. Either way the cursor stays where it was.
-    mutating func ascend(leaving: (Int32, Frame) throws -> Void = { _, _ in }) throws -> Frame {
+    public mutating func ascend(leaving: (Int32, Frame) throws -> Void = { _, _ in }) throws -> Frame {
         guard let parent = ancestors.last else {
             preconditionFailure("ascended past the directory the cursor started from")
         }
         let reopened: Int32
         do {
-            reopened = try volume.openDirectory([0x2E, 0x2E], in: descriptor)
+            reopened = try fileSystem.openParent(of: descriptor)
         } catch {
             throw DirectoryCursorFailure.system(error)
         }
         do {
-            let status: stat
+            let status: FileStatus
             do {
-                status = try volume.status(of: reopened)
+                status = try fileSystem.status(of: reopened)
             } catch {
                 throw DirectoryCursorFailure.system(error)
             }
-            guard status.st_dev == parent.device, status.st_ino == parent.inode else {
+            guard status.device == parent.device, status.inode == parent.inode else {
                 throw DirectoryCursorFailure.moved
             }
             try leaving(descriptor, level.frame)
         } catch {
-            volume.close(reopened)
+            fileSystem.close(reopened)
             throw error
         }
         let left = level
         let leftDescriptor = descriptor
         level = ancestors.removeLast()
         descriptor = reopened
-        volume.close(leftDescriptor)
+        fileSystem.close(leftDescriptor)
         return left.frame
     }
 
     deinit {
-        volume.close(descriptor)
+        fileSystem.close(descriptor)
     }
 }

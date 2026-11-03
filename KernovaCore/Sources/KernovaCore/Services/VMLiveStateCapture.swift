@@ -101,13 +101,26 @@ package enum VMLiveStateCapture {
         }
     }
 
-    /// Pauses the guest and writes its state into `url`: the one call to
-    /// `saveMachineState`.
+    /// Pauses the guest and writes its state into `url` — the one call to
+    /// `saveMachineState` — then records this build as its writer
+    /// (``SavedStateVersion``), so only a completed write carries one.
+    ///
+    /// A record that can't be written leaves the state without one rather than
+    /// failing the save: the version only describes the state.
     private static func writeState(
         _ context: borrowing VMOperationContext, session: any VMSnapshotSessionOperating, to url: URL
     ) async throws {
         try await session.pauseIfRunning()
         try await session.saveMachineState(to: url, SaveGrant())
+        let instance = context.instance
+        do {
+            try SavedStateVersion.record(instance.bundleProducts.versionLabel, at: url)
+        } catch {
+            logger.log(
+                .error,
+                "Could not record which Kernova saved '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     /// Takes every passthrough USB accessory off the VM `context` holds before
