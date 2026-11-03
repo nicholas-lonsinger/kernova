@@ -68,8 +68,9 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The C calls the portable targets make without importing an OS module:
-    // the CRC32C instructions, the monotonic clock that counts sleep, and the
-    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports.
+    // the CRC32C instructions, the monotonic clock that counts sleep, the
+    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
+    // the `openat2` and `renameat2` system calls, which musl does not wrap.
     .target(
         name: "CKernovaShims",
         linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
@@ -127,6 +128,16 @@ var targets: [Target] = [
     .target(
         name: "KernovaPlatformPOSIX",
         dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Trees walked and changed through descriptors, one name at a time: the
+    // file-system protocol, the cursor, and the Darwin and Linux calls. A leaf
+    // beside the agent runtime, so the app's kit links it without the runtime;
+    // the protocol and the cursor compile everywhere, the calls into the OS
+    // only for Darwin and Linux.
+    .target(
+        name: "KernovaFileTree",
+        dependencies: ["CKernovaShims"],
         swiftSettings: sharedSwiftSettings
     ),
     // The guest-agent protocol's sans-I/O state machines: streams, credit,
@@ -215,6 +226,12 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaFileTreeTests",
+        dependencies: ["KernovaFileTree", "KernovaPortableTestSupport"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
     // is Apple-only, so its suites carry no `.caseScoped` and mint no scratch
     // (Tools/check-test-seams.sh).
@@ -265,6 +282,7 @@ targets += [
         dependencies: [
             "KernovaLogging",
             "KernovaSynchronization",
+            "KernovaFileTree",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
@@ -321,6 +339,7 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
+            "KernovaFileTree",
         ],
         swiftSettings: sharedSwiftSettings
     ),

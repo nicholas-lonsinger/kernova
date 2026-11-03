@@ -1,6 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaFileTree
 import KernovaTestSupport
 import System
 import Testing
@@ -30,10 +31,10 @@ struct ClipboardArchiveTreeTests {
         return header.withAAEncodedData { Array($0) }
     }
 
-    private func lstatus(_ path: String) throws -> stat {
+    private func lstatus(_ path: String) throws -> FileStatus {
         var status = stat()
         try #require(lstat(path, &status) == 0)
-        return status
+        return FileStatus(status)
     }
 
     @Test("each entry kind's header is the one AppleArchive builds from the same entry")
@@ -274,7 +275,7 @@ extension ClipboardArchive {
 
 /// An in-memory volume the walk reads through descriptors it hands out,
 /// recording how many it holds open at once.
-private final class FakeVolume: ClipboardArchiveVolume {
+private final class FakeVolume: TreeFileSystem {
     static let rootPath = "/fake/root"
 
     final class Node {
@@ -320,34 +321,30 @@ private final class FakeVolume: ClipboardArchiveVolume {
         return nextInode
     }
 
-    private func node(_ name: [UInt8], in directory: Int32) throws(Errno) -> Node {
+    private func node(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Node {
         if directory == AT_FDCWD {
-            guard name == Array(Self.rootPath.utf8) else { throw .noSuchFileOrDirectory }
+            guard name == Array(Self.rootPath.utf8) else { throw TreeFileSystemError(code: ENOENT) }
             return root
         }
-        guard let parent = open[directory] else { throw .badFileDescriptor }
-        if name == [0x2E, 0x2E] {
-            guard let up = parent.parentOverride ?? parent.parent else { throw .noSuchFileOrDirectory }
-            return up
-        }
-        guard let child = parent.children[name] else { throw .noSuchFileOrDirectory }
+        guard let parent = open[directory] else { throw TreeFileSystemError(code: EBADF) }
+        guard let child = parent.children[name] else { throw TreeFileSystemError(code: ENOENT) }
         return child
     }
 
-    private func status(of node: Node) -> stat {
-        var status = stat()
+    private func status(of node: Node) -> FileStatus {
+        let kind: FileKind
+        var size: Int64 = 0
         switch node.kind {
-        case .directory: status.st_mode = S_IFDIR | 0o755
+        case .directory: kind = .directory
         case .link(let target):
-            status.st_mode = S_IFLNK | 0o755
-            status.st_size = off_t(target.count)
-        case .fifo: status.st_mode = S_IFIFO | 0o644
+            kind = .symbolicLink
+            size = Int64(target.count)
+        case .fifo: kind = .fifo
         }
-        status.st_dev = 7
-        status.st_ino = node.inode
-        status.st_mtimespec = timespec(tv_sec: 1_700_000_000, tv_nsec: 0)
-        status.st_birthtimespec = timespec(tv_sec: 1_600_000_000, tv_nsec: 0)
-        return status
+        return FileStatus(
+            kind: kind, permissions: kind == .fifo ? 0o644 : 0o755, device: 7, inode: UInt64(node.inode),
+            size: size, modificationTime: FileTime(seconds: 1_700_000_000, nanoseconds: 0),
+            birthTime: FileTime(seconds: 1_600_000_000, nanoseconds: 0))
     }
 
     private func hand(_ node: Node) -> Int32 {
@@ -357,38 +354,46 @@ private final class FakeVolume: ClipboardArchiveVolume {
         return nextDescriptor
     }
 
-    func status(of name: [UInt8], in directory: Int32) throws(Errno) -> stat {
+    func status(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> FileStatus {
         status(of: try node(name, in: directory))
     }
 
-    func status(of descriptor: Int32) throws(Errno) -> stat {
-        guard let node = open[descriptor] else { throw .badFileDescriptor }
+    func status(of descriptor: Int32) throws(TreeFileSystemError) -> FileStatus {
+        guard let node = open[descriptor] else { throw TreeFileSystemError(code: EBADF) }
         return status(of: node)
     }
 
-    func openDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
+    func openDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
         let node = try node(name, in: directory)
-        guard case .directory = node.kind else { throw .notDirectory }
-        if let refusal = node.refusal { throw refusal }
+        guard case .directory = node.kind else { throw TreeFileSystemError(code: ENOTDIR) }
+        if let refusal = node.refusal { throw TreeFileSystemError(code: refusal.rawValue) }
         return hand(node)
     }
 
-    func openFile(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
+    func openParent(of directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        guard let node = open[directory] else { throw TreeFileSystemError(code: EBADF) }
+        guard let up = node.parentOverride ?? node.parent else { throw TreeFileSystemError(code: ENOENT) }
+        return hand(up)
+    }
+
+    func openFile(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
         hand(try node(name, in: directory))
     }
 
-    func names(in directory: Int32) throws(Errno) -> [[UInt8]] {
-        guard let node = open[directory] else { throw .badFileDescriptor }
+    func names(in directory: Int32) throws(TreeFileSystemError) -> [[UInt8]] {
+        guard let node = open[directory] else { throw TreeFileSystemError(code: EBADF) }
         return Array(node.children.keys)
     }
 
-    func linkTarget(of name: [UInt8], in directory: Int32) throws(Errno) -> [UInt8] {
-        guard case .link(let target) = try node(name, in: directory).kind else { throw .invalidArgument }
+    func linkTarget(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> [UInt8] {
+        guard case .link(let target) = try node(name, in: directory).kind else {
+            throw TreeFileSystemError(code: EINVAL)
+        }
         return target
     }
 
-    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(Errno) -> Int {
-        throw .invalidArgument
+    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int {
+        throw TreeFileSystemError(code: EINVAL)
     }
 
     func close(_ descriptor: Int32) {
