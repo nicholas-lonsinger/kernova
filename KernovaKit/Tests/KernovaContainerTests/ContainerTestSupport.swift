@@ -9,9 +9,9 @@ import KernovaPortableTestSupport
 import KernovaWire
 import SwiftProtobuf
 
-/// A pull of a `storage` representation accepting LZ4, decmpfs type 4, and up to 1 GiB.
+/// A pull of a `storage` representation accepting LZ4, decmpfs types 3 and 4, and up to 1 GiB.
 func generous(_ storage: Representation.Storage = .file) -> ContainerAcceptance {
-    ContainerAcceptance(storage: storage, byteCeiling: 1 << 30, decmpfsTypes: [4], acceptsLZ4: true)
+    ContainerAcceptance(storage: storage, byteCeiling: 1 << 30, decmpfsTypes: [3, 4], acceptsLZ4: true)
 }
 
 /// The storage whose representation sends `type` as its root entry.

@@ -419,7 +419,7 @@ struct UnknownFieldTests {
         let known: Data
         switch fieldNumber {
         case 8: known = field(1, Data("user.a".utf8))
-        case 12: known = field(1, decmpfsAttribute(type: 4, size: 0))
+        case 12: known = field(1, decmpfsAttribute(type: 3, size: 1, tail: Data([0x78])))
         default: known = Data()
         }
         let acceptance = generous(.file)

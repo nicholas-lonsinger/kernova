@@ -80,6 +80,11 @@ public enum ContainerError: Error, Equatable, Sendable {
     case resourceForkTooLarge(UInt64)
     /// A decmpfs storage's attribute is not a well-formed `decmpfs_disk_header`.
     case malformedDecmpfsAttribute(DecmpfsHeaderError)
+    /// A decmpfs storage's compression type has no known layout (`DecmpfsHeader.payload(of:)`).
+    case decmpfsTypeUnknown(UInt32)
+    /// A decmpfs storage carries no compressed bytes where its type keeps them: nothing past the attribute's
+    /// header, or no resource fork.
+    case decmpfsPayloadMissing(UInt32)
     /// A decmpfs storage's compression type is not one the pull accepted.
     case decmpfsTypeNotAccepted(UInt32)
     /// The entries' declared sizes total more than the pull's byte ceiling.

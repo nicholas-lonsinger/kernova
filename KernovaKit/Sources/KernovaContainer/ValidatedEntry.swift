@@ -91,7 +91,28 @@ public struct ValidatedEntry: Sendable {
             throw .resourceForkTooLarge(header.resourceForkSize)
         }
         resourceForkByteCount = header.resourceForkSize
+        if let decmpfs {
+            try Self.checkPayload(of: decmpfs, attribute: header.decmpfs.attribute, fork: resourceForkByteCount)
+        }
         self.header = header
+    }
+
+    /// Checks that decmpfs storage carries compressed bytes where its type keeps them: past the attribute's
+    /// header, or in a resource fork. Without them the kernel takes the file compressed and reads it as nothing,
+    /// or fails its `open` (docs/research/2026-10-24-decmpfs-pass-through.md, finding 9).
+    private static func checkPayload(of decmpfs: DecmpfsHeader, attribute: Data, fork: UInt64)
+        throws(ContainerError)
+    {
+        switch DecmpfsHeader.payload(of: decmpfs.compressionType) {
+        case .attribute:
+            guard attribute.count > DecmpfsHeader.byteCount else {
+                throw .decmpfsPayloadMissing(decmpfs.compressionType)
+            }
+        case .resourceFork:
+            guard fork > 0 else { throw .decmpfsPayloadMissing(decmpfs.compressionType) }
+        case nil:
+            throw .decmpfsTypeUnknown(decmpfs.compressionType)
+        }
     }
 
     private static func check(_ header: EntryHeader) throws(ContainerError) {

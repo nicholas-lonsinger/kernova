@@ -2,8 +2,7 @@
 ///
 /// Creating it writes its extended attributes and then its `com.apple.decmpfs` attribute into the new, empty
 /// file; ``appendResourceFork(_:)`` writes the resource fork, in positional pieces; ``finish(_:)`` sets the
-/// flags with `UF_COMPRESSED` in one write, confirms the file is compressed at the logical size its
-/// attribute declares, then sets the mode and the times, which the flag write resets, and closes it.
+/// flags with `UF_COMPRESSED` in one write, confirms the system took the file compressed, then sets the mode and the times, which the flag write resets, and closes it.
 /// Attributes before the flag is the order the kernel takes: the flag set first does not stick
 /// (docs/research/2026-10-24-decmpfs-pass-through.md, finding 3).
 ///
@@ -77,11 +76,11 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
         resourceForkByteCount += UInt64(bytes.count)
     }
 
-    /// Sets the flags with `UF_COMPRESSED`, confirms the file is compressed at its logical size, sets the mode
+    /// Sets the flags with `UF_COMPRESSED`, confirms the system took the file compressed, sets the mode
     /// and times of `attributes`, and closes the file.
     ///
     /// - Parameter attributes: What the file lands with; its flags carry no `UF_COMPRESSED` of their own.
-    /// - Returns: The file's status once it is confirmed compressed.
+    /// - Returns: The file's status once the system took it compressed.
     /// - Throws: ``CompressedFileFailure``; the file is then closed.
     public func finish(_ attributes: TreeEntryAttributes) throws(CompressedFileFailure) -> FileStatus {
         guard let descriptor else { preconditionFailure("a file finished twice") }
@@ -116,8 +115,11 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// The flag write, then the status that confirms it: `UF_COMPRESSED` set and the size the attribute
-    /// declares. Setting the flag is undefined in `chflags(2)`, so the file is used only once this holds.
+    /// The flag write, then the status that confirms the system took the file compressed: `UF_COMPRESSED` set
+    /// and `st_size` the attribute's logical size. Setting the flag is undefined in `chflags(2)`, so the file
+    /// is used only once this holds. Once the flag sticks, `st_size` is the header's own value
+    /// (docs/research/2026-10-24-decmpfs-pass-through.md, finding 1), so this confirms nothing about the
+    /// content: a well-formed payload that decompresses short or wrong lands as sent.
     private func seal(_ descriptor: Int32, flags: UInt32) throws(CompressedFileFailure) -> FileStatus {
         do {
             try fileSystem.setCompressedFlags(flags, of: descriptor)
@@ -151,6 +153,8 @@ public enum NotCompressed: Hashable, Sendable {
     case resourceForkNotHeld
     /// The flag write failed: exFAT refuses `UF_COMPRESSED` with `EINVAL`.
     case flagRefused(TreeFileSystemError)
-    /// After the flag write, the file was not compressed at the logical size its attribute declares.
+    /// After the flag write, the system did not take the file compressed: the flag did not stick, or `st_size`
+    /// is not the logical size the attribute declares. It says nothing about the content, which `st_size`
+    /// does not reflect.
     case unconfirmed(flags: UInt32, size: Int64, logicalSize: UInt64)
 }

@@ -227,29 +227,60 @@ struct DecmpfsPassThroughTests {
 
     // MARK: - The confirmation
 
-    @Test("a type the kernel reads as nothing is not confirmed: the entry fails by name and nothing remains")
-    func unconfirmedType() throws {
+    @Test("a flag write that does not stick is not confirmed: the entry fails by name and nothing remains")
+    func unconfirmedFlag() throws {
         let landing = try Landing(kernelContainment: true)
         let sample = try CompressedSample.read("/bin/ls", on: fileSystem)
-        var attribute = sample.attribute
-        attribute[4] = 255
+        let unsticking = FlagDroppingFileSystem()
         for (name, depth, inFolder) in [("held", UInt32(1), true), ("root", 0, false)] {
             var header = file(name, depth: depth, size: 0)
-            header.decmpfs.attribute = Data(attribute)
+            header.decmpfs.attribute = Data(sample.attribute)
             header.resourceForkSize = UInt64(sample.resourceFork.count)
-            let writer = try landing.writer(inFolder ? .folder : .file, decmpfsTypes: [255])
+            let writer = TreeWriter(
+                fileSystem: unsticking, destination: try landing.openDestination(),
+                destinationPathByteCount: landing.destinationPath.utf8.count,
+                accepting: ContainerAcceptance(
+                    storage: inFolder ? .folder : .file, byteCeiling: 1 << 30, decmpfsTypes: [8], acceptsLZ4: false))
             let path = depth == 0 ? [bytes(name)] : [bytes("r"), bytes(name)]
             let file: [TreeEvent] = [.beginFile(header), .resourceFork, .bytes(Data(sample.resourceFork)), .finishFile]
             let events = inFolder ? [.enterDirectory(directory("r", depth: 0))] + file + [.leaveDirectory] : file
-            let refusal = try #require(Self.failure(writing: events, to: writer))
-            #expect(refusal.path == path)
-            guard case .notCompressed(.unconfirmed(_, let size, let logicalSize)) = refusal.reason else {
-                Issue.record("\(name): \(refusal)")
-                continue
+            var refusal: TreeWriteFailure?
+            do {
+                for event in events { try writer.write(event) }
+            } catch {
+                refusal = error
             }
-            #expect(size == 0)
-            #expect(logicalSize == sample.logicalSize)
-            #expect(refusal.wireError.code == .itemDecmpfsRefused)
+            let failure = try #require(refusal)
+            #expect(failure.path == path)
+            #expect(
+                failure.reason
+                    == .notCompressed(.unconfirmed(flags: 0, size: 0, logicalSize: sample.logicalSize)))
+            #expect(failure.wireError.code == .itemDecmpfsRefused)
+            try landing.expectNothingOutside()
+        }
+    }
+
+    /// The adversarial review's probe P7-B: decmpfs storage with no compressed bytes where its type keeps them
+    /// used to land, pass the confirmation, and publish a file that reads as nothing or fails to open.
+    @Test("decmpfs storage with no payload where its type keeps it is refused by name, for every type the kernel reads")
+    func missingPayloadRefused() throws {
+        for type in DecmpfsMatrix.types(for: DecmpfsMatrix.Kernel(major: 27, minor: 2)).sorted() {
+            let landing = try Landing(kernelContainment: true)
+            let header = compressedFile("t\(type)", depth: 1, type: type, logicalSize: 100_000, resourceForkSize: 0)
+            var refusal: TreeWriteFailure?
+            let writer = try landing.writer(.folder, decmpfsTypes: [type])
+            do {
+                for event: TreeEvent in [.enterDirectory(directory("r", depth: 0)), .beginFile(header)] {
+                    try writer.write(event)
+                }
+            } catch {
+                refusal = error
+            }
+            #expect(
+                refusal
+                    == TreeWriteFailure(
+                        path: [bytes("r"), bytes("t\(type)")], reason: .container(.decmpfsPayloadMissing(type))),
+                "type \(type)")
             try landing.expectNothingOutside()
         }
     }

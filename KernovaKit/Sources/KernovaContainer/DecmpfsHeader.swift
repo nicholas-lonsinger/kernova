@@ -27,6 +27,29 @@ public struct DecmpfsHeader: Equatable, Sendable {
     /// The header's size: magic, type and size.
     public static let byteCount = 16
 
+    /// Where a decmpfs type keeps the compressed bytes.
+    public enum Payload: Sendable, Equatable {
+        /// In the attribute, after its 16-byte header.
+        case attribute
+        /// In the resource fork.
+        case resourceFork
+    }
+
+    /// Where `type` keeps its compressed bytes, or nil for a type of no known layout.
+    ///
+    /// Types 1, 3, 7, 9, 11, 13 and 15 keep them in the attribute; types 4, 8, 10, 12, 14 and 16 in the resource
+    /// fork (docs/research/2026-10-24-decmpfs-pass-through.md: finding 2 for types 4, 7, 8, 9 and 14 decoded
+    /// from real files, finding 7 for files of types 3, 7, 9, 11, 13 and 15 built in the attribute and 8, 10, 12,
+    /// 14 and 16 built in the fork, all read back, and for type 1, which XNU itself registers as raw data in the
+    /// attribute). XNU's `bsd/sys/decmpfs.h` names no other layout; the decoders are AppleFSCompression's.
+    public static func payload(of type: UInt32) -> Payload? {
+        switch type {
+        case 1, 3, 7, 9, 11, 13, 15: .attribute
+        case 4, 8, 10, 12, 14, 16: .resourceFork
+        default: nil
+        }
+    }
+
     /// The decmpfs compression type, `compression_type`.
     public var compressionType: UInt32
 

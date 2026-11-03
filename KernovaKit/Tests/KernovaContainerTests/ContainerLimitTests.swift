@@ -340,11 +340,20 @@ struct ContainerLimitTests {
 /// The `com.apple.decmpfs` attribute's header, checked against XNU's `decmpfs_disk_header`.
 @Suite("decmpfs storage")
 struct DecmpfsStorageTests {
-    static func container(_ attribute: Data, accepting types: Set<UInt32> = [4]) -> ContainerError? {
+    /// The error a FILE container of one decmpfs entry with `attribute` and a `fork`-byte resource fork comes
+    /// to.
+    static func container(_ attribute: Data, fork: Int = 0, accepting types: Set<UInt32> = [3, 4]) -> ContainerError? {
         let acceptance = ContainerAcceptance(
             storage: .file, byteCeiling: 1 << 20, decmpfsTypes: types, acceptsLZ4: false)
-        let header = decmpfsFile("c", depth: 0, attribute: attribute, resourceForkSize: 0)
-        return decodingError(ContainerLimitTests.single(header), accepting: acceptance)
+        let header = decmpfsFile("c", depth: 0, attribute: attribute, resourceForkSize: UInt64(fork))
+        let chunks = fork > 0 ? record(.chunk, Data(repeating: 1, count: fork)) : Data()
+        return decodingError(
+            headerRecord(header) + chunks + endRecord(entries: 1, bytes: UInt64(fork)), accepting: acceptance)
+    }
+
+    /// An attribute of `type` holding `payload` bytes after its header.
+    static func inline(_ type: UInt32, payload: Int = 1) -> Data {
+        decmpfsAttribute(type: type, size: 1, tail: Data(repeating: 0xCC, count: payload))
     }
 
     @Test("The header parses as magic, type and size, little-endian")
@@ -359,18 +368,18 @@ struct DecmpfsStorageTests {
 
     @Test("An attribute of 3,802 bytes decodes; 3,803 is refused")
     func attributeSize() {
-        let edge = decmpfsAttribute(type: 4, size: 1, tail: Data(count: 3_802 - 16))
+        let edge = Self.inline(3, payload: 3_802 - 16)
         #expect(edge.count == DecmpfsHeader.maxAttributeByteCount)
         #expect(Self.container(edge) == nil)
-        let past = decmpfsAttribute(type: 4, size: 1, tail: Data(count: 3_803 - 16))
+        let past = Self.inline(3, payload: 3_803 - 16)
         #expect(Self.container(past) == .malformedDecmpfsAttribute(.tooLarge(byteCount: 3_803)))
     }
 
-    @Test("An attribute of exactly the header decodes; one byte short is refused")
+    @Test("An attribute of exactly the header parses; one byte short is refused")
     func attributeHoldsHeader() {
         let whole = decmpfsAttribute(type: 4, size: 1)
         #expect(whole.count == DecmpfsHeader.byteCount)
-        #expect(Self.container(whole) == nil)
+        #expect(Self.container(whole, fork: 1) == nil)
         #expect(Self.container(whole.prefix(15)) == .malformedDecmpfsAttribute(.truncated(byteCount: 15)))
         #expect(Self.container(Data()) == .malformedDecmpfsAttribute(.truncated(byteCount: 0)))
     }
@@ -387,11 +396,34 @@ struct DecmpfsStorageTests {
 
     @Test("The type must be one the pull accepted")
     func acceptedType() {
-        #expect(Self.container(decmpfsAttribute(type: 4, size: 1), accepting: [3, 4]) == nil)
-        let refused = Self.container(decmpfsAttribute(type: 8, size: 1), accepting: [3, 4])
+        #expect(Self.container(decmpfsAttribute(type: 4, size: 1), fork: 1, accepting: [3, 4]) == nil)
+        let refused = Self.container(decmpfsAttribute(type: 8, size: 1), fork: 1, accepting: [3, 4])
         #expect(refused == .decmpfsTypeNotAccepted(8))
         #expect(refused?.errorCode == .itemDecmpfsRefused)
-        #expect(Self.container(decmpfsAttribute(type: 4, size: 1), accepting: []) == .decmpfsTypeNotAccepted(4))
+        #expect(
+            Self.container(decmpfsAttribute(type: 4, size: 1), fork: 1, accepting: []) == .decmpfsTypeNotAccepted(4))
+    }
+
+    @Test(
+        "A type that keeps its bytes in the attribute needs one past the header",
+        arguments: [UInt32(1), 3, 7, 9, 11, 13, 15])
+    func attributePayload(type: UInt32) {
+        #expect(Self.container(Self.inline(type, payload: 0), accepting: [type]) == .decmpfsPayloadMissing(type))
+        #expect(Self.container(Self.inline(type, payload: 1), accepting: [type]) == nil)
+    }
+
+    @Test(
+        "A type that keeps its bytes in the resource fork needs a fork of at least one byte",
+        arguments: [UInt32(4), 8, 10, 12, 14, 16])
+    func resourceForkPayload(type: UInt32) {
+        let attribute = decmpfsAttribute(type: type, size: 1)
+        #expect(Self.container(attribute, fork: 0, accepting: [type]) == .decmpfsPayloadMissing(type))
+        #expect(Self.container(attribute, fork: 1, accepting: [type]) == nil)
+    }
+
+    @Test("A type of no known layout is refused, whatever it carries", arguments: [UInt32(0), 2, 5, 6, 17, 255, 256])
+    func unknownType(type: UInt32) {
+        #expect(Self.container(Self.inline(type), fork: 1, accepting: [type]) == .decmpfsTypeUnknown(type))
     }
 
     @Test("decmpfs storage is for regular files only")
