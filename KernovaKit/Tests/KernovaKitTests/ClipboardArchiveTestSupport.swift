@@ -154,6 +154,17 @@ final class InterposedArchiveVolume: MutableTreeFileSystem {
         try base.rename(name, in: directory, to: newName, in: newDirectory)
     }
 
+    func renameReplacing(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(TreeFileSystemError)
+    {
+        try interpose(.rename)
+        try base.renameReplacing(name, in: directory, to: newName, in: newDirectory)
+    }
+
+    func renamesExclusively(in directory: Int32) throws(TreeFileSystemError) -> Bool {
+        try base.renamesExclusively(in: directory)
+    }
+
     func makeDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
         try base.makeDirectory(name, in: directory)
     }

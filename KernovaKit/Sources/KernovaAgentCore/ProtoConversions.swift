@@ -40,7 +40,7 @@ extension WireError {
     }
 
     /// The received form: strings clipped, the code kept as sent.
-    init(received error: Kernova_V2_Error) {
+    package init(received error: Kernova_V2_Error) {
         self.init(
             error.code,
             item: error.hasItem

@@ -30,7 +30,9 @@ public enum InTurnEffect<Input: Sendable>: Sendable {
 /// A write error stops writing and ends nothing: later transmits are taken and dropped, as a write into a
 /// transport the far side shut is. The transport ends on the read side's `.ended`, or after the final
 /// transmit, written or dropped — so bytes the far side sent before it shut, a RESET(0) above all, are read.
-/// The turn that finds the connection finished shuts the stream down and then calls `Handlers.ended`.
+/// The turn that finds the connection finished shuts the stream down and then calls `Handlers.ended`. Inputs
+/// still run after it while the endpoint has landings in flight, since a sink's publish report brings an event
+/// the owner is owed; the turn that finds none is the driver's last.
 public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
     /// What the driver hands its owner, all on the driver queue.
     public struct Handlers: Sendable {
@@ -41,7 +43,8 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         public var effect: @Sendable (Endpoint.Effect, ConnectionDriver) -> Void
         /// Receives each event except diagnostics, which the driver logs; it hops to its owner's queue.
         public var event: @Sendable (Endpoint.Event, ConnectionDriver) -> Void
-        /// Runs once, last: the stream is shut down, and nothing more is delivered.
+        /// Runs once, when the stream is shut down: after it, only the events of committed pulls' publish
+        /// reports are delivered.
         public var ended: @Sendable (ConnectionClosure, ConnectionDriver) -> Void
 
         /// Creates the handlers.
@@ -132,6 +135,8 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         var timer = TimerSlot()
         var closure: ConnectionClosure?
         var isShutDown = false
+        /// The connection is finished and owes no event: no turn runs.
+        var isDrained = false
     }
 
     /// What a turn does outside the lock, in order.
@@ -140,7 +145,7 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         var writeFailure: ByteStreamError?
         var events: [Endpoint.Event] = []
         var effects: [Endpoint.Effect] = []
-        /// Set on the turn that shuts the stream down: how the connection ended.
+        /// Set on the turn that finds the connection finished: how it ended.
         var ended: ConnectionClosure?
     }
 
@@ -158,7 +163,7 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
         dispatchPrecondition(condition: .onQueue(queue))
         let now = scheduler.now
         let outcome = state.withLock { state -> Outcome? in
-            guard !state.isShutDown else { return nil }
+            guard !state.isDrained else { return nil }
             var outcome = Outcome()
             apply(step, to: &state, outcome: &outcome, now: now)
             while true {
@@ -166,11 +171,14 @@ public final class ConnectionDriver<Endpoint: DrivenEndpoint>: Sendable {
                 guard takeTransmit(&state, outcome: &outcome, now: now) else { break }
             }
             if state.endpoint.state == .finished {
-                state.isShutDown = true
-                state.timer.disarm()
-                // The core emits exactly one `.closed` before it finishes; a transport that ended without
-                // one ended without a RESET(0).
-                outcome.ended = state.closure ?? .transportLost
+                if !state.isShutDown {
+                    state.isShutDown = true
+                    state.timer.disarm()
+                    // The core emits exactly one `.closed` before it finishes; a transport that ended without
+                    // one ended without a RESET(0).
+                    outcome.ended = state.closure ?? .transportLost
+                }
+                state.isDrained = !state.endpoint.hasLandingsInFlight
             } else {
                 state.timer.arm(state.endpoint.nextDeadline, scheduler: scheduler, queue: queue) { [self] token in
                     turn(.timeout(token))

@@ -88,6 +88,14 @@
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaItemTransferTests",
+        "name" : "KernovaItemTransferTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaKit",
         "identifier" : "KernovaAgentInstallTests",
         "name" : "KernovaAgentInstallTests"
       }

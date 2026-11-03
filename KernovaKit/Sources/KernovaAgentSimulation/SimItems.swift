@@ -174,17 +174,21 @@ package struct ContainerItemSource: Sendable {
 }
 
 /// An item sink that only decodes: it feeds each pull's container to a `ContainerDecoder`, stages the digest
-/// of the bytes it decodes, and lands that digest on `.commit`. It records any effect that breaks the sink
+/// of the bytes it decodes, and lands that digest on `.commit`, reporting it published under its landing's
+/// name — an INLINE pull's bytes as the digest's four bytes. It records any effect that breaks the sink
 /// contract.
 package struct DecodingItemSink {
     private struct Pull {
         var decoder: ContainerDecoder
         var acceptance: ContainerAcceptance
+        var landing: ItemLanding
         var digest = CRC32C()
     }
 
+    /// The error every publish fails with, when set.
+    package var publishFailure: WireError?
     private var pulls: [ItemPullID: Pull] = [:]
-    private var staged: [ItemPullID: UInt32] = [:]
+    private var staged: [ItemPullID: (digest: UInt32, landing: ItemLanding)] = [:]
     private var begun: Set<ItemPullID> = []
     private var terminated: Set<ItemPullID> = []
     /// Each committed pull's digest: the CRC32C of the bytes its entries carried.
@@ -201,13 +205,14 @@ package struct DecodingItemSink {
     /// The answer to `effect`, if it takes one.
     package mutating func handle(_ effect: ItemSinkEffect) -> ItemSinkInput? {
         switch effect {
-        case .begin(let id, let request, let representation):
+        case .begin(let id, let order, let representation):
             guard begun.insert(id).inserted else {
                 violations.append("pull \(id.stream.rawValue) begun twice")
                 return nil
             }
-            let acceptance = ContainerAcceptance(request, storage: representation.storage)
-            pulls[id] = Pull(decoder: ContainerDecoder(accepting: acceptance), acceptance: acceptance)
+            let acceptance = ContainerAcceptance(order.request, storage: representation.storage)
+            pulls[id] = Pull(
+                decoder: ContainerDecoder(accepting: acceptance), acceptance: acceptance, landing: order.landing)
             return nil
         case .bytes(let id, let bytes):
             if terminated.contains(id) { violations.append("bytes for pull \(id.stream.rawValue) after its end") }
@@ -232,22 +237,36 @@ package struct DecodingItemSink {
             } catch {
                 return .refused(id, SimItems.wireError(error, pull.acceptance))
             }
-            staged[id] = pull.digest.value
+            staged[id] = (pull.digest.value, pull.landing)
             return .verified(id)
         case .commit(let id):
             terminate(id)
-            guard let digest = staged.removeValue(forKey: id) else {
+            guard let (digest, landing) = staged.removeValue(forKey: id) else {
                 violations.append("commit of pull \(id.stream.rawValue), which is not verified")
                 return nil
             }
+            if let publishFailure { return .publishFailed(id, publishFailure) }
             landed[id] = digest
-            return nil
+            return .published(id, Self.published(digest, landing))
         case .abort(let id):
             terminate(id)
             pulls[id] = nil
             staged[id] = nil
             return nil
         }
+    }
+
+    /// What a pull that staged `digest` publishes as, landing as `landing`.
+    package static func published(_ digest: UInt32, _ landing: ItemLanding) -> LandedItem {
+        switch landing {
+        case .inline: .inline(withUnsafeBytes(of: digest.bigEndian) { Data($0) })
+        case .tree(_, .exactly(let name)), .tree(_, .keepingBoth(let name)): .named(name)
+        }
+    }
+
+    /// The landing a sink takes a representation of `storage` as.
+    package static func landing(_ storage: Representation.Storage) -> ItemLanding {
+        storage == .inline ? .inline : .tree(directory: "/sim", name: .keepingBoth(Data("item".utf8)))
     }
 
     private mutating func terminate(_ id: ItemPullID) {

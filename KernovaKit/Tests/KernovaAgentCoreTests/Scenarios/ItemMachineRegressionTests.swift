@@ -132,7 +132,7 @@ struct ItemMachineRegressionTests {
         run.host?.releaseOffer(SimItems.token(7), now: run.now)
         run.drain()
         run.feed([Unit.raw(HostileItems.pullStream, HostileItems.container), Unit.end(HostileItems.pullStream)])
-        #expect(run.itemEnds == [.pullEnded(id, .closed(.resetLocally(WireError(.itemOfferStale))))])
+        #expect(run.itemEnds == [.pullEnded(.clipboard, id, .closed(.resetLocally(WireError(.itemOfferStale))))])
         #expect(!run.itemOutputs.contains(.sink(.commit(id))))
         #expect(HostileItems.endedOnce(run, id).isEmpty, "\(HostileItems.endedOnce(run, id))")
     }
@@ -143,7 +143,7 @@ struct ItemMachineRegressionTests {
         let id = try #require(pulled)
         run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
         run.feed([Unit.raw(HostileItems.pullStream, HostileItems.container), Unit.end(HostileItems.pullStream)])
-        #expect(run.itemEnds == [.pullEnded(id, .closed(.resetLocally(WireError(.itemOfferStale))))])
+        #expect(run.itemEnds == [.pullEnded(.clipboard, id, .closed(.resetLocally(WireError(.itemOfferStale))))])
         #expect(!run.itemOutputs.contains(.sink(.commit(id))))
         #expect(HostileItems.endedOnce(run, id).isEmpty, "\(HostileItems.endedOnce(run, id))")
     }

@@ -188,11 +188,19 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
         try Self.call(name) { unlinkat(directory, $0, isDirectory ? AT_REMOVEDIR : 0) }
     }
 
-    /// Darwin's `renameatx_np` with `RENAME_EXCL`; Linux's `renameat2` with `RENAME_NOREPLACE`.
+    /// Darwin's `renameatx_np` with `RENAME_EXCL`; Linux's `renameat2` with `RENAME_NOREPLACE`, whose
+    /// `EINVAL` for a file system that does not take the flag (rename(2)) is `ENOTSUP`.
     public func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
         throws(TreeFileSystemError)
     {
         try Self.call(name, newName) { Self.renameExclusive(directory, $0, newDirectory, $1) }
+    }
+
+    /// `renameat`.
+    public func renameReplacing(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(TreeFileSystemError)
+    {
+        try Self.call(name, newName) { renameat(directory, $0, newDirectory, $1) }
     }
 
     // MARK: - Creation

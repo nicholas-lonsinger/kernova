@@ -148,7 +148,12 @@ enum ItemFeatureScenarios {
                     host?.takesEnded.map(\.result) == [.taken] && host?.takesEnded.first?.id == id,
                     "the take ended taken: \(String(describing: host?.takesEnded))")
                 + expectThat(
-                    ItemScenarios.onePull(world, .host)?.1 == .landed, "the pull: \(ItemScenarios.ended(world, .host))")
+                    ItemScenarios.isLanded(ItemScenarios.onePull(world, .host)?.1),
+                    "the pull: \(ItemScenarios.ended(world, .host))")
+                + expectThat(
+                    host?.pullsEnded.map(\.feature) == [.drag]
+                        && items(world, .peer)?.servesEnded.map(\.feature) == [.drag],
+                    "both ends of the pull name DRAG: \(String(describing: host?.pullsEnded))")
                 + expectThat(
                     ends(world, .peer, .local).count == 1
                         && ends(world, .peer, .local).allSatisfy {

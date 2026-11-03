@@ -28,8 +28,8 @@ public struct TreeWriteFailure: Error, Equatable, Sendable {
     }
 
     /// The entry's path as byte components, first the item's own name: the entry that failed, or, for a
-    /// container the decoder refused, the file or directory the writer was in when it did. Empty before
-    /// the item's own entry.
+    /// container the decoder refused, the file or directory the writer was in when it did — the item itself
+    /// before its own entry begins.
     public let path: [[UInt8]]
     /// What went wrong.
     public let reason: Reason
