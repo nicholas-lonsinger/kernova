@@ -250,6 +250,8 @@ public struct HostEndpoint: Sendable {
         itemTransfer.remoteItem(token: token, index: index)
     }
 
+    package var itemOffers: ItemOfferRegistry { itemTransfer.offers }
+
     /// The next output for the item source, the item sink or the owner.
     public mutating func pollItemTransfer() -> ItemTransferOutput? {
         itemOutputs.poll()

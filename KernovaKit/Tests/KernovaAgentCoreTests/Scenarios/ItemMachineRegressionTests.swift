@@ -3,9 +3,6 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
-#if canImport(Darwin)
-import Darwin
-#endif
 
 import KernovaAgentCore
 import KernovaAgentSimulation
@@ -14,22 +11,6 @@ import Testing
 
 /// What the item-transfer machines hold against a far side shaped to break them.
 enum Regression {
-    /// This process's physical footprint, where the platform reports one.
-    static func footprint() -> Int? {
-        #if canImport(Darwin)
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
-        }
-        return result == KERN_SUCCESS ? Int(info.phys_footprint) : nil
-        #else
-        return nil
-        #endif
-    }
-
     /// A host that read the far peer's Hello, recording no trace when `trace` is false.
     static func host(trace: Bool = true) -> HostileRun {
         let run = HostileRun(local: .host, seed: 1, testKinds: true, itemTransfer: true) { connection in
@@ -118,14 +99,14 @@ struct ItemMachineRegressionTests {
         let payload = Data((0..<65_536).map { $0 % 2 == 0 ? 0x0A : 0x00 })
         let messages = 200
         run.feed([WireFrames.open(1, .testItemOfferByPeer, body: HostileItems.header(count: UInt32(messages)))])
-        let before = Regression.footprint()
         Regression.feedRepeated(run, Unit.rawMessage(1, payload), count: messages)
         run.feed([Unit.end(1)])
-        let after = Regression.footprint()
         #expect(Regression.received(run).map(\.count) == [messages])
-        if let before, let after {
-            #expect(after - before < 4 * Self.limit, "footprint grew \(after - before) bytes")
-        }
+        // What the registry holds is the items' bytes, each charged with its overhead.
+        let holding = try #require(run.host?.itemOffers.remoteHolding)
+        #expect(holding.itemBytes == messages * payload.count)
+        #expect(holding.charged == holding.itemBytes + holding.items * Self.overhead)
+        #expect(holding.charged <= Self.limit)
         let item = try #require(run.host?.remoteOfferItem(token: HostileItems.header(count: 0).token, index: 0))
         #expect(item.representations.count == 32_768)
     }
