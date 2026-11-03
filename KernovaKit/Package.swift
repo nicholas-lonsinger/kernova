@@ -119,8 +119,8 @@ var targets: [Target] = [
     .executableTarget(
         name: "KernovaLinuxAgent",
         dependencies: [
-            "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus", "KernovaDigest",
-            "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
+            "KernovaAgentInstall", "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus",
+            "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -203,6 +203,18 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // An agent's install and in-band update, on every OS with an agent: the root and its slots, the switch,
+    // confirm and rollback, and the install plan with what carries it out. The service manager and a payload
+    // format's lander are each OS's, reached through the protocols it declares. Its sources compile only for
+    // Darwin and Linux, but for the plan's data, which compiles everywhere.
+    .target(
+        name: "KernovaAgentInstall",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaDigest", "KernovaLogging",
+            "KernovaSynchronization",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The host's side: one hub per VM over the runtime's host connections,
     // and the transport admission it accepts through. Portable, though only
     // the Mac runs a host, so its tests ride the runtime's harness.
@@ -247,8 +259,18 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaLinuxAgentTests",
         dependencies: [
-            "KernovaLinuxAgent", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation", "KernovaDigest",
-            "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaLinuxAgent", "KernovaAgentInstall", "KernovaAgentCore", "KernovaSynchronization", "KernovaWire",
+            "KernovaPortableTestSupport",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its suites, like the target they test,
+    // compile only for Darwin and Linux.
+    .testTarget(
+        name: "KernovaAgentInstallTests",
+        dependencies: [
+            "KernovaAgentInstall", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation",
+            "KernovaDigest", "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings

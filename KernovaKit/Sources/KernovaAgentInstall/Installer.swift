@@ -1,5 +1,7 @@
-#if os(Linux)
-#if canImport(Glibc)
+#if canImport(Darwin) || os(Linux)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
 import Musl
@@ -11,9 +13,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
-import KernovaAgentCore
 import KernovaDigest
-import KernovaPlatformLinux
 
 /// Carries out an ``InstallPlan``: writes each file whole through a rename, so a reader sees the old file or
 /// the new one and a running binary is never written over; then runs its commands.
@@ -26,12 +26,11 @@ import KernovaPlatformLinux
 /// directory, and each owner and mode set on the descriptor of what the installer just made; no privileged call
 /// below the root acts on a name. A link the account planted is refused or removed, never followed. Every
 /// directory and file written belongs to the account, which updates its own slots there; a link stays the
-/// installer's, which grants nothing (``replaceLink(in:_:path:target:)``). Above the
-/// root, and for the unit and autostart directories, any path that `stat`s as a directory will do, as
-/// `mkdir -p` takes it.
-struct Installer {
+/// installer's, which grants nothing (``replaceLink(in:_:path:target:)``). Above the root, and for the
+/// service manager's directories, any path that `stat`s as a directory will do, as `mkdir -p` takes it.
+public struct Installer {
     /// What failed, and where.
-    enum Failure: Error, CustomStringConvertible {
+    public enum Failure: Error, CustomStringConvertible {
         /// A system call on `path` failed with `errno`.
         case system(operation: String, path: String, errno: Int32)
         /// The JSON encoder refused the slot metadata.
@@ -40,16 +39,11 @@ struct Installer {
         case removal(path: String, detail: String)
         /// `arguments` could not be started, or exited `status`.
         case command(arguments: [String], status: Int32)
-        /// Nothing says where the user's files go.
-        case noHome
-        /// The request needs a different user than the process runs as.
-        case wrongUser(String)
-        /// The guest is not running systemd, which every unit the agent installs needs.
-        case noSystemd
         /// The account the system scope's root belongs to does not exist.
         case noAccount(String)
 
-        var description: String {
+        /// The failure as the installer prints it.
+        public var description: String {
             switch self {
             case .system(let operation, let path, let errno):
                 "\(operation) \(path): \(String(cString: strerror(errno)))"
@@ -59,9 +53,6 @@ struct Installer {
                 status < 0
                     ? "cannot run \(arguments.joined(separator: " "))"
                     : "\(arguments.joined(separator: " ")) exited \(status)"
-            case .noHome: "neither XDG_DATA_HOME and XDG_CONFIG_HOME nor HOME is set to an absolute path"
-            case .wrongUser(let detail): detail
-            case .noSystemd: "the Kernova guest agent needs systemd, and this system is not running it"
             case .noAccount(let name): "the \(name) account does not exist"
             }
         }
@@ -70,61 +61,41 @@ struct Installer {
     /// Prefixed to every path written, removed or checked; empty for the live system.
     let stagingRoot: String
     /// Whether commands run.
-    let runsSystemd: Bool
-    /// The binary a `.payload` write copies: the installer's own executable.
+    let runsCommands: Bool
+    /// The file holding the payload a `.payload` write lands.
     let payloadSource: String
+    /// What lands it.
+    let lander: any PayloadLander
     /// The display version the payload reports.
     let versionLabel: String
     /// The account the plan's root and everything in it belong to; nil for the invoker, as in the user scope
     /// and a staging root.
     let account: String?
 
-    /// Refuses unless the guest runs systemd: `runDirectory` exists, as sd_booted(3) tests.
-    static func requireSystemd(runDirectory: String = "/run/systemd/system") throws(Failure) {
-        var info = stat()
-        guard lstat(runDirectory, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { throw .noSystemd }
-    }
-
-    /// The environment of the invoking user's systemd manager: the one it searches for units in and runs
-    /// the session peer with, so the install's paths are the ones both use.
-    static func managerEnvironment() throws(Failure) -> [String: String] {
-        let arguments = ["systemctl", "--user", "show-environment"]
-        let (status, output) = capture(arguments)
-        guard status == 0 else { throw .command(arguments: arguments, status: status) }
-        return InstallLayout.environment(parsingShowEnvironment: String(decoding: output, as: UTF8.self))
-    }
-
-    /// The layout `request` installs into, for a process whose environment is `environment` and whose
-    /// effective uid is `effectiveUID`. User scope refuses root, whose home is not the user's; system scope
-    /// needs root. A staging root waives both, since it writes no live system.
-    static func layout(
-        for request: AgentCommand.InstallRequest, environment: [String: String], effectiveUID: uid_t
-    ) throws(Failure) -> InstallLayout {
-        let live = request.root == nil
-        if request.scope == .system {
-            guard !live || effectiveUID == 0 else {
-                throw .wrongUser("installing the system service needs root: run it with sudo")
-            }
-            return .system(root: LinuxIdentity.systemInstallRoot)
-        }
-        guard !live || effectiveUID != 0 else {
-            throw .wrongUser("run this as the user the agent is for, not as root; --system installs the system service")
-        }
-        guard let root = LinuxIdentity.userInstallRoot(environment: environment),
-            let config = InstallLayout.configHome(environment: environment)
-        else { throw .noHome }
-        return .user(root: root, configHome: config)
+    /// An installer writing below `stagingRoot` — empty for the live system — and running commands when
+    /// `runsCommands`, whose `.payload` write lands `payloadSource` through `lander`, recorded as `versionLabel`,
+    /// and whose root belongs to `account`.
+    public init(
+        stagingRoot: String, runsCommands: Bool, payloadSource: String, lander: any PayloadLander,
+        versionLabel: String, account: String?
+    ) {
+        self.stagingRoot = stagingRoot
+        self.runsCommands = runsCommands
+        self.payloadSource = payloadSource
+        self.lander = lander
+        self.versionLabel = versionLabel
+        self.account = account
     }
 
     /// The ids the plan's root belongs to.
-    private struct Owner {
+    struct Owner {
         var uid: uid_t
         var gid: gid_t
     }
 
     /// Runs `plan`'s ``InstallPlan/steps`` in order, handing `report` each one's description just before it
-    /// takes it; a command not run, as with `runsSystemd` false or its path absent, is not reported.
-    func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) {
+    /// takes it; a command not run, as with `runsCommands` false or its path absent, is not reported.
+    public func run(_ plan: InstallPlan, report: (String) -> Void = { _ in }) throws(Failure) {
         let source = try openPayload(plan)
         defer { if let source { close(source) } }
         // The root open for the steps below it: as found until the plan makes it, then as made and handed to
@@ -199,8 +170,8 @@ struct Installer {
         case .file(let path, let mode, let text):
             let (parent, name) = try openParent(of: path)
             defer { close(parent) }
-            try writeFile(in: parent, name, path: path, mode: mode, owner: nil) { descriptor throws(Failure) in
-                try writeAll(Array(text.utf8), to: descriptor, path: path)
+            try Self.writeFile(in: parent, name, path: path, mode: mode, owner: nil) { descriptor throws(Failure) in
+                try Self.writeAll(Array(text.utf8), to: descriptor, path: path)
             }
         case .payload, .link:
             preconditionFailure("\(write) is written only below the agent's root")
@@ -256,7 +227,7 @@ struct Installer {
             guard errno == ENOENT, !creating else { throw .system(operation: "open", path: staged(path), errno: errno) }
             return nil
         }
-        do throws(Failure) { try own(root, by: owner, path: path) } catch {
+        do throws(Failure) { try Self.own(root, by: owner, path: path) } catch {
             close(root)
             throw error
         }
@@ -294,7 +265,7 @@ struct Installer {
                         close(current)
                         throw .system(operation: "chmod", path: path, errno: failure)
                     }
-                    do throws(Failure) { try own(next, by: owner, path: path) } catch {
+                    do throws(Failure) { try Self.own(next, by: owner, path: path) } catch {
                         close(next)
                         close(current)
                         throw error
@@ -314,7 +285,7 @@ struct Installer {
         return current
     }
 
-    private func own(_ descriptor: Int32, by owner: Owner?, path: String) throws(Failure) {
+    static func own(_ descriptor: Int32, by owner: Owner?, path: String) throws(Failure) {
         guard let owner else { return }
         var info = stat()
         guard fstat(descriptor, &info) == 0 else { throw .system(operation: "stat", path: path, errno: errno) }
@@ -335,22 +306,27 @@ struct Installer {
             if let directory { close(directory) }
         case .file(let path, let mode, let text):
             try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try writeFile(in: parent, name, path: path, mode: mode, owner: owner) { descriptor throws(Failure) in
-                    try writeAll(Array(text.utf8), to: descriptor, path: path)
+                try Self.writeFile(in: parent, name, path: path, mode: mode, owner: owner) {
+                    descriptor throws(Failure) in
+                    try Self.writeAll(Array(text.utf8), to: descriptor, path: path)
                 }
             }
-        case .payload(let binary, let state):
+        case .payload(let path, let state):
             guard let source else { throw .system(operation: "open", path: payloadSource, errno: EBADF) }
-            var hash: [UInt8] = []
-            try withParent(of: binary, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                hash = try copyPayload(from: source, into: parent, name, path: binary, owner: owner)
+            let payload = InstallPayloadReader(source, path: payloadSource)
+            try withParent(of: path, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
+                let slot = InstallDirectory(
+                    descriptor: parent, path: String(path.dropLast(name.count + 1)), owner: owner)
+                try lander.install(payload, as: name, in: slot)
             }
+            let hash = try payload.finish()
             let record = InstallState.fresh(payloadSHA256: lowercaseHex(hash), versionLabel: versionLabel)
             let bytes: [UInt8]
             do { bytes = try record.encoded() } catch { throw .encoding(String(describing: error)) }
             try withParent(of: state, below: root, rootPath, owner: owner) { parent, name throws(Failure) in
-                try writeFile(in: parent, name, path: state, mode: 0o644, owner: owner) { descriptor throws(Failure) in
-                    try writeAll(bytes, to: descriptor, path: state)
+                try Self.writeFile(in: parent, name, path: state, mode: 0o644, owner: owner) {
+                    descriptor throws(Failure) in
+                    try Self.writeAll(bytes, to: descriptor, path: state)
                 }
             }
         case .link(let path, let target):
@@ -392,9 +368,17 @@ struct Installer {
     /// emptied through its own descriptor and removed.
     private func removeEntry(_ name: String, in directory: Int32, path: String) throws(Failure) {
         if unlinkat(directory, name, 0) == 0 || errno == ENOENT { return }
-        guard errno == EISDIR else { throw .system(operation: "remove", path: path, errno: errno) }
+        // unlink(2) refuses a directory EISDIR on Linux and EPERM on Darwin.
+        let refused = errno
+        guard refused == EISDIR || refused == EPERM else {
+            throw .system(operation: "remove", path: path, errno: refused)
+        }
         let child = openat(directory, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard child >= 0 else { throw .system(operation: "open", path: path, errno: errno) }
+        guard child >= 0 else {
+            // Not a directory after all: the refusal was the file's own.
+            guard errno == ENOTDIR || errno == ELOOP else { throw .system(operation: "open", path: path, errno: errno) }
+            throw .system(operation: "remove", path: path, errno: refused)
+        }
         do throws(Failure) { try empty(child, path: path) } catch {
             close(child)
             throw error
@@ -433,7 +417,7 @@ struct Installer {
     /// The new file is made in the destination's own directory, never elsewhere and moved: a rename keeps the
     /// SELinux label a file was created with, and only one created in place takes the directory's, so a binary
     /// made anywhere else would land unexecutable. Every writer of the agent's slots follows this rule.
-    private func writeFile(
+    static func writeFile(
         in directory: Int32, _ name: String, path: String, mode: UInt16, owner: Owner?,
         _ fill: (Int32) throws(Failure) -> Void
     ) throws(Failure) {
@@ -449,7 +433,7 @@ struct Installer {
             guard fchmod(descriptor, mode_t(mode)) == 0 else {
                 throw .system(operation: "chmod", path: path + ".kernova-new", errno: errno)
             }
-            try own(descriptor, by: owner, path: path + ".kernova-new")
+            try Self.own(descriptor, by: owner, path: path + ".kernova-new")
         } catch {
             close(descriptor)
             unlinkat(directory, temporary, 0)
@@ -466,29 +450,8 @@ struct Installer {
         }
     }
 
-    /// Copies the file open at `source` to `name` in `directory`, mode `0o755`, answering its SHA-256.
-    private func copyPayload(
-        from source: Int32, into directory: Int32, _ name: String, path: String, owner: Owner?
-    ) throws(Failure) -> [UInt8] {
-        var hasher = SHA256()
-        try writeFile(in: directory, name, path: path, mode: 0o755, owner: owner) { descriptor throws(Failure) in
-            var buffer = [UInt8](repeating: 0, count: 1 << 20)
-            var offset: off_t = 0
-            while true {
-                let count = buffer.withUnsafeMutableBytes { pread(source, $0.baseAddress, $0.count, offset) }
-                if count < 0, errno == EINTR { continue }
-                guard count >= 0 else { throw .system(operation: "read", path: payloadSource, errno: errno) }
-                guard count > 0 else { return }
-                let piece = Array(buffer[0..<count])
-                hasher.update(piece)
-                try writeAll(piece, to: descriptor, path: path)
-                offset += off_t(count)
-            }
-        }
-        return hasher.finalize()
-    }
-
-    private func writeAll(_ bytes: [UInt8], to descriptor: Int32, path: String) throws(Failure) {
+    /// Writes all of `bytes` to the file open at `descriptor`, `path` naming it in a failure.
+    public static func writeAll(_ bytes: [UInt8], to descriptor: Int32, path: String) throws(Failure) {
         var offset = 0
         while offset < bytes.count {
             let count = bytes[offset...].withUnsafeBytes { write(descriptor, $0.baseAddress, $0.count) }
@@ -522,7 +485,7 @@ struct Installer {
 
     /// Whether `command` runs: not when commands are off or its path is absent.
     private func willRun(_ command: InstallPlan.Command) -> Bool {
-        guard runsSystemd else { return false }
+        guard runsCommands else { return false }
         guard let path = command.onlyIfPresent else { return true }
         var info = stat()
         return lstat(staged(path), &info) == 0
@@ -530,10 +493,10 @@ struct Installer {
 
     /// Runs `arguments` as ``spawn(_:)`` does, answering its exit status and what it wrote to standard
     /// output.
-    static func capture(_ arguments: [String]) -> (status: Int32, output: [UInt8]) {
+    public static func capture(_ arguments: [String]) -> (status: Int32, output: [UInt8]) {
         var pipeEnds: [Int32] = [-1, -1]
         guard pipe(&pipeEnds) == 0 else { return (-1, []) }
-        var actions = posix_spawn_file_actions_t()
+        var actions = emptyFileActions()
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_adddup2(&actions, pipeEnds[1], 1)
@@ -555,12 +518,21 @@ struct Installer {
 
     /// Runs `arguments` from `PATH`, with this process's environment, and answers its exit status: -1 when
     /// it could not start, 128 plus the signal that killed it.
-    static func spawn(_ arguments: [String]) -> Int32 {
+    public static func spawn(_ arguments: [String]) -> Int32 {
         guard let pid = start(arguments, actions: nil) else { return -1 }
         return wait(for: pid)
     }
 
-    private static func start(_ arguments: [String], actions: UnsafePointer<posix_spawn_file_actions_t>?) -> pid_t? {
+    #if canImport(Darwin)
+    /// Darwin's `posix_spawn_file_actions_t` is a pointer, which `posix_spawn_file_actions_init` fills.
+    private typealias FileActions = posix_spawn_file_actions_t?
+    private static func emptyFileActions() -> FileActions { nil }
+    #else
+    private typealias FileActions = posix_spawn_file_actions_t
+    private static func emptyFileActions() -> FileActions { posix_spawn_file_actions_t() }
+    #endif
+
+    private static func start(_ arguments: [String], actions: UnsafePointer<FileActions>?) -> pid_t? {
         let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
         let envp: [UnsafeMutablePointer<CChar>?] =
             ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") } + [nil]

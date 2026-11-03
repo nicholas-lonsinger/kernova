@@ -1,4 +1,5 @@
 import KernovaAgentCore
+import KernovaAgentInstall
 
 /// The text of every file `kernova-agent install` writes besides the binary and its metadata: the binary
 /// writes its own units, so they can never drift from it.
@@ -10,7 +11,8 @@ import KernovaAgentCore
 /// so the installer's `restart` reports it rather than the restart loop hiding it. The rollback check is
 /// `Type=oneshot`, whose start already waits for it to exit. The rollback timer fires every
 /// `UpdateRollbackPolicy.checkIntervalSeconds`, `AccuracySec=1s` because
-/// systemd's default of one minute coarsens it; its service runs only while `switch-pending` exists.
+/// systemd's default of one minute coarsens it; its service runs only while the core's
+/// ``InstallRoot/switchPending`` exists.
 ///
 /// The system units run the agent from `/opt/kernova-agent`. Fedora's targeted policy labels that tree
 /// `usr_t` by default, which systemd executes a `User=` service from, where it refuses `var_lib_t`
@@ -19,7 +21,7 @@ import KernovaAgentCore
 enum UnitFiles {
     /// The service that runs the peer of `layout`'s scope.
     static func service(_ layout: InstallLayout) -> String {
-        let binary = escapedArgument(layout.current + "/" + InstallLayout.binaryName)
+        let binary = escapedArgument(layout.installRoot.current + "/" + InstallLayout.binaryName)
         let writable = escapedArgument(layout.root)
         switch layout.scope {
         case .system:
@@ -89,8 +91,8 @@ enum UnitFiles {
 
     /// The rollback check, which runs the previous slot's binary while a switch is unconfirmed.
     static func rollbackService(_ layout: InstallLayout) -> String {
-        let condition = escapedSpecifiers(layout.switchPending)
-        let binary = escapedArgument(layout.rollback + "/" + InstallLayout.binaryName)
+        let condition = escapedSpecifiers(layout.installRoot.switchPending)
+        let binary = escapedArgument(layout.installRoot.rollback + "/" + InstallLayout.binaryName)
         let writable = escapedArgument(layout.root)
         switch layout.scope {
         case .system:

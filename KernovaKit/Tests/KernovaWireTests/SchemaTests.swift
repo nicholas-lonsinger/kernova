@@ -20,6 +20,7 @@ struct SchemaTests {
         #expect(AbsenceReason.noAgent.rawValue == 103)
         #expect(PowerAction.restart.rawValue == 2)
         #expect(PayloadFormat.paxTree.rawValue == 2)
+        #expect(PayloadFormat.containerTree.rawValue == 4)
         #expect(StreamKind.logForward.rawValue == 300)
     }
 

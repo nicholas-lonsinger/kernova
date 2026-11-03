@@ -1,3 +1,4 @@
+import KernovaAgentInstall
 import Testing
 
 @testable import KernovaLinuxAgent
@@ -52,7 +53,7 @@ struct InstallPlanTests {
         arguments: [user, system])
     func clearsPendingSwitch(layout: InstallLayout) {
         let plan = InstallPlan.install(layout)
-        #expect(plan.treeRemovals == [layout.switchPending, layout.switchRejected])
+        #expect(plan.treeRemovals == [layout.installRoot.switchPending, layout.installRoot.switchRejected])
     }
 
     @Test("Everything under the agent's root is a tree step, and nothing else is", arguments: [user, system])
@@ -83,7 +84,7 @@ struct InstallPlanTests {
     private static func path(of write: InstallPlan.Write) -> String {
         switch write {
         case .directory(let path, _), .file(let path, _, _), .link(let path, _): path
-        case .payload(let binary, _): binary
+        case .payload(let path, _): path
         }
     }
 
