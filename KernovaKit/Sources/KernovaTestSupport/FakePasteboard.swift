@@ -59,6 +59,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// in the order read, for a test proving what was read when.
     public var residentReads: [NSPasteboard.PasteboardType] { state.withLock { $0.reads } }
 
+    /// ``residentReads`` as type identifiers, for a test target that does not import AppKit.
+    public var residentReadTypes: [String] { residentReads.map(\.rawValue) }
+
     // MARK: - Promised writes
 
     /// Every promised type across all items, concatenated in item order (a
@@ -158,6 +161,12 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     @discardableResult
     public func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
         setItem([(type: type, data: Data(string.utf8))])
+    }
+
+    /// Replaces the resident item with `text` as UTF-8 plain text, for a test target that does not import AppKit.
+    @discardableResult
+    public func setText(_ text: String) -> Bool {
+        setString(text, forType: .string)
     }
 
     private func clearResidents() {

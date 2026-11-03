@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
@@ -337,7 +336,7 @@ struct SpiceClipboardServiceTests {
     /// The Mac's copy of `text`, read from a pasteboard as passthrough reads it.
     private func macCopy(_ text: String) async throws -> (copy: ClipboardOfferSource, pasteboard: FakePasteboard) {
         let pasteboard = FakePasteboard()
-        pasteboard.setString(text, forType: .string)
+        pasteboard.setText(text)
         let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
         guard case .offer(let copy, _) = outcome else {
             Issue.record("expected an offer, got \(outcome)")
@@ -382,7 +381,7 @@ struct SpiceClipboardServiceTests {
         #expect(await service.offerHostCopy(copy) == .settled)
         #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
         // The copy read nothing, so a privacy prompt can come only with a paste in the guest.
-        #expect(pasteboard.residentReads.isEmpty)
+        #expect(pasteboard.residentReadTypes.isEmpty)
         // The buffer is not the copy: showing it would read it.
         #expect(service.clipboardContent.isEmpty)
 
@@ -390,7 +389,7 @@ struct SpiceClipboardServiceTests {
         let replies = clipboardData(in: drainPipe(inputPipe))
         #expect(replies.map(\.type) == [SpiceClipboardType.utf8Text.rawValue])
         #expect(replies.map(\.bytes) == [Data("from the Mac".utf8)])
-        #expect(pasteboard.residentReads == [.string])
+        #expect(pasteboard.residentReadTypes == [ClipboardContent.utf8TextUTI])
     }
 
     @Test("A request after the Mac's clipboard moved on is answered with no data")
@@ -402,7 +401,7 @@ struct SpiceClipboardServiceTests {
         drainPipe(inputPipe)
 
         // A newer copy, not yet polled: the grab still stands, but what it was read from is gone.
-        pasteboard.setString("copied since", forType: .string)
+        pasteboard.setText("copied since")
         await service.handleIncomingData(textRequest)
 
         let replies = clipboardData(in: drainPipe(inputPipe))
