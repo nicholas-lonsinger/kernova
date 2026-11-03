@@ -34,10 +34,11 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
     /// fields. A `nil` `contentSize` preserves the content controller's own
     /// `preferredContentSize`.
     ///
-    /// A `.transient` or `.semitransient` popover has the keyboard while it is
-    /// up, unless text is being edited, and AppKit returns it to the parent
-    /// window's first responder as the popover closes. An `.applicationDefined`
-    /// one leaves the keyboard alone.
+    /// A `.transient` or `.semitransient` popover, which the user asks for, has
+    /// the keyboard while it is up: it ends a text field's edit as any click
+    /// elsewhere does, and AppKit returns the keyboard to the parent window's
+    /// first responder as the popover closes. An `.applicationDefined` one, which
+    /// comes up on its own, leaves the keyboard and any edit alone.
     public func show(
         content: NSViewController,
         from anchor: NSView,
@@ -48,6 +49,7 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
         if let contentSize {
             content.preferredContentSize = contentSize
         }
+        endTextEdit(around: anchor, behavior: behavior)
 
         if let popover, popover.isShown {
             popover.contentViewController = content
@@ -75,17 +77,34 @@ public final class PopoverPresenter: NSObject, NSPopoverDelegate {
         takeKeyboard(for: content, behavior: behavior)
     }
 
+    /// Ends a text field's edit in `anchor`'s window through the field's own commit
+    /// path, and gives the keyboard to the nearest view around `anchor` that takes
+    /// it, unless `behavior` is `.applicationDefined`.
+    ///
+    /// With no such view, nothing holds the keyboard, as after a click on blank
+    /// space. A field that refuses to end its edit keeps the keyboard.
+    func endTextEdit(around anchor: NSView, behavior: NSPopover.Behavior) {
+        // Left to the popover, the edit ends as it takes the keyboard, and once it
+        // closes keys reach nothing until the next click (observed on macOS 27.2
+        // with a sidebar rename).
+        guard behavior != .applicationDefined, let window = anchor.window,
+            (window.firstResponder as? NSText)?.isFieldEditor == true,
+            window.makeFirstResponder(nil)
+        else { return }
+        var enclosing: NSView? = anchor
+        while let view = enclosing, !view.acceptsFirstResponder {
+            enclosing = view.superview
+        }
+        if let enclosing {
+            window.makeFirstResponder(enclosing)
+        }
+    }
+
     /// Gives `content`'s popover the keyboard, unless `behavior` is
-    /// `.applicationDefined`, a view in `content` already took it, or text is
-    /// being edited.
+    /// `.applicationDefined` or a view in `content` already took it.
     func takeKeyboard(for content: NSViewController, behavior: NSPopover.Behavior) {
         guard behavior != .applicationDefined, let window = content.view.window else { return }
-        // Taking the keyboard from text being edited would commit it half-typed,
-        // and a sidebar rename ended that way leaves the keyboard reaching nothing
-        // once the popover closes (observed on macOS 27.2).
-        if let focused = window.firstResponder as? NSView,
-            focused.isDescendant(of: content.view) || focused is NSText
-        {
+        if let focused = window.firstResponder as? NSView, focused.isDescendant(of: content.view) {
             return
         }
         // With nothing in the popover accepting first responder, keys go to the
