@@ -59,7 +59,8 @@ private final class OneShotQuestion<Answer> {
 /// raised; an alert waiting on one window never holds up another. An alert no
 /// window the user can see qualifies for is held (``held``) until one does:
 /// every event that can make one qualify re-runs the routing. One that waited
-/// is shown only while what it says is still true.
+/// is shown only while what it says is still true, and one about a session
+/// (``AlertSubject/session(_:_:)``) is taken down when that session ends.
 ///
 /// A question a suspended verb waits on is never queued: it is asked now, or
 /// answered ``PresenterAnswer/unasked`` when its window is taken or there is
@@ -150,6 +151,9 @@ final class AppAlertPresenter {
         /// Shown on the same window once this alert's dismissal finishes, ahead
         /// of anything waiting — the account prompt putting itself back up.
         var followUp: (@MainActor () -> Void)?
+        /// Takes the alert down when the session it is about ends; cancelled
+        /// once it is dismissed.
+        var sessionWatch: ObservationLoop?
 
         init(
             buttons: [AlertButton], onWindowClose: WindowCloseDisposition,
@@ -281,7 +285,7 @@ final class AppAlertPresenter {
     /// The VM `request` is about, or `nil` for one about no VM.
     private func vm(of request: Request) -> VMInstance? {
         switch request {
-        case .error(_, _, .vm(let instance)): instance
+        case .error(_, _, .vm(let instance)), .error(_, _, .session(let instance, _)): instance
         case .error(_, _, .library), .startSummary, .cancelPreparing: nil
         case .deleteSheet(let delete): delete.instance
         case .startFailedAttachment(_, let instance), .startFailure(_, _, let instance),
@@ -358,6 +362,8 @@ final class AppAlertPresenter {
             return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm)
         case .linuxAgentInstallChoice(let vm, _):
             return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm) && !vm.hasGuestAgentInstallerMounted
+        case .error(_, _, .session(let vm, let session)):
+            return vm.liveSessionID == session
         case .error, .startFailedAttachment, .startFailure, .startSummary, .deleteSheet,
             .cancelPreparing:
             return true
@@ -441,6 +447,11 @@ final class AppAlertPresenter {
 
     private func show(_ entry: AlertQueue<Request, NSWindow>.Entry, on window: NSWindow) {
         switch entry.request {
+        case .error(let title, let message, .session(let instance, let session)):
+            let shown = showAlert(
+                .acknowledgement(title: title, message: message), on: window,
+                onWindowClose: .requeue(entry))
+            watch(shown, on: window, until: session, of: instance)
         case .error(let title, let message, _), .startFailure(let title, let message, _):
             showAlert(
                 .acknowledgement(title: title, message: message), on: window,
@@ -515,6 +526,7 @@ final class AppAlertPresenter {
         shown.alert = presentSheetAlert(
             config, in: window,
             didDismiss: { [weak slot] in
+                shown.sessionWatch?.cancel()
                 guard let slot, slot.occupant?.alert === shown else { return }
                 slot.occupant = nil
                 slot.leavingSheet = shown.alert?.window
@@ -527,6 +539,20 @@ final class AppAlertPresenter {
                 self?.pump()
             })
         return shown
+    }
+
+    /// Takes `shown`, on `window`, down once `instance`'s live session is no
+    /// longer `session`: an alert about a session that ended says nothing
+    /// true. It ends as a window closing under it would, naming no button.
+    private func watch(_ shown: ShownAlert, on window: NSWindow, until session: UUID, of instance: VMInstance) {
+        shown.sessionWatch = observeRecurring(
+            track: { [weak instance] in _ = instance?.liveSessionID },
+            apply: { [weak window, weak instance, weak shown] in
+                guard let shown, instance?.liveSessionID != session else { return }
+                shown.sessionWatch?.cancel()
+                guard let window, let sheet = shown.alert?.window, window.attachedSheet === sheet else { return }
+                window.endSheet(sheet, returnCode: .cancel)
+            })
     }
 
     /// Takes everything off a window that is closing.

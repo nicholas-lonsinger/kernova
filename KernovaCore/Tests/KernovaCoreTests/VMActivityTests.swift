@@ -634,7 +634,7 @@ struct VMActivityTests {
         #expect(throws: removed) {
             try instance.activity.launch(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
         }
-        await #expect(throws: removed) { try await instance.activity.requestStop {} }
+        await #expect(throws: removed) { try await instance.activity.requestStop { _ in } }
         await #expect(throws: removed) { try await instance.activity.forceStop {} }
         #expect(throws: removed) { try instance.activity.cancel(.guestSetup) }
         #expect(throws: removed) { try instance.activity.remove() }
@@ -1212,7 +1212,7 @@ struct VMActivityTests {
             try await gate.waitUntilEntered()
             let held = instance.phase
 
-            try await instance.activity.requestStop { recorder.sent += 1 }
+            try await instance.activity.requestStop { _ in recorder.sent += 1 }
             #expect(recorder.sent == 1, "\(kind)")
             #expect(instance.phase == held, "\(kind)")
 
@@ -1346,7 +1346,7 @@ struct VMActivityTests {
 
             let busy = VMAdmissionRefusal(refusal: .busy(kind))
             await #expect(throws: busy, "\(kind)") {
-                try await instance.activity.requestStop { recorder.sent += 1 }
+                try await instance.activity.requestStop { _ in recorder.sent += 1 }
             }
             await #expect(throws: busy, "\(kind)") {
                 try await instance.activity.forceStop { recorder.terminations += 1 }
@@ -1369,7 +1369,7 @@ struct VMActivityTests {
         let session = UUID()
         let (instance, recorder) = makeInstance(.running(sessionID: session))
 
-        try await instance.activity.requestStop {
+        try await instance.activity.requestStop { _ in
             recorder.sent += 1
             recorder.phase = instance.phase
         }
@@ -1380,7 +1380,7 @@ struct VMActivityTests {
         // Nothing to ask at rest.
         let (resting, restingRecorder) = makeInstance(.stopped)
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await resting.activity.requestStop { restingRecorder.sent += 1 }
+            try await resting.activity.requestStop { _ in restingRecorder.sent += 1 }
         }
         #expect(restingRecorder.sent == 0)
     }

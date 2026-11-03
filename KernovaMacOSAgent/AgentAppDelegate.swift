@@ -67,6 +67,10 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     /// shows.
     private var transferReporter: ClipboardTransferReporter?
 
+    /// Stops every service and exits with the status given; set once the
+    /// services start.
+    private var shutDown: (@Sendable (Int32) -> Void)?
+
     /// Retained so the signal source stays armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
 
@@ -171,16 +175,19 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         self.dropAgent = dropAgent
         self.controlAgent = controlAgent
 
-        // Must exit 0: the LaunchAgent's `KeepAlive={SuccessfulExit:false}`
-        // keeps only a clean exit stopped.
-        let stop: @Sendable () -> Void = {
-            Self.logger.log(.notice, "Shutting down")
+        // The LaunchAgent's `KeepAlive={SuccessfulExit:false}` keeps only a
+        // clean exit stopped, so 0 stops the agent and any other status
+        // relaunches it.
+        let shutDown: @Sendable (Int32) -> Void = { status in
+            Self.logger.log(.notice, "Shutting down, exit status \(status, privacy: .public)")
             controlAgent.stop()
             clipboardAgent.stop()
             dropAgent.stop()
             MainActorBridge.async { dragOut.stop() }
-            peer.exit(status: 0)
+            peer.exit(status: status)
         }
+        self.shutDown = shutDown
+        let stop: @Sendable () -> Void = { shutDown(0) }
 
         self.statusItemController = AgentStatusItemController(
             connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
@@ -198,6 +205,20 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         clipboardAgent.start()
         dropAgent.start()
         controlAgent.start()
+    }
+
+    /// A quit Apple event — loginwindow's as the session or the machine goes
+    /// down, or a script's — exits with ``MacAgentQuit/exitStatus(for:)``'s
+    /// status, so a shutdown an app cancels finds the agent relaunched.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        let reason = MacAgentQuit.reason(of: event)
+        Self.logger.log(
+            .notice,
+            "Asked to quit, reason \(reason.map { String(format: "%08x", $0) } ?? "none", privacy: .public)")
+        guard let shutDown else { return .terminateNow }
+        shutDown(MacAgentQuit.exitStatus(for: event))
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {

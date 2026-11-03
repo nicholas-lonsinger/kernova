@@ -661,7 +661,7 @@ package final class VMInstance {
     var errorMessage: String? { activity.errorMessage }
     var sessionContext: VMSessionContext? { activity.sessionContext }
     package var session: (any VMSessionOperating)? { activity.session }
-    var liveSessionID: UUID? { activity.liveSessionID }
+    package var liveSessionID: UUID? { activity.liveSessionID }
     package var hasLiveVirtualMachine: Bool { activity.hasLiveVirtualMachine }
     package var hasLiveSession: Bool { activity.hasLiveSession }
     var attachableSessionID: UUID? { activity.attachableSessionID }
@@ -737,7 +737,8 @@ package final class VMInstance {
             identityConflict: nil,
             accessoryHolder: nil,
             terminating: peers?.isTerminating ?? false,
-            heldByAnotherCopy: heldByAnotherCopy)
+            heldByAnotherCopy: heldByAnotherCopy,
+            stopRequestInFlight: activity.isRequestingStop)
     }
 
     /// The VM claiming the identity (``claimsIdentity``) that bringing this

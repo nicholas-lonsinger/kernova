@@ -21,7 +21,7 @@ LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks @loader_pa
 
 ENABLE_APP_SANDBOX = NO
 ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO
-AUTOMATION_APPLE_EVENTS = NO
+AUTOMATION_APPLE_EVENTS = YES
 ENABLE_HARDENED_RUNTIME = YES
 RUNTIME_EXCEPTION_ALLOW_DYLD_ENVIRONMENT_VARIABLES = NO
 RUNTIME_EXCEPTION_ALLOW_JIT = NO
@@ -45,5 +45,10 @@ CODE_SIGN_STYLE = Automatic
 CODE_SIGN_STYLE[config=Release] = Manual
 PROVISIONING_PROFILE_SPECIFIER =
 CODE_SIGN_INJECT_BASE_ENTITLEMENTS[config=Release] = NO
+// Xcode's ad-hoc Debug signature omitted the runtime flag despite ENABLE_HARDENED_RUNTIME = YES.
+OTHER_CODE_SIGN_FLAGS = --options=runtime
+// Under that runtime's library validation, dyld refuses the separately ad-hoc-signed
+// KernovaMacOSAgent.debug.dylib, so the agent links as one binary.
+ENABLE_DEBUG_DYLIB = NO
 OTHER_CODE_SIGN_FLAGS[config=Release] = --timestamp
 SKIP_INSTALL[config=Release] = YES

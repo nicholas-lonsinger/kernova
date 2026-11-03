@@ -13,8 +13,8 @@ import FoundationEssentials
 import Foundation
 #endif
 
-// Apple's Dispatch marks its source protocols `Sendable`; swift-corelibs-libdispatch
-// does not, though dispatch objects are thread-safe on every platform.
+// Apple's Dispatch marks `DispatchQueue` `Sendable`; swift-corelibs-libdispatch does not, though dispatch
+// objects are thread-safe on every platform.
 #if canImport(Darwin)
 import Dispatch
 #else
@@ -23,13 +23,14 @@ import Dispatch
 import KernovaAgentRuntime
 import KernovaSynchronization
 
-/// A `ByteStream` over a connected stream socket in non-blocking mode, driven by dispatch read and write
-/// sources on the start queue. The host's, Linux guests' and macOS 15+ guests' streams.
+/// A `ByteStream` over a connected stream socket in non-blocking mode, waiting through `SocketReadiness`
+/// whenever the socket is not ready. The host's streams to its guests, and the Linux agent's stream to the host.
 ///
 /// A write to a socket the far side closed fails with `EPIPE` and never raises SIGPIPE: Darwin sets
 /// `SO_NOSIGPIPE` on the socket, Linux passes `MSG_NOSIGNAL` to each `sendmsg`.
 public final class POSIXByteStream: ByteStream {
     private let descriptor: Int32
+    private let readiness: SocketReadiness
     private let released: (@Sendable () -> Void)?
     private let state: Locked<State>
 
@@ -44,22 +45,21 @@ public final class POSIXByteStream: ByteStream {
     private struct State: Sendable {
         var queue: DispatchQueue?
         var handler: (@Sendable (ByteStreamEvent) -> Void)?
-        var readSource: (any DispatchSourceRead)?
-        var writeSource: (any DispatchSourceWrite)?
-        /// Suspended between a `.received` and `readMore()`, and once the read side ended.
+        var registration: SocketReadiness.Registration?
+        /// Between a `.received` and `readMore()`, and once the read side ended.
         var readSuspended = false
-        var writeSuspended = true
         var pendingWrite: PendingWrite?
         var endDelivered = false
         var isShutDown = false
-        /// The cancel handlers and the shutdown delivery still to run before the descriptor closes.
+        /// The registration's cancel and the shutdown delivery still to run before the descriptor closes.
         var releasesOutstanding = 0
         var buffer = [UInt8](repeating: 0, count: ByteStreamLimits.maxReceive)
     }
 
     /// Takes ownership of `descriptor`, a connected stream socket, and puts it in non-blocking,
     /// close-on-exec mode, so no child process the agent execs inherits the connection. Throws the OS's
-    /// error, closing nothing, when the descriptor is not a socket or refuses either mode.
+    /// error, closing nothing, when the descriptor is not a socket or refuses either mode, or when
+    /// `SocketReadiness` cannot start.
     ///
     /// `released` runs once the descriptor is closed and the stream holds nothing more: on the start queue
     /// after `shutdown()`, or inside `shutdown()` when the stream was never started.
@@ -78,46 +78,42 @@ public final class POSIXByteStream: ByteStream {
         guard setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size)) == 0
         else { throw .system(errno) }
         #endif
+        readiness = try SocketReadiness.shared()
         self.descriptor = descriptor
         self.released = released
         state = Locked(State())
     }
 
-    /// Begins reading on `queue`; the read and write sources run there.
+    /// Begins reading on `queue`, where every read, readiness and completion runs.
     public func start(on queue: DispatchQueue, _ handler: @escaping @Sendable (ByteStreamEvent) -> Void) {
         let shutBeforeStart = state.withLock { state -> Bool in
             precondition(state.queue == nil, "a stream started twice")
             state.queue = queue
             guard !state.isShutDown else { return true }
             state.handler = handler
-            let read = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
-            let write = DispatchSource.makeWriteSource(fileDescriptor: descriptor, queue: queue)
-            read.setEventHandler { [self] in readReady() }
-            write.setEventHandler { [self] in writeReady() }
-            read.setCancelHandler { [self] in release() }
-            write.setCancelHandler { [self] in release() }
-            state.readSource = read
-            state.writeSource = write
-            read.activate()
+            state.registration = readiness.register(descriptor, queue: queue) { [self] ready in
+                if ready.contains(.read) { readReady() }
+                if ready.contains(.write) { writeReady() }
+            }
             return false
         }
-        if shutBeforeStart { queue.async { handler(.ended(.failed(.shutDown))) } }
+        queue.async { [self] in
+            if shutBeforeStart { handler(.ended(.failed(.shutDown))) } else { readReady() }
+        }
     }
 
-    /// Resumes the read source after a `.received`.
+    /// Reads again after a `.received`.
     public func readMore() {
         let queue = state.withLock { state -> DispatchQueue? in
             guard state.readSuspended, !state.endDelivered, !state.isShutDown else { return nil }
             state.readSuspended = false
-            state.readSource?.resume()
             return state.queue
         }
-        // Readiness that arose while the source was suspended need not fire on resume where the event
-        // mechanism is edge-triggered (epoll under swift-corelibs-libdispatch): read once after re-arming.
         queue?.async { [self] in readReady() }
     }
 
-    /// Writes at once what the socket accepts and the rest as it drains; completes on the start queue.
+    /// Sends at once, on the caller's thread, what the socket accepts, and the rest on the start queue as it
+    /// drains; completes on the start queue.
     public func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void) {
         let refused = state.withLock { state -> (DispatchQueue, ByteStreamError)? in
             guard let queue = state.queue else { preconditionFailure("a write before start") }
@@ -132,28 +128,19 @@ public final class POSIXByteStream: ByteStream {
         writeReady()
     }
 
-    /// Shuts the socket both ways, cancels the sources, and closes the descriptor once both cancel
-    /// handlers and the final deliveries have run.
+    /// Shuts the socket both ways, cancels the registration, and closes the descriptor once the registration
+    /// no longer watches it and the final deliveries have run.
     public func shutdown() {
         let actions = state.withLock { state -> (DispatchQueue?, @Sendable () -> Void)? in
             guard !state.isShutDown else { return nil }
             state.isShutDown = true
             Glue.shutdownSocket(descriptor)
-            guard let queue = state.queue, let read = state.readSource, let write = state.writeSource else {
+            guard let queue = state.queue, let registration = state.registration else {
                 close(descriptor)
                 return (nil, { [released] in released?() })
             }
-            read.cancel()
-            write.cancel()
-            if state.readSuspended {
-                state.readSuspended = false
-                read.resume()
-            }
-            if state.writeSuspended {
-                state.writeSuspended = false
-                write.resume()
-            }
-            state.releasesOutstanding = 3
+            registration.cancel { [self] in release() }
+            state.releasesOutstanding = 2
             let completion = state.pendingWrite?.completion
             state.pendingWrite = nil
             let handler = state.endDelivered ? nil : state.handler
@@ -171,8 +158,9 @@ public final class POSIXByteStream: ByteStream {
         if let queue { queue.async(execute: deliver) } else { deliver() }
     }
 
-    // MARK: Source handlers, on the start queue
+    // MARK: Reading and writing
 
+    /// Reads once, waiting for readiness when the socket has nothing yet.
     private func readReady() {
         let event = state.withLock { state -> (ByteStreamEvent, @Sendable (ByteStreamEvent) -> Void)? in
             guard !state.isShutDown, !state.endDelivered, !state.readSuspended, let handler = state.handler
@@ -187,21 +175,22 @@ public final class POSIXByteStream: ByteStream {
             } else if read.count == 0 {
                 event = .ended(.eof)
             } else if read.error == EAGAIN || read.error == EWOULDBLOCK || read.error == EINTR {
+                state.registration?.arm(.read)
                 return nil
             } else {
                 event = .ended(.failed(.system(read.error)))
             }
             state.readSuspended = true
-            state.readSource?.suspend()
             if case .ended = event { state.endDelivered = true }
             return (event, handler)
         }
         if let (event, handler) = event { handler(event) }
     }
 
-    /// Writes what the pending write still holds; completes it once written or failed.
+    /// Writes what the pending write still holds, waiting for readiness when the socket takes no more;
+    /// completes it once written or failed.
     private func writeReady() {
-        let next = state.withLock { state -> (DispatchQueue, (@Sendable () -> Void)?)? in
+        let next = state.withLock { state -> (DispatchQueue, @Sendable () -> Void)? in
             guard !state.isShutDown, var pending = state.pendingWrite, let queue = state.queue else { return nil }
             var failure: ByteStreamError?
             while pending.index < pending.chunks.count {
@@ -225,46 +214,32 @@ public final class POSIXByteStream: ByteStream {
                     }
                 }
             }
-            let done = failure != nil || pending.index == pending.chunks.count
-            if done {
-                state.pendingWrite = nil
-                if !state.writeSuspended {
-                    state.writeSuspended = true
-                    state.writeSource?.suspend()
-                }
-                let completion = pending.completion
-                let result = failure
-                return (queue, { completion(result) })
+            guard failure != nil || pending.index == pending.chunks.count else {
+                state.pendingWrite = pending
+                state.registration?.arm(.write)
+                return nil
             }
-            state.pendingWrite = pending
-            guard state.writeSuspended else { return nil }
-            state.writeSuspended = false
-            state.writeSource?.resume()
-            return (queue, nil)
+            state.pendingWrite = nil
+            let completion = pending.completion
+            let result = failure
+            return (queue, { completion(result) })
         }
         guard let (queue, completion) = next else { return }
-        if let completion {
-            queue.async(execute: completion)
-        } else {
-            // As in `readMore()`: room that opened before the source was re-armed need not fire it, so
-            // write once after re-arming.
-            queue.async { [self] in writeReady() }
-        }
+        queue.async(execute: completion)
     }
 
-    /// One of the two cancel handlers or the shutdown delivery ran; the last closes the descriptor and
-    /// drops the handler and sources, after the lock is released, then reports the release.
+    /// The registration's cancel or the shutdown delivery ran; the last closes the descriptor and drops the
+    /// handler and registration, after the lock is released, then reports the release.
     private func release() {
-        let dropped = state.withLock { state -> (Any?, Any?, Any?)? in
+        let dropped = state.withLock { state -> (Any?, Any?)? in
             state.releasesOutstanding -= 1
             guard state.releasesOutstanding == 0 else { return nil }
             close(descriptor)
             defer {
                 state.handler = nil
-                state.readSource = nil
-                state.writeSource = nil
+                state.registration = nil
             }
-            return (state.handler, state.readSource, state.writeSource)
+            return (state.handler, state.registration)
         }
         guard dropped != nil else { return }
         released?()
