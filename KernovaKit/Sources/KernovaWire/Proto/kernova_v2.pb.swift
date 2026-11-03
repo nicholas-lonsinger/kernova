@@ -597,9 +597,12 @@ public nonisolated enum Kernova_V2_PayloadFormat: SwiftProtobuf.Enum, Swift.Case
   /// its own unit and autostart files when it installs.
   case executable // = 1
 
-  /// An uncompressed POSIX.1-2001 pax archive of the macOS install tree,
-  /// extracted by the never-resolve-a-path writer.
+  /// Never sent: no agent lists it and no host bundles it.
   case paxTree // = 2
+
+  /// The macOS install tree as one item in the container ITEM_TRANSFER pulls
+  /// carry (KernovaContainer), landed into a slot as a pull's item lands.
+  case containerTree // = 4
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -611,6 +614,7 @@ public nonisolated enum Kernova_V2_PayloadFormat: SwiftProtobuf.Enum, Swift.Case
     case 0: self = .unspecified
     case 1: self = .executable
     case 2: self = .paxTree
+    case 4: self = .containerTree
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -620,6 +624,7 @@ public nonisolated enum Kernova_V2_PayloadFormat: SwiftProtobuf.Enum, Swift.Case
     case .unspecified: return 0
     case .executable: return 1
     case .paxTree: return 2
+    case .containerTree: return 4
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -629,6 +634,7 @@ public nonisolated enum Kernova_V2_PayloadFormat: SwiftProtobuf.Enum, Swift.Case
     .unspecified,
     .executable,
     .paxTree,
+    .containerTree,
   ]
 
 }
@@ -2347,7 +2353,7 @@ nonisolated extension Kernova_V2_PowerAction: SwiftProtobuf._ProtoNameProviding 
 }
 
 nonisolated extension Kernova_V2_PayloadFormat: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PAYLOAD_FORMAT_UNSPECIFIED\0\u{1}PAYLOAD_FORMAT_EXECUTABLE\0\u{1}PAYLOAD_FORMAT_PAX_TREE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PAYLOAD_FORMAT_UNSPECIFIED\0\u{1}PAYLOAD_FORMAT_EXECUTABLE\0\u{1}PAYLOAD_FORMAT_PAX_TREE\0\u{2}\u{2}PAYLOAD_FORMAT_CONTAINER_TREE\0")
 }
 
 nonisolated extension Kernova_V2_LogLevel: SwiftProtobuf._ProtoNameProviding {
