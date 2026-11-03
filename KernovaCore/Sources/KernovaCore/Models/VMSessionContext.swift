@@ -91,14 +91,15 @@ package final class VMSessionContext {
     /// The agent scopes the absence watchdog has warned about: each joins when
     /// its absence outlasts its allowance, and leaves once ``MissingAgentRule``
     /// stops finding it missing, so its next absence gets an allowance of its
-    /// own.
+    /// own. Kept through ``tearDown()``: the run's end reads it with
+    /// ``observedAgents``.
     var warnedAgentScopes: Set<GuestAgentScope> = []
 
-    /// The versions the guest's session and system peers reported this
-    /// session, `nil` before each connects: what the session knows whether or
-    /// not the write recording them landed.
-    var observedSessionAgentVersion: String?
-    var observedSystemAgentVersion: String?
+    /// What each scope's newest peer reported this session, a scope absent
+    /// until one connects: what the session knows whether or not the write
+    /// recording it landed, and — once the session ends — what replaces the
+    /// committed records.
+    var observedAgents: [GuestAgentScope: GuestAgentSighting] = [:]
 
     /// The ``AwayPeer/order``s of the agent hub's away peers this session's
     /// absence watchdog stopped waiting for: every surface shows the hub's away
@@ -199,7 +200,6 @@ package final class VMSessionContext {
         stopClipboardService()
         stopSerialReading()
         cancelAgentAbsenceWatchdog()
-        warnedAgentScopes = []
         expiredAwayOrders = []
         agentAbsenceFloor = nil
         serialInputPipe = nil

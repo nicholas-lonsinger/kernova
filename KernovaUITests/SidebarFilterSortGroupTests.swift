@@ -73,6 +73,36 @@ struct SidebarFilterSortGroupTests {
 
     // MARK: - Filter through the projection
 
+    @Test("The guest agent bucket judges an agent by its payload hash, not by the label it reports")
+    func agentBucketByHash() {
+        let rebuilt = Data(repeating: 0xB2, count: 32)
+        let entries = [
+            vm("Current", guestOS: .macOS) {
+                $0.lastSeenAgentVersion = "0.9 (1)"
+                $0.lastSeenAgentPayloadHash = .testingPayloadHash
+            },
+            vm("Same label, other payload", guestOS: .macOS) {
+                $0.lastSeenAgentVersion = "1.0 (1)"
+                $0.lastSeenAgentPayloadHash = rebuilt
+            },
+            vm("One scope behind", guestOS: .macOS) {
+                $0.lastSeenAgentVersion = "1.0 (1)"
+                $0.lastSeenAgentPayloadHash = .testingPayloadHash
+                $0.lastSeenSystemAgentVersion = "1.0 (1)"
+                $0.lastSeenSystemAgentPayloadHash = rebuilt
+            },
+        ]
+        #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate]))) == ["Current"])
+        #expect(
+            shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion])))
+                == ["Same label, other payload", "One scope behind"])
+        // Before the bundled payload is hashed, no recorded agent is judged.
+        let unhashed = SidebarLayout.Context.testing(bundledPayloadHashes: [:])
+        #expect(
+            shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate, .olderVersion])), context: unhashed)
+                .isEmpty)
+    }
+
     @Test("Each attribute narrows the library section by what each VM is")
     func filterAttributes() {
         let baseline = VMSnapshot(name: "Baseline", macAddress: nil)
@@ -80,6 +110,7 @@ struct SidebarFilterSortGroupTests {
         let entries = [
             vm("Mac", guestOS: .macOS, phase: .running(sessionID: UUID())) {
                 $0.lastSeenAgentVersion = "1.0 (1)"
+                $0.lastSeenAgentPayloadHash = .testingPayloadHash
             },
             vm("Old Mac", guestOS: .macOS) { $0.lastSeenAgentVersion = "0.9 (1)" },
             vm("Bare Mac", guestOS: .macOS) {

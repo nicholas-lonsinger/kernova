@@ -217,17 +217,22 @@ package final class VMInstance {
 
     // MARK: - Session Projection
 
-    /// The version this VM's session agent last reported: this session's when
-    /// one connected, the committed record otherwise.
-    package var lastSeenAgentVersion: String? {
-        sessionContext?.observedSessionAgentVersion ?? configuration.lastSeenAgentVersion
+    /// What `scope`'s agent last reported on this VM: this session's when one
+    /// connected, the committed record otherwise.
+    ///
+    /// The committed records are the scopes the last run that saw any agent
+    /// saw, less any it ended warning about — each run that sees an agent
+    /// replaces them as it ends (``sessionDidEnd(_:)``) — so a scope the
+    /// guest stopped running warns in one run at most.
+    package func lastSeenAgent(_ scope: GuestAgentScope) -> GuestAgentSighting? {
+        sessionContext?.observedAgents[scope] ?? configuration.lastSeenAgent(scope)
     }
 
-    /// The version this VM's system agent last reported, on the same terms as
-    /// ``lastSeenAgentVersion``.
-    package var lastSeenSystemAgentVersion: String? {
-        sessionContext?.observedSystemAgentVersion ?? configuration.lastSeenSystemAgentVersion
-    }
+    /// The version ``lastSeenAgent(_:)`` gives the session agent.
+    package var lastSeenAgentVersion: String? { lastSeenAgent(.login)?.versionLabel }
+
+    /// The version ``lastSeenAgent(_:)`` gives the system agent.
+    package var lastSeenSystemAgentVersion: String? { lastSeenAgent(.system)?.versionLabel }
 
     /// The guest OS version an agent last reported on this VM, as recorded —
     /// and unknown once this session's watchdog has found no agent, since
@@ -249,8 +254,7 @@ package final class VMInstance {
         for heal in context.heals {
             config.healExternalReference(heal.reference, movedTo: heal.path, bookmark: heal.bookmark)
         }
-        config.lastSeenAgentVersion = lastSeenAgentVersion
-        config.lastSeenSystemAgentVersion = lastSeenSystemAgentVersion
+        for scope in GuestAgentScope.allCases { config.recordLastSeenAgent(lastSeenAgent(scope), scope) }
         config.lastSeenGuestOSVersion = reportedGuestOSVersion
         return config
     }
@@ -314,25 +318,39 @@ package final class VMInstance {
         agentPresenceChanged()
     }
 
-    /// Records the version each scope's connected peer reports, the newest
-    /// session peer's for the session agent, and the guest OS version the
-    /// newest peer reports: in the session at once, and in the configuration
-    /// whenever it differs from the committed record.
+    /// Records what each scope's newest connected peer reports, and the guest
+    /// OS version the newest peer reports: in the session at once, and in the
+    /// configuration whenever it differs from the committed record.
     private func recordHubPeers(_ context: VMSessionContext) {
-        let session = publishedAgentHubSnapshot.peers.first { $0.role == .sessionPeer }?.versionLabel
-        let system = publishedAgentHubSnapshot.peers.first { $0.role == .systemPeer }?.versionLabel
+        for peer in publishedAgentHubSnapshot.peers.reversed() {
+            context.observedAgents[GuestAgentScope(of: peer)] = GuestAgentSighting(peer)
+        }
         let osVersion = publishedAgentHubSnapshot.peers.first { !$0.osVersion.isEmpty }?.osVersion
-        if let session { context.observedSessionAgentVersion = session }
-        if let system { context.observedSystemAgentVersion = system }
-        let recordsSession = session.map { $0 != configuration.lastSeenAgentVersion } ?? false
-        let recordsSystem = system.map { $0 != configuration.lastSeenSystemAgentVersion } ?? false
-        let recordsOS = osVersion.map { $0 != configuration.lastSeenGuestOSVersion } ?? false
-        guard recordsSession || recordsSystem || recordsOS else { return }
-        recordObservation("the agents' Hello") {
+        commitAgentSightings(of: context, runEnded: false, osVersion: osVersion)
+    }
+
+    /// Brings the committed agent records up to what `context`'s run saw:
+    /// each scope seen recorded as seen, and — once the run has ended, if it
+    /// saw any agent — the records replaced by the scopes it saw and did not
+    /// end warning about, so a scope that left the guest is expected for the
+    /// one run that finds it gone. A run that saw no agent, as a boot into
+    /// Recovery or a guest that never got far enough, leaves them be.
+    private func commitAgentSightings(of context: VMSessionContext, runEnded: Bool, osVersion: String? = nil) {
+        let replaces = runEnded && !context.observedAgents.isEmpty
+        var records = configuration
+        for scope in GuestAgentScope.allCases {
+            let gone = runEnded && context.warnedAgentScopes.contains(scope)
+            let seen = gone ? nil : context.observedAgents[scope]
+            if seen != nil || replaces { records.recordLastSeenAgent(seen, scope) }
+        }
+        if let osVersion { records.lastSeenGuestOSVersion = osVersion }
+        guard records != configuration else { return }
+        recordObservation(runEnded ? "the agents the run saw" : "the agents' Hello") {
             _ = $0.updateConfiguration { config in
-                if let session { config.lastSeenAgentVersion = session }
-                if let system { config.lastSeenSystemAgentVersion = system }
-                if let osVersion { config.lastSeenGuestOSVersion = osVersion }
+                for scope in GuestAgentScope.allCases {
+                    config.recordLastSeenAgent(records.lastSeenAgent(scope), scope)
+                }
+                config.lastSeenGuestOSVersion = records.lastSeenGuestOSVersion
             }
         }
     }
@@ -909,10 +927,12 @@ package final class VMInstance {
 
     // MARK: - Activity Callbacks
 
-    /// Called by ``activity`` once the session is released; `afterRunning`
-    /// is whether that session ever settled running.
-    func sessionDidEnd(afterRunning: Bool) {
-        if afterRunning { recordLastRun(at: Date()) }
+    /// Called by ``activity`` once the session `ended` is released: a run
+    /// that settled running records its end, and every run commits the agents
+    /// it saw (``commitAgentSightings(of:runEnded:osVersion:)``).
+    func sessionDidEnd(_ ended: VMSessionContext) {
+        if ended.runningSince != nil { recordLastRun(at: Date()) }
+        commitAgentSightings(of: ended, runEnded: true)
     }
 
     /// Called by ``activity`` when the presented phase enters or leaves a live
@@ -1202,11 +1222,11 @@ package final class VMInstance {
         return [
             AgentScopePresence(
                 scope: .login, lastSeenVersion: lastSeenAgentVersion,
-                seenThisSession: context.observedSessionAgentVersion != nil,
+                seenThisSession: context.observedAgents[.login] != nil,
                 isConnected: peers.contains { $0.role == .sessionPeer }),
             AgentScopePresence(
                 scope: .system, lastSeenVersion: lastSeenSystemAgentVersion,
-                seenThisSession: context.observedSystemAgentVersion != nil,
+                seenThisSession: context.observedAgents[.system] != nil,
                 isConnected: peers.contains { $0.role == .systemPeer }),
         ]
     }

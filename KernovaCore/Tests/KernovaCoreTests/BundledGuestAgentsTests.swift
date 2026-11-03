@@ -95,7 +95,7 @@ struct BundledGuestAgentsTests {
         let agents = BundledGuestAgents(entries: entries, macOSInstallerDiskImageURL: nil, linuxDisk: .testing)
         #expect(await agents.payloads(for: .linux).isEmpty)
         #expect(await agents.payloads(for: .macOS).isEmpty)
-        #expect(agents.versionLabel(for: .macOS) == nil)
+        #expect(await agents.payloadHashes().isEmpty)
     }
 
     @Test("The macOS agent serves both scopes from one container-tree payload, offered with its hash, beside the DMG")
@@ -107,10 +107,13 @@ struct BundledGuestAgentsTests {
         #expect(user.format == .containerTree)
         #expect(user.versionLabel == "1.2 (34)")
         #expect(user.fileURL.path(percentEncoded: false).hasSuffix("Contents/Resources/\(Self.macOSAgent)"))
-        #expect(agents.versionLabel(for: .macOS) == "1.2 (34)")
 
         let payloads = await agents.payloads(for: .macOS)
         let manifest = Self.manifest(of: Self.macOSPayload, format: .containerTree)
+        #expect(
+            await agents.payloadHashes() == [
+                .macOS: manifest.payloadHash, .linux: Self.manifest(of: Self.payload).payloadHash,
+            ])
         #expect(payloads.map(\.scope) == [.user, .system])
         #expect(payloads.allSatisfy { $0.os == .macOS && $0.architecture == .arm64 && $0.manifest == manifest })
         let session = PeerClaim(role: .sessionPeer, scope: .user, os: .macOS, architecture: .arm64)

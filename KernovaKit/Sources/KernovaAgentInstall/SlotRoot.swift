@@ -132,7 +132,9 @@ public final class SlotRoot: Sendable {
         let target = String(decoding: buffer[0..<count].map { UInt8(bitPattern: $0) }, as: UTF8.self)
         guard target.hasPrefix(InstallRoot.slotsName + "/") else { return nil }
         let slot = String(target.dropFirst(InstallRoot.slotsName.count + 1))
-        return slot.isEmpty || slot.contains("/") ? nil : slot
+        // Bytes, not `String.contains(_:)`: Foundation's, which a string argument picks, links ICU into the
+        // static Linux agent.
+        return slot.isEmpty || slot.utf8.contains(UInt8(ascii: "/")) ? nil : slot
     }
 
     // MARK: Markers

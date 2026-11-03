@@ -1074,6 +1074,7 @@ struct VMInstanceTests {
         let hostState = VMHostState(agentInstallNudgeDismissed: agentInstallNudgeDismissed)
         let recordAgent: (inout VMConfiguration) -> Void = {
             $0.lastSeenAgentVersion = lastSeen
+            $0.lastSeenAgentPayloadHash = Self.agentHash
             $0.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         }
         let instance =
@@ -1098,9 +1099,13 @@ struct VMInstanceTests {
                     PeerSummary(
                         handle: PeerHandle(rawValue: handle), role: .sessionPeer, scope: .user, os: .macOS,
                         sessionID: "2", userName: "pbear", console: .on, versionLabel: version, standing: standing,
-                        isResponsive: true)
+                        isResponsive: true, payloadHash: Self.agentHash)
                 ], features: FeatureStatus.merge([])))
     }
+
+    /// The payload hash the agent ``makeMacOSInstanceWithAgentInstalled(in:lastSeen:lastSeenGuestOSVersion:setupState:bootedIntoRecovery:agentInstallNudgeDismissed:)``
+    /// records claimed, and ``connectSessionAgent(to:version:standing:handle:)``'s claims.
+    private static let agentHash = Data(repeating: 0x7E, count: 32)
 
     /// Lands a hub snapshot with no peer: every agent went away.
     private func disconnectAgents(from instance: VMInstance) {
@@ -1413,7 +1418,8 @@ struct VMInstanceTests {
 
         instance.handleSessionEvent(.guestDidStop)
 
-        #expect(context.warnedAgentScopes.isEmpty)
+        #expect(instance.agentExpectedButMissing == false)
+        #expect(context.agentAbsenceTimer == nil)
         // The next session's context arms cleanly — the prior task was
         // cancelled, so nothing carries over to block it.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
@@ -1637,6 +1643,136 @@ struct VMInstanceTests {
         #expect(storage.bundles[instance.bundleURL] == held)
         #expect(instance.lastSeenAgentVersion == "0.9.2")
         #expect(instance.effectiveConfiguration.lastSeenAgentVersion == "0.9.2")
+    }
+
+    // MARK: - Agent records replaced per run
+
+    /// Lands a hub snapshot of `peers`, each `(role, version, payload hash)`, connected now.
+    private func connectAgents(to instance: VMInstance, _ peers: [(PeerRole, String, Data)]) {
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: peers.enumerated().map { index, peer in
+                    PeerSummary(
+                        handle: PeerHandle(rawValue: UInt64(index + 1)), role: peer.0,
+                        scope: peer.0 == .systemPeer ? .system : .user, os: .macOS, sessionID: "2",
+                        userName: peer.0 == .systemPeer ? "" : "pbear", console: .on, versionLabel: peer.1,
+                        standing: .current, isResponsive: true, payloadHash: peer.2)
+                }, features: FeatureStatus.merge([])))
+    }
+
+    /// Ends `instance`'s run as the guest stopping does, then starts its next one, its agents not yet back.
+    private func runAgain(_ instance: VMInstance) {
+        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        instance.publishAgentHubSnapshotForTesting(.empty)
+    }
+
+    private static let systemHash = Data(repeating: 0x5A, count: 32)
+
+    @Test("A scope the guest stopped running warns in one run at most, then is no longer expected")
+    func scopeSwitchWarnsOnce() async {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+
+        // The guest now runs only the install for everyone's system peer: the login agent it ran last time warns.
+        connectAgents(to: instance, [(.systemPeer, "2.0", Self.systemHash)])
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+
+        // The run that saw it replaces the records: the system peer only.
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.configuration.lastSeenAgent(.login) == nil)
+        #expect(
+            instance.configuration.lastSeenAgent(.system)
+                == GuestAgentSighting(versionLabel: "2.0", payloadHash: Self.systemHash))
+        #expect(storage.bundles[instance.bundleURL]?.lastSeenAgentVersion == nil)
+
+        // Every later run expects the system peer alone, so nothing warns again.
+        for _ in 0..<2 {
+            instance.activity.placeForTesting(.running(sessionID: UUID()))
+            instance.beginSessionContextForTesting().hasAgentTransport = true
+            connectAgents(to: instance, [(.systemPeer, "2.0", Self.systemHash)])
+            instance.startAgentAbsenceWatch()
+            #expect(instance.agentAbsenceTimerForTesting == nil)
+            #expect(instance.warnedMissingAgents.isEmpty)
+            instance.handleSessionEvent(.guestDidStop)
+        }
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+    }
+
+    @Test("A scope that leaves the guest during a run warns in that run only")
+    func scopeLeavingDuringARunWarnsOnce() async {
+        let library = makeWiredLibrary()
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+        let session = (PeerRole.sessionPeer, "1.0", Self.agentHash)
+        connectAgents(to: instance, [session, (.systemPeer, "1.0", Self.systemHash)])
+
+        // The install for everyone goes, and one just for the user takes its place: the system peer never returns.
+        connectAgents(to: instance, [session])
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
+
+        instance.handleSessionEvent(.guestDidStop)
+        #expect(instance.configuration.lastSeenAgent(.system) == nil)
+        #expect(instance.configuration.lastSeenAgent(.login)?.versionLabel == "1.0")
+
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        connectAgents(to: instance, [session])
+        instance.startAgentAbsenceWatch()
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
+    }
+
+    @Test("A run that saw no agent — a boot into Recovery, a guest that never got far — keeps the records")
+    func runWithoutAgentKeepsRecords() {
+        let storage = MockVMStorageService()
+        let library = makeWiredLibrary(storage: storage)
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+        connectAgents(to: instance, [(.sessionPeer, "1.0", Self.systemHash), (.systemPeer, "1.0", Self.systemHash)])
+        runAgain(instance)
+        let recorded = instance.configuration
+        let saves = storage.saveConfigurationCallCount
+        #expect(recorded.lastSeenAgent(.login) != nil && recorded.lastSeenAgent(.system) != nil)
+
+        // This run sees nothing.
+        instance.handleSessionEvent(.guestDidStop)
+
+        #expect(instance.configuration == recorded)
+        #expect(storage.saveConfigurationCallCount == saves)
+    }
+
+    @Test("The Library's bucket and the install choice follow the scopes the last run saw")
+    func bucketAndInstallChoiceFollowTheRun() async throws {
+        let library = makeWiredLibrary()
+        let bundled = try #require(await AppBundleProducts.testing.guestAgents.payloadHashes()[.macOS])
+        try await waitForChange { library.bundledPayloadHashes[.macOS] == bundled }
+        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
+        defer { withExtendedLifetime(library) {} }
+        // A login agent of an older payload last time, and both scopes on record.
+        connectAgents(
+            to: instance, [(.sessionPeer, "1.0", Self.systemHash), (.systemPeer, "1.0", Self.systemHash)])
+        runAgain(instance)
+        #expect(instance.seenAgentScopes == [.login, .system])
+        #expect(library.sidebarContext.subject(of: instance).guestAgent == .olderVersion)
+
+        // This run sees only a current system peer: the stale login record goes with it.
+        connectAgents(to: instance, [(.systemPeer, "1.0", bundled)])
+        runAgain(instance)
+
+        #expect(instance.seenAgentScopes == [.system])
+        #expect(LinuxAgentInstallChoice(seen: instance.seenAgentScopes) == .systemService)
+        #expect(library.sidebarContext.subject(of: instance).guestAgent == .upToDate)
     }
 
     // MARK: - guestOSVersionDisplay

@@ -128,11 +128,6 @@ package struct BundledGuestAgents: Sendable {
         assertionFailure("\(path) missing from app bundle — check the build phase that writes it")
     }
 
-    /// The display version of the payloads bundled for a `guestOS` guest, or `nil` when none is.
-    package func versionLabel(for guestOS: VMGuestOS) -> String? {
-        entries.first { $0.key.os == OSFamily(guestOS) }?.value.versionLabel
-    }
-
     /// The entry for `os`, `architecture` and `scope`, or nil when none is bundled.
     package func entry(
         _ os: OSFamily, _ architecture: Architecture, _ scope: InstallScope
@@ -158,6 +153,18 @@ package struct BundledGuestAgents: Sendable {
                         versionLabel: entry.versionLabel)))
         }
         return payloads
+    }
+
+    /// The SHA-256 of the payload bundled for each guest OS that has one: the hash
+    /// ``payloads(for:)`` offers, which a peer running it claims.
+    package func payloadHashes() async -> [VMGuestOS: Data] {
+        var hashes: [VMGuestOS: Data] = [:]
+        for guestOS in VMGuestOS.allCases {
+            if let payload = await payloads(for: OSFamily(guestOS)).first {
+                hashes[guestOS] = payload.manifest.payloadHash
+            }
+        }
+        return hashes
     }
 
     /// The file `manifest` was made from, among the payloads bundled for `os`; nil when none was.

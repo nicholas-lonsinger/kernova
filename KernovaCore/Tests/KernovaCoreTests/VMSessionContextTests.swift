@@ -78,7 +78,8 @@ struct VMSessionContextTests {
         #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
-        #expect(context.warnedAgentScopes.isEmpty)
+        // What the run warned about is its record, which the run's end reads.
+        #expect(context.warnedAgentScopes == [.login])
         #expect(context.networkAttachmentPending == false)
         #expect(context.session == nil)
         #expect(context.agentAbsenceTimer == nil)

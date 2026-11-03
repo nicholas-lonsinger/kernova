@@ -31,12 +31,12 @@ extension VMInstance {
     /// What a ``VMLibraryFilter`` reads of this VM, with `networks` the
     /// library's named networks and `tags` its tags.
     func filterSubject(
-        bundledAgents: BundledGuestAgents, networks: VMNetworkDirectory.State, tags: [VMTag]
+        bundledPayloadHashes: [VMGuestOS: Data], networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
-            configuration, lastSeenAgentVersions: [lastSeenAgentVersion, lastSeenSystemAgentVersion],
+            configuration, lastSeenAgents: GuestAgentScope.allCases.compactMap(lastSeenAgent),
             state: stateBucket, hostState: hostState, hasSnapshots: !snapshotManifest.isEmpty, tags: tags,
-            bundledAgents: bundledAgents, networks: networks)
+            bundledPayloadHashes: bundledPayloadHashes, networks: networks)
     }
 }
 
@@ -46,13 +46,12 @@ extension VMArrival {
     /// becomes as far as ``starting`` knows them; `networks` is the library's
     /// named networks and `tags` its tags.
     func filterSubject(
-        bundledAgents: BundledGuestAgents, networks: VMNetworkDirectory.State, tags: [VMTag]
+        bundledPayloadHashes: [VMGuestOS: Data], networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject {
         VMLibraryFilter.Subject(
-            configuration,
-            lastSeenAgentVersions: [configuration.lastSeenAgentVersion, configuration.lastSeenSystemAgentVersion],
+            configuration, lastSeenAgents: GuestAgentScope.allCases.compactMap(configuration.lastSeenAgent),
             state: .preparing, hostState: starting.hostState, hasSnapshots: starting.hasSnapshots, tags: tags,
-            bundledAgents: bundledAgents, networks: networks)
+            bundledPayloadHashes: bundledPayloadHashes, networks: networks)
     }
 }
 
@@ -61,13 +60,13 @@ extension LibraryEntry {
     /// library's named networks and `tags` its tags; `nil` for a bundle
     /// Kernova can't read, which holds nothing a filter reads.
     func filterSubject(
-        bundledAgents: BundledGuestAgents, networks: VMNetworkDirectory.State, tags: [VMTag]
+        bundledPayloadHashes: [VMGuestOS: Data], networks: VMNetworkDirectory.State, tags: [VMTag]
     ) -> VMLibraryFilter.Subject? {
         switch self {
         case .vm(let instance):
-            instance.filterSubject(bundledAgents: bundledAgents, networks: networks, tags: tags)
+            instance.filterSubject(bundledPayloadHashes: bundledPayloadHashes, networks: networks, tags: tags)
         case .arriving(let arrival):
-            arrival.filterSubject(bundledAgents: bundledAgents, networks: networks, tags: tags)
+            arrival.filterSubject(bundledPayloadHashes: bundledPayloadHashes, networks: networks, tags: tags)
         case .unreadable: nil
         }
     }
@@ -76,10 +75,11 @@ extension LibraryEntry {
 extension VMLibraryFilter.Subject {
     /// The subject of a VM configured as `configuration` whose host state is
     /// `hostState`, carrying the tags of `tags` — the library's — it assigns,
-    /// and whose agents last reported `lastSeenAgentVersions`, one per scope.
+    /// and whose agents last reported `lastSeenAgents`, one per scope on
+    /// record, judged against `bundledPayloadHashes`.
     fileprivate init(
-        _ configuration: VMConfiguration, lastSeenAgentVersions: [String?], state: VMStateBucket,
-        hostState: VMHostState, hasSnapshots: Bool, tags: [VMTag], bundledAgents: BundledGuestAgents,
+        _ configuration: VMConfiguration, lastSeenAgents: [GuestAgentSighting], state: VMStateBucket,
+        hostState: VMHostState, hasSnapshots: Bool, tags: [VMTag], bundledPayloadHashes: [VMGuestOS: Data],
         networks: VMNetworkDirectory.State
     ) {
         self.init(
@@ -90,8 +90,7 @@ extension VMLibraryFilter.Subject {
                 networks.listed?.contains { $0.id == id && $0.kind == kind } ?? true
             },
             guestAgent: VMGuestAgentBucket(
-                lastSeen: lastSeenAgentVersions.compactMap { $0 },
-                bundled: bundledAgents.versionLabel(for: configuration.guestOS)),
+                lastSeen: lastSeenAgents.map(\.payloadHash), bundled: bundledPayloadHashes[configuration.guestOS]),
             isEphemeral: hostState.ephemeralModeEnabled, hasSnapshots: hasSnapshots,
             tags: Set(tags.assigned(hostState.tags).map(\.id)))
     }

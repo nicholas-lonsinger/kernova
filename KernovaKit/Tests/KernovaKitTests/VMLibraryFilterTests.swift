@@ -237,16 +237,21 @@ struct VMLibraryFilterTests {
 
     // MARK: - Guest agent buckets
 
-    @Test("The agent bucket is up to date only when every scope's last label is the bundled one")
+    @Test("The agent bucket is up to date only when every scope's last payload hash is the bundled one")
     func agentBuckets() {
-        #expect(VMGuestAgentBucket(lastSeen: [], bundled: "1.2 (3)") == .neverConnected)
-        #expect(VMGuestAgentBucket(lastSeen: ["1.2 (3)"], bundled: "1.2 (3)") == .upToDate)
-        #expect(VMGuestAgentBucket(lastSeen: ["1.2 (3)", "1.2 (3)"], bundled: "1.2 (3)") == .upToDate)
-        // The hub offers any other payload, newer or older, so a differing label is out of date.
-        #expect(VMGuestAgentBucket(lastSeen: ["1.2 (3)", "1.1 (2)"], bundled: "1.2 (3)") == .olderVersion)
-        #expect(VMGuestAgentBucket(lastSeen: ["1.3 (4)"], bundled: "1.2 (3)") == .olderVersion)
+        let bundled = Data(repeating: 1, count: 32)
+        let other = Data(repeating: 2, count: 32)
+        #expect(VMGuestAgentBucket(lastSeen: [], bundled: bundled) == .neverConnected)
+        #expect(VMGuestAgentBucket(lastSeen: [bundled], bundled: bundled) == .upToDate)
+        #expect(VMGuestAgentBucket(lastSeen: [bundled, bundled], bundled: bundled) == .upToDate)
+        // The hub offers any other payload, newer or older, so a differing hash is out of date — whatever label
+        // the agent reports, since two builds can carry one label.
+        #expect(VMGuestAgentBucket(lastSeen: [bundled, other], bundled: bundled) == .olderVersion)
+        #expect(VMGuestAgentBucket(lastSeen: [other], bundled: bundled) == .olderVersion)
+        // A record kept without a hash cannot be the bundled payload.
+        #expect(VMGuestAgentBucket(lastSeen: [nil], bundled: bundled) == .olderVersion)
         // A build that bundles nothing for the guest puts a connected agent in no bucket.
-        #expect(VMGuestAgentBucket(lastSeen: ["0.1"], bundled: nil) == nil)
+        #expect(VMGuestAgentBucket(lastSeen: [other], bundled: nil) == nil)
         #expect(VMGuestAgentBucket(lastSeen: [], bundled: nil) == .neverConnected)
     }
 

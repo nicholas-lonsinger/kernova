@@ -244,6 +244,14 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// host has seen one; persisted and read as ``lastSeenAgentVersion`` is.
     var lastSeenSystemAgentVersion: String?
 
+    /// The SHA-256 of the payload the session agent recorded in
+    /// ``lastSeenAgentVersion`` claimed — what the agent hub judges a peer
+    /// current by — or `nil` when none was recorded with it.
+    var lastSeenAgentPayloadHash: Data?
+
+    /// The same of the system peer recorded in ``lastSeenSystemAgentVersion``.
+    var lastSeenSystemAgentPayloadHash: Data?
+
     /// The most recent OS version a guest agent reported on this VM, or `nil`
     /// when no agent has vouched for one — a fresh VM, an agent that reported
     /// no version, or the absence watchdog concluding a previously-seen agent
@@ -416,6 +424,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         agentLogForwardingEnabled: Bool = Defaults.agentLogForwardingEnabled,
         lastSeenAgentVersion: String? = nil,
         lastSeenSystemAgentVersion: String? = nil,
+        lastSeenAgentPayloadHash: Data? = nil,
+        lastSeenSystemAgentPayloadHash: Data? = nil,
         lastSeenGuestOSVersion: String? = nil,
         hardwareModelData: Data? = nil,
         machineIdentifierData: Data? = nil,
@@ -463,6 +473,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.agentLogForwardingEnabled = agentLogForwardingEnabled
         self.lastSeenAgentVersion = lastSeenAgentVersion
         self.lastSeenSystemAgentVersion = lastSeenSystemAgentVersion
+        self.lastSeenAgentPayloadHash = lastSeenAgentPayloadHash
+        self.lastSeenSystemAgentPayloadHash = lastSeenSystemAgentPayloadHash
         self.lastSeenGuestOSVersion = lastSeenGuestOSVersion
         self.hardwareModelData = hardwareModelData
         self.machineIdentifierData = machineIdentifierData
@@ -543,6 +555,9 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
             default: Defaults.agentLogForwardingEnabled, in: decoder)
         self.lastSeenAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenAgentVersion)
         self.lastSeenSystemAgentVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenSystemAgentVersion)
+        self.lastSeenAgentPayloadHash = try c.decodeIfPresent(Data.self, forKey: .lastSeenAgentPayloadHash)
+        self.lastSeenSystemAgentPayloadHash = try c.decodeIfPresent(
+            Data.self, forKey: .lastSeenSystemAgentPayloadHash)
         self.lastSeenGuestOSVersion = try c.decodeIfPresent(String.self, forKey: .lastSeenGuestOSVersion)
         self.hardwareModelData = try c.decodeIfPresent(Data.self, forKey: .hardwareModelData)
         self.machineIdentifierData = try c.decodeIfPresent(Data.self, forKey: .machineIdentifierData)
