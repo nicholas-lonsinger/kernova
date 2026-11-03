@@ -137,7 +137,9 @@ extension Connection {
             queuedRawTotal -= payload.count
         case .message:
             streams[index].unsentMessages -= 1
-        case .window, .end:
+        case .end:
+            streams[index].endHandedOut = true
+        case .window:
             break
         }
         if streams[index].isRetired {

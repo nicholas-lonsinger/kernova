@@ -23,11 +23,12 @@ package enum WireFrames {
         return Self.message(0, message)
     }
 
-    /// A Hello for `role`, POWER, UPDATE and LOGS available.
+    /// A Hello for `role`, POWER, UPDATE and LOGS available, and ITEM_TRANSFER when `itemTransfer`.
     package static func hello(
         role: Kernova_V2_PeerIdentity.Role, scope: Kernova_V2_PeerIdentity.InstallScope = .user,
         sessionID: String = "c1", protocolVersion: UInt32 = 1, powerActions: [PowerAction] = [.shutdown, .restart],
-        instanceID: Data = Data(repeating: 0x11, count: 16), payloadHash: Data = Data(repeating: 0xA1, count: 32)
+        instanceID: Data = Data(repeating: 0x11, count: 16), payloadHash: Data = Data(repeating: 0xA1, count: 32),
+        itemTransfer: Bool = false
     ) -> Frame {
         session { message in
             var hello = Kernova_V2_Hello()
@@ -63,6 +64,13 @@ package enum WireFrames {
             logs.version = 1
             logs.params = Data()
             hello.features = [power, update, logs]
+            if itemTransfer {
+                var items = Kernova_V2_FeatureAdvert()
+                items.feature = .itemTransfer
+                items.version = 1
+                items.params = Data()
+                hello.features.append(items)
+            }
             message.hello = hello
         }
     }
@@ -122,11 +130,15 @@ package final class HostileRun {
     package private(set) var trace: [ConnectionTrace] = []
     /// While set, nothing is taken from `pollTransmit`: the far side reads nothing.
     package var writerStalled = false
+    /// The endpoint's item-transfer outputs, in order; its source and sink answer each at once.
+    package private(set) var itemOutputs: [ItemTransferOutput] = []
+    package var itemSource = ContainerItemSource()
+    package private(set) var itemSink = DecodingItemSink()
 
     /// A real host endpoint (`local == .host`) holding `bundles`, or a real
     /// session peer whose process's power ledger is `powerLedger`.
     package init(
-        local: SimSide, seed: UInt64, testKinds: Bool = false,
+        local: SimSide, seed: UInt64, testKinds: Bool = false, itemTransfer: Bool = false,
         bundles: [BundledPayload] = [SimHub.bundle(size: 100_000, tag: 1)], powerLedger: PowerLedger = PowerLedger(),
         tweak: @escaping @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     ) {
@@ -143,6 +155,7 @@ package final class HostileRun {
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
                 policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
             configuration.tweak = configure
+            if itemTransfer { configuration.itemTransfer = .available(NoParams()) }
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         case .peer:
             var spec = PeerSpec.session()
@@ -152,6 +165,7 @@ package final class HostileRun {
                 update: .available(UpdateOffer(formats: [.executable])))
             configuration.powerLedger = powerLedger
             configuration.tweak = configure
+            if itemTransfer { configuration.itemTransfer = .available(NoParams()) }
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         }
         drain()
@@ -235,10 +249,52 @@ package final class HostileRun {
         return stream
     }
 
+    /// Pulls `request` from the far side's offer.
+    package func pullItem(_ request: PullRequest) -> Result<ItemPullID, WireError>? {
+        let result = host?.pullItem(request, now: now) ?? peer?.pullItem(request, now: now)
+        drain()
+        return result
+    }
+
+    /// Offers `offer` on the local side's test offer kind; nil when opened.
+    package func offerItems(_ offer: ItemOffer) -> WireError? {
+        let refusal = host?.offerTestItems(offer, now: now) ?? peer?.offerTestItems(offer, now: now)
+        drain()
+        return refusal
+    }
+
+    /// The `.pullEnded` and `.serveEnded` events, in order.
+    package var itemEnds: [ItemTransferEvent] {
+        itemOutputs.compactMap { output in
+            switch output {
+            case .event(let event):
+                switch event {
+                case .pullEnded, .serveEnded: event
+                default: nil
+                }
+            default: nil
+            }
+        }
+    }
+
     package func drain() {
         var progressed = true
         while progressed {
             progressed = false
+            while let output = host?.pollItemTransfer() ?? peer?.pollItemTransfer() {
+                progressed = true
+                itemOutputs.append(output)
+                let input: ItemTransferInput?
+                switch output {
+                case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
+                case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
+                case .event: input = nil
+                }
+                if let input {
+                    host?.handle(itemTransfer: input, now: now)
+                    peer?.handle(itemTransfer: input, now: now)
+                }
+            }
             while let event = host?.pollEvent() {
                 hostEvents.append(event)
                 progressed = true

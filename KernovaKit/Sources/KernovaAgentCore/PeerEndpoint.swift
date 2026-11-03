@@ -24,6 +24,8 @@ public struct PeerConfiguration: Sendable {
     public var update: Availability<UpdateOffer>
     /// The receiver policy the host is judged by.
     public var receiverPolicy: ReceiverPolicy = .production
+    /// Whether this build pulls and serves offered items; absent `NOT_IMPLEMENTED` until a feature offers any.
+    public var itemTransfer: Availability<NoParams> = .absent(.notImplemented, debugDetail: "")
     package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
 
     /// Creates a configuration.
@@ -83,11 +85,13 @@ public struct PeerEndpoint: Sendable {
     private var power: PowerResponder
     private var logs: LogForwarder
     private var update: UpdateClient
+    private var itemTransfer: ItemTransfer
     package var testSink = TestBulkSink()
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
     private var effects = OutputQueue<PeerEffect, NoSlot>()
     private var events = OutputQueue<PeerEvent, PeerEventSlot>()
+    private var itemOutputs = OutputQueue<ItemTransferOutput, NoSlot>()
 
     /// Creates the endpoint of a connection that just connected.
     public init(_ configuration: PeerConfiguration, generation: ConnectionGeneration, now: CoreInstant) {
@@ -97,11 +101,13 @@ public struct PeerEndpoint: Sendable {
         logs = LogForwarder(availability: configuration.logs)
         update = UpdateClient(
             availability: configuration.update, ownHash: configuration.claim.payloadHash, generation: generation)
+        itemTransfer = ItemTransfer(availability: configuration.itemTransfer, generation: generation)
         var connectionConfiguration = ConnectionConfiguration(
             claim: configuration.claim, initialState: configuration.state, adverts: [],
             policy: configuration.receiverPolicy)
         connectionConfiguration.adverts = [
             (.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert),
+            (.itemTransfer, itemTransfer.localAdvert),
         ]
         configuration.tweak(&connectionConfiguration)
         connection = Connection(connectionConfiguration, now: now)
@@ -115,7 +121,10 @@ public struct PeerEndpoint: Sendable {
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
         let clock = connection.clock
-        let machines = [power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock)]
+        let machines = [
+            power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock),
+            itemTransfer.nextDeadline(on: clock),
+        ]
         return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
     }
 
@@ -196,6 +205,72 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
+    // MARK: Item transfer
+
+    /// Pulls one representation of the far side's open offer: the pull's id, whose one `.pullEnded` follows,
+    /// or why it was not opened.
+    public mutating func pullItem(_ request: PullRequest, now: CoreInstant) -> Result<ItemPullID, WireError> {
+        connection.tick(now)
+        route(now)
+        let result = itemTransfer.pull(request, connection: &connection)
+        route(now)
+        return result
+    }
+
+    /// Cancels a pull this side opened; its `.pullEnded` follows.
+    public mutating func cancelPull(_ id: ItemPullID, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        itemTransfer.cancel(id, connection: &connection)
+        route(now)
+    }
+
+    /// The item source's answer or the item sink's report; one naming another generation is dropped.
+    public mutating func handle(itemTransfer input: ItemTransferInput, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        itemTransfer.handle(input: input, connection: &connection, now: now)
+        route(now)
+    }
+
+    /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
+    public func remoteOfferItem(token: Data, index: Int) -> OfferedItem? {
+        itemTransfer.remoteItem(token: token, index: index)
+    }
+
+    package var itemOffers: ItemOfferRegistry { itemTransfer.offers }
+
+    /// The next output for the item source, the item sink or the owner.
+    public mutating func pollItemTransfer() -> ItemTransferOutput? {
+        itemOutputs.poll()
+    }
+
+    /// Offers `offer` on this side's test offer kind; nil when opened, or why not.
+    package mutating func offerTestItems(_ offer: ItemOffer, now: CoreInstant) -> WireError? {
+        connection.tick(now)
+        route(now)
+        let kind: StreamKind = connection.role == .host ? .testItemOfferByHost : .testItemOfferByPeer
+        let refusal = itemTransfer.offer(offer, kind: kind, connection: &connection)
+        route(now)
+        return refusal
+    }
+
+    /// Withdraws this side's offer of `token`.
+    package mutating func withdrawTestOffer(_ token: Data, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        itemTransfer.withdraw(token, connection: &connection)
+        route(now)
+    }
+
+    /// Releases the far side's offer of `token`.
+    package mutating func releaseTestOffer(_ token: Data, now: CoreInstant) {
+        connection.tick(now)
+        route(now)
+        itemTransfer.release(token, connection: &connection)
+        route(now)
+    }
+
     // MARK: Outputs
 
     /// The next frames to write.
@@ -240,6 +315,7 @@ public struct PeerEndpoint: Sendable {
     private mutating func publishAdverts() -> Bool {
         let adverts: [(FeatureID, LocalAdvert)] = [
             (.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert),
+            (.itemTransfer, itemTransfer.localAdvert),
         ]
         let before = connection.localAdverts
         connection.setLocalAdverts(adverts)
@@ -250,6 +326,7 @@ public struct PeerEndpoint: Sendable {
         power.handle(event, connection: &connection, now: now)
         logs.handle(event, connection: &connection, now: now)
         update.handle(event, connection: &connection, now: now)
+        itemTransfer.handle(event, connection: &connection, now: now)
     }
 
     private mutating func dispatch(_ routed: RoutedEvent, _ now: CoreInstant) {
@@ -298,7 +375,9 @@ public struct PeerEndpoint: Sendable {
         case .power: power.handle(event, connection: &connection, now: now)
         case .update: update.handle(event, connection: &connection, now: now)
         case .logs: logs.handle(event, connection: &connection, now: now)
+        case .itemTransfer: itemTransfer.handle(event, connection: &connection, now: now)
         case .testBulk: testSink.handle(event, connection: &connection)
+        case .testItemOffer: itemTransfer.handleOffer(event, connection: &connection)
         case nil: break
         }
     }
@@ -310,6 +389,9 @@ public struct PeerEndpoint: Sendable {
                 connection.diagnose(diagnostic)
             }
         }
+        let items = itemTransfer.takeOutputs()
+        for output in items.outputs { itemOutputs.append(output) }
+        for diagnostic in items.diagnostics { connection.diagnose(diagnostic) }
     }
 }
 

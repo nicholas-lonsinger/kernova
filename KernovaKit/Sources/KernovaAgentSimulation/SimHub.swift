@@ -69,6 +69,7 @@ package final class SimHub {
             claim: PeerClaim(role: .host, versionLabel: "Kernova 2.0"),
             sessionToken: world.rng.bytes(16), policy: policy, bundles: bundles)
         configuration.receiverPolicy = options.receiverPolicy
+        if options.itemTransfer { configuration.itemTransfer = .available(NoParams()) }
         let testKinds = options.testKinds
         let hostile = options.hostile
         configuration.tweak = { connection in

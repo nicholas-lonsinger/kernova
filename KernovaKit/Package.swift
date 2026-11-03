@@ -170,7 +170,7 @@ var targets: [Target] = [
     .target(
         name: "KernovaAgentSimulation",
         dependencies: [
-            "KernovaAgentCore", "KernovaWire", "KernovaPortableTestSupport",
+            "KernovaAgentCore", "KernovaContainer", "KernovaWire", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
@@ -238,7 +238,8 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaAgentCoreTests",
         dependencies: [
-            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaDigest", "KernovaPortableTestSupport",
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaContainer", "KernovaWire", "KernovaDigest",
+            "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         exclude: ["Transcripts"],

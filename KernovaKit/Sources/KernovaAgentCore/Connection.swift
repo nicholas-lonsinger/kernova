@@ -69,6 +69,10 @@ public struct Connection: Sendable {
     var queuedRawTotal = 0 {
         didSet { refreshAllWritable() }
     }
+    /// Every stream's `reservedRaw`: spendable only by the stream that reserved it.
+    var reservedRawTotal = 0 {
+        didSet { refreshAllWritable() }
+    }
 
     // MARK: Session
 
@@ -411,10 +415,18 @@ public struct Connection: Sendable {
         streams.insert(record, at: low)
     }
 
+    /// What `index` may send beyond its own reservation: its window and the shared budget, less every
+    /// reservation, so no send spends bytes another stream reserved.
     func writableData(at index: Int) -> Int {
         let record = streams[index]
         guard record.canSend, record.sending == .rawData, isAcceptingInput else { return 0 }
-        return max(0, min(record.sendWindow, connectionSendCredit, policy.senderRawBudget - queuedRawTotal))
+        return Self.unreserved(
+            record, credit: connectionSendCredit, budget: policy.senderRawBudget - queuedRawTotal,
+            reserved: reservedRawTotal)
+    }
+
+    static func unreserved(_ record: StreamRecord, credit: Int, budget: Int, reserved: Int) -> Int {
+        max(0, min(record.sendWindow - record.reservedRaw, credit - reserved, budget - reserved))
     }
 
     static func sortedAdverts(_ adverts: [(FeatureID, LocalAdvert)]) -> [FeatureAdvertValue] {

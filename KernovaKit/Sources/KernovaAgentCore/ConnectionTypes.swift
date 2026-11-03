@@ -48,9 +48,9 @@ public struct ConnectionConfiguration: Sendable {
         self.kinds = StreamKindDescriptor.production
     }
 
-    /// The production kinds plus the simulation's bulk kinds.
+    /// The production kinds plus the simulation's bulk and item-set offer kinds.
     package mutating func addTestKinds() {
-        kinds += StreamKindDescriptor.testBulk
+        kinds += StreamKindDescriptor.testBulk + StreamKindDescriptor.testItemOffer
     }
 }
 

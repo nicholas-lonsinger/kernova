@@ -344,7 +344,7 @@ extension CoreUnits {
         @Test("No peer at all → every feature absent NO_AGENT")
         func noPeers() {
             let merged = FeatureStatus.merge([])
-            #expect(merged.entries.map(\.feature) == [.power, .update, .logs])
+            #expect(merged.entries.map(\.feature) == [.power, .update, .logs, .itemTransfer])
             for entry in merged.entries {
                 #expect(entry.status == .absent(.noAgent, debugDetail: ""))
             }
@@ -395,7 +395,7 @@ extension CoreUnits {
         @Test("The merged table is ordered by feature")
         func ordered() {
             let merged = FeatureStatus.merge([Self.table([(.logs, .available(Data())), (.power, .available(Data()))])])
-            #expect(merged.entries.map(\.feature) == [.power, .update, .logs])
+            #expect(merged.entries.map(\.feature) == [.power, .update, .logs, .itemTransfer])
         }
     }
 }

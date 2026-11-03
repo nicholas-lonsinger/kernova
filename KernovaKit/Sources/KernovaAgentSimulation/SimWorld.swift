@@ -22,6 +22,8 @@ package final class SimLink {
     var armed: [SimSide: CoreInstant?] = [.host: nil, .peer: nil]
     var shutDown: Set<SimSide> = []
     let observer: LinkObserver
+    let hostItems = SimItemSide()
+    let peerItems = SimItemSide()
 
     init(id: Int, peerIndex: Int, generation: ConnectionGeneration, options: SimOptions) {
         self.id = id
@@ -34,6 +36,9 @@ package final class SimLink {
     }
 
     func pipe(writtenBy side: SimSide) -> SimPipe { side == .host ? toPeer : toHost }
+
+    /// `side`'s item source, sink and record.
+    package func items(_ side: SimSide) -> SimItemSide { side == .host ? hostItems : peerItems }
     func pipe(readBy side: SimSide) -> SimPipe { side == .host ? toHost : toPeer }
 
     /// The bytes `side` has written into the transport.
@@ -305,6 +310,7 @@ package final class SimWorld {
             while let effect = link.host?.pollEffect() {
                 hub.handle(effect, link: link, world: self)
             }
+            drainItems(link, .host)
             if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
         case .peer:
             let peer = peers[link.peerIndex]
@@ -321,6 +327,7 @@ package final class SimWorld {
                     peer.handle(event, link: link, world: self)
                 }
             }
+            drainItems(link, .peer)
             if let trace = link.peer?.takeTrace() { checker.trace(trace, link: link, side: .peer, world: self) }
         }
         checker.footprint(link, side, world: self)
@@ -330,6 +337,20 @@ package final class SimWorld {
         tryWrite(link, side)
         rearm(link, side, process)
         if link.state(side) == .finished { shutDown(link, side) }
+    }
+
+    /// Hands `side`'s item-transfer outputs to the checker, then to the link's item side.
+    private func drainItems(_ link: SimLink, _ side: SimSide) {
+        while true {
+            let output: ItemTransferOutput? =
+                switch side {
+                case .host: link.host?.pollItemTransfer()
+                case .peer: link.peer?.pollItemTransfer()
+                }
+            guard let output else { return }
+            link.items(side).handle(output, link: link, side: side, world: self)
+            checker.itemOutput(output, link: link, side: side, world: self)
+        }
     }
 
     package func rearm(_ link: SimLink, _ side: SimSide, _ process: SimProcess) {
@@ -500,6 +521,7 @@ package final class SimWorld {
             while let effect = link.host?.pollEffect() {
                 hub.handle(effect, link: link, world: self)
             }
+            drainItems(link, .host)
             if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
         case .peer:
             while let effect = link.peer?.pollEffect() {
@@ -509,6 +531,7 @@ package final class SimWorld {
                 checker.peerEvent(event, link: link, world: self)
                 peers[link.peerIndex].handle(event, link: link, world: self)
             }
+            drainItems(link, .peer)
             if let trace = link.peer?.takeTrace() { checker.trace(trace, link: link, side: .peer, world: self) }
         }
     }
@@ -673,6 +696,8 @@ package final class SimWorld {
         case (_, StreamKind.testBulkByPeer), (_, StreamKind.testBulkByHost):
             stalledTestConsumers.append((fault, side, kind, peer))
             setTestConsumes(false, side, kind, peer: peer)
+        case (_, .itemPullByHost), (_, .itemPullByPeer):
+            peers[peer].link?.items(side).stall = fault
         default:
             checker.fail("no \(side) consumer of \(kind) is modeled")
         }
@@ -680,6 +705,9 @@ package final class SimWorld {
 
     private func releaseConsumer(_ fault: Int, _ side: SimSide, _ kind: StreamKind, peer: Int) {
         if peers[peer].consumerStall == fault { peers[peer].releaseConsumer(world: self) }
+        if let link = peers[peer].link, link.items(side).stall == fault {
+            link.items(side).releaseStall(link: link, side: side, world: self)
+        }
         guard stalledTestConsumers.contains(where: { $0.fault == fault }) else { return }
         if let link = peers[peer].link, testFlows(link, side, kind).contains(where: { $0.held > 0 }) {
             faultTookEffect(fault)
