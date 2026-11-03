@@ -232,17 +232,23 @@ public final class AgentHub: Sendable {
         publishIfChanged()
     }
 
+    /// Sends `handle`'s connection the routing's request. `PowerRouting` asks only a peer of `routingPeers`,
+    /// read on this queue in the same turn, so the peer is present; one without a connection is refused as a
+    /// connection that ended, and the drain moves on.
     private func ask(_ handle: PeerHandle, _ action: PowerAction) {
-        // `PowerRouting` asks only a peer of `routingPeers`, read on this queue in the same turn, and a
-        // peer and its connection leave the hub together; so both are present.
-        let (connection, id, record) = state.withLock { state in
-            let connection = state.connections[handle]!
-            let record = state.peers[handle]!
+        let asked = state.withLock { state -> (any HostConnectionHandle, PowerRequestID, PeerRecord)? in
+            guard let connection = state.connections[handle], let record = state.peers[handle] else {
+                state.power.routing.handle(
+                    .refused(WireError(.shuttingDown, debugDetail: "the connection ended before the request")),
+                    from: handle, peers: state.routingPeers)
+                return nil
+            }
             let id = state.power.drawID(connection.generation)
             state.power.requests[id] = handle
             state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
             return (connection, id, record)
         }
+        guard let (connection, id, record) = asked else { return }
         logger.log(
             .notice, "Asking the \(Self.name(record), privacy: .public) to \(Self.name(action), privacy: .public)")
         connection.send(.requestPower(id, action))

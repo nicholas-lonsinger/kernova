@@ -38,6 +38,7 @@ public struct PeerFeatureRegistry: Sendable {
 public struct ItemAdapters: Sendable {
     /// The features that offer items, each of which a side serves only where its owner handles its offers.
     public struct Features: OptionSet, Sendable {
+        /// One bit per feature.
         public let rawValue: UInt8
 
         /// Creates a set.
