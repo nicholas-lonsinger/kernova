@@ -22,14 +22,23 @@ enum MacPowerAnswer: Sendable, Equatable {
 
 /// How a macOS peer asks its OS for a power action: the console state it serves in, and the blocking call.
 struct MacPowerMechanism: Sendable {
+    /// The blocking call, by when it says the OS has taken the request.
+    enum Call: Sendable {
+        /// A call whose answer says whether the OS took the request.
+        case answering(@Sendable (PowerAction) -> MacPowerAnswer)
+        /// A call the OS has taken once it starts, because it takes the OS down before it answers: its acceptance
+        /// is reported before it starts, and it answers the failure that ended it, nil when the OS is going down.
+        case committing(@Sendable (PowerAction) -> WireError?)
+    }
+
     /// The peer's console state while the mechanism is offered.
     let offeredWhile: ConsoleState
     /// Whether the OS asks running apps to quit, which may stop the request.
     let asksAppsToQuit: Bool
     /// Why the mechanism is not offered in any other console state, for the host's log.
     let absentDetail: String
-    /// Asks the OS for the action, blocking until the OS answers.
-    let perform: @Sendable (PowerAction) -> MacPowerAnswer
+    /// Asks the OS for the action, blocking until the call returns.
+    let call: Call
 
     /// The session peer's: the Apple event loginwindow takes to shut down or restart, while the session owns the
     /// console ([QA1134](https://developer.apple.com/library/archive/qa/qa1134/_index.html)). The sequence it
@@ -39,17 +48,19 @@ struct MacPowerMechanism: Sendable {
     {
         MacPowerMechanism(
             offeredWhile: .on, asksAppsToQuit: true, absentDetail: "this session does not own the console",
-            perform: { action in LoginWindowPower.answer(send(LoginWindowPower.event(for: action))) })
+            call: .answering { action in LoginWindowPower.answer(send(LoginWindowPower.event(for: action))) })
     }
 
     /// The system peer's: `shutdown(8)`, while no user session owns the console. QA1134: "In the case where there
-    /// are no GUI login sessions a daemon can issue the standard shutdown command".
+    /// are no GUI login sessions a daemon can issue the standard shutdown command". It commits: in macOS 12.7.6
+    /// and 27.2 guests the peer logged nothing after starting it
+    /// (`docs/research/2026-11-03-macos-guest-power-through-agents.md`).
     static func shutdownCommand(run: @escaping @Sendable ([String]) -> Int32 = { Installer.spawn($0) })
         -> MacPowerMechanism
     {
         MacPowerMechanism(
             offeredWhile: .off, asksAppsToQuit: false, absentDetail: "a user session owns the console",
-            perform: { action in ShutdownCommand.answer(run(ShutdownCommand.arguments(for: action))) })
+            call: .committing { action in ShutdownCommand.failure(run(ShutdownCommand.arguments(for: action))) })
     }
 }
 
@@ -61,8 +72,9 @@ public final class MacPowerAdapter: PowerAdapter {
     private struct State {
         var reporter: PowerReporter?
         var console = ConsoleState.unknown
-        /// The request whose call has not answered and that `cancel` has not let go.
-        var calling: PowerRequestID?
+        /// The request whose call has not returned and that `cancel` has not let go, and whether it was
+        /// reported accepted.
+        var calling: (id: PowerRequestID, accepted: Bool)?
     }
 
     private let mechanism: MacPowerMechanism
@@ -118,21 +130,33 @@ public final class MacPowerAdapter: PowerAdapter {
                 reporter?.report(.refused(id, WireError(.powerNotOnConsole, debugDetail: mechanism.absentDetail)))
                 return
             }
-            state.withLock { $0.calling = id }
             Self.logger.log(.notice, "Asking macOS to \(Self.name(action), privacy: .public)")
-            callQueue.async { [self] in
-                let answer = mechanism.perform(action)
-                queue.async { [self] in answered(id, answer) }
+            switch mechanism.call {
+            case .answering(let call):
+                state.withLock { $0.calling = (id, accepted: false) }
+                callQueue.async { [self] in
+                    let answer = call(action)
+                    queue.async { [self] in answered(id, answer) }
+                }
+            case .committing(let call):
+                state.withLock { $0.calling = (id, accepted: true) }
+                // Queued to the runtime before the call starts, so it goes out ahead of the connection's close
+                // that the OS going down brings.
+                reporter?.report(.accepted(id))
+                callQueue.async { [self] in
+                    let failure = call(action)
+                    queue.async { [self] in ended(id, failure) }
+                }
             }
         }
     }
 
     /// A call blocked in the OS cannot be withdrawn, so a request still calling is let go unconfirmed, and its
-    /// answer, when it comes, reports nothing.
+    /// answer, when it comes, reports nothing. A request already reported accepted is its call's to end.
     public func cancel(_ id: PowerRequestID) {
         queue.async { [self] in
             let reporter = state.withLock { state -> PowerReporter? in
-                guard state.calling == id else { return nil }
+                guard let calling = state.calling, calling.id == id, !calling.accepted else { return nil }
                 state.calling = nil
                 return state.reporter
             }
@@ -150,12 +174,7 @@ public final class MacPowerAdapter: PowerAdapter {
 
     private func answered(_ id: PowerRequestID, _ answer: MacPowerAnswer) {
         Self.logger.log(.notice, "macOS answered the power request: \(String(describing: answer), privacy: .public)")
-        let reporter = state.withLock { state -> PowerReporter? in
-            guard state.calling == id else { return nil }
-            state.calling = nil
-            return state.reporter
-        }
-        guard let reporter else { return }
+        guard let reporter = release(id) else { return }
         let reports: [PowerInput] =
             switch answer {
             case .tookIt: [.accepted(id), .handedOff(id)]
@@ -163,6 +182,24 @@ public final class MacPowerAdapter: PowerAdapter {
             case .unconfirmed: [.unconfirmed(id)]
             }
         for report in reports { reporter.report(report) }
+    }
+
+    private func ended(_ id: PowerRequestID, _ failure: WireError?) {
+        Self.logger.log(
+            .notice,
+            "The power request's call returned: \(failure.map { String(describing: $0) } ?? "going down", privacy: .public)"
+        )
+        release(id)?.report(failure.map { .failed(id, $0) } ?? .handedOff(id))
+    }
+
+    /// Lets go of request `id` once its call returns, answering the reporter its end goes to, or nil when it was
+    /// let go already.
+    private func release(_ id: PowerRequestID) -> PowerReporter? {
+        state.withLock { state in
+            guard state.calling?.id == id else { return nil }
+            state.calling = nil
+            return state.reporter
+        }
     }
 
     private static func name(_ action: PowerAction) -> String {
@@ -222,14 +259,14 @@ enum ShutdownCommand {
         ["/sbin/shutdown", action == .restart ? "-r" : "-h", "now"]
     }
 
-    /// What `status`, as `Installer.spawn(_:)` answers it, says of the request: `shutdown` exits 0 once it has
-    /// asked the system to go down, and 1 having done nothing.
-    static func answer(_ status: Int32) -> MacPowerAnswer {
+    /// The failure `status`, as `Installer.spawn(_:)` answers it, reports, nil for none: `shutdown` exits 0 once
+    /// it has asked the system to go down.
+    static func failure(_ status: Int32) -> WireError? {
         switch status {
-        case 0: .tookIt
-        case -1: .refused(WireError(.powerOsFailed, debugDetail: "shutdown could not start"))
-        case 1..<128: .refused(WireError(.powerOsFailed, debugDetail: "shutdown exited \(status)"))
-        default: .unconfirmed
+        case 0: nil
+        case -1: WireError(.powerOsFailed, debugDetail: "shutdown could not start")
+        case 1..<128: WireError(.powerOsFailed, debugDetail: "shutdown exited \(status)")
+        default: WireError(.powerOsFailed, debugDetail: "shutdown ended by signal \(status - 128)")
         }
     }
 }

@@ -34,6 +34,9 @@ struct MacPowerTests {
             queue.sync {}
         }
 
+        /// The reports made so far and not yet taken, without waiting for anything queued.
+        var reported: [PowerInput] { reports.withLock { $0 } }
+
         /// The reports made since the last `take()`.
         func take() -> [PowerInput] {
             settle()
@@ -46,15 +49,24 @@ struct MacPowerTests {
 
     static let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 3)
 
+    /// `base` with its call replaced by one recording each action and answering `answer`.
     static func mechanism(
         _ base: MacPowerMechanism, answering answer: MacPowerAnswer, calls: Locked<[PowerAction]>
     ) -> MacPowerMechanism {
         MacPowerMechanism(
             offeredWhile: base.offeredWhile, asksAppsToQuit: base.asksAppsToQuit, absentDetail: base.absentDetail,
-            perform: { action in
+            call: .answering { action in
                 calls.withLock { $0.append(action) }
                 return answer
             })
+    }
+
+    /// The answer `mechanism`'s call gives `action`, whichever kind of call it is.
+    static func answer(of mechanism: MacPowerMechanism, _ action: PowerAction) -> String {
+        switch mechanism.call {
+        case .answering(let call): String(describing: call(action))
+        case .committing(let call): call(action).map { "failed \($0)" } ?? "going down"
+        }
     }
 
     // MARK: - Adverts
@@ -118,6 +130,49 @@ struct MacPowerTests {
         #expect(calls.withLock { $0 } == [.restart])
     }
 
+    @Test(
+        "The system peer reports the request accepted before shutdown starts, then how shutdown ended",
+        arguments: [
+            (Int32(0), PowerInput.handedOff(id)),
+            (1, .failed(id, WireError(.powerOsFailed, debugDetail: "shutdown exited 1"))),
+            (-1, .failed(id, WireError(.powerOsFailed, debugDetail: "shutdown could not start"))),
+            (128 + SIGKILL, .failed(id, WireError(.powerOsFailed, debugDetail: "shutdown ended by signal 9"))),
+        ])
+    func systemPeerAcceptsBeforeShutdown(status: Int32, end: PowerInput) {
+        let seenAtStart = Locked<[PowerInput]?>(nil)
+        let harness = Locked<Harness?>(nil)
+        let mechanism = MacPowerMechanism.shutdownCommand(run: { _ in
+            seenAtStart.withLock { $0 = harness.withLock { $0 }?.reported }
+            return status
+        })
+        let built = Harness(mechanism, console: .off)
+        harness.withLock { $0 = built }
+        _ = built.take()
+
+        built.adapter.perform(Self.id, .shutdown)
+        #expect(built.take() == [.accepted(Self.id), end])
+        #expect(seenAtStart.withLock { $0 } == [.accepted(Self.id)])
+    }
+
+    @Test("A cancel while shutdown runs reports nothing: the accepted request ends with shutdown")
+    func cancelWhileShutdownRuns() {
+        let running = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let harness = Harness(
+            .shutdownCommand(run: { _ in
+                running.signal()
+                release.wait()
+                return 0
+            }), console: .off)
+        _ = harness.take()
+
+        harness.adapter.perform(Self.id, .shutdown)
+        running.wait()
+        harness.adapter.cancel(Self.id)
+        release.signal()
+        #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
+    }
+
     @Test("A request outside the offered console state is refused NOT_ON_CONSOLE without a call")
     func requestOffConsoleRefused() {
         let calls = Locked<[PowerAction]>([])
@@ -139,7 +194,7 @@ struct MacPowerTests {
         let release = DispatchSemaphore(value: 0)
         let mechanism = MacPowerMechanism(
             offeredWhile: .on, asksAppsToQuit: true, absentDetail: "",
-            perform: { _ in
+            call: .answering { _ in
                 calling.signal()
                 release.wait()
                 return .tookIt
@@ -178,7 +233,7 @@ struct MacPowerTests {
             sent.withLock { $0.append((event.eventClass, event.eventID, bundle, target?.descriptorType)) }
             return noErr
         })
-        #expect(mechanism.perform(action) == .tookIt)
+        #expect(Self.answer(of: mechanism, action) == "tookIt")
         let event = sent.withLock { $0 }
         #expect(event.count == 1)
         #expect(event.first?.eventClass == AEEventClass(kCoreEventClass))
@@ -217,18 +272,8 @@ struct MacPowerTests {
             ran.withLock { $0.append(arguments) }
             return 0
         })
-        #expect(mechanism.perform(action) == .tookIt)
+        #expect(Self.answer(of: mechanism, action) == "going down")
         #expect(ran.withLock { $0 } == [["/sbin/shutdown", flag, "now"]])
-    }
-
-    @Test("shutdown's status: 0 taken, a failure exit or no start refused, a signal unconfirmed")
-    func shutdownAnswers() {
-        #expect(ShutdownCommand.answer(0) == .tookIt)
-        #expect(
-            ShutdownCommand.answer(1) == .refused(WireError(.powerOsFailed, debugDetail: "shutdown exited 1")))
-        #expect(
-            ShutdownCommand.answer(-1) == .refused(WireError(.powerOsFailed, debugDetail: "shutdown could not start")))
-        #expect(ShutdownCommand.answer(128 + SIGKILL) == .unconfirmed)
     }
 
     // MARK: - Quit
