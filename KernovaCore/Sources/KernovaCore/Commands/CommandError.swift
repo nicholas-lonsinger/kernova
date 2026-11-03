@@ -85,6 +85,11 @@ package enum CommandError: Error, Sendable, Equatable {
     /// The verb removed what it was mainly asked to, and the files it names
     /// stayed.
     case filesKept(FilesKept)
+    /// A graceful stop the guest's agents took that did not take the guest
+    /// down, or one Kernova can't tell the fate of — about the session it was
+    /// asked of, so a surface stops showing it once that session ends. It
+    /// crosses a wire as the stop that ran and did not complete.
+    case shutdownNotCarriedOut(GuestShutdownNotCarriedOut)
 }
 
 /// An error that names the heading a surface shows it under — carried onto
@@ -124,8 +129,10 @@ extension CommandError {
     /// Whether the verb ran and did not complete, as opposed to being refused
     /// before it started.
     var isOperationFailure: Bool {
-        if case .operationFailed = self { return true }
-        return false
+        switch self {
+        case .operationFailed, .shutdownNotCarriedOut: true
+        default: false
+        }
     }
 
     /// The confirmation this refusal is asking for, or `nil` when it is not a
@@ -192,6 +199,9 @@ extension CommandError {
                 verb: verb, title: title, message: message, recovery: recovery?.dto)
         case .filesKept(let kept):
             .filesKept(kept)
+        case .shutdownNotCarriedOut(let failure):
+            .operationFailed(
+                verb: .stop, title: failure.alertTitle, message: failure.errorDescription ?? "", recovery: nil)
         }
     }
 }

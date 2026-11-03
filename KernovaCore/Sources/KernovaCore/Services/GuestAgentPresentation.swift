@@ -168,7 +168,38 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
             Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
             Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
+            Self.powerRow(snapshot),
         ]
+    }
+
+    /// The shutdown row: the routing running now, else the agent a Stop or
+    /// Restart would ask, else why none would.
+    private static func powerRow(_ snapshot: AgentHubSnapshot) -> CapabilityRow {
+        let title = "Shut down and restart from Kernova"
+        if let routing = snapshot.routing {
+            let detail =
+                switch routing.stage {
+                case .askingApps: "Asking apps to quit\u{2026}"
+                case .waitingOnApps(let apps):
+                    "Waiting on \(ListFormatter.localizedString(byJoining: apps.map(\.displayName)))"
+                case .asking, .accepted: "Shutting down\u{2026}"
+                }
+            return CapabilityRow(title: title, isAvailable: true, detail: detail)
+        }
+        switch snapshot.power {
+        case .agent(.systemPeer):
+            return CapabilityRow(title: title, isAvailable: true, detail: "Through the system service")
+        case .agent:
+            return CapabilityRow(title: title, isAvailable: true, detail: "Through the session agent")
+        case .absent(.notOnConsole):
+            return CapabilityRow(
+                title: title, isAvailable: false,
+                detail:
+                    "Available to the session at the guest\u{2019}s screen, or to the system service at the login window."
+            )
+        case .absent(let reason):
+            return CapabilityRow(title: title, isAvailable: false, detail: Self.reason(reason))
+        }
     }
 
     /// The row titled `title` for a feature whose merged status is `status`.
