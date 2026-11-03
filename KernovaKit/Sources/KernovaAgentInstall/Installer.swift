@@ -182,8 +182,8 @@ public struct Installer {
             let (parent, name) = try openParent(of: path)
             defer { close(parent) }
             let bytes = Array(text.utf8)
-            // A service manager may act on any write to its files: macOS posts a Background Items notification
-            // for each launchd property list written (docs/research/2026-10-27-macos-guest-shutdown-via-loginwindow.md).
+            // A service manager may act on any write to its files: on macOS 27.2, writing a launchd property list
+            // raised a "Background Activity" notification (docs/research/2026-10-27-macos-guest-shutdown-via-loginwindow.md).
             guard !Self.holds(parent, name, bytes, mode: mode) else { return }
             try Self.writeFile(in: parent, name, path: path, mode: mode, owner: nil) { descriptor throws(Failure) in
                 try Self.writeAll(bytes, to: descriptor, path: path)
