@@ -111,6 +111,10 @@ package final class SimPeerProcess {
             }
         case .update(let update):
             handleUpdate(update, link: link, world: world)
+        case .itemSource(let effect):
+            world.itemOutput(.source(effect), link: link, side: .peer)
+        case .itemSink(let effect):
+            world.itemOutput(.sink(effect), link: link, side: .peer)
         }
     }
 
@@ -123,6 +127,8 @@ package final class SimPeerProcess {
         case .closed(let closure):
             agent?.connectionEnded(link.generation, closure, now: world.localNow(.peer(index)))
             world.drainAgent(index)
+        case .items(let event):
+            world.itemOutput(.event(event), link: link, side: .peer)
         case .established, .hostLiveness, .updateAvailable, .diagnostic:
             break
         }

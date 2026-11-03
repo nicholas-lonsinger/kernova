@@ -314,14 +314,13 @@ package struct FixturePayloadSource: Sendable {
 
     package init() {}
 
-    /// The answer to `effect`.
-    package mutating func answer(_ effect: HostEffect) -> PayloadInput {
-        switch effect {
-        case .read(let id, let manifest, let offset, let maxBytes):
-            let content = contents[manifest.payloadHash] ?? SimHub.expectedContent(manifest)
-            contents[manifest.payloadHash] = content
-            return .bytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))
-        }
+    /// The answer to a `HostEffect.read` of up to `maxBytes` of `manifest`'s payload from `offset`.
+    package mutating func answer(
+        _ id: UpdatePullID, _ manifest: UpdateManifestValue, offset: UInt64, maxBytes: Int
+    ) -> PayloadInput {
+        let content = contents[manifest.payloadHash] ?? SimHub.expectedContent(manifest)
+        contents[manifest.payloadHash] = content
+        return .bytes(id, Self.read(content, offset: offset, maxBytes: maxBytes))
     }
 
     /// Up to `maxBytes` of `content` from `offset`: empty past its end.

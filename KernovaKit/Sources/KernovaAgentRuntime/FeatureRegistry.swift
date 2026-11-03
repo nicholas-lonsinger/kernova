@@ -17,14 +17,72 @@ public struct PeerFeatureRegistry: Sendable {
     public var logs: LogForwarding?
     /// Installs update payloads.
     public var update: (any UpdateInstaller)?
+    /// Serves and lands items.
+    public var items: ItemAdapters?
 
     /// Creates a registry.
     public init(
-        power: (any PowerAdapter)? = nil, logs: LogForwarding? = nil, update: (any UpdateInstaller)? = nil
+        power: (any PowerAdapter)? = nil, logs: LogForwarding? = nil, update: (any UpdateInstaller)? = nil,
+        items: ItemAdapters? = nil
     ) {
         self.power = power
         self.logs = logs
         self.update = update
+        self.items = items
+    }
+}
+
+/// The adapters that move items' bytes: the source serves this side's offers, the sink lands the far
+/// side's. Without them, item transfer is advertised absent `NOT_IMPLEMENTED`.
+public struct ItemAdapters: Sendable {
+    /// Serves this side's offers.
+    public var source: any ItemSource
+    /// Lands the far side's offers.
+    public var sink: any ItemSink
+
+    /// Creates the adapters.
+    public init(source: any ItemSource, sink: any ItemSink) {
+        self.source = source
+        self.sink = sink
+    }
+
+    /// Item transfer's availability on a connection these adapters, or none, serve.
+    static func availability(_ adapters: ItemAdapters?) -> Availability<NoParams> {
+        adapters == nil ? .absent(.notImplemented, debugDetail: "no adapter registered") : .available(NoParams())
+    }
+}
+
+/// Serves this side's offered items, one container per pull, as `ItemSourceEffect` specifies. It returns at
+/// once; anything that waits runs on its own queue, thread or actor.
+public protocol ItemSource: Sendable {
+    /// Carries out `effect`, answering a `.read` through `reporter`, which reaches the connection that asked.
+    func handle(_ effect: ItemSourceEffect, reporter: ItemSourceReporter)
+}
+
+/// Lands the far side's items, one container per pull, as `ItemSinkEffect` specifies. It returns at once;
+/// anything that waits runs on its own queue, thread or actor.
+public protocol ItemSink: Sendable {
+    /// Carries out `effect`, reporting through `reporter`, which reaches the connection that asked.
+    func handle(_ effect: ItemSinkEffect, reporter: ItemSinkReporter)
+}
+
+/// How an item source answers one connection, from any thread.
+public struct ItemSourceReporter: Sendable {
+    let deliver: @Sendable (ItemSourceInput) -> Void
+
+    /// Reports `input` to the connection whose effect this reporter came with.
+    public func report(_ input: ItemSourceInput) {
+        deliver(input)
+    }
+}
+
+/// How an item sink reports to one connection, from any thread.
+public struct ItemSinkReporter: Sendable {
+    let deliver: @Sendable (ItemSinkInput) -> Void
+
+    /// Reports `input` to the connection whose effect this reporter came with.
+    public func report(_ input: ItemSinkInput) {
+        deliver(input)
     }
 }
 

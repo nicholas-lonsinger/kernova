@@ -137,8 +137,9 @@ public enum ItemTransferEvent: Sendable, Equatable {
     case serveEnded(ItemPullID, ItemPullResult)
 }
 
-/// One output of the item-transfer machine.
-public enum ItemTransferOutput: Sendable, Equatable {
+/// One output of the item-transfer machine, in the order it emitted them. An endpoint hands the source
+/// and sink effects out as its effects and the events as its events.
+package enum ItemTransferOutput: Sendable, Equatable {
     /// For the item source.
     case source(ItemSourceEffect)
     /// For the item sink.

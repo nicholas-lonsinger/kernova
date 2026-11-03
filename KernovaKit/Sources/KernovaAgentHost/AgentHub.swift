@@ -258,6 +258,15 @@ public final class AgentHub: Sendable {
         case .update(let event):
             logUpdate(event, from: handle)
             state.withLock { $0.updateServed(event, from: handle) }
+        case .items(let event):
+            // The hub offers and pulls no items, so no item event changes what it does.
+            if let record = state.withLock({ $0.peers[handle] }) {
+                logger.log(
+                    .notice,
+                    "The hub does not act on the \(Self.name(record), privacy: .public)'s item event \(Self.kind(event), privacy: .public)"
+                )
+            }
+            return
         case .power, .diagnostic:
             // Nothing asks a peer for power yet, and the driver logs diagnostics itself.
             return
@@ -299,6 +308,15 @@ public final class AgentHub: Sendable {
         case .closed(_, let closure):
             let detail = String(describing: closure)
             logger.log(.error, "The \(peer, privacy: .public)'s update pull ended early: \(detail, privacy: .public)")
+        }
+    }
+
+    private static func kind(_ event: ItemTransferEvent) -> String {
+        switch event {
+        case .offerReceived: "offerReceived"
+        case .offerEnded: "offerEnded"
+        case .pullEnded: "pullEnded"
+        case .serveEnded: "serveEnded"
         }
     }
 

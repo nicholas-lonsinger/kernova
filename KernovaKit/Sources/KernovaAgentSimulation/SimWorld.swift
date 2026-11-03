@@ -301,22 +301,36 @@ package final class SimWorld {
     /// One driver turn's outputs: events and effects, the write, the timer, shutdown.
     package func drain(_ link: SimLink, _ side: SimSide) {
         let process = process(of: link, side)
-        switch side {
-        case .host:
-            while let event = link.host?.pollEvent() {
-                checker.hostEvent(event, link: link, world: self)
-                hub.handle(event, link: link, world: self)
-            }
-            while let effect = link.host?.pollEffect() {
-                hub.handle(effect, link: link, world: self)
-            }
-            drainItems(link, .host)
-            if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
-        case .peer:
-            let peer = peers[link.peerIndex]
-            var progressed = true
-            while progressed {
-                progressed = false
+        drainOutputs(link, side)
+        checker.footprint(link, side, world: self)
+        for stall in stalledTestConsumers where stall.side == side && stall.peer == link.peerIndex {
+            if testFlows(link, side, stall.kind).contains(where: { $0.held > 0 }) { faultTookEffect(stall.fault) }
+        }
+        tryWrite(link, side)
+        rearm(link, side, process)
+        if link.state(side) == .finished { shutDown(link, side) }
+    }
+
+    /// Hands `side`'s effects and events to its handlers until neither has more, effects before events: a
+    /// pull's `.commit` or `.abort` before its `.pullEnded`, as the machine emits them. Then the checker reads
+    /// the trace.
+    private func drainOutputs(_ link: SimLink, _ side: SimSide) {
+        var progressed = true
+        while progressed {
+            progressed = false
+            switch side {
+            case .host:
+                while let effect = link.host?.pollEffect() {
+                    progressed = true
+                    hub.handle(effect, link: link, world: self)
+                }
+                while let event = link.host?.pollEvent() {
+                    progressed = true
+                    checker.hostEvent(event, link: link, world: self)
+                    hub.handle(event, link: link, world: self)
+                }
+            case .peer:
+                let peer = peers[link.peerIndex]
                 while let effect = link.peer?.pollEffect() {
                     progressed = true
                     peer.handle(effect, link: link, world: self)
@@ -327,30 +341,19 @@ package final class SimWorld {
                     peer.handle(event, link: link, world: self)
                 }
             }
-            drainItems(link, .peer)
+        }
+        switch side {
+        case .host:
+            if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
+        case .peer:
             if let trace = link.peer?.takeTrace() { checker.trace(trace, link: link, side: .peer, world: self) }
         }
-        checker.footprint(link, side, world: self)
-        for stall in stalledTestConsumers where stall.side == side && stall.peer == link.peerIndex {
-            if testFlows(link, side, stall.kind).contains(where: { $0.held > 0 }) { faultTookEffect(stall.fault) }
-        }
-        tryWrite(link, side)
-        rearm(link, side, process)
-        if link.state(side) == .finished { shutDown(link, side) }
     }
 
-    /// Hands `side`'s item-transfer outputs to the checker, then to the link's item side.
-    private func drainItems(_ link: SimLink, _ side: SimSide) {
-        while true {
-            let output: ItemTransferOutput? =
-                switch side {
-                case .host: link.host?.pollItemTransfer()
-                case .peer: link.peer?.pollItemTransfer()
-                }
-            guard let output else { return }
-            link.items(side).handle(output, link: link, side: side, world: self)
-            checker.itemOutput(output, link: link, side: side, world: self)
-        }
+    /// Hands one of `side`'s item-transfer effects or events to the link's item side, then to the checker.
+    func itemOutput(_ output: ItemTransferOutput, link: SimLink, side: SimSide) {
+        link.items(side).handle(output, link: link, side: side, world: self)
+        checker.itemOutput(output, link: link, side: side, world: self)
     }
 
     package func rearm(_ link: SimLink, _ side: SimSide, _ process: SimProcess) {
@@ -498,7 +501,7 @@ package final class SimWorld {
             case .host: link.host?.transportEnded(now: local)
             case .peer: link.peer?.transportEnded(now: local)
             }
-            drainEventsOnly(link, side)
+            drainOutputs(link, side)
         }
         link.shutDown.insert(side)
         link.timerToken[side, default: 0] += 1
@@ -508,31 +511,6 @@ package final class SimWorld {
         at(now) { world in world.scheduleRead(link, other) }
         if side == .peer {
             peers[link.peerIndex].linkEnded(link, world: self)
-        }
-    }
-
-    private func drainEventsOnly(_ link: SimLink, _ side: SimSide) {
-        switch side {
-        case .host:
-            while let event = link.host?.pollEvent() {
-                checker.hostEvent(event, link: link, world: self)
-                hub.handle(event, link: link, world: self)
-            }
-            while let effect = link.host?.pollEffect() {
-                hub.handle(effect, link: link, world: self)
-            }
-            drainItems(link, .host)
-            if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
-        case .peer:
-            while let effect = link.peer?.pollEffect() {
-                peers[link.peerIndex].handle(effect, link: link, world: self)
-            }
-            while let event = link.peer?.pollEvent() {
-                checker.peerEvent(event, link: link, world: self)
-                peers[link.peerIndex].handle(event, link: link, world: self)
-            }
-            drainItems(link, .peer)
-            if let trace = link.peer?.takeTrace() { checker.trace(trace, link: link, side: .peer, world: self) }
         }
     }
 

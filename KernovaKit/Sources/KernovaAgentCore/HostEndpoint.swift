@@ -18,7 +18,7 @@ public struct HostConfiguration: Sendable {
     public var bundles: [BundledPayload]
     /// The receiver policy the peer is judged by.
     public var receiverPolicy: ReceiverPolicy = .production
-    /// Whether this build pulls and serves offered items; absent `NOT_IMPLEMENTED` until a feature offers any.
+    /// Whether this side pulls and serves offered items: available only where item adapters serve them.
     public var itemTransfer: Availability<NoParams> = .absent(.notImplemented, debugDetail: "")
     package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
 
@@ -47,10 +47,14 @@ public enum HostCommand: Sendable, Equatable {
     case close(ErrorCode, retryAfter: CoreDuration?)
 }
 
-/// What a host endpoint asks of its update payload source.
+/// What a host endpoint asks of its update payload source and its item adapters.
 public enum HostEffect: Sendable, Equatable {
     /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
     case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
+    /// For the item source.
+    case itemSource(ItemSourceEffect)
+    /// For the item sink.
+    case itemSink(ItemSinkEffect)
 }
 
 /// The update payload source's answer to the outstanding `.read`.
@@ -77,6 +81,8 @@ public enum HostEvent: Sendable, Equatable {
     case log(LogDelivery)
     /// An update pull's progress.
     case update(UpdateServeEvent)
+    /// An offer or pull of item transfer changed.
+    case items(ItemTransferEvent)
     /// A note for the runtime's log.
     case diagnostic(Diagnostic)
     /// The connection ended.
@@ -94,9 +100,7 @@ public struct HostEndpoint: Sendable {
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
     private var events = OutputQueue<HostEvent, HostEventSlot>()
-    private var effects: [HostEffect] = []
-    private var effectHead = 0
-    private var itemOutputs = OutputQueue<ItemTransferOutput, NoSlot>()
+    private var effects = OutputQueue<HostEffect, NoSlot>()
     private var lastStatus: FeatureStatusTable?
 
     /// Creates the endpoint of a connection just accepted.
@@ -238,7 +242,7 @@ public struct HostEndpoint: Sendable {
     }
 
     /// The item source's answer or the item sink's report; one naming another generation is dropped.
-    public mutating func handle(itemTransfer input: ItemTransferInput, now: CoreInstant) {
+    public mutating func handle(_ input: ItemTransferInput, now: CoreInstant) {
         connection.tick(now)
         route(now)
         itemTransfer.handle(input: input, connection: &connection, now: now)
@@ -251,11 +255,6 @@ public struct HostEndpoint: Sendable {
     }
 
     package var itemOffers: ItemOfferRegistry { itemTransfer.offers }
-
-    /// The next output for the item source, the item sink or the owner.
-    public mutating func pollItemTransfer() -> ItemTransferOutput? {
-        itemOutputs.poll()
-    }
 
     /// Offers `offer` on this side's test offer kind; nil when opened, or why not.
     package mutating func offerTestItems(_ offer: ItemOffer, now: CoreInstant) -> WireError? {
@@ -300,17 +299,9 @@ public struct HostEndpoint: Sendable {
     /// Events not yet polled.
     package var pendingEventCount: Int { events.count }
 
-    /// The next ask of the payload source.
+    /// The next ask of the payload source or an item adapter.
     public mutating func pollEffect() -> HostEffect? {
-        guard effectHead < effects.count else { return nil }
-        defer {
-            effectHead += 1
-            if effectHead == effects.count {
-                effects.removeAll(keepingCapacity: true)
-                effectHead = 0
-            }
-        }
-        return effects[effectHead]
+        effects.poll()
     }
 
     package mutating func takeTrace() -> [ConnectionTrace] {
@@ -393,9 +384,15 @@ public struct HostEndpoint: Sendable {
 
     private mutating func collect() {
         let served = update.takeOutputs()
-        effects += served.effects
+        for effect in served.effects { effects.append(effect) }
         let items = itemTransfer.takeOutputs()
-        for output in items.outputs { itemOutputs.append(output) }
+        for output in items.outputs {
+            switch output {
+            case .source(let effect): effects.append(.itemSource(effect))
+            case .sink(let effect): effects.append(.itemSink(effect))
+            case .event(let event): events.append(.items(event))
+            }
+        }
         for diagnostic in items.diagnostics { connection.diagnose(diagnostic) }
         for output in [
             power.takeOutputs(), logs.takeOutputs(), (events: served.events, diagnostics: served.diagnostics),

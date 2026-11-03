@@ -9,6 +9,7 @@ import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaSynchronization
 import KernovaWire
+import Testing
 
 /// A stream wrapper that can hold back what the inner stream delivers, and reports each write's start
 /// and completion.
@@ -114,6 +115,19 @@ final class ScriptedDialer: TransportDialer {
 
 /// Accepts every action it offers and hands off at once, unless told to hold before or after accepting.
 /// It can never confirm a cancel, so a cancel ends the request `.unconfirmed`.
+/// Item adapters that are only registered: no test reaches them, since no production kind offers items.
+struct RegisteredItemAdapters: ItemSource, ItemSink {
+    static let adapters = ItemAdapters(source: RegisteredItemAdapters(), sink: RegisteredItemAdapters())
+
+    func handle(_ effect: ItemSourceEffect, reporter: ItemSourceReporter) {
+        Issue.record("the source was asked \(effect)")
+    }
+
+    func handle(_ effect: ItemSinkEffect, reporter: ItemSinkReporter) {
+        Issue.record("the sink was asked \(effect)")
+    }
+}
+
 final class FakePowerAdapter: PowerAdapter {
     private let reporter = Locked<PowerReporter?>(nil)
     let performed = Recorder<PowerRequestID>()

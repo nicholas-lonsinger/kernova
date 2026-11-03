@@ -63,24 +63,27 @@ extension PeerEndpoint: DrivenEndpoint {
     }
 }
 
-/// What a host connection's driver feeds its endpoint: the hub's commands, and the payload source's
-/// answers to the endpoint's reads. The hub can send only the first.
+/// What a host connection's driver feeds its endpoint: the hub's commands, and the payload source's and
+/// item adapters' answers to the endpoint's effects. The hub can send only the first.
 public enum HostInput: Sendable, Equatable {
     /// A hub command.
     case hub(HostCommand)
     /// The payload source's answer.
     case payload(PayloadInput)
+    /// The item source's answer or the item sink's report.
+    case items(ItemTransferInput)
 }
 
 extension HostEndpoint: DrivenEndpoint {
-    /// The hub's commands and the payload source's answers.
+    /// The hub's commands and the adapters' answers.
     public typealias Input = HostInput
 
-    /// Feeds a hub command or a payload answer.
+    /// Feeds a hub command or an adapter's answer.
     public mutating func handle(_ input: HostInput, now: CoreInstant) {
         switch input {
         case .hub(let command): handle(command, now: now)
         case .payload(let answer): handle(answer, now: now)
+        case .items(let answer): handle(answer, now: now)
         }
     }
 

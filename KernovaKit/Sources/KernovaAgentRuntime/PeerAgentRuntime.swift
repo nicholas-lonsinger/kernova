@@ -183,6 +183,7 @@ public final class PeerAgentRuntime: Sendable {
             }
             configuration.powerLedger = ledger
             configuration.receiverPolicy = receiverPolicy
+            configuration.itemTransfer = ItemAdapters.availability(registry.items)
             let driver = ConnectionDriver(
                 endpoint: PeerEndpoint(configuration, generation: generation, now: scheduler.now), stream: stream,
                 scheduler: scheduler, logger: logger, handlers: driverHandlers(generation))
@@ -207,7 +208,7 @@ public final class PeerAgentRuntime: Sendable {
                     return .feed(.logs(.batch(batch)))
                 }
             },
-            effect: { [registry, ledger] effect, _ in
+            effect: { [registry, ledger] effect, driver in
                 switch effect {
                 case .power(let effect):
                     ledger.withLock { $0.record(effect) }
@@ -220,6 +221,11 @@ public final class PeerAgentRuntime: Sendable {
                 case .update(.abort(let id)): registry.update?.abort(id)
                 case .update(.recordRejected(let hash)): registry.update?.recordRejected(hash)
                 case .update(.clearRejected): registry.update?.clearRejected()
+                case .itemSource(let effect):
+                    registry.items?.source.handle(
+                        effect, reporter: ItemSourceReporter { driver.handle(.items(.source($0))) })
+                case .itemSink(let effect):
+                    registry.items?.sink.handle(effect, reporter: ItemSinkReporter { driver.handle(.items(.sink($0))) })
                 case .logs: break
                 }
             },
@@ -259,7 +265,7 @@ public final class PeerAgentRuntime: Sendable {
                 switch input {
                 case .power(.availability(let availability)): state.power = availability
                 case .update(.availability(let availability)): state.update = availability
-                case .power, .update, .logs, .peerState: break
+                case .power, .update, .logs, .items, .peerState: break
                 }
                 return state.driver
             }
