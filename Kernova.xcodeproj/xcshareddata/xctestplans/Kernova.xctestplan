@@ -72,8 +72,8 @@
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:KernovaKit",
-        "identifier" : "KernovaPlatformPOSIXTests",
-        "name" : "KernovaPlatformPOSIXTests"
+        "identifier" : "KernovaFileTreeTests",
+        "name" : "KernovaFileTreeTests"
       }
     },
     {

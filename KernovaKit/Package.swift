@@ -122,13 +122,22 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
-    // The non-blocking `ByteStream` over a socket, and the descriptor-relative
-    // tree calls with the cursor that walks them. Declared on every platform,
-    // like `KernovaPlatformLinux`; the tree protocol and the cursor compile
-    // everywhere, the calls into the OS only for Darwin and Linux.
+    // The non-blocking `ByteStream` over a socket. Declared on every platform,
+    // like `KernovaPlatformLinux`, with its sources compiled only for Darwin
+    // and Linux.
     .target(
         name: "KernovaPlatformPOSIX",
-        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization", "CKernovaShims"],
+        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Trees walked and changed through descriptors, one name at a time: the
+    // file-system protocol, the cursor, and the Darwin and Linux calls. A leaf
+    // beside the agent runtime, so the app's kit links it without the runtime;
+    // the protocol and the cursor compile everywhere, the calls into the OS
+    // only for Darwin and Linux.
+    .target(
+        name: "KernovaFileTree",
+        dependencies: ["CKernovaShims"],
         swiftSettings: sharedSwiftSettings
     ),
     // The guest-agent protocol's sans-I/O state machines: streams, credit,
@@ -219,8 +228,8 @@ var targets: [Target] = [
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`.
     .testTarget(
-        name: "KernovaPlatformPOSIXTests",
-        dependencies: ["KernovaPlatformPOSIX", "KernovaPortableTestSupport"],
+        name: "KernovaFileTreeTests",
+        dependencies: ["KernovaFileTree", "KernovaPortableTestSupport"],
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
@@ -273,7 +282,7 @@ targets += [
         dependencies: [
             "KernovaLogging",
             "KernovaSynchronization",
-            "KernovaPlatformPOSIX",
+            "KernovaFileTree",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
@@ -330,7 +339,7 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-            "KernovaPlatformPOSIX",
+            "KernovaFileTree",
         ],
         swiftSettings: sharedSwiftSettings
     ),

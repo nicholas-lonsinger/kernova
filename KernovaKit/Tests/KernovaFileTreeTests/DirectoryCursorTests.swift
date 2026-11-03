@@ -1,4 +1,4 @@
-import KernovaPlatformPOSIX
+import KernovaFileTree
 import Testing
 
 /// The cursor's moves against an in-memory file system, so the suite runs on

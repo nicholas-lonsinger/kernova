@@ -1,7 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
-import KernovaPlatformPOSIX
+import KernovaFileTree
 import System
 
 // MARK: - Entry headers

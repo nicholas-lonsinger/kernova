@@ -6,7 +6,7 @@ import Glibc
 #elseif canImport(Musl)
 import Musl
 #endif
-import KernovaPlatformPOSIX
+import KernovaFileTree
 import KernovaPortableTestSupport
 import Testing
 

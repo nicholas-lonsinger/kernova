@@ -1,6 +1,6 @@
 import Darwin
 import Foundation
-import KernovaPlatformPOSIX
+import KernovaFileTree
 import System
 
 /// Removes staged content outright: a file, a symlink (never its target), or
