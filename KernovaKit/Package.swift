@@ -261,8 +261,8 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaTreeTransferTests",
         dependencies: [
-            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaPortableTestSupport",
-            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaDigest",
+            "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),

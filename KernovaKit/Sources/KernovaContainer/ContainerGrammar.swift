@@ -203,10 +203,7 @@ struct ContainerGrammar {
             guard time.nanoseconds <= Self.maxNanoseconds else { throw .nanosecondsOutOfRange(time.nanoseconds) }
         }
         if header.type == .symlink {
-            let target = header.symlinkTarget
-            guard !target.isEmpty, target.count <= Self.maxSymlinkTargetByteCount, !target.contains(0) else {
-                throw .invalidSymlinkTarget
-            }
+            guard Self.isValidSymlinkTarget(header.symlinkTarget) else { throw .invalidSymlinkTarget }
         } else {
             guard header.symlinkTarget.isEmpty else { throw .invalidSymlinkTarget }
         }
@@ -236,6 +233,11 @@ struct ContainerGrammar {
             || (name.count > allowedXattrPrefix.count && name.starts(with: allowedXattrPrefix))
     }
 
+    /// Whether a symlink entry may point at `target`.
+    static func isValidSymlinkTarget(_ target: Data) -> Bool {
+        !target.isEmpty && target.count <= maxSymlinkTargetByteCount && !target.contains(0)
+    }
+
     /// Whether `name` is one path component a POSIX file system takes as it is.
     static func isValidName(_ name: Data) -> Bool {
         guard !name.isEmpty, name.count <= maxNameByteCount else { return false }
@@ -248,4 +250,22 @@ extension EntryHeader {
     /// Whether `name` is one path component a POSIX file system takes as it is: not empty, `.` or `..`, at
     /// most 255 bytes, and free of `/` and NUL — the rule every container entry's name keeps.
     public static func isValidName(_ name: Data) -> Bool { ContainerGrammar.isValidName(name) }
+
+    /// The `darwin_flags` bits an entry may carry: `UF_NODUMP`, `UF_OPAQUE` and `UF_HIDDEN`.
+    public static let carriedDarwinFlags = ContainerGrammar.allowedDarwinFlags
+
+    /// Whether an entry may carry the extended attribute `name`: Finder tags, the resource fork, or a name in
+    /// Linux's `user.` namespace.
+    public static func isCarriedXattrName(_ name: Data) -> Bool {
+        !name.isEmpty && name.count <= ContainerGrammar.maxNameByteCount && !name.contains(0)
+            && ContainerGrammar.isAllowedXattrName(name)
+    }
+
+    /// Whether a symlink entry may point at `target`: not empty, at most 1,023 bytes, and free of NUL.
+    public static func isValidSymlinkTarget(_ target: Data) -> Bool { ContainerGrammar.isValidSymlinkTarget(target) }
+
+    /// Whether the header fits one header record, at most `ContainerRecord.maxHeaderPayload` bytes.
+    public var fitsHeaderRecord: Bool {
+        ContainerRecordKind.header.payloadLengths.contains(ContainerEncoder.serialized(self).count)
+    }
 }

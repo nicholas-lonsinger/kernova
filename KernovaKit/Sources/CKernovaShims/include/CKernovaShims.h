@@ -43,6 +43,16 @@ int kernova_punch_hole(int descriptor, int64_t offset, int64_t length);
 /// `fsetxattr(2)`, creating or replacing the attribute. Returns 0, or -1 with
 /// `errno` set.
 int kernova_set_xattr(int descriptor, const char *name, const void *value, size_t size);
+
+/// `flistxattr(2)`: the open file's attribute names, each ending in NUL,
+/// into `names`, or with `size` 0 the bytes they take. Returns that count,
+/// or -1 with `errno` set.
+long kernova_list_xattr(int descriptor, char *names, size_t size);
+
+/// `fgetxattr(2)`: the attribute's value into `value`, or with `size` 0 its
+/// length. Returns that count, or -1 with `errno` set (`ERANGE` when
+/// `value` is too small).
+long kernova_get_xattr(int descriptor, const char *name, void *value, size_t size);
 #endif
 
 #endif

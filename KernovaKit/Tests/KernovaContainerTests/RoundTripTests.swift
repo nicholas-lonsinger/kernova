@@ -92,6 +92,45 @@ struct RoundTripTests {
         #expect(decode(container).events.contains(.zeros(300)))
     }
 
+    @Test("A declared zero run lands as exactly that run, merged with the zeros beside it, however short")
+    func declaredZeros() throws {
+        var encoder = ContainerEncoder(accepting: generous(), policy: .never)
+        var container = try encoder.entry(plainFile("h", depth: 0, size: 4096 * 3 + 300))
+        container += try encoder.bytes(Data(repeating: 7, count: 4096))
+        container += try encoder.zeros(4096)
+        container += try encoder.bytes(Data(count: 100))
+        container += try encoder.zeros(4096)
+        container += try encoder.bytes(Data(repeating: 9, count: 200))
+        container += try encoder.end()
+        #expect(recordOffsets(container).map(\.kind) == [.header, .chunk, .zeroRun, .chunk, .end])
+        let decoded = decode(container)
+        #expect(decoded.error == nil)
+        #expect(decoded.events.contains(.zeros(4096 * 2 + 100)))
+
+        var trailing = ContainerEncoder(accepting: generous(), policy: .never)
+        var ending = try trailing.entry(plainFile("t", depth: 0, size: 5000))
+        ending += try trailing.bytes(Data([1]))
+        ending += try trailing.zeros(4999)
+        #expect(recordOffsets(ending).map(\.kind) == [.header, .chunk, .zeroRun])
+        #expect(throws: ContainerError.chunkOutsideEntry) { try trailing.zeros(1) }
+    }
+
+    @Test("Encoding a tree's events writes what the encoder's own calls write, and refuses a file finished short")
+    func encodesEvents() throws {
+        let fixture = TreeFixture.mixed()
+        // Each file's bytes in one call, as `expectedEvents` carries them.
+        let direct = try fixture.encoded(pieceSize: 1 << 40)
+        var encoder = ContainerEncoder(accepting: generous(for: direct), policy: .never)
+        var container = Data()
+        for event in fixture.expectedEvents { container += try encoder.encode(event) }
+        #expect(container == direct)
+
+        var short = ContainerEncoder(accepting: generous(), policy: .never)
+        _ = try short.encode(.beginFile(plainFile("f", depth: 0, size: 2)))
+        _ = try short.encode(.bytes(Data([1])))
+        #expect(throws: ContainerError.entryIncomplete(remaining: 1)) { try short.encode(.finishFile) }
+    }
+
     @Test("INLINE data round-trips as one bare DATA entry")
     func inline() throws {
         let bytes = Data("clipboard text".utf8)

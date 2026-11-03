@@ -103,6 +103,26 @@ final class InterposedArchiveVolume: MutableTreeFileSystem {
         try base.read(descriptor, into: buffer)
     }
 
+    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    {
+        try base.read(descriptor, into: buffer, at: offset)
+    }
+
+    func dataRun(in descriptor: Int32, from offset: Int64) throws(TreeFileSystemError) -> Range<Int64>? {
+        try base.dataRun(in: descriptor, from: offset)
+    }
+
+    func extendedAttributeNames(of target: TreeEntryTarget) throws(TreeFileSystemError) -> [[UInt8]] {
+        try base.extendedAttributeNames(of: target)
+    }
+
+    func extendedAttribute(_ name: [UInt8], of target: TreeEntryTarget, maxByteCount: Int)
+        throws(TreeFileSystemError) -> [UInt8]?
+    {
+        try base.extendedAttribute(name, of: target, maxByteCount: maxByteCount)
+    }
+
     func setMode(_ mode: UInt32, of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
         try interpose(.setMode(mode, name: name))
         try base.setMode(mode, of: name, in: directory)

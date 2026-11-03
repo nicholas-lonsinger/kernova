@@ -103,6 +103,76 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
         try Self.check(Self.readDescriptor(descriptor, buffer.baseAddress, buffer.count))
     }
 
+    /// `pread(2)`, again on `EINTR`.
+    public func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
+        throws(TreeFileSystemError) -> Int
+    {
+        while true {
+            let count = pread(descriptor, buffer.baseAddress, buffer.count, off_t(offset))
+            if count >= 0 { return count }
+            let code = errno
+            guard code == EINTR else { throw TreeFileSystemError(code: code) }
+        }
+    }
+
+    /// `lseek(2)` to the next data, then to the hole after it.
+    public func dataRun(in descriptor: Int32, from offset: Int64) throws(TreeFileSystemError) -> Range<Int64>? {
+        let start = lseek(descriptor, off_t(offset), Self.seekData)
+        guard start >= 0 else {
+            let code = errno
+            // `ENXIO`: nothing but a hole from `offset` to the end (lseek(2)).
+            if code == ENXIO { return nil }
+            guard Self.unreportedHoleCodes.contains(code) else { throw TreeFileSystemError(code: code) }
+            let size = try status(of: descriptor).size
+            return offset < size ? offset..<size : nil
+        }
+        let end = try Self.check(lseek(descriptor, start, Self.seekHole))
+        return Int64(start)..<Int64(end)
+    }
+
+    /// `flistxattr`, on Darwin with a symlink opened itself; on Linux none
+    /// for a symlink, which takes no `user.` attribute.
+    public func extendedAttributeNames(of target: TreeEntryTarget) throws(TreeFileSystemError) -> [[UInt8]] {
+        guard let descriptor = try Self.openAttributes(of: target) else { return [] }
+        defer { Self.closeAttributes(descriptor, of: target) }
+        while true {
+            let size = try Self.check(Self.listAttributes(descriptor, nil, 0))
+            guard size > 0 else { return [] }
+            var buffer = [UInt8](repeating: 0, count: size)
+            let listed = buffer.withUnsafeMutableBytes { Self.listAttributes(descriptor, $0.baseAddress, size) }
+            // `ERANGE`: an attribute was added since the size was read.
+            if listed < 0 && errno == ERANGE { continue }
+            try Self.check(listed)
+            return buffer[..<listed].split(separator: 0, omittingEmptySubsequences: true).map { Array($0) }
+        }
+    }
+
+    /// `fgetxattr`, its length read first; on Darwin with a symlink opened
+    /// itself, and on Linux `EPERM` for a symlink.
+    public func extendedAttribute(_ name: [UInt8], of target: TreeEntryTarget, maxByteCount: Int)
+        throws(TreeFileSystemError) -> [UInt8]?
+    {
+        guard let descriptor = try Self.openAttributes(of: target) else { throw TreeFileSystemError(code: EPERM) }
+        defer { Self.closeAttributes(descriptor, of: target) }
+        while true {
+            let size = try Self.call(name) { Self.getAttribute(descriptor, $0, nil, 0) }
+            guard size <= maxByteCount else { return nil }
+            var value = [UInt8](repeating: 0, count: size)
+            var code: Int32 = 0
+            let got = try Self.call(name) { name in
+                let got = value.withUnsafeMutableBytes { Self.getAttribute(descriptor, name, $0.baseAddress, size) }
+                // `ERANGE`: the value grew since its length was read.
+                if got < 0 && errno == ERANGE {
+                    code = ERANGE
+                    return 0
+                }
+                return got
+            }
+            if code == ERANGE { continue }
+            return Array(value[..<got])
+        }
+    }
+
     /// `close(2)`.
     public func close(_ descriptor: Int32) { Self.closeDescriptor(descriptor) }
 
