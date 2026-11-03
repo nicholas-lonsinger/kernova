@@ -1,4 +1,4 @@
-# C07 drag: the catcher stands down and shows again, a delivering drop is CAUGHT under a re-offer, and the host pulls the re-offer — duet
+# C07 drag: the catcher stands down → STOOD_DOWN and shows again, a delivering drop is CAUGHT under a re-offer, and the host releases the taken offer and pulls the re-offer — duet
 host fixture=host-items
 peer fixture=linux-session-items
 end 1100
@@ -26,6 +26,9 @@ t=631    ev      host drag takeReport id=2 targeted
 t=650    in      host takeControl catcher shown=0
 t=650    h>p     00000002 00 01 00000002 0a00
 t=651    ev      peer drag takeControl id=2 catcher shown=0
+t=660    in      peer take report stoodDown
+t=660    p>h     00000002 00 01 00000002 0805
+t=661    ev      host drag takeReport id=2 stoodDown
 t=700    in      host takeControl catcher shown=1
 t=700    h>p     00000002 00 01 00000004 0a020801
 t=701    ev      peer drag takeControl id=2 catcher shown=1
@@ -50,10 +53,10 @@ t=810    in      peer take caught reoffer=04040404040404040404040404040404
 t=810    p>h     00000002 02 00 00000014 08011a1004040404040404040404040404040404
 t=811    ev      host drag takeEnded id=2 caught reoffer=04040404040404040404040404040404
 t=811    h>p     00000002 02 00 00000000
-t=820    in      peer withdraw token=01010101010101010101010101010101
-t=820    ev      peer item offerEnded feature=12 local token=01010101010101010101010101010101 resetLocally code=50
-t=820    p>h     00000003 03 00 00000002 0832
-t=821    ev      host item offerEnded feature=12 remote token=01010101010101010101010101010101 resetByPeer code=50
+t=820    in      host release token=01010101010101010101010101010101
+t=820    ev      host item offerEnded feature=12 remote token=01010101010101010101010101010101 completed
+t=820    h>p     00000003 02 00 00000000
+t=821    ev      peer item offerEnded feature=12 local token=01010101010101010101010101010101 completed
 t=850    in      host pull token=04040404040404040404040404040404 item=0 representation=0 ceiling=1048576
 t=850    h>p     00000004 01 00 0000001b 08e90712160a100404040404040404040404040404040420808040
 t=850    h>p     00000004 04 00 00000004 007c0000

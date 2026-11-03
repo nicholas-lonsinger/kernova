@@ -625,7 +625,9 @@ struct GuestDragOutTests {
 
     // MARK: - Drag-back-in
 
-    @Test("standing the catcher down hides it, refusing its callbacks; the press ending then ends the take RETURNED")
+    @Test(
+        "standing the catcher down hides it, reports STOOD_DOWN, refuses its callbacks; the press ending then ends the take RETURNED"
+    )
     func aStoodDownCatcherReturnsTheDrag() throws {
         let urls = [try file("one.txt")]
         let rig = try takenRig(urls)
@@ -638,7 +640,7 @@ struct GuestDragOutTests {
         #expect(catcher.draggingUpdated(caught(urls)) == [])
         #expect(!catcher.performDragOperation())
         rig.releaseAndTick()
-        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .targeted, .returned])
+        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .targeted, .stoodDown, .returned])
     }
 
     @Test("the drag ending with the catcher stood down ends the take RETURNED")
@@ -649,7 +651,7 @@ struct GuestDragOutTests {
 
         rig.dragOut.catcherForTesting.draggingEnded()
 
-        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .returned])
+        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .stoodDown, .returned])
     }
 
     @Test("showing the catcher again arms it afresh, and the drag entering it reports TARGETED again")
@@ -665,7 +667,7 @@ struct GuestDragOutTests {
         #expect(rig.surface.isShown)
         #expect(rig.surface.showCount == 2)
         #expect(catcher.draggingEntered(caught(urls)) == .copy)
-        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .targeted, .armed, .targeted])
+        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .targeted, .stoodDown, .armed, .targeted])
     }
 
     // MARK: - Every path that takes the surface down
@@ -894,7 +896,7 @@ struct GuestDragOutTests {
         #expect(!exists(rig.promiseFolders))
     }
 
-    @Test("a delivering drop calls the promises in, offers the drag again named, ends CAUGHT naming it, then withdraws")
+    @Test("a delivering drop calls the promises in, offers the drag again named, ends CAUGHT naming it, withdrawing nothing")
     func aDeliveringDropCallsThePromisesIn() throws {
         let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
         let burst = FakePromiseReceiver(names: ["IMG_0002.JPG", "IMG_0003.JPG"])
@@ -909,8 +911,8 @@ struct GuestDragOutTests {
         #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
         let named = try rig.token(1)
         #expect(named != standIn)
-        // A receiver naming several files goes out under its first, and the
-        // take names the new offer before the taken one goes.
+        // A receiver naming several files goes out under its first; the
+        // taken offer stays until the host releases it.
         #expect(
             rig.peer.events == [
                 .offered(token: standIn, names: ["plain.txt", "Untitled.heic", "Untitled.jpeg"]),
@@ -919,7 +921,6 @@ struct GuestDragOutTests {
                 .answered(takeID(1), .report(.delivering)),
                 .offered(token: named, names: ["plain.txt", "IMG_0001.HEIC", "IMG_0002.JPG"]),
                 .answered(takeID(1), .caught(reoffer: named)),
-                .withdrew(token: standIn),
             ])
         let representations = try #require(rig.peer.offers.last).items.compactMap(\.representations.first)
         #expect(representations.map(\.promised) == [false, true, true])

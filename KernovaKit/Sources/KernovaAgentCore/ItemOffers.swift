@@ -72,6 +72,12 @@ package struct ItemOfferRegistry: Sendable {
         remote.first { $0.header.token == token }?.header.feature
     }
 
+    /// The far side's open offer of `token`: its feature, its stream, and whether it has arrived whole; nil when
+    /// none is open.
+    func remoteOffer(_ token: Data) -> (feature: FeatureID, stream: StreamID, complete: Bool)? {
+        remote.first { $0.header.token == token }.map { ($0.header.feature, $0.stream, $0.complete) }
+    }
+
     /// The tokens of the far side's open offers.
     package var remoteTokens: [Data] { remote.map(\.header.token) }
 

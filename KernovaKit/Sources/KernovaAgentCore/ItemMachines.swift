@@ -133,6 +133,7 @@ struct ItemMachines: Sendable {
                 drag.opened(stream, body: body, items: transfer, connection: &connection)
             } else {
                 drag.handle(event, connection: &connection, now: now)
+                drag.offersChanged(transfer, connection: &connection)
             }
         case .power, .update, .logs, .testBulk:
             break

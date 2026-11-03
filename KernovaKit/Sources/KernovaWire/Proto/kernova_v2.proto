@@ -902,10 +902,11 @@ message DragTakeControl {
 }
 
 // The host's Mac drag session came back over the VM's display (`shown`
-// false): the peer stands its catcher down, and the drag is the guest's
-// under the pointer the host moves, so a drop there lands in the guest. Or it
-// left the display again (`shown` true): the peer shows the catcher again
-// and reports ARMED.
+// false): the peer stands its catcher down and reports STOOD_DOWN, and the
+// drag is the guest's under the pointer the host moves, so a drop there lands
+// in the guest; the host releases the button for it only after STOOD_DOWN.
+// Or it left the display again (`shown` true): the peer shows the catcher
+// again and reports ARMED.
 message DragCatcher {
   bool shown = 1;
 }
@@ -929,12 +930,15 @@ message DragTakeReport {
     STEP_TARGETED = 2;
     STEP_DELIVERING = 3;       // answers DragDeliver: the next drop delivers
     STEP_DELIVER_REFUSED = 4;  // answers DragDeliver: no drop delivers
+    // Answers each DragCatcher that stands the catcher down, in order: the
+    // catcher is down, so a release now drops where the pointer is.
+    STEP_STOOD_DOWN = 5;
   }
   Step step = 1;
 }
 
-// The peer's END body on DRAG_TAKE. A caught drag's offer stays open until
-// the host releases it.
+// The peer's END body on DRAG_TAKE. A caught drag's offers stay open until
+// the host releases them.
 message DragTakeOutcome {
   enum Kind {
     KIND_UNSPECIFIED = 0;  // fallback: treated as KIND_REFUSED
@@ -945,9 +949,11 @@ message DragTakeOutcome {
   Kind kind = 1;
   Error error = 2;
   // CAUGHT by a delivering drop of a drag carrying promises or folders: the
-  // token of the DRAG_OFFER, opened before this END, that offers the drag
-  // again under the names its promises took and with its folders sized. The
-  // peer withdraws the taken offer after this END. Empty: the taken offer
+  // token of the DRAG_OFFER, opened after the take's OPEN and before this
+  // END, that offers the drag again under the names its promises took and
+  // with its folders sized. The host counts the take ended once that offer
+  // has arrived whole, whichever stream's frames arrive first; a token naming
+  // anything else reads as CAUGHT with no reoffer. Empty: the taken offer
   // still carries the drag.
   bytes reoffer = 3;
 }

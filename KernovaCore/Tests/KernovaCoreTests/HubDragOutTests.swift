@@ -289,22 +289,24 @@ struct HubDragOutTests {
         await deliver(.report(takeID, .delivering))
         #expect(take.phase == .released(at: .catcher))
 
-        // The guest offers the drag again, ends the take naming it, and
-        // withdraws the one it took.
+        // The guest offers the drag again and ends the take naming it; the
+        // hub reports the end once the new offer arrived whole.
         hub.state.withLock { $0.items[reoffer] = Self.deliveredItems }
         dragOut.offerReceived(reoffer, count: 2, from: peer)
         await deliver(.ended(takeID, .caught(reoffer: reoffer)))
-        dragOut.offerEnded(token)
         await MainActorTurn.next()
         #expect(dragOut.offer == nil)
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
+        // Only the host ends the offer it took, once it carries the drag on.
+        #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
 
-        let outcome = TestOutcome()
-        take.writeItem(at: 1, to: scratch.url.appendingPathComponent("Photos")) { outcome.set($0) }
-        try await hub.changed.wait { hub.pullCount == 1 }
-        let pull = hub.state.withLock { $0.pulls[0] }
-        #expect(pull.order.request.token == reoffer)
-        #expect(pull.order.request.item == 1)
+        for (index, name) in ["IMG_0042.jpeg", "Photos"].enumerated() {
+            take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { _ in }
+        }
+        try await hub.changed.wait { hub.pullCount == 2 }
+        let pulls = hub.state.withLock { $0.pulls.map(\.order.request) }
+        #expect(pulls.map(\.token) == [reoffer, reoffer])
+        #expect(Set(pulls.map(\.item)) == [0, 1])
     }
 
     @Test("a promised name asked on the main thread waits on a delivery the hub's queue settles without it")

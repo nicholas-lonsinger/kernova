@@ -330,6 +330,7 @@ struct GuestDragTakeTests {
         let take = try carriedTake(items: [Self.promise])
         let point = CGPoint(x: 50, y: 60)
         _ = take.hostSession(over: display, at: point)
+        transport.report(.stoodDown)
 
         #expect(take.hostSessionDropped(on: display, at: point))
         #expect(take.phase == .released(at: .dropPoint))
@@ -341,6 +342,51 @@ struct GuestDragTakeTests {
         #expect(outcome as? GuestDragWriteError == .failed(.transferFailed))
         transport.end(.returned)
         #expect(finished.count == 1)
+    }
+
+    @Test("a drop over the display before the catcher reports STOOD_DOWN releases only once it does")
+    func dropWaitsForTheCatcherToStandDown() throws {
+        let take = try carriedTake()
+        let point = CGPoint(x: 50, y: 60)
+        _ = take.hostSession(over: display, at: point)
+
+        #expect(take.hostSessionDropped(on: display, at: point))
+        #expect(take.phase == .carried(.dropped))
+        #expect(display.calls.last == .drag(point))
+        take.hostSessionEnded(dropped: true)
+        // A step about the catcher that is not its stand-down releases nothing.
+        transport.report(.targeted)
+        #expect(!display.calls.contains(.release))
+
+        transport.report(.stoodDown)
+        #expect(take.phase == .released(at: .dropPoint))
+        #expect(display.calls.suffix(2) == [.drag(point), .release])
+    }
+
+    @Test("a stand-down answers only its own: a drop after a second one waits for the second STOOD_DOWN")
+    func eachStandDownIsAnswered() throws {
+        let take = try carriedTake()
+        let point = CGPoint(x: 5, y: 5)
+        _ = take.hostSession(over: display, at: point)
+        take.hostSessionLeft(display)
+        _ = take.hostSession(over: display, at: point)
+        transport.report(.stoodDown)
+
+        #expect(take.hostSessionDropped(on: display, at: point))
+        #expect(take.phase == .carried(.dropped))
+        transport.report(.stoodDown)
+        #expect(take.phase == .released(at: .dropPoint))
+    }
+
+    @Test("a take that ends while its drop waits on STOOD_DOWN releases at the drop point")
+    func dropReleasesWhenTheTakeEnds() throws {
+        let take = try carriedTake()
+        let point = CGPoint(x: 5, y: 5)
+        _ = take.hostSession(over: display, at: point)
+        _ = take.hostSessionDropped(on: display, at: point)
+
+        transport.end(.returned)
+        #expect(take.phase == .released(at: .dropPoint))
     }
 
     @Test("leaving the display again shows the catcher; its ARMED nudges, and only the new showing's TARGETED counts")
@@ -432,11 +478,11 @@ struct GuestDragTakeTests {
         transport.report(.delivering)
         #expect(take.phase == .released(at: .catcher))
         transport.end(.caught(reoffer: Self.reoffer), delivered: [Self.namedPromise, Self.sizedFolder])
-        take.offerEnded(Self.taken)
 
         try await transport.changed.wait { !transport.pulls.isEmpty }
         let pull = try #require(transport.pulls.first)
         #expect(pull.token == Self.reoffer)
+        #expect(transport.releases == [Self.taken])
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
         #expect(take.filename(forItemAt: 1) == "Folder")
         transport.end(0, .success(()))
@@ -446,8 +492,30 @@ struct GuestDragTakeTests {
         _ = try await write(take, item: 1, to: URL(fileURLWithPath: "/Users/me/Desktop/Folder")) {
             $0.end(1, .success(()))
         }
-        #expect(transport.releases == [Self.reoffer])
+        #expect(transport.releases == [Self.taken, Self.reoffer])
         #expect(finished.count == 1)
+    }
+
+    @Test("the taken offer ends only by this side's release, once the re-offer carries the drag on")
+    func takenOfferEndsOnlyByTheHostsRelease() async throws {
+        let take = try carriedTake(items: [Self.promise, Self.folder])
+        take.hostSessionEnded(dropped: true)
+        let outcome = OutcomeBox(gate: transport.changed)
+        take.writeItem(at: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/IMG_0042.jpeg")) { outcome.set($0) }
+        await Task.yield()
+        transport.report(.delivering)
+        #expect(transport.releases.isEmpty)
+
+        transport.end(.caught(reoffer: Self.reoffer), delivered: [Self.namedPromise, Self.sizedFolder])
+        try await transport.changed.wait { !transport.pulls.isEmpty || outcome.isSet }
+        #expect(!transport.pulls.isEmpty)
+        #expect(transport.releases == [Self.taken])
+        // The release's own end reaches the take after it, and changes nothing.
+        take.offerEnded(Self.taken)
+        #expect(!transport.pulls[0].cancelled)
+        transport.end(0, .success(()))
+        try await transport.changed.wait { outcome.isSet }
+        #expect(outcome.error == nil)
     }
 
     @Test("a promised item's name asked mid-drop waits on the delivery it starts, released from the waiting thread")

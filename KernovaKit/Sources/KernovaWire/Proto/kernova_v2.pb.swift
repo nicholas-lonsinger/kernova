@@ -2547,10 +2547,11 @@ public nonisolated struct Kernova_V2_DragTakeControl: Sendable {
 }
 
 /// The host's Mac drag session came back over the VM's display (`shown`
-/// false): the peer stands its catcher down, and the drag is the guest's
-/// under the pointer the host moves, so a drop there lands in the guest. Or it
-/// left the display again (`shown` true): the peer shows the catcher again
-/// and reports ARMED.
+/// false): the peer stands its catcher down and reports STOOD_DOWN, and the
+/// drag is the guest's under the pointer the host moves, so a drop there lands
+/// in the guest; the host releases the button for it only after STOOD_DOWN.
+/// Or it left the display again (`shown` true): the peer shows the catcher
+/// again and reports ARMED.
 public nonisolated struct Kernova_V2_DragCatcher: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2606,6 +2607,10 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
 
     /// answers DragDeliver: no drop delivers
     case deliverRefused // = 4
+
+    /// Answers each DragCatcher that stands the catcher down, in order: the
+    /// catcher is down, so a release now drops where the pointer is.
+    case stoodDown // = 5
     case UNRECOGNIZED(Int)
 
     public init() {
@@ -2619,6 +2624,7 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
       case 2: self = .targeted
       case 3: self = .delivering
       case 4: self = .deliverRefused
+      case 5: self = .stoodDown
       default: self = .UNRECOGNIZED(rawValue)
       }
     }
@@ -2630,6 +2636,7 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
       case .targeted: return 2
       case .delivering: return 3
       case .deliverRefused: return 4
+      case .stoodDown: return 5
       case .UNRECOGNIZED(let i): return i
       }
     }
@@ -2641,6 +2648,7 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
       .targeted,
       .delivering,
       .deliverRefused,
+      .stoodDown,
     ]
 
   }
@@ -2648,8 +2656,8 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
   public init() {}
 }
 
-/// The peer's END body on DRAG_TAKE. A caught drag's offer stays open until
-/// the host releases it.
+/// The peer's END body on DRAG_TAKE. A caught drag's offers stay open until
+/// the host releases them.
 public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2667,9 +2675,11 @@ public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
   public mutating func clearError() {self._error = nil}
 
   /// CAUGHT by a delivering drop of a drag carrying promises or folders: the
-  /// token of the DRAG_OFFER, opened before this END, that offers the drag
-  /// again under the names its promises took and with its folders sized. The
-  /// peer withdraws the taken offer after this END. Empty: the taken offer
+  /// token of the DRAG_OFFER, opened after the take's OPEN and before this
+  /// END, that offers the drag again under the names its promises took and
+  /// with its folders sized. The host counts the take ended once that offer
+  /// has arrived whole, whichever stream's frames arrive first; a token naming
+  /// anything else reads as CAUGHT with no reoffer. Empty: the taken offer
   /// still carries the drag.
   public var reoffer: Data = Data()
 
@@ -4974,7 +4984,7 @@ nonisolated extension Kernova_V2_DragTakeReport: SwiftProtobuf.Message, SwiftPro
 }
 
 nonisolated extension Kernova_V2_DragTakeReport.Step: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STEP_UNSPECIFIED\0\u{1}STEP_ARMED\0\u{1}STEP_TARGETED\0\u{1}STEP_DELIVERING\0\u{1}STEP_DELIVER_REFUSED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STEP_UNSPECIFIED\0\u{1}STEP_ARMED\0\u{1}STEP_TARGETED\0\u{1}STEP_DELIVERING\0\u{1}STEP_DELIVER_REFUSED\0\u{1}STEP_STOOD_DOWN\0")
 }
 
 nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {

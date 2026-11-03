@@ -231,8 +231,9 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// The guest's drag stays live, its button held, for as long as the Mac
 /// session runs: over this VM's display the catcher stands down and the guest
 /// pointer follows the session, so a drag that comes back drops inside the
-/// guest. `NSDraggingSession` cannot be withdrawn, so the session begins only
-/// from ``Phase/ready``, which only `TARGETED` enters, and every end before it
+/// guest, released only once the guest reports the catcher `STOOD_DOWN`.
+/// `NSDraggingSession` cannot be withdrawn, so the session begins only from
+/// ``Phase/ready``, which only `TARGETED` enters, and every end before it
 /// hands the press back.
 ///
 /// A drag a Mac destination takes is delivered: the take asks the guest
@@ -272,9 +273,12 @@ package final class GuestDragTake: GuestDragTaking {
         /// Off this VM's display; `targeted` while the guest's catcher, shown,
         /// is the drag's target.
         case outside(targeted: Bool)
-        /// Over this VM's display: the catcher is stood down, and the guest
-        /// pointer follows the session.
+        /// Over this VM's display: the catcher is asked to stand down, and the
+        /// guest pointer follows the session.
         case inside
+        /// Dropped on this VM's display; the release at the drop point waits
+        /// for the catcher to report itself stood down.
+        case dropped
         /// The session ended away from the guest; the release waits for the
         /// catcher to become the drag's target.
         case ended
@@ -331,12 +335,21 @@ package final class GuestDragTake: GuestDragTaking {
     /// showing, in order on one stream, so a step that arrives while this
     /// trails ``catcherShowings`` answers a showing that was since stood down.
     @ObservationIgnored private var catcherArmings = 0
+    /// How many times the guest was asked to stand its catcher down.
+    @ObservationIgnored private var catcherStandDowns = 0
+    /// How many `STOOD_DOWN` reports the guest sent, one per stand-down, in
+    /// order on one stream.
+    @ObservationIgnored private var catcherStoodDown = 0
     /// Whether the guest's catcher can no longer take the drag: the take
     /// ended without a catch.
     @ObservationIgnored private var catcherLost = false
 
     /// Whether the catcher's latest showing is up and can still take the drag.
     private var catcherArmed: Bool { !catcherLost && catcherArmings == catcherShowings }
+
+    /// Whether no catcher is up to take a release: the guest reported every
+    /// stand-down, or the take ended.
+    private var catcherDown: Bool { catcherLost || catcherStoodDown == catcherStandDowns }
 
     // MARK: The take and the offers
 
@@ -346,8 +359,8 @@ package final class GuestDragTake: GuestDragTaking {
     /// The guest's offers of this drag still open: the one taken, and the one a
     /// delivering catch names.
     @ObservationIgnored private var openOffers: Set<Data>
-    /// The offer the items are pulled from: the taken one, until a delivering
-    /// catch names another.
+    /// The offer the items are pulled from: the taken one, until the delivery
+    /// carries the drag on in another.
     @ObservationIgnored private var pullToken: Data
 
     // MARK: After the Mac session begins
@@ -475,6 +488,7 @@ package final class GuestDragTake: GuestDragTaking {
         case .carried(let carriage):
             // Nothing can wait for a target any more: a new press is about to
             // reach the guest, or the display is gone.
+            guard carriage != .dropped else { return release(at: .dropPoint) }
             let onCatcher = carriage == .outside(targeted: true) || carriage == .delivering
             release(at: onCatcher && catcherArmed ? .catcher : .exitPoint)
         case .released, .unreleased, .abandoned:
@@ -494,11 +508,12 @@ package final class GuestDragTake: GuestDragTaking {
         switch carriage {
         case .outside:
             phase = .carried(.inside)
+            catcherStandDowns += 1
             transport.control(.catcher(shown: false))
             Self.logger.log(.notice, "The Mac session came back over its display; the guest's catcher stands down")
         case .inside:
             break
-        case .ended, .delivering:
+        case .ended, .delivering, .dropped:
             return false
         }
         display.injectDrag(at: point)
@@ -515,6 +530,13 @@ package final class GuestDragTake: GuestDragTaking {
         guard display === self.display, phase == .carried(.inside) else { return false }
         noDestinationAsks = true
         display.injectDrag(at: point)
+        // A catcher still up would take the release the user meant for what
+        // is under it.
+        guard catcherDown else {
+            phase = .carried(.dropped)
+            Self.logger.log(.notice, "Dropped on the display; waiting for the guest's catcher to stand down")
+            return true
+        }
         release(at: .dropPoint)
         return true
     }
@@ -533,7 +555,7 @@ package final class GuestDragTake: GuestDragTaking {
             awaitTarget()
         case .outside(targeted: false):
             awaitTarget()
-        case .ended, .delivering:
+        case .ended, .delivering, .dropped:
             break
         }
     }
@@ -583,6 +605,9 @@ package final class GuestDragTake: GuestDragTaking {
             }
         case .delivering, .deliverRefused:
             deliveryAnswered(delivering: report == .delivering)
+        case .stoodDown:
+            catcherStoodDown += 1
+            if phase == .carried(.dropped), catcherDown { release(at: .dropPoint) }
         }
     }
 
@@ -591,7 +616,7 @@ package final class GuestDragTake: GuestDragTaking {
         takeOpen = false
         if case .caught(let reoffer?) = result {
             openOffers.insert(reoffer)
-            pullToken = reoffer
+            adoptDelivered()
         }
         let reason = Self.describe(result)
         switch phase {
@@ -603,6 +628,7 @@ package final class GuestDragTake: GuestDragTaking {
             switch carriage {
             case .outside: phase = .carried(.outside(targeted: false))
             case .inside: break
+            case .dropped: release(at: .dropPoint)
             case .delivering where hostSessionLive: phase = .carried(.outside(targeted: false))
             case .ended, .delivering: release(at: .exitPoint)
             }
@@ -614,7 +640,6 @@ package final class GuestDragTake: GuestDragTaking {
     /// The guest's offer of `token` ended without this side releasing it.
     func offerEnded(_ token: Data) {
         guard openOffers.remove(token) != nil else { return }
-        // The offer a delivering catch replaced goes as the new one comes.
         guard token == pullToken else { return retireIfDone() }
         switch phase {
         case .handingOff, .ready: abandon(because: "the guest's offer ended")
@@ -854,6 +879,7 @@ package final class GuestDragTake: GuestDragTaking {
 
     /// The drag's delivery settled: every write waiting on it pulls now.
     private func deliverySettled() {
+        adoptDelivered()
         let waiting = owed
         owed.removeAll()
         for (index, write) in waiting.sorted(by: { $0.key < $1.key }) {
@@ -864,6 +890,18 @@ package final class GuestDragTake: GuestDragTaking {
             pull(index, to: write.destination, write.completion)
         }
         retireIfDone()
+    }
+
+    /// Carries the drag on in the offer its delivery read whole, once the take
+    /// ended naming it, and releases the taken one: only this side ends the
+    /// taken offer, so no pull of it races its end. Nothing pulls before the
+    /// delivery settles, so no pull of the taken offer is in flight.
+    private func adoptDelivered() {
+        guard case .delivered(let token, _)? = delivery.settled, token != pullToken, openOffers.contains(token)
+        else { return }
+        let taken = pullToken
+        pullToken = token
+        if openOffers.remove(taken) != nil { transport.release(taken) }
     }
 
     /// The item a pull of `index` fetches, and the offer it comes from: the

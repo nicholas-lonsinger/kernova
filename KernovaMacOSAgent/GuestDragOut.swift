@@ -25,8 +25,9 @@ import UniformTypeIdentifiers
 /// names for its promises and no size for its folders. The drop the host asks
 /// to deliver — a Mac destination took the drag — calls the promises in and
 /// walks the folders, offers the drag again under the names the promises gave
-/// and the sizes the walk found, ends the take `CAUGHT` naming that offer, and
-/// withdraws the first. A drop that does not deliver, and a drag that never
+/// and the sizes the walk found, and ends the take `CAUGHT` naming that offer.
+/// The host releases the first offer once it has the second; this side never
+/// withdraws a taken offer. A drop that does not deliver, and a drag that never
 /// leaves the guest, calls nothing in.
 ///
 /// Built once, for the session peer's life; the watcher runs only while DRAG
@@ -132,8 +133,7 @@ final class GuestDragOut {
     }
 
     /// Offers `claim`'s drag again under `callIn`'s names and with `sizes` for
-    /// its folders, then ends take `id` naming the new offer and withdraws the
-    /// one the host took.
+    /// its folders, then ends take `id` naming the new offer.
     private func reoffer(
         _ id: DragTakeID, _ claim: GuestDragWatcher.Claim, naming callIn: GuestDragPromises.CallIn?,
         folderSizes sizes: [Int: Int]
@@ -157,10 +157,7 @@ final class GuestDragOut {
                 self.offerEnded(token)
                 return self.peer.answerTake(id, .caught(reoffer: nil))
             }
-            // The take names the new offer before the one it took goes away,
-            // so the host never sees the drag without an offer.
             self.peer.answerTake(id, .caught(reoffer: token))
-            self.peer.withdrawDrag(claim.token)
             Self.logger.log(.notice, "Delivered the drag under a new offer, named and sized")
         }
     }

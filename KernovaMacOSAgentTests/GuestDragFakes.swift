@@ -179,6 +179,7 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         case targeted
         case delivering
         case deliverRefused
+        case stoodDown
         case caught(reoffered: Bool)
         case returned
         case refused(ErrorCode)
@@ -202,6 +203,7 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
             case .report(.targeted): return .targeted
             case .report(.delivering): return .delivering
             case .report(.deliverRefused): return .deliverRefused
+            case .report(.stoodDown): return .stoodDown
             case .caught(let reoffer): return .caught(reoffered: reoffer != nil)
             case .returned: return .returned
             case .refused(let error): return .refused(error.code)

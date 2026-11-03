@@ -379,7 +379,9 @@ package final class HubDragOut {
 
         /// Hears a take event on the hub's queue: the guest answering the ask
         /// for a delivering drop, or the take ending, which settles its
-        /// delivery once the offer it names is read.
+        /// delivery once the offer it names is read. The hub reports a take
+        /// that names an offer ended only once that offer arrived whole, so
+        /// every item is there to read.
         func hear(_ event: DragTakeEvent) {
             switch event {
             case .report(let id, .delivering), .report(let id, .deliverRefused):

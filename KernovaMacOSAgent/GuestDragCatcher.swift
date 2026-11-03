@@ -32,7 +32,8 @@ import KernovaWire
 ///
 /// While the host's Mac session is over this VM's display, the host stands the
 /// surface down and moves the guest pointer itself, so the drag can drop
-/// inside the guest; the take stays, and the host shows the surface again —
+/// inside the guest once `STOOD_DOWN` says the surface is out of the way; the
+/// take stays, and the host shows the surface again —
 /// a fresh `ARMED`, then `TARGETED` — when the session leaves. Drag callbacks
 /// AppKit delivers while the surface is down are refused without a word, and
 /// the press ending then is the user's own drop inside the guest, which ends
@@ -121,13 +122,14 @@ final class GuestDragCatcher {
 
     /// The host's Mac session carrying take `id` left this VM's display
     /// (`shown`) or came back over it: shows the surface again and reports it
-    /// armed, or stands it down, keeping the take either way. A take this side
-    /// already ended stays as it is.
+    /// armed, or stands it down and reports it stood down, keeping the take
+    /// either way. A take this side already ended stays as it is.
     func setShown(_ shown: Bool, take id: DragTakeID) {
         guard let current = take, current.id == id, !current.ended else { return }
         guard shown else {
             take?.showing = nil
             surface?.hide()
+            peer.answerTake(id, .report(.stoodDown))
             Self.logger.log(.notice, "Catcher stood down")
             return
         }

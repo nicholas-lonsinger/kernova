@@ -409,16 +409,17 @@ package struct Exchange: Sendable {
         Exchange(
             id: "C07",
             title:
-                "drag: the catcher stands down and shows again, a delivering drop is CAUGHT under a re-offer, and the host pulls the re-offer",
+                "drag: the catcher stands down → STOOD_DOWN and shows again, a delivering drop is CAUGHT under a re-offer, and the host releases the taken offer and pulls the re-offer",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
                 (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))),
                 (620, .answerTake(.report(.armed))), (630, .answerTake(.report(.targeted))),
-                (650, .controlTake(.catcher(shown: false))), (700, .controlTake(.catcher(shown: true))),
+                (650, .controlTake(.catcher(shown: false))), (660, .answerTake(.report(.stoodDown))),
+                (700, .controlTake(.catcher(shown: true))),
                 (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted))),
                 (750, .controlTake(.deliver)), (760, .answerTake(.report(.delivering))),
                 (800, .offer(.peer, .drag, "file-2k-reoffer")),
-                (810, .answerTake(.caught(reoffer: SimItems.token(4)))), (820, .withdraw(.peer, SimItems.token(1))),
+                (810, .answerTake(.caught(reoffer: SimItems.token(4)))), (820, .release(.host, SimItems.token(1))),
                 (850, .itemPull(.host, SimItems.request(4, ceiling: 1 << 20))),
                 (950, .release(.host, SimItems.token(4))),
             ], end: 1100),
@@ -924,12 +925,13 @@ package enum TranscriptEvents {
         case .targeted: "targeted"
         case .delivering: "delivering"
         case .deliverRefused: "deliverRefused"
+        case .stoodDown: "stoodDown"
         }
     }
 
     /// The step a transcript names `name`.
     static func report(named name: String) -> DragTakeReport? {
-        [DragTakeReport.armed, .targeted, .delivering, .deliverRefused].first { Self.name($0) == name }
+        [DragTakeReport.armed, .targeted, .delivering, .deliverRefused, .stoodDown].first { Self.name($0) == name }
     }
 
     static func describe(_ result: ItemPullResult) -> String {

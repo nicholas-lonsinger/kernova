@@ -41,6 +41,9 @@ public enum DragTakeReport: Sendable, Equatable {
     case delivering
     /// Answers `.deliver`: the drag is not on the catcher, and no drop delivers.
     case deliverRefused
+    /// Answers each `.catcher(shown: false)`, in order: the catcher is down, so a release drops where the pointer
+    /// is.
+    case stoodDown
 }
 
 /// What the peer's owner says on a take: a step, which the take goes on after, or how it ended.
@@ -48,7 +51,8 @@ public enum DragTakeAnswer: Sendable, Equatable {
     /// A step of the hand-off.
     case report(DragTakeReport)
     /// The drag ended on the catcher; `reoffer` is the offer that carries it on when a delivering drop re-offered
-    /// it, which this side opened first and withdraws the taken one after.
+    /// it, which this side opened after the take and before this answer. The taken offer stays open until the
+    /// host releases it.
     case caught(reoffer: Data?)
     /// The drag ended in the guest, its catcher stood down.
     case returned
@@ -63,8 +67,8 @@ public enum DragTakeAnswer: Sendable, Equatable {
 
 /// How a take the host opened ended.
 public enum DragTakeResult: Sendable, Equatable {
-    /// The drag ended on the catcher; its offer, or `reoffer` when one carries it on, stays open until this side
-    /// releases it.
+    /// The drag ended on the catcher; `reoffer`, when one carries it on, is a DRAG offer the peer opened after the
+    /// take, held whole. The taken offer and `reoffer` stay open until this side releases them.
     case caught(reoffer: Data?)
     /// The drag ended in the guest, its catcher stood down.
     case returned
@@ -86,7 +90,10 @@ public enum DragTakeEvent: Sendable, Equatable {
     case cancelled(DragTakeID)
     /// Host: a step of the peer's hand-off on a take `takeDrag` opened.
     case report(DragTakeID, DragTakeReport)
-    /// Host: a take `takeDrag` opened ended. Once per take.
+    /// Host: a take `takeDrag` opened ended. Once per take. A CAUGHT naming a reoffer ends once that offer has
+    /// arrived whole, after its `.offerReceived`, whatever order the two streams' frames arrive in; one naming any
+    /// other offer ends CAUGHT with no reoffer, as does one called off or whose taken offer ends while its reoffer
+    /// has not opened.
     case ended(DragTakeID, DragTakeResult)
 }
 
@@ -182,6 +189,17 @@ public struct DragOffers: FeatureMachine {
     private struct Take: Sendable {
         var id: DragTakeID
         var token: Data
+        /// Host: the highest stream id the peer had opened when this side opened the take, which any offer the
+        /// peer opens after it is above.
+        var mark: UInt32 = 0
+    }
+
+    /// Host: a take the peer ended CAUGHT naming `reoffer`, until that offer has arrived whole.
+    private struct Arrival: Sendable {
+        var take: Take
+        var reoffer: Data
+        /// The reoffer was open, so its absence now means it ended.
+        var seen = false
     }
 
     private let availability: Availability<NoParams>
@@ -192,6 +210,10 @@ public struct DragOffers: FeatureMachine {
     private var taken: [Data] = []
     /// Host: the takes this side opened, until their streams close.
     private var opened: [Take] = []
+    /// Host: the takes whose CAUGHT names a reoffer not yet whole.
+    private var arrivals: [Arrival] = []
+    /// Host: the reoffers ended takes carried on in, while they stay open.
+    private var adopted: [Data] = []
     /// Each take's messages a stream did not take yet, and the END that waits
     /// behind them: a stream holds one unsent message at a time.
     private var outbox: [StreamID: (messages: [Data], end: Data?)] = [:]
@@ -238,7 +260,7 @@ public struct DragOffers: FeatureMachine {
         let stream = connection.open(.dragTake, body: body.encoded)
         guard stream != .session else { return .failure(WireError(.internal, debugDetail: "the open failed")) }
         let id = DragTakeID(generation: generation, stream: stream)
-        opened.append(Take(id: id, token: token))
+        opened.append(Take(id: id, token: token, mark: connection.highestRemoteOpened))
         return .success(id)
     }
 
@@ -257,10 +279,15 @@ public struct DragOffers: FeatureMachine {
         send(message.encoded, on: id.stream, &connection)
     }
 
-    /// Host: calls take `id` off, which the peer hears before any release. Dropped once the take has ended.
+    /// Host: calls take `id` off, which the peer hears before any release; one the peer already ended CAUGHT
+    /// stops waiting for its reoffer and ends CAUGHT with none. Dropped once the take has ended.
     public mutating func cancel(_ id: DragTakeID, connection: inout Connection) {
-        guard id.generation == generation, opened.contains(where: { $0.id == id }), connection.canReset(id.stream)
-        else { return }
+        guard id.generation == generation else { return }
+        if let index = arrivals.firstIndex(where: { $0.take.id == id }) {
+            arrivals.remove(at: index)
+            return events.append(.ended(id, .caught(reoffer: nil)))
+        }
+        guard opened.contains(where: { $0.id == id }), connection.canReset(id.stream) else { return }
         connection.reset(id.stream, WireError(.cancelled, debugDetail: "the host called the take off"))
     }
 
@@ -313,7 +340,14 @@ public struct DragOffers: FeatureMachine {
                 events.append(.cancelled(asked.remove(at: index).id))
             }
             guard let index = opened.firstIndex(where: { $0.id.stream == stream }) else { return }
-            events.append(.ended(opened.remove(at: index).id, Self.result(closure)))
+            let take = opened.remove(at: index)
+            let result = Self.result(closure)
+            guard case .caught(let reoffer?) = result else { return events.append(.ended(take.id, result)) }
+            guard !adopted.contains(reoffer), !arrivals.contains(where: { $0.reoffer == reoffer }) else {
+                return dropReoffer(of: take.id, "names a reoffer another take carries on in")
+            }
+            // `offersChanged`, which follows every take event, ends it once the reoffer is whole.
+            arrivals.append(Arrival(take: take, reoffer: reoffer))
         case .sessionEstablished, .opened, .data, .slotFreed, .deadline:
             break
         }
@@ -340,6 +374,7 @@ public struct DragOffers: FeatureMachine {
             case .targeted: events.append(.report(take.id, .targeted))
             case .delivering: events.append(.report(take.id, .delivering))
             case .deliverRefused: events.append(.report(take.id, .deliverRefused))
+            case .stoodDown: events.append(.report(take.id, .stoodDown))
             case .unspecified, .UNRECOGNIZED: break
             }
         }
@@ -394,7 +429,9 @@ public struct DragOffers: FeatureMachine {
         events.append(.requested(id, token: token))
     }
 
-    /// The offer registry changed: a take of a drag offer no longer open is refused `DRAG_NOT_CURRENT`.
+    /// The offer registry or a take changed. Peer: a take of a drag offer no longer open is refused
+    /// `DRAG_NOT_CURRENT`. Host: a CAUGHT take ends once its reoffer is whole, or as soon as the reoffer cannot be
+    /// the take's.
     mutating func offersChanged(_ items: ItemTransfer, connection: inout Connection) {
         let open = items.offers.localTokens
         taken.removeAll { !open.contains($0) }
@@ -403,6 +440,45 @@ public struct DragOffers: FeatureMachine {
             events.append(.cancelled(take.id))
         }
         asked.removeAll { !open.contains($0.token) }
+
+        adopted.removeAll { items.offers.remoteOffer($0) == nil }
+        let waiting = arrivals
+        arrivals.removeAll()
+        for var arrival in waiting {
+            let id = arrival.take.id
+            guard let reoffer = items.offers.remoteOffer(arrival.reoffer) else {
+                if arrival.seen {
+                    dropReoffer(of: id, "names a reoffer that ended before it arrived whole")
+                } else if items.offers.remoteOffer(arrival.take.token) == nil {
+                    // Nothing is left to carry the drag on from.
+                    events.append(.ended(id, .caught(reoffer: nil)))
+                } else {
+                    arrivals.append(arrival)
+                }
+                continue
+            }
+            guard reoffer.feature == Self.feature else {
+                dropReoffer(of: id, "names an offer of \(reoffer.feature)")
+                continue
+            }
+            guard reoffer.stream.rawValue > arrival.take.mark else {
+                dropReoffer(of: id, "names an offer opened before the take")
+                continue
+            }
+            guard reoffer.complete else {
+                arrival.seen = true
+                arrivals.append(arrival)
+                continue
+            }
+            adopted.append(arrival.reoffer)
+            events.append(.ended(id, .caught(reoffer: arrival.reoffer)))
+        }
+    }
+
+    /// Host: ends take `id` CAUGHT with no reoffer, the one its END named breaking the reoffer's contract.
+    private mutating func dropReoffer(of id: DragTakeID, _ why: String) {
+        diagnostics.append(.remoteViolation("a CAUGHT \(why)"))
+        events.append(.ended(id, .caught(reoffer: nil)))
     }
 
     /// ENDs a take REFUSED `DRAG_NOT_CURRENT`.
@@ -419,6 +495,7 @@ public struct DragOffers: FeatureMachine {
         case .targeted: .targeted
         case .delivering: .delivering
         case .deliverRefused: .deliverRefused
+        case .stoodDown: .stoodDown
         }
     }
 
