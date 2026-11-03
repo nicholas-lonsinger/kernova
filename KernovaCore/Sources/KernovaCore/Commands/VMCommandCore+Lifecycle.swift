@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaLogging
 
@@ -724,7 +725,8 @@ extension VMCommandCore {
     ///
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
     /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume.
-    /// `.force` always asks: it discards unsaved guest state.
+    /// `.force` always asks: it discards unsaved guest state. `.anyway` asks
+    /// too, and refuses as a step a guest whose agents do not offer it.
     ///
     /// `timeout` seconds bounds a wait for the guest to actually power off,
     /// refusing with ``CommandError/timedOut(vm:verb:seconds:)`` and touching
@@ -809,7 +811,50 @@ extension VMCommandCore {
                 return
             }
             try await discardSavedState(instance, discard)
+        case .anyway:
+            try require(anyOf: [.shutDownAnyway], on: instance)
+            if instance.isLivePaused {
+                throw CommandError.stepRequired(pausedStopRefusal(instance))
+            }
+            // Asked before the consent, so nobody agrees to what is then refused.
+            guard instance.agentHubSnapshot.shutsDownIgnoringApps else {
+                throw CommandError.stepRequired(Self.shutDownAnywayUnavailable(instance))
+            }
+            guard consent.covers(.shutDownAnyway) else {
+                throw CommandError.confirmationRequired(Self.shutDownAnywayPrompt(instance))
+            }
+            do {
+                try await lifecycle.requestStopIgnoringApps(instance)
+            } catch is ShutdownIgnoringAppsUntaken {
+                throw CommandError.stepRequired(Self.shutDownAnywayUnavailable(instance))
+            } catch {
+                throw failure(error, verb: .stop, on: instance)
+            }
         }
+    }
+
+    /// The confirmation Shut Down Anyway asks on every use. It states what
+    /// macOS does, and no more: a guest shut down this way was seen to quit an
+    /// app holding an unsaved document without asking, and to bring that
+    /// document back through autosave at the next start
+    /// (`docs/research/2026-11-03-macos-shutdown-without-waiting-for-apps.md`).
+    package static func shutDownAnywayPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+        ConfirmationPrompt(
+            kind: .shutDownAnyway,
+            title: "Shut Down \u{201C}\(instance.name)\u{201D} Anyway?",
+            message: "macOS shuts down without waiting for apps. Apps still open quit without asking to save.",
+            confirmTitle: "Shut Down Anyway",
+            dismissTitle: "Cancel")
+    }
+
+    /// The refusal of a Shut Down Anyway no agent of the guest offers: only a
+    /// macOS guest's agent installed "For everyone", connected, runs it.
+    static func shutDownAnywayUnavailable(_ instance: VMInstance) -> StepRequirement {
+        StepRequirement(
+            title: "Can\u{2019}t Shut Down Anyway",
+            message:
+                "\u{201C}\(instance.name)\u{201D} can\u{2019}t shut down without waiting for apps. That takes a "
+                + "macOS guest with the Kernova agent installed \u{201C}For everyone\u{201D} and connected.")
     }
 
     /// Takes the stop's `discard` of the saved state `instance` holds.

@@ -24,10 +24,13 @@ extension CoreUnits {
 
         /// The host's OPEN of POWER_REQUEST on `stream`, END at once.
         static func request(
-            _ run: HostileRun, _ action: PowerAction = .shutdown, deadlineMs: UInt32 = 10_000, stream: UInt32 = 2
+            _ run: HostileRun, _ action: PowerAction = .shutdown, deadlineMs: UInt32 = 10_000, stream: UInt32 = 2,
+            ignoreApps: Bool = false
         ) {
             run.feed([
-                WireFrames.open(stream, .powerRequest, body: Unit.powerRequest(action, deadlineMs: deadlineMs)),
+                WireFrames.open(
+                    stream, .powerRequest,
+                    body: Unit.powerRequest(action, deadlineMs: deadlineMs, ignoreApps: ignoreApps)),
                 Unit.end(stream),
             ])
         }
@@ -62,6 +65,35 @@ extension CoreUnits {
             let outcomes = Self.outcomes(run.written)
             #expect(outcomes.map(\.kind) == [.refused])
             #expect(outcomes.first?.error.code == .powerActionUnsupported)
+            #expect(Self.powerEffects(run).isEmpty)
+        }
+
+        @Test(
+            "new + OPEN without waiting for apps → .perform ignoring apps for an action the advert lists among them, else END REFUSED POWER_ACTION_UNSUPPORTED",
+            arguments: [
+                (PowerAction.shutdown, true, true), (.restart, true, false), (.shutdown, false, false),
+            ])
+        func ignoringApps(action: PowerAction, ignoreApps: Bool, performed: Bool) {
+            let run = Self.peer()
+            // A system peer with a user logged in: nothing waits for apps, shutdown without waiting.
+            run.input(.power(.availability(.available(PowerOffer(actions: [], ignoringApps: [.shutdown])))))
+            Self.request(run, action, ignoreApps: ignoreApps)
+            if performed {
+                #expect(Self.powerEffects(run) == [.perform(Self.id, action, ignoringApps: true)])
+                #expect(run.written.on(2).isEmpty)
+            } else {
+                #expect(Self.outcomes(run.written).map(\.error.code) == [.powerActionUnsupported])
+                #expect(Self.powerEffects(run).isEmpty)
+            }
+        }
+
+        @Test(
+            "new + OPEN without waiting for apps toward an advert listing none → END REFUSED POWER_ACTION_UNSUPPORTED")
+        func ignoringAppsUnoffered() {
+            let run = Self.peer()
+            run.input(.power(.availability(.available(PowerOffer(actions: [.shutdown, .restart])))))
+            Self.request(run, .shutdown, ignoreApps: true)
+            #expect(Self.outcomes(run.written).map(\.error.code) == [.powerActionUnsupported])
             #expect(Self.powerEffects(run).isEmpty)
         }
 
@@ -407,6 +439,18 @@ extension CoreUnits {
             let body = open.flatMap { try? Kernova_V2_PowerRequest(serializedBytes: $0.body) }
             #expect(body?.action == .shutdown)
             #expect(body?.acceptanceDeadlineMs == 10_000)
+            #expect(body?.ignoreApps == false)
+        }
+
+        @Test("A request without waiting for apps sets ignore_apps in the OPEN")
+        func requestIgnoringAppsFrames() {
+            let run = HostileRun(local: .host, seed: 11)
+            run.feed([WireFrames.hello(role: .systemPeer, scope: .system)], preamble: true)
+            run.command(.requestPower(Self.id, .shutdown, ignoringApps: true))
+            let open = run.written.on(2).first.flatMap { try? Kernova_V2_Open(serializedBytes: $0.payload) }
+            let body = open.flatMap { try? Kernova_V2_PowerRequest(serializedBytes: $0.body) }
+            #expect(body?.action == .shutdown)
+            #expect(body?.ignoreApps == true)
         }
 
         struct Row: Sendable, CustomTestStringConvertible {

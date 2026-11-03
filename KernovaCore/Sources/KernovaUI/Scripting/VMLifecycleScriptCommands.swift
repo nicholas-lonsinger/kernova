@@ -11,6 +11,7 @@ import KernovaLogging
 enum VMScriptStopMethod: CaseIterable {
     case shutDown
     case force
+    case shutDownAnyway
 
     /// The way of stopping `disposition` names. Exhaustive, so a new
     /// disposition has to be given a term before it compiles.
@@ -18,6 +19,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch disposition {
         case .graceful: self = .shutDown
         case .force: self = .force
+        case .anyway: self = .shutDownAnyway
         }
     }
 
@@ -33,6 +35,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch self {
         case .shutDown: "shut down"
         case .force: "force"
+        case .shutDownAnyway: "shut down anyway"
         }
     }
 
@@ -41,6 +44,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch self {
         case .shutDown: FourCharCode(scriptingCode: "KmSd")
         case .force: FourCharCode(scriptingCode: "KmFo")
+        case .shutDownAnyway: FourCharCode(scriptingCode: "KmSa")
         }
     }
 
@@ -49,6 +53,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch self {
         case .shutDown: .graceful
         case .force: .force
+        case .shutDownAnyway: .anyway
         }
     }
 }

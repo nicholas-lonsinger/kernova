@@ -69,6 +69,7 @@ struct VMCapabilityCatalogTests {
         .stop: .sessionAction(.requestStop),
         .restart: .sessionAction(.requestStop),
         .forceStop: .sessionAction(.forceStop),
+        .shutDownAnyway: .sessionAction(.requestStop),
         .discardSavedState: .operation(.discardingSavedState),
         .pause: .operation(.pausing),
         .resume: .resume,

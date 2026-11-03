@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 
 /// One thing a VM can be asked to do — every wire verb, plus the GUI-only
@@ -21,6 +22,10 @@ package enum VMCapability: CaseIterable, Hashable {
     case stop
     case restart
     case forceStop
+    /// Shut the guest down without waiting for apps — admitted as Stop is;
+    /// whether the guest's agents offer it is
+    /// ``VMCapabilityCatalog/isShutDownAnywayApplicable(to:)``'s to say.
+    case shutDownAnyway
     case discardSavedState
     case pause
     case resume
@@ -74,9 +79,9 @@ package enum VMCapability: CaseIterable, Hashable {
     /// The wire verb this capability performs, or `nil` for an affordance only
     /// the GUI offers.
     ///
-    /// Not injective: the graceful stop, the forceful one and the suspended
-    /// discard are one verb on the wire and three differently-gated commands in
-    /// the UI.
+    /// Not injective: the graceful stop, the forceful one, the one that does
+    /// not wait for apps and the suspended discard are one verb on the wire and
+    /// four differently-gated commands in the UI.
     var verb: VMVerb? {
         switch self {
         case .info: .info
@@ -84,7 +89,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .snapshots: .snapshots
         case .start: .start
         case .cancelGuestSetup: .cancelGuestSetup
-        case .stop, .forceStop, .discardSavedState: .stop
+        case .stop, .forceStop, .shutDownAnyway, .discardSavedState: .stop
         case .restart: .restart
         case .pause: .pause
         case .resume: .resume
@@ -135,7 +140,8 @@ package enum VMCapability: CaseIterable, Hashable {
         case .rename: .rename
         case .editTags: .hostPresentation
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
+            .restart, .forceStop, .shutDownAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
+            .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
             .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .showGuestAgentStatus,
@@ -158,10 +164,11 @@ package enum VMCapability: CaseIterable, Hashable {
             return .start(recovery: true)
         case .cancelGuestSetup:
             return .cancel(.guestSetup)
-        case .stop, .restart:
-            // Virtualization refuses the shutdown request to a paused guest:
-            // restart resumes it first, and the stop verb refuses as a step,
-            // which the app's Stop takes as a resume and then a stop.
+        case .stop, .restart, .shutDownAnyway:
+            // Virtualization refuses the shutdown request to a paused guest,
+            // and a paused guest's agents run nothing: restart resumes it
+            // first, and the stop verb refuses as a step, which the app's Stop
+            // takes as a resume and then a stop.
             return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
         case .forceStop:
             return .sessionAction(.forceStop)
@@ -552,6 +559,21 @@ package struct VMCapabilityCatalog {
     static func deliverableGuestAccount(of configuration: VMConfiguration) -> GuestAccountIntent? {
         guard MacOSGuestProvisioning.hostSupportsProvisioning else { return nil }
         return configuration.pendingGuestAccount
+    }
+
+    /// Whether Shut Down Anyway is offered on `instance` at all — the level a
+    /// surface that hides it reads: the guest's agents shut it down without
+    /// waiting for apps (a macOS guest's agent installed "For everyone",
+    /// connected), and the VM's state admits a stop.
+    package func isShutDownAnywayApplicable(to instance: VMInstance) -> Bool {
+        instance.agentHubSnapshot.shutsDownIgnoringApps && isApplicable(.shutDownAnyway, to: instance)
+    }
+
+    /// Whether Shut Down Anyway can be invoked now: offered, and on a guest
+    /// awake to take it — a paused one runs no agent.
+    package func isShutDownAnywayAvailable(on instance: VMInstance) -> Bool {
+        isShutDownAnywayApplicable(to: instance) && !instance.isLivePaused
+            && isAvailable(.shutDownAnyway, on: instance)
     }
 
     /// Whether the stop slot can be invoked now.

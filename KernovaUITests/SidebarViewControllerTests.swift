@@ -1052,6 +1052,73 @@ struct SidebarViewControllerTests {
         #expect(forceStop?.isAlternate == false)
     }
 
+    /// A running VM whose guest's agents offer Shut Down Anyway, or not.
+    private func runningInstance(
+        in viewModel: VMLibraryViewModel, offeringShutDownAnyway offered: Bool
+    ) -> VMInstance {
+        let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
+        return instance
+    }
+
+    @Test(
+        "Shut Down Anyway… is Stop's Option-alternate where offered, with Force Stop… Restart's, so ⌥ shows them in that order"
+    )
+    func contextMenuShutDownAnywayIsOptionAlternate() throws {
+        preferences.alwaysShowAdvancedOptions = false
+        let viewModel = makeViewModel()
+        let instance = runningInstance(in: viewModel, offeringShutDownAnyway: true)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        let titles = menu.items.map(\.title)
+        let stop = try #require(titles.firstIndex(of: "Stop"))
+        #expect(Array(titles[stop...].prefix(4)) == ["Stop", "Shut Down Anyway…", "Restart", "Force Stop…"])
+        let anyway = try #require(menuItem("Shut Down Anyway…", in: menu))
+        let forceStop = try #require(menuItem("Force Stop…", in: menu))
+        #expect(anyway.isAlternate)
+        #expect(anyway.keyEquivalentModifierMask == [.option])
+        #expect(anyway.isEnabled)
+        #expect(forceStop.isAlternate)
+        #expect(forceStop.keyEquivalentModifierMask == [.option])
+        #expect(menuItem("Stop", in: menu)?.keyEquivalentModifierMask == [])
+        #expect(menuItem("Restart", in: menu)?.keyEquivalentModifierMask == [])
+    }
+
+    @Test("Where not offered, Shut Down Anyway… is not in the menu at all, and Force Stop… stays Stop's alternate")
+    func contextMenuShutDownAnywayAbsentWhereNotOffered() throws {
+        preferences.alwaysShowAdvancedOptions = false
+        let viewModel = makeViewModel()
+        let instance = runningInstance(in: viewModel, offeringShutDownAnyway: false)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        #expect(menuItem("Shut Down Anyway…", in: menu) == nil)
+        let titles = menu.items.map(\.title)
+        let stop = try #require(titles.firstIndex(of: "Stop"))
+        #expect(Array(titles[stop...].prefix(3)) == ["Stop", "Force Stop…", "Restart"])
+        #expect(menuItem("Force Stop…", in: menu)?.isAlternate == true)
+    }
+
+    @Test("With advanced options on, Shut Down Anyway… is a plain item just before Force Stop…")
+    func contextMenuShutDownAnywayVisibleWhenAdvanced() throws {
+        preferences.alwaysShowAdvancedOptions = true
+        let viewModel = makeViewModel()
+        let instance = runningInstance(in: viewModel, offeringShutDownAnyway: true)
+        let controller = SidebarViewController(viewModel: viewModel)
+
+        let menu = controller.buildContextMenu(for: instance)
+
+        let titles = menu.items.map(\.title)
+        let stop = try #require(titles.firstIndex(of: "Stop"))
+        #expect(Array(titles[stop...].prefix(4)) == ["Stop", "Shut Down Anyway…", "Force Stop…", "Restart"])
+        #expect(menuItem("Shut Down Anyway…", in: menu)?.isAlternate == false)
+        #expect(menuItem("Force Stop…", in: menu)?.isAlternate == false)
+    }
+
     /// The lifecycle items, in the order each expectation lists them.
     private static let lifecycleItems = [
         "Start", "Start in Recovery Mode…", "Pause", "Resume", "Stop", "Force Stop…", "Restart",

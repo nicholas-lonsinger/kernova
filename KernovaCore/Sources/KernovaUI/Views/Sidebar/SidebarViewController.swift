@@ -880,29 +880,52 @@ extension SidebarViewController {
             menu.addItem(resume)
         }
         let canStop = capabilities.isApplicable(.stop, to: instance)
+        let canRestart = capabilities.isApplicable(.restart, to: instance)
         let discardsSavedState = capabilities.isApplicable(.discardSavedState, to: instance)
         let stopAction = capabilities.stopAction(for: instance)
+        let advanced = preferences.alwaysShowAdvancedOptions
+        // ⌥ swaps a row for one alternate, so Shut Down Anyway takes Stop's row
+        // only where Force Stop can take Restart's. Restart is applicable
+        // wherever Stop is: both are the one stop request.
+        let offersShutDownAnyway =
+            canStop && capabilities.isShutDownAnywayApplicable(to: instance) && (advanced || canRestart)
+        var restartAdded = false
         if canStop {
             let stop = item(stopAction.menuTitle, #selector(menuStop(_:)), instance)
             stop.isEnabled = capabilities.isAvailable(.stop, on: instance)
             menu.addItem(stop)
-            // An Option-alternate of "Stop". No zero-height anchor is needed: when
-            // a graceful stop is offered, a Pause or Resume item always precedes
-            // "Stop", so the pair is never at index 0 and the menu can't shift on
-            // ⌥-press.
+            // Option-alternates of "Stop" and, beside Shut Down Anyway,
+            // "Restart". No zero-height anchor is needed: when a graceful stop
+            // is offered, a Pause or Resume item always precedes "Stop", so a
+            // pair is never at index 0 and the menu can't shift on ⌥-press.
             let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
             forceStop.isEnabled = capabilities.isAvailable(.forceStop, on: instance)
-            if !preferences.alwaysShowAdvancedOptions {
-                stop.keyEquivalentModifierMask = []
+            var forceStopsPrimary = stop
+            if offersShutDownAnyway {
+                let anyway = item("Shut Down Anyway…", #selector(menuShutDownAnyway(_:)), instance)
+                anyway.isEnabled = capabilities.isShutDownAnywayAvailable(on: instance)
+                if !advanced {
+                    stop.keyEquivalentModifierMask = []
+                    anyway.keyEquivalentModifierMask = [.option]
+                    anyway.isAlternate = true
+                }
+                menu.addItem(anyway)
+                if !advanced {
+                    let restart = restartItem(for: instance)
+                    menu.addItem(restart)
+                    restartAdded = true
+                    forceStopsPrimary = restart
+                }
+            }
+            if !advanced {
+                forceStopsPrimary.keyEquivalentModifierMask = []
                 forceStop.keyEquivalentModifierMask = [.option]
                 forceStop.isAlternate = true
             }
             menu.addItem(forceStop)
         }
-        if capabilities.isApplicable(.restart, to: instance) {
-            let restart = item("Restart", #selector(menuRestart(_:)), instance)
-            restart.isEnabled = capabilities.isAvailable(.restart, on: instance)
-            menu.addItem(restart)
+        if canRestart, !restartAdded {
+            menu.addItem(restartItem(for: instance))
         }
         if discardsSavedState {
             // Listed whatever its state, disabled when there is nothing behind
@@ -1030,6 +1053,13 @@ extension SidebarViewController {
         return menuItem
     }
 
+    /// The context menu's Restart for `instance`.
+    private func restartItem(for instance: VMInstance) -> NSMenuItem {
+        let restart = item("Restart", #selector(menuRestart(_:)), instance)
+        restart.isEnabled = viewModel.capabilities.isAvailable(.restart, on: instance)
+        return restart
+    }
+
     /// A menu item dispatched down the responder chain (target `nil`) so the
     /// app delegate handles it — used for the display pop-out/fullscreen toggles.
     ///
@@ -1081,6 +1111,11 @@ extension SidebarViewController {
     @objc private func menuForceStop(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         viewModel.requestForceStop(instance)
+    }
+
+    @objc private func menuShutDownAnyway(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        Task { await viewModel.shutDownAnyway(instance) }
     }
 
     @objc private func menuSuspend(_ sender: NSMenuItem) {

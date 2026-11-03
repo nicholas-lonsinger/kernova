@@ -439,6 +439,9 @@ public enum VMGroupKind: String, Codable, Sendable, Hashable, CaseIterable {
 public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable {
     /// Terminating a VM immediately, or discarding a suspended session.
     case forceStop
+    /// Shutting a guest down without waiting for apps, which quit without
+    /// being asked to save.
+    case shutDownAnyway
     /// Deleting a VM's bundle.
     case deleteVM
     /// Trashing one snapshot's captured files.

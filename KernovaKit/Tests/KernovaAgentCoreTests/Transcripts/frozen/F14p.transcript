@@ -1,0 +1,18 @@
+# F14p power: shutdown without waiting for apps accepted → handed off — peer pinned
+pinned peer  fixture=macos-system-ignore-apps-v1
+current host fixture=host-default token=000102030405060708090a0b0c0d0e0f
+end 2000
+t=0      expect  h>p preamble
+t=0      expect  h>p s=0 MSG hello role=1 scope=0 token=000102030405060708090a0b0c0d0e0f 1=v1:actions[]:asks=false 2=v1:formats[]
+t=0      p>h     4b524e32
+t=0      p>h     00000000 00 01 000000a4 0aa1010801124e080310021801220432372e322a05323743353038014220b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b24a03322e305210606060606060606060606060606060601a09080110011a031a01011a09080210011a030a01021a06080310011a001a08080a1001220208021a08080b1001220208021a08080c1001220208021a08080d100122020801220708012203323537
+t=1      expect  h>p s=0 MSG policy
+t=1      expect  h>p s=0 MSG update_available none
+t=2      p>h     00000001 01 00 00000003 08ac02
+t=1000   in      host requestPower id=1 action=1 ignoreApps=1
+t=1000   expect  h>p s=2 OPEN kind=POWER_REQUEST body.action=1 body.acceptance_deadline_ms=10000 body.ignore_apps=true
+t=1000   expect  h>p s=2 END empty
+t=1001   p>h     00000002 00 01 00000002 0801
+t=1002   ev      host power id=1 accepted
+t=1300   p>h     00000002 02 00 00000002 0802
+t=1301   ev      host power id=1 finished handedOff

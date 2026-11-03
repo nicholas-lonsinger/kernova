@@ -317,6 +317,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // State…") is the one surface for that action, and two enabled items
         // must not alias one action under two names.
         case #selector(AppDelegate.forceStopVM(_:)): .forceStop
+        case #selector(AppDelegate.shutDownAnywayVM(_:)): .shutDownAnyway
         case #selector(AppDelegate.restartVM(_:)): .restart
         case #selector(AppDelegate.saveVM(_:)): .suspend
         case #selector(AppDelegate.takeSnapshot(_:)): .takeSnapshot
@@ -387,6 +388,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             // state admits; enablement is the availability read beside it.
             menuItem.title = viewModel.capabilities.stopAction(for: instance).menuTitle
             return viewModel.capabilities.isStopActionAvailable(on: instance)
+        case #selector(AppDelegate.shutDownAnywayVM(_:)):
+            // Listed always; enabled only where the guest's agents offer it.
+            return viewModel.capabilities.isShutDownAnywayAvailable(on: instance)
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             let model = GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
             menuItem.title = model.title
@@ -542,6 +546,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         resumeItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(
             withTitle: "Stop", action: #selector(AppDelegate.stopVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(
+            withTitle: "Shut Down Anyway…", action: #selector(AppDelegate.shutDownAnywayVM(_:)),
+            keyEquivalent: "")
         vmMenu.addItem(
             withTitle: "Force Stop…", action: #selector(AppDelegate.forceStopVM(_:)),
             keyEquivalent: "")

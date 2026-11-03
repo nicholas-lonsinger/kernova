@@ -15,6 +15,8 @@ final class VMToolbarManager: NSObject {
     struct Configuration {
         /// Toolbar item identifiers (different strings per controller to avoid AppKit conflicts).
         let lifecycleID: NSToolbarItem.Identifier
+        /// Shut Down Anyway, offered in the customization palette only.
+        let shutDownAnywayID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
         /// Sits immediately after ``saveStateID`` with no space between, so the
         /// two capture-state actions share one glass capsule.
@@ -39,6 +41,7 @@ final class VMToolbarManager: NSObject {
     var sharedItemIdentifiers: [NSToolbarItem.Identifier] {
         [
             configuration.lifecycleID,
+            configuration.shutDownAnywayID,
             configuration.saveStateID,
             configuration.takeSnapshotID,
             configuration.clipboardID,
@@ -48,8 +51,8 @@ final class VMToolbarManager: NSObject {
         ].compactMap { $0 }
     }
 
-    /// The shared items in default-layout order, with fixed spaces between the
-    /// glass capsule clusters.
+    /// The shared items in default-layout order, less the palette-only Shut
+    /// Down Anyway, with fixed spaces between the glass capsule clusters.
     ///
     /// Adjacent bordered items share one glass background and a fixed space
     /// separates them ([Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)),
@@ -58,7 +61,9 @@ final class VMToolbarManager: NSObject {
     /// needs no space.
     var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
         let clusterStarts = clusterStartIdentifiers
-        return sharedItemIdentifiers.flatMap { clusterStarts.contains($0) ? [.space, $0] : [$0] }
+        return sharedItemIdentifiers.filter { $0 != configuration.shutDownAnywayID }.flatMap {
+            clusterStarts.contains($0) ? [.space, $0] : [$0]
+        }
     }
 
     /// The items that begin a new capsule cluster, i.e. the ones a fixed
@@ -97,6 +102,7 @@ final class VMToolbarManager: NSObject {
     private static let resumeDownloadToolTip = "Resume the interrupted installer image download"
     private static let pauseToolTip = "Pause the virtual machine"
     private static let restartToolTip = "Restart the virtual machine"
+    private static let shutDownAnywayToolTip = "Shut macOS down without waiting for apps"
     private static let saveStateToolTip = "Suspend the virtual machine"
     private static let takeSnapshotToolTip = "Take a snapshot of the virtual machine"
     private static let clipboardToolTip = "Open the clipboard sharing window"
@@ -171,6 +177,15 @@ final class VMToolbarManager: NSObject {
                 VMInstance.StopAction.stop.toolTip
             group.autovalidates = false
             return group
+
+        case configuration.shutDownAnywayID:
+            return makeBorderedItem(
+                identifier: identifier,
+                label: "Shut Down Anyway",
+                symbol: "power",
+                action: #selector(AppDelegate.shutDownAnywayVM(_:)),
+                toolTip: Self.shutDownAnywayToolTip
+            )
 
         case configuration.saveStateID:
             return makeBorderedItem(
@@ -263,6 +278,7 @@ final class VMToolbarManager: NSObject {
         _ = instance.detailPaneMode
         _ = instance.startAction
         _ = instance.configuration.clipboardSharingEnabled
+        _ = capabilities.isShutDownAnywayAvailable(on: instance)
     }
 
     func updateToolbarItems(in toolbar: NSToolbar) {
@@ -271,6 +287,9 @@ final class VMToolbarManager: NSObject {
             Self.logger.log(.debug, "updateToolbarItems: no instance available")
         }
         updateLifecycleGroup(in: toolbar, instance: instance)
+        updateItem(
+            in: toolbar, configuration.shutDownAnywayID,
+            isEnabled: instance.map { capabilities.isShutDownAnywayAvailable(on: $0) } ?? false)
         updateItem(
             in: toolbar, configuration.saveStateID, isEnabled: isAvailable(.suspend, on: instance))
         updateItem(

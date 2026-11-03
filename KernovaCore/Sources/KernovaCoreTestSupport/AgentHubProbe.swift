@@ -63,13 +63,14 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         state: PeerSessionState(console: .on, sessionID: "2", userName: "pbear")
     )
 
-    /// Opens a connection that says Hello as `claim` in `state` and offers POWER for shutdown and restart,
-    /// answering its index (from 0, in accept order), or `nil` when the hub refused it.
+    /// Opens a connection that says Hello as `claim` in `state` and offers POWER as `offer` — shutdown and
+    /// restart by default — answering its index (from 0, in accept order), or `nil` when the hub refused it.
     ///
     /// Each power request the hub sends it is answered with `answering`'s results for its action, in order;
     /// with no `answering`, the test answers through ``deliver(_:fromConnection:)``.
     package func connectPowerPeer(
         claim: PeerClaim = consoleSessionPeer.claim, state peerState: PeerSessionState = consoleSessionPeer.state,
+        offer powerOffer: PowerOffer = PowerOffer(actions: [.shutdown, .restart]),
         answering: (@Sendable (PowerAction) -> [PowerRequestResult])? = nil
     ) -> Int? {
         guard connect() else { return nil }
@@ -78,7 +79,7 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
             state.powerAnswers[index] = answering
             return index
         }
-        let offer = PowerOffer(actions: [.shutdown, .restart]).encoded
+        let offer = powerOffer.encoded
         deliver(.helloReceived(claim, peerState), fromConnection: index)
         deliver(.featuresChanged(FeatureStatusTable([(.power, .available(offer))])), fromConnection: index)
         return index
@@ -87,7 +88,15 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     /// Every power request sent to any connection, in order.
     package var powerRequests: [(id: PowerRequestID, action: PowerAction)] {
         commands.compactMap { command in
-            guard case .requestPower(let id, let action) = command else { return nil }
+            guard case .requestPower(let id, let action, _) = command else { return nil }
+            return (id, action)
+        }
+    }
+
+    /// The power requests sent to any connection without waiting for apps, in order.
+    package var powerRequestsIgnoringApps: [(id: PowerRequestID, action: PowerAction)] {
+        commands.compactMap { command in
+            guard case .requestPower(let id, let action, true) = command else { return nil }
             return (id, action)
         }
     }
@@ -129,7 +138,7 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
                 state.commands.append(command)
                 return state.powerAnswers[Int(generation.rawValue) - 1]
             }
-            if case .requestPower(let id, let action) = command, let answer {
+            if case .requestPower(let id, let action, _) = command, let answer {
                 for result in answer(action) {
                     probe.deliver(.power(id, result), fromConnection: Int(generation.rawValue) - 1)
                 }
