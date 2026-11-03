@@ -1,6 +1,10 @@
-#if os(Linux)
-import Foundation
+#if canImport(Darwin) || os(Linux)
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
 import Glibc
+#endif
+import Foundation
 import KernovaAgentCore
 @testable import KernovaAgentRuntime
 import KernovaAgentSimulation
@@ -11,7 +15,7 @@ import KernovaWire
 import SwiftProtobuf
 import Testing
 
-@testable import KernovaLinuxAgent
+@testable import KernovaAgentInstall
 
 /// An install root in a scratch directory as `kernova-agent install` leaves it: slot `a` holds the installed
 /// agent, `current` points at it, and `state.json` records it.
@@ -23,7 +27,7 @@ final class SlotFixture {
         directory = try PortableScratchDirectory(prefix: "kernova-slots")
         root = directory.path + "/kernova-agent"
         try FileManager.default.createDirectory(atPath: root + "/slots/a", withIntermediateDirectories: true)
-        try Data("installed agent".utf8).write(to: URL(filePath: root + "/slots/a/kernova-agent"))
+        try Data("installed agent".utf8).write(to: URL(fileURLWithPath: root + "/slots/a/" + TestLander.name))
         try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
         try write(InstallState.fresh(payloadSHA256: "aa", versionLabel: "1.0"))
     }
@@ -31,11 +35,11 @@ final class SlotFixture {
     func slotRoot() throws -> SlotRoot { try SlotRoot(path: root) }
 
     func state() throws -> InstallState {
-        try InstallState.decoded(Array(try Data(contentsOf: URL(filePath: root + "/state.json"))))
+        try InstallState.decoded(Array(try Data(contentsOf: URL(fileURLWithPath: root + "/state.json"))))
     }
 
     func write(_ state: InstallState) throws {
-        try Data(try state.encoded()).write(to: URL(filePath: root + "/state.json"))
+        try Data(try state.encoded()).write(to: URL(fileURLWithPath: root + "/state.json"))
     }
 
     /// Where the link `name` points.
@@ -92,24 +96,76 @@ final class Inbox<Value: Sendable>: @unchecked Sendable {
 
 struct InboxTimeout: Error {}
 
+/// A lander of one file, `agent`, in its slot, staged as `agent.partial` until it publishes. A write can be made
+/// to fail with an errno, and a publish to refuse.
+struct TestLander: PayloadLander {
+    static let name = "agent"
+    static let partialName = name + ".partial"
+
+    var writeFailure: Int32?
+    var refusal: PayloadRefusal?
+
+    var format: PayloadFormat { .executable }
+
+    func install(_ payload: InstallPayloadReader, as name: String, in slot: InstallDirectory) throws(Installer.Failure)
+    {
+        try slot.writeFile(name, mode: 0o755) { descriptor throws(Installer.Failure) in
+            while let piece = try payload.next() {
+                try Installer.writeAll(Array(piece), to: descriptor, path: slot.path + "/" + name)
+            }
+        }
+    }
+
+    func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
+        let directory = try root.openSlot(slot)
+        let file = openat(directory, Self.partialName, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
+        guard file >= 0 else { throw SlotRoot.Failure(operation: "create", name: Self.partialName, errno: errno) }
+        return Landing(lander: self, slot: directory, file: file)
+    }
+
+    struct Landing: PayloadLanding {
+        let lander: TestLander
+        let slot: Int32
+        let file: Int32
+
+        func write(_ bytes: UnsafeRawBufferPointer) throws(SlotRoot.Failure) {
+            if let failure = lander.writeFailure {
+                throw SlotRoot.Failure(operation: "write", name: TestLander.partialName, errno: failure)
+            }
+            try SlotRoot.writeAll(Array(bytes), to: file, name: TestLander.partialName)
+        }
+
+        func publish() throws(PayloadRefusal) {
+            close(file)
+            defer { close(slot) }
+            if let refusal = lander.refusal {
+                unlinkat(slot, TestLander.partialName, 0)
+                throw refusal
+            }
+            guard renameat(slot, TestLander.partialName, slot, TestLander.name) == 0 else {
+                throw PayloadRefusal(.updateInstallFailed, "rename", errno: errno, rejectsPayload: false)
+            }
+        }
+
+        func discard() {
+            close(file)
+            unlinkat(slot, TestLander.partialName, 0)
+            close(slot)
+        }
+    }
+}
+
 /// One installer over a fixture, with what it reports and every relaunch and confirmation it asks for.
 struct InstallerRun {
-    let installer: LinuxUpdateInstaller
+    let installer: SlotUpdateInstaller
     let reports = Inbox<UpdateInput>()
     let switched = Inbox<Void>()
     let confirmed = Inbox<Void>()
 
-    init(
-        _ fixture: SlotFixture, running slot: String = "a",
-        selfTest: SelfTest.Outcome = .passed,
-        write: (@Sendable (Int32, UnsafeRawBufferPointer) -> Int)? = nil
-    ) throws {
-        var system = LinuxUpdateInstaller.System()
-        system.selfTest = { _ in selfTest }
-        if let write { system.write = write }
+    init(_ fixture: SlotFixture, running slot: String = "a", lander: TestLander = TestLander()) throws {
         let (switched, confirmed) = (switched, confirmed)
-        installer = LinuxUpdateInstaller(
-            root: try fixture.slotRoot(), runningSlot: slot, system: system,
+        installer = SlotUpdateInstaller(
+            root: try fixture.slotRoot(), runningSlot: slot, lander: lander,
             logger: KernovaLogger(subsystem: "app.kernova.tests", category: "Update") { _, _, _, _ in },
             onSwitched: { switched.put(()) }, onConfirmed: { confirmed.put(()) })
         let reports = reports
@@ -137,8 +193,8 @@ enum Payloads {
     }
 }
 
-@Suite("The Linux update installer")
-struct LinuxUpdateInstallerTests {
+@Suite("The slot update installer")
+struct SlotUpdateInstallerTests {
     @Test("It advertises the executable format and no rejected hash on a fresh install")
     func availability() throws {
         let fixture = try SlotFixture()
@@ -156,9 +212,8 @@ struct LinuxUpdateInstallerTests {
         #expect(try run.reports.next() == .installed(Payloads.id))
         _ = try run.switched.next()
 
-        #expect(fixture.contents("slots/b/kernova-agent") == Payloads.bytes)
-        #expect(fixture.mode("slots/b/kernova-agent") == 0o755)
-        #expect(!fixture.exists("slots/b/" + LinuxUpdateInstaller.partialName))
+        #expect(fixture.contents("slots/b/" + TestLander.name) == Payloads.bytes)
+        #expect(!fixture.exists("slots/b/" + TestLander.partialName))
         #expect(fixture.link("current") == "slots/b")
         #expect(fixture.link("rollback") == "slots/a")
         #expect(fixture.contents("switch-pending") == Data())
@@ -207,10 +262,11 @@ struct LinuxUpdateInstallerTests {
         #expect(try fixture.state().rejectedSHA256 == lowercaseHex(manifest.payloadHash))
     }
 
-    @Test("A payload whose self-test fails is rejected and recorded before any switch")
-    func selfTestFails() throws {
+    @Test("A payload its lander refuses as it publishes is rejected and recorded before any switch")
+    func landerRefuses() throws {
         let fixture = try SlotFixture()
-        let run = try InstallerRun(fixture, selfTest: .exited(1))
+        let run = try InstallerRun(
+            fixture, lander: TestLander(refusal: PayloadRefusal(.updateInstallFailed, "self-test: exited(1)")))
         _ = try run.reports.next()
         try Payloads.write(run)
         run.installer.complete(Payloads.id, Payloads.manifest)
@@ -226,10 +282,7 @@ struct LinuxUpdateInstallerTests {
     @Test("A write failing ENOSPC fails the pull DISK_FULL, drops the staged file, and ignores the pull's rest")
     func diskFull() throws {
         let fixture = try SlotFixture()
-        let run = try InstallerRun(fixture) { _, _ in
-            errno = ENOSPC
-            return -1
-        }
+        let run = try InstallerRun(fixture, lander: TestLander(writeFailure: ENOSPC))
         _ = try run.reports.next()
         run.installer.write(Payloads.id, Payloads.bytes)
         #expect(try run.reports.next() == .failed(Payloads.id, WireError(.diskFull, posixErrno: ENOSPC)))
@@ -241,18 +294,35 @@ struct LinuxUpdateInstallerTests {
         try Self.expectUnswitched(fixture)
     }
 
+    @Test("A publish that fails on the install's own account is refused without recording the payload")
+    func installFails() throws {
+        let fixture = try SlotFixture()
+        let refusal = PayloadRefusal(.updateInstallFailed, "rename into the slot", errno: EIO, rejectsPayload: false)
+        let run = try InstallerRun(fixture, lander: TestLander(refusal: refusal))
+        _ = try run.reports.next()
+        try Payloads.write(run)
+        run.installer.complete(Payloads.id, Payloads.manifest)
+        guard case .rejected(_, let error) = try run.reports.next() else {
+            Issue.record("no rejection")
+            return
+        }
+        #expect(error == refusal.error)
+        try Self.expectUnswitched(fixture)
+        #expect(try fixture.state().rejectedSHA256 == nil)
+    }
+
     @Test("abort drops the staged file")
     func abort() throws {
         let fixture = try SlotFixture()
         let run = try InstallerRun(fixture)
         _ = try run.reports.next()
         try Payloads.write(run)
-        #expect(fixture.exists("slots/b/" + LinuxUpdateInstaller.partialName))
+        #expect(fixture.exists("slots/b/" + TestLander.partialName))
         run.installer.abort(Payloads.id)
         run.installer.clearRejected()
         run.installer.recordRejected(Data(repeating: 1, count: 32))
         _ = try run.reports.next()
-        #expect(!fixture.exists("slots/b/" + LinuxUpdateInstaller.partialName))
+        #expect(!fixture.exists("slots/b/" + TestLander.partialName))
     }
 
     @Test("recordRejected and clearRejected persist the rejected hash and re-advertise it")
@@ -319,8 +389,8 @@ struct LinuxUpdateInstallerTests {
     static func expectUnswitched(_ fixture: SlotFixture) throws {
         #expect(fixture.link("current") == "slots/a")
         #expect(!fixture.exists("switch-pending"))
-        #expect(!fixture.exists("slots/b/kernova-agent"))
-        #expect(!fixture.exists("slots/b/" + LinuxUpdateInstaller.partialName))
+        #expect(!fixture.exists("slots/b/" + TestLander.name))
+        #expect(!fixture.exists("slots/b/" + TestLander.partialName))
         #expect(try fixture.state().pendingSwitch == nil)
     }
 }
@@ -331,8 +401,15 @@ struct RollbackCheckTests {
         var pids: [UInt32] = []
     }
 
+    /// A service manager whose peer runs as `pid`.
+    struct Manager: ServiceManager {
+        var pid: UInt32
+        func peerProcessID() -> UInt32 { pid }
+    }
+
     static func check(_ fixture: SlotFixture, mainPID: UInt32 = 4242, kills: Kills) throws -> RollbackCheck {
-        RollbackCheck(root: try fixture.slotRoot(), mainPID: { mainPID }, kill: { kills.pids.append($0) })
+        RollbackCheck(
+            root: try fixture.slotRoot(), serviceManager: Manager(pid: mainPID), kill: { kills.pids.append($0) })
     }
 
     @Test("With no switch pending it does nothing")
@@ -346,7 +423,7 @@ struct RollbackCheckTests {
     @Test("Runs 1–4 count and change nothing; run 5 reverts, kills the new version, and the old one records it")
     func reverts() throws {
         let fixture = try SlotFixture()
-        try LinuxUpdateInstallerTests.switchToB(fixture)
+        try SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, kills: kills)
         for runs in 1..<RollbackCheck.runsToRevert {
@@ -363,7 +440,7 @@ struct RollbackCheckTests {
         #expect(fixture.exists("switch-rejected"))
         #expect(try check.run() == .nothingPending)
 
-        // systemd restarts the unit through current: the previous version, which records the payload.
+        // The service manager restarts the peer through current: the previous version, which records the payload.
         let previous = try InstallerRun(fixture, running: "a")
         #expect(try previous.reports.next() == Payloads.available(rejected: Payloads.hash))
         let state = try fixture.state()
@@ -376,7 +453,7 @@ struct RollbackCheckTests {
     @Test("A unit with no main process — waiting to restart — is reverted and nothing is killed")
     func revertsWithoutProcess() throws {
         let fixture = try SlotFixture()
-        try LinuxUpdateInstallerTests.switchToB(fixture)
+        try SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, mainPID: 0, kills: kills)
         for _ in 1..<RollbackCheck.runsToRevert { _ = try check.run() }
@@ -388,7 +465,7 @@ struct RollbackCheckTests {
     @Test("A switch confirmed before the reverting run makes the check stand down")
     func confirmedFirst() throws {
         let fixture = try SlotFixture()
-        try LinuxUpdateInstallerTests.switchToB(fixture)
+        try SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, kills: kills)
         for _ in 1..<RollbackCheck.runsToRevert { _ = try check.run() }
@@ -404,7 +481,7 @@ struct RollbackCheckTests {
     @Test("A switch reverted before the new version connects is not confirmed")
     func revertedFirst() throws {
         let fixture = try SlotFixture()
-        try LinuxUpdateInstallerTests.switchToB(fixture)
+        try SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, kills: kills)
         // The new version is up but has not connected yet.
@@ -429,7 +506,7 @@ struct RollbackCheckTests {
     }
 }
 
-@Suite("Slot metadata and the self-test")
+@Suite("Slot metadata")
 struct SlotMetadataTests {
     @Test("A fresh install's state.json names no switch and no rejected hash; both round-trip under their keys")
     func stateKeys() throws {
@@ -443,40 +520,6 @@ struct SlotMetadataTests {
         let encoded = try state.encoded()
         #expect(String(decoding: encoded, as: UTF8.self).contains(#""switch""#))
         #expect(try InstallState.decoded(encoded) == state)
-    }
-
-    @Test("The user scope's unit refresh writes exactly the install's units and autostart entry, then reloads")
-    func refreshUnits() {
-        let layout = InstallLayout.user(
-            root: "/home/pbear/.local/share/kernova-agent", configHome: "/home/pbear/.config")
-        let plan = InstallPlan.refreshUnits(layout)
-        #expect(plan.writes == InstallPlan.install(layout).writes)
-        #expect(plan.treeWrites.isEmpty && plan.treeRemovals.isEmpty && plan.before.isEmpty && !plan.removesRoot)
-        #expect(plan.after.map(\.arguments) == [["systemctl", "--user", "daemon-reload"]])
-    }
-
-    /// A script in a scratch directory with `mode`.
-    static func script(_ directory: PortableScratchDirectory, _ name: String, _ text: String, mode: mode_t = 0o755)
-        throws -> String
-    {
-        let path = directory.path + "/" + name
-        try Data(text.utf8).write(to: URL(filePath: path))
-        #expect(chmod(path, mode) == 0)
-        return path
-    }
-
-    @Test("The self-test passes a binary that runs and exits 0, and fails every other")
-    func selfTest() throws {
-        let directory = try PortableScratchDirectory(prefix: "kernova-self-test")
-        #expect(SelfTest.run(try Self.script(directory, "pass", "#!/bin/sh\nexit 0\n")) == .passed)
-        #expect(SelfTest.run(try Self.script(directory, "fail", "#!/bin/sh\nexit 3\n")) == .exited(3))
-        #expect(
-            SelfTest.run(try Self.script(directory, "hang", "#!/bin/sh\nexec sleep 30\n"), limit: .milliseconds(200))
-                == .timedOut)
-        #expect(
-            SelfTest.run(try Self.script(directory, "plain", "#!/bin/sh\nexit 0\n", mode: 0o644))
-                == .couldNotStart(EACCES))
-        #expect(SelfTest.run(directory.path + "/missing") == .couldNotStart(ENOENT))
     }
 }
 

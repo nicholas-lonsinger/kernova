@@ -15,6 +15,7 @@ import CKernovaAgentVersion
 // Apple's Dispatch marks its source protocols `Sendable`; swift-corelibs-libdispatch does not.
 @preconcurrency import Dispatch
 import KernovaAgentCore
+import KernovaAgentInstall
 import KernovaAgentRuntime
 import KernovaDBus
 import KernovaDigest
@@ -173,7 +174,7 @@ enum AgentShell {
 
     /// The installer of the install this executable runs from; nil when it runs from none, as a development
     /// build run in place does, which then advertises UPDATE absent.
-    private static func updateInstaller(scope: InstallScope, label: String) -> LinuxUpdateInstaller? {
+    private static func updateInstaller(scope: InstallScope, label: String) -> SlotUpdateInstaller? {
         guard scope != .unspecified, let running = LinuxIdentity.runningSlot() else { return nil }
         let root: SlotRoot
         do throws(SlotRoot.Failure) {
@@ -182,8 +183,8 @@ enum AgentShell {
             logger.log(.error, "Cannot open the install's root: \(String(describing: error), privacy: .public)")
             return nil
         }
-        return LinuxUpdateInstaller(
-            root: root, runningSlot: running.slot, logger: logger,
+        return SlotUpdateInstaller(
+            root: root, runningSlot: running.slot, lander: ExecutableLander(), logger: logger,
             onSwitched: {
                 logger.log(.notice, "The peer relaunches into the update")
                 guard let runtime = held.withLock({ $0.runtime }) else { exit(relaunchStatus) }
@@ -203,8 +204,7 @@ enum AgentShell {
         // The path the install wrote the units with, from the manager's environment this service shares.
         let layout = InstallLayout.user(
             root: LinuxIdentity.userInstallRoot(environment: environment) ?? root, configHome: config)
-        let installer = Installer(
-            stagingRoot: "", runsSystemd: true, payloadSource: "/proc/self/exe", versionLabel: label, account: nil)
+        let installer = LinuxInstall.installer(stagingRoot: "", runsSystemd: true, label: label, account: nil)
         do throws(Installer.Failure) {
             try installer.run(.refreshUnits(layout))
             logger.log(.notice, "Rewrote the user units for this version")
@@ -220,37 +220,16 @@ enum AgentShell {
             writeError("kernova-agent: rollback-check runs only from an installed slot")
             exit(1)
         }
-        do {
-            let check = RollbackCheck(
-                root: try SlotRoot(path: running.root),
-                mainPID: {
-                    let bus = try DBusBusConnection(bus: scope == .system ? .system : .user)
-                    return try SystemdManager(connection: bus).mainPID(ofService: InstallLayout.serviceName(scope))
-                },
-                kill: { pid in _ = kill(pid_t(pid), SIGKILL) })
-            switch try check.run() {
-            case .nothingPending:
-                break
-            case .clearedStaleMarker:
-                logger.log(.notice, "Removed a switch-pending marker that named no update")
-            case .counted(let runs):
-                logger.log(
-                    .notice, "The update is unconfirmed after \(runs) of \(RollbackCheck.runsToRevert) rollback checks")
-            case .confirmedMeanwhile:
-                logger.log(.notice, "The update was confirmed as the rollback check ran")
-            case .reverted(let killed):
-                logger.log(
-                    .error,
-                    """
-                    The update was never confirmed: rolled back to the previous version, killing process \
-                    \(killed.map(String.init) ?? "none", privacy: .public)
-                    """)
-            }
-            exit(0)
+        let root: SlotRoot
+        do throws(SlotRoot.Failure) {
+            root = try SlotRoot(path: running.root)
         } catch {
-            logger.log(.error, "The rollback check failed: \(String(describing: error), privacy: .public)")
-            exit(1)
+            fail("The rollback check failed: \(String(describing: error), privacy: .public)")
         }
+        let check = RollbackCheck(
+            root: root, serviceManager: SystemdServiceManager(scope: scope),
+            kill: { pid in _ = kill(pid_t(pid), SIGKILL) })
+        exit(check.run(logger: logger) ? 0 : 1)
     }
 
     private static func logState(_ state: PeerSessionState?, role: PeerRole) {
