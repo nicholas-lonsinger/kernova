@@ -687,8 +687,6 @@ message ItemSetHeader {
   // The content is sensitive (a password): the receiver keeps it out of
   // history and logs.
   bool concealed = 1;
-  // The content is momentary: the receiver keeps it out of history.
-  bool transient = 2;
   // The Item messages that follow.
   uint32 count = 3;
   // 16 random bytes naming this offer; a pull quotes it.

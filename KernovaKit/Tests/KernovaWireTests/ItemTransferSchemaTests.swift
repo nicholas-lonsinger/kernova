@@ -95,10 +95,9 @@ struct ItemTransferSchemaTests {
     func itemSetAndRecordFields() throws {
         var setHeader = Kernova_V2_ItemSetHeader()
         setHeader.concealed = true
-        setHeader.transient = true
         setHeader.count = 1
         setHeader.token = Data([0xAA])
-        #expect(try setHeader.serializedBytes() == [0x08, 1, 0x10, 1, 0x18, 1, 0x22, 1, 0xAA])
+        #expect(try setHeader.serializedBytes() == [0x08, 1, 0x18, 1, 0x22, 1, 0xAA])
 
         var type = TypeDescriptor()
         type.mime = "a"
