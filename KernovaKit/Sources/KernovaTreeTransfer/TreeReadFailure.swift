@@ -14,8 +14,8 @@ public struct TreeReadFailure: Error, Equatable, Sendable {
     public enum Reason: Equatable, Sendable {
         /// A file-system call failed.
         case system(TreeFileSystemError)
-        /// The entry changed while it was read: replaced after its directory listed it, or a file whose size
-        /// or modification time moved, or that ended before its size.
+        /// The entry changed while it was read: replaced after its directory listed it, or a file whose size,
+        /// modification time, compression or resource fork moved, or that ended before its size.
         case changed
         /// A directory the reader was inside was moved.
         case moved
@@ -35,8 +35,7 @@ public struct TreeReadFailure: Error, Equatable, Sendable {
         /// The entry's header breaks a rule of `ValidatedEntry`: a name or symlink target past its limits, or
         /// an extended attribute name the format refuses.
         case entry(ContainerError)
-        /// The entry's extended attributes do not fit one header record — a resource fork near 64 KiB or
-        /// larger, most often.
+        /// The entry's extended attributes do not fit one header record.
         case metadataTooLarge
     }
 

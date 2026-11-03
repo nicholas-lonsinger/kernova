@@ -190,7 +190,15 @@ struct DecoderMemoryCeilingTests {
     func ceilingCheckedAtHeader() {
         let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 100, decmpfsTypes: [], acceptsLZ4: false)
         var decoder = ContainerDecoder(accepting: acceptance)
-        decoder.feed(headerRecord(plainFile("f", depth: 0, size: UInt64.max)))
-        #expect(throws: ContainerError.exceedsByteCeiling(declared: UInt64.max, ceiling: 100)) { try decoder.next() }
+        decoder.feed(headerRecord(plainFile("f", depth: 0, size: 1 << 62)))
+        #expect(throws: ContainerError.exceedsByteCeiling(declared: 1 << 62, ceiling: 100)) { try decoder.next() }
+    }
+
+    @Test("A file larger than Int64.max bytes is refused at its header, whatever the ceiling")
+    func fileTooLarge() {
+        let acceptance = ContainerAcceptance(storage: .file, byteCeiling: .max, decmpfsTypes: [], acceptsLZ4: false)
+        var decoder = ContainerDecoder(accepting: acceptance)
+        decoder.feed(headerRecord(plainFile("f", depth: 0, size: UInt64(Int64.max) + 1)))
+        #expect(throws: ContainerError.fileTooLarge(UInt64(Int64.max) + 1)) { try decoder.next() }
     }
 }

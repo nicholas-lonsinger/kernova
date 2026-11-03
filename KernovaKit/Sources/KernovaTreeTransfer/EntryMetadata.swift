@@ -4,11 +4,6 @@ import KernovaWire
 
 /// What an entry lands with besides its contents: its extended attributes, then its mode, flags and times.
 struct EntryMetadata: Sendable {
-    struct ExtendedAttribute: Sendable {
-        let name: [UInt8]
-        let value: [UInt8]
-    }
-
     let extendedAttributes: [ExtendedAttribute]
     let attributes: TreeEntryAttributes
 

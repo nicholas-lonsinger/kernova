@@ -41,6 +41,18 @@ public protocol TreeFileSystem {
     /// longer than `maxByteCount` bytes, which are then never read.
     func extendedAttribute(_ name: [UInt8], of target: TreeEntryTarget, maxByteCount: Int)
         throws(TreeFileSystemError) -> [UInt8]?
+    /// The `com.apple.decmpfs` attribute of the open regular file — the header of its compressed storage
+    /// and, for some types, its compressed bytes — or `nil` when the file is not stored compressed, the OS
+    /// stores no file so, or the attribute is longer than `maxByteCount` bytes.
+    func compressedStorage(of descriptor: Int32, maxByteCount: Int) throws(TreeFileSystemError) -> [UInt8]?
+    /// The size of the open regular file's resource fork, 0 when it has none: as the file shows it, which
+    /// for a compressed file is none, or, `showingCompression`, as its compressed storage holds it.
+    func resourceForkSize(of descriptor: Int32, showingCompression: Bool) throws(TreeFileSystemError) -> UInt64
+    /// Reads up to `buffer.count` bytes of the open regular file's resource fork at `offset`, as
+    /// ``resourceForkSize(of:showingCompression:)`` sees it, returning `0` past its end.
+    func readResourceFork(
+        _ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: UInt64, showingCompression: Bool
+    ) throws(TreeFileSystemError) -> Int
     /// Closes a descriptor this file system opened.
     func close(_ descriptor: Int32)
 }
@@ -95,6 +107,23 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     /// nothing when the volume or the OS cannot hold that attribute there.
     func setExtendedAttribute(_ name: [UInt8], to value: [UInt8], of target: TreeEntryTarget)
         throws(TreeFileSystemError)
+    /// Writes `buffer` into the open regular file's resource fork at
+    /// `offset`, returning `false`, having written nothing, when the volume
+    /// or the OS holds no resource fork there.
+    func writeResourceFork(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: UInt64)
+        throws(TreeFileSystemError) -> Bool
+    /// Whether the volume holding the open directory `directory` stores
+    /// decmpfs-compressed files; `false` where the OS stores none.
+    func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool
+    /// Sets the `com.apple.decmpfs` attribute of the open, empty regular
+    /// file, which is not yet compressed: ``CompressedFile``'s first step,
+    /// and no one else's. `ENOTSUP` where the OS stores no compressed file.
+    func setCompressedStorage(_ attribute: [UInt8], of descriptor: Int32) throws(TreeFileSystemError)
+    /// Sets the open regular file's flags to `flags` with `UF_COMPRESSED`,
+    /// which compresses a file whose storage is in place:
+    /// ``CompressedFile``'s flag write, and no one else's. `ENOTSUP` where
+    /// the OS stores no compressed file.
+    func setCompressedFlags(_ flags: UInt32, of descriptor: Int32) throws(TreeFileSystemError)
     /// Applies `attributes` to `target`, leaving out each one the volume or
     /// the OS cannot hold there.
     func setAttributes(_ attributes: TreeEntryAttributes, of target: TreeEntryTarget) throws(TreeFileSystemError)
@@ -102,6 +131,20 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     /// whose absolute path, NUL excluded, is `pathByteCount` bytes long, or
     /// `nil` when it lands it.
     func landingRefusal(of name: [UInt8], pathByteCount: Int) -> TreeFileSystemError?
+}
+
+/// An extended attribute's name and value.
+public struct ExtendedAttribute: Hashable, Sendable {
+    /// The name, as the volume's bytes.
+    public let name: [UInt8]
+    /// The value.
+    public let value: [UInt8]
+
+    /// The attribute `name` holding `value`.
+    public init(name: [UInt8], value: [UInt8]) {
+        self.name = name
+        self.value = value
+    }
 }
 
 /// What a change of attributes, or an extended attribute read or written, applies to.
@@ -222,6 +265,11 @@ public struct FileStatus: Hashable, Sendable {
     public var specialDevice: UInt64
     /// The BSD file flags; `0` where the OS keeps none.
     public var flags: UInt32
+    /// Whether the file is stored compressed: Darwin's `UF_COMPRESSED`.
+    public var isCompressed: Bool { flags & FileStatus.compressedFlag != 0 }
+    /// Darwin's `UF_COMPRESSED` (`sys/stat.h`), which marks a file stored
+    /// through decmpfs.
+    public static let compressedFlag: UInt32 = 0x20
     /// When the contents last changed.
     public var modificationTime: FileTime
     /// When the entry was created; `nil` where the volume or the call keeps

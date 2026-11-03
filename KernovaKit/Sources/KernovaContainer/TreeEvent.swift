@@ -7,17 +7,21 @@ import Foundation
 import KernovaWire
 
 /// One step of building a tree, in depth-first pre-order: what a tree writer consumes, whichever format
-/// produced it. A file's events are `beginFile`, its `bytes` and `zeros` in order, then `finishFile`; every
-/// `enterDirectory` is matched by one `leaveDirectory` before `end`.
+/// produced it. A file's events are `beginFile`, its data's `bytes` and `zeros` in order, then — when its
+/// header declares a resource fork — `resourceFork` and the fork's `bytes` and `zeros`, then `finishFile`;
+/// every `enterDirectory` is matched by one `leaveDirectory` before `end`.
 public enum TreeEvent: Equatable, Sendable {
     /// Create the directory `header` describes in the current directory, and make it current.
     case enterDirectory(EntryHeader)
-    /// Create the regular file or INLINE data `header` describes. Its bytes follow; for decmpfs storage
-    /// they are the resource fork.
+    /// Create the regular file or INLINE data `header` describes. Its data's bytes follow; decmpfs storage
+    /// has none.
     case beginFile(EntryHeader)
-    /// The current file's next bytes.
+    /// The current file's data has all its bytes; the `bytes` and `zeros` that follow are its resource
+    /// fork's.
+    case resourceFork
+    /// The next bytes of the current file's data, or of its resource fork once `resourceFork` came.
     case bytes(Data)
-    /// The current file's next bytes, all zero.
+    /// The next bytes of the current file's data or resource fork, all zero.
     case zeros(UInt64)
     /// The current file has all its bytes.
     case finishFile
@@ -32,8 +36,7 @@ public enum TreeEvent: Equatable, Sendable {
 
 /// What the pull's destination accepts, which a container is held to on both sides.
 public struct ContainerAcceptance: Equatable, Sendable {
-    /// The most logical bytes the entries may land: each file's size, and for decmpfs storage the larger of
-    /// the attribute's uncompressed size and the resource fork.
+    /// The most logical bytes the entries may land, each entry's `ValidatedEntry.landedByteCount`.
     public var byteCeiling: UInt64
     /// The decmpfs compression types the destination lands as they are.
     public var decmpfsTypes: Set<UInt32>
@@ -68,5 +71,25 @@ public struct ContainerAcceptance: Equatable, Sendable {
         self.init(
             storage: storage, byteCeiling: pull.byteCeiling, decmpfsTypes: Set(pull.decmpfsTypes),
             acceptsLZ4: pull.codecs.contains(.lz4))
+    }
+
+    /// The rules of what lands that `TreeEventSequence` holds `entry` to, after entries that landed `landed`
+    /// bytes: its decmpfs type is one this acceptance lists, and its landed bytes keep the total within the
+    /// byte ceiling. A producer that reads a tree checks an entry here before it emits it.
+    ///
+    /// - Parameters:
+    ///   - entry: The entry.
+    ///   - landed: The logical bytes the entries before it land.
+    /// - Returns: The logical bytes the entries land with it.
+    /// - Throws: `ContainerError.decmpfsTypeNotAccepted` or `.exceedsByteCeiling`.
+    public func admitLanding(_ entry: ValidatedEntry, after landed: UInt64) throws(ContainerError) -> UInt64 {
+        if let decmpfs = entry.decmpfs, !decmpfsTypes.contains(decmpfs.compressionType) {
+            throw .decmpfsTypeNotAccepted(decmpfs.compressionType)
+        }
+        let size = entry.landedByteCount
+        guard landed <= byteCeiling, size <= byteCeiling - landed else {
+            throw .exceedsByteCeiling(declared: landed &+ size, ceiling: byteCeiling)
+        }
+        return landed + size
     }
 }

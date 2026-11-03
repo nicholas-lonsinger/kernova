@@ -29,7 +29,7 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     /// A receiver landing what `acceptance` admits in `destination`.
     ///
     /// - Parameters:
-    ///   - acceptance: What the pull accepts; its byte ceiling bounds the writer too.
+    ///   - acceptance: What the pull accepts; its byte ceiling and decmpfs types bound the writer too.
     ///   - fileSystem: The calls the writer makes.
     ///   - destination: An open directory, which the receiver takes ownership of and closes when it ends.
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path.
@@ -41,7 +41,7 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         decoder = ContainerDecoder(accepting: acceptance)
         writer = TreeWriter(
             fileSystem: fileSystem, destination: destination, destinationPathByteCount: destinationPathByteCount,
-            byteCeiling: acceptance.byteCeiling, logger: logger)
+            accepting: acceptance, logger: logger)
     }
 
     /// Takes the container's next bytes, landing every entry they complete.

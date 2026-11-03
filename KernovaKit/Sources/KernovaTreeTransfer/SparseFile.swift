@@ -144,7 +144,8 @@ struct SparseFile<FileSystem: MutableTreeFileSystem> {
     }
 }
 
-/// The zeros ``SparseFile`` writes where it makes no hole, allocated once and never freed.
-private nonisolated(unsafe) let zeroBlock = UnsafeRawBufferPointer(
+/// The zeros ``SparseFile`` writes where it makes no hole, and a resource fork's zeros, allocated once and never
+/// freed.
+nonisolated(unsafe) let zeroBlock = UnsafeRawBufferPointer(
     UnsafeMutableRawBufferPointer.allocate(byteCount: 64 * 1024, alignment: 16).initializeMemory(
         as: UInt8.self, repeating: 0))

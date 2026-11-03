@@ -37,12 +37,14 @@ struct RoundTripFidelityTests {
         var sparse: [[[UInt8]]] = []
         /// A file whose zeros are stored, not holes.
         var storedZeros: [[UInt8]] = []
+        /// Files given a resource fork, with the fork given.
+        var resourceForks: [([[UInt8]], [UInt8])] = []
     }
 
     static let item = bytes("item")
 
-    /// Builds the item: every entry type, modes, times, flags and carried and uncarried extended attributes,
-    /// deep nesting, more siblings than one folder batch takes, empty files and directories, files on each
+    /// Builds the item: every entry type, modes, times, flags, carried and uncarried extended attributes and
+    /// resource forks, deep nesting, more siblings than one folder batch takes, empty files and directories, files on each
     /// side of the batch and chunk sizes, sparse files with holes smaller than a chunk, and on Linux a name
     /// that is not UTF-8.
     static func buildTree(on bench: FidelityBench) throws -> Expected {
@@ -136,9 +138,17 @@ struct RoundTripFidelityTests {
         }
         try bench.setExtendedAttribute(at("link-relative"), tags, tagValue, symlink: true)
         expected.xattrs.append((at("link-relative"), tags, tagValue))
-        let fork = Array(randomBytes(4096, seed: 8))
-        try bench.setExtendedAttribute(at("chunk"), "com.apple.ResourceFork", fork)
-        expected.xattrs.append((at("chunk"), "com.apple.ResourceFork", fork))
+        // Resource forks: a small one, held with its file; one past a header record on a file written as it
+        // arrives; and a folder's custom icon, an empty `Icon\r` whose fork is the icon.
+        try directory(at("custom-icon"))
+        try file(at("custom-icon", "Icon\r"), Data())
+        for (components, size, seed) in [
+            (at("chunk"), 4096, UInt64(8)), (at("large"), 70 << 10, 12), (at("custom-icon", "Icon\r"), 200 << 10, 13),
+        ] {
+            let fork = Array(randomBytes(size, seed: seed))
+            try bench.setExtendedAttribute(components, "com.apple.ResourceFork", fork)
+            expected.resourceForks.append((components, fork))
+        }
         try bench.setExtendedAttribute(at("one"), "com.example.private", bytes("stays home"))
         expected.uncarriedXattr = (at("one"), "com.example.private")
         // `UF_TRACKED` (0x40) is not carried; it rides along to show the mask.
@@ -246,12 +256,16 @@ struct RoundTripFidelityTests {
             #expect(landed.size == read.size, "size of \(where_)")
             #expect(landed.linkTarget == read.linkTarget, "symlink target of \(where_)")
             #expect(landed.carriedXattrs == read.carriedXattrs, "xattrs of \(where_)")
+            #expect(landed.resourceFork == read.resourceFork, "resource fork of \(where_)")
             #expect(landed.digest == read.digest, "SHA-256 of \(where_)")
             // The writer leaves every whole all-zero block a hole, whether the source stored it or not.
             #expect(landed.blocks == read.blocks - read.storedZeroBlocks, "st_blocks of \(where_)")
         }
         for (components, name, value) in expected.xattrs {
             #expect(destination[components]?.carriedXattrs[bytes(name)] == value, "\(name) landed on \(components)")
+        }
+        for (components, fork) in expected.resourceForks {
+            #expect(destination[components]?.resourceFork == fork, "the resource fork landed on \(components)")
         }
         if let (components, name) = expected.uncarriedXattr {
             try #require(source[components]?.xattrNames.contains(bytes(name)) == true)

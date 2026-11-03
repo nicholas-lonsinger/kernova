@@ -623,8 +623,9 @@ message LogBatch {
 //
 // The container is the same for every pull, an INLINE representation
 // included: records of entries in depth-first pre-order, each entry an
-// EntryHeader followed by its data chunks, and an EndRecord last. The record
-// framing is not protobuf and lives in KernovaContainer.
+// EntryHeader followed by its data chunks and then its resource fork's, and
+// an EndRecord last. The record framing is not protobuf and lives in
+// KernovaContainer.
 
 // FeatureAdvert.params for ITEM_TRANSFER, both sides.
 message ItemTransferCapability {
@@ -694,8 +695,8 @@ message PullRequest {
   // Index into the item's representations.
   uint32 representation = 3;
   // The most logical bytes the container may land: each DATA or FILE
-  // entry's size, and for decmpfs storage the larger of the attribute's
-  // uncompressed size and the resource fork's size.
+  // entry's size plus its resource fork's, and for decmpfs storage the
+  // larger of the attribute's uncompressed size and the resource fork's.
   uint64 byte_ceiling = 4;
   // The decmpfs compression types the destination lands as they are; a file
   // of any other type is sent decompressed. Empty: none.
@@ -743,15 +744,14 @@ message Lz4Storage {
 }
 
 // A file landed with its decmpfs compression intact. Sent only for a type
-// the pull listed in `decmpfs_types`.
+// the pull listed in `decmpfs_types`. The entry has no data chunks: its
+// content is this attribute and, for a type that keeps it there, the
+// resource fork (`EntryHeader.resource_fork_size`).
 message DecmpfsStorage {
   // The com.apple.decmpfs attribute, at most 3,802 bytes. Its header holds
   // the compression type and the file's logical size; no other field
   // repeats them.
   bytes attribute = 1;
-  // The resource fork's size, which the chunks carry exactly; 0 when the
-  // attribute holds the data.
-  uint64 resource_fork_size = 2;
 }
 
 // The header record of one container entry, at most 64 KiB.
@@ -786,13 +786,18 @@ message EntryHeader {
     Lz4Storage lz4 = 11;
     DecmpfsStorage decmpfs = 12;
   }
+  // FILE: the resource fork's size, whose bytes are chunks of their own after
+  // the data's, carried as the storage carries the data (raw beside decmpfs).
+  // 0 on every other type, and on a file without one.
+  uint64 resource_fork_size = 13;
 }
 
 // The container's last record.
 message EndRecord {
   // The entries the container held.
   uint64 entries = 1;
-  // The bytes every entry's chunks carry, after decompression: a framing
-  // count, not the size landed, which for decmpfs storage is the attribute's.
+  // The bytes every entry's chunks carry, data and resource fork, after
+  // decompression: a framing count, not the size landed, which for decmpfs
+  // storage is the attribute's.
   uint64 bytes = 2;
 }

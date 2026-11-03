@@ -1992,8 +1992,8 @@ public nonisolated struct Kernova_V2_PullRequest: Sendable {
   public var representation: UInt32 = 0
 
   /// The most logical bytes the container may land: each DATA or FILE
-  /// entry's size, and for decmpfs storage the larger of the attribute's
-  /// uncompressed size and the resource fork's size.
+  /// entry's size plus its resource fork's, and for decmpfs storage the
+  /// larger of the attribute's uncompressed size and the resource fork's.
   public var byteCeiling: UInt64 = 0
 
   /// The decmpfs compression types the destination lands as they are; a file
@@ -2141,7 +2141,9 @@ public nonisolated struct Kernova_V2_Lz4Storage: Sendable {
 }
 
 /// A file landed with its decmpfs compression intact. Sent only for a type
-/// the pull listed in `decmpfs_types`.
+/// the pull listed in `decmpfs_types`. The entry has no data chunks: its
+/// content is this attribute and, for a type that keeps it there, the
+/// resource fork (`EntryHeader.resource_fork_size`).
 public nonisolated struct Kernova_V2_DecmpfsStorage: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2151,10 +2153,6 @@ public nonisolated struct Kernova_V2_DecmpfsStorage: Sendable {
   /// the compression type and the file's logical size; no other field
   /// repeats them.
   public var attribute: Data = Data()
-
-  /// The resource fork's size, which the chunks carry exactly; 0 when the
-  /// attribute holds the data.
-  public var resourceForkSize: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2234,6 +2232,11 @@ public nonisolated struct Kernova_V2_EntryHeader: Sendable {
     set {storage = .decmpfs(newValue)}
   }
 
+  /// FILE: the resource fork's size, whose bytes are chunks of their own after
+  /// the data's, carried as the storage carries the data (raw beside decmpfs).
+  /// 0 on every other type, and on a file without one.
+  public var resourceForkSize: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   /// DATA and FILE: how the chunks carry the bytes. Unset on any other type.
@@ -2309,8 +2312,9 @@ public nonisolated struct Kernova_V2_EndRecord: Sendable {
   /// The entries the container held.
   public var entries: UInt64 = 0
 
-  /// The bytes every entry's chunks carry, after decompression: a framing
-  /// count, not the size landed, which for decmpfs storage is the attribute's.
+  /// The bytes every entry's chunks carry, data and resource fork, after
+  /// decompression: a framing count, not the size landed, which for decmpfs
+  /// storage is the attribute's.
   public var bytes: UInt64 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -4070,7 +4074,7 @@ nonisolated extension Kernova_V2_Lz4Storage: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Kernova_V2_DecmpfsStorage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DecmpfsStorage"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}attribute\0\u{3}resource_fork_size\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}attribute\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4079,7 +4083,6 @@ nonisolated extension Kernova_V2_DecmpfsStorage: SwiftProtobuf.Message, SwiftPro
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularBytesField(value: &self.attribute) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.resourceForkSize) }()
       default: break
       }
     }
@@ -4089,15 +4092,11 @@ nonisolated extension Kernova_V2_DecmpfsStorage: SwiftProtobuf.Message, SwiftPro
     if !self.attribute.isEmpty {
       try visitor.visitSingularBytesField(value: self.attribute, fieldNumber: 1)
     }
-    if self.resourceForkSize != 0 {
-      try visitor.visitSingularUInt64Field(value: self.resourceForkSize, fieldNumber: 2)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_DecmpfsStorage, rhs: Kernova_V2_DecmpfsStorage) -> Bool {
     if lhs.attribute != rhs.attribute {return false}
-    if lhs.resourceForkSize != rhs.resourceForkSize {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4105,7 +4104,7 @@ nonisolated extension Kernova_V2_DecmpfsStorage: SwiftProtobuf.Message, SwiftPro
 
 nonisolated extension Kernova_V2_EntryHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EntryHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}depth\0\u{1}name\0\u{1}type\0\u{1}mode\0\u{3}darwin_flags\0\u{3}modification_time\0\u{3}birth_time\0\u{1}xattrs\0\u{3}symlink_target\0\u{1}plain\0\u{1}lz4\0\u{1}decmpfs\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}depth\0\u{1}name\0\u{1}type\0\u{1}mode\0\u{3}darwin_flags\0\u{3}modification_time\0\u{3}birth_time\0\u{1}xattrs\0\u{3}symlink_target\0\u{1}plain\0\u{1}lz4\0\u{1}decmpfs\0\u{3}resource_fork_size\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4161,6 +4160,7 @@ nonisolated extension Kernova_V2_EntryHeader: SwiftProtobuf.Message, SwiftProtob
           self.storage = .decmpfs(v)
         }
       }()
+      case 13: try { try decoder.decodeSingularUInt64Field(value: &self.resourceForkSize) }()
       default: break
       }
     }
@@ -4213,6 +4213,9 @@ nonisolated extension Kernova_V2_EntryHeader: SwiftProtobuf.Message, SwiftProtob
     }()
     case nil: break
     }
+    if self.resourceForkSize != 0 {
+      try visitor.visitSingularUInt64Field(value: self.resourceForkSize, fieldNumber: 13)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4227,6 +4230,7 @@ nonisolated extension Kernova_V2_EntryHeader: SwiftProtobuf.Message, SwiftProtob
     if lhs.xattrs != rhs.xattrs {return false}
     if lhs.symlinkTarget != rhs.symlinkTarget {return false}
     if lhs.storage != rhs.storage {return false}
+    if lhs.resourceForkSize != rhs.resourceForkSize {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

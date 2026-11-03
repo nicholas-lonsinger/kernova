@@ -76,9 +76,9 @@ struct ItemTransferSchemaTests {
         #expect(try header.serializedBytes() == [0x5A, 0])
         var decmpfs = Kernova_V2_DecmpfsStorage()
         decmpfs.attribute = Data([0x63])
-        decmpfs.resourceForkSize = 1
         header.decmpfs = decmpfs
-        #expect(try header.serializedBytes() == [0x62, 5, 0x0A, 1, 0x63, 0x10, 1])
+        header.resourceForkSize = 1
+        #expect(try header.serializedBytes() == [0x62, 3, 0x0A, 1, 0x63, 0x68, 1])
     }
 
     @Test("The item-set, outcome and record messages carry the proto's numbers")

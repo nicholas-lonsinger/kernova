@@ -164,5 +164,62 @@ struct POSIXTreeFileSystemTests {
         #expect(try fileSystem.status(of: at).inode == topStatus.inode)
         #expect(try fileSystem.names(in: at).isEmpty)
     }
+
+    @Test(
+        "a resource fork written in positional pieces reads back in pieces where the OS keeps one, and is refused where it keeps none"
+    )
+    func resourceForkInPieces() throws {
+        let fileSystem = POSIXTreeFileSystem()
+        let top = try openScratch(on: fileSystem)
+        defer { fileSystem.close(top) }
+        let descriptor = try fileSystem.createFile(Self.bytes("forked"), in: top)
+        defer { fileSystem.close(descriptor) }
+        let fork = (0..<300_000).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 1) }
+        var held = true
+        for start in stride(from: 0, to: fork.count, by: 65_536) {
+            let piece = fork[start..<min(start + 65_536, fork.count)]
+            held = try piece.withUnsafeBytes {
+                try fileSystem.writeResourceFork(descriptor, from: $0, at: UInt64(start))
+            }
+            guard held else { break }
+        }
+        #if canImport(Darwin)
+        #expect(held)
+        #expect(try fileSystem.resourceForkSize(of: descriptor, showingCompression: false) == UInt64(fork.count))
+        var read = [UInt8](repeating: 0, count: fork.count + 10)
+        var offset = 0
+        while true {
+            let count = try read.withUnsafeMutableBytes { buffer in
+                try fileSystem.readResourceFork(
+                    descriptor,
+                    into: UnsafeMutableRawBufferPointer(rebasing: buffer[offset..<min(offset + 100_000, buffer.count)]),
+                    at: UInt64(offset), showingCompression: false)
+            }
+            if count == 0 { break }
+            offset += count
+        }
+        #expect(Array(read[..<offset]) == fork)
+        #expect(try fileSystem.compressedStorage(of: descriptor, maxByteCount: 3_802) == nil)
+        #else
+        #expect(!held)
+        #expect(try fileSystem.resourceForkSize(of: descriptor, showingCompression: false) == 0)
+        #endif
+    }
+
+    @Test("the scratch volume stores compressed files on Darwin's APFS, and none on Linux")
+    func volumeCompression() throws {
+        let fileSystem = POSIXTreeFileSystem()
+        let top = try openScratch(on: fileSystem)
+        defer { fileSystem.close(top) }
+        #if canImport(Darwin)
+        #expect(try fileSystem.volumeStoresCompressedFiles(top))
+        #else
+        #expect(try !fileSystem.volumeStoresCompressedFiles(top))
+        let descriptor = try fileSystem.createFile(Self.bytes("plain"), in: top)
+        defer { fileSystem.close(descriptor) }
+        #expect(throws: TreeFileSystemError(code: ENOTSUP)) { try fileSystem.setCompressedStorage([0], of: descriptor) }
+        #expect(throws: TreeFileSystemError(code: ENOTSUP)) { try fileSystem.setCompressedFlags(0, of: descriptor) }
+        #endif
+    }
 }
 #endif

@@ -139,6 +139,47 @@ extension POSIXTreeFileSystem {
     }
 }
 
+extension POSIXTreeFileSystem {
+    /// Linux stores no file compressed through decmpfs.
+    public func compressedStorage(of descriptor: Int32, maxByteCount: Int) throws(TreeFileSystemError) -> [UInt8]? {
+        nil
+    }
+
+    /// Linux keeps no resource forks.
+    public func resourceForkSize(of descriptor: Int32, showingCompression: Bool) throws(TreeFileSystemError)
+        -> UInt64
+    {
+        0
+    }
+
+    /// Linux keeps no resource forks, so there is nothing to read.
+    public func readResourceFork(
+        _ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: UInt64, showingCompression: Bool
+    ) throws(TreeFileSystemError) -> Int {
+        0
+    }
+
+    /// `false`: Linux keeps no resource forks.
+    public func writeResourceFork(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: UInt64)
+        throws(TreeFileSystemError) -> Bool
+    {
+        false
+    }
+
+    /// `false`: Linux stores no file compressed through decmpfs.
+    public func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool { false }
+
+    /// `ENOTSUP`: Linux stores no file compressed through decmpfs.
+    public func setCompressedStorage(_ attribute: [UInt8], of descriptor: Int32) throws(TreeFileSystemError) {
+        throw TreeFileSystemError(code: ENOTSUP)
+    }
+
+    /// `ENOTSUP`: Linux stores no file compressed through decmpfs.
+    public func setCompressedFlags(_ flags: UInt32, of descriptor: Int32) throws(TreeFileSystemError) {
+        throw TreeFileSystemError(code: ENOTSUP)
+    }
+}
+
 extension FileStatus {
     /// The status `stat(2)` reported, which on Linux carries no birth time
     /// and no file flags.

@@ -62,6 +62,34 @@ func symlinkEntry(_ name: String, depth: UInt32, target: String) -> EntryHeader 
     return header
 }
 
+/// `header` with a resource fork of `size` bytes.
+func withResourceFork(_ header: EntryHeader, size: UInt64) -> EntryHeader {
+    var header = header
+    header.resourceForkSize = size
+    return header
+}
+
+/// A `com.apple.decmpfs` attribute: XNU's `decmpfs_disk_header` of `type` and `logicalSize`, then `payload`.
+func decmpfsAttribute(type: UInt32, logicalSize: UInt64, payload: Data = Data()) -> Data {
+    var attribute = Data()
+    for value in [UInt64(DecmpfsHeader.magic), UInt64(type)] {
+        attribute.append(contentsOf: (0..<4).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
+    }
+    attribute.append(contentsOf: (0..<8).map { UInt8(truncatingIfNeeded: logicalSize >> ($0 * 8)) })
+    return attribute + payload
+}
+
+/// A file landing compressed: decmpfs storage of `type` and `logicalSize`, with a resource fork.
+func compressedFile(
+    _ name: String, depth: UInt32, type: UInt32, logicalSize: UInt64, resourceForkSize: UInt64,
+    payload: Data = Data()
+) -> EntryHeader {
+    var header = file(name, depth: depth, size: 0)
+    header.decmpfs.attribute = decmpfsAttribute(type: type, logicalSize: logicalSize, payload: payload)
+    header.resourceForkSize = resourceForkSize
+    return header
+}
+
 /// A file larger than a folder batch takes, so it is written as it arrives.
 let largeFileSize = FolderBatch.largestFile + 1
 
@@ -177,12 +205,15 @@ final class Landing {
     }
 
     /// A writer landing in the destination, driven by events directly.
-    func writer(ceiling: UInt64 = 1 << 30, logger: KernovaLogger = TreeWriterLog.logger) throws
-        -> TreeWriter<POSIXTreeFileSystem>
-    {
-        TreeWriter(
+    func writer(
+        _ storage: Representation.Storage = .folder, ceiling: UInt64 = 1 << 30, decmpfsTypes: Set<UInt32> = [],
+        logger: KernovaLogger = TreeWriterLog.logger
+    ) throws -> TreeWriter<POSIXTreeFileSystem> {
+        var accepted = acceptance(storage, ceiling: ceiling)
+        accepted.decmpfsTypes = decmpfsTypes
+        return TreeWriter(
             fileSystem: fileSystem, destination: try openDestination(),
-            destinationPathByteCount: destinationPath.utf8.count, byteCeiling: ceiling, logger: logger)
+            destinationPathByteCount: destinationPath.utf8.count, accepting: accepted, logger: logger)
     }
 
     /// Feeds `container` in pieces of `pieceSize` bytes, then finishes, returning the landed name or the
