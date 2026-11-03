@@ -10,8 +10,9 @@ import KernovaWire
 /// container its source produces, a read at a time, and ENDs once the source reports it finished. Each read
 /// is a reservation of the connection's raw budget, so however many pulls are served at once, an answer
 /// within its read always fits; the connection refuses a puller's END that precedes this side's
-/// (`acceptorEndsFirst`). A pull exists from its `.serve` to its stream's close, which alone emits its
-/// `.release` and its one `.serveEnded`.
+/// (`acceptorEndsFirst`). Once this side ENDs, the puller holds the whole container and only its outcome is
+/// left, so the end of the offer no longer resets the pull. A pull exists from its `.serve` to its stream's
+/// close, which alone emits its `.release` and its one `.serveEnded`.
 struct ItemPullServer: Sendable {
     private struct Pull: Sendable {
         var id: ItemPullID
@@ -93,10 +94,10 @@ struct ItemPullServer: Sendable {
         }
     }
 
-    /// The registry changed: a pull of an offer no longer open is stale.
+    /// The registry changed: a pull of an offer no longer open is stale, unless this side has sent all of it.
     mutating func offersChanged(_ offers: ItemOfferRegistry, connection: inout Connection) {
         let open = offers.localTokens
-        for pull in pulls where !open.contains(pull.token) && connection.canReset(pull.id.stream) {
+        for pull in pulls where !open.contains(pull.token) && !pull.ended && connection.canReset(pull.id.stream) {
             connection.reset(pull.id.stream, WireError(.itemOfferStale))
         }
     }
@@ -109,7 +110,7 @@ struct ItemPullServer: Sendable {
     }
 
     /// The puller's `PullOutcome` when it ENDed; otherwise how the stream closed.
-    private static func result(_ closure: StreamClosure) -> ItemPullResult {
+    private static func result(_ closure: StreamClosure) -> ItemServeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
         guard let outcome = try? Kernova_V2_PullOutcome(serializedBytes: body) else {
             return .failed(WireError(.malformedMessage, debugDetail: "a PullOutcome that does not decode"))
@@ -131,19 +132,23 @@ struct ItemPullServer: Sendable {
 }
 
 /// The pulling side of ITEM_PULL: opens a pull of the far side's open offer, hands the container's bytes to
-/// its sink as they arrive, asks it to finish at the far side's END, and ENDs with the sink's verdict as a
-/// `PullOutcome`; a verified container is committed at once. A sink refusal before the END RESETs the pull
-/// with the sink's code, and so does the end of the offer it names, with `ITEM_OFFER_STALE`. A pull exists
-/// from the `.success` `pull` returns to its stream's close, which alone emits its one `.pullEnded`, after the
-/// sink's `.abort` unless it was told to commit.
+/// its sink as they arrive, and asks it to finish at the far side's END. A verified container is committed at
+/// once, and the pull ENDs with the sink's publish report as a `PullOutcome`; a container the sink refused
+/// ENDs FAILED with its code. A sink refusal before the END RESETs the pull with the sink's code, and so does
+/// the end of the offer it names, with `ITEM_OFFER_STALE`, until the pull is committed: nothing withdraws a
+/// commit. A pull exists from the `.success` `pull` returns to its stream's close, or its sink's publish
+/// report when that comes later. It emits one `.pullEnded`: a committed pull's on its sink's report, any
+/// other's at its close, after the sink's `.abort`.
 struct ItemPullClient: Sendable {
     private enum Sink: Sendable, Equatable {
         /// Container bytes are arriving.
         case receiving
         /// The far side ended; the sink was asked to finish.
         case finishing
-        /// The sink verified the container and was told to commit it.
-        case committed
+        /// The sink verified the container and was told to commit it; its report is owed.
+        case publishing
+        /// The sink reported its publish, and the pull ended.
+        case reported
         /// The sink refused it.
         case refused(WireError)
     }
@@ -152,12 +157,20 @@ struct ItemPullClient: Sendable {
         var id: ItemPullID
         var token: Data
         var sink: Sink = .receiving
+        /// The stream closed while the sink was publishing.
+        var streamClosed = false
+
+        /// Whether the sink was told to commit it: nothing withdraws that.
+        var isCommitted: Bool { sink == .publishing || sink == .reported }
     }
 
     private var pulls: [Pull] = []
 
+    /// Whether a committed pull's publish report is still owed.
+    var hasLandingsInFlight: Bool { pulls.contains { $0.sink == .publishing } }
+
     mutating func pull(
-        _ request: PullRequest, offers: ItemOfferRegistry, generation: ConnectionGeneration,
+        _ request: PullRequest, landing: ItemLanding, offers: ItemOfferRegistry, generation: ConnectionGeneration,
         connection: inout Connection, outbox: inout [ItemTransferOutput]
     ) -> Result<ItemPullID, WireError> {
         let representation: Representation
@@ -165,29 +178,33 @@ struct ItemPullClient: Sendable {
         case .failure(let error): return .failure(error)
         case .success(let named): representation = named
         }
+        guard landing.takes(representation.storage) else {
+            return .failure(
+                WireError(.internal, debugDetail: "a \(landing) landing for a \(representation.storage) representation")
+            )
+        }
         let kind: StreamKind = connection.role == .host ? .itemPullByHost : .itemPullByPeer
         if let refusal = connection.openRefusal(kind) { return .failure(refusal) }
         let stream = connection.open(kind, body: request.encoded)
         guard stream != .session else { return .failure(WireError(.internal, debugDetail: "the open failed")) }
         let id = ItemPullID(generation: generation, stream: stream)
         pulls.append(Pull(id: id, token: request.token))
-        outbox.append(.sink(.begin(id, request, representation)))
+        outbox.append(.sink(.begin(id, request, representation, landing)))
         return .success(id)
     }
 
     /// The registry changed: a pull of an offer no longer open ends `ITEM_OFFER_STALE`, uncommitted.
     mutating func offersChanged(_ offers: ItemOfferRegistry, connection: inout Connection) {
         let open = offers.remoteTokens
-        for pull in pulls
-        where !open.contains(pull.token) && pull.sink != .committed
-            && connection.canReset(pull.id.stream)
-        {
+        for pull in pulls where !open.contains(pull.token) && !pull.isCommitted && connection.canReset(pull.id.stream) {
             connection.reset(pull.id.stream, WireError(.itemOfferStale))
         }
     }
 
     mutating func cancel(_ stream: StreamID, connection: inout Connection) {
-        guard pulls.contains(where: { $0.id.stream == stream }), connection.canReset(stream) else { return }
+        guard let pull = pulls.first(where: { $0.id.stream == stream }), !pull.isCommitted,
+            connection.canReset(stream)
+        else { return }
         connection.reset(stream, WireError(.cancelled))
     }
 
@@ -217,9 +234,8 @@ struct ItemPullClient: Sendable {
             guard pulls[index].sink == .finishing else {
                 return diagnostics.append(.localFault("the item sink verified a pull it was not asked to finish"))
             }
-            pulls[index].sink = .committed
+            pulls[index].sink = .publishing
             outbox.append(.sink(.commit(id)))
-            end(id.stream, Self.outcome(nil), &connection)
         case .refused(let id, let error):
             guard let index = index(id, generation) else { return }
             switch pulls[index].sink {
@@ -229,26 +245,53 @@ struct ItemPullClient: Sendable {
             case .finishing:
                 pulls[index].sink = .refused(error)
                 end(id.stream, Self.outcome(error), &connection)
-            case .committed, .refused:
+            case .publishing, .reported, .refused:
                 diagnostics.append(.localFault("the item sink refused a pull it already settled"))
             }
+        case .published(let id, let item):
+            reported(id, .landed(item), generation, &connection, &outbox, &diagnostics)
+        case .publishFailed(let id, let error):
+            reported(id, .failed(error), generation, &connection, &outbox, &diagnostics)
         }
+    }
+
+    /// The sink's publish report: the pull ENDs with it as its outcome while its stream is open, and ends.
+    private mutating func reported(
+        _ id: ItemPullID, _ result: ItemPullResult, _ generation: ConnectionGeneration, _ connection: inout Connection,
+        _ outbox: inout [ItemTransferOutput], _ diagnostics: inout [Diagnostic]
+    ) {
+        guard let index = index(id, generation) else { return }
+        guard pulls[index].sink == .publishing else {
+            return diagnostics.append(.localFault("the item sink reported a publish it was not asked for"))
+        }
+        if pulls[index].streamClosed {
+            pulls.remove(at: index)
+        } else {
+            pulls[index].sink = .reported
+            let error: WireError? = if case .failed(let error) = result { error } else { nil }
+            end(id.stream, Self.outcome(error), &connection)
+        }
+        outbox.append(.event(.pullEnded(id, result)))
     }
 
     mutating func closed(_ stream: StreamID, _ closure: StreamClosure, outbox: inout [ItemTransferOutput]) {
         guard let index = pulls.firstIndex(where: { $0.id.stream == stream }) else { return }
-        let pull = pulls.remove(at: index)
         let result: ItemPullResult
-        switch pull.sink {
-        case .committed:
-            result = .landed
+        switch pulls[index].sink {
+        case .publishing:
+            // Its end waits for the sink's report.
+            pulls[index].streamClosed = true
+            return
+        case .reported:
+            pulls.remove(at: index)
+            return
         case .refused(let error):
-            outbox.append(.sink(.abort(pull.id)))
             result = .failed(error)
         case .receiving, .finishing:
-            outbox.append(.sink(.abort(pull.id)))
             result = .closed(closure)
         }
+        let pull = pulls.remove(at: index)
+        outbox.append(.sink(.abort(pull.id)))
         outbox.append(.event(.pullEnded(pull.id, result)))
     }
 

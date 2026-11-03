@@ -11,16 +11,18 @@ import KernovaWire
 /// adapters do, and what its owner heard.
 package final class SimItemSide {
     package var source = ContainerItemSource()
-    package private(set) var sink = DecodingItemSink()
+    package var sink = DecodingItemSink()
     /// The consumer-stall fault holding the sink's consumption, while one does.
     var stall: Int?
+    /// How long the sink takes to publish a committed pull.
+    package var publishDelay: SimTime = .us(20)
     private var heldConsumption: [ItemSinkInput] = []
     /// Every pull asked for, and what `pullItem` returned.
     package private(set) var pulls: [(time: SimTime, request: PullRequest, result: Result<ItemPullID, WireError>)] = []
     /// Every refused offer.
     package private(set) var offerRefusals: [WireError] = []
     package private(set) var pullsEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
-    package private(set) var servesEnded: [(time: SimTime, id: ItemPullID, result: ItemPullResult)] = []
+    package private(set) var servesEnded: [(time: SimTime, id: ItemPullID, result: ItemServeResult)] = []
     package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
     package private(set) var offersEnded:
         [(time: SimTime, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
@@ -40,7 +42,12 @@ package final class SimItemSide {
                 world.faultTookEffect(stall)
                 return
             }
-            world.itemInput(.sink(input), link: link, side: side, after: .us(20))
+            switch input {
+            case .published, .publishFailed:
+                world.itemInput(.sink(input), link: link, side: side, after: publishDelay)
+            default:
+                world.itemInput(.sink(input), link: link, side: side, after: .us(20))
+            }
         case .event(let event):
             switch event {
             case .offerReceived(let header): offersReceived.append((world.now, header))
@@ -69,13 +76,15 @@ package final class SimItemSide {
 }
 
 extension SimWorld {
-    /// Feeds an item source's or sink's answer to `side`'s endpoint after `delay`, if the link still runs there.
+    /// Feeds an item source's or sink's answer to `side`'s endpoint after `delay`, if the link still runs
+    /// there or has a landing in flight, as a driver feeds a finished endpoint until its committed pulls end.
     package func itemInput(_ input: ItemTransferInput, link: SimLink, side: SimSide, after delay: SimTime) {
         let process = process(of: link, side)
         at(now + delay) { world in
             world.perform(process) { world in
-                guard !link.shutDown.contains(side) else { return }
+                guard !link.shutDown.contains(side) || link.hasLandingsInFlight(side) else { return }
                 let local = world.localNow(process)
+                if case .sink(let report) = input { world.checker.sinkReport(report, link: link, side: side) }
                 switch side {
                 case .host: link.host?.handle(input, now: local)
                 case .peer: link.peer?.handle(.items(input), now: local)
@@ -129,11 +138,20 @@ extension SimWorld {
         }
     }
 
-    /// `side` pulls `request` on link `index`.
+    /// `side` pulls `request` on link `index`, landing it as `DecodingItemSink.landing(_:)` takes the storage
+    /// of the representation it names.
     package func pullItem(_ request: PullRequest, by side: SimSide, link index: Int = 0) {
         onEndpoint(side, link: index) { world, link, now in
+            let item =
+                side == .host
+                ? link.host?.remoteOfferItem(token: request.token, index: Int(request.item))
+                : link.peer?.remoteOfferItem(token: request.token, index: Int(request.item))
+            let storage = item?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
+            let landing = DecodingItemSink.landing(storage)
             let result =
-                side == .host ? link.host?.pullItem(request, now: now) : link.peer?.pullItem(request, now: now)
+                side == .host
+                ? link.host?.pullItem(request, landing: landing, now: now)
+                : link.peer?.pullItem(request, landing: landing, now: now)
             if let result { link.items(side).recordPull(request, result, at: world.now) }
         }
     }

@@ -70,6 +70,10 @@ public protocol ItemSink: Sendable {
 public struct ItemSourceReporter: Sendable {
     let deliver: @Sendable (ItemSourceInput) -> Void
 
+    package init(_ deliver: @escaping @Sendable (ItemSourceInput) -> Void) {
+        self.deliver = deliver
+    }
+
     /// Reports `input` to the connection whose effect this reporter came with.
     public func report(_ input: ItemSourceInput) {
         deliver(input)
@@ -79,6 +83,10 @@ public struct ItemSourceReporter: Sendable {
 /// How an item sink reports to one connection, from any thread.
 public struct ItemSinkReporter: Sendable {
     let deliver: @Sendable (ItemSinkInput) -> Void
+
+    package init(_ deliver: @escaping @Sendable (ItemSinkInput) -> Void) {
+        self.deliver = deliver
+    }
 
     /// Reports `input` to the connection whose effect this reporter came with.
     public func report(_ input: ItemSinkInput) {

@@ -216,12 +216,13 @@ final class Landing {
             destinationPathByteCount: destinationPath.utf8.count, accepting: accepted, logger: logger)
     }
 
-    /// Feeds `container` in pieces of `pieceSize` bytes, then finishes, returning the landed name or the
-    /// failure.
+    /// Feeds `container` in pieces of `pieceSize` bytes, then finishes and publishes it under its root entry's
+    /// own name, returning the landed name or the failure.
     func land(
         _ container: Data, accepting acceptance: ContainerAcceptance = acceptance(), pieceSize: Int? = nil
     ) throws -> Result<[UInt8], TreeWriteFailure> {
         let receiver = try receiver(acceptance)
+        let name = Self.rootName(of: container, accepting: acceptance) ?? Array("item".utf8)
         return Result { () throws(TreeWriteFailure) in
             let step = max(1, pieceSize ?? container.count)
             var start = container.startIndex
@@ -230,7 +231,18 @@ final class Landing {
                 try receiver.receive(container[start..<end])
                 start = end
             }
-            return try receiver.finish()
+            try receiver.finish()
+            return try receiver.publish(as: .exactly(name))
+        }
+    }
+
+    /// The name `container`'s root entry carries, or nil when its first record does not decode to one.
+    static func rootName(of container: Data, accepting acceptance: ContainerAcceptance) -> [UInt8]? {
+        var decoder = ContainerDecoder(accepting: acceptance)
+        decoder.feed(container)
+        switch try? decoder.next() {
+        case .enterDirectory(let header)?, .beginFile(let header)?, .symlink(let header)?: return Array(header.name)
+        default: return nil
         }
     }
 

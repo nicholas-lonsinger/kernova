@@ -191,7 +191,8 @@ struct TreeBench {
                 transfer.receiving += since(receiveStart)
             }
             let finishStart = DispatchTime.now().uptimeNanoseconds
-            transfer.landedName = try receiver.finish()
+            try receiver.finish()
+            transfer.landedName = try receiver.publish(as: .exactly(name))
             transfer.receiving += since(finishStart)
         } catch {
             KernovaBench.fail("the transfer failed: \(error)")

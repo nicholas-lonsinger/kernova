@@ -100,7 +100,11 @@ extension POSIXTreeFileSystem {
     static func renameExclusive(
         _ directory: Int32, _ name: UnsafePointer<CChar>, _ newDirectory: Int32, _ newName: UnsafePointer<CChar>
     ) -> Int32 {
-        kernova_rename_exclusive(directory, name, newDirectory, newName)
+        let result = kernova_rename_exclusive(directory, name, newDirectory, newName)
+        // `EINVAL`: the file system does not take `RENAME_NOREPLACE` (rename(2)). Its other meaning, a
+        // directory moved beneath itself, is a rename no caller makes.
+        if result < 0 && errno == EINVAL { errno = ENOTSUP }
+        return result
     }
 
     static func readDescriptor(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer?, _ count: Int) -> Int {
@@ -168,6 +172,10 @@ extension POSIXTreeFileSystem {
 
     /// `false`: Linux stores no file compressed through decmpfs.
     public func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool { false }
+
+    /// `true`: Linux has no call that asks, so a file system that does not take `RENAME_NOREPLACE` says so by
+    /// failing the rename `ENOTSUP`.
+    public func renamesExclusively(in directory: Int32) throws(TreeFileSystemError) -> Bool { true }
 
     /// `ENOTSUP`: Linux stores no file compressed through decmpfs.
     public func setCompressedStorage(_ attribute: [UInt8], of descriptor: Int32) throws(TreeFileSystemError) {

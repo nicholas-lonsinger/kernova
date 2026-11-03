@@ -13,7 +13,8 @@ import KernovaWire
 enum ItemScenarios {
     static let all: [Scenario] = [
         landsEveryStorage, peerPulls, stalledReceiver, deathWhileStalled, deathInFlight, sourceCeiling,
-        sinkCeiling, withdrawnMidPull, releasedMidPull, staleToken, cancelled,
+        sinkCeiling, withdrawnMidPull, releasedMidPull, staleToken, cancelled, publishFails, closedMidPublish,
+        withdrawnMidPublish,
     ]
 
     /// Past the 8 MiB bulk receive window, so a stalled sink holds the pull at its credit.
@@ -51,6 +52,20 @@ enum ItemScenarios {
         }
     }
 
+    static func resetCode(_ result: ItemServeResult?) -> ErrorCode? {
+        switch result {
+        case .closed(.resetByPeer(let error)), .closed(.resetLocally(let error)): error.code
+        default: nil
+        }
+    }
+
+    static func isLanded(_ result: ItemPullResult?) -> Bool {
+        if case .landed? = result { true } else { false }
+    }
+
+    /// The `SimItems` file the host pulls in the publish scenarios, landed under the sim sink's name.
+    static let landedFile = ItemPullResult.landed(.named(Data("item".utf8)))
+
     static let landsEveryStorage = Scenario(
         name: "items: the host pulls each storage of a peer's offer, and each lands", seeds: 30, end: .sec(3),
         options: options,
@@ -74,7 +89,7 @@ enum ItemScenarios {
             failures += expectThat(host.offersReceived.count == 1, "the host received the offer once")
             failures += expectThat(host.pullsEnded.count == 3, "three pulls ended: \(ended(world, .host))")
             for ended in host.pullsEnded {
-                guard ended.result == .landed,
+                guard isLanded(ended.result),
                     let request = host.pulls.first(where: { (try? $0.result.get()) == ended.id })?.request,
                     let offered = link.host?.remoteOfferItem(token: request.token, index: 0)
                 else {
@@ -105,7 +120,7 @@ enum ItemScenarios {
         },
         expect: { world in
             let pull = onePull(world, .peer)
-            return expectThat(pull?.1 == .landed, "the peer's pull landed: \(ended(world, .peer))")
+            return expectThat(isLanded(pull?.1), "the peer's pull landed: \(ended(world, .peer))")
                 + expectThat(
                     world.links.first?.items(.host).servesEnded.map(\.result) == [.landed],
                     "the host served one landing")
@@ -127,7 +142,7 @@ enum ItemScenarios {
         },
         expect: { world in
             let pull = world.links.first?.items(.host).pullsEnded.first
-            return expectThat(pull?.result == .landed, "the pull landed: \(ended(world, .host))")
+            return expectThat(isLanded(pull?.result), "the pull landed: \(ended(world, .host))")
                 + expectThat((pull?.time ?? 0) >= .ms(3_950), "the pull waited out the stall")
                 + expectThat(
                     (world.marks["sent"] ?? .max) < 8 << 20 + 1 << 20,
@@ -276,7 +291,7 @@ enum ItemScenarios {
             case .success:
                 let result = onePull(world, .host)?.1
                 return expectThat(
-                    resetCode(result) == .itemOfferStale || result == .landed, "the pull: \(ended(world, .host))")
+                    resetCode(result) == .itemOfferStale || isLanded(result), "the pull: \(ended(world, .host))")
             }
         })
 
@@ -297,5 +312,63 @@ enum ItemScenarios {
             return expectThat(pull?.1 == .closed(.resetLocally(WireError(.cancelled))), "host: \(ended(world, .host))")
                 + expectThat(
                     served == .closed(.resetByPeer(WireError(.cancelled))), "peer: \(String(describing: served))")
+        })
+
+    static let publishFails = Scenario(
+        name: "items: a publish that fails ends the pull failed on both sides, with the sink's error", seeds: 20,
+        end: .sec(3),
+        options: options,
+        script: { world in
+            peerOffers(world, [SimItems.representation(.file, size: 300_000)])
+            world.at(.ms(900)) { world in
+                world.links.first?.items(.host).sink.publishFailure = WireError(.writeFailed, posixErrno: 17)
+            }
+            world.at(pullAt) { world in world.pullItem(SimItems.request(1), by: .host) }
+        },
+        expect: { world in
+            let served = world.links.first?.items(.peer).servesEnded.map(\.result)
+            return expectThat(
+                onePull(world, .host)?.1 == .failed(WireError(.writeFailed, posixErrno: 17)),
+                "the host's pull failed with the sink's error: \(ended(world, .host))")
+                + expectThat(
+                    served == [.failed(WireError(.writeFailed, posixErrno: 17))],
+                    "the peer heard FAILED: \(String(describing: served))")
+        })
+
+    static let closedMidPublish = Scenario(
+        name: "items: the connection closing while the sink publishes still ends the pull with its report",
+        seeds: 20, end: .sec(4),
+        options: { options in
+            Self.options(&options)
+            options.faults = [.peerDeath(peer: 0, in: .ms(1_200) ... .ms(1_800))]
+        },
+        script: { world in
+            peerOffers(world, [SimItems.representation(.file, size: 2_048)])
+            world.at(.ms(900)) { world in world.links.first?.items(.host).publishDelay = .sec(1) }
+            world.at(pullAt) { world in world.pullItem(SimItems.request(1), by: .host) }
+        },
+        expect: { world in
+            guard let closed = world.hub.closures.first?.time else { return ["the connection never closed"] }
+            let pull = world.links.first?.items(.host).pullsEnded.first
+            return expectThat(pull?.result == landedFile, "the host's pull landed: \(ended(world, .host))")
+                + expectThat(
+                    (pull?.time ?? 0) > closed,
+                    "the pull ended at \(String(describing: pull?.time)), before the close at \(closed)")
+        })
+
+    static let withdrawnMidPublish = Scenario(
+        name: "items: the offer withdrawn while the sink publishes does not withdraw the commit", seeds: 20,
+        end: .sec(4),
+        options: options,
+        script: { world in
+            peerOffers(world, [SimItems.representation(.file, size: 2_048)])
+            world.at(.ms(900)) { world in world.links.first?.items(.host).publishDelay = .sec(1) }
+            world.at(pullAt) { world in world.pullItem(SimItems.request(1), by: .host) }
+            world.at(in: .ms(1_200) ... .ms(1_800)) { world in world.withdrawOffer(SimItems.token(1), from: .peer) }
+        },
+        expect: { world in
+            let served = world.links.first?.items(.peer).servesEnded.map(\.result)
+            return expectThat(onePull(world, .host)?.1 == landedFile, "the host's pull landed: \(ended(world, .host))")
+                + expectThat(served == [.landed], "the peer served a landing: \(String(describing: served))")
         })
 }

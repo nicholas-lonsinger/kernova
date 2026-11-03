@@ -3,6 +3,13 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 import KernovaContainer
 import KernovaFileTree
@@ -200,28 +207,94 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         return root.map { [$0.name] } ?? []
     }
 
-    /// Gives the item's own entry its own name in the destination, exclusively.
+    /// Gives the item's own entry `name` in the destination, never replacing anything the writer did not
+    /// create.
+    ///
+    /// Where the volume renames without replacing, the staged entry is renamed onto the name exclusively.
+    /// Where it cannot (exFAT, FAT), the writer first claims the name — `O_CREAT | O_EXCL` for a file,
+    /// `mkdirat` for a directory — and renames the staged entry onto its own claim, provided the name still
+    /// holds that claim. A name something else has fails `EEXIST`, or for Keep Both moves to the next name.
     ///
     /// - Returns: the name it landed under.
-    func publish() throws(TreeWriteFailure) -> [UInt8] {
+    func publish(as name: PublishName) throws(TreeWriteFailure) -> [UInt8] {
         switch phase {
         case .failed(let failure): throw failure
         case .published: throw failHere(.container(.bytesAfterEnd))
         case .writing: guard sequence.isEnded else { throw failHere(.container(.eventOutOfOrder)) }
         }
         guard let root else { preconditionFailure("ended with no root") }
+        let base = name.base
+        guard ValidatedEntry.isValidName(Data(base)) else {
+            throw fail(.system(TreeFileSystemError(code: EINVAL)), at: [base])
+        }
         let staged = try? fileSystem.status(of: stagingName, in: destination)
-        guard let staged, FolderBatch.Identity(staged) == root.identity else {
-            throw fail(.moved, at: [root.name])
-        }
+        guard let staged, FolderBatch.Identity(staged) == root.identity else { throw fail(.moved, at: [base]) }
+        var exclusive: Bool
         do {
-            try fileSystem.rename(stagingName, in: destination, to: root.name, in: destination)
+            exclusive = try fileSystem.renamesExclusively(in: destination)
         } catch {
-            throw fail(.system(error), at: [root.name])
+            throw fail(.system(error), at: [base])
         }
-        cursor = nil
-        phase = .published
-        return root.name
+        var number = 1
+        while true {
+            let candidate = KeepBothName.candidate(base, number)
+            do {
+                try place(as: candidate, directory: staged.kind == .directory, exclusive: &exclusive)
+                cursor = nil
+                phase = .published
+                return candidate
+            } catch  where error.code == EEXIST && name.keepsBoth {
+                number += 1
+            } catch {
+                throw fail(.system(error), at: [candidate])
+            }
+        }
+    }
+
+    /// Renames the staged entry to `candidate`: exclusively while `exclusive`, which a volume that answers
+    /// `ENOTSUP` clears, and otherwise onto a claim of the name.
+    private func place(as candidate: [UInt8], directory: Bool, exclusive: inout Bool) throws(TreeFileSystemError) {
+        if exclusive {
+            do {
+                return try fileSystem.rename(stagingName, in: destination, to: candidate, in: destination)
+            } catch  where error.code == ENOTSUP {
+                exclusive = false
+            }
+        }
+        let claim = try self.claim(candidate, directory: directory)
+        do throws(TreeFileSystemError) {
+            // Something that took the name from the claim is not replaced: the name is taken.
+            guard FolderBatch.Identity(try fileSystem.status(of: candidate, in: destination)) == claim else {
+                throw TreeFileSystemError(code: EEXIST)
+            }
+            try fileSystem.renameReplacing(stagingName, in: destination, to: candidate, in: destination)
+        } catch {
+            if (try? fileSystem.status(of: candidate, in: destination)).map(FolderBatch.Identity.init) == claim {
+                try? fileSystem.remove(candidate, in: destination, isDirectory: directory)
+            }
+            throw error
+        }
+    }
+
+    /// Creates `name` in the destination, empty, as what the staged entry replaces: its identity.
+    private func claim(_ name: [UInt8], directory: Bool) throws(TreeFileSystemError) -> FolderBatch.Identity {
+        if directory {
+            try fileSystem.makeDirectory(name, in: destination)
+            do {
+                return FolderBatch.Identity(try fileSystem.status(of: name, in: destination))
+            } catch {
+                try? fileSystem.remove(name, in: destination, isDirectory: true)
+                throw error
+            }
+        }
+        let descriptor = try fileSystem.createFile(name, in: destination)
+        defer { fileSystem.close(descriptor) }
+        do {
+            return FolderBatch.Identity(try fileSystem.status(of: descriptor))
+        } catch {
+            try? fileSystem.remove(name, in: destination, isDirectory: false)
+            throw error
+        }
     }
 
     /// Removes everything the writer created, unless it was published.
@@ -412,7 +485,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         guard let open = file.take() else { preconditionFailure("a finish admitted with no file open") }
         if let compressed = open.compressed {
             do {
-                _ = try compressed.finish(open.metadata.attributes)
+                let status = try compressed.finish(open.metadata.attributes)
+                if isRootFile { root = Root(name: open.name, identity: FolderBatch.Identity(status)) }
             } catch {
                 throw TreeWriteFailure(path: open.path, reason: Self.reason(error))
             }
@@ -437,12 +511,20 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         do {
             try sparse.finish()
             try open.metadata.apply(to: .descriptor(descriptor), on: fileSystem)
+            if isRootFile {
+                root = Root(name: open.name, identity: FolderBatch.Identity(try fileSystem.status(of: descriptor)))
+            }
         } catch {
             fileSystem.close(descriptor)
             throw TreeWriteFailure(path: open.path, reason: .system(error))
         }
         try system(open.path) { () throws(TreeFileSystemError) in try fileSystem.closeWritten(descriptor) }
     }
+
+    /// Whether the file open is the item's own entry. Its identity is read again once its bytes are written:
+    /// exFAT on macOS 27.2 numbers an empty file apart from the cluster it later starts at, so the number it had
+    /// when created is not the one it publishes with.
+    private var isRootFile: Bool { entered.isEmpty }
 
     /// The reason a compressed file's `failure` fails its entry for.
     static func reason(_ failure: CompressedFileFailure) -> TreeWriteFailure.Reason {

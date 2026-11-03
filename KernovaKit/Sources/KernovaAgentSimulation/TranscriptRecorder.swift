@@ -406,7 +406,12 @@ package final class Duet {
                 failures.append("t=\(now): `\(input.text)` refused: \(refusal)")
             }
         case .hostPull(let request):
-            if case .failure(let error) = host.pullItem(request, now: instant) {
+            let storage =
+                host.remoteOfferItem(token: request.token, index: Int(request.item))?.representations
+                .dropFirst(Int(request.representation)).first?.storage ?? .file
+            if case .failure(let error) = host.pullItem(
+                request, landing: DecodingItemSink.landing(storage), now: instant)
+            {
                 failures.append("t=\(now): `\(input.text)` refused: \(error)")
             }
         }
@@ -686,6 +691,15 @@ package enum TranscriptEvents {
     }
 
     static func describe(_ result: ItemPullResult) -> String {
+        switch result {
+        case .landed(.named(let name)): "landed name=\(FrozenFields.hex(name))"
+        case .landed(.inline(let bytes)): "landed inline=\(FrozenFields.hex(bytes))"
+        case .failed(let error): "failed code=\(error.code.rawValue)"
+        case .closed(let closure): "closed \(describe(closure))"
+        }
+    }
+
+    static func describe(_ result: ItemServeResult) -> String {
         switch result {
         case .landed: "landed"
         case .failed(let error): "failed code=\(error.code.rawValue)"

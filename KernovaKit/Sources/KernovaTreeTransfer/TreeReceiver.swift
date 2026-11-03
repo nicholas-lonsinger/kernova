@@ -10,8 +10,8 @@ import KernovaFileTree
 import KernovaLogging
 
 /// Lands a pulled FILE or FOLDER representation from its container's bytes: a `ContainerDecodePipeline` feeding a
-/// ``TreeWriter``. The item takes its own name in the destination only in ``finish()``, once the pipeline has
-/// confirmed the container whole; any failure, or the receiver ending first, removes everything it created.
+/// ``TreeWriter``. The item stays under its staging name until ``publish(as:)``, after ``finish()`` has confirmed
+/// the container whole; any failure, or the receiver ending first, removes everything it created.
 ///
 /// Once a call has failed, the receiver takes no more bytes and holds none: whether the container or the writer
 /// failed, the pipeline is released — which returns once none of its work is running — and every later call
@@ -19,6 +19,8 @@ import KernovaLogging
 public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     private enum State {
         case receiving(ContainerDecodePipeline)
+        /// The container ended whole, and the pipeline is released.
+        case finished
         case failed(TreeWriteFailure)
     }
 
@@ -66,17 +68,36 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// Lands every entry still decompressing, confirms the container ended whole, and publishes the item under its own
-    /// name.
+    /// Lands every entry still decompressing and confirms the container ended whole: the item is staged, under
+    /// ``stagingName``, until ``publish(as:)``.
     ///
-    /// - Returns: The name the item landed under in the destination.
-    /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an item that could not take
-    ///   its name — `EEXIST` when the destination already holds it; nothing created then remains.
-    public func finish() throws(TreeWriteFailure) -> [UInt8] {
+    /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an entry that could not land;
+    ///   nothing created then remains.
+    public func finish() throws(TreeWriteFailure) {
         try latching { decoder throws(TreeWriteFailure) in
             decoder.finish()
             try land(from: decoder)
-            return try writer.publish()
+            state = .finished
+        }
+    }
+
+    /// Publishes the finished item in the destination under `name`, never the container's own name for it, and
+    /// never replacing anything the receiver did not create.
+    ///
+    /// - Returns: The name the item landed under.
+    /// - Throws: ``TreeWriteFailure``: before ``finish()``, `eventOutOfOrder`; for a name that is taken,
+    ///   `EEXIST` unless `name` keeps both; nothing created then remains.
+    public func publish(as name: PublishName) throws(TreeWriteFailure) -> [UInt8] {
+        switch state {
+        case .failed(let failure): throw failure
+        case .receiving: throw writer.failHere(.container(.eventOutOfOrder))
+        case .finished: break
+        }
+        do {
+            return try writer.publish(as: name)
+        } catch {
+            state = .failed(error)
+            throw error
         }
     }
 
@@ -102,6 +123,7 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         let decoder: ContainerDecodePipeline
         switch state {
         case .failed(let failure): throw failure
+        case .finished: throw writer.failHere(.container(.bytesAfterEnd))
         case .receiving(let receiving): decoder = receiving
         }
         do {

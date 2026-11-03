@@ -182,9 +182,23 @@ extension POSIXTreeFileSystem {
         throw TreeFileSystemError(code: code)
     }
 
-    /// `fgetattrlist` of `ATTR_VOL_CAPABILITIES` on `directory`: `VOL_CAP_FMT_DECMPFS_COMPRESSION` both valid
-    /// and set, the check `copyfile` makes before it copies a file compressed.
+    /// `VOL_CAP_FMT_DECMPFS_COMPRESSION` both valid and set, the check `copyfile` makes before it copies a file
+    /// compressed.
     public func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool {
+        try Self.volumeHas(VOL_CAPABILITIES_FORMAT, VOL_CAP_FMT_DECMPFS_COMPRESSION, directory)
+    }
+
+    /// `VOL_CAP_INT_RENAME_EXCL` both valid and set: renamex_np(2) names it as what says `RENAME_EXCL` is
+    /// supported.
+    public func renamesExclusively(in directory: Int32) throws(TreeFileSystemError) -> Bool {
+        try Self.volumeHas(VOL_CAPABILITIES_INTERFACES, VOL_CAP_INT_RENAME_EXCL, directory)
+    }
+
+    /// `fgetattrlist` of `ATTR_VOL_CAPABILITIES` on `directory`: whether capability `bit` of the `group` word
+    /// is both valid and set.
+    private static func volumeHas(_ group: Int32, _ bit: Int32, _ directory: Int32) throws(TreeFileSystemError)
+        -> Bool
+    {
         var list = attrlist()
         list.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
         list.volattr = attrgroup_t(ATTR_VOL_INFO) | attrgroup_t(ATTR_VOL_CAPABILITIES)
@@ -194,16 +208,14 @@ extension POSIXTreeFileSystem {
             var capabilities: vol_capabilities_attr_t
         }
         var reply = Reply(length: 0, capabilities: vol_capabilities_attr_t())
-        try Self.check(fgetattrlist(directory, &list, &reply, MemoryLayout<Reply>.size, 0))
-        let format = Int(VOL_CAPABILITIES_FORMAT)
-        let bit = UInt32(VOL_CAP_FMT_DECMPFS_COMPRESSION)
-        let valid = withUnsafeBytes(of: reply.capabilities.valid) {
-            $0.load(fromByteOffset: format * 4, as: UInt32.self)
-        }
+        try check(fgetattrlist(directory, &list, &reply, MemoryLayout<Reply>.size, 0))
+        let offset = Int(group) * 4
+        let mask = UInt32(bitPattern: bit)
+        let valid = withUnsafeBytes(of: reply.capabilities.valid) { $0.load(fromByteOffset: offset, as: UInt32.self) }
         let set = withUnsafeBytes(of: reply.capabilities.capabilities) {
-            $0.load(fromByteOffset: format * 4, as: UInt32.self)
+            $0.load(fromByteOffset: offset, as: UInt32.self)
         }
-        return valid & bit != 0 && set & bit != 0
+        return valid & mask != 0 && set & mask != 0
     }
 
     /// `fsetxattr` of `com.apple.decmpfs` with `XATTR_SHOWCOMPRESSION`.

@@ -83,7 +83,8 @@ struct ItemHostileTests {
             var failures = HostileItems.endedOnce(run, id)
             let outcome = HostileItems.outcome(run)
             if cut == container.count {
-                failures += expectThat(run.itemEnds == [.pullEnded(id, .landed)], "whole: \(run.itemEnds)")
+                failures += expectThat(
+                    run.itemEnds == [.pullEnded(id, .landed(.named(Data("item".utf8))))], "whole: \(run.itemEnds)")
                 failures += expectThat(outcome?.kind == .landed, "END \(String(describing: outcome))")
                 failures += expectThat(
                     run.itemSink.landed[id] == SimItems.digest(HostileItems.request, HostileItems.representation),
@@ -118,7 +119,8 @@ struct ItemHostileTests {
             run.host?.transportEnded(now: run.now)
             run.drain()
             var failures = HostileItems.endedOnce(run, id)
-            let expected: ItemPullResult = cut == wire.count ? .landed : .closed(.connectionLost)
+            let expected: ItemPullResult =
+                cut == wire.count ? .landed(.named(Data("item".utf8))) : .closed(.connectionLost)
             failures += expectThat(run.itemEnds == [.pullEnded(id, expected)], "ends \(run.itemEnds)")
             if !failures.isEmpty {
                 Issue.record("cut \(cut) of \(wire.count): \(failures.joined(separator: "; "))")

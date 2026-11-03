@@ -144,7 +144,8 @@ final class FidelityBench {
         while let event = try reader.next() {
             try receiver.receive(try encoder.encode(event))
         }
-        return try receiver.finish()
+        try receiver.finish()
+        return try receiver.publish(as: .exactly(name))
     }
 
     /// Every event the reader produces for the item `name` in the source.

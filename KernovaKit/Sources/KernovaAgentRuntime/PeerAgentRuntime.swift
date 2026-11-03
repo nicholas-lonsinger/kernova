@@ -15,7 +15,8 @@ import KernovaWire
 ///
 /// Its state lives on its own serial queue. Each connection runs on a `ConnectionDriver` of its own;
 /// adapter reports reach the current one through this queue, and its events come back through it. A
-/// connection has ended once its driver has shut its stream down: only then does the schedule hear of it.
+/// connection has ended once its driver has shut its stream down and every pull it committed has ended: only
+/// then does the schedule hear of it.
 public final class PeerAgentRuntime: Sendable {
     /// Where the runtime sends what the shell acts on, on the runtime's queue.
     public struct Handlers: Sendable {
@@ -127,7 +128,8 @@ public final class PeerAgentRuntime: Sendable {
     }
 
     /// Stops dialing and closes the connection with `SHUTTING_DOWN`. `completion` runs on the runtime's
-    /// queue once the connection has ended — its stream shut down — or at once when there is none.
+    /// queue once the connection has ended — its stream shut down and its committed pulls ended — or at once
+    /// when there is none.
     public func close(_ completion: @escaping @Sendable () -> Void) {
         queue.async { [self] in
             step { agent, now in agent.shutDown(now: now) }
@@ -244,7 +246,7 @@ public final class PeerAgentRuntime: Sendable {
         handlers.event(event)
     }
 
-    /// The connection's stream is shut down: the schedule hears of its end, and `close` completes.
+    /// The connection has ended: the schedule hears of it, and `close` completes.
     private func connectionEnded(_ generation: ConnectionGeneration, _ closure: ConnectionClosure) {
         let completions = state.withLock { state -> [@Sendable () -> Void] in
             guard state.driver?.generation == generation else { return [] }

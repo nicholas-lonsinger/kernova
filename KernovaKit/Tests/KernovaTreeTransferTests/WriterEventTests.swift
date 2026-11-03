@@ -237,7 +237,7 @@ struct WriterEventTests {
         ] {
             try writer.write(event)
         }
-        #expect(try writer.publish() == bytes("r"))
+        #expect(try writer.publish(as: .exactly(bytes("r"))) == bytes("r"))
         let directory = try landing.fileSystem.openDirectory(bytes(landing.destinationPath + "/r"), in: AT_FDCWD)
         defer { landing.fileSystem.close(directory) }
         for (name, expected) in [("held", Data("ico".utf8)), ("written", fork)] {
@@ -276,7 +276,7 @@ struct WriterEventTests {
         #expect(try landing.entriesOutside(landed: writer.stagingName).count == 3)
         #expect(try landing.landedEntries(writer.stagingName) == [".: directory", "./f: regular 1"].sorted())
         #expect(staged.hasPrefix(".kernova-"))
-        #expect(try writer.publish() == bytes("r"))
+        #expect(try writer.publish(as: .exactly(bytes("r"))) == bytes("r"))
         #expect(try landing.landedEntries(bytes("r")) == [".: directory", "./f: regular 1"].sorted())
         try landing.expectNothingOutside(landed: bytes("r"))
     }
