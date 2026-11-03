@@ -1,14 +1,16 @@
 import Foundation
 import KernovaCommandModel
 
-/// Why the guest-agent installer disk was attached, so the post-mount alert can
-/// point the user at the right next step.
+/// Why the guest-agent installer disk was attached: what it waits for, and the
+/// next step the post-mount alert points the user at.
 package enum GuestAgentInstallerPurpose: Equatable {
     /// The agent is absent or behind the bundled version — a fresh install,
-    /// update, or reinstall. The user runs `install.command`.
+    /// update, or reinstall. The user runs `install.command`, and the disk
+    /// waits for the agents being installed.
     case install
     /// The agent is already installed (`.current`) or present-but-unresponsive
-    /// — the user re-mounted the disk to reinstall *or* run `uninstall.command`.
+    /// — the user re-mounted the disk to reinstall *or* run `uninstall.command`,
+    /// so the disk waits for no agent and stays until it is ejected.
     case manage
 }
 
@@ -206,6 +208,11 @@ package protocol VMLibraryPresenting: AnyObject {
     func presentInstallerMounted(
         for instance: VMInstance, purpose: GuestAgentInstallerPurpose,
         delivery: GuestAgentDiskDelivery)
+    /// Ask what to install on `instance`, a Linux guest, starting on `initial`,
+    /// before its installer disk is attached: an answer attaches it through
+    /// ``VMLibraryViewModel/installLinuxGuestAgent(on:choice:)``, and Cancel
+    /// changes nothing.
+    func presentLinuxAgentInstallChoice(for instance: VMInstance, initial: LinuxAgentInstallChoice)
     /// Ask which running guest a newly assigned USB accessory should be passed
     /// through to.
     ///

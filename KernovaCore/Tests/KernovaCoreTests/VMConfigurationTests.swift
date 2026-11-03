@@ -221,6 +221,30 @@ struct VMConfigurationTests {
         let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
 
         #expect(decoded.removableMedia?[0].notes == "")
+        #expect(decoded.removableMedia?[0].awaitedAgentScopes == [])
+    }
+
+    @Test("What an installer disk waits for round-trips through JSON, and an unknown scope is refused")
+    func removableMediaAwaitedScopesRoundTrip() throws {
+        var config = VMConfiguration(
+            name: "Linux VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        config.removableMedia = [
+            RemovableMediaItem(path: "/agent.iso", readOnly: true, awaitedAgentScopes: [.system])
+        ]
+
+        let data = try VMConfiguration.makeJSONEncoder().encode(config)
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
+        #expect(decoded.removableMedia?[0].awaitedAgentScopes == [.system])
+
+        let json = Self.makeBaseJSON(
+            extraFields: """
+                "removableMedia": [{"id": "32345678-1234-1234-1234-123456789012", "path": "/ext/i.iso", "readOnly": true, "label": "I", "notes": "", "awaitedAgentScopes": ["desktop"]}]
+                """
+        )
+        #expect(throws: DecodingError.self) {
+            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+        }
     }
 
     @Test("Security bookmark fields round-trip through JSON")

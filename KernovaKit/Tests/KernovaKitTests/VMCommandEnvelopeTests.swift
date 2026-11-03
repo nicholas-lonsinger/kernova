@@ -148,7 +148,9 @@ struct VMCommandEnvelopeTests {
             .setConfiguration(
                 selector, assignments: [ConfigurationEntry(key: "cpus", value: "4")],
                 consent: .all),
-            .guestAgentDisk(selector, .mount),
+            .guestAgentDisk(selector, .mount(awaiting: nil)),
+            .guestAgentDisk(selector, .mount(awaiting: [])),
+            .guestAgentDisk(selector, .mount(awaiting: [.login, .system])),
             .guestAgentDisk(selector, .unmount),
             .networks,
             .createNetwork(name: "Lab", kind: .hostOnly),
@@ -222,7 +224,21 @@ struct VMCommandEnvelopeTests {
         #expect(name(of: .eject(item: diskID)) == "eject")
         #expect(name(of: .remove(directory: diskID)) == "remove")
         #expect(name(of: .add(path: "/Users/somebody/Sites", readOnly: true)) == "add")
-        #expect(GuestAgentDiskEdit.allCases == [.mount, .unmount])
+    }
+
+    @Test("A mount names the scopes it waits for, none meaning every scope the guest OS has")
+    func guestAgentDiskMountScopes() throws {
+        let selector = VMSelector.name("Ubuntu")
+        // `nil` and the empty set are different requests: the guest's every
+        // scope, and no scope at all.
+        for awaiting: Set<GuestAgentScope>? in [nil, [], [.system]] {
+            let request = VMCommandRequest(verb: .guestAgentDisk(selector, .mount(awaiting: awaiting)))
+            #expect(try roundTrip(request).verb == .guestAgentDisk(selector, .mount(awaiting: awaiting)))
+        }
+        let wire = try JSONEncoder().encode(GuestAgentDiskEdit.mount(awaiting: [.system]))
+        #expect(String(decoding: wire, as: UTF8.self) == #"{"mount":{"awaiting":["system"]}}"#)
+        #expect(VMGuestOS.macOS.guestAgentScopes == [.login])
+        #expect(VMGuestOS.linux.guestAgentScopes == [.login, .system])
     }
 
     @Test("Every response result round-trips")

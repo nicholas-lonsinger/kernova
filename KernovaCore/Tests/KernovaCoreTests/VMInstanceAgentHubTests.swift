@@ -567,29 +567,34 @@ struct VMInstanceAgentHubTests {
     }
 
     @Test(
-        "A peer arriving on the bundled payload ejects the installer disk; one already there, or out of date, does not")
-    func currentPeerArrivalFiresTheEject() {
+        "A peer arriving on the bundled payload reports its scope; one already there, or out of date, reports nothing")
+    func currentPeerArrivalReportsItsScope() {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
-        var fired = 0
-        instance.onAgentBecameCurrent = { fired += 1 }
+        var arrivals: [Set<GuestAgentScope>] = []
+        instance.onCurrentAgentsArrived = { arrivals.append($0) }
         let outdated = Self.peer(1, standing: .outdated(offeredVersionLabel: "2.0", update: .unavailable))
         let current = Self.peer(2, standing: .current)
 
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [outdated], features: FeatureStatus.merge([])))
-        #expect(fired == 0)
+        #expect(arrivals.isEmpty)
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [current, outdated], features: FeatureStatus.merge([])))
-        #expect(fired == 1)
+        #expect(arrivals == [[.login]])
         // The same peers again, or the current one alone, is no arrival.
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [current, outdated], features: FeatureStatus.merge([])))
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [current], features: FeatureStatus.merge([])))
-        #expect(fired == 1)
+        #expect(arrivals == [[.login]])
+        // A system peer arriving reports its own scope.
+        let system = Self.peer(3, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [current, system], features: FeatureStatus.merge([])))
+        #expect(arrivals == [[.login], [.system]])
         // A reconnect is a new peer.
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [Self.peer(3, standing: .current)], features: FeatureStatus.merge([])))
-        #expect(fired == 2)
+            AgentHubSnapshot(peers: [Self.peer(4, standing: .current)], features: FeatureStatus.merge([])))
+        #expect(arrivals == [[.login], [.system], [.login]])
     }
 }

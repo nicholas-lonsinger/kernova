@@ -1530,20 +1530,39 @@ package final class VMLibraryViewModel {
     /// calls.
     ///
     /// Ejecting removes the bundled installer from `removableMedia`, and the
-    /// reconcile flow performs the runtime detach. Mounting attaches it and
-    /// shows the next-step alert on every outcome: the alert is the whole action
-    /// on two of the verb's three paths — an image already mounted, and a guest
-    /// that takes it on virtio for the whole session.
+    /// reconcile flow performs the runtime detach. An install on a Linux guest
+    /// asks what to install first, and attaches nothing until it is answered
+    /// (``installLinuxGuestAgent(on:choice:)``). Every other mount attaches the
+    /// disk, waiting for the guest's agent on an install and for nothing on a
+    /// manage, and shows the next-step alert on every outcome: the alert is the
+    /// whole action on two of the verb's three paths — an image already
+    /// mounted, and a guest that takes it on virtio for the whole session.
     package func toggleGuestAgentDisk(on instance: VMInstance) async {
         switch GuestAgentDiskControl.model(for: instance, in: capabilities).action {
         case .eject:
             runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
         case .mount(let purpose):
+            let guestOS = instance.configuration.guestOS
+            if purpose == .install, guestOS == .linux {
+                presenter?.presentLinuxAgentInstallChoice(
+                    for: instance, initial: LinuxAgentInstallChoice(seen: instance.seenAgentScopes))
+                return
+            }
+            let awaited = purpose == .install ? guestOS.guestAgentScopes : []
             await runEdit(on: instance) {
-                let outcome = try await self.commands.mountGuestAgentDisk(.id(instance.id))
+                let outcome = try await self.commands.mountGuestAgentDisk(.id(instance.id), awaiting: awaited)
                 self.presenter?.presentInstallerMounted(
                     for: instance, purpose: purpose, delivery: outcome.delivery)
             }
+        }
+    }
+
+    /// Attaches the Linux agent's disk to `instance`, waiting for the agents
+    /// `choice` installs: the answer to the question an install asks. The
+    /// question showed the command, so no alert follows.
+    package func installLinuxGuestAgent(on instance: VMInstance, choice: LinuxAgentInstallChoice) async {
+        await runEdit(on: instance) {
+            _ = try await self.commands.mountGuestAgentDisk(.id(instance.id), awaiting: choice.scopes)
         }
     }
 

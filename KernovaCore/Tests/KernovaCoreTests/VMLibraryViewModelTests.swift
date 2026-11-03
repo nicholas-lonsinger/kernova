@@ -1,7 +1,10 @@
 import CryptoKit
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -6041,6 +6044,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.installerMountedPurpose == .install)
         #expect(presenter.installerMountedDelivery == .usb)
         #expect(instance.configuration.removableMedia?.count == 1)
+        // A macOS guest has one agent, which the install waits for.
+        #expect(instance.guestAgentInstallerAwaits == [.login])
         #expect(instance.configuration.removableMedia?.first?.path == installerURL.path(percentEncoded: false))
 
         try await waitForChange { !instance.liveRemovableMedia.isEmpty }
@@ -6096,15 +6101,16 @@ struct VMLibraryViewModelTests {
         #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
-    @Test("onAgentBecameCurrent (wired by loadVMs) auto-ejects the installer disk")
-    func onAgentBecameCurrentAutoEjectsInstaller() async throws {
+    @Test("onCurrentAgentsArrived (wired by loadVMs) ejects an installer that waited for that agent")
+    func currentAgentArrivalEjectsTheInstaller() async throws {
         let installerURL = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
         let storage = MockVMStorageService()
         var config = VMConfiguration(
             name: "Wired VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.removableMedia = [
-            RemovableMediaItem(path: installerURL.path(percentEncoded: false), readOnly: true)
+            RemovableMediaItem(
+                path: installerURL.path(percentEncoded: false), readOnly: true, awaitedAgentScopes: [.login])
         ]
         let url = scratch.url
             .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
@@ -6117,10 +6123,79 @@ struct VMLibraryViewModelTests {
 
         // Fire the hook the view model wired in `wireHooks(for:)` — it
         // must detach the installer regardless of which window is open.
-        instance.onAgentBecameCurrent?()
+        instance.onCurrentAgentsArrived?([.login])
 
         #expect(!instance.hasGuestAgentInstallerMounted)
         #expect(instance.configuration.removableMedia == nil)
+    }
+
+    /// A running Linux VM in a view model whose build bundles the Linux agent,
+    /// its session reaching the agent hub.
+    private func linuxAgentViewModel() throws -> (VMLibraryViewModel, VMInstance) {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let agent = scratch.url.appending(path: "kernova-agent")
+        try Data(repeating: 0x7F, count: 64).write(to: agent)
+        let cache = GuestAgentDiskCache(
+            directory: scratch.url.appending(path: "GuestAgentDisks"), files: LinuxAgentDisk.bundledFiles)
+        let viewModel = makeLibraryViewModel(
+            preferences: preferences,
+            bundleProducts: AppBundleProducts(
+                bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "1.0", buildNumber: "1",
+                guestAgents: .linux(agent: agent, disk: cache)))
+        viewModel.presenter = presenter
+        let instance = viewModel.library.admitFixture(guestOS: .linux, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(AgentHubProbe())
+        return (viewModel, instance)
+    }
+
+    @Test("An install on a Linux guest asks what to install, starting on the agents it has run, and attaches nothing")
+    func linuxInstallAsksFirst() async throws {
+        let (viewModel, instance) = try linuxAgentViewModel()
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .mount(.install))
+
+        await viewModel.toggleGuestAgentDisk(on: instance)
+
+        #expect(presenter.linuxAgentInstallChoices.map(\.instance.id) == [instance.id])
+        // Nothing seen yet, so both.
+        #expect(presenter.linuxAgentInstallChoices.last?.initial == .both)
+        #expect(!instance.hasGuestAgentInstallerMounted)
+        #expect(!presenter.showInstallerMountedAlert)
+
+        let seen = viewModel.library.admitFixture(
+            name: "Seen", guestOS: .linux, phase: .running(sessionID: UUID())
+        ) { $0.lastSeenSystemAgentVersion = "1.0" }
+        seen.beginSessionContextForTesting()
+        seen.attachAgentTransport(AgentHubProbe())
+        await viewModel.toggleGuestAgentDisk(on: seen)
+        #expect(presenter.linuxAgentInstallChoices.last?.initial == .systemService)
+    }
+
+    @Test("Answering the Linux install question attaches the disk waiting for the chosen agents, with no alert")
+    func linuxInstallAnswerAttaches() async throws {
+        let (viewModel, instance) = try linuxAgentViewModel()
+
+        await viewModel.installLinuxGuestAgent(on: instance, choice: .sessionAgent)
+
+        #expect(instance.guestAgentInstallerAwaits == [.login])
+        #expect(!presenter.showInstallerMountedAlert)
+    }
+
+    @Test("Managing the agent attaches a disk that waits for nothing, with the manage alert")
+    func manageMountWaitsForNothing() async throws {
+        let (viewModel, instance) = try linuxAgentViewModel()
+        let current = PeerSummary(
+            handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "1",
+            userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [current], features: FeatureStatus.merge([])))
+        #expect(GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities).action == .mount(.manage))
+
+        await viewModel.toggleGuestAgentDisk(on: instance)
+
+        #expect(instance.guestAgentInstallerAwaits == [])
+        #expect(presenter.installerMountedPurpose == .manage)
+        #expect(presenter.linuxAgentInstallChoices.isEmpty)
     }
 
     // MARK: - Storage Disk Helpers

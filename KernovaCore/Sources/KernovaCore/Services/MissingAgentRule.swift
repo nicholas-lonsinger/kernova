@@ -1,16 +1,10 @@
+import KernovaCommandModel
+
 /// One scope of a VM's guest agents, as ``MissingAgentRule`` reads it, within
 /// one VM session (from Start until the VM stops).
 package struct AgentScopePresence: Equatable, Sendable {
-    /// When an agent of the scope starts.
-    package enum Scope: Hashable, Sendable {
-        /// At a user's login: the macOS agent, a Linux session peer.
-        case login
-        /// At boot: a Linux system peer.
-        case system
-    }
-
     /// The scope.
-    package var scope: Scope
+    package var scope: GuestAgentScope
     /// The version an agent of the scope last reported on this VM, this
     /// session or an earlier one; nil when none ever connected.
     package var lastSeenVersion: String?
@@ -19,7 +13,7 @@ package struct AgentScopePresence: Equatable, Sendable {
     /// An agent of the scope is connected now.
     package var isConnected: Bool
 
-    package init(scope: Scope, lastSeenVersion: String?, seenThisSession: Bool, isConnected: Bool) {
+    package init(scope: GuestAgentScope, lastSeenVersion: String?, seenThisSession: Bool, isConnected: Bool) {
         self.scope = scope
         self.lastSeenVersion = lastSeenVersion
         self.seenThisSession = seenThisSession

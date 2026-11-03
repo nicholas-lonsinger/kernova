@@ -216,12 +216,11 @@ package final class VMCommandCore {
         library.onUnsettledSession = { [weak self] instance in
             self?.ephemeralBaselineRevert(for: instance).map { [$0] } ?? []
         }
-        // The installer disk comes out the moment the agent it carries
-        // handshakes as current, whichever surface asked for the mount — so the
-        // handler belongs with the guest-agent-disk verb rather than with any
-        // of them.
-        library.onAgentBecameCurrent = { [weak self] instance in
-            self?.detachGuestAgentDisk(from: instance)
+        // The installer disk waits for the agents it carries, whichever
+        // surface asked for the mount — so the handler belongs with the
+        // guest-agent-disk verb rather than with any of them.
+        library.onCurrentAgentsArrived = { [weak self] instance, scopes in
+            self?.recordCurrentAgents(scopes, on: instance)
         }
         // A power-off takes the installer disk, its copy and the virtio copy
         // with it; a suspend keeps them for the resume.

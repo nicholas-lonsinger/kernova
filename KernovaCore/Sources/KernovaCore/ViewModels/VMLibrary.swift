@@ -16,7 +16,7 @@ import KernovaLogging
 ///
 /// Headless: it imports no AppKit and holds no presenter. Anything a user has
 /// to be told about leaves through ``onFailure``, and the `VMInstance` hooks
-/// whose handling belongs elsewhere — ``onAgentBecameCurrent``,
+/// whose handling belongs elsewhere — ``onCurrentAgentsArrived``,
 /// ``onUnsettledSession`` and ``onSessionBecameAttachable`` —
 /// leave through their own closures.
 /// ``VMLibraryViewModel`` is the AppKit adapter that owns one of these and
@@ -88,9 +88,9 @@ package final class VMLibrary: VMAdmissionPeers {
     /// presenter.
     @ObservationIgnored var onFailure: ((_ title: String, _ message: String, _ subject: AlertSubject) -> Void)?
 
-    /// Fires when a VM's guest agent handshakes a current version, for the
-    /// installer auto-eject.
-    @ObservationIgnored var onAgentBecameCurrent: ((VMInstance) -> Void)?
+    /// Fires with the scopes of a VM's guest agents that just connected
+    /// current, for what the installer disk waits for.
+    @ObservationIgnored var onCurrentAgentsArrived: ((VMInstance, Set<GuestAgentScope>) -> Void)?
 
     /// Fires once a power-off has rested a VM, for the installer disk's removal.
     @ObservationIgnored var onGuestPoweredOff: ((VMInstance) -> Void)?
@@ -872,11 +872,10 @@ package final class VMLibrary: VMAdmissionPeers {
             return self.updateSettings(permit, configuration: configuration, hostState: hostState)
         }
         instance.peers = self
-        // Auto-eject the installer disk once the agent handshakes a current version.
         // Wired here so it fires regardless of which window is open.
-        instance.onAgentBecameCurrent = { [weak self, weak instance] in
+        instance.onCurrentAgentsArrived = { [weak self, weak instance] scopes in
             guard let self, let instance else { return }
-            self.onAgentBecameCurrent?(instance)
+            self.onCurrentAgentsArrived?(instance, scopes)
         }
         instance.onGuestPoweredOff = { [weak self, weak instance] in
             guard let self, let instance else { return }

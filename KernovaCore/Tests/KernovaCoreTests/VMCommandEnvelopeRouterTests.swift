@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 15)
+        #expect(VMCommandRequest.currentProtocolVersion == 16)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -699,7 +699,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [true])
     }
 
-    @Test("Both guest-agent-disk edits cross the wire")
+    @Test("Both guest-agent-disk edits cross the wire, a mount with the scopes it waits for")
     func guestAgentDiskEditsCrossTheWire() async throws {
         let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
             .path(percentEncoded: false)
@@ -708,8 +708,16 @@ struct VMCommandEnvelopeRouterTests {
             in: harness, name: "Stub", phase: .running(sessionID: UUID()), guestOS: .macOS)
         let selector = VMSelector.id(instance.id)
 
-        #expect(try await harness.transport.send(.guestAgentDisk(selector, .mount)).result == .ok)
+        // A mount naming no scopes waits for every scope the guest OS has.
+        #expect(try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: nil))).result == .ok)
         #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
+        #expect(instance.guestAgentInstallerAwaits == [.login])
+        // One naming a scope the guest OS has not is refused, and changes nothing.
+        let refused = try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: [.system])))
+        #expect(refused.result != .ok)
+        #expect(instance.guestAgentInstallerAwaits == [.login])
+        #expect(try await harness.transport.send(.guestAgentDisk(selector, .mount(awaiting: []))).result == .ok)
+        #expect(instance.guestAgentInstallerAwaits == [])
 
         #expect(try await harness.transport.send(.guestAgentDisk(selector, .unmount)).result == .ok)
         #expect(instance.configuration.removableMedia == nil)
