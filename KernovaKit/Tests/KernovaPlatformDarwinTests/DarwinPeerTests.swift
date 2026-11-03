@@ -247,6 +247,31 @@ struct BlockingConnectTests {
         release.signal()
     }
 
+    @Test("A gate refusal reports busy without running the connect; a completed attempt lifts the backoff")
+    func gateRefusalAndHeal() {
+        let clock = Clock()
+        let gate = clock.gate()
+        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
+            #expect(gate.admit("t"))
+            gate.markParked("t")
+        }
+        let calls = Locked(0)
+        #expect(
+            DarwinVsockConnect.boundedBlockingConnect(fd: -1, label: "t", port: 1, gate: gate) {
+                calls.withLock { $0 += 1 }
+                return 0
+            } == .busy)
+        #expect(calls.withLock { $0 } == 0)
+        clock.advance(seconds: BlockingConnectGate.backoffFloor)
+        // A refusal inside the deadline proves the host answers, so the next attempt waits out no backoff even
+        // with the parks still outstanding.
+        #expect(
+            DarwinVsockConnect.boundedBlockingConnect(fd: -1, label: "t", port: 1, gate: gate) { ECONNREFUSED }
+                == .failed(errno: ECONNREFUSED))
+        #expect(gate.parkedCount("t") == BlockingConnectGate.maxParkedAttempts)
+        #expect(gate.admit("t"))
+    }
+
     @Test("EAFNOSUPPORT and EPROTONOSUPPORT are permanent; anything else is transient")
     func classification() {
         for code in [EAFNOSUPPORT, EPROTONOSUPPORT] {

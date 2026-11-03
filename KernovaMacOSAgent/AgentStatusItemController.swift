@@ -17,9 +17,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
 
-    private let version: String
     private let connectionState: () -> HostConnectionState
-    private let hostBundledVersion: () -> String
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
     private let onCancelTransfer: (ClipboardTransferOperationID) -> Void
@@ -44,18 +42,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private static let clipboardNoticeDuration: TimeInterval = 6
 
     init(
-        version: String,
         connectionState: @escaping () -> HostConnectionState,
-        hostBundledVersion: @escaping () -> String,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
         onCancelTransfer: @escaping (ClipboardTransferOperationID) -> Void = { _ in },
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        self.version = version
         self.connectionState = connectionState
-        self.hostBundledVersion = hostBundledVersion
         self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
         self.onCancelTransfer = onCancelTransfer
@@ -155,11 +149,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
         pasteProgressPresenter.insertItemsIfActive()
 
-        if case .updateAvailable(let bundled) = updateState() {
-            addInfoItem(AgentMenuText.updateAvailableLine(bundled: bundled))
-            menu.addItem(.separator())
-        }
-
         let activity = clipboardActivity()
         // A notice is what the callout announced, so it reads at the top level;
         // every other activity is state the Status submenu holds.
@@ -208,10 +197,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     /// be activated first or the panel opens behind the frontmost app.
     @objc private func aboutTapped() {
         var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
-        if case .updateAvailable(let bundled) = updateState() {
-            options[.credits] = NSAttributedString(
-                string: AgentMenuText.updateAvailableLine(bundled: bundled))
-        }
         #if DEBUG
         let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""
         options[.version] = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
@@ -225,10 +210,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Helpers
-
-    private func updateState() -> KernovaVersionComparison.UpdateState {
-        KernovaVersionComparison.updateState(own: version, hostBundled: hostBundledVersion())
-    }
 
     /// Appends a disabled, non-actionable line to `destination`, defaulting to
     /// the main dropdown.

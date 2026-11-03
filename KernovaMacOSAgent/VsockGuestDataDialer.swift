@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaPlatformDarwin
 
 /// Opens one clipboard transfer's data connection to the host.
 ///
@@ -17,15 +18,14 @@ enum VsockGuestDataDialer {
     /// Connects to `port` on the host and returns the descriptor, with the data
     /// connection's socket options applied.
     ///
-    /// - Throws: ``VsockProviderError`` when the connect does not complete
-    ///   inside `VsockGuestClient.connectTimeoutSeconds`, or at all.
+    /// - Throws: `VsockConnectFailure` when the connect does not complete
+    ///   inside `DarwinVsockConnect.connectTimeoutSeconds`, or at all.
     static func connect(
         port: UInt32, label: String = gateLabel, socketProvider: VsockSocketProvider? = nil
     ) throws -> Int32 {
         let provider =
             socketProvider ?? { port, label in
-                VsockGuestClient.openVsockToHost(
-                    port: port, label: label, clock: makePlatformEngineClock())
+                VsockGuestClient.openVsockToHost(port: port, label: label)
             }
         switch provider(port, label) {
         case .success(let fd):

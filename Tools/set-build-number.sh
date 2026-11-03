@@ -3,9 +3,10 @@
 # set-build-number.sh — compute CFBundleVersion and emit the preprocessor
 # header that INFOPLIST_PREFIX_HEADER feeds into a target's Info.plist.
 #
-# Usage: set-build-number.sh <app|agent>
+# Usage: set-build-number.sh app
 #
-# The number is squash-merge aware, and app/agent mode scope it differently.
+# The number is squash-merge aware. Every target that labels itself takes the
+# same one, so a guest agent claims the label the host bundles it under.
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR.
 
@@ -13,37 +14,23 @@ set -eu
 
 MODE="${1:-}"
 case "$MODE" in
-    app)   DEFINE="KERNOVA_BUILD_NUMBER"; HEADER="KernovaBuildNumber.h" ;;
-    agent) DEFINE="AGENT_BUILD_NUMBER";   HEADER="AgentBuildNumber.h" ;;
-    *) echo "error: usage: $0 <app|agent>" >&2; exit 1 ;;
+    app) DEFINE="KERNOVA_BUILD_NUMBER"; HEADER="KernovaBuildNumber.h" ;;
+    *) echo "error: usage: $0 app" >&2; exit 1 ;;
 esac
 
 g() { git -C "${SRCROOT}" "$@"; }
 
-# rev-list --count for the mode. agent scopes to the guest-agent sources — both
-# the pre- and post-rename directories, so the count stays monotonic across the
-# rename, matching the scope the agent build number has always used.
 count() { # $1 = rev
-    if [ "$MODE" = agent ]; then
-        g rev-list --count "$1" -- KernovaGuestAgent/ KernovaMacOSAgent/
-    else
-        g rev-list --count "$1"
-    fi
+    g rev-list --count "$1"
 }
 
 # Does this checkout carry work not yet on main that becomes the squash commit,
 # moving this number by one? Work = a commit beyond base OR an uncommitted change.
 # `--no-optional-locks` keeps the parallel per-target phases from racing on the
 # index lock; `status --porcelain` also catches untracked (non-ignored) files.
-# app: any commit/change. agent: only ones touching the guest-agent sources.
 has_pending_work() { # $1 = base
-    if [ "$MODE" = agent ]; then
-        ! g diff --quiet "$1" HEAD -- KernovaGuestAgent/ KernovaMacOSAgent/ \
-            || [ -n "$(g --no-optional-locks status --porcelain -- KernovaGuestAgent/ KernovaMacOSAgent/)" ]
-    else
-        [ -n "$(g rev-list "$1"..HEAD)" ] \
-            || [ -n "$(g --no-optional-locks status --porcelain)" ]
-    fi
+    [ -n "$(g rev-list "$1"..HEAD)" ] \
+        || [ -n "$(g --no-optional-locks status --porcelain)" ]
 }
 
 # Resolve the mainline ref to measure against; prefer the remote-tracking main.
@@ -71,7 +58,7 @@ if [ -z "$number" ]; then
 fi
 
 if [ -z "$number" ]; then
-    echo "error: could not determine ${MODE} build number from git history" >&2
+    echo "error: could not determine the build number from git history" >&2
     exit 1
 fi
 
