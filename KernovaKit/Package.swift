@@ -129,6 +129,7 @@ var targets: [Target] = [
         name: "KernovaBench",
         dependencies: [
             "KernovaWire", "KernovaContainer", "KernovaContainerPipeline", "KernovaSynchronization",
+            "KernovaTreeTransfer", "KernovaFileTree", "KernovaDigest",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
