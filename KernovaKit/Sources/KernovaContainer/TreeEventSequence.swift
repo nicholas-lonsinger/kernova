@@ -51,8 +51,8 @@ public struct TreeEventSequence: Sendable {
     public enum Admitted: Sendable {
         /// An entry's header, keeping every rule.
         case entry(ValidatedEntry)
-        /// Bytes of the open file's `part`, starting `offset` bytes into it.
-        case content(FilePart, offset: UInt64)
+        /// Bytes of the open file's `part`, after those already admitted.
+        case content(FilePart)
         /// A step that carries nothing to land: a leave, the start of a resource fork, a file's finish, the end.
         case step
     }
@@ -119,19 +119,17 @@ public struct TreeEventSequence: Sendable {
     /// Admits `count` bytes of the open file's current part.
     ///
     /// - Parameter count: The bytes, as a chunk or event carries them.
-    /// - Returns: The part and the offset into it they start at.
+    /// - Returns: The part they belong to.
     /// - Throws: `ContainerError` naming the rule they break.
     public mutating func admitContent(_ count: UInt64) throws(ContainerError) -> Admitted {
         guard !isEnded else { throw .bytesAfterEnd }
         guard var file = openFile else { throw .chunkOutsideEntry }
         guard count > 0 else { throw .emptyChunk }
         guard count <= file.remaining else { throw .chunkPastEntrySize(count: count, remaining: file.remaining) }
-        let size = file.part == .data ? file.entry.dataByteCount : file.entry.resourceForkByteCount
-        let offset = size - file.remaining
         file.remaining -= count
         openFile = file
         counts.bytes += count
-        return .content(file.part, offset: offset)
+        return .content(file.part)
     }
 
     private mutating func admitEntry(_ header: EntryHeader, as event: TreeEvent) throws(ContainerError)
