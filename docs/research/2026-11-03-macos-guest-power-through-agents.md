@@ -1,6 +1,8 @@
 # In a macOS guest, loginwindow takes an agent's kAEShutDown with no prompt and says nothing of an app's cancel, and shutdown(8) at the login window powers off before its caller can report
 
-**Date:** 2026-11-03 · **Method:** a live run on Ephemeral Mode pool VMs, macOS 12.7.6 and macOS 27.2, from Kernova Debug `0.10.0 (1173)` on branch `feat/macos-agent-power` (PR #1814). Every guest command ran over SSH; the guest's records were streamed with `/usr/bin/log stream --level info --predicate 'subsystem BEGINSWITH "app.kernova"'` and the host's read with `/usr/bin/log show`, each to a file per step, beside the screenshots of each step and a once-a-second `kernova list` sample of the VM's state. Timestamps below are each log's own clock: guest records on the guest's, host records on the host's.
+**Date:** 2026-11-03 · **Method:** a live run on Ephemeral Mode pool VMs, macOS 12.7.6 and macOS 27.2, from Kernova Debug `0.10.0 (1173)` on branch `feat/macos-agent-power` (PR #1814).
+
+Every guest command ran over SSH. The guest's records were streamed with `/usr/bin/log stream --level info --predicate 'subsystem BEGINSWITH "app.kernova"'` and the host's read with `/usr/bin/log show`, each to a file per step, beside screenshots and a once-a-second `kernova list` sample of the VM's state. Timestamps are each log's own clock.
 
 The agent on the disk was signed ad hoc with the hardened runtime and the Apple Events entitlement:
 
