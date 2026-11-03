@@ -631,6 +631,7 @@ package final class VMCommandCore {
     /// pairing — and a ``CommandError`` a body raised passes through as it is.
     func failure(_ error: Error, verb: VMVerb, on instance: VMInstance) -> CommandError {
         if let commandError = error as? CommandError { return commandError }
+        if let shutdown = error as? GuestShutdownNotCarriedOut { return .shutdownNotCarriedOut(shutdown) }
         if let refused = error as? VMAdmissionRefusal {
             return admissionRefusal(refused.refusal, on: instance, verb: verb)
         }

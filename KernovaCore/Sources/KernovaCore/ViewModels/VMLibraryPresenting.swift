@@ -133,6 +133,8 @@ package struct GuestAccountPasswordRequest {
 package enum AlertSubject {
     /// One VM.
     case vm(VMInstance)
+    /// One session of a VM, which the alert is shown only while it is live.
+    case session(VMInstance, UUID)
     /// The library as a whole — an arrival, a bundle on disk, or several VMs.
     case library
 }

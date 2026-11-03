@@ -90,13 +90,42 @@ struct GuestShutdownRoutingTests {
         let fixture = try await makeFixture { _ in results }
 
         if throwsError {
-            await #expect(throws: CommandError.self) { try await stop(fixture) }
+            let error = try await #require(throws: CommandError.self) { try await stop(fixture) }
+            guard case .shutdownNotCarriedOut(let failure) = error else {
+                Issue.record("Expected the shutdown not carried out, got \(error)")
+                return
+            }
+            #expect(failure.session == fixture.session)
+            guard case .operationFailed(.stop, _, _, nil) = error.dto else {
+                Issue.record("Expected the wire to read a stop that failed, got \(error.dto)")
+                return
+            }
         } else {
             try await stop(fixture)
         }
         #expect(fixture.probe.powerRequests.map(\.action) == [.shutdown])
         #expect(fixture.harness.virtualization.stopCallCount == 0)
         #expect(fixture.instance.status == .running)
+    }
+
+    @Test(
+        "A Stop the ACPI button took is over once pressed: the guest still running, Stop, Restart and Force Stop are offered and a second Stop presses it again"
+    )
+    func acpiPressLeavesTheVMStoppable() async throws {
+        let fixture = try await makeFixture(peer: false)
+        fixture.harness.virtualization.guestIgnoresShutdownRequest = true
+        let capabilities = fixture.harness.library.capabilities
+
+        try await stop(fixture)
+        #expect(fixture.instance.status == .running)
+        #expect(!fixture.instance.activity.isRequestingStop)
+        #expect(fixture.instance.agentHubSnapshot.routing == nil)
+        for capability in [VMCapability.stop, .restart, .forceStop] {
+            #expect(capabilities.isAvailable(capability, on: fixture.instance), "\(capability)")
+        }
+
+        try await stop(fixture)
+        #expect(fixture.harness.virtualization.stopCallCount == 2)
     }
 
     // MARK: - Restart
@@ -201,7 +230,7 @@ struct GuestShutdownRoutingTests {
     // MARK: - Copy
 
     private static func copy(_ reason: GuestShutdownNotCarriedOut.Reason) -> (title: String?, message: String?) {
-        let error = GuestShutdownNotCarriedOut(vmName: "Fedora", reason: reason)
+        let error = GuestShutdownNotCarriedOut(vmName: "Fedora", session: UUID(), reason: reason)
         return (error.alertTitle, error.errorDescription)
     }
 

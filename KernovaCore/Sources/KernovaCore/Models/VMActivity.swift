@@ -1199,14 +1199,15 @@ package final class VMActivity {
     // MARK: - Session Actions
 
     /// Sends a graceful stop through `send` once one is admitted: a settled
-    /// live VM, or an operation that tolerates it.
+    /// live VM, or an operation that tolerates it. `send` is handed the
+    /// session the stop was admitted on.
     ///
     /// Takes no admission and moves no phase — a guest may take minutes to go
     /// down, or never, and the session-ended event is what rests the VM. The
     /// admitted request withdraws the continuations owed to the live session
     /// (``follow(_:continuing:)``): a stop someone asks for cancels a Restart
     /// waiting on it.
-    func requestStop(_ send: () async throws -> Void) async throws {
+    func requestStop(_ send: (_ session: UUID) async throws -> Void) async throws {
         try requireAdmitted(.sessionAction(.requestStop))
         guard let live = liveSessionID else { throw VMAdmissionRefusal(refusal: .invalidState) }
         withdrawContinuations(of: live)
@@ -1219,7 +1220,7 @@ package final class VMActivity {
     /// Restart's request, admitted once the first's `send` has returned, joins
     /// the first's end instead of cancelling it.
     func requestStop(
-        continuingWith boot: VMFollowUp, _ send: () async throws -> Void
+        continuingWith boot: VMFollowUp, _ send: (_ session: UUID) async throws -> Void
     ) async throws {
         try requireAdmitted(.sessionAction(.requestStop))
         guard let live = liveSessionID else { throw VMAdmissionRefusal(refusal: .invalidState) }
@@ -1239,10 +1240,10 @@ package final class VMActivity {
     /// Runs `send` as session `live`'s stop request in flight. Only the
     /// request that marked a session unmarks it, so one still returning from
     /// a session that has ended leaves the next session's mark alone.
-    private func sending(on live: UUID, _ send: () async throws -> Void) async throws {
+    private func sending(on live: UUID, _ send: (_ session: UUID) async throws -> Void) async throws {
         stopRequestSession = live
         defer { if stopRequestSession == live { stopRequestSession = nil } }
-        try await send()
+        try await send(live)
     }
 
     /// Force Stop: marks the live session *stopping* at admission — on a

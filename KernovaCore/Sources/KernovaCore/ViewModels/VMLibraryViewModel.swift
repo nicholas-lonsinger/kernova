@@ -1716,8 +1716,9 @@ package final class VMLibraryViewModel {
     /// The single place an error about `subject` becomes something on screen.
     ///
     /// A consent refusal opens the sheet that gathers it; a failure carrying a
-    /// recovery opens the alert that offers it; everything else is an error
-    /// alert headed by the refusal's own title — a ``TitledError``'s, or
+    /// recovery opens the alert that offers it; a shutdown the guest didn't
+    /// carry out is about the session it was asked of; everything else is an
+    /// error alert headed by the refusal's own title — a ``TitledError``'s, or
     /// "Error".
     func present(_ error: Error, about subject: AlertSubject) {
         guard let command = error as? CommandError else {
@@ -1738,6 +1739,8 @@ package final class VMLibraryViewModel {
             presenter?.presentStartFailedAttachment(failure, for: instance)
         case (.operationFailed(.start, _, let message, _), .vm(let instance)):
             presenter?.presentStartFailure(message, title: command.alertTitle, for: instance)
+        case (.shutdownNotCarriedOut(let failure), .vm(let instance)):
+            surfaceError(command.message, title: command.alertTitle, about: .session(instance, failure.session))
         case (.operationFailed(_, _, let message, _), _):
             surfaceError(message, title: command.alertTitle, about: subject)
         default:

@@ -2,10 +2,11 @@ import Foundation
 import KernovaAgentCore
 
 /// A graceful stop the guest's agents took that did not take the guest down,
-/// or one Kernova can't tell the fate of.
-struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatable {
+/// or one Kernova can't tell the fate of: a fact about the session it was
+/// asked of, which ends with that session.
+package struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatable, Sendable {
     /// How the shutdown ended.
-    enum Reason: Equatable {
+    package enum Reason: Equatable, Sendable {
         /// These apps stopped it.
         case blocked([AppValue])
         /// A user in the guest cancelled it.
@@ -17,16 +18,18 @@ struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatable {
     }
 
     let vmName: String
+    /// The session the stop was asked of.
+    package let session: UUID
     let reason: Reason
 
-    var alertTitle: String? {
+    package var alertTitle: String? {
         switch reason {
         case .blocked, .cancelledInGuest, .failed: "\u{201C}\(vmName)\u{201D} Didn\u{2019}t Shut Down"
         case .indeterminate: nil
         }
     }
 
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch reason {
         case .blocked(let apps):
             Self.blockers(apps)
