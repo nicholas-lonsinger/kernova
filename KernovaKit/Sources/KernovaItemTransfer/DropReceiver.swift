@@ -1,3 +1,5 @@
+// It lands through ItemSinkAdapter, which only Darwin and Linux have here.
+#if canImport(Darwin) || os(Linux)
 #if canImport(FoundationEssentials)
 import FoundationEssentials
 #else
@@ -184,3 +186,4 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         if !job.landed.isEmpty { landed(job.landed) }
     }
 }
+#endif

@@ -4,6 +4,13 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 import Dispatch
 import KernovaAgentCore
