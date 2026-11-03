@@ -126,6 +126,10 @@ public struct PeerEndpoint: Sendable {
     /// The connection's phase.
     public var state: ConnectionState { connection.state }
 
+    /// Whether a committed pull's `.pullEnded` is still owed, which its sink's publish report brings, though
+    /// the connection may have finished.
+    public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
+
     /// When the driver must next call `handleTimeout`: the soonest of the
     /// connection's deadline and every machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
@@ -247,12 +251,12 @@ public struct PeerEndpoint: Sendable {
         route(now)
     }
 
-    /// Pulls one representation of the far side's open offer: the pull's id, whose one `.pullEnded` follows,
-    /// or why it was not opened.
-    public mutating func pullItem(_ request: PullRequest, now: CoreInstant) -> Result<ItemPullID, WireError> {
+    /// Pulls one representation of the far side's open offer, as `order` says: the pull's id, whose one
+    /// `.pullEnded` follows, or why it was not opened.
+    public mutating func pullItem(_ order: ItemPullOrder, now: CoreInstant) -> Result<ItemPullID, WireError> {
         connection.tick(now)
         route(now)
-        let result = items.pull(request, connection: &connection)
+        let result = items.pull(order, connection: &connection)
         route(now)
         return result
     }

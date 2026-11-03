@@ -53,6 +53,7 @@ public final class HostConnectionRuntime: Sendable {
         configuration.items.itemTransfer = ItemAdapters.availability(items)
         let source = payloadSource
         let items = items
+        let itemConnection = ItemConnection(role: claim.role)
         let driver = ConnectionDriver(
             endpoint: HostEndpoint(configuration, generation: generation, now: scheduler.now), stream: stream,
             scheduler: scheduler, logger: logger,
@@ -68,9 +69,10 @@ public final class HostConnectionRuntime: Sendable {
                         }
                     case .itemSource(let effect):
                         items?.source.handle(
-                            effect, reporter: ItemSourceReporter { driver.handle(.items(.source($0))) })
+                            effect, reporter: ItemSourceReporter(itemConnection) { driver.handle(.items(.source($0))) })
                     case .itemSink(let effect):
-                        items?.sink.handle(effect, reporter: ItemSinkReporter { driver.handle(.items(.sink($0))) })
+                        items?.sink.handle(
+                            effect, reporter: ItemSinkReporter(itemConnection) { driver.handle(.items(.sink($0))) })
                     }
                 },
                 event: { event, _ in queue.async { handler(event) } }))

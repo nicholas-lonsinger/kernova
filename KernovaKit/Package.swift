@@ -184,6 +184,16 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // The item adapters a shell registers: the sink landing pulls through `KernovaTreeTransfer` and the source
+    // serving offers through it, over the runtime's `ItemSink` and `ItemSource`.
+    .target(
+        name: "KernovaItemTransfer",
+        dependencies: [
+            "KernovaAgentRuntime", "KernovaAgentCore", "KernovaTreeTransfer", "KernovaContainer",
+            "KernovaContainerPipeline", "KernovaFileTree", "KernovaWire", "KernovaSynchronization",
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
     // endpoints against each other on virtual time.
     .target(
@@ -309,6 +319,16 @@ var targets: [Target] = [
             "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaLogging",
             "KernovaSynchronization", "KernovaDigest", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
+        swiftSettings: sharedSwiftSettings
+    ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaItemTransferTests",
+        dependencies: [
+            "KernovaItemTransfer", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation",
+            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaSynchronization",
+            "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         swiftSettings: sharedSwiftSettings
     ),

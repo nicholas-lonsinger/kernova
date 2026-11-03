@@ -254,9 +254,12 @@ package final class HostileRun {
         return stream
     }
 
-    /// Pulls `request` from the far side's offer.
-    package func pullItem(_ request: PullRequest) -> Result<ItemPullID, WireError>? {
-        let result = host?.pullItem(request, now: now) ?? peer?.pullItem(request, now: now)
+    /// Pulls `request` from the far side's offer, landing it as `landing` says.
+    package func pullItem(_ request: PullRequest, landing: ItemLanding = DecodingItemSink.landing(.file))
+        -> Result<ItemPullID, WireError>?
+    {
+        let order = ItemPullOrder(request, landing: landing)
+        let result = host?.pullItem(order, now: now) ?? peer?.pullItem(order, now: now)
         drain()
         return result
     }

@@ -494,8 +494,16 @@ package final class Duet {
                 : peer.offerItems(offer, feature: feature, now: instant)
             if let refusal { failures.append("t=\(now): `\(input.text)` refused: \(refusal)") }
         case .itemPull(let side, let request):
+            let item =
+                side == .host
+                ? host.remoteOfferItem(token: request.token, index: Int(request.item))
+                : peer.remoteOfferItem(token: request.token, index: Int(request.item))
+            let storage = item?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
+            let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
             let result =
-                side == .host ? host.pullItem(request, now: instant) : peer.pullItem(request, now: instant)
+                side == .host
+                ? host.pullItem(order, now: instant)
+                : peer.pullItem(order, now: instant)
             if case .failure(let error) = result { failures.append("t=\(now): `\(input.text)` refused: \(error)") }
         case .withdraw(.host, let token): host.withdrawOffer(token, now: instant)
         case .withdraw(.peer, let token): peer.withdrawOffer(token, now: instant)
@@ -784,8 +792,10 @@ package enum TranscriptEvents {
             "\(prefix) offerReceived feature=\(header.feature.rawValue) token=\(FrozenFields.hex(header.token)) items=\(header.count)"
         case .offerEnded(let feature, let origin, let token, let closure):
             "\(prefix) offerEnded feature=\(feature.rawValue) \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
-        case .pullEnded(let id, let result): "\(prefix) pullEnded id=\(id.stream.rawValue) \(describe(result))"
-        case .serveEnded(let id, let result): "\(prefix) serveEnded id=\(id.stream.rawValue) \(describe(result))"
+        case .pullEnded(let feature, let id, let result):
+            "\(prefix) pullEnded feature=\(feature.rawValue) id=\(id.stream.rawValue) \(describe(result))"
+        case .serveEnded(let feature, let id, let result):
+            "\(prefix) serveEnded feature=\(feature.rawValue) id=\(id.stream.rawValue) \(describe(result))"
         }
     }
 
@@ -803,6 +813,15 @@ package enum TranscriptEvents {
     }
 
     static func describe(_ result: ItemPullResult) -> String {
+        switch result {
+        case .landed(.named(let name)): "landed name=\(FrozenFields.hex(name))"
+        case .landed(.inline(let bytes)): "landed inline=\(FrozenFields.hex(bytes))"
+        case .failed(let error): "failed code=\(error.code.rawValue)"
+        case .closed(let closure): "closed \(describe(closure))"
+        }
+    }
+
+    static func describe(_ result: ItemServeResult) -> String {
         switch result {
         case .landed: "landed"
         case .failed(let error): "failed code=\(error.code.rawValue)"

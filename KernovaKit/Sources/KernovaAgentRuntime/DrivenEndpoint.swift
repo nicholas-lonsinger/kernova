@@ -20,6 +20,9 @@ public protocol DrivenEndpoint: Sendable {
     var generation: ConnectionGeneration { get }
     /// The connection's phase.
     var state: ConnectionState { get }
+    /// Whether an event is still owed for a step no input can withdraw — a committed pull's publish report —
+    /// though the connection may have finished.
+    var hasLandingsInFlight: Bool { get }
     /// When `handleTimeout` must next run.
     var nextDeadline: CoreInstant? { get }
 

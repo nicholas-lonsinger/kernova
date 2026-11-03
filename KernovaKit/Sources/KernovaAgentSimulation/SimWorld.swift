@@ -67,6 +67,14 @@ package final class SimLink {
         case .peer: peer?.state
         }
     }
+
+    /// Whether `side`'s endpoint owes a committed pull's end.
+    package func hasLandingsInFlight(_ side: SimSide) -> Bool {
+        switch side {
+        case .host: host?.hasLandingsInFlight ?? false
+        case .peer: peer?.hasLandingsInFlight ?? false
+        }
+    }
 }
 
 /// One injected fault: what the world drew for it, and when it took effect.

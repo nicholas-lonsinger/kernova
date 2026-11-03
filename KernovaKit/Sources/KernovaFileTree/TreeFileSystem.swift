@@ -69,10 +69,20 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(TreeFileSystemError)
     /// Renames `name` in `directory` to `newName` in `newDirectory`, failing
     /// when anything already has the new name — `EXDEV` when the two are on
-    /// different volumes, `ENOTSUP` (Linux: `EINVAL`) when the volume cannot
-    /// rename without replacing.
+    /// different volumes, `ENOTSUP` when the volume cannot rename without
+    /// replacing.
     func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
         throws(TreeFileSystemError)
+    /// Renames `name` in `directory` to `newName` in `newDirectory`, replacing
+    /// what has the new name: a file, or an empty directory when `name` is a
+    /// directory. Only for a name the caller created itself, where ``rename(_:in:to:in:)``
+    /// cannot rename without replacing.
+    func renameReplacing(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
+        throws(TreeFileSystemError)
+    /// Whether the volume holding the open directory `directory` can rename
+    /// without replacing, as ``rename(_:in:to:in:)`` does; where it answers
+    /// `true` and is wrong, that rename fails `ENOTSUP`.
+    func renamesExclusively(in directory: Int32) throws(TreeFileSystemError) -> Bool
 
     /// Creates the directory `name` in `directory`, searchable and writable by
     /// its owner alone until its own mode is applied, failing when anything
