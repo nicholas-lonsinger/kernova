@@ -145,7 +145,9 @@ struct ItemAdapterTests {
                 .code == .readFailed)
     }
 
-    @Test("an item is served by its own path, though the folder it lies in cannot be opened")
+    @Test(
+        "an item is served by its own path, though the folder it lies in cannot be opened",
+        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
     func servedThroughItsOwnPath() async throws {
         let bench = try Bench()
         let content = Data("granted".utf8)

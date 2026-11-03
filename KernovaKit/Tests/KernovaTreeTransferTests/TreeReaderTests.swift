@@ -46,7 +46,9 @@ struct TreeReaderTests {
         #expect(failure?.wireError.code == .readFailed)
     }
 
-    @Test("an item is opened by its own path, so a folder above it that cannot be opened does not stop it")
+    @Test(
+        "an item is opened by its own path, so a folder above it that cannot be opened does not stop it",
+        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
     func rootOpenedByItsOwnPath() throws {
         let bench = try FidelityBench()
         try bench.makeDirectory([bytes("locked")])

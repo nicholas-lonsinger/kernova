@@ -183,7 +183,9 @@ struct DropReceiverTests {
         await bench.close()
     }
 
-    @Test("A dropped folder the host cannot read all of, for an entry deep in it it may not open, is skipped")
+    @Test(
+        "A dropped folder the host cannot read all of, for an entry deep in it it may not open, is skipped",
+        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
     func unreadableEntryInFolderIsSkipped() async throws {
         let bench = try await Bench()
         try FileManager.default.createDirectory(
