@@ -1,6 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaPlatformPOSIX
 import System
 
 // MARK: - Entry headers
@@ -11,7 +12,7 @@ struct ClipboardArchiveEntryHeader {
     /// The entry's path in the archive, raw bytes and `/`-separated; empty for
     /// a source's own root.
     let path: [UInt8]
-    let status: stat
+    let status: FileStatus
     /// A symlink's target.
     var linkTarget: [UInt8]? = nil
     /// The byte count a regular file's entry declares.
@@ -25,8 +26,7 @@ struct ClipboardArchiveEntryHeader {
     ///   key in ``ClipboardArchive/fieldKeys`` this type has no value for — a
     ///   programming error, raised loudly rather than left out of every entry.
     func make() throws -> ArchiveHeader {
-        let format = status.st_mode & S_IFMT
-        guard let type = Self.entryType(format) else {
+        guard let type = Self.entryType(status.kind) else {
             throw ClipboardItemFailure(
                 itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(EFTYPE))
         }
@@ -45,25 +45,24 @@ struct ClipboardArchiveEntryHeader {
             case "PAT": builder.append(string: path, key: key)
             case "LNK": if let linkTarget { builder.append(string: linkTarget, key: key) }
             case "DEV":
-                if format == S_IFCHR || format == S_IFBLK {
-                    builder.append(uint: UInt64(UInt32(bitPattern: status.st_rdev)), key: key)
+                if status.kind == .characterDevice || status.kind == .blockDevice {
+                    builder.append(uint: status.specialDevice, key: key)
                 }
-            case "UID": builder.append(uint: UInt64(status.st_uid), key: key)
-            case "GID": builder.append(uint: UInt64(status.st_gid), key: key)
-            case "MOD": builder.append(uint: UInt64(status.st_mode & 0o7777), key: key)
-            case "FLG": builder.append(uint: UInt64(status.st_flags), key: key)
+            case "UID": builder.append(uint: UInt64(status.owner), key: key)
+            case "GID": builder.append(uint: UInt64(status.group), key: key)
+            case "MOD": builder.append(uint: UInt64(status.permissions), key: key)
+            case "FLG": builder.append(uint: UInt64(status.flags), key: key)
             // `CTM` is the entry's creation time (AADefs.h), not the inode
-            // change time; a volume that keeps none reports it as zero, and
-            // AppleArchive's own headers then leave the field out.
+            // change time; for a volume that keeps none, AppleArchive's own
+            // headers leave the field out.
             case "CTM":
-                let birth = status.st_birthtimespec
-                if birth.tv_sec != 0 || birth.tv_nsec != 0 {
-                    builder.append(timespec: birth, key: key)
+                if let birth = status.birthTime {
+                    builder.append(timespec: Self.timespec(birth), key: key)
                 }
-            case "MTM": builder.append(timespec: status.st_mtimespec, key: key)
+            case "MTM": builder.append(timespec: Self.timespec(status.modificationTime), key: key)
             case "DAT":
-                if format == S_IFREG {
-                    builder.append(blobSize: UInt64(byteCount ?? Int(status.st_size)), key: key)
+                if status.kind == .regular {
+                    builder.append(blobSize: UInt64(byteCount ?? Int(status.size)), key: key)
                 }
             default:
                 assertionFailure("ClipboardArchive.fieldKeys names \(key), which no entry produces")
@@ -79,16 +78,31 @@ struct ClipboardArchiveEntryHeader {
 
     private static let keyNames = ClipboardArchive.fieldKeys.split(separator: ",").map(String.init)
 
-    private static func entryType(_ format: mode_t) -> ArchiveHeader.EntryType? {
-        switch format {
-        case S_IFREG: .regularFile
-        case S_IFDIR: .directory
-        case S_IFLNK: .link
-        case S_IFIFO: .fifo
-        case S_IFCHR: .characterSpecial
-        case S_IFBLK: .blockSpecial
-        case S_IFSOCK: .socket
-        default: nil
+    private static func entryType(_ kind: FileKind) -> ArchiveHeader.EntryType? {
+        switch kind {
+        case .regular: .regularFile
+        case .directory: .directory
+        case .symbolicLink: .link
+        case .fifo: .fifo
+        case .characterDevice: .characterSpecial
+        case .blockDevice: .blockSpecial
+        case .socket: .socket
+        case .other: nil
+        }
+    }
+
+    private static func timespec(_ time: FileTime) -> Darwin.timespec {
+        Darwin.timespec(tv_sec: Int(time.seconds), tv_nsec: Int(time.nanoseconds))
+    }
+}
+
+extension DirectoryCursorFailure {
+    /// The failure as one on the item at `path`.
+    func naming(_ path: [UInt8]) -> ClipboardItemFailure {
+        let display = ClipboardArchiveCodec.displayPath(path)
+        switch self {
+        case .system(let error): return ClipboardItemFailure(itemPath: display, reason: .posix(error.code))
+        case .moved: return ClipboardItemFailure(itemPath: display, reason: .unknown)
         }
     }
 }
@@ -111,7 +125,7 @@ extension ClipboardArchiveCodec {
     static func writeFileEntry(
         _ url: URL, name: String, byteCount: Int, to encodeStream: ArchiveStream
     ) throws {
-        let walk = TreeWalk(volume: ClipboardArchiveLocalVolume(), encodeStream: encodeStream)
+        let walk = TreeWalk(fileSystem: POSIXTreeFileSystem(), encodeStream: encodeStream)
         try walk.writeRegularFile(
             Array(url.path.utf8), in: AT_FDCWD, path: Array(name.utf8), failurePath: [],
             byteCount: byteCount)
@@ -135,17 +149,17 @@ extension ClipboardArchiveCodec {
     ///   reason, the directory that was no longer where the walk left it. The
     ///   walk stops there: nothing is skipped.
     static func writeTree(at root: String, to encodeStream: ArchiveStream) throws {
-        try writeTree(at: root, to: encodeStream, on: ClipboardArchiveLocalVolume())
+        try writeTree(at: root, to: encodeStream, on: POSIXTreeFileSystem())
     }
 
-    /// ``writeTree(at:to:)`` against `volume`.
-    static func writeTree<Volume: ClipboardArchiveVolume>(
-        at root: String, to encodeStream: ArchiveStream, on volume: Volume
+    /// ``writeTree(at:to:)`` against `fileSystem`.
+    static func writeTree<FileSystem: TreeFileSystem>(
+        at root: String, to encodeStream: ArchiveStream, on fileSystem: FileSystem
     ) throws {
-        let walk = TreeWalk(volume: volume, encodeStream: encodeStream)
+        let walk = TreeWalk(fileSystem: fileSystem, encodeStream: encodeStream)
         guard let top = try walk.writeEntry(Array(root.utf8), in: AT_FDCWD, path: []) else { return }
         var cursor = DirectoryCursor(
-            volume: volume, descriptor: top.descriptor, status: top.status, frame: top.directory)
+            fileSystem: fileSystem, descriptor: top.descriptor, status: top.status, frame: top.directory)
         while true {
             if let name = cursor.frame.pending.popLast() {
                 let parentPath = cursor.frame.path
@@ -175,13 +189,13 @@ extension ClipboardArchiveCodec {
     /// A directory ``TreeWalk/writeEntry(_:in:path:)`` opened to walk into.
     struct OpenedTreeDirectory {
         let descriptor: Int32
-        let status: stat
+        let status: FileStatus
         let directory: TreeDirectory
     }
 
-    /// One walk's writes, against one volume and one encode stream.
-    struct TreeWalk<Volume: ClipboardArchiveVolume> {
-        let volume: Volume
+    /// One walk's writes, against one file system and one encode stream.
+    struct TreeWalk<FileSystem: TreeFileSystem> {
+        let fileSystem: FileSystem
         let encodeStream: ArchiveStream
 
         /// Writes the entry `name` in `directory`, at `path` in the archive.
@@ -192,27 +206,27 @@ extension ClipboardArchiveCodec {
         func writeEntry(_ name: [UInt8], in directory: Int32, path: [UInt8]) throws
             -> OpenedTreeDirectory?
         {
-            let status = try attempt(path) { () throws(Errno) in
-                try volume.status(of: name, in: directory)
+            let status = try attempt(path) { () throws(TreeFileSystemError) in
+                try fileSystem.status(of: name, in: directory)
             }
-            switch status.st_mode & S_IFMT {
-            case S_IFREG:
+            switch status.kind {
+            case .regular:
                 try writeRegularFile(name, in: directory, path: path, failurePath: path, byteCount: nil)
                 return nil
-            case S_IFDIR:
-                let descriptor = try attempt(path) { () throws(Errno) in
-                    try volume.openDirectory(name, in: directory)
+            case .directory:
+                let descriptor = try attempt(path) { () throws(TreeFileSystemError) in
+                    try fileSystem.openDirectory(name, in: directory)
                 }
                 do {
-                    let opened = try attempt(path) { () throws(Errno) in
-                        try volume.status(of: descriptor)
+                    let opened = try attempt(path) { () throws(TreeFileSystemError) in
+                        try fileSystem.status(of: descriptor)
                     }
                     try encodeStream.writeHeader(ClipboardArchiveEntryHeader(path: path, status: opened).make())
-                    let names = try attempt(path) { () throws(Errno) in
-                        try volume.names(in: descriptor)
+                    let names = try attempt(path) { () throws(TreeFileSystemError) in
+                        try fileSystem.names(in: descriptor)
                     }
                     guard !names.isEmpty else {
-                        volume.close(descriptor)
+                        fileSystem.close(descriptor)
                         return nil
                     }
                     return OpenedTreeDirectory(
@@ -220,12 +234,12 @@ extension ClipboardArchiveCodec {
                         directory: TreeDirectory(
                             path: path, pending: names.sorted { $1.lexicographicallyPrecedes($0) }))
                 } catch {
-                    volume.close(descriptor)
+                    fileSystem.close(descriptor)
                     throw error
                 }
-            case S_IFLNK:
-                let target = try attempt(path) { () throws(Errno) in
-                    try volume.linkTarget(of: name, in: directory)
+            case .symbolicLink:
+                let target = try attempt(path) { () throws(TreeFileSystemError) in
+                    try fileSystem.linkTarget(of: name, in: directory)
                 }
                 try encodeStream.writeHeader(
                     ClipboardArchiveEntryHeader(path: path, status: status, linkTarget: target).make())
@@ -252,18 +266,18 @@ extension ClipboardArchiveCodec {
             _ name: [UInt8], in directory: Int32, path: [UInt8], failurePath: [UInt8],
             byteCount: Int?
         ) throws {
-            let descriptor = try attempt(failurePath) { () throws(Errno) in
-                try volume.openFile(name, in: directory)
+            let descriptor = try attempt(failurePath) { () throws(TreeFileSystemError) in
+                try fileSystem.openFile(name, in: directory)
             }
-            defer { volume.close(descriptor) }
-            let status = try attempt(failurePath) { () throws(Errno) in
-                try volume.status(of: descriptor)
+            defer { fileSystem.close(descriptor) }
+            let status = try attempt(failurePath) { () throws(TreeFileSystemError) in
+                try fileSystem.status(of: descriptor)
             }
-            guard (status.st_mode & S_IFMT) == S_IFREG else {
+            guard status.kind == .regular else {
                 throw ClipboardItemFailure(
                     itemPath: ClipboardArchiveCodec.displayPath(failurePath), reason: .posix(EFTYPE))
             }
-            let byteCount = byteCount ?? Int(status.st_size)
+            let byteCount = byteCount ?? Int(status.size)
             try encodeStream.writeHeader(
                 ClipboardArchiveEntryHeader(path: path, status: status, byteCount: byteCount).make())
 
@@ -272,8 +286,8 @@ extension ClipboardArchiveCodec {
                 byteCount: min(ClipboardArchiveCodec.fileReadBlockSize, max(1, byteCount)), alignment: 16)
             defer { buffer.deallocate() }
             while remaining > 0 {
-                let got = try attempt(failurePath) { () throws(Errno) in
-                    try volume.read(
+                let got = try attempt(failurePath) { () throws(TreeFileSystemError) in
+                    try fileSystem.read(
                         descriptor,
                         into: UnsafeMutableRawBufferPointer(
                             rebasing: buffer[..<min(buffer.count, remaining)]))
@@ -291,13 +305,13 @@ extension ClipboardArchiveCodec {
         }
 
         private func attempt<Result>(
-            _ path: [UInt8], _ body: () throws(Errno) -> Result
+            _ path: [UInt8], _ body: () throws(TreeFileSystemError) -> Result
         ) throws(ClipboardItemFailure) -> Result {
             do {
                 return try body()
             } catch {
                 throw ClipboardItemFailure(
-                    itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(error.rawValue))
+                    itemPath: ClipboardArchiveCodec.displayPath(path), reason: .posix(error.code))
             }
         }
     }

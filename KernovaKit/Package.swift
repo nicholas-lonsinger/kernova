@@ -68,8 +68,9 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The C calls the portable targets make without importing an OS module:
-    // the CRC32C instructions, the monotonic clock that counts sleep, and the
-    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports.
+    // the CRC32C instructions, the monotonic clock that counts sleep, the
+    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
+    // the `openat2` and `renameat2` system calls, which musl does not wrap.
     .target(
         name: "CKernovaShims",
         linkerSettings: [.linkedLibrary("mincore", .when(platforms: [.windows]))]
@@ -121,12 +122,13 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
-    // The non-blocking `ByteStream` over a socket. Declared on every platform,
-    // like `KernovaPlatformLinux`, with its sources compiled only for Darwin
-    // and Linux.
+    // The non-blocking `ByteStream` over a socket, and the descriptor-relative
+    // tree calls with the cursor that walks them. Declared on every platform,
+    // like `KernovaPlatformLinux`; the tree protocol and the cursor compile
+    // everywhere, the calls into the OS only for Darwin and Linux.
     .target(
         name: "KernovaPlatformPOSIX",
-        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization"],
+        dependencies: ["KernovaAgentRuntime", "KernovaSynchronization", "CKernovaShims"],
         swiftSettings: sharedSwiftSettings
     ),
     // The guest-agent protocol's sans-I/O state machines: streams, credit,
@@ -215,6 +217,12 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`.
+    .testTarget(
+        name: "KernovaPlatformPOSIXTests",
+        dependencies: ["KernovaPlatformPOSIX", "KernovaPortableTestSupport"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
     // is Apple-only, so its suites carry no `.caseScoped` and mint no scratch
     // (Tools/check-test-seams.sh).
@@ -265,6 +273,7 @@ targets += [
         dependencies: [
             "KernovaLogging",
             "KernovaSynchronization",
+            "KernovaPlatformPOSIX",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
@@ -321,6 +330,7 @@ targets += [
         dependencies: [
             "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
             "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
+            "KernovaPlatformPOSIX",
         ],
         swiftSettings: sharedSwiftSettings
     ),

@@ -1,6 +1,7 @@
 import AppleArchive
 import Darwin
 import Foundation
+import KernovaPlatformPOSIX
 import KernovaSynchronization
 import System
 import Testing
@@ -21,15 +22,15 @@ func extractFailure(_ archive: Data, into destination: URL) -> Error? {
 /// The local volume, counting the directories it holds open, and handing each
 /// call that changes the volume to `before` first, which fails the call with
 /// the `errno` it throws.
-final class InterposedArchiveVolume: ClipboardArchiveWritableVolume {
+final class InterposedArchiveVolume: MutableTreeFileSystem {
     /// A call that changes the volume, about to be made.
     enum Call {
-        case setMode(mode_t, name: [UInt8])
+        case setMode(UInt32, name: [UInt8])
         case remove(name: [UInt8])
         case rename
     }
 
-    private let base = ClipboardArchiveLocalVolume()
+    private let base = POSIXTreeFileSystem()
     private let before: @Sendable (Call) throws(Errno) -> Void
 
     /// Directories the volume opened and has not closed.
@@ -59,8 +60,15 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume {
         }
     }
 
-    func openDirectory(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
-        let descriptor = try base.openDirectory(name, in: directory)
+    func openDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        held(try base.openDirectory(name, in: directory))
+    }
+
+    func openParent(of directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        held(try base.openParent(of: directory))
+    }
+
+    private func held(_ descriptor: Int32) -> Int32 {
         directories.withLock { held in
             held.open.insert(descriptor)
             held.most = max(held.most, held.open.count)
@@ -75,41 +83,49 @@ final class InterposedArchiveVolume: ClipboardArchiveWritableVolume {
         base.close(descriptor)
     }
 
-    func status(of name: [UInt8], in directory: Int32) throws(Errno) -> stat {
+    func status(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> FileStatus {
         try base.status(of: name, in: directory)
     }
 
-    func status(of descriptor: Int32) throws(Errno) -> stat { try base.status(of: descriptor) }
+    func status(of descriptor: Int32) throws(TreeFileSystemError) -> FileStatus { try base.status(of: descriptor) }
 
-    func openFile(_ name: [UInt8], in directory: Int32) throws(Errno) -> Int32 {
+    func openFile(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
         try base.openFile(name, in: directory)
     }
 
-    func names(in directory: Int32) throws(Errno) -> [[UInt8]] { try base.names(in: directory) }
+    func names(in directory: Int32) throws(TreeFileSystemError) -> [[UInt8]] { try base.names(in: directory) }
 
-    func linkTarget(of name: [UInt8], in directory: Int32) throws(Errno) -> [UInt8] {
+    func linkTarget(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> [UInt8] {
         try base.linkTarget(of: name, in: directory)
     }
 
-    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(Errno) -> Int {
+    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int {
         try base.read(descriptor, into: buffer)
     }
 
-    func setMode(_ mode: mode_t, of name: [UInt8], in directory: Int32) throws(Errno) {
-        try before(.setMode(mode, name: name))
+    func setMode(_ mode: UInt32, of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
+        try interpose(.setMode(mode, name: name))
         try base.setMode(mode, of: name, in: directory)
     }
 
-    func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(Errno) {
-        try before(.remove(name: name))
+    func remove(_ name: [UInt8], in directory: Int32, isDirectory: Bool) throws(TreeFileSystemError) {
+        try interpose(.remove(name: name))
         try base.remove(name, in: directory, isDirectory: isDirectory)
     }
 
     func rename(_ name: [UInt8], in directory: Int32, to newName: [UInt8], in newDirectory: Int32)
-        throws(Errno)
+        throws(TreeFileSystemError)
     {
-        try before(.rename)
+        try interpose(.rename)
         try base.rename(name, in: directory, to: newName, in: newDirectory)
+    }
+
+    private func interpose(_ call: Call) throws(TreeFileSystemError) {
+        do {
+            try before(call)
+        } catch {
+            throw TreeFileSystemError(code: error.rawValue)
+        }
     }
 }
 

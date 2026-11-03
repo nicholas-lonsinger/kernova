@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import KernovaPlatformPOSIX
 import System
 
 /// Removes staged content outright: a file, a symlink (never its target), or
@@ -23,19 +24,25 @@ public enum StagedItemRemoval {
     ///   directory was moved out from under the removal, a failure naming no
     ///   reason. What was removed before it stays removed.
     public static func remove(at url: URL) throws {
-        try remove(at: url, on: ClipboardArchiveLocalVolume())
+        try remove(at: url, on: POSIXTreeFileSystem())
     }
 
-    /// ``remove(at:)`` against `volume`.
-    static func remove<Volume: ClipboardArchiveWritableVolume>(at url: URL, on volume: Volume) throws {
-        let root = Array(url.path.utf8)
-        let status = try volume.status(of: root, in: AT_FDCWD)
-        guard (status.st_mode & S_IFMT) == S_IFDIR else {
-            try volume.remove(root, in: AT_FDCWD, isDirectory: false)
-            return
+    /// ``remove(at:)`` against `fileSystem`.
+    static func remove<FileSystem: MutableTreeFileSystem>(at url: URL, on fileSystem: FileSystem) throws {
+        do {
+            let root = Array(url.path.utf8)
+            let status = try fileSystem.status(of: root, in: AT_FDCWD)
+            guard status.kind == .directory else {
+                try fileSystem.remove(root, in: AT_FDCWD, isDirectory: false)
+                return
+            }
+            try empty(root, status: status, on: fileSystem)
+            try fileSystem.remove(root, in: AT_FDCWD, isDirectory: true)
+        } catch let error as TreeFileSystemError {
+            throw Errno(rawValue: error.code)
+        } catch DirectoryCursorFailure.system(let error) {
+            throw Errno(rawValue: error.code)
         }
-        try empty(root, status: status, on: volume)
-        try volume.remove(root, in: AT_FDCWD, isDirectory: true)
     }
 
     /// A directory being emptied: its name in its parent, and the names in it
@@ -47,36 +54,31 @@ public enum StagedItemRemoval {
 
     /// Removes everything inside the directory `root`, whose status is
     /// `status`.
-    private static func empty<Volume: ClipboardArchiveWritableVolume>(
-        _ root: [UInt8], status: stat, on volume: Volume
+    private static func empty<FileSystem: MutableTreeFileSystem>(
+        _ root: [UInt8], status: FileStatus, on fileSystem: FileSystem
     ) throws {
-        guard let top = try open(root, status: status, in: AT_FDCWD, on: volume) else { return }
+        guard let top = try open(root, status: status, in: AT_FDCWD, on: fileSystem) else { return }
         var cursor = DirectoryCursor(
-            volume: volume, descriptor: top.descriptor, status: top.status,
+            fileSystem: fileSystem, descriptor: top.descriptor, status: top.status,
             frame: Frame(name: root, pending: top.names))
         while true {
             if let name = cursor.frame.pending.popLast() {
-                let entry = try volume.status(of: name, in: cursor.descriptor)
-                guard (entry.st_mode & S_IFMT) == S_IFDIR else {
-                    try volume.remove(name, in: cursor.descriptor, isDirectory: false)
+                let entry = try fileSystem.status(of: name, in: cursor.descriptor)
+                guard entry.kind == .directory else {
+                    try fileSystem.remove(name, in: cursor.descriptor, isDirectory: false)
                     continue
                 }
-                guard let child = try open(name, status: entry, in: cursor.descriptor, on: volume)
+                guard let child = try open(name, status: entry, in: cursor.descriptor, on: fileSystem)
                 else {
-                    try volume.remove(name, in: cursor.descriptor, isDirectory: true)
+                    try fileSystem.remove(name, in: cursor.descriptor, isDirectory: true)
                     continue
                 }
                 cursor.descend(
                     into: child.descriptor, status: child.status,
                     frame: Frame(name: name, pending: child.names))
             } else if !cursor.isAtTop {
-                let left: Frame
-                do {
-                    left = try cursor.ascend()
-                } catch DirectoryCursorFailure.system(let errno) {
-                    throw errno
-                }
-                try volume.remove(left.name, in: cursor.descriptor, isDirectory: true)
+                let left = try cursor.ascend()
+                try fileSystem.remove(left.name, in: cursor.descriptor, isDirectory: true)
             } else {
                 return
             }
@@ -88,24 +90,25 @@ public enum StagedItemRemoval {
     ///
     /// - Returns: the directory, open, with the names in it; `nil` when it is
     ///   empty, closed.
-    private static func open<Volume: ClipboardArchiveWritableVolume>(
-        _ name: [UInt8], status: stat, in directory: Int32, on volume: Volume
-    ) throws(Errno) -> (descriptor: Int32, status: stat, names: [[UInt8]])? {
-        let mode = status.st_mode & 0o7777
-        if mode & S_IRWXU != S_IRWXU {
-            try volume.setMode(mode | S_IRWXU, of: name, in: directory)
+    private static func open<FileSystem: MutableTreeFileSystem>(
+        _ name: [UInt8], status: FileStatus, in directory: Int32, on fileSystem: FileSystem
+    ) throws(TreeFileSystemError) -> (descriptor: Int32, status: FileStatus, names: [[UInt8]])? {
+        let mode = status.permissions
+        let ownerAll = UInt32(S_IRWXU)
+        if mode & ownerAll != ownerAll {
+            try fileSystem.setMode(mode | ownerAll, of: name, in: directory)
         }
-        let descriptor = try volume.openDirectory(name, in: directory)
+        let descriptor = try fileSystem.openDirectory(name, in: directory)
         do {
-            let opened = try volume.status(of: descriptor)
-            let names = try volume.names(in: descriptor)
+            let opened = try fileSystem.status(of: descriptor)
+            let names = try fileSystem.names(in: descriptor)
             guard !names.isEmpty else {
-                volume.close(descriptor)
+                fileSystem.close(descriptor)
                 return nil
             }
             return (descriptor, opened, names)
         } catch {
-            volume.close(descriptor)
+            fileSystem.close(descriptor)
             throw error
         }
     }

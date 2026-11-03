@@ -72,6 +72,14 @@
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:KernovaKit",
+        "identifier" : "KernovaPlatformPOSIXTests",
+        "name" : "KernovaPlatformPOSIXTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:KernovaKit",
         "identifier" : "KernovaAgentCoreTests",
         "name" : "KernovaAgentCoreTests"
       }

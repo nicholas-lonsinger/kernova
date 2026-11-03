@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import KernovaPlatformPOSIX
 import KernovaTestSupport
 import System
 import Testing
