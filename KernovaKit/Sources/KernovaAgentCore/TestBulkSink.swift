@@ -56,7 +56,7 @@ package struct TestBulkSink: Sendable {
     package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, _):
-            let kind: StreamKind = stream.rawValue % 2 == 1 ? .UNRECOGNIZED(9000) : .UNRECOGNIZED(9001)
+            let kind: StreamKind = stream.rawValue % 2 == 1 ? .testBulkByPeer : .testBulkByHost
             flows.append(Flow(stream: stream, kind: kind, isSender: true, remaining: bytesPerStream, consumes: true))
             pump(stream, &connection)
         case .writable(let stream):

@@ -15,3 +15,20 @@ public typealias PayloadFormat = Kernova_V2_PayloadFormat
 
 /// What an OPEN asks for.
 public typealias StreamKind = Kernova_V2_StreamKind
+
+/// What a representation's bytes are: a canonical MIME type and namespaced native names.
+public typealias TypeDescriptor = Kernova_V2_TypeDescriptor
+
+/// A container codec a destination decodes besides plain bytes.
+public typealias Codec = Kernova_V2_Codec
+
+extension StreamKind {
+    /// The simulation's raw-DATA kind a peer opens.
+    package static let testBulkByPeer = StreamKind.UNRECOGNIZED(9000)
+    /// The simulation's raw-DATA kind the host opens.
+    package static let testBulkByHost = StreamKind.UNRECOGNIZED(9001)
+    /// The simulation's item-set offer kind the host opens.
+    package static let testItemOfferByHost = StreamKind.UNRECOGNIZED(9002)
+    /// The simulation's item-set offer kind a peer opens.
+    package static let testItemOfferByPeer = StreamKind.UNRECOGNIZED(9003)
+}

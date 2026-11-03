@@ -118,9 +118,9 @@ struct SweepSuite {
         world.at(.sec(1)) { world in
             guard let link = world.peers[0].link else { return }
             let now = world.localNow(.peer(0))
-            guard let first = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: true, now: now) else { return }
+            guard let first = link.peer?.openTestBulk(.testBulkByPeer, consumes: true, now: now) else { return }
             link.peer?.resetTestStream(first, now: now)
-            let second = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: true, now: now)
+            let second = link.peer?.openTestBulk(.testBulkByPeer, consumes: true, now: now)
             world.drain(link, .peer)
             world.marks["skipped"] = Int(first.rawValue)
             world.marks["second"] = second.map { Int($0.rawValue) }

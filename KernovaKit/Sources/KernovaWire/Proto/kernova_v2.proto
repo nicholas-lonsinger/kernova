@@ -61,9 +61,10 @@ enum FeatureId {
 
   // Guest status: guest info (hostname, addresses, uptime) 4, metrics 5.
   reserved 4 to 9;
-  // Phase 4 data plane: clipboard 10, drop onto the VM 11, drag out 12,
-  // item transfer (pulls) 13.
-  reserved 10 to 19;
+  // Phase 4 data plane: clipboard 10, drop onto the VM 11, drag out 12.
+  reserved 10 to 12;
+  FEATURE_ID_ITEM_TRANSFER = 13;  // current-only, version 1. Pulls of offered items.
+  reserved 14 to 19;
   // Exec, file browsing, and other later features.
   reserved 20 to 49;
 }
@@ -77,9 +78,12 @@ enum FeatureId {
 // | POWER_REQUEST | POWER   | host   | PowerRequest | nothing            | PowerProgress msgs   | empty, at once | PowerOutcome  |
 // | UPDATE_PULL   | UPDATE  | peer   | UpdatePull   | nothing            | raw DATA only        | UpdateResult   | empty         |
 // | LOG_FORWARD   | LOGS    | peer   | LogOpen      | LogBatch msgs      | nothing              | empty          | empty         |
+// | ITEM_PULL_BY_HOST | ITEM_TRANSFER | host | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
+// | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 //
 // "Opener END: empty, at once" means the opener sends END right after OPEN.
-// UPDATE_PULL's opener END is sent only after the acceptor's END.
+// UPDATE_PULL's and both ITEM_PULLs' opener END is sent only after the
+// acceptor's END.
 // LOG_FORWARD's acceptor END answers the opener's END; at most one
 // LOG_FORWARD is open per connection.
 // A stream code a receiver does not expect on a stream RESET (a connection
@@ -95,9 +99,16 @@ enum StreamKind {
   STREAM_KIND_LOG_FORWARD = 300;
   reserved 301 to 399;              // logs
   reserved 400 to 499;              // guest info, metrics
-  // Phase 4: item-set offer 1000, item pull 1001, and their kin.
-  reserved 1000 to 1099;
+  // 1000, 1003-1099: the clipboard, drop and drag features' item-set offer
+  // kinds (ItemSetHeader), and later transfer kinds.
+  reserved 1000;
+  STREAM_KIND_ITEM_PULL_BY_HOST = 1001;
+  STREAM_KIND_ITEM_PULL_BY_PEER = 1002;
+  reserved 1003 to 1099;
   reserved 1100 to 1199;            // exec
+  // The simulation's test kinds (KernovaAgentSimulation). No shipping
+  // endpoint opens or serves one.
+  reserved 9000 to 9099;
 }
 
 // FROZEN. The one error vocabulary: RESET payloads, END outcomes, absences.
@@ -157,9 +168,13 @@ enum ErrorCode {
   // 140-199: logs, guest info, metrics.
   reserved 140 to 199;
 
-  // 1000-1199: phase 4 transfer codes (offer stale, representation
-  // unavailable, unpack refused, container malformed, ...).
-  reserved 1000 to 1199;
+  // 1000-1199: item transfer.
+  ERROR_CODE_ITEM_OFFER_STALE = 1000;               // the token names no open offer
+  ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE = 1001;// the indexes name no representation, or its source is gone
+  ERROR_CODE_ITEM_CONTAINER_MALFORMED = 1002;       // the container broke its grammar or a declared limit
+  ERROR_CODE_ITEM_UNPACK_REFUSED = 1003;            // the writer refused an entry; Error.item names it
+  ERROR_CODE_ITEM_DECMPFS_REFUSED = 1004;           // the destination could not land a decmpfs entry; Error.item names it
+  reserved 1005 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -593,4 +608,188 @@ message LogBatch {
   repeated LogRecord records = 1;
   // Records the peer evicted, unsent, immediately before records[0].
   uint64 dropped_before = 2;
+}
+
+// ============================================================================
+// Item transfer (feature version 1; current-only)
+// ============================================================================
+//
+// An offer is a stream of an item-set offer kind, owned by the feature that
+// offers (clipboard, drop, drag). Its OPEN body is an ItemSetHeader; the
+// opener then sends `count` Item messages, one per MESSAGE frame, and END.
+// The offer is valid while its stream is open: the opener's RESET withdraws
+// it. A pull (ITEM_PULL_BY_HOST / _BY_PEER) names one representation of an
+// open offer; the acceptor answers with a container in raw DATA, then END.
+//
+// The container is the same for every pull, an INLINE representation
+// included: records of entries in depth-first pre-order, each entry an
+// EntryHeader followed by its data chunks, and an EndRecord last. The record
+// framing is not protobuf and lives in KernovaWire.
+
+// FeatureAdvert.params for ITEM_TRANSFER, both sides.
+message ItemTransferCapability {
+}
+
+// What a representation's bytes are, in each vocabulary that names them.
+message TypeDescriptor {
+  // The canonical MIME type: lowercase, without parameters ("image/png").
+  // Empty when no MIME type names it.
+  string mime = 1;
+  // The native type names the sender's OS gave it, each prefixed with its
+  // vocabulary's namespace: "apple-uti/public.png", "win-cf/PNG".
+  repeated string native = 2;
+}
+
+// One form of an item.
+message Representation {
+  enum Storage {
+    STORAGE_UNSPECIFIED = 0;  // fallback: the representation is not offered
+    STORAGE_INLINE = 1;       // bytes: the container holds one DATA entry
+    STORAGE_FILE = 2;         // one file: the container holds one FILE entry
+    STORAGE_FOLDER = 3;       // a folder: the container holds a DIRECTORY entry and its tree
+  }
+  TypeDescriptor type = 1;
+  Storage storage = 2;
+  // The sender produces the bytes only when pulled, so a pull may take long
+  // or fail with ITEM_REPRESENTATION_UNAVAILABLE.
+  bool promised = 3;
+  // The sender's estimate of EndRecord.bytes; 0 when unknown. Not a limit.
+  uint64 size_estimate = 4;
+}
+
+// One offered item. Item MESSAGE on an offer stream, at most 64 KiB.
+message Item {
+  // In the sender's order of preference, best first.
+  repeated Representation representations = 1;
+}
+
+// OPEN body of every item-set offer kind.
+message ItemSetHeader {
+  // The content is sensitive (a password): the receiver keeps it out of
+  // history and logs.
+  bool concealed = 1;
+  // The content is momentary: the receiver keeps it out of history.
+  bool transient = 2;
+  // The Item messages that follow.
+  uint32 count = 3;
+  // 16 random bytes naming this offer; a pull quotes it.
+  bytes token = 4;
+}
+
+// The container codecs a destination decodes.
+enum Codec {
+  CODEC_UNSPECIFIED = 0;  // fallback: ignored
+  CODEC_LZ4 = 1;          // LZ4 block format chunks (KernovaWire LZ4Block)
+}
+
+// OPEN body of ITEM_PULL_BY_HOST and ITEM_PULL_BY_PEER. The acceptor answers
+// RESET(ITEM_OFFER_STALE) when no offer of `token` is open on this
+// connection, RESET(ITEM_REPRESENTATION_UNAVAILABLE) when the indexes name
+// nothing or the source is gone, and RESET(TOO_LARGE, limit = byte_ceiling)
+// once the container would carry more than `byte_ceiling`.
+message PullRequest {
+  bytes token = 1;
+  // Index into the offer's items, in the order they were sent.
+  uint32 item = 2;
+  // Index into the item's representations.
+  uint32 representation = 3;
+  // The most EndRecord.bytes the destination accepts.
+  uint64 byte_ceiling = 4;
+  // The decmpfs compression types the destination lands as they are; a file
+  // of any other type is sent decompressed. Empty: none.
+  repeated uint32 decmpfs_types = 5;
+  // Codecs the destination decodes besides plain bytes; at most one entry
+  // each.
+  repeated Codec codecs = 6;
+}
+
+// The opener's END body on ITEM_PULL_BY_HOST and ITEM_PULL_BY_PEER, sent
+// after the acceptor's END.
+message PullOutcome {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;  // fallback: treated as KIND_FAILED
+    KIND_LANDED = 1;       // every entry landed at the destination
+    KIND_FAILED = 2;       // nothing landed; `error` says why
+  }
+  Kind kind = 1;
+  Error error = 2;
+}
+
+// Seconds and nanoseconds since the Unix epoch, UTC.
+message Timespec {
+  int64 seconds = 1;
+  uint32 nanoseconds = 2;  // 0 to 999,999,999
+}
+
+// One extended attribute. Only names on the sender's allowlist are sent, and
+// the writer drops any name off its own.
+message Xattr {
+  // Bytes, not a string: Linux attribute names need not be valid UTF-8.
+  bytes name = 1;
+  bytes value = 2;
+}
+
+// An entry's bytes are its chunks, uncompressed.
+message PlainStorage {
+  uint64 size = 1;  // the logical size, which the chunks carry exactly
+}
+
+// An entry's chunks may each be an LZ4 block; the chunk record says which.
+// Sent only when the pull listed CODEC_LZ4.
+message Lz4Storage {
+  uint64 size = 1;  // the logical size, which the chunks decompress to exactly
+}
+
+// A file landed with its decmpfs compression intact. Sent only for a type
+// the pull listed in `decmpfs_types`.
+message DecmpfsStorage {
+  // The com.apple.decmpfs attribute, at most 3,802 bytes. Its header holds
+  // the compression type and the file's logical size; no other field
+  // repeats them.
+  bytes attribute = 1;
+  // The resource fork's size, which the chunks carry exactly; 0 when the
+  // attribute holds the data.
+  uint64 resource_fork_size = 2;
+}
+
+// The header record of one container entry, at most 64 KiB.
+message EntryHeader {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;  // fallback: the container is malformed
+    TYPE_DATA = 1;         // an INLINE representation's bytes: depth 0, no name, no metadata
+    TYPE_FILE = 2;
+    TYPE_DIRECTORY = 3;
+    TYPE_SYMLINK = 4;
+  }
+  // The entry's parent by position: an entry at depth d lies in the directory
+  // entered at depth d - 1, which is the most recent DIRECTORY entry at that
+  // depth. Depth 0 is the representation's own entry.
+  uint32 depth = 1;
+  // One path component. Bytes, not a string: names need not be valid UTF-8.
+  bytes name = 2;
+  Type type = 3;
+  // Permission bits (07777).
+  uint32 mode = 4;
+  // st_flags as Darwin defines them; 0 from any other OS.
+  uint32 darwin_flags = 5;
+  // Unset: the writer leaves the time it lands with.
+  Timespec modification_time = 6;
+  Timespec birth_time = 7;
+  repeated Xattr xattrs = 8;
+  // SYMLINK: the link's target, never followed.
+  bytes symlink_target = 9;
+  // DATA and FILE: how the chunks carry the bytes. Unset on any other type.
+  oneof storage {
+    PlainStorage plain = 10;
+    Lz4Storage lz4 = 11;
+    DecmpfsStorage decmpfs = 12;
+  }
+}
+
+// The container's last record.
+message EndRecord {
+  // The entries the container held.
+  uint64 entries = 1;
+  // The bytes every entry's chunks carry, after decompression.
+  uint64 bytes = 2;
 }

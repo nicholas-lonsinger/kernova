@@ -195,7 +195,7 @@ enum StreamScenarios {
                     guard let link = world.peers[0].link else { return }
                     var opened = 0
                     for _ in 0..<65
-                    where link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: false, now: world.localNow(.peer(0)))
+                    where link.peer?.openTestBulk(.testBulkByPeer, consumes: false, now: world.localNow(.peer(0)))
                         != nil
                     {
                         opened += 1
@@ -220,7 +220,7 @@ enum StreamScenarios {
                 world.at(.sec(1)) { world in
                     guard let link = world.peers[0].link else { return }
                     for _ in 0..<2 {
-                        _ = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: false, now: world.localNow(.peer(0)))
+                        _ = link.peer?.openTestBulk(.testBulkByPeer, consumes: false, now: world.localNow(.peer(0)))
                     }
                     world.drain(link, .peer)
                 }
@@ -242,8 +242,8 @@ enum StreamScenarios {
                 world.addPeer(.session())
                 world.at(.sec(1)) { world in
                     guard let link = world.peers[0].link else { return }
-                    _ = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: false, now: world.localNow(.peer(0)))
-                    _ = link.peer?.openTestBulk(.UNRECOGNIZED(9000), consumes: true, now: world.localNow(.peer(0)))
+                    _ = link.peer?.openTestBulk(.testBulkByPeer, consumes: false, now: world.localNow(.peer(0)))
+                    _ = link.peer?.openTestBulk(.testBulkByPeer, consumes: true, now: world.localNow(.peer(0)))
                     world.drain(link, .peer)
                 }
                 world.at(.ms(1_060)) { world in
@@ -348,7 +348,7 @@ enum LivenessScenarios {
             }),
         quiet(
             "the host's bulk consumer stalls 10 s through a 24 MiB stream",
-            [.consumerStall(.host, .UNRECOGNIZED(9001), peer: 0, in: established, for: .sec(10))],
+            [.consumerStall(.host, .testBulkByHost, peer: 0, in: established, for: .sec(10))],
             options: { options in
                 options.testKinds = true
                 options.testBulkBytes = bulkBytes
@@ -358,7 +358,7 @@ enum LivenessScenarios {
                 world.at(world.faults[0].start - .ms(1)) { world in
                     guard let link = world.peers[0].link else { return }
                     let stream = link.host?.openTestBulk(
-                        .UNRECOGNIZED(9001), consumes: true, now: world.localNow(.host))
+                        .testBulkByHost, consumes: true, now: world.localNow(.host))
                     world.marks["stream"] = stream.map { Int($0.rawValue) }
                     world.drain(link, .host)
                 }

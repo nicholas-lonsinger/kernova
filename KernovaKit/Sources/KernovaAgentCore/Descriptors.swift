@@ -89,10 +89,10 @@ public struct StreamKindDescriptor: Sendable {
     /// host, each carrying raw DATA from acceptor to opener, any number at once.
     package static let testBulk: [StreamKindDescriptor] = [
         StreamKindDescriptor(
-            kind: .UNRECOGNIZED(9000), feature: nil, owner: .testBulk, openerRole: .peer, openerToAcceptor: .nothing,
+            kind: .testBulkByPeer, feature: nil, owner: .testBulk, openerRole: .peer, openerToAcceptor: .nothing,
             acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
         StreamKindDescriptor(
-            kind: .UNRECOGNIZED(9001), feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
+            kind: .testBulkByHost, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
             acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
     ]
 

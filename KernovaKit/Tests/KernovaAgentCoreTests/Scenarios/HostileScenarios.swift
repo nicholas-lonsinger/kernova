@@ -229,7 +229,7 @@ enum HostileRows {
             outcome: .fatal(.flowControlError)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
-            _ = run.openTestBulk(.UNRECOGNIZED(9000), consumes: false)
+            _ = run.openTestBulk(.testBulkByPeer, consumes: false)
             let chunk = Frame(streamID: StreamID(rawValue: 1), type: .data, payload: Data(count: 1 << 20))
             run.feed(WireFrames.bytes(Array(repeating: chunk, count: 9), preamble: false), maxSplit: 1 << 20)
         },
@@ -238,7 +238,7 @@ enum HostileRows {
             outcome: .fatal(.flowControlError)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
-            for _ in 0..<3 { _ = run.openTestBulk(.UNRECOGNIZED(9000), consumes: false) }
+            for _ in 0..<3 { _ = run.openTestBulk(.testBulkByPeer, consumes: false) }
             var frames: [Frame] = []
             for stream: UInt32 in [1, 3] {
                 frames += Array(
@@ -268,8 +268,8 @@ enum HostileRows {
             tweak: { $0.firstLocalStreamID = UInt64(UInt32.max) }, outcome: .fatal(.streamIdsExhausted)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
-            _ = run.openTestBulk(.UNRECOGNIZED(9000), consumes: true)
-            _ = run.openTestBulk(.UNRECOGNIZED(9000), consumes: true)
+            _ = run.openTestBulk(.testBulkByPeer, consumes: true)
+            _ = run.openTestBulk(.testBulkByPeer, consumes: true)
         },
         HostileRow(
             name: "RESET(0) with an unknown code reads INTERNAL", local: .peer, outcome: .closedByPeer(.internal)
