@@ -111,16 +111,9 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | Feature | What it offers |
 |---|---|
 | **Guest agent** (macOS) | A lightweight in-guest helper that clipboard sharing, drag-and-drop, and log forwarding run through — **Install Guest Agent…** attaches its installer disk, which installs it just for you or for everyone, and an installed agent updates itself when Kernova bundles a different one. Talks to the host over **vsock**; its own menu bar item shows the connection, what's shared and paste progress, and a sidebar icon flags an agent that needs attention. |
-| **Clipboard sharing** | Bidirectional text, rich text, images, files, and folders through each VM's **clipboard window**, an editable buffer with **Paste from Mac** and **Copy to Mac** that also takes drops. Copy is instant; only a **paste** moves bytes — up to a ceiling (2 GB default) with integrity checks and live progress. Opt-in **Automatic clipboard passthrough** skips the window and syncs continuously. Passwords show a locked placeholder; transient content is skipped. Linux: text, via **spice-vdagent**. |
+| **Clipboard sharing** | Text, rich text, images, files, and folders, both ways: **Edit → Copy Guest Clipboard to Mac** (⌃⇧⌘C) and **Copy Mac Clipboard to Guest** (⌃⇧⌘V), also in the toolbar, copy everything on one clipboard to the other as it stands at the click; files cross only when pasted, up to a ceiling (2 GB default). Opt-in **Automatic Clipboard Passthrough** shares one clipboard instead, moving bytes only when pasted. Passwords stay in memory; transient content is skipped. Linux: text, via **spice-vdagent**. |
 | **Drag-and-drop** (macOS) | Drop files and folders from Finder, or items from apps such as Photos and Mail, onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. Drag files, folders, and guest apps' items such as photos and Mail attachments out of the display onto the Mac; they are copied where you drop them, crossing only once a destination asks. |
 | **Log forwarding** (macOS) | Opt-in, live-toggleable: the guest agent's `os.Logger` records appear in **Console.app** under `app.kernova.guest`. |
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png">
-    <img src="docs/images/clipboard-light.png" alt="The clipboard window for a running macOS guest, holding rich text with an embedded photo and caption, with Paste from Mac, Copy to Mac, and Automatic passthrough off" width="720">
-  </picture>
-</p>
 
 ### The app
 

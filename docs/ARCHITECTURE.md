@@ -129,7 +129,8 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   agent's CLIPBOARD owner, one per `VMInstance`) and `SpiceClipboardService`
   (Linux) behind `VMInstance.clipboardService`, which `ClipboardRoute` picks;
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host
-  pasteboard. `HubClipboardService` and the macOS agent's `GuestClipboard` run
+  pasteboard, and `VMInstance`'s clipboard commands copy a snapshot each way
+  through the service. `HubClipboardService` and the macOS agent's `GuestClipboard` run
   over KernovaKit's `ClipboardItemExchange` (`KernovaClipboardItems`); the drop
   services and agent drive KernovaKit's `ClipboardEndpoint`.
 - Sockets: `UnixSocketListener` under `SerialSocketRelay` and
@@ -143,8 +144,8 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `VMDisplayBackingView`, fed only through `VMDisplayHandle`; it moves files both
 ways through the `VMDisplayTransferHosting` its host resolves (`VMInstance`).
 `MainWindowController` and `VMDisplayWindowController` each build their
-toolbar through a `VMToolbarManager`; `ClipboardToolbarButton` is the one
-view-backed item.
+toolbar through a `VMToolbarManager`; the two clipboard commands' items are
+its view-backed ones, each a `ClipboardToolbarButton`.
 
 ## Shared package and helper targets
 
