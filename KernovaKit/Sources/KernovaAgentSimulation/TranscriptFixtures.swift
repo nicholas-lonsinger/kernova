@@ -107,6 +107,16 @@ package enum TranscriptFixture {
                 state: PeerSessionState(console: .on, consoleSessionID: "257"),
                 power: .available(PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)),
                 logs: .available(NoParams()), update: .available(UpdateOffer(formats: [.paxTree])))
+        case "macos-system-ignore-apps-v1":
+            // A user owns the console, so the system peer shuts down only without waiting for apps.
+            configuration = PeerConfiguration(
+                claim: PeerClaim(
+                    role: .systemPeer, scope: .system, os: .macOS, osVersion: "27.2", osBuild: "27C50",
+                    architecture: .arm64, payloadHash: macSystemHash, versionLabel: "2.0",
+                    instanceID: Data(repeating: 0x60, count: 16)),
+                state: PeerSessionState(console: .on, consoleSessionID: "257"),
+                power: .available(PowerOffer(actions: [], ignoringApps: [.shutdown])),
+                logs: .available(NoParams()), update: .available(UpdateOffer(formats: [.paxTree])))
         default:
             return nil
         }
@@ -164,8 +174,10 @@ package enum FrozenFields {
             switch open.kind {
             case .powerRequest:
                 let body = (try? Kernova_V2_PowerRequest(serializedBytes: open.body)) ?? Kernova_V2_PowerRequest()
+                // `ignore_apps` is stated only when set, as it is encoded.
                 return FrozenLine(
                     "\(prefix) OPEN kind=POWER_REQUEST body.action=\(body.action.rawValue) body.acceptance_deadline_ms=\(body.acceptanceDeadlineMs)"
+                        + (body.ignoreApps ? " body.ignore_apps=true" : "")
                 )
             case .updatePull:
                 let body = (try? Kernova_V2_UpdatePull(serializedBytes: open.body)) ?? Kernova_V2_UpdatePull()
@@ -252,8 +264,11 @@ package enum FrozenFields {
                 if feature == .power {
                     let capability =
                         (try? Kernova_V2_PowerCapability(serializedBytes: params)) ?? Kernova_V2_PowerCapability()
+                    // `ignore_apps_actions` is stated only when listed, as it is encoded.
+                    let ignored = capability.ignoreAppsActions.map { "\($0.rawValue)" }.joined(separator: ",")
+                    let ignoring = capability.ignoreAppsActions.isEmpty ? "" : ":ignore[\(ignored)]"
                     return
-                        "\(feature.rawValue)=v\(advert.version):actions[\(capability.actions.map { "\($0.rawValue)" }.joined(separator: ","))]:asks=\(capability.asksAppsToQuit)"
+                        "\(feature.rawValue)=v\(advert.version):actions[\(capability.actions.map { "\($0.rawValue)" }.joined(separator: ","))]:asks=\(capability.asksAppsToQuit)\(ignoring)"
                 }
                 let capability =
                     (try? Kernova_V2_UpdateCapability(serializedBytes: params)) ?? Kernova_V2_UpdateCapability()

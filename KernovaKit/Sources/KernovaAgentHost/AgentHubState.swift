@@ -177,7 +177,11 @@ struct AgentHubState: Sendable {
         return AgentHubSnapshot(
             peers: ordered.map(summary), features: features,
             away: away.filter { !visible.contains($0.key) }.values.sorted { $0.order > $1.order },
-            power: provision(features: features), routing: power.progress, consolePeers: consolePeers)
+            power: provision(features: features),
+            shutsDownIgnoringApps: !PowerRouting.candidates(
+                for: .shutdown, ignoringApps: true, peers: routingPeers, excluding: []
+            ).isEmpty,
+            routing: power.progress, consolePeers: consolePeers)
     }
 
     /// The merged POWER entry: the first candidate a shutdown would ask, else why there is none.

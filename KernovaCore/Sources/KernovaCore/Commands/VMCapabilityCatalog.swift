@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 
 /// One thing a VM can be asked to do — every wire verb, plus the GUI-only
@@ -21,6 +22,10 @@ package enum VMCapability: CaseIterable, Hashable {
     case stop
     case restart
     case forceStop
+    /// Shut the guest down without waiting for apps: named only where the
+    /// guest's agents offer it, admitted as Stop is, and refused
+    /// ``VMAdmission/Refusal/guestPaused`` while the guest is paused.
+    case shutDownAnyway
     case discardSavedState
     case pause
     case resume
@@ -74,9 +79,9 @@ package enum VMCapability: CaseIterable, Hashable {
     /// The wire verb this capability performs, or `nil` for an affordance only
     /// the GUI offers.
     ///
-    /// Not injective: the graceful stop, the forceful one and the suspended
-    /// discard are one verb on the wire and three differently-gated commands in
-    /// the UI.
+    /// Not injective: the graceful stop, the forceful one, the one that does
+    /// not wait for apps and the suspended discard are one verb on the wire and
+    /// four differently-gated commands in the UI.
     var verb: VMVerb? {
         switch self {
         case .info: .info
@@ -84,7 +89,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .snapshots: .snapshots
         case .start: .start
         case .cancelGuestSetup: .cancelGuestSetup
-        case .stop, .forceStop, .discardSavedState: .stop
+        case .stop, .forceStop, .shutDownAnyway, .discardSavedState: .stop
         case .restart: .restart
         case .pause: .pause
         case .resume: .resume
@@ -135,7 +140,8 @@ package enum VMCapability: CaseIterable, Hashable {
         case .rename: .rename
         case .editTags: .hostPresentation
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .discardSavedState, .pause, .resume, .suspend, .open, .reveal,
+            .restart, .forceStop, .shutDownAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
+            .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
             .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
             .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .showGuestAgentStatus,
@@ -163,6 +169,10 @@ package enum VMCapability: CaseIterable, Hashable {
             // restart resumes it first, and the stop verb refuses as a step,
             // which the app's Stop takes as a resume and then a stop.
             return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
+        case .shutDownAnyway:
+            // Only an agent runs it: a macOS guest's agent installed "For
+            // everyone", connected.
+            return instance.agentHubSnapshot.shutsDownIgnoringApps ? .sessionAction(.requestStop) : nil
         case .forceStop:
             return .sessionAction(.forceStop)
         case .discardSavedState:
@@ -269,12 +279,18 @@ package struct VMCapabilityCatalog {
     /// The one reading every level below is taken from, and the same decision
     /// ``VMActivity`` commits — so what a surface offers and what a verb takes
     /// agree by construction.
+    ///
+    /// Shut Down Anyway layers one rule over admission's: the agent that runs
+    /// it runs nothing while the guest is paused.
     func decision(
         _ capability: VMCapability, on instance: VMInstance, posture: VMAdmission.Posture
     ) -> VMAdmission.Decision? {
-        capability.request(on: instance).map {
-            instance.activity.decide($0, posture: posture)
+        guard let request = capability.request(on: instance) else { return nil }
+        let decision = instance.activity.decide(request, posture: posture)
+        if capability == .shutDownAnyway, decision == .admit, instance.isLivePaused {
+            return .refuse(.guestPaused)
         }
+        return decision
     }
 
     /// Whether the VM's own state admits `capability` at all — the level a
@@ -283,12 +299,12 @@ package struct VMCapabilityCatalog {
     /// An operation holding the VM is no reason to hide one: a VM that can be
     /// snapshotted still shows Take Snapshot while another operation runs,
     /// dimmed. Nor is the app's termination, another copy of Kernova
-    /// holding the VM, a rule that takes the VM stopped, or a stop request
-    /// still being sent.
+    /// holding the VM, a rule that takes the VM stopped, a stop request
+    /// still being sent, or a paused guest.
     package func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
         case .admit, .join, .wait, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
-            .refuse(.takesStoppedVM), .refuse(.stopRequestInFlight):
+            .refuse(.takesStoppedVM), .refuse(.stopRequestInFlight), .refuse(.guestPaused):
             true
         case .refuse, nil: false
         }

@@ -221,6 +221,32 @@ struct CLIVerbWireTests {
             ])
     }
 
+    @Test(
+        "stop --anyway crosses as the anyway disposition; without --yes its consent refusal names --yes, as --force's does"
+    )
+    func stopAnywayCrossesAndAsksForYes() throws {
+        let consented = try CLIWire.exchange(["stop", "Alpha", "--anyway", "--yes"], answering: accepted)
+        #expect(
+            consented.sent == [.stop(.idOrName("Alpha"), disposition: .anyway, consent: .all, timeout: nil)])
+
+        let prompt = ConfirmationPrompt(
+            kind: .shutDownAnyway, title: "Shut Down \u{201C}Alpha\u{201D} Anyway?",
+            message: "macOS shuts down without waiting for apps. Apps still open quit without asking to save.",
+            confirmTitle: "Shut Down Anyway", dismissTitle: "Cancel")
+        let unconsented = try CLIWire.exchange(
+            ["stop", "Alpha", "--anyway"],
+            answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
+        #expect(
+            unconsented.sent == [.stop(.idOrName("Alpha"), disposition: .anyway, consent: .none, timeout: nil)])
+        do {
+            _ = try unconsented.answer.payload()
+            Issue.record("expected a consent refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .refusedByState)
+            #expect(failure.message == prompt.message + "\n\nPass --yes to do it anyway.")
+        }
+    }
+
     @Test("stop --yes on a paused guest exits 5, naming the resume as a command line")
     func stopOfAPausedGuestNamesTheResume() throws {
         let vm = VMSummary(

@@ -1118,6 +1118,14 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Shuts the guest down without waiting for apps, putting the confirmation
+    /// the verb asks on every use on screen first.
+    package func shutDownAnyway(_ instance: VMInstance) async {
+        await runAsking(on: instance, then: nil) { consent in
+            try await self.commands.stop(.id(instance.id), disposition: .anyway, consent: consent)
+        }
+    }
+
     /// Opens the Force Stop / Discard Saved State confirmation.
     package func requestForceStop(_ instance: VMInstance) {
         presenter?.presentForceStop(for: instance)

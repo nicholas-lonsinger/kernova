@@ -120,7 +120,7 @@ package final class SimHub {
             routingOutputs.append((world.now, output))
             routingLog.append(.output(output))
             world.log("routing: \(output)")
-            guard case .ask(let handle, let action) = output,
+            guard case .ask(let handle, let action, let ignoringApps) = output,
                 let peer = connected.first(where: { $0.link.hubHandle == handle })
             else { continue }
             let expected = Self.expectedCandidates(action, peers: routingPeers, asked: asks.map(\.peer)).first
@@ -128,7 +128,7 @@ package final class SimHub {
             nextPowerID += 1
             let id = PowerRequestID(generation: peer.link.generation, rawValue: nextPowerID)
             pending[id] = handle
-            world.hostCommand(.requestPower(id, action), link: peer.link)
+            world.hostCommand(.requestPower(id, action, ignoringApps: ignoringApps), link: peer.link)
         }
     }
 

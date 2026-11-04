@@ -40,6 +40,9 @@ struct VMCapabilityAgreementTests {
         switch capability {
         case .stop, .discardSavedState: return [.stop, .discardSavedState]
         case .forceStop: return [.forceStop, .discardSavedState]
+        // Its admission is Stop's; the agents' offer and a paused guest are
+        // refused past it, as steps.
+        case .shutDownAnyway: return [.shutDownAnyway, .stop]
         // One verb, whose edit the list's size and the VM's session route to
         // either capability.
         case .editSharedDirectories, .editLiveSharedDirectories:
@@ -74,6 +77,8 @@ struct VMCapabilityAgreementTests {
             try await core.stop(vm, disposition: .graceful, consent: .none, timeout: nil)
         case .forceStop:
             try await core.stop(vm, disposition: .force, consent: .none, timeout: nil)
+        case .shutDownAnyway:
+            try await core.stop(vm, disposition: .anyway, consent: .none, timeout: nil)
         case .restart: try await core.restart(vm, timeout: 1, consent: .none)
         case .pause: try await core.pause(vm)
         case .resume: try await core.resume(vm, consent: .none)

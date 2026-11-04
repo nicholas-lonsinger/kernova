@@ -209,13 +209,16 @@ extension PowerOffer {
         var capability = Kernova_V2_PowerCapability()
         capability.actions = actions
         capability.asksAppsToQuit = asksAppsToQuit
+        capability.ignoreAppsActions = ignoringApps
         return capability.encoded
     }
 
     /// Decodes a far side's `PowerCapability` params; nil when they do not decode.
     public init?(params: Data) {
         guard let capability = try? Kernova_V2_PowerCapability(serializedBytes: params) else { return nil }
-        self.init(actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit)
+        self.init(
+            actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit,
+            ignoringApps: capability.ignoreAppsActions)
     }
 }
 

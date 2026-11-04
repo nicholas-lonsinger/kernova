@@ -292,7 +292,7 @@ extension CoreUnits {
         }
 
         static func performed(_ run: HostileRun) -> [PowerRequestID] {
-            run.peerEffects.compactMap { if case .power(.perform(let id, _)) = $0 { id } else { nil } }
+            run.peerEffects.compactMap { if case .power(.perform(let id, _, _)) = $0 { id } else { nil } }
         }
 
         static func localFaults(_ run: HostileRun) -> Int {

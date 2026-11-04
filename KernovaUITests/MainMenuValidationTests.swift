@@ -145,6 +145,39 @@ struct MainMenuValidationTests {
         #expect(fixture.validate(restart) == isEnabled, "\(phase)")
     }
 
+    @Test("The Virtual Machine menu lists Shut Down Anyway… just before Force Stop…, always")
+    func shutDownAnywayIsListedBeforeForceStop() throws {
+        let fixture = makeFixture()
+        let vmMenu = try #require(
+            submenu(titled: "Virtual Machine", in: fixture.controller.makeMainMenu()))
+        let actions = vmMenu.items.map(\.action)
+        let anyway = try #require(actions.firstIndex(of: #selector(AppDelegate.shutDownAnywayVM(_:))))
+        let forceStop = try #require(actions.firstIndex(of: #selector(AppDelegate.forceStopVM(_:))))
+
+        #expect(anyway == forceStop - 1)
+        #expect(vmMenu.items[anyway].title == "Shut Down Anyway…")
+        #expect(!vmMenu.items[anyway].isHidden)
+    }
+
+    @Test(
+        "Shut Down Anyway… is enabled only on a running VM whose agents offer it",
+        arguments: [
+            (PhaseFixture.settled(.running(sessionID: UUID())), true, true),
+            (.settled(.running(sessionID: UUID())), false, false),
+            (.settled(.livePaused(sessionID: UUID())), true, false),
+            (.settled(.stopped), true, false),
+        ])
+    func shutDownAnywayValidation(phase: PhaseFixture, offered: Bool, isEnabled: Bool) {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
+        let item = makeMenuItem(#selector(AppDelegate.shutDownAnywayVM(_:)))
+
+        #expect(fixture.validate(item) == isEnabled, "\(phase), offered \(offered)")
+        #expect(!item.isHidden)
+    }
+
     @Test("The Virtual Machine menu lists Restart after Force Stop")
     func restartIsListedInTheVirtualMachineMenu() throws {
         let fixture = makeFixture()

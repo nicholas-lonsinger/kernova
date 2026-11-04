@@ -123,7 +123,7 @@ enum PowerScenarios {
                 world.at(in: .ms(500) ... .sec(2)) { world in world.hub.requestPower(.shutdown, world: world) }
             },
             expect: { world in
-                guard case .acpi(.shutdown, let refusals) = world.finalRouting else {
+                guard case .untaken(.shutdown, let refusals) = world.finalRouting else {
                     return ["expected ACPI, got \(String(describing: world.finalRouting))"]
                 }
                 return expectThat(refusals.count == 2, "two refusals")

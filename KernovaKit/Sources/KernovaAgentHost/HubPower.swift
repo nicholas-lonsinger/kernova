@@ -21,9 +21,9 @@ public enum PowerRoutingOutcome: Sendable, Equatable {
     case indeterminate
     /// The peer's connection ended after it accepted, as it does when the guest goes down.
     case lostAfterAcceptance
-    /// No peer took it, and nothing was done: the caller presses the ACPI button. `refusals` say why each
-    /// peer asked declined.
-    case useACPI(refusals: [PeerRefusal])
+    /// No peer took it, and nothing was done: a graceful action's caller presses the ACPI button. `refusals`
+    /// say why each peer asked declined.
+    case untaken(refusals: [PeerRefusal])
     /// Another routing is running for this VM.
     case busy
 }
@@ -96,7 +96,7 @@ extension PowerRoutingOutcome {
         case .failed(_, let error): self = .failed(error)
         case .indeterminate: self = .indeterminate
         case .lostAfterAcceptance: self = .lostAfterAcceptance
-        case .acpi(_, let refusals): self = .useACPI(refusals: refusals)
+        case .untaken(_, let refusals): self = .untaken(refusals: refusals)
         case .busy: self = .busy
         }
     }

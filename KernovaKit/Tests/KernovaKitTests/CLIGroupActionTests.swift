@@ -83,6 +83,8 @@ struct CLIGroupActionTests {
             ["start", "--folder", "Lab", "--recovery"],
             ["start", "--folder", "Lab", "--yes"],
             ["stop", "--folder", "Lab", "--force"],
+            ["stop", "--folder", "Lab", "--anyway"],
+            ["stop", "--smart-group", "Running", "--anyway"],
             ["stop", "--folder", "Lab", "--timeout", "5"],
             ["suspend", "--folder", "Lab", "--yes"],
             ["restart", "--folder", "Lab", "--timeout", "5"],

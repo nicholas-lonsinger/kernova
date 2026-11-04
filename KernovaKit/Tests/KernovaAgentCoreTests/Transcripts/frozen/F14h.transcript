@@ -1,0 +1,17 @@
+# F14h power: shutdown without waiting for apps accepted → handed off — host pinned
+pinned host  fixture=host-default
+current peer fixture=macos-system-ignore-apps-v1
+end 2000
+t=0      h>p     4b524e32
+t=0      h>p     00000000 00 01 00000063 0a610801120b08014a074b65726e6f76611a06080110011a001a06080210011a001a06080310011a001a08080a1001220208011a08080b1001220208011a08080c1001220208011a08080d1001220208012a10000102030405060708090a0b0c0d0e0f
+t=0      expect  p>h preamble
+t=0      expect  p>h s=0 MSG hello role=3 scope=2 os=1 arch=1 payload_hash=b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2 instance_id=60606060606060606060606060606060 state=console=1,session=,user=,console_session=257 1=v1:actions[]:asks=false:ignore[1] 2=v1:formats[2]
+t=1      h>p     00000000 00 01 0000000a 22080a06080310011801
+t=1      h>p     00000000 00 01 00000002 2a00
+t=1000   h>p     00000002 01 00 0000000b 08641207080110904e1801
+t=1000   h>p     00000002 02 00 00000000
+t=1001   ev      peer power perform id=2 action=1 ignoreApps=1
+t=1001   in      peer power accepted id=2
+t=1001   expect  p>h s=2 MSG progress.stage=1 progress.apps=[]
+t=1300   in      peer power handedOff id=2
+t=1300   expect  p>h s=2 END outcome.kind=2 outcome.code=0 outcome.apps=[]

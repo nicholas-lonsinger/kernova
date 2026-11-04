@@ -106,6 +106,18 @@ final class VMLifecycleCoordinator {
         }
     }
 
+    /// Asks the guest's agents to shut it down without waiting for apps — the
+    /// session action ``requestStop(_:)`` is, so another stop request is
+    /// refused while it is sent — on the session it was admitted on.
+    ///
+    /// Throws ``ShutdownIgnoringAppsUntaken`` when no agent took it: nothing
+    /// was done, and no ACPI press stands in for it, which would wait for apps.
+    func requestStopIgnoringApps(_ instance: VMInstance) async throws {
+        try await instance.activity.requestStop { session in
+            try await shutDownGuest(instance, session: session, ignoringApps: true)
+        }
+    }
+
     /// A Restart's graceful stop, owing `boot` to the end of the session it
     /// asks to go down — see ``VMActivity/requestStop(continuingWith:_:)`` —
     /// sent as ``shutDownGuest(_:session:)`` sends it.
@@ -123,10 +135,17 @@ final class VMLifecycleCoordinator {
     /// Returns once the request is sent; the session's end is what follows it.
     /// Throws ``GuestShutdownNotCarriedOut`` when an agent took the request
     /// and the guest did not go down, or Kernova can't tell whether it is.
-    private func shutDownGuest(_ instance: VMInstance, session: UUID) async throws {
+    /// `ignoringApps` asks the agents for the shutdown that does not wait for
+    /// apps, and throws ``ShutdownIgnoringAppsUntaken`` where the graceful one
+    /// presses the button.
+    private func shutDownGuest(
+        _ instance: VMInstance, session: UUID, ignoringApps: Bool = false
+    ) async throws {
         let failure: GuestShutdownNotCarriedOut.Reason
-        switch await instance.agentHub.requestPower(.shutdown) {
-        case .useACPI:
+        switch await instance.agentHub.requestPower(.shutdown, ignoringApps: ignoringApps) {
+        case .untaken where ignoringApps:
+            throw ShutdownIgnoringAppsUntaken()
+        case .untaken:
             // The session that ended while the agents were asked has nothing
             // left to press the button on.
             guard instance.liveSessionID == session else { return }
@@ -1119,3 +1138,7 @@ final class VMLifecycleCoordinator {
         }
     }
 }
+
+/// No agent of the guest took a shutdown that does not wait for apps, and
+/// nothing was done.
+struct ShutdownIgnoringAppsUntaken: Error {}

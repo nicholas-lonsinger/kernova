@@ -99,6 +99,8 @@ struct VMAdmissionTests {
         case .refuse(.takesStoppedVM): "S"
         case .refuse(.ephemeralBaselineUnreadable): "E"
         case .refuse(.stopRequestInFlight): "G"
+        // Raised by the catalog alone, never by admission.
+        case .refuse(.guestPaused): "?"
         }
     }
 

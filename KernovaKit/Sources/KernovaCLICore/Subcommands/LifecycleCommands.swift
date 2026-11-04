@@ -9,12 +9,15 @@ extension KernovaCommand {
         case graceful
         /// Terminate the guest immediately, losing unsaved state.
         case force
+        /// Shut a macOS guest down without waiting for apps.
+        case anyway
 
         /// The wire disposition this method names.
         var disposition: StopDisposition {
             switch self {
             case .graceful: .graceful
             case .force: .force
+            case .anyway: .anyway
             }
         }
 
@@ -23,6 +26,8 @@ extension KernovaCommand {
             switch value {
             case .graceful: "Ask the guest to shut down (the default)."
             case .force: "Terminate the guest immediately, losing unsaved state."
+            case .anyway:
+                "Shut a macOS guest down without waiting for apps. Apps still open quit without asking to save."
             }
         }
     }
@@ -103,6 +108,8 @@ extension KernovaCommand {
                 + "as it is when the guest is still up; --force is the escalation from there. "
                 + "A paused guest can\u{2019}t receive the request, so its stop is refused, "
                 + "naming `kernova resume` as the step to take first."
+                + "\n\n--anyway takes a macOS guest whose Kernova agent is installed \u{201C}For "
+                + "everyone\u{201D} and connected; any other guest refuses it."
                 + "\n\nWith --smart-group or --folder, asks each running guest in the group to shut "
                 + "down, one after another, and prints a line for each. A paused or suspended "
                 + "virtual machine is skipped, since a paused one takes a resume first and a "
@@ -138,7 +145,7 @@ extension KernovaCommand {
             try groups.validateTarget(
                 vm: vm,
                 singleVMFlags: [
-                    method == .force ? "--force" : nil,
+                    method == .force ? "--force" : nil, method == .anyway ? "--anyway" : nil,
                     timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
                 ].compactMap(\.self))
         }
