@@ -17,6 +17,7 @@ import KernovaContainerPipeline
 import KernovaFileTree
 import KernovaItemTransfer
 import KernovaPortableTestSupport
+import KernovaSynchronization
 import KernovaTreeTransfer
 import KernovaWire
 import Testing
@@ -143,6 +144,74 @@ struct ItemAdapterTests {
         sink.discardForTermination()
 
         #expect(try bench.names("landed").isEmpty)
+    }
+
+    @Test("a termination discard after the pull's own abort still removes the landing before it returns")
+    func discardAfterAbortRemoves() async throws {
+        let bench = try Bench()
+        // Incompressible, so the source sends every byte and the lane has them all to write.
+        var generator = SplitMix64(seed: 1)
+        try bench.write(generator.bytes(40_000_000), to: "source/big.bin")
+        try bench.makeDirectory("landed")
+        let fileSystem = POSIXTreeFileSystem()
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _ in
+            .success(.tree(path: bench.path("source/big.bin")))
+        }
+        let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
+        let order = try sink.order(
+            token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30,
+            landing: .exactPath(bench.path("landed/big.bin")))
+        var representation = Representation()
+        representation.storage = .file
+        let (sources, sourceReporter) = Inbox<ItemSourceInput>.make {
+            ItemSourceReporter(ItemConnection(role: .sessionPeer), $0)
+        }
+        let (sinks, sinkReporter) = Inbox<ItemSinkInput>.make { ItemSinkReporter(ItemConnection(role: .host), $0) }
+        source.handle(.serve(Bench.id, .clipboard, order.request, representation), reporter: sourceReporter)
+        defer { source.handle(.release(Bench.id), reporter: sourceReporter) }
+        sink.handle(.begin(Bench.id, order, representation), reporter: sinkReporter)
+        // Land the first bytes, so the root exists under its final name.
+        while (try? bench.names("landed"))?.isEmpty ?? true {
+            source.handle(.read(Bench.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
+            guard case .bytes(_, let bytes)? = await sources.next() else {
+                Issue.record("the source finished before the landing began")
+                return
+            }
+            sink.handle(.bytes(Bench.id, bytes), reporter: sinkReporter)
+            #expect(await sinks.next() == .consumed(Bench.id, bytes.count))
+        }
+        // Queue more writes on the pull's lane, unawaited, as a pull mid-copy has.
+        var queued: [Data] = []
+        for _ in 0..<24 {
+            source.handle(.read(Bench.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
+            guard case .bytes(_, let bytes)? = await sources.next() else { break }
+            queued.append(bytes)
+        }
+        for bytes in queued { sink.handle(.bytes(Bench.id, bytes), reporter: sinkReporter) }
+        // The hub queue's abort for the termination's own cancel lands first.
+        sink.handle(.abort(Bench.id), reporter: sinkReporter)
+        sink.discardForTermination()
+
+        #expect(try bench.names("landed").isEmpty, "discardForTermination returned with a landing still on disk")
+    }
+
+    @Test("a pull begun after a termination discard opens nothing")
+    func beginAfterDiscardOpensNothing() throws {
+        let bench = try Bench()
+        let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem(), decodingWorkers: 0)
+        let reports = Locked<[ItemSinkInput]>([])
+        let reporter = ItemSinkReporter(ItemConnection(role: .host)) { report in reports.withLock { $0.append(report) } }
+        var representation = Representation()
+        representation.storage = .file
+        // A directory that does not exist: a pull that begins reports it refused.
+        let order = ItemPullOrder(PullRequest(), landing: .tree(directory: bench.path("missing"), name: .exactly(Data("item".utf8))))
+        sink.discardForTermination()
+
+        sink.handle(.begin(Bench.id, order, representation), reporter: reporter)
+        // Waits on every lane there is, so a lane the begin opened has run.
+        sink.discardForTermination()
+
+        #expect(reports.withLock { $0 }.isEmpty)
     }
 
     @Test(

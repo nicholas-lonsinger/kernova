@@ -190,9 +190,9 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         }
     }
 
-    /// Drops every pull's landing now, removing what each created, and returns once all are removed: for a
-    /// process about to exit, which would never run the aborts its core emits. Each pull's work already
-    /// queued runs first; the core's later effects for these pulls do nothing.
+    /// Drops every pull's landing now, removing what each created, and returns once all are removed — one
+    /// already aborted included: for a process about to exit, which would never run the aborts its core emits.
+    /// Each pull's work already queued runs first; the core's later effects do nothing, a pull's begin included.
     public func discardForTermination() {
         pulls.closeAll()
     }
