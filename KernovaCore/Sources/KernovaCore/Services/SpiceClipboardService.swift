@@ -112,7 +112,7 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// The text the guest's agent sent at its last grab: the guest's clipboard as it stands, since each change
     /// of it grabs anew.
-    func guestClipboardCopy() async -> GuestClipboardCopy {
+    func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
         guard let guestText else { return .nothing }
         var text = Representation()
         text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
@@ -122,10 +122,11 @@ final class SpiceClipboardService: ClipboardServicing {
         item.representations = [text]
         let bytes = Data(guestText.utf8)
         var generator = SystemRandomNumberGenerator()
-        return .copy(
+        write(
             GuestCopyContents(
                 token: Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }), items: [item],
                 concealed: false, plan: .whole, landed: { _, _ in bytes }, puller: NoFilesPuller(), release: {}))
+        return .landed
     }
 
     /// Grabs the copy's UTF-8 text, the one representation this transport carries, reading it only when the

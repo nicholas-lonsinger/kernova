@@ -741,28 +741,59 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.changeCount == before)
     }
 
-    @Test("Two host copies in quick succession are both written: the first's write is not the clipboard changing")
-    func quickHostCopiesBothLand() async throws {
+    /// Lands `text` as the INLINE pull `index` of `link` opened.
+    private func land(_ text: String, pull index: Int, on rig: Rig, _ link: RecordingLink) throws {
+        guard case .staged(let directory, .exactly(let name)) = link.orders[index].landing else {
+            Issue.record("landing \(link.orders[index].landing)")
+            return
+        }
+        try Data(text.utf8).write(
+            to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
+        rig.clipboard.exchange.pullEnded(link.opened[index], .landed(.named(name)))
+    }
+
+    @Test("A host copy arriving while an earlier one lands supersedes it: the earlier one never writes, landed late")
+    func newerHostCopySupersedesTheLanding() async throws {
         let rig = rig()
         let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         rig.clipboard.setLink(link)
         let second = Data(repeating: 8, count: 16)
-        // Both arrive before either lands, each pull opened in turn so its order and its id pair up.
         rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
         try await link.changed.wait { link.opened.count == 1 }
+        // The Mac's clipboard changed and the user clicked again: the second copy ends the first's landing.
         rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: second, count: 1)), on: link)
         try await link.changed.wait { link.opened.count == 2 }
+        #expect(link.refusals.map(\.token) == [Self.copyToken])
+        #expect(link.refusals.map(\.code) == [.itemOfferReplaced])
 
-        for (index, text) in ["first", "second"].enumerated() {
-            guard case .staged(let directory, .exactly(let name)) = link.orders[index].landing else {
-                Issue.record("landing \(link.orders[index].landing)")
-                return
-            }
-            try Data(text.utf8).write(
-                to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
-            rig.clipboard.exchange.pullEnded(link.opened[index], .landed(.named(name)))
-            try await link.changed.wait { link.releases.contains(index == 0 ? Self.copyToken : second) }
-        }
+        // The newer, small copy lands first and is written; the older, slow one lands after and writes nothing.
+        try land("second, newer", pull: 1, on: rig, link)
+        try await link.changed.wait { link.releases.contains(second) }
+        let written = rig.pasteboard.changeCount
+        try land("first, older", pull: 0, on: rig, link)
+        await drainMainQueue()
+        #expect(rig.pasteboard.changeCount == written)
+        #expect(
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("second, newer".utf8))
+        #expect(link.refusals.count == 1)
+    }
+
+    @Test("A host copy arriving after an earlier one was written lands too: that write is not the clipboard changing")
+    func hostCopyAfterAWrittenOneLands() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        let second = Data(repeating: 8, count: 16)
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { link.opened.count == 1 }
+        try land("first", pull: 0, on: rig, link)
+        try await link.changed.wait { link.releases.contains(Self.copyToken) }
+
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: second, count: 1)), on: link)
+        try await link.changed.wait { link.opened.count == 2 }
+        try land("second", pull: 1, on: rig, link)
+        try await link.changed.wait { link.releases.contains(second) }
         #expect(link.refusals.isEmpty)
         #expect(
             rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]

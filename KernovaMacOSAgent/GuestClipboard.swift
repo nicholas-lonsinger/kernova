@@ -282,58 +282,58 @@ final class GuestClipboard {
     // MARK: Host → guest
 
     /// Writes the host's copy once every INLINE representation landed, as data, its files promised — unless the
-    /// pasteboard changed since the copy arrived by anything but this agent's own write, when it is left as it
-    /// is and the host told why. Files over the paste ceiling are left out of the write, and the host told that
-    /// too; with nothing else in the copy, nothing is written. The copy is released once the pasteboard lets its
-    /// files go, or at once when it promised none.
+    /// pasteboard changed since the copy arrived, when it is left as it is and the host told why, or a newer copy
+    /// arrived first (``ClipboardItemExchange/land(_:then:)``). Files over the paste ceiling are left out of the
+    /// write, and the host told that too; with nothing else in the copy, nothing is written. The copy is released
+    /// once the pasteboard lets its files go, or at once when it promised none.
     private func write(_ copy: ClipboardRemoteOffer) {
         let arrivedAt = pasteboard.changeCount
+        let exchange = exchange
         Task { @MainActor [weak self] in
-            if let error = await copy.landInline() {
-                self?.exchange.refuseCopy(copy, error)
-                if error.code == .tooLarge { self?.pullFailed(error) }
-                return
-            }
-            guard let self else { return }
-            let changeCount = pasteboard.changeCount
-            guard changeCount == arrivedAt || changeCount == publisher.lastWriteChangeCount else {
-                Self.logger.log(.notice, "The clipboard changed before the host's copy landed: left as it is")
-                exchange.refuseCopy(copy, WireError(.clipboardChanged))
-                return
-            }
-            let ceiling = pasteCeilingBytes
-            let plan = ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom)
-            guard plan != .tooLarge else {
-                Self.logger.log(.notice, "The host's copy is files over the paste ceiling alone: not written")
-                exchange.refuseCopy(copy, WireError(.tooLarge, limit: UInt64(ceiling)))
-                activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
-                onNotice()
-                return
-            }
-            let (written, promised) = publisher.publishCopy(
-                copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
-                landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy, servingOffer: copy.token,
-                onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
-            if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
-            guard written else {
-                Self.logger.log(.error, "The host's clipboard copy could not be written to the pasteboard")
-                exchange.refuseCopy(copy, WireError(.writeFailed))
-                return
-            }
-            // The pasteboard holds the host's copy now, so neither current offer is this clipboard's.
-            if let published {
-                self.published = nil
-                exchange.release(published)
-            }
-            exchange.withdrawLocal()
-            activity = .receivedFromHost
-            if case .withoutFiles = plan {
-                exchange.refuseCopy(copy, WireError(.clipboardFilesWithheld, limit: UInt64(ceiling)))
-                activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
-                onNotice()
-            } else if !promised {
-                exchange.releaseCopy(copy)
-            }
+            let landing = await exchange.land(copy) { self?.writeLanded(copy, arrivedAt: arrivedAt) }
+            if case .failed(let error) = landing, error.code == .tooLarge { self?.pullFailed(error) }
+        }
+    }
+
+    /// Writes `copy`, every INLINE representation landed, unless the pasteboard changed since `arrivedAt`.
+    private func writeLanded(_ copy: ClipboardRemoteOffer, arrivedAt: Int) {
+        guard pasteboard.changeCount == arrivedAt else {
+            Self.logger.log(.notice, "The clipboard changed before the host's copy landed: left as it is")
+            exchange.refuseCopy(copy, WireError(.clipboardChanged))
+            return
+        }
+        let ceiling = pasteCeilingBytes
+        let plan = ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom)
+        guard plan != .tooLarge else {
+            Self.logger.log(.notice, "The host's copy is files over the paste ceiling alone: not written")
+            exchange.refuseCopy(copy, WireError(.tooLarge, limit: UInt64(ceiling)))
+            activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
+            onNotice()
+            return
+        }
+        let (written, promised) = publisher.publishCopy(
+            copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
+            landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy, servingOffer: copy.token,
+            onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
+        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
+        guard written else {
+            Self.logger.log(.error, "The host's clipboard copy could not be written to the pasteboard")
+            exchange.refuseCopy(copy, WireError(.writeFailed))
+            return
+        }
+        // The pasteboard holds the host's copy now, so neither current offer is this clipboard's.
+        if let published {
+            self.published = nil
+            exchange.release(published)
+        }
+        exchange.withdrawLocal()
+        activity = .receivedFromHost
+        if case .withoutFiles = plan {
+            exchange.refuseCopy(copy, WireError(.clipboardFilesWithheld, limit: UInt64(ceiling)))
+            activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
+            onNotice()
+        } else if !promised {
+            exchange.releaseCopy(copy)
         }
     }
 

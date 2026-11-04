@@ -185,7 +185,7 @@ struct SpiceClipboardServiceTests {
 
         await service.handleIncomingData(buildGuestMessage(type: .clipboardRelease, payload: Data()))
         #expect(service.guestText == nil)
-        guard case .nothing = await service.guestClipboardCopy() else {
+        guard case .nothing = await service.guestClipboardCopy({ _ in }) else {
             Issue.record("the released text is still the guest's clipboard")
             return
         }
@@ -380,7 +380,7 @@ struct SpiceClipboardServiceTests {
     func copyToMacTakesTheGuestsText() async throws {
         let (service, _, _) = makeService()
         await connect(service)
-        guard case .nothing = await service.guestClipboardCopy() else {
+        guard case .nothing = await service.guestClipboardCopy({ _ in }) else {
             Issue.record("a copy before the guest sent any text")
             return
         }
@@ -389,7 +389,8 @@ struct SpiceClipboardServiceTests {
         await service.handleIncomingData(
             buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
 
-        guard case .copy(let contents) = await service.guestClipboardCopy() else {
+        var written: GuestCopyContents?
+        guard case .landed = await service.guestClipboardCopy({ written = $0 }), let contents = written else {
             Issue.record("no copy of the guest's text")
             return
         }

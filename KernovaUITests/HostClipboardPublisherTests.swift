@@ -33,7 +33,9 @@ struct HostClipboardPublisherCancellationTests {
 
         func stop() {}
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
-        func guestClipboardCopy() async -> GuestClipboardCopy { .nothing }
+        func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
+            .nothing
+        }
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
 
         func guestClipboardItems() -> [CopyToMacItem] {
@@ -162,7 +164,9 @@ struct HostClipboardPublisherOutcomeTests {
 
         func stop() {}
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
-        func guestClipboardCopy() async -> GuestClipboardCopy { .nothing }
+        func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
+            .nothing
+        }
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
         func guestClipboardItems() -> [CopyToMacItem] { copyItems }
     }

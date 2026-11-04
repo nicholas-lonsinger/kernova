@@ -39,8 +39,7 @@ extension VMInstance {
         }
     }
 
-    /// Copies the guest's clipboard as it stands now to the Mac's, unless the Mac's changes before it lands, by
-    /// anything but this VM's own write. A file set over the paste ceiling is left off, and said so; with nothing
+    /// Copies the guest's clipboard as it stands now to the Mac's, unless the Mac's changes before it lands. A file set over the paste ceiling is left off, and said so; with nothing
     /// else to copy, nothing is written. A guest clipboard that is its write of this
     /// VM's own offer is the Mac's clipboard already, so nothing is copied.
     package func copyGuestClipboardToMac() {
@@ -50,36 +49,40 @@ extension VMInstance {
         clipboardTransfers.gestureBegan()
         Task { @MainActor [weak self, weak service] in
             defer { self?.runningClipboardCommands.remove(.copyGuestClipboardToMac) }
-            guard let copy = await service?.guestClipboardCopy() else { return }
-            guard let self else {
-                if case .copy(let contents) = copy { contents.release() }
-                return
+            let copy = await service?.guestClipboardCopy { [weak self] contents in
+                guard let self else { return contents.release() }
+                self.writeGuestCopy(contents, commandedAt: commandedAt)
             }
+            guard let self, let copy else { return }
             switch copy {
             case .nothing:
                 reportClipboardCommand(.copy, .nothingToCopy)
-            case .alreadyHeld:
+            case .alreadyHeld, .landed:
                 break
             case .failed(let failure):
                 reportClipboardCommand(.copy, failure)
-            case .copy(let contents):
-                let changeCount = publisher.pasteboard.changeCount
-                guard changeCount == commandedAt || changeCount == publisher.lastWriteChangeCount else {
-                    contents.release()
-                    return reportClipboardCommand(.copy, .clipboardChanged)
-                }
-                let ceiling = effectiveClipboardMaxPasteBytes
-                guard contents.plan != .tooLarge else {
-                    contents.release()
-                    return reportClipboardCommand(.copy, .tooLarge(limitBytes: ceiling))
-                }
-                guard publisher.writeCopy(contents, servingFileURLs: contents.plan.servesFileURLs) else {
-                    return reportClipboardCommand(.copy, .transferFailed)
-                }
-                if case .withoutFiles(let count) = contents.plan {
-                    reportClipboardCommand(.copy, .filesLeftOut(count: count, limitBytes: ceiling))
-                }
             }
+        }
+    }
+
+    /// Writes the guest's landed copy `contents` to the Mac, unless the Mac's clipboard changed since
+    /// `commandedAt`.
+    private func writeGuestCopy(_ contents: GuestCopyContents, commandedAt: Int) {
+        let publisher = hostClipboardPublisher
+        guard publisher.pasteboard.changeCount == commandedAt else {
+            contents.release()
+            return reportClipboardCommand(.copy, .clipboardChanged)
+        }
+        let ceiling = effectiveClipboardMaxPasteBytes
+        guard contents.plan != .tooLarge else {
+            contents.release()
+            return reportClipboardCommand(.copy, .tooLarge(limitBytes: ceiling))
+        }
+        guard publisher.writeCopy(contents, servingFileURLs: contents.plan.servesFileURLs) else {
+            return reportClipboardCommand(.copy, .transferFailed)
+        }
+        if case .withoutFiles(let count) = contents.plan {
+            reportClipboardCommand(.copy, .filesLeftOut(count: count, limitBytes: ceiling))
         }
     }
 

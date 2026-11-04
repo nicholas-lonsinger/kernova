@@ -209,8 +209,9 @@ final class HubClipboardService: ClipboardServicing {
 
     var guestOfferToken: Data? { exchange.remote?.token }
 
-    /// Asks the guest for its clipboard, and lands every representation of its copy but a file or folder.
-    func guestClipboardCopy() async -> GuestClipboardCopy {
+    /// Asks the guest for its clipboard, lands every representation of its copy but a file or folder, and has
+    /// `write` write it unless a newer copy arrived first.
+    func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
         let answer = await withCheckedContinuation { continuation in
             exchange.askForCopy { continuation.resume(returning: $0) }
         }
@@ -224,17 +225,20 @@ final class HubClipboardService: ClipboardServicing {
                 .notice, "The guest's clipboard was not copied: \(String(describing: error), privacy: .public)")
             return .failed(Self.failure(error))
         case .copy(let copy):
-            if let error = await copy.landInline() {
-                exchange.refuseCopy(copy, error)
-                return .failed(Self.failure(error))
-            }
             let exchange = exchange
-            return .copy(
-                GuestCopyContents(
-                    token: copy.token, items: copy.items, concealed: copy.concealed,
-                    plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
-                    landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy,
-                    release: { exchange.releaseCopy(copy) }))
+            let landing = await exchange.land(copy) {
+                write(
+                    GuestCopyContents(
+                        token: copy.token, items: copy.items, concealed: copy.concealed,
+                        plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
+                        landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy,
+                        release: { exchange.releaseCopy(copy) }))
+            }
+            switch landing {
+            case .written: return .landed
+            case .superseded: return .failed(.transferFailed)
+            case .failed(let error): return .failed(Self.failure(error))
+            }
         }
     }
 

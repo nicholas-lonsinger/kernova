@@ -19,7 +19,9 @@ import KernovaWire
 /// - Offers made before either side saw the other's cross; the host's wins (``side``).
 /// - A copy (``ItemOffer/copy``) is neither side's clipboard offer: the user sent it by command, and it lives as
 ///   long as the receiver's write of it. This side serves each copy it sent until the far side lets it go; the
-///   receiver holds each copy it received until its end releases it.
+///   receiver holds each copy it received until its end releases it. A copy that arrives while an earlier one is
+///   still landing supersedes it: the earlier one is refused there and then, and never written
+///   (``land(_:then:)``).
 /// - A connection's leaving ends every offer and copy it carried: what an end wrote of the far side's is the
 ///   end's to retract, since nothing more of it can be pulled.
 ///
@@ -45,6 +47,17 @@ public final class ClipboardItemExchange {
         /// The connection left or no longer carries the feature, so nothing more of it can be pulled; the far
         /// side's clipboard may hold it still, and offers it again on the next connection.
         case linkLost
+    }
+
+    /// How landing a copy ended (``land(_:then:)``).
+    public enum CopyLanding: Sendable, Equatable {
+        /// Every INLINE representation landed and no newer copy arrived: the end wrote it.
+        case written
+        /// A newer copy arrived before this one landed, and refused it `ITEM_OFFER_REPLACED`, or it ended: nothing
+        /// was written.
+        case superseded
+        /// A pull of it failed with this error, and it was refused with it; nothing was written.
+        case failed(WireError)
     }
 
     /// The guest's answer to the host's ask for its clipboard (``askForCopy(_:)``).
@@ -130,6 +143,9 @@ public final class ClipboardItemExchange {
     private var ask: (token: Data, answers: [(CopyAnswer) -> Void], answeredBy: Data?)?
     /// A guest: the host's asks on `link` still to be answered.
     private var asks: Set<Data> = []
+    /// The far side's newest copy on `link`, from its arrival until it is written: the one copy landing. A copy
+    /// arriving refuses the one here before it.
+    private var landing: Data?
     private var nextGeneration: UInt64 = 1
     private let staging: ClipboardFileStaging
     private let pasteCeiling: @Sendable () -> Int
@@ -169,6 +185,7 @@ public final class ClipboardItemExchange {
         readingCopies.removeAll()
         sentCopies.removeAll()
         asks.removeAll()
+        landing = nil
         answerAsk(.failed(WireError(.cancelled, debugDetail: "the connection left")))
         let held = copies.values
         copies.removeAll()
@@ -361,12 +378,14 @@ public final class ClipboardItemExchange {
     /// Lets `copy` go: this end's clipboard no longer holds what it wrote of it, so the far side serves it no
     /// more.
     public func releaseCopy(_ copy: ClipboardRemoteOffer) {
+        if landing == copy.token { landing = nil }
         guard copies.removeValue(forKey: copy.token) != nil else { return }
         copy.release()
     }
 
     /// Refuses `copy` with `error`, written nowhere: the far side hears why.
     public func refuseCopy(_ copy: ClipboardRemoteOffer, _ error: WireError) {
+        if landing == copy.token { landing = nil }
         guard copies.removeValue(forKey: copy.token) != nil else { return }
         copy.refuse(error)
     }
@@ -396,13 +415,44 @@ public final class ClipboardItemExchange {
             link.releaseOffer(header.token)
             return
         }
+        supersedeLanding(by: header.token, on: link)
         readingCopies.insert(header.token)
         readItems(of: header, on: link) { [weak self] items in self?.copyRead(header, items, on: link) }
+    }
+
+    /// The far side's copy `token` arrived: the copy still landing before it, read or not, is refused
+    /// `ITEM_OFFER_REPLACED` and never written.
+    private func supersedeLanding(by token: Data, on link: any ClipboardItemLink) {
+        defer { landing = token }
+        guard let older = landing else { return }
+        logger.log(.notice, "A newer clipboard copy arrived before the last one landed: the last is not written")
+        let replaced = WireError(.itemOfferReplaced, debugDetail: "a newer copy arrived before this one landed")
+        if readingCopies.remove(older) != nil { return link.refuseOffer(older, replaced) }
+        copies.removeValue(forKey: older)?.refuse(replaced)
+    }
+
+    /// Lands every INLINE representation of `copy`, then has `write` write it — synchronously, unless a newer
+    /// copy arrived meanwhile, so an older copy never writes over a newer one. A failed pull refuses it.
+    /// `write` decides everything after: whether to write, and whether to release or refuse it.
+    @discardableResult
+    public func land(_ copy: ClipboardRemoteOffer, then write: @MainActor () -> Void) async -> CopyLanding {
+        guard landing == copy.token else { return .superseded }
+        if let error = await copy.landInline() {
+            guard landing == copy.token else { return .superseded }
+            landing = nil
+            refuseCopy(copy, error)
+            return .failed(error)
+        }
+        guard landing == copy.token else { return .superseded }
+        landing = nil
+        write()
+        return .written
     }
 
     private func copyRead(_ header: ItemSetHeaderValue, _ items: [OfferedItem]?, on link: any ClipboardItemLink) {
         guard readingCopies.remove(header.token) != nil else { return }
         guard let items else {
+            if landing == header.token { landing = nil }
             logger.log(.notice, "The far side's clipboard copy ended before its items were read")
             link.releaseOffer(header.token)
             if ask?.answeredBy == header.token {
@@ -504,6 +554,7 @@ public final class ClipboardItemExchange {
             reading.remove(token)
             readingCopies.remove(token)
             asks.remove(token)
+            if landing == token { landing = nil }
             if let copy = copies.removeValue(forKey: token) {
                 copy.close()
                 onCopyEnded?(copy)

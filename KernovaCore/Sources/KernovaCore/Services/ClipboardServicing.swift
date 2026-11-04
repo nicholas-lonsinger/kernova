@@ -59,8 +59,9 @@ package protocol ClipboardServicing: AnyObject {
     /// at once, or nil. A refusal the guest answers later goes to the VM's transfer report.
     func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure?
 
-    /// The guest's clipboard as it stands now, every representation but a file or folder already landed here.
-    func guestClipboardCopy() async -> GuestClipboardCopy
+    /// Copies the guest's clipboard as it stands now: once every representation but a file or folder landed
+    /// here, `write` is handed it, synchronously, unless a newer copy of the guest's arrived first.
+    func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy
 
     /// The token of the guest's offer that is this clipboard's now, which a host-pasteboard write of it serves;
     /// nil when there is none, or the transport names none.
@@ -82,7 +83,7 @@ package protocol ClipboardServicing: AnyObject {
     func guestClipboardItems() -> [CopyToMacItem]
 }
 
-/// The guest's clipboard, as a copy command took it.
+/// What became of a copy command's copy of the guest's clipboard.
 package enum GuestClipboardCopy {
     /// It held nothing to copy.
     case nothing
@@ -90,8 +91,8 @@ package enum GuestClipboardCopy {
     case alreadyHeld
     /// It could not be copied, and why.
     case failed(ClipboardTransferFailure)
-    /// The copy, to be written to the Mac.
-    case copy(GuestCopyContents)
+    /// The copy landed and was handed to the write.
+    case landed
 }
 
 /// A copy of the guest's clipboard: its items, every non-file representation landed, and the files still on
