@@ -72,7 +72,9 @@ struct PublishTests {
         try landing.expectNothingOutside(landed: bytes(name))
     }
 
-    @Test("an exact-path publish that finds another item at its path fails moved and leaves both", arguments: [false, true])
+    @Test(
+        "an exact-path publish that finds another item at its path fails moved and leaves both",
+        arguments: [false, true])
     func exactPathMovedLeavesTheOther(_ folder: Bool) throws {
         let landing = try Landing(kernelContainment: true)
         let path = landing.destinationPath + "/chosen"

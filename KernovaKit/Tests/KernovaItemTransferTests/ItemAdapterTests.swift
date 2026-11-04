@@ -200,11 +200,14 @@ struct ItemAdapterTests {
         let bench = try Bench()
         let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem(), decodingWorkers: 0)
         let reports = Locked<[ItemSinkInput]>([])
-        let reporter = ItemSinkReporter(ItemConnection(role: .host)) { report in reports.withLock { $0.append(report) } }
+        let reporter = ItemSinkReporter(ItemConnection(role: .host)) { report in
+            reports.withLock { $0.append(report) }
+        }
         var representation = Representation()
         representation.storage = .file
         // A directory that does not exist: a pull that begins reports it refused.
-        let order = ItemPullOrder(PullRequest(), landing: .tree(directory: bench.path("missing"), name: .exactly(Data("item".utf8))))
+        let order = ItemPullOrder(
+            PullRequest(), landing: .tree(directory: bench.path("missing"), name: .exactly(Data("item".utf8))))
         sink.discardForTermination()
 
         sink.handle(.begin(Bench.id, order, representation), reporter: reporter)
