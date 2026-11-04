@@ -76,6 +76,11 @@ package enum VMAdmission {
         /// Raised only where the VM would otherwise admit the request, so a
         /// surface reads it as applicable.
         case stopRequestInFlight
+        /// The guest is paused, and what the request asks is carried out by
+        /// its agent, which runs nothing until it resumes. Raised by
+        /// ``VMCapabilityCatalog`` for Shut Down Anyway, only where the VM
+        /// would otherwise admit it, so a surface reads it as applicable.
+        case guestPaused
 
         package static func == (lhs: Refusal, rhs: Refusal) -> Bool {
             switch (lhs, rhs) {
@@ -85,7 +90,7 @@ package enum VMAdmission {
                 (.terminating, .terminating),
                 (.heldByAnotherCopy, .heldByAnotherCopy),
                 (.ephemeralBaselineUnreadable, .ephemeralBaselineUnreadable),
-                (.stopRequestInFlight, .stopRequestInFlight):
+                (.stopRequestInFlight, .stopRequestInFlight), (.guestPaused, .guestPaused):
                 true
             case (.identityConflict(let l), .identityConflict(let r)):
                 l.other === r.other && l.reason == r.reason && l.asks == r.asks

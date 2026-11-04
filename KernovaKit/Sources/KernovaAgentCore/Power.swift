@@ -38,8 +38,8 @@ public enum PowerInput: Sendable, Equatable {
 
 /// What a peer's power machine asks its adapter to do.
 public enum PowerEffect: Sendable, Equatable {
-    /// Ask the OS to perform `action`.
-    case perform(PowerRequestID, PowerAction)
+    /// Ask the OS to perform `action`, without waiting for apps when `ignoringApps`.
+    case perform(PowerRequestID, PowerAction, ignoringApps: Bool = false)
     /// Cancel the request if the OS has not started it; the adapter answers
     /// `.cancelled` when the OS confirms nothing started, `.accepted` when the OS
     /// took it first, and `.unconfirmed` when it cannot tell.
@@ -101,7 +101,7 @@ public struct PowerLedger: Sendable, Equatable {
 
     /// Records an effect the runtime carries out.
     public mutating func record(_ effect: PowerEffect) {
-        if case .perform(let id, _) = effect { held = id }
+        if case .perform(let id, _, _) = effect { held = id }
     }
 
     /// Records the adapter's report: the held request's terminal one releases it.
@@ -254,7 +254,7 @@ public struct PowerResponder: FeatureMachine {
 
     private mutating func opened(_ stream: StreamID, body: Data, connection: inout Connection) {
         let powerRequest = (try? Kernova_V2_PowerRequest(serializedBytes: body)) ?? Kernova_V2_PowerRequest()
-        let offered = availability.params?.actions ?? []
+        let offered = availability.params?.actions(ignoringApps: powerRequest.ignoreApps) ?? []
         guard offered.contains(powerRequest.action), powerRequest.action != .unspecified else {
             return refuse(stream, .powerActionUnsupported, connection: &connection)
         }
@@ -266,7 +266,7 @@ public struct PowerResponder: FeatureMachine {
                 after: .milliseconds(Int64(powerRequest.acceptanceDeadlineMs)))
         }
         request = current
-        let effect = PowerEffect.perform(id, powerRequest.action)
+        let effect = PowerEffect.perform(id, powerRequest.action, ignoringApps: powerRequest.ignoreApps)
         ledger.record(effect)
         outbox.append(.power(effect))
     }
@@ -397,8 +397,11 @@ public struct PowerRequester: FeatureMachine {
         return (outbox, diagnostics)
     }
 
-    /// Starts a request: opens POWER_REQUEST and ends it at once.
-    public mutating func request(_ id: PowerRequestID, _ action: PowerAction, connection: inout Connection) {
+    /// Starts a request: opens POWER_REQUEST and ends it at once. `ignoringApps` is sent only toward a peer
+    /// whose `PowerCapability` lists `action` in `ignore_apps_actions` (the freeze rules).
+    public mutating func request(
+        _ id: PowerRequestID, _ action: PowerAction, ignoringApps: Bool, connection: inout Connection
+    ) {
         guard id.generation == generation else { return }
         guard !entries.contains(where: { $0.id == id }) else {
             diagnostics.append(.localFault("a second power request with one id"))
@@ -411,6 +414,7 @@ public struct PowerRequester: FeatureMachine {
         var body = Kernova_V2_PowerRequest()
         body.action = action
         body.acceptanceDeadlineMs = Self.peerDeadline
+        body.ignoreApps = ignoringApps
         let stream = connection.open(.powerRequest, body: body.encoded)
         guard connection.canQueue(on: stream) else { return }
         connection.end(stream, body: Data())

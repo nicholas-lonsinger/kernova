@@ -401,11 +401,19 @@ public struct PowerOffer: Sendable, Equatable {
     public var actions: [PowerAction]
     /// Whether it asks running apps to quit.
     public var asksAppsToQuit: Bool
+    /// The actions it can perform now without waiting for apps, independent of `actions`.
+    public var ignoringApps: [PowerAction]
 
     /// Creates an offer.
-    public init(actions: [PowerAction], asksAppsToQuit: Bool = false) {
+    public init(actions: [PowerAction], asksAppsToQuit: Bool = false, ignoringApps: [PowerAction] = []) {
         self.actions = actions
         self.asksAppsToQuit = asksAppsToQuit
+        self.ignoringApps = ignoringApps
+    }
+
+    /// The actions offered with apps waited for, or, `ignoringApps`, without.
+    public func actions(ignoringApps ignoring: Bool) -> [PowerAction] {
+        ignoring ? ignoringApps : actions
     }
 }
 

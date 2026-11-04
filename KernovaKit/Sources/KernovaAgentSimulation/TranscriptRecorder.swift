@@ -65,8 +65,9 @@ package enum TranscriptInput: Sendable, Equatable {
         switch self {
         case .host(let command):
             switch command {
-            case .requestPower(let id, let action):
+            case .requestPower(let id, let action, let ignoringApps):
                 return "host requestPower id=\(id.rawValue) action=\(action.rawValue)"
+                    + (ignoringApps ? " ignoreApps=1" : "")
             case .cancelPower(let id): return "host cancelPower id=\(id.rawValue)"
             case .close(let code, let retry):
                 return "host close code=\(code.rawValue) retry=\(retry?.milliseconds ?? 0)"
@@ -161,7 +162,10 @@ package enum TranscriptInput: Sendable, Equatable {
         let token = fields["token"].flatMap { FrozenFields.unhex(Substring($0)) }
         switch (words[0], words[1]) {
         case ("host", "requestPower"):
-            self = .host(.requestPower(powerID, PowerAction(rawValue: number("action")) ?? .unspecified))
+            self = .host(
+                .requestPower(
+                    powerID, PowerAction(rawValue: number("action")) ?? .unspecified,
+                    ignoringApps: number("ignoreApps") == 1))
         case ("host", "cancelPower"): self = .host(.cancelPower(powerID))
         case ("host", "close"):
             let retry = number("retry")
@@ -286,8 +290,11 @@ package struct Exchange: Sendable {
     /// Which sides get a frozen transcript; F12 and F13 only the host.
     package var pinnable: [SimSide] = [.host, .peer]
 
-    static func power(_ action: PowerAction) -> TranscriptInput {
-        .host(.requestPower(PowerRequestID(generation: TranscriptInput.generation, rawValue: 1), action))
+    static func power(_ action: PowerAction, ignoringApps: Bool = false) -> TranscriptInput {
+        .host(
+            .requestPower(
+                PowerRequestID(generation: TranscriptInput.generation, rawValue: 1), action,
+                ignoringApps: ignoringApps))
     }
 
     static func peerPower(_ make: (PowerRequestID) -> PowerInput) -> TranscriptInput {
@@ -368,6 +375,13 @@ package struct Exchange: Sendable {
             id: "F13", title: "identity conflict → RESET(0) SUPERSEDED", hostFixture: "host-default",
             peerFixture: "linux-session-v1", script: [(5, .host(.close(.superseded, retryAfter: nil)))], end: 1000,
             pinnable: [.host]),
+        Exchange(
+            id: "F14", title: "power: shutdown without waiting for apps accepted → handed off",
+            hostFixture: "host-default", peerFixture: "macos-system-ignore-apps-v1",
+            script: [
+                (1000, power(.shutdown, ignoringApps: true)), (1001, peerPower { .accepted($0) }),
+                (1300, peerPower { .handedOff($0) }),
+            ], end: 2000),
     ]
 
     /// Non-frozen exchanges, replayed duet and changed with their feature.
@@ -892,7 +906,8 @@ package enum TranscriptEvents {
 
     package static func describe(_ effect: PeerEffect) -> String? {
         switch effect {
-        case .power(.perform(let id, let action)): "peer power perform id=\(id.rawValue) action=\(action.rawValue)"
+        case .power(.perform(let id, let action, let ignoringApps)):
+            "peer power perform id=\(id.rawValue) action=\(action.rawValue)\(ignoringApps ? " ignoreApps=1" : "")"
         case .power(.cancel(let id)): "peer power cancel id=\(id.rawValue)"
         case .update(.complete(let id, let manifest)):
             "peer update complete id=\(id.stream.rawValue) size=\(manifest.payloadSize)"

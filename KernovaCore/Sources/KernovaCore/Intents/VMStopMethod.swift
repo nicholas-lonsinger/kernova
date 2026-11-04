@@ -16,12 +16,15 @@ enum VMStopMethod: String, AppEnum {
     case shutDown
     /// Terminate the virtual machine immediately, losing unsaved guest state.
     case force
+    /// Shut a macOS guest down without waiting for apps.
+    case shutDownAnyway
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Stop Method")
 
     static let caseDisplayRepresentations: [VMStopMethod: DisplayRepresentation] = [
         .shutDown: "Shut Down",
         .force: "Force Stop",
+        .shutDownAnyway: "Shut Down Anyway",
     ]
 
     /// The disposition this method names.
@@ -29,6 +32,7 @@ enum VMStopMethod: String, AppEnum {
         switch self {
         case .shutDown: .graceful
         case .force: .force
+        case .shutDownAnyway: .anyway
         }
     }
 
@@ -38,6 +42,7 @@ enum VMStopMethod: String, AppEnum {
             switch disposition {
             case .graceful: .shutDown
             case .force: .force
+            case .anyway: .shutDownAnyway
             }
     }
 }

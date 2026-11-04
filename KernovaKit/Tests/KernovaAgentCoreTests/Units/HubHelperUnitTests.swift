@@ -23,12 +23,12 @@ extension CoreUnits {
 
         static func system(
             _ handle: UInt64, console: ConsoleState = .on, consoleSessionID: String = "", usable: Bool = true,
-            actions: [PowerAction] = [.shutdown, .restart]
+            actions: [PowerAction] = [.shutdown, .restart], ignoringApps: [PowerAction] = []
         ) -> RoutingPeer {
             RoutingPeer(
                 handle: PeerHandle(rawValue: handle), role: .systemPeer,
                 state: PeerSessionState(console: console, consoleSessionID: consoleSessionID),
-                connectedOrder: handle, powerUsable: usable, actions: actions)
+                connectedOrder: handle, powerUsable: usable, actions: actions, ignoringAppsActions: ignoringApps)
         }
 
         static func handles(_ raw: [UInt64]) -> [PeerHandle] {
@@ -101,9 +101,49 @@ extension CoreUnits {
                 PowerRouting.candidates(for: .restart, peers: peers, excluding: Self.handles([4])) == Self.handles([3]))
         }
 
+        @Test("Without waiting for apps, only a peer listing the action among those is a candidate, and only it")
+        func ignoringAppsCandidates() {
+            // A user logged in: the session peer shuts down waiting for apps, the system peer only without.
+            let peers = [
+                Self.session(1, "a"),
+                Self.system(9, consoleSessionID: "a", actions: [], ignoringApps: [.shutdown]),
+            ]
+            #expect(
+                PowerRouting.candidates(for: .shutdown, ignoringApps: true, peers: peers, excluding: [])
+                    == Self.handles([9]))
+            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([1]))
+            #expect(PowerRouting.candidates(for: .restart, ignoringApps: true, peers: peers, excluding: []).isEmpty)
+            let unusable = [Self.system(9, usable: false, actions: [], ignoringApps: [.shutdown])]
+            #expect(
+                PowerRouting.candidates(for: .shutdown, ignoringApps: true, peers: unusable, excluding: []).isEmpty)
+        }
+
+        @Test("A routing without waiting for apps asks so, and ends .untaken when no peer offers it")
+        func ignoringAppsRouting() {
+            let peers = [
+                Self.session(1, "a"),
+                Self.system(9, consoleSessionID: "a", actions: [], ignoringApps: [.shutdown]),
+            ]
+            var routing = PowerRouting()
+            routing.begin(.shutdown, ignoringApps: true, peers: peers)
+            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 9), .shutdown, ignoringApps: true)])
+            routing.handle(.refused(WireError(.powerActionUnsupported)), from: PeerHandle(rawValue: 9), peers: peers)
+            #expect(
+                Self.outputs(&routing) == [
+                    .untaken(
+                        .shutdown,
+                        refusals: [
+                            PeerRefusal(peer: PeerHandle(rawValue: 9), error: WireError(.powerActionUnsupported))
+                        ])
+                ])
+
+            routing.begin(.shutdown, ignoringApps: true, peers: [Self.session(1, "a")])
+            #expect(Self.outputs(&routing) == [.untaken(.shutdown, refusals: [])])
+        }
+
         // MARK: Routing
 
-        @Test("refused → recompute and ask the next; every peer refused → .acpi with the refusals")
+        @Test("refused → recompute and ask the next; every peer refused → .untaken with the refusals")
         func refusedToAcpi() {
             let peers = [Self.session(1, "a"), Self.system(9, consoleSessionID: "a")]
             var routing = PowerRouting()
@@ -116,7 +156,7 @@ extension CoreUnits {
             routing.handle(.refused(second), from: PeerHandle(rawValue: 9), peers: peers)
             #expect(
                 Self.outputs(&routing) == [
-                    .acpi(
+                    .untaken(
                         .shutdown,
                         refusals: [
                             PeerRefusal(peer: PeerHandle(rawValue: 1), error: first),
@@ -126,11 +166,11 @@ extension CoreUnits {
             #expect(!routing.isRouting)
         }
 
-        @Test("No candidate at all → .acpi at once with no refusals")
+        @Test("No candidate at all → .untaken at once with no refusals")
         func noCandidates() {
             var routing = PowerRouting()
             routing.begin(.restart, peers: [])
-            #expect(Self.outputs(&routing) == [.acpi(.restart, refusals: [])])
+            #expect(Self.outputs(&routing) == [.untaken(.restart, refusals: [])])
         }
 
         @Test("Candidates are recomputed after each refusal from the current peer views")

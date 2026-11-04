@@ -494,6 +494,9 @@ struct CLIArgumentParsingTests {
 
         let forced = try #require(try parse(["stop", "Alpha", "--force"]) as? KernovaCommand.Stop)
         #expect(forced.method.disposition == .force)
+
+        let anyway = try #require(try parse(["stop", "Alpha", "--anyway"]) as? KernovaCommand.Stop)
+        #expect(anyway.method.disposition == .anyway)
         #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--resume-first"]) }
     }
 
@@ -502,7 +505,7 @@ struct CLIArgumentParsingTests {
         // The deadline bounds the wait for the guest to actually power off,
         // which every disposition has to travel — a force stop simply gets
         // there in one step.
-        for method in ["--force", "--graceful"] {
+        for method in ["--force", "--graceful", "--anyway"] {
             let stop = try #require(
                 try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)
             #expect(stop.timeout == 5)
@@ -529,6 +532,8 @@ struct CLIArgumentParsingTests {
     @Test("Two stop methods at once is a usage error, not a silent winner")
     func stopMethodsAreExclusive() {
         #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--force", "--graceful"]) }
+        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--anyway", "--force"]) }
+        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--anyway", "--graceful"]) }
     }
 
     @Test("Every stop method maps onto a wire disposition, exhaustively")

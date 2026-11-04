@@ -169,6 +169,10 @@ public enum StopDisposition: String, Codable, Sendable, Hashable, CaseIterable {
     case graceful
     /// Terminate the virtual machine immediately, losing unsaved guest state.
     case force
+    /// Ask the guest's OS to shut down without waiting for apps, which quit
+    /// without being asked to save: what a macOS guest's agent installed
+    /// "For everyone" serves.
+    case anyway
 }
 
 /// What a clone is of its source.
