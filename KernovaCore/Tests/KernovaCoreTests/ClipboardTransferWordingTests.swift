@@ -39,6 +39,7 @@ struct ClipboardTransferWordingTests {
             (.peerReported(.dropFailed), .drop),
             (.supersededCopyRetracted(hasSuccessor: true), .copy),
             (.supersededCopyRetracted(hasSuccessor: false), .copy),
+            (.disconnectedCopyRetracted, .copy),
             (.incompleteFileSet, .paste),
             (.interrupted(fileCount: nil), .paste),
             (.interrupted(fileCount: 1), .drop),

@@ -67,11 +67,11 @@ final class GuestClipboard {
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
         exchange.onRemoteOfferEnded = { [weak self] remote, ending in
             switch ending {
-            case .byFarSide: self?.retract(remote)
-            case .superseded: if self?.published === remote { self?.published = nil }
-            case .linkLost: break
+            case .byFarSide, .linkLost: self?.retract(remote)
+            case .superseded, .cleared: if self?.published === remote { self?.published = nil }
             }
         }
+        exchange.onCleared = { [weak self] in self?.clearForHost() }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
         exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
@@ -242,9 +242,17 @@ final class GuestClipboard {
         onNotice()
     }
 
-    /// The host's clipboard moved on: a promise still standing for its offer could serve only what already
-    /// landed, so it is withdrawn, unless a copy has replaced it since. An offer ended by the connection leaving
-    /// keeps its promise, serving what landed, until the host's return offers what it holds then.
+    /// The host cleared the clipboard: the guest pasteboard is emptied, as this agent's own write.
+    private func clearForHost() {
+        published = nil
+        publisher.clear()
+        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
+        activity = .enabled
+    }
+
+    /// The host's offer ended — its clipboard moved on, or the connection carrying it left: a promise still
+    /// standing for it could serve only what already landed, so it is withdrawn, unless a copy has replaced it
+    /// since. The host's next connection offers what it holds then.
     private func retract(_ remote: ClipboardRemoteOffer) {
         guard published === remote else { return }
         published = nil

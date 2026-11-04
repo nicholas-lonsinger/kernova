@@ -29,6 +29,13 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Bumped once per inbound guest clipboard text.
     private(set) var inboundOfferSeq: UInt64 = 0
 
+    /// Whether the guest's clipboard is the Mac's copy, grabbed for it and not since replaced by a grab of the
+    /// guest's.
+    var guestHoldsMacCopy: Bool {
+        guard case .copy = outbound else { return false }
+        return isConnected && carriesClipboard
+    }
+
     /// Whether this service carries the VM's clipboard, as `ClipboardRoute`
     /// chooses: false while the guest agent's hub carries it, when the guest's
     /// grabs are not asked for and nothing the host grabbed is sent. Turning it
@@ -153,12 +160,15 @@ final class SpiceClipboardService: ClipboardServicing {
 
     /// Grabs the copy's UTF-8 text, the one representation this transport carries, reading it only when the
     /// guest requests it; a legacy guest, which never requests, is sent it now. A copy with no text has nothing
-    /// to send. The buffer keeps what it shows, since showing the copy would read it.
+    /// to send. The buffer never shows the copy, since showing it would read it, and empties: the guest no longer
+    /// holds what it showed.
     func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
         guard copy.offersUTF8Text else { return .settled }
         guard isConnected, carriesClipboard else { return .undelivered }
         guard writeToGuest(SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])) else { return .undelivered }
         outbound = .copy(copy)
+        clipboardContent = .empty
+        lastGrabbedText = nil
         if !guestSupportsByDemand {
             guard await reply(from: .copy(copy)) else { return .undelivered }
         }
@@ -259,7 +269,7 @@ final class SpiceClipboardService: ClipboardServicing {
         )
     }
 
-    /// Guest announced it has new clipboard data — request it.
+    /// Guest announced it has new clipboard data — request it. The guest's grab ends the host's.
     private func handleClipboardGrab(types: [SpiceClipboardType]) {
         Self.logger.log(.debug, "Guest clipboard grab: types=\(types.map(\.rawValue), privacy: .public)")
 
@@ -267,6 +277,7 @@ final class SpiceClipboardService: ClipboardServicing {
             Self.logger.log(.debug, "Guest clipboard grab ignored: the guest agent carries the clipboard")
             return
         }
+        outbound = nil
         guard types.contains(.utf8Text) else {
             Self.logger.log(.debug, "Guest clipboard has no UTF-8 text type, ignoring")
             return

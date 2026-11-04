@@ -31,6 +31,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private let filesPreview = ClipboardFilesPreviewView()
     private let summaryView = ClipboardSummaryView()
     private let concealedPreview = ClipboardConcealedPreviewView()
+    private let passthroughLine = ClipboardPassthroughLineView()
     private let commandBar = ClipboardCommandBarView()
     /// The content well: holds the previews and names the buffer's content type.
     private let bufferCard = ClipboardBufferCardView()
@@ -47,7 +48,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private var contentViews: [NSView] {
         [
             scrollView, richTextPreview, imagePreview, filePreview, filesPreview, summaryView,
-            concealedPreview,
+            concealedPreview, passthroughLine,
         ]
     }
     private let statusCircle: NSImageView
@@ -56,8 +57,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     // MARK: - State
 
-    /// What the content area renders: the content's digest, and whether it is
-    /// concealed, which the digest leaves out but the rendering doesn't.
+    /// What the content area renders: the content's digest, whether it is
+    /// concealed, which the digest leaves out but the rendering doesn't, and
+    /// whether the passthrough line stands in for it.
     ///
     /// A matching observed key skips the rebuild — both for no-op passes and
     /// for the echo of our own writes.
@@ -66,10 +68,12 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     private struct AppliedKey: Equatable {
         let digest: Data
         let isConcealed: Bool
+        let showsPassthroughLine: Bool
 
-        init(_ content: ClipboardContent) {
+        init(_ content: ClipboardContent, showsPassthroughLine: Bool = false) {
             digest = content.digest
             isConcealed = content.isConcealed
+            self.showsPassthroughLine = showsPassthroughLine
         }
     }
 
@@ -400,6 +404,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     var isShowingConcealedForTesting: Bool { !concealedPreview.isHidden }
 
+    var isShowingPassthroughLineForTesting: Bool { !passthroughLine.isHidden }
+
     var isEditorEditableForTesting: Bool { textView.isEditable }
 
     /// The status line's transient slot — empty unless a message is up.
@@ -443,6 +449,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
                 let clipService = self.instance.clipboardService
                 _ = clipService?.clipboardContent
                 _ = clipService?.isConnected
+                _ = clipService?.guestHoldsMacCopy
                 _ = self.instance.agentPresentation
                 _ = self.diskControl
                 _ = self.instance.configuration.clipboardPassthroughEnabled
@@ -531,13 +538,21 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         if let service {
             let content = service.clipboardContent
-            if AppliedKey(content) != lastAppliedKey {
+            // The guest holds the Mac's copy, which the window never shows.
+            let showsPassthroughLine = service.guestHoldsMacCopy && isPassthroughOn
+            let key = AppliedKey(content, showsPassthroughLine: showsPassthroughLine)
+            if key != lastAppliedKey {
                 // An external update is replacing the editor; drop any debounced
                 // edit so it can't later flush stale text over this content.
                 cancelPendingEdit()
-                lastAppliedKey = AppliedKey(content)
-                apply(content: content)
-                bufferCard.setContentType(ClipboardContentDescriber.indicatorText(for: content))
+                lastAppliedKey = key
+                if showsPassthroughLine {
+                    show(contentView: passthroughLine)
+                    bufferCard.setContentType("")
+                } else {
+                    apply(content: content)
+                    bufferCard.setContentType(ClipboardContentDescriber.indicatorText(for: content))
+                }
             }
         }
 
@@ -692,10 +707,8 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         takeIn(pasteboard: publisher.pasteboard)
     }
 
-    /// Empties the window's clipboard buffer.
-    ///
-    /// Clears only the gated buffer/preview — the host and guest pasteboards
-    /// are the user's real clipboards and are left untouched.
+    /// Empties the window's clipboard buffer, and with it what the transport
+    /// carries of it to the guest (``ClipboardServicing/clearBuffer()``).
     @objc private func clearClipboard(_: Any?) {
         guard let service = instance.clipboardService, !service.clipboardContent.isEmpty else {
             return

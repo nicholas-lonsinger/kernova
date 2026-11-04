@@ -71,6 +71,9 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// clipboard moved on. `hasSuccessor` is whether a guest offer took its
     /// place, so the message can point at Copy to Mac.
     case supersededCopyRetracted(hasSuccessor: Bool)
+    /// A Copy to Mac still on the host pasteboard was retracted because the guest's connection ended, so nothing
+    /// more of it could be pasted.
+    case disconnectedCopyRetracted
     /// A paste fired after the session ended with only part of the copied file
     /// set staged, so nothing was served rather than a silent subset.
     case incompleteFileSet

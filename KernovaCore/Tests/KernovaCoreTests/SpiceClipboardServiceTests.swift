@@ -392,6 +392,28 @@ struct SpiceClipboardServiceTests {
         #expect(pasteboard.residentReadTypes == [ClipboardContent.utf8TextUTI])
     }
 
+    @Test("A Mac copy empties the buffer while the guest holds it, until the guest's own grab")
+    func macCopyHeldUntilTheGuestGrabs() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        var text = Data()
+        text.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        await service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: text + Data("From guest".utf8)))
+        #expect(service.clipboardContent.text == "From guest")
+
+        let (copy, _) = try await macCopy("from the Mac")
+        #expect(await service.offerHostCopy(copy) == .settled)
+        #expect(service.guestHoldsMacCopy)
+        // The guest no longer holds the copy the buffer showed, and the buffer never shows the Mac's.
+        #expect(service.clipboardContent.isEmpty)
+
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardGrab, payload: text))
+        #expect(!service.guestHoldsMacCopy)
+        drainPipe(inputPipe)
+        await service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: text + Data("Later".utf8)))
+        #expect(service.clipboardContent.text == "Later")
+    }
+
     @Test("A request after the Mac's clipboard moved on is answered with no data")
     func requestAfterTheCopyMovedOn() async throws {
         let (service, inputPipe, _) = makeService()

@@ -456,6 +456,26 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         #expect(vc.isEditorEditableForTesting)
     }
 
+    @Test(
+        "the guest holding the Mac's copy shows the passthrough line, never content, only while passthrough is on",
+        arguments: [true, false])
+    func macCopyShowsThePassthroughLine(passthroughEnabled: Bool) throws {
+        let (vc, instance) = makeConnectedController(passthroughEnabled: passthroughEnabled)
+        let service = try #require(instance.sessionContext?.clipboardService as? FakeClipboardService)
+        #expect(!vc.isShowingPassthroughLineForTesting)
+
+        service.guestHoldsMacCopy = true
+        vc.simulateObservationForTesting()
+        #expect(vc.isShowingPassthroughLineForTesting == passthroughEnabled)
+        #expect(vc.contentChipTextForTesting.isEmpty == passthroughEnabled)
+
+        // A guest copy replaces the Mac's: the window shows it.
+        service.guestHoldsMacCopy = false
+        service.clipboardContent = ClipboardContent(text: "copied in the guest")
+        vc.simulateObservationForTesting()
+        #expect(!vc.isShowingPassthroughLineForTesting)
+    }
+
     @Test("a plain guest copy after a concealed one with the same digest replaces the concealed view")
     func plainCopyAfterConcealedRerenders() {
         let (vc, instance) = makeConnectedController()
@@ -1020,6 +1040,7 @@ private final class FakeClipboardService: ClipboardServicing {
 
     var isConnected: Bool = true
     var supportsBinaryRepresentations: Bool = true
+    var guestHoldsMacCopy = false
 
     /// The VM's transfer report, as a real transport holds it — so a test can
     /// raise a refusal from a service the window is no longer showing.

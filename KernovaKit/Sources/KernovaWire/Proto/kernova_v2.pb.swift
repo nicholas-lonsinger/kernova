@@ -2054,7 +2054,9 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// history and logs.
   public var concealed: Bool = false
 
-  /// The Item messages that follow.
+  /// The Item messages that follow. A CLIPBOARD_OFFER_BY_HOST of none is the
+  /// host's clear: the peer empties its clipboard and releases the offer. The
+  /// host refuses a CLIPBOARD_OFFER_BY_PEER of none.
   public var count: UInt32 = 0
 
   /// 16 random bytes naming this offer; a pull quotes it.

@@ -393,11 +393,11 @@ struct GuestClipboardTests {
     }
 
     @Test(
-        "A host offer the host ends is retracted, with or without a successor; one its connection drops keeps serving",
+        "A host offer that ends is retracted: the host ends it, with or without a successor, or its connection drops",
         arguments: [
             (StreamClosure.resetByPeer(WireError(.cancelled)), true),
             (StreamClosure.resetByPeer(WireError(.itemOfferReplaced)), true),
-            (StreamClosure.connectionLost, false),
+            (StreamClosure.connectionLost, true),
         ])
     func hostEndRetracts(closure: StreamClosure, retracted: Bool) async throws {
         let rig = rig()
@@ -413,6 +413,45 @@ struct GuestClipboardTests {
         rig.clipboard.checkPasteboard()
         await drainMainQueue()
         #expect(link.offers.isEmpty)
+    }
+
+    @Test("The connection leaving retracts the host's offer at once, and its return offers nothing of the clear")
+    func linkDropRetracts() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        try await receiveHostOffer(rig, link)
+        #expect(!rig.pasteboard.promisedTypes.isEmpty)
+
+        rig.clipboard.setLink(nil)
+        #expect(rig.pasteboard.promisedTypes.isEmpty)
+        #expect(rig.clipboard.exchange.remote == nil)
+        rig.clipboard.setLink(link)
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
+    }
+
+    @Test("The host's offer of no items is its clear: the pasteboard empties, the guest's offer and the clear end")
+    func hostClearEmptiesTheClipboard() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 1 }
+
+        rig.clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 0)),
+            on: link)
+        try await rig.pasteboard.changed.wait { rig.pasteboard.items.isEmpty }
+        try await link.changed.wait { link.releases == [Self.hostToken] }
+        #expect(link.withdrawals == [link.offers[0].token])
+        #expect(rig.clipboard.exchange.remote == nil)
+        // The clear is the agent's own write: the poll reads no copy from it.
+        rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.count == 1)
     }
 
     @Test("A copy that offers nothing withdraws the guest's offer")

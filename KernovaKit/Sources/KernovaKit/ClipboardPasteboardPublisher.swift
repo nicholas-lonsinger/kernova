@@ -204,10 +204,15 @@ public final class ClipboardPasteboardPublisher {
     public func retractPromisedWrite() -> Bool {
         guard let held = heldWrite, held.promised, held.changeCount == pasteboard.changeCount
         else { return false }
+        clear()
+        return true
+    }
+
+    /// Empties the pasteboard, whatever it holds, as this publisher's own write.
+    public func clear() {
         pasteboard.clearContents()
         lastWriteChangeCount = pasteboard.changeCount
         heldWrite = nil
-        return true
     }
 
     // MARK: - Planning

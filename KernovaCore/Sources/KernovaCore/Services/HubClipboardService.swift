@@ -16,10 +16,11 @@ import UniformTypeIdentifiers
 /// passthrough read from its pasteboard — and the guest's offer.
 ///
 /// The buffer is the guest's clipboard as Kernova carries it: a guest copy shows at once, and a Mac copy never
-/// does. One per VM, for its whole life: its owner is registered with the hub's item router before the hub
-/// exists. Each console peer the hub names is offered the buffer when it holds the window's own content;
-/// passthrough offers the Mac's copy itself. The guest's offer stays held while it is the host's clipboard and
-/// the buffer shows it or the host pasteboard holds this VM's write.
+/// does — the buffer empties while the guest holds one (``guestHoldsMacCopy``). One per VM, for its whole
+/// life: its owner is registered with the hub's item router before the hub exists. Each console peer the hub
+/// names is offered the buffer when it holds the window's own content; passthrough offers the Mac's copy
+/// itself. The guest's offer stays held while it is the host's clipboard and the buffer shows it or the host
+/// pasteboard holds this VM's write.
 @MainActor
 @Observable
 final class HubClipboardService: ClipboardServicing {
@@ -38,6 +39,9 @@ final class HubClipboardService: ClipboardServicing {
 
     /// Bumped once per guest offer shown in the buffer, never by its preview's pulls.
     private(set) var inboundOfferSeq: UInt64 = 0
+
+    /// Whether the host's offer the guest holds is the Mac's copy passthrough offered it.
+    private(set) var guestHoldsMacCopy = false
 
     // MARK: - Wiring
 
@@ -98,6 +102,9 @@ final class HubClipboardService: ClipboardServicing {
     /// The guest offer whose preview has run, by token.
     @ObservationIgnored private var previewedToken: Data?
 
+    /// The Mac's copy passthrough last offered, while the exchange may still hold it.
+    @ObservationIgnored private weak var macCopy: ClipboardOfferSource?
+
     /// Where a file promise, dropped on the window or copied on the Mac, is called in.
     @ObservationIgnored private let promiseStaging: ClipboardFileStaging
     @ObservationIgnored private var nextPromiseGeneration: UInt64 = 1
@@ -120,6 +127,7 @@ final class HubClipboardService: ClipboardServicing {
         exchange.onRemoteOfferEnded = { [weak self] in self?.remoteEnded($0, $1) }
         exchange.holdsUnsentCopy = { [weak self] in self?.passthroughHoldsUnsentCopy() ?? false }
         exchange.onCrossingRefused = { [weak self] in self?.passthroughForwardNow() }
+        exchange.onLocalSourceChanged = { [weak self] in self?.localSourceChanged() }
     }
 
     /// CLIPBOARD's owner on the hub's connections.
@@ -188,11 +196,18 @@ final class HubClipboardService: ClipboardServicing {
     }
 
     /// Makes the Mac's copy the host's clipboard and offers it: a new connection is passthrough's to offer again,
-    /// so nothing is owed a retry. The buffer never shows it.
+    /// so nothing is owed a retry. The buffer never shows it, and empties, since the guest no longer holds what
+    /// it showed.
     func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
+        macCopy = copy
         exchange.offer(copy)
+        if guestHoldsMacCopy { showNothing() }
         clipboardChangeMark = hostPasteboardChangeCount()
         return .settled
+    }
+
+    private func localSourceChanged() {
+        guestHoldsMacCopy = macCopy != nil && exchange.localSource === macCopy
     }
 
     /// The Mac's pasteboard changed to something it offers nothing of: the host's offer is withdrawn, and the
@@ -205,9 +220,14 @@ final class HubClipboardService: ClipboardServicing {
 
     var hasStandingGuestOffer: Bool { remote?.isOpen == true && exchange.remote === remote }
 
-    /// Empties the buffer; the window's own content it held is withdrawn from the guest.
+    /// Empties the buffer and the guest's clipboard: the guest's copy it showed is cleared there, and a write
+    /// of it on the Mac retracted; the window's own content it held is withdrawn, which the guest retracts.
     func clearBuffer() {
-        if clipboardContent.digest != remoteDigest { exchange.withdrawLocal() }
+        if clipboardContent.digest == remoteDigest {
+            exchange.clear()
+        } else {
+            exchange.withdrawLocal()
+        }
         offeredDigest = nil
         clipboardContent = .empty
     }
@@ -299,23 +319,38 @@ final class HubClipboardService: ClipboardServicing {
         clipboardContent = content
     }
 
-    /// The guest's offer stopped being the host's clipboard.
+    /// The guest's offer stopped being the host's clipboard. A write of it the host pasteboard still holds,
+    /// whether passthrough or Copy to Mac made it, is retracted unless a Mac copy replaced it, since nothing more
+    /// of it can be pulled; a retraction the user did not make is reported only with passthrough off, where the
+    /// window's Copy to Mac is the way back.
     ///
-    /// - The guest ended it: its clipboard moved on, so a write of it the host pasteboard still holds is
-    ///   retracted, whether passthrough or Copy to Mac made it — reported only with passthrough off, where the
-    ///   window's Copy to Mac is the way back. The buffer empties unless the guest's next offer follows.
+    /// - The guest ended it: its clipboard moved on. The buffer empties unless the guest's next offer follows.
     /// - A Mac copy replaced it: the guest's clipboard is that copy now, which the buffer never shows.
-    /// - The connection left: the guest may hold it still, and its return re-offers it, so all stays.
+    /// - The window's Clear cleared it, and the buffer with it.
+    /// - The connection left: the buffer keeps it, since the guest may hold it still, and its return re-offers
+    ///   it.
     private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         guard self.remote === remote else { return }
         let shown = clipboardContent.digest == remoteDigest
         self.remote = nil
         previewedToken = nil
         switch ending {
-        case .linkLost:
-            return
         case .superseded:
             if shown { showNothing() }
+        case .cleared:
+            if shown { showNothing() }
+            guard retractStaleHostWrite() else { return }
+            Self.logger.log(
+                .notice,
+                "Retracted the host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's clipboard was cleared"
+            )
+        case .linkLost:
+            guard retractStaleHostWrite() else { return }
+            Self.logger.log(
+                .notice,
+                "Retracted the host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's connection ended"
+            )
+            if !passthroughRuns() { reportRefusal(gesture: .copy, .disconnectedCopyRetracted) }
         case .byFarSide(let hasSuccessor):
             if shown, !hasSuccessor { showNothing() }
             guard retractStaleHostWrite() else { return }

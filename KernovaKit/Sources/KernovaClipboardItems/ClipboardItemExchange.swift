@@ -17,6 +17,9 @@ import KernovaWire
 /// - The far side's offer arrives as ``ClipboardRemoteOffer``, its items read whole, for the end to publish.
 ///   Taking it withdraws this side's offer.
 /// - Offers made before either side saw the other's cross; the host's wins (``side``).
+/// - The host's offer of no items is its clear (``clear()``): the guest empties its clipboard.
+/// - A connection's leaving ends both offers it carried: what an end published of the far side's is the end's
+///   to retract, since nothing more of it can be pulled.
 ///
 /// Offers and ends hop onto the main actor in the order the connection emitted them; a pull's end is handled on
 /// the connection's queue, so a paste waiting on a pull never needs the main actor.
@@ -37,7 +40,10 @@ public final class ClipboardItemExchange {
         case byFarSide(hasSuccessor: Bool)
         /// This side made a copy of its own.
         case superseded
-        /// The connection left or no longer carries the feature; the far side's clipboard may hold it still.
+        /// This side cleared the clipboard: neither end holds anything now.
+        case cleared
+        /// The connection left or no longer carries the feature, so nothing more of it can be pulled; the far
+        /// side's clipboard may hold it still, and offers it again on the next connection.
         case linkLost
     }
 
@@ -57,11 +63,17 @@ public final class ClipboardItemExchange {
     /// Hears each pull of the far side's offer that failed a paste, with the error it failed with:
     /// `TOO_LARGE` when the representation, or the offer's file set, is over the paste ceiling.
     public var onPullFailed: ((WireError) -> Void)?
+    /// A guest: the host cleared the clipboard, so this end empties its own.
+    public var onCleared: (() -> Void)?
+    /// Hears each change of ``localSource``.
+    public var onLocalSourceChanged: (() -> Void)?
 
     /// The far side's offer this end published, while it is this end's clipboard.
     public private(set) var remote: ClipboardRemoteOffer?
     /// This side's offer, while it is this end's clipboard and a connection carries it.
-    public private(set) var localSource: ClipboardOfferSource?
+    public private(set) var localSource: ClipboardOfferSource? {
+        didSet { if localSource !== oldValue { onLocalSourceChanged?() } }
+    }
 
     /// Which end this is.
     public let side: Side
@@ -96,14 +108,20 @@ public final class ClipboardItemExchange {
 
     // MARK: The connection
 
-    /// Runs over `link` from now on, or over nothing. Offers open on the connection before are ended by it, or
-    /// by its leaving, and their ends follow as events; this sends nothing. This side's offer goes with them:
-    /// what a new connection is offered is the end's to read from its pasteboard then.
+    /// Runs over `link` from now on, or over nothing; this sends nothing. Both offers the connection before
+    /// carried end here: the far side's as `.linkLost`, its pulls cancelled, and this side's, whose end follows as
+    /// an event. What a new connection is offered is the end's to read from its pasteboard then.
     public func setLink(_ link: (any ClipboardItemLink)?) {
         self.link = link
         localToken = nil
         localSource = nil
         lastLinkToken = nil
+        reading.removeAll()
+        if let remote {
+            self.remote = nil
+            remote.close()
+            onRemoteOfferEnded?(remote, .linkLost)
+        }
     }
 
     // MARK: This side's offer
@@ -114,8 +132,22 @@ public final class ClipboardItemExchange {
     public func offer(_ source: ClipboardOfferSource) {
         guard !source.items.isEmpty else { return withdrawLocal() }
         endRemote(.superseded)
+        open(source.items, concealed: source.concealed, servedBy: source)
+    }
+
+    /// Empties this end's clipboard and the far side's: the far side's offer ends (`.cleared`), and this side
+    /// offers no items in place of its own, which the far side publishes as a clear. With no connection, only the
+    /// far side's offer ends.
+    public func clear() {
+        endRemote(.cleared)
+        open([], concealed: false, servedBy: nil)
+    }
+
+    /// Offers `items` on the connection as this side's offer, each pull served from `source`; with no
+    /// connection, nothing is held.
+    private func open(_ items: [OfferedItem], concealed: Bool, servedBy source: ClipboardOfferSource?) {
         guard let link else { return }
-        // A far-side offer still being read predates this copy too.
+        // A far-side offer still being read predates this side's offer too.
         for token in reading { link.releaseOffer(token) }
         reading.removeAll()
         localSource = source
@@ -123,10 +155,9 @@ public final class ClipboardItemExchange {
         localToken = token
         if side == .host { lastLinkToken = token }
         let logger = logger
-        let count = source.items.count
+        let count = items.count
         let offer = ItemOffer(
-            token: token, concealed: source.concealed, items: source.items,
-            after: side == .guest ? lastLinkToken ?? Data() : Data())
+            token: token, concealed: concealed, items: items, after: side == .guest ? lastLinkToken ?? Data() : Data())
         link.offerItems(offer) { refusal in
             if let refusal {
                 logger.log(
@@ -301,11 +332,12 @@ public final class ClipboardItemExchange {
     ) {
         guard reading.remove(header.token) != nil else { return }
         let held = items.compactMap { $0 }
-        guard held.count == items.count, !held.isEmpty else {
+        guard held.count == items.count else {
             logger.log(.notice, "The far side's clipboard offer ended before its items were read")
             link.releaseOffer(header.token)
             return
         }
+        guard !held.isEmpty else { return farSideCleared(header, on: link) }
         let ceiling = pasteCeiling
         let remote = ClipboardRemoteOffer(
             header: header, items: held, link: link, staging: staging, generation: generation,
@@ -316,6 +348,19 @@ public final class ClipboardItemExchange {
         self.remote = remote
         logger.log(.notice, "Received a clipboard offer: \(held.count, privacy: .public) item(s)")
         onRemoteOffer?(remote)
+    }
+
+    /// The far side offered no items: a guest takes it as the host's clear, emptying its clipboard; the host
+    /// takes none from a guest, whose clipboard emptying withdraws its offer instead. Either way the offer,
+    /// which has nothing to pull, is released.
+    private func farSideCleared(_ header: ItemSetHeaderValue, on link: any ClipboardItemLink) {
+        link.releaseOffer(header.token)
+        guard side == .guest else {
+            return logger.log(.notice, "Refused a guest clipboard offer of no items")
+        }
+        withdrawLocal()
+        logger.log(.notice, "The host cleared the clipboard")
+        onCleared?()
     }
 }
 

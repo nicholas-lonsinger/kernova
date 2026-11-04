@@ -71,8 +71,14 @@ package protocol ClipboardServicing: AnyObject {
     /// Whether the guest's offer is this clipboard's now, for passthrough to publish.
     var hasStandingGuestOffer: Bool { get }
 
+    /// Whether the guest's clipboard is the Mac copy passthrough offered it last. The buffer never shows a Mac
+    /// copy, so it is empty while this holds. Default false: a transport passthrough never offers a copy.
+    var guestHoldsMacCopy: Bool { get }
+
     /// Empties the buffer (the window's "Clear" gesture) and resets the
-    /// outbound dedup state.
+    /// outbound dedup state. The hub also empties the guest's clipboard: the
+    /// guest's copy the buffer showed is cleared there, and the window's own
+    /// content is withdrawn.
     ///
     /// Resetting the dedup is the reason this isn't just `clipboardContent =
     /// .empty`: otherwise re-copying the just-cleared content would be suppressed
@@ -168,4 +174,5 @@ extension ClipboardServicing {
     var connectionEpoch: UInt64 { 0 }
     var clipboardChangeMark: Int? { nil }
     var hasStandingGuestOffer: Bool { false }
+    var guestHoldsMacCopy: Bool { false }
 }
