@@ -47,9 +47,9 @@ final class HubClipboardService: ClipboardServicing {
     /// The paste ceiling in force: what the exchange's pulls read, from any thread.
     @ObservationIgnored let maxPasteBytes: @Sendable () -> Int
 
-    /// Retracts this VM's write serving the offer named, if the host pasteboard still holds it, returning
-    /// whether it did: what an offer's end owes a write of it.
-    @ObservationIgnored var retractHostWrite: (_ servingOffer: Data) -> Bool = { _ in false }
+    /// Withdraws the promises of this VM's write serving the offer named, if the host pasteboard still holds
+    /// it, returning what that left: what an offer's end owes a write of it.
+    @ObservationIgnored var retractHostWrite: (_ servingOffer: Data) -> ClipboardRetraction? = { _ in nil }
 
     /// Whether passthrough runs: it decides only whether a retraction is reported.
     @ObservationIgnored var passthroughRuns: () -> Bool = { false }
@@ -108,7 +108,7 @@ final class HubClipboardService: ClipboardServicing {
         exchange.onCrossingRefused = { [weak self] in self?.passthroughForwardNow() }
         exchange.onEmptyUnchangedReturn = { [weak self] in self?.emptyUnchangedReturn() }
         exchange.onCopyEnded = { [weak self] in self?.copyEnded($0) }
-        exchange.onCopyRefused = { [weak self] in self?.copyRefused($0) }
+        exchange.onCopyRefused = { [weak self] in self?.copyRefused($0, $1) }
     }
 
     /// CLIPBOARD's owner on the hub's connections.
@@ -210,7 +210,7 @@ final class HubClipboardService: ClipboardServicing {
         case .failed(let error):
             Self.logger.log(
                 .notice, "The guest's clipboard was not copied: \(String(describing: error), privacy: .public)")
-            return .failed(.transferFailed)
+            return .failed(Self.failure(error))
         case .copy(let copy):
             if let error = await copy.landInline() {
                 exchange.refuseCopy(copy, error)
@@ -220,6 +220,7 @@ final class HubClipboardService: ClipboardServicing {
             return .copy(
                 GuestCopyContents(
                     token: copy.token, items: copy.items, concealed: copy.concealed,
+                    plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
                     landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy,
                     release: { exchange.releaseCopy(copy) }))
         }
@@ -228,19 +229,24 @@ final class HubClipboardService: ClipboardServicing {
     /// A copy the guest sent ended with the connection: what the Mac's clipboard holds of it is retracted, its
     /// files being on the guest's disk.
     private func copyEnded(_ copy: ClipboardRemoteOffer) {
-        guard retractHostWrite(copy.token) else { return }
+        guard let retraction = retractHostWrite(copy.token) else { return }
         Self.logger.log(
             .notice,
             "Retracted the guest's copied files from the host pasteboard for '\(self.label(), privacy: .public)': the guest's connection ended"
         )
-        reportRefusal(gesture: .copy, .disconnectedCopyRetracted)
+        reportRefusal(
+            gesture: .copy, retraction == .keptData ? .disconnectedFilesRetracted : .disconnectedCopyRetracted)
     }
 
-    /// The guest refused a copy of the Mac's clipboard.
-    private func copyRefused(_ error: WireError) {
+    /// The guest refused `copy` of the Mac's clipboard, or wrote it without its files.
+    private func copyRefused(_ copy: ClipboardOfferSource, _ error: WireError) {
         Self.logger.log(
             .notice, "The guest refused the Mac's clipboard copy: \(String(describing: error), privacy: .public)")
-        reportRefusal(gesture: .send, Self.failure(error))
+        guard error.code == .clipboardFilesWithheld else { return reportRefusal(gesture: .send, Self.failure(error)) }
+        reportRefusal(
+            gesture: .send,
+            .filesLeftOut(
+                count: ClipboardPromisePolicy.fileCount(copy.items), limitBytes: Int(clamping: error.limit)))
     }
 
     /// The failure a copy ending with `error` reports.
@@ -321,14 +327,14 @@ final class HubClipboardService: ClipboardServicing {
         case .superseded:
             return
         case .linkLost:
-            guard retractHostWrite(remote.token) else { return }
+            guard retractHostWrite(remote.token) != nil else { return }
             Self.logger.log(
                 .notice,
                 "Retracted the host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's connection ended"
             )
             if !passthroughRuns() { reportRefusal(gesture: .copy, .disconnectedCopyRetracted) }
         case .byFarSide(let hasSuccessor):
-            guard retractHostWrite(remote.token) else { return }
+            guard retractHostWrite(remote.token) != nil else { return }
             Self.logger.log(
                 .notice,
                 "Retracted the stale host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's clipboard moved on"

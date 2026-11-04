@@ -125,7 +125,7 @@ final class SpiceClipboardService: ClipboardServicing {
         return .copy(
             GuestCopyContents(
                 token: Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }), items: [item],
-                concealed: false, landed: { _, _ in bytes }, puller: NoFilesPuller(), release: {}))
+                concealed: false, plan: .whole, landed: { _, _ in bytes }, puller: NoFilesPuller(), release: {}))
     }
 
     /// Grabs the copy's UTF-8 text, the one representation this transport carries, reading it only when the
@@ -195,7 +195,7 @@ final class SpiceClipboardService: ClipboardServicing {
                 handleClipboardData(type: type, data: data)
 
             case .clipboardRelease:
-                Self.logger.log(.debug, "Guest released clipboard")
+                handleClipboardRelease()
 
             case .other(let type):
                 Self.logger.log(.debug, "Ignoring unhandled SPICE message type: \(type.rawValue, privacy: .public)")
@@ -235,6 +235,13 @@ final class SpiceClipboardService: ClipboardServicing {
             .notice,
             "Guest agent connected (caps: \(caps.map { String($0, radix: 16) }, privacy: .public), byDemand: \(byDemand, privacy: .public))"
         )
+    }
+
+    /// The guest's clipboard let go of what it grabbed: the text it sent is its clipboard no more.
+    private func handleClipboardRelease() {
+        Self.logger.log(.debug, "Guest released clipboard")
+        guard carriesClipboard else { return }
+        guestText = nil
     }
 
     /// Guest announced it has new clipboard data — request it. The guest's grab ends the host's.

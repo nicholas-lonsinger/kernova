@@ -222,7 +222,7 @@ struct GuestClipboardTests {
         #expect(link.offers.isEmpty)
     }
 
-    @Test("The host's policy sets each pull's byte ceiling, and a policy arriving later changes it")
+    @Test("The host's policy sets each pull's byte ceiling, and a policy arriving later changes it for later offers")
     func policySetsThePullCeiling() async throws {
         let rig = rig()
         var text = OfferedItem()
@@ -250,8 +250,14 @@ struct GuestClipboardTests {
         _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
         #expect(link.ceilings == [UInt64(first)])
 
+        // An offer's pulls land against one budget, the ceiling as its first pull read it.
         let raised = 16 * 1024 * 1024 * 1024
         rig.clipboard.apply(policy(raised))
+        let later = Data(repeating: 8, count: 16)
+        rig.clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: later, concealed: false, count: 1)),
+            on: link)
+        try await rig.pasteboard.changed.wait { rig.clipboard.exchange.remote?.token == later }
         _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
         #expect(link.ceilings == [UInt64(first), UInt64(raised)])
         #expect(rig.clipboard.pasteCeilingBytes == raised)
@@ -675,7 +681,7 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("copied meanwhile".utf8))
     }
 
-    @Test("The connection leaving retracts a host copy's pending files")
+    @Test("The connection leaving retracts a host copy's pending files, its text kept")
     func hostCopyRetractedWithTheLink() async throws {
         let rig = rig()
         let link = RecordingLink(
@@ -686,7 +692,79 @@ struct GuestClipboardTests {
 
         rig.clipboard.setLink(nil)
         try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes.isEmpty }
-        #expect(rig.pasteboard.dataByItem.isEmpty)
+        #expect(
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("from the host".utf8))
+        // The rewrite is the agent's own: the poll offers nothing of it.
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.allSatisfy { $0.items.isEmpty })
+    }
+
+    /// A text item beside a file of `size` bytes.
+    private static func textAndFileItem(fileSize size: UInt64) -> OfferedItem {
+        var item = textAndFileItem()
+        item.representations[1].sizeEstimate = size
+        return item
+    }
+
+    @Test("A host copy of text and files over the paste ceiling is written without the files, and the host told so")
+    func hostCopyLeavesOutOversizeFiles() async throws {
+        let rig = rig()
+        let item = Self.textAndFileItem(fileSize: 3 << 30)
+        let link = RecordingLink(items: [item], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveCopy(item, text: Data("from the host".utf8), on: rig, link)
+
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.code) == [.clipboardFilesWithheld])
+        #expect(
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("from the host".utf8))
+        #expect(rig.pasteboard.promisedTypes.isEmpty)
+    }
+
+    @Test("A host copy of only files over the paste ceiling is not written: refused too large")
+    func hostCopyOfOversizeFilesAlone() async throws {
+        let rig = rig()
+        var file = Self.textAndFileItem(fileSize: 3 << 30)
+        file.representations.removeFirst()
+        let link = RecordingLink(items: [file])
+        rig.clipboard.setLink(link)
+        #expect(rig.pasteboard.setString("the guest's", forType: .string))
+        let before = rig.pasteboard.changeCount
+
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.code) == [.tooLarge])
+        #expect(rig.pasteboard.changeCount == before)
+    }
+
+    @Test("Two host copies in quick succession are both written: the first's write is not the clipboard changing")
+    func quickHostCopiesBothLand() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        let second = Data(repeating: 8, count: 16)
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: second, count: 1)), on: link)
+        try await link.changed.wait { link.opened.count == 2 }
+
+        for (index, text) in ["first", "second"].enumerated() {
+            guard case .staged(let directory, .exactly(let name)) = link.orders[index].landing else {
+                Issue.record("landing \(link.orders[index].landing)")
+                return
+            }
+            try Data(text.utf8).write(
+                to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
+            rig.clipboard.exchange.pullEnded(link.opened[index], .landed(.named(name)))
+            try await link.changed.wait { link.releases.contains(index == 0 ? Self.copyToken : second) }
+        }
+        #expect(link.refusals.isEmpty)
+        #expect(
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("second".utf8))
     }
 
     @Test("A connection's first offer says whether the clipboard changed while unlinked, reporting an empty one")

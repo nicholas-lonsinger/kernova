@@ -97,6 +97,8 @@ package struct GuestCopyContents {
     let token: Data
     let items: [OfferedItem]
     let concealed: Bool
+    /// How the copy is written within the paste ceiling, decided once its INLINE representations landed.
+    let plan: ClipboardPromisePolicy.CopyPlan
     /// The bytes INLINE representation `rep` of item `item` landed with.
     let landed: @Sendable (_ item: Int, _ rep: Int) -> Data?
     /// Pulls the copy's files when a paste asks.

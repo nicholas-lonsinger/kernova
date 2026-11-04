@@ -172,6 +172,25 @@ struct SpiceClipboardServiceTests {
         #expect(service.guestClipboardItems().isEmpty)
     }
 
+    @Test("The guest releasing its clipboard ends the text it sent: Copy to Mac then has nothing to copy")
+    func clipboardReleaseEndsTheGuestsText() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service)
+        drainPipe(inputPipe)
+        var payload = Data()
+        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        await service.handleIncomingData(
+            buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
+        #expect(service.guestText == "From guest")
+
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardRelease, payload: Data()))
+        #expect(service.guestText == nil)
+        guard case .nothing = await service.guestClipboardCopy() else {
+            Issue.record("the released text is still the guest's clipboard")
+            return
+        }
+    }
+
     @Test("Guest clipboard request with no pending text sends nothing")
     func clipboardRequestWithoutPending() async {
         let (service, inputPipe, _) = makeService()

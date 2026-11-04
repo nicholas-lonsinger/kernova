@@ -208,7 +208,8 @@ enum ErrorCode {
   ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is
   ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY = 1009;      // a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
   ERROR_CODE_CLIPBOARD_ALREADY_HELD = 1010;         // a CLIPBOARD ask's RESET by the peer: its clipboard is its write of the host's current clipboard offer, which the host already holds
-  reserved 1011 to 1199;
+  ERROR_CODE_CLIPBOARD_FILES_WITHHELD = 1011;       // a CLIPBOARD copy's RESET by its receiver: its clipboard was written without the copy's files, which total over the paste ceiling; Error.limit names it
+  reserved 1012 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -751,8 +752,11 @@ enum ClipboardCopy {
   // A snapshot of the opener's clipboard. The receiver lands every INLINE
   // representation first, writes its clipboard only if that has not changed
   // since the copy arrived (else RESET(CLIPBOARD_CHANGED)), and releases the
-  // copy once its clipboard no longer holds what it wrote. A peer's names the
-  // host's ask it answers in `after`.
+  // copy once its clipboard no longer holds what it wrote. Its files over the
+  // paste ceiling are left out of that write, and the copy RESET
+  // CLIPBOARD_FILES_WITHHELD; with nothing else in it, nothing is written and
+  // the copy is RESET TOO_LARGE. A peer's names the host's ask it answers in
+  // `after`.
   CLIPBOARD_COPY_SNAPSHOT = 1;
   // Host only, of no items: asks the peer for a snapshot of its clipboard. The
   // peer answers with a CLIPBOARD_COPY_SNAPSHOT naming it, then releases it,

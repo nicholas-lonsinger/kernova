@@ -76,6 +76,9 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// A Copy to Mac still on the host pasteboard was retracted because the guest's connection ended, so nothing
     /// more of it could be pasted.
     case disconnectedCopyRetracted
+    /// The files of a copy still on the host pasteboard were retracted because the guest's connection ended;
+    /// the rest of the copy stays.
+    case disconnectedFilesRetracted
     /// A paste fired after the session ended with only part of the copied file
     /// set staged, so nothing was served rather than a silent subset.
     case incompleteFileSet
@@ -116,6 +119,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case clipboardChanged
     /// The source's clipboard held nothing a copy could carry.
     case nothingToCopy
+    /// A copy was written without its `count` files, which together are over the transfer ceiling `limitBytes`.
+    case filesLeftOut(count: Int, limitBytes: Int)
     /// The source's clipboard held no text, the one thing a text-only transport
     /// carries.
     case noTextToCopy

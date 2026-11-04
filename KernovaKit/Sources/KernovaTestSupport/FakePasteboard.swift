@@ -56,8 +56,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         }
     }
 
-    /// None: no copy on this double carries a file promise.
-    @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { [] }
+    /// The receiver ``setFilePromise(_:)`` placed last, or none.
+    @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { promiseReceivers }
+
+    @MainActor private var promiseReceivers: [any FilePromiseReceiving] = []
 
     /// Every type the user's own copy was read for — as data or as a string —
     /// in the order read, for a test proving what was read when.
@@ -172,6 +174,16 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     @discardableResult
     public func setFilePromise() -> Bool {
         setItem(NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
+    }
+
+    /// Places one item carrying `receiver`'s file promise and nothing else, `receiver` the receiver every later
+    /// read of the pasteboard's promises yields.
+    @MainActor
+    @discardableResult
+    public func setFilePromise(_ receiver: any FilePromiseReceiving) -> Bool {
+        setFilePromise()
+        promiseReceivers = [receiver]
+        return true
     }
 
     /// Replaces the resident item with a single text representation —

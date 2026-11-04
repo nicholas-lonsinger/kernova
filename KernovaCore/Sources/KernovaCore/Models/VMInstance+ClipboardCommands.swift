@@ -17,6 +17,7 @@ extension VMInstance {
             defer { self?.runningClipboardCommands.remove(.copyMacClipboardToGuest) }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
                 from: pasteboard, destinationOffer: service?.guestOfferToken,
+                ceiling: self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes,
                 promiseDestination: {
                     guard let destination = service?.reservePromiseDestination() else {
                         throw ClipboardServeError.unavailable
@@ -31,6 +32,8 @@ extension VMInstance {
                 reportClipboardCommand(.send, .transferFailed)
             case .heldByDestination:
                 break
+            case .tooLarge(let limitBytes):
+                reportClipboardCommand(.send, .tooLarge(limitBytes: limitBytes))
             case .snapshot(let snapshot, let lost):
                 if let failure = service.copyMacClipboardToGuest(snapshot) {
                     reportClipboardCommand(.send, failure)
@@ -41,8 +44,9 @@ extension VMInstance {
         }
     }
 
-    /// Copies the guest's clipboard as it stands now to the Mac's, unless the Mac's changes before it lands. A
-    /// file set over the paste ceiling is left off, and said so. A guest clipboard that is its write of this
+    /// Copies the guest's clipboard as it stands now to the Mac's, unless the Mac's changes before it lands, by
+    /// anything but this VM's own write. A file set over the paste ceiling is left off, and said so; with nothing
+    /// else to copy, nothing is written. A guest clipboard that is its write of this
     /// VM's own offer is the Mac's clipboard already, so nothing is copied.
     package func copyGuestClipboardToMac() {
         guard let service = clipboardService, service.isConnected, begin(.copyGuestClipboardToMac) else { return }
@@ -64,16 +68,22 @@ extension VMInstance {
             case .failed(let failure):
                 reportClipboardCommand(.copy, failure)
             case .copy(let contents):
-                guard publisher.pasteboard.changeCount == commandedAt else {
+                let changeCount = publisher.pasteboard.changeCount
+                guard changeCount == commandedAt || changeCount == publisher.lastWriteChangeCount else {
                     contents.release()
                     return reportClipboardCommand(.copy, .clipboardChanged)
                 }
                 let ceiling = effectiveClipboardMaxPasteBytes
-                let budget = ClipboardPromisePolicy.pasteBudget(contents.items, limit: ceiling)
-                guard publisher.writeCopy(contents, servingFileURLs: !budget.exceeds) else {
+                guard contents.plan != .tooLarge else {
+                    contents.release()
+                    return reportClipboardCommand(.copy, .tooLarge(limitBytes: ceiling))
+                }
+                guard publisher.writeCopy(contents, servingFileURLs: contents.plan.servesFileURLs) else {
                     return reportClipboardCommand(.copy, .transferFailed)
                 }
-                if budget.exceeds { reportClipboardCommand(.copy, .tooLarge(limitBytes: ceiling)) }
+                if case .withoutFiles(let count) = contents.plan {
+                    reportClipboardCommand(.copy, .filesLeftOut(count: count, limitBytes: ceiling))
+                }
             }
         }
     }

@@ -616,7 +616,8 @@ package enum VMAdmission {
         case .externalDisplay:
             admitted = phase.hasLiveSession
         case .clipboard:
-            admitted = facts.clipboardSharingEnabled && phase.hasLiveSession
+            // A paused guest answers nothing until it resumes.
+            admitted = facts.clipboardSharingEnabled && phase.hasLiveSession && !phase.isLivePaused
         case .guestAgentStatus:
             admitted = phase.hasLiveSession && facts.reachesGuestAgent
         case .guestAgentDisk:
@@ -674,6 +675,7 @@ package enum VMAffordance: Sendable, Equatable {
     case display
     /// Pop out, or go fullscreen.
     case externalDisplay
+    /// Copy one clipboard to the other: the guest running.
     case clipboard
     /// Show the guest agent's status for a session with a channel to one.
     case guestAgentStatus

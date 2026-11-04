@@ -53,6 +53,8 @@ public final class ClipboardOfferSource {
         case promise(Int)
         /// A file a promise called in before the offer was read lands.
         case landing(Task<URL, any Error>)
+        /// Bytes a copy served once, let go: its receiver pulls each representation once.
+        case spent
     }
 
     /// The items, in the order they are offered.
@@ -60,7 +62,7 @@ public final class ClipboardOfferSource {
     /// The content is confidential: `org.nspasteboard.ConcealedType`.
     public let concealed: Bool
 
-    private let origins: [[Origin]]
+    private var origins: [[Origin]]
     private let pasteboard: (any ClipboardReadPasteboard)?
     /// The pasteboard change the offer was read at.
     let changeCount: Int
@@ -83,21 +85,27 @@ public final class ClipboardOfferSource {
     }
 
     /// This offer as a snapshot of the pasteboard now, independent of what it holds later: every INLINE
-    /// representation's bytes read now and held in memory, each sized by what was read, and every FILE and
-    /// FOLDER kept as the reference it is, read when pulled.
+    /// representation's bytes read now and held in memory, each sized by what was read, every FILE and FOLDER
+    /// kept as the reference it is, read when pulled, and every file promise called in now, inside the
+    /// source's own staging, and kept as the file it landed.
     ///
-    /// A representation whose bytes can no longer be read is left out, and an item left with none is dropped.
-    /// Nil when the pasteboard moved on from what was offered, or nothing remains.
-    public func snapshot() async -> ClipboardOfferSource? {
+    /// A representation whose bytes can no longer be read, or whose promise lands nothing, is left out, and an
+    /// item left with none is dropped. Nil when the pasteboard moved on from what was offered, or nothing
+    /// remains.
+    ///
+    /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`,
+    ///   reading nothing more.
+    public func snapshot(inlineCeiling: Int) async throws(ClipboardSnapshotTooLarge) -> ClipboardOfferSource? {
+        var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
         var frozenItems: [OfferedItem] = []
         var frozenOrigins: [[Origin]] = []
         for (index, item) in items.enumerated() {
             var frozen = OfferedItem()
             var itemOrigins: [Origin] = []
             for (position, representation) in item.representations.enumerated() {
-                let origin = origins[index][position]
+                var kept = representation
                 let held: Origin?
-                switch origin {
+                switch origins[index][position] {
                 case .pasteboard(let pasteboardItem, let type):
                     guard let pasteboard, pasteboard.changeCount == changeCount else { return nil }
                     let pasteboardItems = pasteboard.items
@@ -107,13 +115,21 @@ public final class ClipboardOfferSource {
                             Origin.bytes)
                         : nil
                 case .fileContents(let url):
+                    let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+                    try tally.add(UInt64(max(size, 0)))
                     held = await Task.detached { try? Data(contentsOf: url) }.value.map(Origin.bytes)
-                case .bytes, .file, .folder, .promise, .landing:
-                    held = origin
+                case .promise(let promise):
+                    held = await Self.landed(callIn(promise), as: &kept)
+                case .landing(let file):
+                    held = await Self.landed(file, as: &kept)
+                case .bytes, .file, .folder, .spent:
+                    held = origins[index][position]
                 }
                 guard let held else { continue }
-                var kept = representation
-                if case .bytes(let data) = held { kept.sizeEstimate = UInt64(data.count) }
+                if case .bytes(let data) = held {
+                    if case .pasteboard = origins[index][position] { try tally.add(UInt64(data.count)) }
+                    kept.sizeEstimate = UInt64(data.count)
+                }
                 frozen.representations.append(kept)
                 itemOrigins.append(held)
             }
@@ -125,7 +141,35 @@ public final class ClipboardOfferSource {
         guard !frozenItems.isEmpty else { return nil }
         return ClipboardOfferSource(
             items: frozenItems, origins: frozenOrigins, concealed: concealed, pasteboard: nil, changeCount: 0,
-            promises: promises, promiseDestination: promiseDestination)
+            promises: [], promiseDestination: { throw ClipboardServeError.unavailable })
+    }
+
+    /// The file or folder `landing` lands, once it has, `kept` taking what landed: its storage, its size, and
+    /// its name when it is one path component. Nil when it lands nothing.
+    private static func landed(_ landing: Task<URL, any Error>, as kept: inout Representation) async -> Origin? {
+        guard let url = try? await value(of: landing),
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+        else { return nil }
+        let isFolder = values.isDirectory == true
+        kept.storage = isFolder ? .folder : .file
+        kept.sizeEstimate = UInt64(
+            max(
+                isFolder
+                    ? await Task.detached { ClipboardArchive.estimatedByteCount(at: url) }.value
+                    : values.fileSize ?? 0, 0))
+        let name = Data(url.lastPathComponent.utf8)
+        if PathComponent.isValid(name) { kept.name = name }
+        kept.promised = false
+        return isFolder ? .folder(url) : .file(url)
+    }
+
+    /// Lets go of representation `representation` of item `item` once a copy served its bytes: the receiver
+    /// pulls each once, so the copy holds no bytes for the rest of its life.
+    public func spend(item: Int, representation: Int) {
+        guard origins.indices.contains(item), origins[item].indices.contains(representation),
+            case .bytes = origins[item][representation]
+        else { return }
+        origins[item][representation] = .spent
     }
 
     /// A snapshot of what a write of this process placed, built from what it was made from — what `source`
@@ -134,7 +178,10 @@ public final class ClipboardOfferSource {
     /// brought is left out, and an item left with none is dropped. Nil when nothing remains.
     ///
     /// - Returns: the snapshot, and how many of the write's items it left out.
-    static func snapshot(of source: ClipboardWriteSource) async -> (ClipboardOfferSource, lost: Int)? {
+    static func snapshot(of source: ClipboardWriteSource, inlineCeiling: Int) async throws(ClipboardSnapshotTooLarge)
+        -> (ClipboardOfferSource, lost: Int)?
+    {
+        var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
         var frozenItems: [OfferedItem] = []
         var frozenOrigins: [[Origin]] = []
         var lost = 0
@@ -146,7 +193,10 @@ public final class ClipboardOfferSource {
                     var kept = item.representations[promised.representation]
                     guard let origin = await Self.origin(of: kept, item: index, promised.representation, in: part)
                     else { continue }
-                    if case .bytes(let data) = origin { kept.sizeEstimate = UInt64(data.count) }
+                    if case .bytes(let data) = origin {
+                        try tally.add(UInt64(data.count))
+                        kept.sizeEstimate = UInt64(data.count)
+                    }
                     kept.promised = false
                     frozen.representations.append(kept)
                     itemOrigins.append(origin)
@@ -228,6 +278,8 @@ public final class ClipboardOfferSource {
             return try await Self.served(landing: callIn(index), as: storage)
         case .landing(let file):
             return try await Self.served(landing: file, as: storage)
+        case .spent:
+            throw .unavailable
         }
     }
 
@@ -297,6 +349,28 @@ public final class ClipboardOfferSource {
         case .file where values.isRegularFile == true: return .file(url)
         case .folder where values.isDirectory == true: return .folder(url)
         default: throw .readFailed
+        }
+    }
+}
+
+/// A snapshot's INLINE bytes came to more than the paste ceiling, so nothing of it is copied.
+public struct ClipboardSnapshotTooLarge: Error, Equatable, Sendable {
+    /// The ceiling the bytes came to more than.
+    public let limitBytes: Int
+
+    /// The INLINE bytes a snapshot read so far, against its ceiling.
+    struct Tally {
+        let ceiling: Int
+        private var total: UInt64 = 0
+
+        init(ceiling: Int) {
+            self.ceiling = ceiling
+        }
+
+        /// Counts `bytes` more, throwing once the total is over the ceiling.
+        mutating func add(_ bytes: UInt64) throws(ClipboardSnapshotTooLarge) {
+            total = total.saturatingAdding(bytes)
+            guard total <= UInt64(max(ceiling, 0)) else { throw ClipboardSnapshotTooLarge(limitBytes: ceiling) }
         }
     }
 }

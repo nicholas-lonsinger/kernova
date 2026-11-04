@@ -623,6 +623,19 @@ struct VMCapabilityCatalogTests {
         #expect(!harness.catalog.isAvailable(command, on: instance))
     }
 
+    @Test(
+        "The clipboard commands are off while the guest is paused",
+        arguments: [
+            VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest,
+        ])
+    func clipboardCommandsOffWhilePaused(command: VMCapability) {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .livePaused(sessionID: UUID()), guestOS: .macOS)
+        harness.library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = true }
+        Self.carryClipboard(on: instance)
+        #expect(!harness.catalog.isAvailable(command, on: instance))
+    }
+
     // MARK: - Reveal surface
 
     /// Which window a `reveal` — from the CLI, a `kernova:` link, AppleScript,

@@ -874,7 +874,7 @@ struct HubClipboardServiceTests {
         #expect(try hostPasteboard(instance).promisedTypes.isEmpty)
     }
 
-    @Test("Copy to Mac's pending files are retracted when the guest's connection ends, and that is said")
+    @Test("Copy to Mac's pending files are retracted when the guest's connection ends, its text kept, and that is said")
     func copyToMacRetractedWithTheLink() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
@@ -887,6 +887,24 @@ struct HubClipboardServiceTests {
 
         probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
         try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(
+            pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("the guest's".utf8))
+        #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
+    }
+
+    @Test("Copy to Mac of files alone, its connection ending, clears what it wrote")
+    func copyToMacOfFilesRetractedWithTheLink() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try await copyToMac(
+            Self.item(Self.representation("public.data", .file, name: "a.bin")), on: probe, into: instance)
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(pasteboard.dataByItem.isEmpty)
         #expect(try await reported(instance, .copy) == .disconnectedCopyRetracted)
     }
 
@@ -912,6 +930,128 @@ struct HubClipboardServiceTests {
         try await probe.changed.wait { released(Self.copyToken, probe) }
         #expect(reads(probe).isEmpty)
         #expect(instance.hubClipboard.exchange.copies.isEmpty)
+    }
+
+    // MARK: - The paste ceiling
+
+    @Test("Copy to Mac of one file over the paste ceiling reports it too large and writes nothing")
+    func copyToMacOfAnOversizeFile() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        var file = Self.representation("public.data", .file, name: "big.bin")
+        file.sizeEstimate = 3 << 30
+        var item = OfferedItem()
+        item.representations = [file]
+        _ = try await copyToMac(item, on: probe, into: instance)
+        #expect(try await reported(instance, .copy) == .tooLarge(limitBytes: instance.effectiveClipboardMaxPasteBytes))
+        #expect(try hostPasteboard(instance).prepareCount == 0)
+        try await probe.changed.wait { released(Self.copyToken, probe) }
+    }
+
+    @Test("Copy to Mac of text and a file over the paste ceiling writes the text and says the file was left out")
+    func copyToMacLeavesOutAnOversizeFile() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        var file = Self.representation("public.data", .file, name: "big.bin")
+        file.sizeEstimate = 3 << 30
+        _ = try await copyToMac(
+            Self.item(Self.representation(ClipboardContent.utf8TextUTI, .inline), file), on: probe, into: instance)
+        try await probe.changed.wait { pulls(probe).count == 1 }
+        let (requestID, order) = pulls(probe)[0]
+        try land(Data("the guest's".utf8), for: order, request: requestID, stream: 3, on: probe)
+
+        #expect(
+            try await reported(instance, .copy)
+                == .filesLeftOut(count: 1, limitBytes: instance.effectiveClipboardMaxPasteBytes))
+        let pasteboard = try hostPasteboard(instance)
+        #expect(
+            pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("the guest's".utf8))
+        #expect(pasteboard.promisedTypes.isEmpty)
+    }
+
+    @Test("A guest that wrote Copy to Guest without its files has that said, with the limit")
+    func copyToGuestFilesWithheldIsReported() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("notes.bin")
+        try Data("file bytes".utf8).write(to: file)
+        #expect(try hostPasteboard(instance).setFiles([file]))
+        let copy = try await copyToGuest(instance, probe)
+        try acceptLastOffer(probe)
+
+        probe.deliver(
+            .items(
+                .offerEnded(
+                    .clipboard, .local, token: copy.token,
+                    .resetByPeer(WireError(.clipboardFilesWithheld, limit: 1024)))),
+            fromConnection: 0)
+        #expect(try await reported(instance, .send) == .filesLeftOut(count: 1, limitBytes: 1024))
+    }
+
+    @Test("Every pull of a guest copy lands against the copy's one budget, its staged text included")
+    func copyPullsShareOneBudget() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try await copyToMac(Self.textAndFile, on: probe, into: instance)
+        try await probe.changed.wait { pulls(probe).count == 1 }
+        let order = pulls(probe)[0].order
+        guard case .staged = order.landing else {
+            Issue.record("the text landed \(order.landing)")
+            return
+        }
+        let budget = try #require(order.budget)
+        #expect(budget.limit == UInt64(instance.effectiveClipboardMaxPasteBytes))
+    }
+
+    @Test(
+        "A copy sent to the guest serves each of its bytes once: the guest lands them, and the copy holds them no more")
+    func copyToGuestServesItsBytesOnce() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        #expect(try hostPasteboard(instance).setString("from the Mac", forType: .string))
+        let copy = try await copyToGuest(instance, probe)
+
+        #expect(await pull(copy, from: instance) == .success(.inline(Data("from the Mac".utf8))))
+        guard case .failure(let error) = await pull(copy, from: instance) else {
+            Issue.record("the copy served its bytes twice")
+            return
+        }
+        #expect(error.code == .itemRepresentationUnavailable)
+    }
+
+    // MARK: - Repeats, pauses and ends
+
+    @Test("A second Copy to Mac while the first waits joins it: one ask, one write, no failure")
+    func secondCopyToMacJoinsTheFirst() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let report = instance.clipboardTransferReport
+        _ = try await copyToMac(Self.text, on: probe, into: instance) {
+            instance.copyGuestClipboardToMac()
+        }
+        try await probe.changed.wait { pulls(probe).count == 1 }
+        let (requestID, order) = pulls(probe)[0]
+        try land(Data("the guest's".utf8), for: order, request: requestID, stream: 3, on: probe)
+        try await waitForChange { instance.runningClipboardCommands.isEmpty }
+        #expect(offers(probe).filter { $0.offer.copy == .ask }.count == 1)
+        #expect(instance.clipboardTransferReport == report)
+        #expect(
+            try hostPasteboard(instance).dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("the guest's".utf8))
+    }
+
+    @Test("An ask ends with its connection: Copy to Mac reports it not copied, and can run again")
+    func askEndsWithTheLink() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        instance.copyGuestClipboardToMac()
+        try await probe.changed.wait { !offers(probe).isEmpty }
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        #expect(try await reported(instance, .copy) == .transferFailed)
+        try await waitForChange { instance.runningClipboardCommands.isEmpty }
     }
 
     // MARK: - A clipboard this process wrote

@@ -82,6 +82,14 @@ public protocol ClipboardPromiseServing: AnyObject, Sendable {
     func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data?
 }
 
+/// What withdrawing a write's promises left on the pasteboard.
+public enum ClipboardRetraction: Equatable, Sendable {
+    /// Nothing: the write held nothing but promises.
+    case cleared
+    /// What the write held as data, written again alone.
+    case keptData
+}
+
 // MARK: - Publisher
 
 /// The one place a clipboard publication reaches a pasteboard, on either side of
@@ -145,7 +153,15 @@ public final class ClipboardPasteboardPublisher {
     /// serving an offer can be stranded by that offer's end, and
     /// ``retractWrite(servingOffer:)`` retracts it by naming that offer, so no
     /// other offer's end reaches it.
-    private var heldWrite: (changeCount: Int, servingOffer: Data?)?
+    private var heldWrite: HeldWrite?
+
+    /// A write standing on the pasteboard: when it was made, the offer it serves, what it was made from, and
+    /// the data each of its items holds now.
+    private struct HeldWrite {
+        let changeCount: Int
+        let source: ClipboardWriteSource
+        let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
+    }
 
     /// Creates a publisher over `pasteboard`, recording each write in `ledger`.
     public init(
@@ -216,7 +232,7 @@ public final class ClipboardPasteboardPublisher {
             ledger.record(nil, on: pasteboard)
             return false
         }
-        heldWrite = (changeCount: pasteboard.changeCount, servingOffer: source.servingOffer)
+        heldWrite = HeldWrite(changeCount: pasteboard.changeCount, source: source, data: items.map(\.data))
         ledger.record(source, on: pasteboard)
         providerRegistry.retain(providers)
         return true
@@ -240,17 +256,38 @@ public final class ClipboardPasteboardPublisher {
         heldWrite?.changeCount == pasteboard.changeCount
     }
 
-    /// Clears the pasteboard when it still holds this publisher's most recent
-    /// write and that write serves the offer `token`, reporting whether it did.
+    /// Withdraws the promises of this publisher's most recent write when the pasteboard still holds it and it
+    /// serves the offer `token`: what it wrote as data is written again alone, and the pasteboard is cleared
+    /// when nothing of that remains. Nil when nothing was withdrawn.
     ///
-    /// A pasteboard the user has written over since is theirs and is left
-    /// untouched, as is a write serving another offer, or none.
+    /// A pasteboard the user has written over since is theirs and is left untouched, as is a write serving
+    /// another offer, or none.
     @discardableResult
-    public func retractWrite(servingOffer token: Data) -> Bool {
-        guard let held = heldWrite, held.servingOffer == token, held.changeCount == pasteboard.changeCount
-        else { return false }
-        clear()
-        return true
+    public func retractWrite(servingOffer token: Data) -> ClipboardRetraction? {
+        guard let held = heldWrite, held.source.servingOffer == token, held.changeCount == pasteboard.changeCount
+        else { return nil }
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
+        let kept = held.data.filter { $0.contains { $0.type != marker } }
+        guard !kept.isEmpty else {
+            clear()
+            return .cleared
+        }
+        pasteboard.prepareForNewContents(with: .currentHostOnly)
+        let written = pasteboard.writeItems(kept.map { ClipboardWriteItem(data: $0, promised: [], provider: nil) })
+        lastWriteChangeCount = pasteboard.changeCount
+        guard written else {
+            heldWrite = nil
+            ledger.record(nil, on: pasteboard)
+            return .cleared
+        }
+        let source = ClipboardWriteSource(
+            servingOffer: nil,
+            parts: held.source.parts.map {
+                .init(items: $0.items, concealed: $0.concealed, servingFileURLs: false, held: $0.held, puller: nil)
+            })
+        heldWrite = HeldWrite(changeCount: pasteboard.changeCount, source: source, data: kept)
+        ledger.record(source, on: pasteboard)
+        return .keptData
     }
 
     /// Empties the pasteboard, whatever it holds, as this publisher's own write.

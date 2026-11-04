@@ -86,8 +86,9 @@ public final class ClipboardItemExchange {
     /// withdrew it. What this end wrote of it can be pulled no more.
     public var onCopyEnded: ((ClipboardRemoteOffer) -> Void)?
     /// Hears each copy this side sent that the far side refused, and why: `CLIPBOARD_CHANGED` when its clipboard
-    /// changed before the copy landed, `TOO_LARGE` over its paste ceiling.
-    public var onCopyRefused: ((WireError) -> Void)?
+    /// changed before the copy landed, `TOO_LARGE` over its paste ceiling, `CLIPBOARD_FILES_WITHHELD` when it
+    /// was written without its files.
+    public var onCopyRefused: ((_ copy: ClipboardOfferSource, _ error: WireError) -> Void)?
     /// Hears each pull of this side's offer that it served.
     public var onServed: (() -> Void)?
     /// Hears each pull of the far side's offer that landed here.
@@ -310,8 +311,8 @@ public final class ClipboardItemExchange {
             token: token, concealed: source.concealed, items: source.items, after: ask ?? Data(), copy: .snapshot)
         send(offer, on: link) { [weak self] wasOpened in
             opened(wasOpened)
-            guard !wasOpened, let self, self.sentCopies.removeValue(forKey: token) != nil else { return }
-            self.onCopyRefused?(WireError(.cancelled, debugDetail: "the copy was not opened"))
+            guard !wasOpened, let self, let source = self.sentCopies.removeValue(forKey: token) else { return }
+            self.onCopyRefused?(source, WireError(.cancelled, debugDetail: "the copy was not opened"))
         }
         return true
     }
@@ -449,6 +450,9 @@ public final class ClipboardItemExchange {
         }
         do throws(ClipboardServeError) {
             let served = try await source.serve(item: Int(request.item), representation: Int(request.representation))
+            if case .bytes = served, sentCopies[request.token] === source {
+                source.spend(item: Int(request.item), representation: Int(request.representation))
+            }
             onServed?()
             switch served {
             case .bytes(let data):
@@ -477,8 +481,8 @@ public final class ClipboardItemExchange {
         case .offerReceived(let header):
             if header.copy == .notACopy { received(header, on: link) } else { receivedCopy(header, on: link) }
         case .offerEnded(_, .local, let token, let closure):
-            if sentCopies.removeValue(forKey: token) != nil {
-                if case .resetByPeer(let error) = closure { onCopyRefused?(error) }
+            if let source = sentCopies.removeValue(forKey: token) {
+                if case .resetByPeer(let error) = closure { onCopyRefused?(source, error) }
                 return
             }
             if let ask, ask.token == token {

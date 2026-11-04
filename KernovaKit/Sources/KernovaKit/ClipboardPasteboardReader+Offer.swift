@@ -81,6 +81,8 @@ extension ClipboardPasteboardReader {
         case heldByDestination
         /// The pasteboard changed while it was read, twice.
         case changed
+        /// What is not a file or folder came to more than the ceiling: nothing is copied.
+        case tooLarge(limitBytes: Int)
     }
 
     /// A snapshot of `pasteboard` now: every representation that is not a file or folder read whole, so nothing
@@ -90,27 +92,38 @@ extension ClipboardPasteboardReader {
     /// A pasteboard holding a write of this process (`ledger`) is never read: a write of the far side's offer
     /// `destinationOffer` is ``SnapshotOutcome/heldByDestination``, and any other is snapshotted from what it was
     /// made from (``ClipboardWriteSource``). Any other pasteboard is read as
-    /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises with it.
+    /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises with it. No more than
+    /// `ceiling` bytes of what is not a file are read.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard, destinationOffer: Data? = nil,
+        ceiling: Int = ClipboardPasteLimit.defaultBytes,
         ledger: ClipboardWriteLedger = .shared,
         promiseDestination: @escaping @MainActor () throws -> URL = { throw ClipboardServeError.unavailable },
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
     ) async -> SnapshotOutcome {
-        for _ in 0..<2 {
-            if let written = ledger.standingWrite(on: pasteboard) {
-                if let serving = written.servingOffer, serving == destinationOffer { return .heldByDestination }
-                guard let (snapshot, lost) = await ClipboardOfferSource.snapshot(of: written) else { return .nothing }
-                return .snapshot(snapshot, lost: lost)
+        do throws(ClipboardSnapshotTooLarge) {
+            for _ in 0..<2 {
+                if let written = ledger.standingWrite(on: pasteboard) {
+                    if let serving = written.servingOffer, serving == destinationOffer { return .heldByDestination }
+                    guard
+                        let (snapshot, lost) = try await ClipboardOfferSource.snapshot(
+                            of: written, inlineCeiling: ceiling)
+                    else { return .nothing }
+                    return .snapshot(snapshot, lost: lost)
+                }
+                let read = await readOffer(
+                    from: pasteboard, promises: pasteboard.filePromiseReceivers,
+                    promiseDestination: promiseDestination, sizeOf: sizeOf)
+                guard case .offer(let source, let lost) = read else { return .nothing }
+                if let snapshot = try await source.snapshot(inlineCeiling: ceiling) {
+                    return .snapshot(snapshot, lost: lost)
+                }
+                guard pasteboard.changeCount != source.changeCount else { return .nothing }
             }
-            let read = await readOffer(
-                from: pasteboard, promises: pasteboard.filePromiseReceivers, promiseDestination: promiseDestination,
-                sizeOf: sizeOf)
-            guard case .offer(let source, let lost) = read else { return .nothing }
-            if let snapshot = await source.snapshot() { return .snapshot(snapshot, lost: lost) }
-            guard pasteboard.changeCount != source.changeCount else { return .nothing }
+            return .changed
+        } catch {
+            return .tooLarge(limitBytes: error.limitBytes)
         }
-        return .changed
     }
 
     /// Reads what a drop of `pasteboard` offers: one item per file or folder a pasteboard item names on disk,

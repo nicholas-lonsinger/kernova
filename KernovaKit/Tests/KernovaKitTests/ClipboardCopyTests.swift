@@ -249,4 +249,68 @@ struct ClipboardCopyTests {
         #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("text".utf8)))
         #expect(try await source.serve(item: 0, representation: 1) == .file(landed))
     }
+
+    // MARK: - Bounds and independence
+
+    @Test("A snapshot whose INLINE bytes come to more than the ceiling is too large, read no further")
+    func snapshotOverTheCeiling() async {
+        let pasteboard = FakePasteboard()
+        pasteboard.setItem([(.string, Data("text".utf8)), (.rtf, Data("{\\rtf1 rich}".utf8))])
+        guard
+            case .tooLarge(let limitBytes) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, ceiling: 3, sizeOf: nil)
+        else {
+            Issue.record("a snapshot over the ceiling was taken")
+            return
+        }
+        #expect(limitBytes == 3)
+        #expect(pasteboard.residentReads == [.string])
+    }
+
+    @Test("A snapshot of this process's write is held to the ceiling too")
+    func snapshotOfOwnWriteOverTheCeiling() async {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        _ = publisher.publishCopy(
+            [item], concealed: false, servingFileURLs: true, landed: { _, _ in Data("text".utf8) },
+            puller: CountingPuller(bytes: Data()), servingOffer: Data(repeating: 1, count: 16), onReleased: {})
+        guard
+            case .tooLarge = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, ceiling: 3, ledger: ledger, sizeOf: nil)
+        else {
+            Issue.record("a snapshot over the ceiling was taken")
+            return
+        }
+    }
+
+    @Test("A snapshot calls a file promise in at once and keeps the file it landed, whatever the pasteboard does next")
+    func snapshotCallsPromisesIn() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let pasteboard = FakePasteboard()
+        let receiver = FakeFilePromiseReceiver(
+            name: "photo.png", fileType: "public.png", contents: .file(Data("png".utf8)))
+        pasteboard.setFilePromise(receiver)
+        let destination = scratch.url
+
+        guard
+            case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, promiseDestination: { destination }, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(receiver.callIns == 1)
+        let kept = try #require(source.items.first?.representations.first)
+        #expect(kept.storage == .file && !kept.promised && kept.sizeEstimate == 3)
+
+        pasteboard.setItem([(.string, Data("copied since".utf8))])
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+            Issue.record("the called-in file was not served")
+            return
+        }
+        #expect(served.lastPathComponent == "photo.png")
+        #expect(receiver.callIns == 1)
+    }
 }

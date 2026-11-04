@@ -11,8 +11,8 @@ import KernovaWire
 /// one in memory, within the paste ceiling, since staging persists and a password must reach no disk.
 ///
 /// A representation is pulled once and kept for every later ask whose limit admits it, so a paste served before
-/// the offer ended still serves after. Its FILE, FOLDER and in-memory pulls together land no more than the paste
-/// ceiling as it stood at the first of them: one budget the sink charges each landed byte to. Ending the offer
+/// the offer ended still serves after. Its pulls together land no more than the paste ceiling as it stood at
+/// the first of them: one budget the sink charges each landed byte to. Ending the offer
 /// here cancels every pull still running and fails everyone waiting on one.
 ///
 /// Safe from any thread: a paste asks on whatever thread the pasteboard fires its provider on, and a pull ends
@@ -104,7 +104,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var landed: [Key: Landed] = [:]
         var pulling: [Key: Pulling] = [:]
         var opened: [ItemPullID: Opened] = [:]
-        /// What every FILE, FOLDER and in-memory pull of the offer lands against, from the first of them.
+        /// What every pull of the offer lands against, from the first of them.
         var budget: ByteBudget?
         /// Why each representation's last pull failed, when its end said.
         var failures: [Key: WireError] = [:]
@@ -301,12 +301,12 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 landing = .staged(
                     directory: reserved.path, name: .exactly(isInline ? Self.inlineName : representation.name))
             }
-            // Memory is charged as files are: a concealed offer's many INLINE representations hold no more
-            // between them than the paste ceiling.
-            let budget = directory == nil || !isInline ? offerBudget() : nil
+            // Every landing is charged, in memory or staged: the offer's INLINE representations hold no more
+            // between them than the paste ceiling, nor its files beside them.
+            let budget = offerBudget()
             order = try link.order(
                 token: token, item: UInt32(key.item), representation: UInt32(key.representation),
-                byteCeiling: [budget?.remaining, ceiling].compactMap { $0 }.min() ?? 0, landing: landing,
+                byteCeiling: min(budget.remaining, ceiling ?? .max), landing: landing,
                 budget: budget)
         } catch {
             logger.log(.error, "Cannot land a clipboard pull: \(String(describing: error), privacy: .public)")
@@ -330,8 +330,12 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         }
     }
 
-    /// The budget every FILE, FOLDER and in-memory pull of the offer lands against: the paste ceiling as it
-    /// stands at the first of them.
+    /// What the offer's pulls may still land: the budget's remainder, or the paste ceiling before the first.
+    public var pasteRoom: UInt64 {
+        state.withLock { $0.budget?.remaining } ?? ceiling()
+    }
+
+    /// The budget every pull of the offer lands against: the paste ceiling as it stands at the first of them.
     private func offerBudget() -> ByteBudget {
         state.withLock { state in
             if let budget = state.budget { return budget }

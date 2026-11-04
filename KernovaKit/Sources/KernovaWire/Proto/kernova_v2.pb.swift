@@ -381,6 +381,9 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
 
   /// a CLIPBOARD ask's RESET by the peer: its clipboard is its write of the host's current clipboard offer, which the host already holds
   case clipboardAlreadyHeld // = 1010
+
+  /// a CLIPBOARD copy's RESET by its receiver: its clipboard was written without the copy's files, which total over the paste ceiling; Error.limit names it
+  case clipboardFilesWithheld // = 1011
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -436,6 +439,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case 1008: self = .clipboardChanged
     case 1009: self = .clipboardNothingToCopy
     case 1010: self = .clipboardAlreadyHeld
+    case 1011: self = .clipboardFilesWithheld
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -489,6 +493,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case .clipboardChanged: return 1008
     case .clipboardNothingToCopy: return 1009
     case .clipboardAlreadyHeld: return 1010
+    case .clipboardFilesWithheld: return 1011
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -542,6 +547,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     .clipboardChanged,
     .clipboardNothingToCopy,
     .clipboardAlreadyHeld,
+    .clipboardFilesWithheld,
   ]
 
 }
@@ -808,8 +814,11 @@ public nonisolated enum Kernova_V2_ClipboardCopy: SwiftProtobuf.Enum, Swift.Case
   /// A snapshot of the opener's clipboard. The receiver lands every INLINE
   /// representation first, writes its clipboard only if that has not changed
   /// since the copy arrived (else RESET(CLIPBOARD_CHANGED)), and releases the
-  /// copy once its clipboard no longer holds what it wrote. A peer's names the
-  /// host's ask it answers in `after`.
+  /// copy once its clipboard no longer holds what it wrote. Its files over the
+  /// paste ceiling are left out of that write, and the copy RESET
+  /// CLIPBOARD_FILES_WITHHELD; with nothing else in it, nothing is written and
+  /// the copy is RESET TOO_LARGE. A peer's names the host's ask it answers in
+  /// `after`.
   case snapshot // = 1
 
   /// Host only, of no items: asks the peer for a snapshot of its clipboard. The
@@ -2711,7 +2720,7 @@ nonisolated extension Kernova_V2_StreamKind: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0\u{1}ERROR_CODE_ITEM_OFFER_REPLACED\0\u{1}ERROR_CODE_CLIPBOARD_CHANGED\0\u{1}ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY\0\u{1}ERROR_CODE_CLIPBOARD_ALREADY_HELD\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0\u{1}ERROR_CODE_ITEM_OFFER_REPLACED\0\u{1}ERROR_CODE_CLIPBOARD_CHANGED\0\u{1}ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY\0\u{1}ERROR_CODE_CLIPBOARD_ALREADY_HELD\0\u{1}ERROR_CODE_CLIPBOARD_FILES_WITHHELD\0")
 }
 
 nonisolated extension Kernova_V2_AbsenceReason: SwiftProtobuf._ProtoNameProviding {

@@ -170,14 +170,14 @@ package final class HostClipboardPublisher {
     /// write — nothing (the user included) has replaced it since.
     var pasteboardHoldsLastWrite: Bool { publisher.holdsLastWrite }
 
-    /// Clears the host pasteboard when it still holds this publisher's most
-    /// recent write and that write serves the offer `token`, returning whether
-    /// it did: what the offer's end owes a write whose promises it can no
-    /// longer serve.
-    func retractWrite(servingOffer token: Data) -> Bool {
-        guard publisher.retractWrite(servingOffer: token) else { return false }
+    /// Withdraws the promises of this publisher's most recent write when the
+    /// host pasteboard still holds it and it serves the offer `token`, keeping
+    /// what it wrote as data, and returns what that left: what the offer's end
+    /// owes a write whose promises it can no longer serve.
+    func retractWrite(servingOffer token: Data) -> ClipboardRetraction? {
+        guard let retraction = publisher.retractWrite(servingOffer: token) else { return nil }
         Self.logger.log(.notice, "Retracted stale promised clipboard write from the host pasteboard")
-        return true
+        return retraction
     }
 
     /// Builds the per-item provider specs to promise on the host pasteboard for

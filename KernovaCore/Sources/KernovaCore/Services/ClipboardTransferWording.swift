@@ -25,6 +25,12 @@ package struct ClipboardTransferWording: Equatable {
 
     /// Shown for a copy to the Mac refused over the deadline-safe cap: a copy
     /// command's and a passthrough publish's are the same refusal.
+    /// What a copy written without its `count` files over `limitBytes` says.
+    private static func filesLeftOutMessage(count: Int, limitBytes: Int) -> String {
+        let files = count == 1 ? "Its file was" : "Its \(count) files were"
+        return "\(files) left out — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit."
+    }
+
     package static func overCopyBudgetMessage(limitBytes: Int) -> String {
         "Too large to copy to your Mac — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit."
     }
@@ -174,6 +180,28 @@ package struct ClipboardTransferWording: Equatable {
                 message:
                     "Clipboard sharing with the VM stopped, so the earlier copy was removed from the Mac clipboard.",
                 menuLine: "Clipboard: earlier copy was removed",
+                mentionsMacClipboardKept: false)
+
+        case (.disconnectedFilesRetracted, _):
+            return ClipboardTransferWording(
+                headline: "Clipboard sharing stopped in \(vm).",
+                message:
+                    "Clipboard sharing with the VM stopped, so the copied files were removed from the Mac clipboard. The rest of the copy is still there.",
+                menuLine: "Clipboard: copied files were removed",
+                mentionsMacClipboardKept: false)
+
+        case (.filesLeftOut(let count, let limitBytes), .copy):
+            return ClipboardTransferWording(
+                headline: "Clipboard copied from \(vm) without its files.",
+                message: filesLeftOutMessage(count: count, limitBytes: limitBytes),
+                menuLine: "Clipboard: files left out, too large to copy to your Mac",
+                mentionsMacClipboardKept: false)
+
+        case (.filesLeftOut(let count, let limitBytes), _):
+            return ClipboardTransferWording(
+                headline: "Clipboard copied to \(vm) without its files.",
+                message: filesLeftOutMessage(count: count, limitBytes: limitBytes),
+                menuLine: "Clipboard: files left out, too large to copy to the guest",
                 mentionsMacClipboardKept: false)
 
         case (.incompleteFileSet, _):
@@ -427,9 +455,9 @@ package struct ClipboardTransferWording: Equatable {
         case .sourceUnreadable(let readFailure):
             message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
             menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
-        case .tooLarge, .supersededCopyRetracted, .disconnectedCopyRetracted, .incompleteFileSet, .transferFailed,
-            .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed, .dropStopped, .clipboardChanged, .nothingToCopy,
-            .noTextToCopy:
+        case .tooLarge, .supersededCopyRetracted, .disconnectedCopyRetracted, .disconnectedFilesRetracted,
+            .incompleteFileSet, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed,
+            .dropStopped, .clipboardChanged, .nothingToCopy, .filesLeftOut, .noTextToCopy:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
