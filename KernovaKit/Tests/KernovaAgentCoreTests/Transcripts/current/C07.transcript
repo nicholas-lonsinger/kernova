@@ -1,4 +1,4 @@
-# C07 drag: the catcher stands down → STOOD_DOWN and shows again, a delivering drop is CAUGHT under a re-offer, and the host releases the taken offer and pulls the re-offer — duet
+# C07 drag: the catcher stands down → STOOD_DOWN and shows again; a delivering drop names the promise, ENDs CAUGHT sizing the folder, and the host pulls the promise from the taken offer — duet
 host fixture=host-items
 peer fixture=linux-session-items
 end 1100
@@ -9,20 +9,19 @@ t=0      p>h     00000000 00 01 000000ac 0aa90108011257080210011802220532342e303
 t=1      h>p     00000000 00 01 00000022 22200a060803100118010a06080a100118010a06080b100118010a06080c10011801
 t=1      h>p     00000000 00 01 00000002 2a00
 t=2      p>h     00000001 01 00 00000003 08ac02
-t=500    in      peer offer feature=12 fixture=file-2k
-t=500    p>h     00000003 01 00 00000019 08ec0712141801221001010101010101010101010101010101
-t=500    p>h     00000003 00 01 0000003d 0a270a1a0a186170706c69636174696f6e2f6f637465742d73747265616d10022080102a046974656d0a120a0c0a0a746578742f706c61696e10012040
+t=500    in      peer offer feature=12 fixture=drag-4
+t=500    p>h     00000003 01 00 00000017 08ec071212221004040404040404040404040404040404
 t=500    p>h     00000003 02 00 00000000
-t=501    ev      host item offerReceived feature=12 token=01010101010101010101010101010101 items=1
-t=600    in      host take token=01010101010101010101010101010101
-t=600    h>p     00000002 01 00 00000017 08ed0712120a1001010101010101010101010101010101
-t=601    ev      peer drag takeRequested id=2 token=01010101010101010101010101010101
+t=501    ev      host item offerReceived feature=12 token=04040404040404040404040404040404 items=0
+t=600    in      host take token=04040404040404040404040404040404
+t=600    h>p     00000002 01 00 00000017 08ed0712120a1004040404040404040404040404040404
+t=601    ev      peer drag takeRequested id=2 token=04040404040404040404040404040404
 t=620    in      peer take report armed
 t=620    p>h     00000002 00 01 00000002 0801
 t=621    ev      host drag takeReport id=2 armed
-t=630    in      peer take report targeted
-t=630    p>h     00000002 00 01 00000002 0802
-t=631    ev      host drag takeReport id=2 targeted
+t=630    in      peer take targeted fixture=promise-folder
+t=630    p>h     00000002 00 01 0000005d 08021a2f0a2d0a1a0a186170706c69636174696f6e2f6f637465742d73747265616d100218012080102a08556e7469746c65641a280a260a1a0a186170706c69636174696f6e2f6f637465742d73747265616d10032a06666f6c646572
+t=631    ev      host drag takeReport id=2 targeted items=2
 t=650    in      host takeControl catcher shown=0
 t=650    h>p     00000002 00 01 00000002 0a00
 t=651    ev      peer drag takeControl id=2 catcher shown=0
@@ -37,26 +36,20 @@ t=720    p>h     00000002 00 01 00000002 0801
 t=721    ev      host drag takeReport id=2 armed
 t=730    in      peer take report targeted
 t=730    p>h     00000002 00 01 00000002 0802
-t=731    ev      host drag takeReport id=2 targeted
+t=731    ev      host drag takeReport id=2 targeted items=2
 t=750    in      host takeControl deliver
 t=750    h>p     00000002 00 01 00000002 1200
 t=751    ev      peer drag takeControl id=2 deliver
 t=760    in      peer take report delivering
 t=760    p>h     00000002 00 01 00000002 0803
 t=761    ev      host drag takeReport id=2 delivering
-t=800    in      peer offer feature=12 fixture=file-2k-reoffer
-t=800    p>h     00000005 01 00 00000019 08ec0712141801221004040404040404040404040404040404
-t=800    p>h     00000005 00 01 0000003d 0a270a1a0a186170706c69636174696f6e2f6f637465742d73747265616d10022080102a046974656d0a120a0c0a0a746578742f706c61696e10012040
-t=800    p>h     00000005 02 00 00000000
-t=801    ev      host item offerReceived feature=12 token=04040404040404040404040404040404 items=1
-t=810    in      peer take caught reoffer=04040404040404040404040404040404
-t=810    p>h     00000002 02 00 00000014 08011a1004040404040404040404040404040404
-t=811    ev      host drag takeEnded id=2 caught reoffer=04040404040404040404040404040404
+t=800    in      peer take named names=494d475f303034322e6a706567
+t=800    p>h     00000002 00 01 00000011 0806120d494d475f303034322e6a706567
+t=801    ev      host drag takeReport id=2 named names=494d475f303034322e6a706567
+t=810    in      peer take caught folderSizes=8192
+t=810    p>h     00000002 02 00 00000006 080122028040
+t=811    ev      host drag takeEnded id=2 caught names=494d475f303034322e6a706567 folderSizes=8192
 t=811    h>p     00000002 02 00 00000000
-t=820    in      host release token=01010101010101010101010101010101
-t=820    ev      host item offerEnded feature=12 remote token=01010101010101010101010101010101 completed
-t=820    h>p     00000003 02 00 00000000
-t=821    ev      peer item offerEnded feature=12 local token=01010101010101010101010101010101 completed
 t=850    in      host pull token=04040404040404040404040404040404 item=0 representation=0 ceiling=1048576
 t=850    h>p     00000004 01 00 0000001b 08e90712160a100404040404040404040404040404040420808040
 t=850    h>p     00000004 04 00 00000004 007c0000
@@ -67,5 +60,5 @@ t=852    h>p     00000004 02 00 00000002 0801
 t=853    ev      peer item serveEnded feature=12 id=4 landed
 t=950    in      host release token=04040404040404040404040404040404
 t=950    ev      host item offerEnded feature=12 remote token=04040404040404040404040404040404 completed
-t=950    h>p     00000005 02 00 00000000
+t=950    h>p     00000003 02 00 00000000
 t=951    ev      peer item offerEnded feature=12 local token=04040404040404040404040404040404 completed

@@ -29,7 +29,9 @@ package final class SimItemSide {
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
     /// Peer: how its owner ends each take, after 20 µs; nil leaves takes unanswered.
-    package var takeAnswer: DragTakeAnswer? = .caught(reoffer: nil)
+    package var takeAnswer: DragTakeAnswer? = .caught(folderSizes: nil)
+    /// Peer: the items its owner's first `TARGETED` lists, just before it ends a take `CAUGHT`; nil sends none.
+    package var takeItems: [OfferedItem]?
     /// Every take `takeDrag` asked for, and what it returned.
     package private(set) var takes: [(time: SimTime, token: Data, result: Result<DragTakeID, WireError>)] = []
     /// Peer: every take its owner was asked about.
@@ -161,6 +163,9 @@ package final class SimItemSide {
         case .requested(let id, let token):
             takesRequested.append((world.now, id, token))
             guard let answer = takeAnswer else { return }
+            if let takeItems, case .caught = answer {
+                world.peerInput(.dragTake(id, .report(.targeted(takeItems))), link: link, after: .us(10))
+            }
             world.peerInput(.dragTake(id, answer), link: link, after: .us(20))
         case .control(let id, let control):
             takeControls.append((world.now, id, control))

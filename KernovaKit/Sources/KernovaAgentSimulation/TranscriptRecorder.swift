@@ -34,6 +34,9 @@ package enum TranscriptInput: Sendable, Equatable {
     /// The peer answers the take it was asked about last. The runner addresses it to that take, so a
     /// script never names a stream id the current side chooses.
     case answerTake(DragTakeAnswer)
+    /// The peer reports the first `TARGETED` on the take it was asked about last, listing the items of the
+    /// fixture offer of this name.
+    case targetTake(String)
 
     /// An installer's report on a pull.
     package enum PullReport: Sendable, Equatable {
@@ -53,7 +56,7 @@ package enum TranscriptInput: Sendable, Equatable {
     var side: SimSide {
         switch self {
         case .host, .takeDrag, .controlTake, .cancelTake: .host
-        case .peer, .pull, .peerLogs, .answerTake: .peer
+        case .peer, .pull, .peerLogs, .answerTake, .targetTake: .peer
         case .offer(let side, _, _), .itemPull(let side, _), .withdraw(let side, _), .release(let side, _): side
         }
     }
@@ -119,10 +122,14 @@ package enum TranscriptInput: Sendable, Equatable {
             return "host takeControl deliver"
         case .cancelTake:
             return "host takeCancel"
+        case .answerTake(.report(.named(let names))):
+            return "peer take named names=\(TranscriptEvents.list(names))"
+        case .targetTake(let fixture):
+            return "peer take targeted fixture=\(fixture)"
         case .answerTake(.report(let report)):
             return "peer take report \(TranscriptEvents.name(report))"
-        case .answerTake(.caught(let reoffer)):
-            return "peer take caught" + (reoffer.map { " reoffer=\(FrozenFields.hex($0))" } ?? "")
+        case .answerTake(.caught(let folderSizes)):
+            return "peer take caught" + (folderSizes.map { " folderSizes=\(TranscriptEvents.list($0))" } ?? "")
         case .answerTake(.returned):
             return "peer take returned"
         case .answerTake(.refused(let error)):
@@ -211,8 +218,14 @@ package enum TranscriptInput: Sendable, Equatable {
                     return nil
                 }
                 self = .answerTake(.report(report))
+            case "targeted":
+                guard let name = fields["fixture"], TranscriptFixture.offer(name) != nil else { return nil }
+                self = .targetTake(name)
+            case "named":
+                guard let names = fields["names"].flatMap(TranscriptEvents.names) else { return nil }
+                self = .answerTake(.report(.named(names)))
             case "caught":
-                self = .answerTake(.caught(reoffer: fields["reoffer"].flatMap { FrozenFields.unhex(Substring($0)) }))
+                self = .answerTake(.caught(folderSizes: fields["folderSizes"].flatMap(TranscriptEvents.sizes)))
             case "returned": self = .answerTake(.returned)
             case "refused": self = .answerTake(.refused(WireError(code("code"))))
             default: return nil
@@ -393,9 +406,9 @@ package struct Exchange: Sendable {
                 "drag: the host takes the peer's drag → ARMED, TARGETED, then CAUGHT; it pulls the FILE → LANDED and releases it",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
-                (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))),
-                (620, .answerTake(.report(.armed))), (630, .answerTake(.report(.targeted))),
-                (650, .answerTake(.caught(reoffer: nil))),
+                (500, .offer(.peer, .drag, "drag-1")), (600, .takeDrag(SimItems.token(1))),
+                (620, .answerTake(.report(.armed))), (630, .targetTake("file-2k")),
+                (650, .answerTake(.caught(folderSizes: nil))),
                 (700, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
                 (800, .release(.host, SimItems.token(1))),
             ], end: 1000),
@@ -403,23 +416,23 @@ package struct Exchange: Sendable {
             id: "C06", title: "drag: the peer refuses a take DRAG_PRESS_OVER, then withdraws its drag",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
-                (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))),
+                (500, .offer(.peer, .drag, "drag-1")), (600, .takeDrag(SimItems.token(1))),
                 (650, .answerTake(.refused(WireError(.dragPressOver)))), (700, .withdraw(.peer, SimItems.token(1))),
             ], end: 1000),
         Exchange(
             id: "C07",
             title:
-                "drag: the catcher stands down → STOOD_DOWN and shows again, a delivering drop is CAUGHT under a re-offer, and the host releases the taken offer and pulls the re-offer",
+                "drag: the catcher stands down → STOOD_DOWN and shows again; a delivering drop names the promise, ENDs CAUGHT sizing the folder, and the host pulls the promise from the taken offer",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
-                (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))),
-                (620, .answerTake(.report(.armed))), (630, .answerTake(.report(.targeted))),
+                (500, .offer(.peer, .drag, "drag-4")), (600, .takeDrag(SimItems.token(4))),
+                (620, .answerTake(.report(.armed))), (630, .targetTake("promise-folder")),
                 (650, .controlTake(.catcher(shown: false))), (660, .answerTake(.report(.stoodDown))),
                 (700, .controlTake(.catcher(shown: true))),
-                (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted))),
+                (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted([])))),
                 (750, .controlTake(.deliver)), (760, .answerTake(.report(.delivering))),
-                (800, .offer(.peer, .drag, "file-2k-reoffer")),
-                (810, .answerTake(.caught(reoffer: SimItems.token(4)))), (820, .release(.host, SimItems.token(1))),
+                (800, .answerTake(.report(.named([Data("IMG_0042.jpeg".utf8)])))),
+                (810, .answerTake(.caught(folderSizes: [8192]))),
                 (850, .itemPull(.host, SimItems.request(4, ceiling: 1 << 20))),
                 (950, .release(.host, SimItems.token(4))),
             ], end: 1100),
@@ -427,7 +440,7 @@ package struct Exchange: Sendable {
             id: "C08", title: "drag: the host calls a take off after ARMED, and the peer's drag stays offered",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
-                (500, .offer(.peer, .drag, "file-2k")), (600, .takeDrag(SimItems.token(1))),
+                (500, .offer(.peer, .drag, "drag-1")), (600, .takeDrag(SimItems.token(1))),
                 (620, .answerTake(.report(.armed))), (650, .cancelTake), (700, .withdraw(.peer, SimItems.token(1))),
             ], end: 1000),
     ]
@@ -584,6 +597,12 @@ package final class Duet {
                 break
             }
             peer.handle(.dragTake(lastTake, answer), now: instant)
+        case .targetTake(let fixture):
+            guard let lastTake, let offer = TranscriptFixture.offer(fixture) else {
+                failures.append("t=\(now): `\(input.text)` with no take asked")
+                break
+            }
+            peer.handle(.dragTake(lastTake, .report(.targeted(offer.items))), now: instant)
         }
         drainAll()
     }
@@ -906,10 +925,17 @@ package enum TranscriptEvents {
             "\(prefix) takeControl id=\(id.stream.rawValue) catcher shown=\(shown ? 1 : 0)"
         case .control(let id, .deliver): "\(prefix) takeControl id=\(id.stream.rawValue) deliver"
         case .cancelled(let id): "\(prefix) takeCancelled id=\(id.stream.rawValue)"
+        case .report(let id, .targeted(let items)):
+            "\(prefix) takeReport id=\(id.stream.rawValue) targeted items=\(items.count)"
+        case .report(let id, .named(let names)):
+            "\(prefix) takeReport id=\(id.stream.rawValue) named names=\(list(names))"
         case .report(let id, let report): "\(prefix) takeReport id=\(id.stream.rawValue) \(name(report))"
-        case .ended(let id, .caught(let reoffer)):
+        case .ended(let id, .caught(let delivery)):
             "\(prefix) takeEnded id=\(id.stream.rawValue) caught"
-                + (reoffer.map { " reoffer=\(FrozenFields.hex($0))" } ?? "")
+                + (delivery.map { delivery in
+                    " names=\(list(delivery.names.sorted { $0.key < $1.key }.map(\.value)))"
+                        + " folderSizes=\(list(delivery.folderSizes.sorted { $0.key < $1.key }.map(\.value)))"
+                } ?? "")
         case .ended(let id, .returned): "\(prefix) takeEnded id=\(id.stream.rawValue) returned"
         case .ended(let id, .refused(let error)):
             "\(prefix) takeEnded id=\(id.stream.rawValue) refused code=\(error.code.rawValue)"
@@ -926,12 +952,37 @@ package enum TranscriptEvents {
         case .delivering: "delivering"
         case .deliverRefused: "deliverRefused"
         case .stoodDown: "stoodDown"
+        case .named: "named"
         }
+    }
+
+    /// How a transcript writes a list of names: each in hex, comma-separated; `-` for none.
+    static func list(_ names: [Data]) -> String {
+        names.isEmpty ? "-" : names.map { FrozenFields.hex($0) }.joined(separator: ",")
+    }
+
+    /// How a transcript writes a list of sizes, comma-separated; `-` for none.
+    static func list(_ sizes: [UInt64]) -> String {
+        sizes.isEmpty ? "-" : sizes.map(String.init).joined(separator: ",")
+    }
+
+    /// The names ``list(_:)-([Data])`` wrote.
+    static func names(_ text: String) -> [Data]? {
+        guard text != "-" else { return [] }
+        let names = text.split(separator: ",").compactMap(FrozenFields.unhex)
+        return names.count == text.split(separator: ",").count ? names : nil
+    }
+
+    /// The sizes ``list(_:)-([UInt64])`` wrote.
+    static func sizes(_ text: String) -> [UInt64]? {
+        guard text != "-" else { return [] }
+        let sizes = text.split(separator: ",").compactMap { UInt64($0) }
+        return sizes.count == text.split(separator: ",").count ? sizes : nil
     }
 
     /// The step a transcript names `name`.
     static func report(named name: String) -> DragTakeReport? {
-        [DragTakeReport.armed, .targeted, .delivering, .deliverRefused, .stoodDown].first { Self.name($0) == name }
+        [DragTakeReport.armed, .targeted([]), .delivering, .deliverRefused, .stoodDown].first { Self.name($0) == name }
     }
 
     static func describe(_ result: ItemPullResult) -> String {

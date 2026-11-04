@@ -13,8 +13,15 @@ import KernovaWire
 /// manager entered it with the taken drag, answered copy), then the take's END:
 /// `CAUGHT` once the drag ended on it. The host releases the guest's button
 /// onto the surface only after `TARGETED`, so anything else arriving before
-/// then — the wrong items, a source that forbids a copy — is answered with no
-/// operation and refuses the take.
+/// then — items no drag goes out with, a source that forbids a copy — is
+/// answered with no operation and refuses the take.
+///
+/// The take's first `TARGETED` lists the drag's items as the surface, its
+/// destination, sees them: AppKit sends a destination `draggingEntered` only
+/// once the drag session is running, and a session's items are the ones it
+/// began with, so this view is the whole drag — where the watcher's read of
+/// the drag pasteboard, taken while the source may still be writing it, can
+/// be a part. A later showing takes only the same items.
 ///
 /// A drop delivers the drag — the drag's owner calls its promises in and sizes
 /// its folders before the take ends — only once the host asked with
@@ -71,10 +78,25 @@ final class GuestDragCatcher {
         var delivers = false
     }
 
+    /// What a take carries: the drag's items as the surface saw them, and what
+    /// their offer serves.
+    struct Carried {
+        let items: [GuestDragItem]
+        /// The file URLs' resolve the items were offered from.
+        let intake: ClipboardPasteboardReader.FileIntake
+        /// The items as the take lists them.
+        let offered: [OfferedItem]
+    }
+
     /// The drag a take armed the catcher for.
     private struct Take {
         let claim: GuestDragWatcher.Claim
         let id: DragTakeID
+        /// What the take carries, once the drag first entered the surface and
+        /// its items were read; nil before.
+        var carried: Carried?
+        /// The drag's items are being read for the take.
+        var carrying = false
         /// The surface is up for the take; `nil` while the host's Mac session
         /// is over this VM's display.
         var showing: Showing? = Showing()
@@ -90,16 +112,23 @@ final class GuestDragCatcher {
     private var surface: (any GuestDragCatcherSurface)?
     private var take: Take?
 
-    /// Hears each delivering drop: the take it ended, the claim it carried, and
-    /// the drop's file promises. It ends the take itself.
-    var onDeliver: ((DragTakeID, GuestDragWatcher.Claim, [any FilePromiseReceiving]) -> Void)?
+    /// Reads `items`, the drag's as the surface saw them, into what take
+    /// `token`'s offer serves, calling back with them, or nil when some cannot
+    /// go out.
+    private let carry: @MainActor ([GuestDragItem], Data, @escaping @MainActor (Carried?) -> Void) -> Void
+
+    /// Hears each delivering drop: the take it ended, the claim and what it
+    /// carried, and the drop's file promises. It ends the take itself.
+    var onDeliver: ((DragTakeID, GuestDragWatcher.Claim, Carried, [any FilePromiseReceiving]) -> Void)?
 
     init(
         peer: any GuestDragOutPeer,
-        makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
+        makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface,
+        carry: @escaping @MainActor ([GuestDragItem], Data, @escaping @MainActor (Carried?) -> Void) -> Void
     ) {
         self.peer = peer
         self.makeSurface = makeSurface
+        self.carry = carry
     }
 
     // MARK: - Takes
@@ -113,7 +142,7 @@ final class GuestDragCatcher {
         let surface = surface ?? makeSurface(self)
         self.surface = surface
         take = Take(claim: claim, id: id)
-        guard surface.show(items: claim.items) else {
+        guard surface.show(items: claim.preview) else {
             return finish(refusing: WireError(.dragNotCurrent, debugDetail: "There is no screen to put the catcher on"))
         }
         peer.answerTake(id, .report(.armed))
@@ -134,7 +163,7 @@ final class GuestDragCatcher {
             return
         }
         guard current.showing == nil, let surface else { return }
-        guard surface.show(items: current.claim.items) else {
+        guard surface.show(items: current.carried?.items ?? current.claim.preview) else {
             return finish(refusing: WireError(.dragNotCurrent, debugDetail: "There is no screen to put the catcher on"))
         }
         take?.showing = Showing()
@@ -230,7 +259,7 @@ final class GuestDragCatcher {
                 current, showing, WireError(.dragNotCurrent, debugDetail: "The drag's source does not allow a copy"))
             return []
         }
-        guard drag.items == current.claim.items else {
+        guard let items = drag.items, current.carried.map({ $0.items == items }) ?? true else {
             decline(
                 current, showing,
                 WireError(.dragNotCurrent, debugDetail: "The drag holds other items than the taken one"))
@@ -238,13 +267,42 @@ final class GuestDragCatcher {
         }
         if !showing.entered {
             take?.showing?.entered = true
-            if !showing.targeted {
-                take?.showing?.targeted = true
-                peer.answerTake(current.id, .report(.targeted))
-                Self.logger.log(.notice, "Catcher is the drag's target")
+            if current.carried == nil {
+                startCarrying(items, for: current)
+            } else if !showing.targeted {
+                target(current)
             }
         }
         return .copy
+    }
+
+    /// Reads the drag's `items` for take `current`, once, and reports
+    /// `TARGETED` listing them when they can go out.
+    private func startCarrying(_ items: [GuestDragItem], for current: Take) {
+        guard !current.carrying else { return }
+        take?.carrying = true
+        carry(items, current.claim.token) { [weak self] carried in
+            guard let self, let now = self.take, now.id == current.id, !now.ended else { return }
+            self.take?.carrying = false
+            guard let carried else {
+                return self.finish(
+                    refusing: WireError(.dragNotCurrent, debugDetail: "Some of the drag's items cannot go out"))
+            }
+            self.take?.carried = carried
+            if now.showing != nil { _ = self.surface?.show(items: carried.items) }
+            Self.logger.log(.notice, "Catcher read the drag: \(carried.items.count, privacy: .public) item(s)")
+            guard let latest = self.take, latest.showing?.entered == true else { return }
+            self.target(latest)
+        }
+    }
+
+    /// Reports the current showing `TARGETED`, once, listing what take
+    /// `current` carries.
+    private func target(_ current: Take) {
+        guard let carried = current.carried, current.showing?.targeted == false else { return }
+        take?.showing?.targeted = true
+        peer.answerTake(current.id, .report(.targeted(carried.offered)))
+        Self.logger.log(.notice, "Catcher is the drag's target")
     }
 
     /// Refuses `current`, keeping the surface up when the host may already
@@ -271,10 +329,10 @@ final class GuestDragCatcher {
         }
         take?.caught = true
         take?.ended = true
-        if showing.delivers, let onDeliver {
-            onDeliver(current.id, current.claim, receivers())
+        if showing.delivers, let onDeliver, let carried = current.carried {
+            onDeliver(current.id, current.claim, carried, receivers())
         } else {
-            peer.answerTake(current.id, .caught(reoffer: nil))
+            peer.answerTake(current.id, .caught(folderSizes: nil))
         }
         Self.logger.log(.notice, "Catcher caught the drag (delivering: \(showing.delivers, privacy: .public))")
         return true

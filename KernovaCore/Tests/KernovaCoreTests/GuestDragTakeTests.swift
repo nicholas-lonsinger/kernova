@@ -62,7 +62,6 @@ struct GuestDragTakeTests {
     final class FakeTransport: GuestDragTransport {
         struct Pull {
             let index: Int
-            let token: Data
             let directory: URL
             let name: String
             let ended: @MainActor (Result<Void, WireError>) -> Void
@@ -74,7 +73,10 @@ struct GuestDragTakeTests {
         private(set) var controls: [DragTakeControl] = []
         private(set) var cancels = 0
         private(set) var pulls: [Pull] = []
-        private(set) var releases: [Data] = []
+        /// How many times the take released its offer.
+        private(set) var releases = 0
+        /// What the guest's first `TARGETED` lists.
+        var listed: [OfferedItem] = []
         nonisolated let delivering = DispatchSemaphore(value: 0)
         let changed = AsyncGate()
 
@@ -93,17 +95,28 @@ struct GuestDragTakeTests {
         }
 
         func pull(
-            _ item: DraggedOutItem, at index: Int, of token: Data, into directory: URL, named name: String,
+            _ item: DraggedOutItem, at index: Int, into directory: URL, named name: String,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             let position = pulls.count
-            pulls.append(Pull(index: index, token: token, directory: directory, name: name, ended: ended))
+            pulls.append(Pull(index: index, directory: directory, name: name, ended: ended))
             changed.notify()
             return { [weak self] in self?.pulls[position].cancelled = true }
         }
 
-        func release(_ token: Data) {
-            releases.append(token)
+        func release() {
+            releases += 1
+        }
+
+        /// The guest's catcher is the drag's target, listing ``listed``.
+        func target() {
+            report(.targeted(listed))
+        }
+
+        /// The guest's delivering drop named the promises: `items`, as the
+        /// real transport hands them on.
+        func name(_ items: [DraggedOutItem]) {
+            delivery?.named(items)
         }
 
         /// The guest reports `report`, as the real transport hands it on.
@@ -113,10 +126,11 @@ struct GuestDragTakeTests {
         }
 
         /// The take ends as `result`, its delivery settled first as the real
-        /// transport settles it: `delivered` names the items a re-offer carries.
+        /// transport settles it: `delivered` is the items a delivery named and
+        /// sized.
         func end(_ result: DragTakeResult, delivered: [DraggedOutItem]? = nil) {
-            if case .caught(let reoffer?) = result, let delivered {
-                delivery?.settle(.delivered(token: reoffer, items: delivered))
+            if case .caught? = Optional(result), let delivered {
+                delivery?.settle(.delivered(delivered))
             } else {
                 delivery?.settle(.undelivered)
             }
@@ -147,8 +161,7 @@ struct GuestDragTakeTests {
     private let running = RunningFlag()
     private let finished = FinishedFlag()
 
-    private static let taken = Data(repeating: 1, count: 16)
-    private static let reoffer = Data(repeating: 4, count: 16)
+    private static let delivery = DragDelivery(names: [:], folderSizes: [:])
 
     private static let file = DraggedOutItem(
         name: Data("a.txt".utf8), type: .plainText, isDirectory: false, sizeEstimate: 4)
@@ -160,11 +173,27 @@ struct GuestDragTakeTests {
     private static let sizedFolder = DraggedOutItem(
         name: Data("Folder".utf8), type: .folder, isDirectory: true, sizeEstimate: 4096)
 
+    /// What a take carrying `items` lists them as.
+    static func offered(_ items: [DraggedOutItem]) -> [OfferedItem] {
+        items.map { item in
+            var representation = Representation()
+            representation.type = TypeDescriptor(appleUTI: item.type.identifier)
+            representation.storage = item.isDirectory ? .folder : .file
+            representation.name = item.name
+            representation.promised = item.isPromised
+            representation.sizeEstimate = item.sizeEstimate
+            var offered = OfferedItem()
+            offered.representations = [representation]
+            return offered
+        }
+    }
+
     private func makeTake(items: [DraggedOutItem] = [Self.file]) -> GuestDragTake {
         let running = running
         let finished = finished
+        transport.listed = Self.offered(items)
         let take = GuestDragTake(
-            items: items, token: Self.taken, transport: transport, display: display,
+            transport: transport, display: display,
             reporter: ClipboardTransferReporter(), peerName: "Test VM", holds: { running.isRunning },
             onFinished: { _ in finished.count += 1 })
         take.begin()
@@ -175,7 +204,7 @@ struct GuestDragTakeTests {
     private func readyTake(items: [DraggedOutItem] = [Self.file]) throws -> GuestDragTake {
         let take = makeTake(items: items)
         transport.report(.armed)
-        transport.report(.targeted)
+        transport.target()
         try #require(take.phase == .ready)
         return take
     }
@@ -234,7 +263,7 @@ struct GuestDragTakeTests {
 
         take.withheldDrag()
         #expect(display.calls == [.nudge(.exitPoint), .nudge(.offset)])
-        transport.report(.targeted)
+        transport.target()
         #expect(take.phase == .ready)
     }
 
@@ -279,7 +308,7 @@ struct GuestDragTakeTests {
         #expect(take.phase == .abandoned)
         #expect(display.calls == [.returnToExit, .resumeTracking])
         #expect(transport.cancels == 0)
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
 
@@ -301,8 +330,8 @@ struct GuestDragTakeTests {
         #expect(take.phase == .released(at: .catcher))
         #expect(transport.controls.isEmpty)
         #expect(finished.count == 0)
-        transport.end(.caught(reoffer: nil))
-        #expect(transport.releases == [Self.taken])
+        transport.end(.caught(nil))
+        #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
 
@@ -355,7 +384,7 @@ struct GuestDragTakeTests {
         #expect(display.calls.last == .drag(point))
         take.hostSessionEnded(dropped: true)
         // A step about the catcher that is not its stand-down releases nothing.
-        transport.report(.targeted)
+        transport.target()
         #expect(!display.calls.contains(.release))
 
         transport.report(.stoodDown)
@@ -398,7 +427,7 @@ struct GuestDragTakeTests {
         #expect(take.phase == .carried(.outside(targeted: false)))
         #expect(transport.controls == [.catcher(shown: false), .catcher(shown: true)])
         // A target for the showing since stood down says nothing of the new one.
-        transport.report(.targeted)
+        transport.target()
         #expect(take.phase == .carried(.outside(targeted: false)))
 
         let nudgesBefore = display.calls.count { if case .nudge = $0 { true } else { false } }
@@ -406,7 +435,7 @@ struct GuestDragTakeTests {
         #expect(display.calls.count { if case .nudge = $0 { true } else { false } } == nudgesBefore + 1)
         take.hostSessionMoved()
         #expect(display.calls.count { if case .nudge = $0 { true } else { false } } == nudgesBefore + 2)
-        transport.report(.targeted)
+        transport.target()
         #expect(take.phase == .carried(.outside(targeted: true)))
     }
 
@@ -419,7 +448,7 @@ struct GuestDragTakeTests {
         #expect(take.phase == .carried(.ended))
         #expect(transport.controls.last == .catcher(shown: true))
         transport.report(.armed)
-        transport.report(.targeted)
+        transport.target()
         #expect(take.phase == .released(at: .catcher))
     }
 
@@ -434,7 +463,7 @@ struct GuestDragTakeTests {
         #expect(transport.cancels == 1)
         #expect(finished.count == 0)
         transport.end(.closed(.resetLocally(WireError(.cancelled))))
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
 
@@ -452,16 +481,15 @@ struct GuestDragTakeTests {
         }
         #expect(outcome == nil)
         let pull = try #require(transport.pulls.first)
-        #expect(pull.token == Self.taken)
         #expect(pull.directory.path == "/Users/me/Desktop")
         #expect(pull.name == "a 2.txt")
-        #expect(transport.releases.isEmpty)
-        transport.end(.caught(reoffer: nil))
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.releases == 0)
+        transport.end(.caught(nil))
+        #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
 
-    @Test("a dropped drag of a promise and a folder releases only on DELIVERING; writes wait for the re-offer")
+    @Test("a dropped drag of a promise and a folder releases only on DELIVERING; writes wait for the delivery")
     func promisesAndFoldersAreDeliveredAtTheDrop() async throws {
         let take = try carriedTake(items: [Self.promise, Self.folder])
         take.hostSessionEnded(dropped: true)
@@ -477,12 +505,12 @@ struct GuestDragTakeTests {
 
         transport.report(.delivering)
         #expect(take.phase == .released(at: .catcher))
-        transport.end(.caught(reoffer: Self.reoffer), delivered: [Self.namedPromise, Self.sizedFolder])
+        transport.end(.caught(Self.delivery), delivered: [Self.namedPromise, Self.sizedFolder])
 
         try await transport.changed.wait { !transport.pulls.isEmpty }
-        let pull = try #require(transport.pulls.first)
-        #expect(pull.token == Self.reoffer)
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.pulls.first?.name == "IMG_0042.jpeg")
+        // The one offer is held until every item is written.
+        #expect(transport.releases == 0)
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
         #expect(take.filename(forItemAt: 1) == "Folder")
         transport.end(0, .success(()))
@@ -492,30 +520,8 @@ struct GuestDragTakeTests {
         _ = try await write(take, item: 1, to: URL(fileURLWithPath: "/Users/me/Desktop/Folder")) {
             $0.end(1, .success(()))
         }
-        #expect(transport.releases == [Self.taken, Self.reoffer])
+        #expect(transport.releases == 1)
         #expect(finished.count == 1)
-    }
-
-    @Test("the taken offer ends only by this side's release, once the re-offer carries the drag on")
-    func takenOfferEndsOnlyByTheHostsRelease() async throws {
-        let take = try carriedTake(items: [Self.promise, Self.folder])
-        take.hostSessionEnded(dropped: true)
-        let outcome = OutcomeBox(gate: transport.changed)
-        take.writeItem(at: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/IMG_0042.jpeg")) { outcome.set($0) }
-        await Task.yield()
-        transport.report(.delivering)
-        #expect(transport.releases.isEmpty)
-
-        transport.end(.caught(reoffer: Self.reoffer), delivered: [Self.namedPromise, Self.sizedFolder])
-        try await transport.changed.wait { !transport.pulls.isEmpty || outcome.isSet }
-        #expect(!transport.pulls.isEmpty)
-        #expect(transport.releases == [Self.taken])
-        // The release's own end reaches the take after it, and changes nothing.
-        take.offerEnded(Self.taken)
-        #expect(!transport.pulls[0].cancelled)
-        transport.end(0, .success(()))
-        try await transport.changed.wait { outcome.isSet }
-        #expect(outcome.error == nil)
     }
 
     @Test("a promised item's name asked mid-drop waits on the delivery it starts, released from the waiting thread")
@@ -531,7 +537,7 @@ struct GuestDragTakeTests {
             transport.delivering.wait()
             delivery.peerAnswered()
             display.released.wait()
-            delivery.settle(.delivered(token: Self.reoffer, items: [Self.namedPromise]))
+            delivery.settle(.delivered([Self.namedPromise]))
         }
         guest.start()
 
@@ -540,6 +546,32 @@ struct GuestDragTakeTests {
         #expect(take.phase == .released(at: .catcher))
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
         #expect(transport.controls == [.deliver])
+    }
+
+    @Test("a name ask waits for the names alone: the folder sizes after them hold no writer and no main thread")
+    func aNameAskWaitsForNamesAlone() async throws {
+        let take = try carriedTake(items: [Self.promise, Self.folder])
+        let transport = transport
+        let display = display
+        let delivery = try #require(transport.delivery)
+        let guest = Thread {
+            transport.delivering.wait()
+            delivery.peerAnswered()
+            display.released.wait()
+            delivery.named([Self.namedPromise, Self.folder])
+        }
+        guest.start()
+
+        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
+        #expect(delivery.settled == nil, "the names waited for the folder sizes")
+        let outcome = OutcomeBox(gate: transport.changed)
+        take.writeItem(at: 1, to: URL(fileURLWithPath: "/Users/me/Desktop/Folder")) { outcome.set($0) }
+        await Task.yield()
+        #expect(transport.pulls.isEmpty, "a write pulled before the delivery sized the folders")
+
+        transport.end(.caught(Self.delivery), delivered: [Self.namedPromise, Self.sizedFolder])
+        try await transport.changed.wait { !transport.pulls.isEmpty }
+        #expect(transport.pulls.first?.index == 1)
     }
 
     @Test("a name asked while the catcher is not the target is the stand-in, and asks no delivery")
@@ -562,7 +594,7 @@ struct GuestDragTakeTests {
 
         let outcome = OutcomeBox(gate: transport.changed)
         take.writeItem(at: 0, to: URL(fileURLWithPath: "/tmp/drag-out/x.jpeg")) { outcome.set($0) }
-        transport.end(.caught(reoffer: nil))
+        transport.end(.caught(nil))
         try await transport.changed.wait { outcome.isSet }
         #expect(outcome.error as? GuestDragWriteError == .failed(.peerReported(.dragItemUnavailable)))
         #expect(transport.pulls.isEmpty)
@@ -623,11 +655,11 @@ struct GuestDragTakeTests {
     @Test("the guest's offer ending mid-hand-off hands the press back without releasing it again")
     func offerEndHandsBack() {
         let take = makeTake()
-        take.offerEnded(Self.taken)
+        take.offerEnded()
         transport.end(.refused(WireError(.dragNotCurrent)))
 
         #expect(take.phase == .abandoned)
-        #expect(transport.releases.isEmpty)
+        #expect(transport.releases == 0)
         #expect(finished.count == 1)
     }
 
@@ -636,11 +668,11 @@ struct GuestDragTakeTests {
         let take = try readyTake()
         take.withheldMouseUp()
         #expect(finished.count == 0)
-        #expect(transport.releases.isEmpty)
+        #expect(transport.releases == 0)
 
-        transport.end(.caught(reoffer: nil))
+        transport.end(.caught(nil))
         #expect(finished.count == 1)
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.releases == 1)
     }
 
     // MARK: - Writing items
@@ -649,20 +681,20 @@ struct GuestDragTakeTests {
     func releaseFollowsTheLastWrite() async throws {
         let take = try carriedTake(items: [Self.file, Self.file])
         take.hostSessionEnded(dropped: true)
-        transport.end(.caught(reoffer: nil))
+        transport.end(.caught(nil))
         let folder = URL(fileURLWithPath: "/Volumes/Exchange/Inbox", isDirectory: true)
 
         let first = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
             $0.end(0, .success(()))
         }
         #expect(first == nil)
-        #expect(transport.releases.isEmpty)
+        #expect(transport.releases == 0)
 
         let second = try await write(take, item: 1, to: folder.appendingPathComponent("a 2.txt")) {
             $0.end(1, .success(()))
         }
         #expect(second == nil)
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
 
@@ -670,7 +702,7 @@ struct GuestDragTakeTests {
     func failedPullEndsTheWrites() async throws {
         let take = try carriedTake(items: [Self.file, Self.file])
         take.hostSessionEnded(dropped: true)
-        transport.end(.caught(reoffer: nil))
+        transport.end(.caught(nil))
         let folder = URL(fileURLWithPath: "/tmp/drag-out", isDirectory: true)
 
         let failed = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
@@ -681,24 +713,24 @@ struct GuestDragTakeTests {
         let after = try await write(take, item: 1, to: folder.appendingPathComponent("b.txt"))
         #expect(after as? GuestDragWriteError == .failed(.peerReported(.dragItemUnavailable)))
         #expect(transport.pulls.count == 1)
-        #expect(transport.releases == [Self.taken])
+        #expect(transport.releases == 1)
     }
 
     @Test("the offer ending mid-write cancels the pull, and the write fails interrupted")
     func offerEndInterruptsTheWrite() async throws {
         let take = try carriedTake()
         take.hostSessionEnded(dropped: true)
-        transport.end(.caught(reoffer: nil))
+        transport.end(.caught(nil))
         let destination = URL(fileURLWithPath: "/tmp/drag-out/a.txt")
 
         let outcome = try await write(take, item: 0, to: destination) { transport in
-            take.offerEnded(Self.taken)
+            take.offerEnded()
             #expect(transport.pulls[0].cancelled)
             transport.end(0, .failure(WireError(.cancelled)))
         }
 
         #expect(outcome as? GuestDragWriteError == .failed(.interrupted(fileCount: 1)))
-        #expect(transport.releases.isEmpty)
+        #expect(transport.releases == 0)
         #expect(finished.count == 1)
     }
 

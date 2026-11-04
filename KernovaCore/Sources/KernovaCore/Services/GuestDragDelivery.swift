@@ -1,22 +1,31 @@
 import Foundation
 
-/// How one take's delivery came out: the offer that carries the drag on, named
-/// and sized, or none.
+/// How one take's delivery came out: what its drop named, then what it
+/// delivered.
 ///
 /// Settled from the transport's queue, never the main actor's: a Mac
 /// destination asks a promised item's name on the main thread
 /// (`filePromiseProvider(_:fileNameForType:)` is `NS_SWIFT_UI_ACTOR` in
 /// `NSFilePromiseProvider.h`) and the answer must return synchronously, so that
 /// ask holds the main thread while the guest calls the promises in, and
-/// everything it waits for arrives here without it.
+/// everything it waits for arrives here without it. The ask waits only for
+/// the names, never for the folder sizes the delivery settles with after.
 package final class GuestDragDelivery: @unchecked Sendable {
-    /// What the drag's delivery left the host to pull from.
+    /// What the drag's delivery left the host to pull.
     package enum Outcome: Equatable, Sendable {
-        /// The guest offered the drag again as `token`, carrying `items` in the
-        /// taken offer's order.
-        case delivered(token: Data, items: [DraggedOutItem])
-        /// No delivery: the taken offer still carries what it can.
+        /// The drop delivered the drag: its items in the taken offer's order,
+        /// each promise under the name it took and each folder sized.
+        case delivered([DraggedOutItem])
+        /// No delivery: the taken offer carries the drag as offered.
         case undelivered
+    }
+
+    /// What a name ask learns.
+    package enum Naming: Equatable, Sendable {
+        /// The drag's items, each promise under the name it took.
+        case named([DraggedOutItem])
+        /// Nothing names the promises.
+        case unnamed
     }
 
     private let condition = NSCondition()
@@ -25,6 +34,7 @@ package final class GuestDragDelivery: @unchecked Sendable {
     private var answered = false
     /// The answer has been acted on, so a later waiter does not release again.
     private var answerTaken = false
+    private var names: [DraggedOutItem]?
     private var outcome: Outcome?
     private var onSettled: (@Sendable () -> Void)?
 
@@ -46,11 +56,37 @@ package final class GuestDragDelivery: @unchecked Sendable {
         return outcome
     }
 
+    /// What names the drag's promises, or nil while nothing has yet.
+    package var naming: Naming? {
+        condition.lock()
+        defer { condition.unlock() }
+        return currentNaming
+    }
+
+    private var currentNaming: Naming? {
+        if let names { return .named(names) }
+        switch outcome {
+        case .delivered(let items)?: return .named(items)
+        case .undelivered?: return .unnamed
+        case nil: return nil
+        }
+    }
+
     /// The guest answered the ask for a delivering drop, `DELIVERING` or
     /// `DELIVER_REFUSED`.
     package func peerAnswered() {
         condition.lock()
         answered = true
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// The drop named the drag's promises: `items`, before their folders are
+    /// sized. Once; a later naming, or one after the delivery settled, changes
+    /// nothing.
+    package func named(_ items: [DraggedOutItem]) {
+        condition.lock()
+        if names == nil, outcome == nil { names = items }
         condition.broadcast()
         condition.unlock()
     }
@@ -67,15 +103,16 @@ package final class GuestDragDelivery: @unchecked Sendable {
         body?()
     }
 
-    /// Blocks the calling thread until the delivery settles, and returns how.
+    /// Blocks the calling thread until something names the drag's promises,
+    /// and returns what.
     ///
     /// `release` is called on this thread, once across every waiter, when the
-    /// guest answers the ask before the delivery settles: a waiter on the main
-    /// thread is the one that can inject the release the delivery waits for.
-    /// No wall clock bounds the wait: the take's end settles it.
-    package func wait(releasing release: (() -> Void)?) -> Outcome {
+    /// guest answers the ask before anything names them: a waiter on the main
+    /// thread is the one that can inject the release the naming waits for. No
+    /// wall clock bounds the wait: the take's end settles it.
+    package func waitForNames(releasing release: (() -> Void)?) -> Naming {
         condition.lock()
-        while outcome == nil {
+        while currentNaming == nil {
             if answered, !answerTaken, let release {
                 answerTaken = true
                 condition.unlock()
@@ -85,8 +122,8 @@ package final class GuestDragDelivery: @unchecked Sendable {
             }
             condition.wait()
         }
-        let settled = outcome ?? .undelivered
+        let naming = currentNaming ?? .unnamed
         condition.unlock()
-        return settled
+        return naming
     }
 }

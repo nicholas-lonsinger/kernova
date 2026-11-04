@@ -132,8 +132,7 @@ struct ItemMachines: Sendable {
             if case .opened(let stream, let body) = event {
                 drag.opened(stream, body: body, items: transfer, connection: &connection)
             } else {
-                drag.handle(event, connection: &connection, now: now)
-                drag.offersChanged(transfer, connection: &connection)
+                drag.handleTake(event, items: &transfer, connection: &connection)
             }
         case .power, .update, .logs, .testBulk:
             break
@@ -183,7 +182,7 @@ struct ItemMachines: Sendable {
 
     /// Peer: answers a take of its drag.
     mutating func answer(_ id: DragTakeID, _ answer: DragTakeAnswer, connection: inout Connection) {
-        drag.answer(id, answer, connection: &connection)
+        drag.answer(id, answer, items: &transfer, connection: &connection)
     }
 
     /// Pulls one representation of the far side's open offer, as `order` says.

@@ -65,7 +65,7 @@ struct AgentHubAuthorityTests {
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 3))
         connector.deliver(.items(.pullEnded(.clipboard, pull, .landed(.inline(Data())))), stranger)
         let take = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
-        connector.deliver(.dragTake(.ended(take, .caught(reoffer: nil))), stranger)
+        connector.deliver(.dragTake(.ended(take, .caught(nil))), stranger)
         connector.deliver(.items(.offerReceived(Self.header(3, .clipboard))), first)
         await flush(scripted.hub.queue)
         #expect(

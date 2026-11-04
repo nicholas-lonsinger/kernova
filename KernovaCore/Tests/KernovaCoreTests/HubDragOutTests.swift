@@ -16,10 +16,9 @@ import UniformTypeIdentifiers
 @testable import KernovaCoreTestSupport
 
 /// The hub's item calls, each recorded with its completion for the test to
-/// answer; reads are answered from ``items``.
+/// answer.
 final class FakeDragOutHub: DragOutHub, Sendable {
     struct State {
-        var items: [Data: [OfferedItem]] = [:]
         var takes: [(token: Data, peer: PeerHandle, completion: @Sendable (Result<DragTakeID, WireError>) -> Void)] =
             []
         var pulls:
@@ -75,16 +74,6 @@ final class FakeDragOutHub: DragOutHub, Sendable {
         changed.notify()
     }
 
-    func readItem(
-        _ token: Data, item: UInt32, of peer: PeerHandle,
-        _ completion: @escaping @Sendable (OfferedItem?) -> Void
-    ) {
-        let read = state.withLock { state -> OfferedItem? in
-            guard let items = state.items[token], items.indices.contains(Int(item)) else { return nil }
-            return items[Int(item)]
-        }
-        completion(read)
-    }
 
     var takeCount: Int { state.withLock { $0.takes.count } }
     var pullCount: Int { state.withLock { $0.pulls.count } }
@@ -123,7 +112,6 @@ struct HubDragOutTests {
     private let dragOut: HubDragOut
     private let peer = PeerHandle(rawValue: 7)
     private let token = Data(repeating: 0xAB, count: 16)
-    private let reoffer = Data(repeating: 0xCD, count: 16)
     private let takeID = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
 
     init() throws {
@@ -148,12 +136,10 @@ struct HubDragOutTests {
         return item
     }
 
-    /// The guest offers `items` under ``token`` and the owner has read them.
-    private func offer(_ items: [OfferedItem]) async throws {
-        hub.state.withLock { $0.items[token] = items }
+    /// The guest offers a drag under ``token``.
+    private func offer() {
         dragOut.consolePeerChanged(peer)
-        dragOut.offerReceived(token, count: items.count, from: peer)
-        try await waitForChange { dragOut.offer != nil }
+        dragOut.offerReceived(token, from: peer)
     }
 
     private static let running: @MainActor () -> Bool = { true }
@@ -174,10 +160,6 @@ struct HubDragOutTests {
         item("Photos", storage: .folder, uti: "public.folder"),
     ]
 
-    private static let deliveredItems = [
-        item("IMG_0042.jpeg", storage: .file, uti: "public.jpeg", promised: true),
-        item("Photos", storage: .folder, uti: "public.folder", size: 4096),
-    ]
 
     /// The take's event `event`, as the hub hands it to DRAG's owner: on the
     /// hub's queue first, then a hop to the main queue.
@@ -189,14 +171,14 @@ struct HubDragOutTests {
     /// A take of the current offer of `items`, the hub having opened it and
     /// the guest's catcher its target, carried by a Mac session.
     private func carriedTake(_ items: [OfferedItem] = Self.twoItems) async throws -> GuestDragTake {
-        try await offer(items)
+        offer()
         let take = try takeOffer()
         try await hub.changed.wait { hub.takeCount == 1 }
         hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
         // The answer hops to the main queue, ahead of the take's events.
         await MainActorTurn.next()
         await deliver(.report(takeID, .armed))
-        await deliver(.report(takeID, .targeted))
+        await deliver(.report(takeID, .targeted(items)))
         try #require(take.phase == .ready)
         take.withheldDrag()
         try #require(take.phase == .carried(.outside(targeted: true)))
@@ -208,46 +190,35 @@ struct HubDragOutTests {
     private func droppedTake() async throws -> GuestDragTake {
         let take = try await carriedTake()
         take.hostSessionEnded(dropped: true)
-        await deliver(.ended(takeID, .caught(reoffer: nil)))
+        await deliver(.ended(takeID, .caught(nil)))
         return take
     }
 
     // MARK: - The offer
 
-    @Test("a console peer's drag offer, read whole, is the drag the display may take, named as offered")
-    func offerIsReadWhole() async throws {
-        try await offer([Self.twoItems[0]] + Self.promiseAndFolder)
+    @Test("a console peer's drag offer is the drag the display may take; its first TARGETED names its items")
+    func targetedNamesTheItems() async throws {
+        offer()
+        #expect(dragOut.offer == GuestDragOffer(peer: peer, token: token))
 
-        let offer = try #require(dragOut.offer)
-        #expect(offer.peer == peer)
-        #expect(offer.items.map(\.filename) == ["notes.txt", "Untitled.jpeg", "Photos"])
-        #expect(offer.items.map(\.isDirectory) == [false, false, true])
-        #expect(offer.items.map(\.isPromised) == [false, true, false])
-        #expect(offer.items[0].type == .plainText)
-    }
-
-    @Test("an offer holding anything but files and folders is released, and nothing is taken")
-    func inlineOfferIsReleased() async throws {
-        let inline = Self.item("", storage: .inline, uti: "public.utf8-plain-text")
-        hub.state.withLock { $0.items[token] = [inline] }
-        dragOut.consolePeerChanged(peer)
-        dragOut.offerReceived(token, count: 1, from: peer)
-
-        try await hub.changed.wait { hub.releaseCount == 1 }
-        #expect(dragOut.offer == nil)
+        let take = try await carriedTake([Self.twoItems[0]] + Self.promiseAndFolder)
+        #expect(take.items.map(\.filename) == ["notes.txt", "Untitled.jpeg", "Photos"])
+        #expect(take.items.map(\.isDirectory) == [false, false, true])
+        #expect(take.items.map(\.isPromised) == [false, true, false])
+        #expect(take.items[0].type == .plainText)
     }
 
     @Test("the offer ending, a new press, or a console move clears the drag on offer")
     func offerIsCleared() async throws {
-        try await offer(Self.twoItems)
+        offer()
         dragOut.offerEnded(token)
         #expect(dragOut.offer == nil)
 
-        try await offer(Self.twoItems)
+        offer()
         dragOut.displayPressBegan()
         #expect(dragOut.offer == nil)
 
-        try await offer(Self.twoItems)
+        offer()
         dragOut.consolePeerChanged(PeerHandle(rawValue: 8))
         #expect(dragOut.offer == nil)
     }
@@ -256,7 +227,7 @@ struct HubDragOutTests {
 
     @Test("a take goes to the offer's peer, and the display may not take the same offer twice")
     func takeGoesToThePeer() async throws {
-        try await offer(Self.twoItems)
+        offer()
 
         _ = try takeOffer()
         try await hub.changed.wait { hub.takeCount == 1 }
@@ -269,7 +240,7 @@ struct HubDragOutTests {
 
     @Test("what a take says before the hub names it goes to the take once it does")
     func heldControlsFollowTheID() async throws {
-        try await offer(Self.twoItems)
+        offer()
         let take = try takeOffer()
         try await hub.changed.wait { hub.takeCount == 1 }
         take.pointerReturned()
@@ -281,48 +252,44 @@ struct HubDragOutTests {
         #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
     }
 
-    @Test("a delivering catch's offer carries the drag on: its names and sizes, pulled from it, never a drag to take")
-    func reofferCarriesTheDragOn() async throws {
+    @Test("a delivering drop names the promises, then sizes the folders, and every item pulls from the one offer")
+    func deliveryNamesThenSizes() async throws {
         let take = try await carriedTake(Self.promiseAndFolder)
         take.hostSessionEnded(dropped: true)
         #expect(hub.controls == [.deliver])
         await deliver(.report(takeID, .delivering))
         #expect(take.phase == .released(at: .catcher))
 
-        // The guest offers the drag again and ends the take naming it; the
-        // hub reports the end once the new offer arrived whole.
-        hub.state.withLock { $0.items[reoffer] = Self.deliveredItems }
-        dragOut.offerReceived(reoffer, count: 2, from: peer)
-        await deliver(.ended(takeID, .caught(reoffer: reoffer)))
-        await MainActorTurn.next()
-        #expect(dragOut.offer == nil)
+        await deliver(.report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
-        // Only the host ends the offer it took, once it carries the drag on.
-        #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
-
         for (index, name) in ["IMG_0042.jpeg", "Photos"].enumerated() {
             take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { _ in }
         }
+        await MainActorTurn.next()
+        #expect(hub.pullCount == 0, "a write pulled before the delivery sized the folders")
+
+        await deliver(
+            .ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], folderSizes: [1: 4096]))))
         try await hub.changed.wait { hub.pullCount == 2 }
         let pulls = hub.state.withLock { $0.pulls.map(\.order.request) }
-        #expect(pulls.map(\.token) == [reoffer, reoffer])
+        #expect(pulls.map(\.token) == [token, token])
         #expect(Set(pulls.map(\.item)) == [0, 1])
+        #expect(hub.releaseCount == 0, "the offer went before its items were written")
     }
 
-    @Test("a promised name asked on the main thread waits on a delivery the hub's queue settles without it")
+    @Test("a promised name asked on the main thread waits on names the hub's queue gives without it")
     func nameAskOnMainSettlesOffMain() async throws {
         let take = try await carriedTake(Self.promiseAndFolder)
-        hub.state.withLock { $0.items[reoffer] = Self.deliveredItems }
         let owner = dragOut.owner
-        let (hub, display, peer, takeID, reoffer) = (hub, display, peer, takeID, reoffer)
+        let (hub, display, peer, takeID) = (hub, display, peer, takeID)
         // The hub's queue while the ask holds the main thread: the guest
-        // answers the ask, and once the release reached it, ends the take
-        // naming its new offer.
+        // answers the ask, and once the release reached it, names the promise
+        // and never sizes the folder.
         let hubQueue = Thread {
             hub.delivering.wait()
             owner.takes(peer, .report(takeID, .delivering))
             display.releases.wait()
-            owner.takes(peer, .ended(takeID, .caught(reoffer: reoffer)))
+            owner.takes(peer, .report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
         }
         hubQueue.start()
 
@@ -332,7 +299,7 @@ struct HubDragOutTests {
 
     @Test("a hub that cannot open the take hands the press back")
     func unopenedTakeAbandons() async throws {
-        try await offer(Self.twoItems)
+        offer()
         let take = try takeOffer()
         try await hub.changed.wait { hub.takeCount == 1 }
 
@@ -414,7 +381,7 @@ struct HubDragOutTests {
 
     @Test("a console move before the guest answers hands the press back")
     func consoleMoveMidHandOff() async throws {
-        try await offer(Self.twoItems)
+        offer()
         let take = try takeOffer()
         try await hub.changed.wait { hub.takeCount == 1 }
 
@@ -480,15 +447,8 @@ struct VMInstanceDragOutTests {
             $0.dropFilesEnabled = dropFilesEnabled
         }
         instance.dragOut.hub = hub
-        var representation = Representation()
-        representation.type = TypeDescriptor(appleUTI: "public.data")
-        representation.storage = .file
-        representation.name = Data("a.bin".utf8)
-        var item = OfferedItem()
-        item.representations = [representation]
-        hub.state.withLock { $0.items[token] = [item] }
         instance.dragOut.consolePeerChanged(peer)
-        instance.dragOut.offerReceived(token, count: 1, from: peer)
+        instance.dragOut.offerReceived(token, from: peer)
         try await waitForChange { instance.dragOut.offer != nil }
         return instance
     }
@@ -497,7 +457,7 @@ struct VMInstanceDragOutTests {
     func runningGuestsDragIsOffered() async throws {
         let instance = try await makeInstance()
 
-        #expect(instance.displayGuestDrag?.items.map(\.filename) == ["a.bin"])
+        #expect(instance.displayGuestDrag?.token == token)
         #expect(instance.takeGuestDrag(display: TrackingDisplay()) != nil)
         #expect(instance.displayGuestDrag == nil)
     }

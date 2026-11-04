@@ -9,14 +9,12 @@ import KernovaLogging
 import KernovaWire
 import Synchronization
 
-/// A drag the guest offers, its items read.
+/// A drag in progress in the guest, which its take lists the items of.
 package struct GuestDragOffer: Equatable, Sendable {
     /// The peer that offered it.
     package var peer: PeerHandle
     /// The offer's token.
     package var token: Data
-    /// What it carries, in the offer's order.
-    package var items: [DraggedOutItem]
 }
 
 /// The calls DRAG's host owner makes of the agent hub; the hub's own, and a
@@ -31,21 +29,19 @@ package protocol DragOutHub: AnyObject, Sendable {
     func controlTake(_ id: DragTakeID, _ control: DragTakeControl, on peer: PeerHandle)
     func cancelTake(_ id: DragTakeID, on peer: PeerHandle)
     func releaseOffer(_ token: Data, of peer: PeerHandle)
-    func readItem(
-        _ token: Data, item: UInt32, of peer: PeerHandle, _ completion: @escaping @Sendable (OfferedItem?) -> Void)
 }
 
 extension AgentHub: DragOutHub {}
 
-/// DRAG's owner on the host: the drag the console peer offers now, read whole,
-/// and the takes of it and their pulls.
+/// DRAG's owner on the host: the drag the console peer offers now, and the
+/// takes of it and their pulls.
 ///
 /// It lives on the main actor. The hub's events and the answers to its calls
 /// reach it in the order the hub emitted them, each hopping from the hub's
 /// queue to the main queue, so a call's answer still comes before any event it
 /// caused. A take's delivery is the exception: it settles on the hub's queue,
-/// reading the offer a delivering catch names there, because a Mac destination
-/// asking a promised item's name waits for it holding the main thread.
+/// because a Mac destination asking a promised item's name waits for it
+/// holding the main thread.
 @MainActor
 @Observable
 package final class HubDragOut {
@@ -64,10 +60,7 @@ package final class HubDragOut {
     @ObservationIgnored private let reporter: ClipboardTransferReporter
     @ObservationIgnored private let peerName: @MainActor () -> String
 
-    /// The offer whose items are being read, by its token.
-    @ObservationIgnored private var reading: (peer: PeerHandle, token: Data)?
-    /// Every take still running, by each of its offers' tokens: the one taken,
-    /// and the one a delivering catch names.
+    /// Every take still running, by its offer's token.
     @ObservationIgnored private var takes: [Data: GuestDragTake] = [:]
     /// Each take's id once the hub opened it, with the token it took and what
     /// hears its events.
@@ -132,10 +125,9 @@ package final class HubDragOut {
         for earlier in takes.values where superseded.insert(ObjectIdentifier(earlier)).inserted {
             earlier.supersede()
         }
-        let transport = Transport(
-            owner: self, hub: hub, peer: offer.peer, token: offer.token, count: offer.items.count)
+        let transport = Transport(owner: self, hub: hub, peer: offer.peer, token: offer.token)
         let take = GuestDragTake(
-            items: offer.items, token: offer.token, transport: transport, display: display, reporter: reporter,
+            transport: transport, display: display, reporter: reporter,
             peerName: peerName(), holds: holds,
             onFinished: { [weak self] finished in self?.takes = self?.takes.filter { $0.value !== finished } ?? [:] })
         takes[offer.token] = take
@@ -149,13 +141,12 @@ package final class HubDragOut {
     /// peer's is not the display's to take.
     func consolePeerChanged(_ peer: PeerHandle?) {
         if let offer, offer.peer != peer { self.offer = nil }
-        if let reading, reading.peer != peer { self.reading = nil }
     }
 
     private func handle(_ event: ItemTransferEvent, from peer: PeerHandle) {
         switch event {
         case .offerReceived(let header):
-            offerReceived(header.token, count: header.count, from: peer)
+            offerReceived(header.token, from: peer)
         case .offerEnded(_, .remote, let token, _):
             offerEnded(token)
         case .pullEnded(_, let id, let result):
@@ -177,8 +168,7 @@ package final class HubDragOut {
     /// The guest's offer of `token` ended.
     func offerEnded(_ token: Data) {
         if offer?.token == token { offer = nil }
-        if reading?.token == token { reading = nil }
-        takes[token]?.offerEnded(token)
+        takes[token]?.offerEnded()
     }
 
     /// Pull `id` ended as `result`.
@@ -186,50 +176,15 @@ package final class HubDragOut {
         pulls.removeValue(forKey: id)?(result)
     }
 
-    /// Take `id` ended as `result`. An offer a delivering catch names carries
-    /// the take's drag on, so it is the take's, never a drag to take.
+    /// Take `id` ended as `result`.
     func takeEnded(_ id: DragTakeID, _ result: DragTakeResult) {
-        guard let (token, events) = takeEvents.removeValue(forKey: id) else { return }
-        if case .caught(let reoffer?) = result {
-            if offer?.token == reoffer { offer = nil }
-            if reading?.token == reoffer { reading = nil }
-            takes[reoffer] = takes[token]
-        }
-        events(.ended(result))
+        takeEvents.removeValue(forKey: id)?.events(.ended(result))
     }
 
-    /// Reads every item of `peer`'s offer of `token`, `count` of them; the
-    /// last read makes it the current offer, unless it ended or another
-    /// replaced it first. An offer of anything but files and folders cannot be
-    /// carried, so it is released.
-    func offerReceived(_ token: Data, count: Int, from peer: PeerHandle) {
-        guard let hub else { return }
-        reading = (peer, token)
-        guard count > 0 else { return read([], of: token, from: peer) }
-        let items = ReadItems()
-        for index in 0..<UInt32(count) {
-            hub.readItem(token, item: index, of: peer) { [weak self] item in
-                let all = items.read.withLock { read -> [OfferedItem?]? in
-                    read[index] = item
-                    guard read.count == count else { return nil }
-                    return (0..<UInt32(count)).map { read[$0] ?? nil }
-                }
-                guard let all else { return }
-                Self.onMain { self?.read(all, of: token, from: peer) }
-            }
-        }
-    }
-
-    private func read(_ items: [OfferedItem?], of token: Data, from peer: PeerHandle) {
-        guard let reading, reading.token == token, reading.peer == peer else { return }
-        self.reading = nil
-        let dragged = items.compactMap { $0.flatMap(DraggedOutItem.init) }
-        guard !dragged.isEmpty, dragged.count == items.count else {
-            Self.logger.log(.error, "The guest offered a drag of something other than files; releasing it")
-            hub?.releaseOffer(token, of: peer)
-            return
-        }
-        offer = GuestDragOffer(peer: peer, token: token, items: dragged)
+    /// `peer`'s drag offer of `token` arrived: it is the drag the display may
+    /// take now, whose take lists its items.
+    func offerReceived(_ token: Data, from peer: PeerHandle) {
+        offer = GuestDragOffer(peer: peer, token: token)
     }
 
     // MARK: - A take's calls
@@ -241,20 +196,16 @@ package final class HubDragOut {
         private let hub: any DragOutHub
         private let peer: PeerHandle
         private let token: Data
-        /// How many items the offer holds, which a delivering catch's offer
-        /// holds too.
-        private let count: Int
         private var id: DragTakeID?
         /// What the take said before the hub named it, in order.
         private var held: [DragTakeControl] = []
         private var cancelHeld = false
 
-        init(owner: HubDragOut, hub: any DragOutHub, peer: PeerHandle, token: Data, count: Int) {
+        init(owner: HubDragOut, hub: any DragOutHub, peer: PeerHandle, token: Data) {
             self.owner = owner
             self.hub = hub
             self.peer = peer
             self.token = token
-            self.count = count
         }
 
         func take(delivery: GuestDragDelivery, _ events: @escaping @MainActor (GuestDragTakeEvent) -> Void) {
@@ -264,12 +215,11 @@ package final class HubDragOut {
             }
             let deliveries = owner.deliveries
             let token = token
-            let count = count
-            hub.takeDrag(token, of: peer) { [weak self, weak owner, hub, peer] result in
+            hub.takeDrag(token, of: peer) { [weak self, weak owner] result in
                 // Recorded on the hub's queue, before any of the take's
                 // events can reach it.
                 if case .success(let id) = result {
-                    deliveries.add(id, count: count, delivery: delivery, peer: peer, hub: hub)
+                    deliveries.add(id, delivery: delivery)
                 } else {
                     delivery.settle(.undelivered)
                 }
@@ -307,7 +257,7 @@ package final class HubDragOut {
         }
 
         func pull(
-            _ item: DraggedOutItem, at index: Int, of token: Data, into directory: URL, named name: String,
+            _ item: DraggedOutItem, at index: Int, into directory: URL, named name: String,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             guard let owner else {
@@ -343,7 +293,7 @@ package final class HubDragOut {
             }
         }
 
-        func release(_ token: Data) {
+        func release() {
             hub.releaseOffer(token, of: peer)
         }
 
@@ -356,64 +306,55 @@ package final class HubDragOut {
         }
     }
 
-    /// The items of one offer read so far, by index.
-    private final class ReadItems: Sendable {
-        let read = Mutex([UInt32: OfferedItem?]())
-    }
-
-    /// Every open take's delivery by its id, settled on the hub's queue as the
-    /// take ends.
+    /// Every open take's delivery by its id, named and settled on the hub's
+    /// queue as the take reports.
     private final class Deliveries: Sendable {
         private struct Entry: Sendable {
-            var count: Int
+            /// The drag's items, once the take's first `TARGETED` listed them.
+            var items: [DraggedOutItem] = []
             var delivery: GuestDragDelivery
-            var peer: PeerHandle
-            var hub: any DragOutHub
         }
 
         private let entries = Mutex([DragTakeID: Entry]())
 
-        func add(_ id: DragTakeID, count: Int, delivery: GuestDragDelivery, peer: PeerHandle, hub: any DragOutHub) {
-            entries.withLock { $0[id] = Entry(count: count, delivery: delivery, peer: peer, hub: hub) }
+        func add(_ id: DragTakeID, delivery: GuestDragDelivery) {
+            entries.withLock { $0[id] = Entry(delivery: delivery) }
         }
 
         /// Hears a take event on the hub's queue: the guest answering the ask
-        /// for a delivering drop, or the take ending, which settles its
-        /// delivery once the offer it names is read. The hub reports a take
-        /// that names an offer ended only once that offer arrived whole, so
-        /// every item is there to read.
+        /// for a delivering drop, its drop naming the promises, or the take
+        /// ending, which settles its delivery.
         func hear(_ event: DragTakeEvent) {
             switch event {
+            case .report(let id, .targeted(let items)):
+                entries.withLock { entries in
+                    if entries[id]?.items.isEmpty == true { entries[id]?.items = DraggedOutItem.carried(items) }
+                }
             case .report(let id, .delivering), .report(let id, .deliverRefused):
                 entries.withLock { $0[id] }?.delivery.peerAnswered()
+            case .report(let id, .named(let names)):
+                guard let entry = entries.withLock({ $0[id] }) else { return }
+                let promised = entry.items.indices.filter { entry.items[$0].isPromised }
+                let delivery = DragDelivery(
+                    names: Dictionary(uniqueKeysWithValues: zip(promised, names)), folderSizes: [:])
+                entry.delivery.named(Self.items(entry.items, delivery))
             case .ended(let id, let result):
                 guard let entry = entries.withLock({ $0.removeValue(forKey: id) }) else { return }
-                guard case .caught(let reoffer?) = result, entry.count > 0 else {
-                    return entry.delivery.settle(.undelivered)
-                }
-                Self.read(reoffer, entry)
+                guard case .caught(let delivery?) = result else { return entry.delivery.settle(.undelivered) }
+                entry.delivery.settle(.delivered(Self.items(entry.items, delivery)))
             case .report, .requested, .control, .cancelled:
                 break
             }
         }
 
-        /// Reads every item of the offer of `token`, as many as the taken offer
-        /// held, and settles `entry`'s delivery with them.
-        private static func read(_ token: Data, _ entry: Entry) {
-            let count = entry.count
-            let items = ReadItems()
-            for index in 0..<UInt32(count) {
-                entry.hub.readItem(token, item: index, of: entry.peer) { item in
-                    let all = items.read.withLock { read -> [OfferedItem?]? in
-                        read[index] = item
-                        guard read.count == count else { return nil }
-                        return (0..<UInt32(count)).map { read[$0] ?? nil }
-                    }
-                    guard let all else { return }
-                    let delivered = all.compactMap { $0.flatMap(DraggedOutItem.init) }
-                    entry.delivery.settle(
-                        delivered.count == count ? .delivered(token: token, items: delivered) : .undelivered)
-                }
+        /// `items` under the names `delivery` gives its promises and the sizes
+        /// it gives its folders.
+        private static func items(_ items: [DraggedOutItem], _ delivery: DragDelivery) -> [DraggedOutItem] {
+            items.indices.map { index in
+                var item = items[index]
+                if let name = delivery.names[index] { item.name = name }
+                if let size = delivery.folderSizes[index] { item.sizeEstimate = size }
+                return item
             }
         }
     }

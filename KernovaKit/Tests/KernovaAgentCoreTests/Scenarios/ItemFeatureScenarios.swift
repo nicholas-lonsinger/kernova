@@ -107,7 +107,7 @@ enum ItemFeatureScenarios {
             world.addPeer(.session())
             world.at(.ms(500)) { world in
                 world.offerItems(SimItems.offer(1, [[file]]), feature: .drop, from: .peer)
-                world.offerItems(SimItems.offer(2, [[file]]), feature: .drag, from: .host)
+                world.offerItems(SimItems.offer(2, []), feature: .drag, from: .host)
                 world.offerItems(SimItems.offer(3, [[file]]), feature: .logs, from: .host)
             }
         },
@@ -122,10 +122,16 @@ enum ItemFeatureScenarios {
                         && items(world, .host)?.offersReceived.isEmpty == true, "an offer opened")
         })
 
-    /// One session peer offering a drag of `file` at 500 ms, which the host takes at 700 ms.
+    /// The items a drag's take lists.
+    static var dragItems: [OfferedItem] { SimItems.offer(1, [[file]]).items }
+
+    /// One session peer offering a drag at 500 ms whose take's `TARGETED` lists ``dragItems``.
     static func dragOffered(_ world: SimWorld) {
         world.addPeer(.session())
-        world.at(.ms(500)) { world in world.offerItems(SimItems.offer(1, [[file]]), feature: .drag, from: .peer) }
+        world.at(.ms(500)) { world in
+            world.links.first?.items(.peer).takeItems = dragItems
+            world.offerItems(SimItems.offer(1, []), feature: .drag, from: .peer)
+        }
     }
 
     static let dragTaken = Scenario(
@@ -145,7 +151,7 @@ enum ItemFeatureScenarios {
                     items(world, .peer)?.takesRequested.map(\.token) == [SimItems.token(1)],
                     "the peer was asked once")
                 + expectThat(
-                    host?.takesEnded.map(\.result) == [.caught(reoffer: nil)] && host?.takesEnded.first?.id == id,
+                    host?.takesEnded.map(\.result) == [.caught(nil)] && host?.takesEnded.first?.id == id,
                     "the take ended caught: \(String(describing: host?.takesEnded))")
                 + expectThat(
                     ItemScenarios.isLanded(ItemScenarios.onePull(world, .host)?.1),
@@ -192,7 +198,7 @@ enum ItemFeatureScenarios {
         expect: { world in
             let host = items(world, .host)
             return expectThat(
-                host?.takesEnded.map(\.result) == [.caught(reoffer: nil), .refused(WireError(.dragNotCurrent))],
+                host?.takesEnded.map(\.result) == [.caught(nil), .refused(WireError(.dragNotCurrent))],
                 "the takes: \(String(describing: host?.takesEnded))")
                 + expectThat(
                     host?.takes.last.map {
@@ -212,7 +218,7 @@ enum ItemFeatureScenarios {
             world.at(.ms(900)) { world in world.withdrawOffer(SimItems.token(1), from: .peer) }
             world.at(.ms(1_000)) { world in
                 guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
-                world.peerInput(.dragTake(id, .caught(reoffer: nil)), link: link, after: 0)
+                world.peerInput(.dragTake(id, .caught(folderSizes: nil)), link: link, after: 0)
             }
         },
         expect: { world in
@@ -241,24 +247,24 @@ enum ItemFeatureScenarios {
             answersByHand(world)
             world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
             world.at(.ms(800)) { world in answer(.report(.armed), world) }
-            world.at(.ms(850)) { world in answer(.report(.targeted), world) }
+            world.at(.ms(850)) { world in answer(.report(.targeted(dragItems)), world) }
             world.at(.ms(900)) { world in world.controlTakes(.catcher(shown: false)) }
             world.at(.ms(950)) { world in world.controlTakes(.deliver) }
             world.at(.ms(1_000)) { world in answer(.report(.delivering), world) }
-            world.at(.ms(1_050)) { world in answer(.caught(reoffer: nil), world) }
+            world.at(.ms(1_050)) { world in answer(.caught(folderSizes: nil), world) }
             world.at(.ms(1_100)) { world in world.controlTakes(.catcher(shown: true)) }
         },
         expect: { world in
             let host = items(world, .host)
             let peer = items(world, .peer)
             return expectThat(
-                host?.takeReports.map(\.report) == [.armed, .targeted, .delivering],
+                host?.takeReports.map(\.report) == [.armed, .targeted(dragItems), .delivering],
                 "the host heard: \(String(describing: host?.takeReports))")
                 + expectThat(
                     peer?.takeControls.map(\.control) == [.catcher(shown: false), .deliver],
                     "the peer heard, and nothing after its END: \(String(describing: peer?.takeControls))")
                 + expectThat(
-                    host?.takesEnded.map(\.result) == [.caught(reoffer: nil)],
+                    host?.takesEnded.map(\.result) == [.caught(nil)],
                     "the take: \(String(describing: host?.takesEnded))")
                 + expectThat(peer?.takesCancelled.isEmpty == true, "the peer heard its own END as a cancel")
                 + expectThat(ends(world, .host, .remote).isEmpty, "the drag offer ended with the take")
@@ -275,19 +281,19 @@ enum ItemFeatureScenarios {
                 guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
                 link.peer?.handle(.dragTake(id, .report(.armed)), now: world.localNow(world.process(of: link, .peer)))
                 link.peer?.handle(
-                    .dragTake(id, .report(.targeted)), now: world.localNow(world.process(of: link, .peer)))
+                    .dragTake(id, .report(.targeted(dragItems))), now: world.localNow(world.process(of: link, .peer)))
                 link.peer?.handle(
-                    .dragTake(id, .caught(reoffer: nil)), now: world.localNow(world.process(of: link, .peer)))
+                    .dragTake(id, .caught(folderSizes: nil)), now: world.localNow(world.process(of: link, .peer)))
                 world.drain(link, .peer)
             }
         },
         expect: { world in
             let host = items(world, .host)
             return expectThat(
-                host?.takeReports.map(\.report) == [.armed, .targeted],
+                host?.takeReports.map(\.report) == [.armed, .targeted(dragItems)],
                 "the host heard: \(String(describing: host?.takeReports))")
                 + expectThat(
-                    host?.takesEnded.map(\.result) == [.caught(reoffer: nil)],
+                    host?.takesEnded.map(\.result) == [.caught(nil)],
                     "the take: \(String(describing: host?.takesEnded))")
                 + expectThat(
                     (host?.takeReports.last?.time).map { last in host?.takesEnded.first.map { $0.time >= last } ?? false
@@ -304,7 +310,7 @@ enum ItemFeatureScenarios {
             world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
             world.at(.ms(800)) { world in answer(.report(.armed), world) }
             world.at(.ms(900)) { world in world.cancelTakes() }
-            world.at(.ms(1_000)) { world in answer(.caught(reoffer: nil), world) }
+            world.at(.ms(1_000)) { world in answer(.caught(folderSizes: nil), world) }
         },
         expect: { world in
             let host = items(world, .host)

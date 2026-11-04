@@ -295,6 +295,16 @@ public struct ItemTransfer: FeatureMachine {
         client.offersChanged(offers, connection: &connection)
     }
 
+    /// Gives this side's DRAG offer of `token` its drag's `items`; false when it has no whole, empty one.
+    mutating func carryLocal(_ token: Data, items: [OfferedItem]) -> Bool {
+        offers.carryLocal(token, items: items)
+    }
+
+    /// Gives the far side's DRAG offer of `token` its drag's `items`; nil when it did, or why not.
+    mutating func carryRemote(_ token: Data, items: [OfferedItem]) -> WireError? {
+        offers.carryRemote(token, items: items)
+    }
+
     /// Opens an offer of `offer` on a stream of `kind`, an item-set offer kind this role opens; nil when sent,
     /// or why not.
     public mutating func offer(_ offer: ItemOffer, kind: StreamKind, connection: inout Connection) -> WireError? {

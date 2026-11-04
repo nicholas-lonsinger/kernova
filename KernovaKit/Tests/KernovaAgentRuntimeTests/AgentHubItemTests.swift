@@ -285,7 +285,7 @@ struct AgentHubItemTests {
         let harness = await harness()
         let peer = HubPeer(harness, claim: Fixture.peerClaim, items: MemoryItems())
         let handle = await harness.snapshot { $0.consolePeers.count == 3 }.peers[0].handle
-        peer.send(.offer(ItemRequestID(rawValue: 1), Self.offer, feature: .drag))
+        peer.send(.offer(ItemRequestID(rawValue: 1), SimItems.offer(1, []), feature: .drag))
         var log = harness.itemLog.waiter()
         _ = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
 
@@ -299,8 +299,8 @@ struct AgentHubItemTests {
                 if case .dragTake(.requested) = $0 { true } else { false }
             })
         else { Issue.record("no take asked"); return }
-        peer.driver.handle(.dragTake(asked, .caught(reoffer: nil)))
-        _ = await log.next { $0 == .event(.dragTake(handle, .ended(take, .caught(reoffer: nil)))) }
+        peer.driver.handle(.dragTake(asked, .caught(folderSizes: nil)))
+        _ = await log.next { $0 == .event(.dragTake(handle, .ended(take, .caught(nil)))) }
         harness.hub.close()
     }
 

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentCore
+import Synchronization
 import KernovaKit
 import KernovaLogging
 import KernovaWire
@@ -43,19 +44,20 @@ package struct DraggedOutItem: Equatable, Sendable {
     /// What a Mac destination is told the item is called.
     package var filename: String { String(decoding: name, as: UTF8.self) }
 
-    /// The item `item` carries out of the guest: its first FILE or FOLDER
-    /// representation, or nil when it has none.
-    package init?(_ item: OfferedItem) {
-        guard
-            let index = item.representations.firstIndex(where: { $0.storage == .file || $0.storage == .folder })
-        else { return nil }
-        let representation = item.representations[index]
+    /// What a take carries of `items`, which its first `TARGETED` listed and
+    /// the hub checked with `DragItems.carried(_:)`.
+    package static func carried(_ items: [OfferedItem]) -> [DraggedOutItem] {
+        (DragItems.carried(items) ?? []).map { DraggedOutItem($0.representation, at: $0.index) }
+    }
+
+    /// The item carried out of the guest by `representation`, at `index` among
+    /// its item's representations (`DragItems.carried(_:)`).
+    package init(_ representation: Representation, at index: UInt32) {
         let isDirectory = representation.storage == .folder
         let declared = representation.type.appleUTI.flatMap { UTType($0) }
         self.init(
             name: representation.name, type: declared ?? (isDirectory ? .folder : .data), isDirectory: isDirectory,
-            isPromised: representation.promised, representation: UInt32(index),
-            sizeEstimate: representation.sizeEstimate)
+            isPromised: representation.promised, representation: index, sizeEstimate: representation.sizeEstimate)
     }
 
     package init(
@@ -99,16 +101,16 @@ package protocol GuestDragTransport: AnyObject {
     /// Calls the take off; its end follows.
     func cancel()
 
-    /// Pulls `item`, item `index` of the offer of `token`, into `directory`
-    /// under exactly `name`, calling `ended` once with how the pull ended, and
+    /// Pulls `item`, item `index` of the taken offer, into `directory` under
+    /// exactly `name`, calling `ended` once with how the pull ended, and
     /// returns what cancels it.
     func pull(
-        _ item: DraggedOutItem, at index: Int, of token: Data, into directory: URL, named name: String,
+        _ item: DraggedOutItem, at index: Int, into directory: URL, named name: String,
         ended: @escaping @MainActor (Result<Void, WireError>) -> Void
     ) -> @MainActor () -> Void
 
-    /// Releases the offer of `token`: this side pulls nothing more of it.
-    func release(_ token: Data)
+    /// Releases the taken offer: this side pulls nothing more of it.
+    func release()
 }
 
 /// The VM display a take drives: it withholds the press while the guest
@@ -151,8 +153,9 @@ package protocol GuestDragDisplay: AnyObject {
 /// drag session it begins speak to it.
 @MainActor
 package protocol GuestDragTaking: AnyObject, Sendable {
-    /// What the drag carries, in the offer's order; a promised item's name is
-    /// a stand-in.
+    /// What the drag carries, in the order the guest's catcher saw it; a
+    /// promised item's name is a stand-in. Empty until the catcher is the
+    /// drag's target, which the Mac session begins after.
     nonisolated var items: [DraggedOutItem] { get }
 
     /// Whether the Mac session is over the display the take began on,
@@ -237,13 +240,14 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// hands the press back.
 ///
 /// A drag a Mac destination takes is delivered: the take asks the guest
-/// (`DragDeliver`) and releases onto its catcher once the guest answers, and
-/// the catcher's drop calls the promises in and sizes the folders, then names
-/// the offer that carries them on. The first destination to ask a promised
-/// item's name starts that while it waits; one that took the drop without
-/// asking yet has it started as the session ends. No wall clock bounds any of
-/// it: each wait ends on the guest's answer, the take's end, or the user's own
-/// release or return.
+/// (`DragDeliver`) and releases onto its catcher once the guest answers; the
+/// catcher's drop calls the promises in and names them on the take, then
+/// sizes the folders and ends it. Every item is pulled from the taken offer,
+/// which only this side ends. The first destination to ask a promised item's
+/// name starts that and waits for the names alone; one that took the drop
+/// without asking yet has it started as the session ends. No wall clock bounds
+/// any of it: each wait ends on the guest's answer, the take's end, or the
+/// user's own release or return.
 @MainActor
 @Observable
 package final class GuestDragTake: GuestDragTaking {
@@ -297,7 +301,9 @@ package final class GuestDragTake: GuestDragTaking {
         case exitPoint
     }
 
-    nonisolated package let items: [DraggedOutItem]
+    nonisolated package var items: [DraggedOutItem] { carried.withLock { $0 } }
+    /// The drag's items, set once by the take's first `TARGETED`.
+    nonisolated private let carried = Mutex<[DraggedOutItem]>([])
     /// Where the hand-off stands now; the one observed property.
     package private(set) var phase: Phase = .handingOff(armed: false) {
         didSet {
@@ -356,12 +362,9 @@ package final class GuestDragTake: GuestDragTaking {
     /// Whether the take's stream is open: the guest has not ended it, and this
     /// side has not called it off.
     @ObservationIgnored private var takeOpen = true
-    /// The guest's offers of this drag still open: the one taken, and the one a
-    /// delivering catch names.
-    @ObservationIgnored private var openOffers: Set<Data>
-    /// The offer the items are pulled from: the taken one, until the delivery
-    /// carries the drag on in another.
-    @ObservationIgnored private var pullToken: Data
+    /// Whether the taken offer is open: this side has not released it, and the
+    /// guest has not ended it.
+    @ObservationIgnored private var offerOpen = true
 
     // MARK: After the Mac session begins
 
@@ -395,7 +398,7 @@ package final class GuestDragTake: GuestDragTaking {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "GuestDragTake")
 
-    /// Takes over the drag of `items`, offered under `token`, through
+    /// Takes over a guest drag through
     /// `transport` for `display`, which the take drives while `holds` stays
     /// true.
     ///
@@ -403,16 +406,13 @@ package final class GuestDragTake: GuestDragTaking {
     /// offers are released or ended, and no write is still pulling. Nothing is
     /// sent until ``begin()``.
     init(
-        items: [DraggedOutItem], token: Data, transport: any GuestDragTransport, display: any GuestDragDisplay,
+        transport: any GuestDragTransport, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         holds: @escaping @MainActor () -> Bool,
         onFinished: @escaping @MainActor (GuestDragTake) -> Void
     ) {
-        self.items = items
-        self.openOffers = [token]
-        self.pullToken = token
         self.transport = transport
         self.display = display
         self.reporter = reporter
@@ -442,7 +442,7 @@ package final class GuestDragTake: GuestDragTaking {
             })
         Self.logger.log(
             .notice,
-            "Taking over a guest drag of \(self.items.count, privacy: .public) item(s) from '\(self.peerName, privacy: .public)'"
+            "Taking over a guest drag from '\(self.peerName, privacy: .public)'"
         )
     }
 
@@ -587,7 +587,8 @@ package final class GuestDragTake: GuestDragTaking {
             case .handingOff(armed: true), .ready, .carried, .released, .unreleased, .abandoned:
                 break
             }
-        case .targeted:
+        case .targeted(let listed):
+            carried.withLock { if $0.isEmpty { $0 = DraggedOutItem.carried(listed) } }
             // A target for a showing since stood down says nothing about the
             // catcher up now.
             guard catcherArmed else { return }
@@ -608,16 +609,15 @@ package final class GuestDragTake: GuestDragTaking {
         case .stoodDown:
             catcherStoodDown += 1
             if phase == .carried(.dropped), catcherDown { release(at: .dropPoint) }
+        case .named:
+            // The delivery hears the names on the transport's queue.
+            break
         }
     }
 
     /// The take ended: the guest's END, or how the stream closed without one.
     func takeEnded(_ result: DragTakeResult) {
         takeOpen = false
-        if case .caught(let reoffer?) = result {
-            openOffers.insert(reoffer)
-            adoptDelivered()
-        }
         let reason = Self.describe(result)
         switch phase {
         case .handingOff, .ready:
@@ -637,10 +637,10 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
-    /// The guest's offer of `token` ended without this side releasing it.
-    func offerEnded(_ token: Data) {
-        guard openOffers.remove(token) != nil else { return }
-        guard token == pullToken else { return retireIfDone() }
+    /// The taken offer ended without this side releasing it.
+    func offerEnded() {
+        guard offerOpen else { return }
+        offerOpen = false
         switch phase {
         case .handingOff, .ready: abandon(because: "the guest's offer ended")
         case .carried, .released, .unreleased, .abandoned:
@@ -792,8 +792,10 @@ package final class GuestDragTake: GuestDragTaking {
         if destinationMayAsk {
             guard written.count == items.count || terminal != nil else { return }
         }
-        for token in openOffers.sorted(by: { $0.lexicographicallyPrecedes($1) }) { transport.release(token) }
-        openOffers.removeAll()
+        if offerOpen {
+            offerOpen = false
+            transport.release()
+        }
         guard !isFinished else { return }
         isFinished = true
         onFinished(self)
@@ -805,18 +807,18 @@ package final class GuestDragTake: GuestDragTaking {
         guard items.indices.contains(index) else { return "Untitled" }
         let item = items[index]
         guard item.isPromised else { return item.filename }
-        if let settled = delivery.settled { return Self.filename(of: index, item, settled) }
+        if let naming = delivery.naming { return Self.filename(of: index, item, naming) }
         guard MainActorBridge.sync({ self.startDeliveryForName() }) else { return item.filename }
         return Self.filename(of: index, item, waitForDelivery())
     }
 
     package func nameItemsForInAppDestination() -> Bool {
         guard items.contains(where: \.isPromised) else { return true }
-        if delivery.settled == nil, !startDeliveryForName() {
+        if delivery.naming == nil, !startDeliveryForName() {
             Self.logger.log(.warning, "A destination in this app asked for names while the drag could not deliver")
             return false
         }
-        guard case .delivered = waitForDelivery() else { return false }
+        guard case .named = waitForDelivery() else { return false }
         return true
     }
 
@@ -836,13 +838,13 @@ package final class GuestDragTake: GuestDragTaking {
         return true
     }
 
-    /// Waits for the drag's delivery; a wait on the main thread injects the
-    /// release itself once the guest answers, since nothing else can run there
-    /// while it waits.
-    nonisolated private func waitForDelivery() -> GuestDragDelivery.Outcome {
+    /// Waits for the drag's delivery to name its promises; a wait on the main
+    /// thread injects the release itself once the guest answers, since nothing
+    /// else can run there while it waits.
+    nonisolated private func waitForDelivery() -> GuestDragDelivery.Naming {
         let onMain = Thread.isMainThread
         let began = ContinuousClock.now
-        let outcome = delivery.wait(
+        let outcome = delivery.waitForNames(
             releasing: onMain
                 ? { MainActor.assumeIsolated { self.deliveryAnswered(delivering: true) } } : nil)
         let waited = (ContinuousClock.now - began).components
@@ -855,12 +857,10 @@ package final class GuestDragTake: GuestDragTaking {
     }
 
     nonisolated private static func filename(
-        of index: Int, _ item: DraggedOutItem, _ outcome: GuestDragDelivery.Outcome
+        of index: Int, _ item: DraggedOutItem, _ naming: GuestDragDelivery.Naming
     ) -> String {
-        guard case .delivered(_, let delivered) = outcome, delivered.indices.contains(index) else {
-            return item.filename
-        }
-        return delivered[index].filename
+        guard case .named(let named) = naming, named.indices.contains(index) else { return item.filename }
+        return named[index].filename
     }
 
     // MARK: - Writing items
@@ -887,7 +887,6 @@ package final class GuestDragTake: GuestDragTaking {
 
     /// The drag's delivery settled: every write waiting on it pulls now.
     private func deliverySettled() {
-        adoptDelivered()
         let waiting = owed
         owed.removeAll()
         for (index, write) in waiting.sorted(by: { $0.key < $1.key }) {
@@ -900,34 +899,22 @@ package final class GuestDragTake: GuestDragTaking {
         retireIfDone()
     }
 
-    /// Carries the drag on in the offer its delivery read whole, once the take
-    /// ended naming it, and releases the taken one: only this side ends the
-    /// taken offer, so no pull of it races its end. Nothing pulls before the
-    /// delivery settles, so no pull of the taken offer is in flight.
-    private func adoptDelivered() {
-        guard case .delivered(let token, _)? = delivery.settled, token != pullToken, openOffers.contains(token)
-        else { return }
-        let taken = pullToken
-        pullToken = token
-        if openOffers.remove(taken) != nil { transport.release(taken) }
-    }
-
-    /// The item a pull of `index` fetches, and the offer it comes from: the
-    /// delivery's, or the taken one's when none was delivered.
-    private func source(of index: Int) -> (item: DraggedOutItem, token: Data)? {
-        if case .delivered(let token, let delivered)? = delivery.settled, delivered.indices.contains(index) {
-            return (delivered[index], token)
+    /// The item a pull of `index` fetches: as delivered, or as offered when
+    /// nothing was.
+    private func source(of index: Int) -> DraggedOutItem? {
+        if case .delivered(let delivered)? = delivery.settled, delivered.indices.contains(index) {
+            return delivered[index]
         }
         let item = items[index]
         // A promise nothing delivered was never called in, so the guest
         // serves nothing for it.
         guard !item.isPromised else { return nil }
-        return (item, pullToken)
+        return item
     }
 
     private func pull(_ index: Int, to destination: URL, _ completion: @escaping @Sendable ((any Error)?) -> Void) {
         let operation = liveReadout()
-        guard let (item, token) = source(of: index), openOffers.contains(token) else {
+        guard offerOpen, let item = source(of: index) else {
             let failure = ClipboardTransferFailure.peerReported(.dragItemUnavailable)
             operation.unitBegan(id: UInt64(index), expectedBytes: 0, name: items[index].filename)
             operation.unitFailed(id: UInt64(index), failure)
@@ -937,7 +924,7 @@ package final class GuestDragTake: GuestDragTaking {
         operation.unitBegan(id: UInt64(index), expectedBytes: item.sizeEstimate, name: item.filename)
         var ended = false
         let cancel = transport.pull(
-            item, at: index, of: token, into: destination.deletingLastPathComponent(),
+            item, at: index, into: destination.deletingLastPathComponent(),
             named: destination.lastPathComponent
         ) { [weak self] result in
             ended = true
@@ -1007,7 +994,7 @@ package final class GuestDragTake: GuestDragTaking {
     private func liveReadout() -> ClipboardTransferOperation {
         if let readout, readout.isLive { return readout }
         let sized: [DraggedOutItem]
-        if case .delivered(_, let delivered)? = delivery.settled { sized = delivered } else { sized = items }
+        if case .delivered(let delivered)? = delivery.settled { sized = delivered } else { sized = items }
         let operation = ClipboardTransferOperation(
             gesture: .dragOut, direction: .inbound, peerName: peerName,
             expectedBytes: sized.reduce(0) { $0 + $1.sizeEstimate }, expectedItems: items.count,

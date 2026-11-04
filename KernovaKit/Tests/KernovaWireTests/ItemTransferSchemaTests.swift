@@ -162,12 +162,17 @@ struct ItemTransferSchemaTests {
 
         var caught = Kernova_V2_DragTakeOutcome()
         caught.kind = .caught
-        caught.reoffer = Data([0xBB])
-        #expect(try caught.serializedBytes() == [0x08, 1, 0x1A, 1, 0xBB])
+        caught.folderSizes = [5]
+        #expect(try caught.serializedBytes() == [0x08, 1, 0x22, 1, 0x05])
 
         var report = Kernova_V2_DragTakeReport()
         report.step = .targeted
         #expect(try report.serializedBytes() == [0x08, 2])
+
+        var named = Kernova_V2_DragTakeReport()
+        named.step = .named
+        named.promiseNames = [Data("a".utf8)]
+        #expect(try named.serializedBytes() == [0x08, 6, 0x12, 1, 0x61])
 
         var shown = Kernova_V2_DragCatcher()
         shown.shown = true
