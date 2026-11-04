@@ -175,16 +175,11 @@ struct ItemPullClient: Sendable {
         _ order: ItemPullOrder, offers: ItemOfferRegistry, generation: ConnectionGeneration,
         connection: inout Connection, outbox: inout [ItemTransferOutput]
     ) -> Result<ItemPullID, WireError> {
-        let (request, landing) = (order.request, order.landing)
+        let request = order.request
         let (feature, representation): (FeatureID, Representation)
         switch offers.remoteRepresentation(request) {
         case .failure(let error): return .failure(error)
         case .success(let named): (feature, representation) = named
-        }
-        guard landing.takes(representation.storage) else {
-            return .failure(
-                WireError(.internal, debugDetail: "a \(landing) landing for a \(representation.storage) representation")
-            )
         }
         let kind: StreamKind = connection.role == .host ? .itemPullByHost : .itemPullByPeer
         if let refusal = connection.openRefusal(kind) { return .failure(refusal) }

@@ -25,9 +25,11 @@ import KernovaWire
 /// read by `TreeReader`, or INLINE bytes as one DATA entry — compressed as `TransferCompression` chooses for the
 /// direction this side's role on the pull's connection sends it. Each pull's work runs on a queue of its own.
 public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: ItemSource {
-    /// Produces the content of the offered representation a pull names, of an offer of the feature it names, or
-    /// why it cannot: called on the pull's own queue, so it may wait, as a promise called in does.
-    public typealias Content = @Sendable (FeatureID, PullRequest, Representation) -> Result<ItemContent, WireError>
+    /// Produces the content of the offered representation pull `ItemPullID` names, of an offer of the feature
+    /// it names, or why it cannot: called on the pull's own queue, so it may wait, as a promise called in does,
+    /// until the pull's `.serveEnded`.
+    public typealias Content =
+        @Sendable (FeatureID, ItemPullID, PullRequest, Representation) -> Result<ItemContent, WireError>
 
     private final class Serve {
         let events: any TreeEventSource
@@ -74,7 +76,7 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
                 sendingCores: sendingCores)
             let acceptance = compression.sending(ContainerAcceptance(request, storage: representation.storage))
             serves.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, content] in
-                switch Self.events(content(feature, request, representation), acceptance, fileSystem) {
+                switch Self.events(content(feature, id, request, representation), acceptance, fileSystem) {
                 case .success(let events):
                     return Serve(
                         events: events,

@@ -156,7 +156,9 @@ var targets: [Target] = [
     // Hello, liveness and close, and every feature's machines per role.
     .target(
         name: "KernovaAgentCore",
-        dependencies: ["KernovaWire", .product(name: "SwiftProtobuf", package: "swift-protobuf")],
+        dependencies: [
+            "KernovaWire", "KernovaSynchronization", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     // An item pull's answer: the transfer container's records, encoded from

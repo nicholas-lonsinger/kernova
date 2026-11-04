@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaSynchronization
 import KernovaWire
 import UniformTypeIdentifiers
 
@@ -135,7 +136,7 @@ public final class ClipboardOfferSource {
     /// offer was read, and a clipboard's is called in on its first pull, into
     /// a fresh directory from the reader's `promiseDestination`; every pull of
     /// a promised file serves what its call-in wrote, waiting for it as long as
-    /// its source takes.
+    /// its source takes, or until the task serving the pull is cancelled.
     public func serve(item: Int, representation: Int) async throws(ClipboardServeError)
         -> ClipboardServedRepresentation
     {
@@ -182,17 +183,45 @@ public final class ClipboardOfferSource {
         return task
     }
 
-    /// The file `landing` lands, once it has, served as `storage` names it.
+    /// The file `landing` lands, once it has, served as `storage` names it: `.readFailed` once the calling task
+    /// is cancelled first, which leaves the call-in running for any later pull.
     private static func served(landing: Task<URL, any Error>, as storage: Representation.Storage)
         async throws(ClipboardServeError) -> ClipboardServedRepresentation
     {
         let landed: URL
         do {
-            landed = try await landing.value
+            landed = try await value(of: landing)
         } catch {
             throw .readFailed
         }
         return try served(landed, as: storage)
+    }
+
+    /// `task`'s value, or `CancellationError` as soon as the calling task is cancelled, `task` running on.
+    nonisolated private static func value<Value: Sendable>(of task: Task<Value, any Error>) async throws -> Value {
+        let waiter = Locked<(continuation: CheckedContinuation<Value, any Error>?, cancelled: Bool)>((nil, false))
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let cancelled = waiter.withLock { waiter -> Bool in
+                    if !waiter.cancelled { waiter.continuation = continuation }
+                    return waiter.cancelled
+                }
+                guard !cancelled else { return continuation.resume(throwing: CancellationError()) }
+                Task {
+                    let result = await task.result
+                    waiter.withLock { waiter in
+                        defer { waiter.continuation = nil }
+                        return waiter.continuation
+                    }?.resume(with: result)
+                }
+            }
+        } onCancel: {
+            waiter.withLock { waiter in
+                waiter.cancelled = true
+                defer { waiter.continuation = nil }
+                return waiter.continuation
+            }?.resume(throwing: CancellationError())
+        }
     }
 
     /// `url` served as `storage` names it, or why it cannot be.

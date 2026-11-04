@@ -5,6 +5,7 @@ import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -46,12 +47,30 @@ struct HubClipboardServiceTests {
         }
     }
 
-    private func reads(_ probe: AgentHubProbe) -> [ItemRequestID] {
-        probe.commands.compactMap { if case .items(.read(let id, _, _)) = $0 { id } else { nil } }
+    private func reads(_ probe: AgentHubProbe) -> [(id: ItemRequestID, item: UInt32)] {
+        probe.commands.compactMap { if case .items(.read(let id, _, let item)) = $0 { (id, item) } else { nil } }
     }
 
     private func pulls(_ probe: AgentHubProbe) -> [(id: ItemRequestID, order: ItemPullOrder)] {
         probe.commands.compactMap { if case .items(.pull(let id, let order)) = $0 { (id, order) } else { nil } }
+    }
+
+    private func cancels(_ probe: AgentHubProbe) -> [ItemPullID] {
+        probe.commands.compactMap { if case .items(.cancel(let id)) = $0 { id } else { nil } }
+    }
+
+    /// Has the guest open the pull the hub asked for in `request`, as pull `stream`.
+    private func open(_ request: ItemRequestID, stream: UInt32, on probe: AgentHubProbe) -> ItemPullID {
+        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: stream))
+        probe.deliver(.itemReply(request, .pulled(.success(pull))), fromConnection: 0)
+        return pull
+    }
+
+    /// Has the guest end its offer, its clipboard having moved on.
+    private func endGuestOffer(on probe: AgentHubProbe) {
+        probe.deliver(
+            .items(.offerEnded(.clipboard, .remote, token: Self.guestToken, .resetByPeer(WireError(.cancelled)))),
+            fromConnection: 0)
     }
 
     private static func representation(_ uti: String, _ storage: Representation.Storage, name: String = "")
@@ -70,12 +89,13 @@ struct HubClipboardServiceTests {
         return item
     }
 
-    /// Has the guest offer `item`, answering the hub's read of it, and waits for the buffer to show it.
-    private func receive(_ item: OfferedItem, on probe: AgentHubProbe, into instance: VMInstance) async throws {
-        let header = ItemSetHeaderValue(feature: .clipboard, token: Self.guestToken, concealed: false, count: 1)
+    /// Has the guest offer `items`, answering the hub's reads of them, and waits for the buffer to show them.
+    private func receive(_ items: OfferedItem..., on probe: AgentHubProbe, into instance: VMInstance) async throws {
+        let header = ItemSetHeaderValue(
+            feature: .clipboard, token: Self.guestToken, concealed: false, count: items.count)
         probe.deliver(.items(.offerReceived(header)), fromConnection: 0)
-        try await probe.changed.wait { !reads(probe).isEmpty }
-        probe.deliver(.itemReply(reads(probe)[0], .read(item)), fromConnection: 0)
+        try await probe.changed.wait { reads(probe).count == items.count }
+        for (id, item) in reads(probe) { probe.deliver(.itemReply(id, .read(items[Int(item)])), fromConnection: 0) }
         try await waitForChange { instance.hubClipboard.inboundOfferSeq == 1 }
     }
 
@@ -102,7 +122,8 @@ struct HubClipboardServiceTests {
         request.token = offer.token
         let exchange = instance.hubClipboard.exchange
         let representation = offer.items[0].representations[0]
-        return await Task.detached { exchange.content(request, representation) }.value
+        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+        return await Task.detached { exchange.content(pull, request, representation) }.value
     }
 
     @Test("A copy on the Mac is offered from its types alone, its bytes read only when the guest pulls them")
@@ -192,7 +213,8 @@ struct HubClipboardServiceTests {
         let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
         try await probe.changed.wait { !pulls(probe).isEmpty }
         let (requestID, order) = try #require(pulls(probe).first)
-        guard case .tree(let directory, .exactly(let name)) = order.landing else {
+        let directory = order.landing.directory
+        guard case .exactly(let name) = order.landing.name else {
             Issue.record("landing \(order.landing)")
             return
         }
@@ -208,6 +230,136 @@ struct HubClipboardServiceTests {
         let served = try #require(await paste.value)
         let url = try #require(URL(string: String(decoding: served, as: UTF8.self)))
         #expect(url.path == directory + "/notes.bin")
+    }
+
+    @Test("A guest pull that opens and never ends is cancelled when the guest's offer ends, and the paste gets nothing")
+    func stalledPullEndsWithItsOffer() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        try await receive(
+            Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
+        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        try await probe.changed.wait { !pulls(probe).isEmpty }
+        let pull = open(pulls(probe)[0].id, stream: 3, on: probe)
+
+        // The guest sends nothing more, and then its clipboard moves on.
+        endGuestOffer(on: probe)
+
+        #expect(await paste.value == nil)
+        try await probe.changed.wait { cancels(probe) == [pull] }
+    }
+
+    @Test("A pull the guest opens only after its offer ended is cancelled as it opens, the paste already answered")
+    func pullOpeningAfterItsOfferEndedIsCancelled() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        try await receive(
+            Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
+        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        try await probe.changed.wait { !pulls(probe).isEmpty }
+
+        endGuestOffer(on: probe)
+        #expect(await paste.value == nil)
+        let pull = open(pulls(probe)[0].id, stream: 3, on: probe)
+        try await probe.changed.wait { cancels(probe) == [pull] }
+    }
+
+    @Test("Every file pull of one guest offer lands against one budget: the paste ceiling as the first pull read it")
+    func filePullsShareOneBudget() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        try await receive(
+            Self.item(Self.representation("public.data", .file, name: "a.bin")),
+            Self.item(Self.representation("public.data", .file, name: "b.bin")), on: probe, into: instance)
+        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
+
+        let first = Task.detached { pasteboard.invokeProvider(forType: .fileURL, itemIndex: 0) }
+        let second = Task.detached { pasteboard.invokeProvider(forType: .fileURL, itemIndex: 1) }
+        try await probe.changed.wait { pulls(probe).count == 2 }
+        let orders = pulls(probe).map(\.order)
+        let budget = try #require(orders[0].budget)
+        #expect(orders[1].budget === budget)
+        #expect(budget.limit == UInt64(instance.effectiveClipboardMaxPasteBytes))
+        // Each pull asks for no more than the budget holds as it is ordered.
+        #expect(orders.map(\.request.byteCeiling) == [budget.limit, budget.limit])
+
+        endGuestOffer(on: probe)
+        #expect(await first.value == nil)
+        #expect(await second.value == nil)
+    }
+
+    @Test("A pull reads the paste ceiling in force, though it changed after the guest's offer was published")
+    func pullReadsTheCeilingInForce() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let text = ClipboardContent.utf8TextUTI
+        try await receive(Self.item(Self.representation(text, .inline)), on: probe, into: instance)
+        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
+
+        let lowered = ClipboardPasteLimit.choices[0]
+        #expect(lowered != instance.effectiveClipboardMaxPasteBytes)
+        instance.preferences.clipboardMaxPasteBytes = lowered
+        let paste = Task.detached { pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType(text)) }
+        try await probe.changed.wait { !pulls(probe).isEmpty }
+        #expect(pulls(probe)[0].order.request.byteCeiling == UInt64(lowered))
+
+        endGuestOffer(on: probe)
+        #expect(await paste.value == nil)
+    }
+
+    @Test("A paste joining a smaller preview's pull pulls again when that one is too large, and lands as a file")
+    func largerAskRepullsAndLandsInStaging() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        try await receive(
+            Self.item(Self.representation(ClipboardContent.utf8TextUTI, .inline)), on: probe, into: instance)
+        let remote = try #require(instance.hubClipboard.exchange.remote)
+        let content = Data("the guest's text".utf8)
+
+        let preview = Task { await remote.previewBytes(item: 0, representation: 0, byteCeiling: 4) }
+        try await probe.changed.wait { pulls(probe).count == 1 }
+        #expect(pulls(probe)[0].order.request.byteCeiling == 4)
+        let pasted = Locked<Data?>(nil)
+        let landed = AsyncGate()
+        remote.pullBytes(item: 0, representation: 0) { data in
+            pasted.withLock { $0 = data }
+            landed.notify()
+        }
+        // The paste joined the preview's pull rather than opening one of its own.
+        #expect(pulls(probe).count == 1)
+
+        let refused = open(pulls(probe)[0].id, stream: 3, on: probe)
+        probe.deliver(
+            .items(.pullEnded(.clipboard, refused, .failed(WireError(.tooLarge, limit: 4)))), fromConnection: 0)
+        #expect(await preview.value == nil)
+        try await probe.changed.wait { pulls(probe).count == 2 }
+        let (requestID, order) = pulls(probe)[1]
+        #expect(order.request.byteCeiling == UInt64(instance.effectiveClipboardMaxPasteBytes))
+        #expect(order.budget == nil)
+
+        // The INLINE representation lands as a file in clipboard staging, and the paste is served from it.
+        #expect(order.landing.directory.hasPrefix(ClipboardFileStaging.processRoot.url.path + "/"))
+        guard case .exactly(let name) = order.landing.name else {
+            Issue.record("landing \(order.landing)")
+            return
+        }
+        try content.write(
+            to: URL(fileURLWithPath: order.landing.directory)
+                .appendingPathComponent(String(decoding: name, as: UTF8.self)))
+        let pull = open(requestID, stream: 5, on: probe)
+        probe.deliver(.items(.pullEnded(.clipboard, pull, .landed(.named(name)))), fromConnection: 0)
+        try await landed.wait { pasted.withLock { $0 } == content }
+
+        // What landed answers each later ask its ceiling admits, pulling nothing more.
+        #expect(await remote.previewBytes(item: 0, representation: 0, byteCeiling: 1024) == content)
+        #expect(await remote.previewBytes(item: 0, representation: 0, byteCeiling: 4) == nil)
+        #expect(pulls(probe).count == 2)
     }
 
     @Test("The guest's offer is released once the buffer and the Mac pasteboard have both moved on")

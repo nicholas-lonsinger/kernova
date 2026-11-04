@@ -7,6 +7,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
+import KernovaSynchronization
 import KernovaWire
 import UniformTypeIdentifiers
 
@@ -50,8 +51,8 @@ final class HubClipboardService: ClipboardServicing {
     /// This VM's transfer report.
     @ObservationIgnored var reporter: ClipboardTransferReporter?
 
-    /// The paste ceiling in force.
-    @ObservationIgnored var maxPasteBytes: () -> Int = { ClipboardPasteLimit.defaultBytes }
+    /// The paste ceiling in force: what the exchange's pulls read, from any thread.
+    @ObservationIgnored let maxPasteBytes: @Sendable () -> Int
 
     /// Whether the host pasteboard still holds this VM's most recent write.
     @ObservationIgnored var hostPasteboardHoldsOurWrite: () -> Bool = { false }
@@ -82,13 +83,16 @@ final class HubClipboardService: ClipboardServicing {
 
     nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubClipboardService")
 
-    /// A service landing the guest's files in clipboard staging under `stagingRoot`, keyed `stagingKey`, its
-    /// pulls built by `sink`, the hub's item sink.
-    init(sink: ItemSinkAdapter<POSIXTreeFileSystem>, stagingRoot: ProcessStagingRoot, stagingKey: String) {
+    /// A service landing the guest's representations in clipboard staging under `stagingRoot`, keyed
+    /// `stagingKey`, its pulls built by `sink`, the hub's item sink, under the paste ceiling `maxPasteBytes` reads.
+    init(
+        sink: ItemSinkAdapter<POSIXTreeFileSystem>, stagingRoot: ProcessStagingRoot, stagingKey: String,
+        maxPasteBytes: @escaping @Sendable () -> Int
+    ) {
         self.sink = sink
+        self.maxPasteBytes = maxPasteBytes
         exchange = ClipboardItemExchange(
-            stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot,
-            pasteCeiling: ClipboardPasteLimit.defaultBytes,
+            stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot, pasteCeiling: maxPasteBytes,
             logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "host-promises-\(stagingKey)", root: stagingRoot)
         exchange.onRemoteOffer = { [weak self] in self?.received($0) }
@@ -104,7 +108,7 @@ final class HubClipboardService: ClipboardServicing {
                 if case .pullEnded(_, let id, let result) = event { return exchange.pullEnded(id, result) }
                 MainActorBridge.async { self?.handle(event, from: peer) }
             },
-            content: { exchange.content($0, $1) })
+            content: { exchange.content($0, $1, $2) })
     }
 
     // MARK: - The console peer
@@ -209,7 +213,6 @@ final class HubClipboardService: ClipboardServicing {
             return reps.map { .resolved($0) }
         }
         let ceiling = maxPasteBytes()
-        exchange.setPasteCeiling(ceiling)
         let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
         var items: [CopyToMacItem] = []
         if budget.exceeds {
@@ -369,9 +372,11 @@ struct HubClipboardLink: ClipboardItemLink {
     func cancelPull(_ id: ItemPullID) { hub.cancelPull(id, on: peer) }
 
     func order(
-        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
+        budget: ByteBudget?
     ) throws(WireError) -> ItemPullOrder {
         try sink.order(
-            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing)
+            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
+            budget: budget)
     }
 }

@@ -85,6 +85,19 @@ struct ClipboardItemBridgeTests {
         }
     }
 
+    /// Starts every pull and never completes one, keeping each completion for the test.
+    private final class StalledPuller: ClipboardItemPulling {
+        let completions = Locked<[@Sendable (Data?) -> Void]>([])
+
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completions.withLock { $0.append(completion) }
+        }
+
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completions.withLock { $0.append { _ in completion(nil) } }
+        }
+    }
+
     /// One publication onto a fresh destination, with what it promised.
     private struct Published {
         let destination: FakePasteboard
@@ -545,6 +558,25 @@ struct ClipboardItemBridgeTests {
             return
         }
         #expect(suppressed == reason)
+    }
+
+    @Test("a paste holds its thread for a stalled pull only until its limit, gets nothing, and leaves the pull running")
+    func pasteHoldEndsAtItsLimit() async throws {
+        #expect(ClipboardPasteboardPublisher.pasteRequesterDeadline == 120)
+        var item = OfferedItem()
+        item.representations = [.make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0)]
+        let puller = StalledPuller()
+        let specs = ClipboardPasteboardPublisher.itemSpecs(
+            for: [item], concealed: false, puller: puller, holdLimit: 0.05, eventLoopWait: { nil })
+        let spec = try #require(specs.first)
+
+        let served = await offCooperativePool { spec.provide(ClipboardContent.utf8TextUTI) }
+
+        #expect(served == nil)
+        let started = puller.completions.withLock { $0 }
+        #expect(started.count == 1)
+        // The pull ends after the paste gave up: nothing is left waiting for it.
+        started.first?(Data("late".utf8))
     }
 
     @Test("a peer's transient marker is never published")

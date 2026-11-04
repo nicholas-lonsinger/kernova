@@ -63,7 +63,7 @@ struct AgentHubAuthorityTests {
         connector.deliver(.items(.offerReceived(Self.header(1, .clipboard))), stranger)
         connector.deliver(.items(.offerEnded(.clipboard, .local, token: SimItems.token(2), .connectionLost)), stranger)
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 3))
-        connector.deliver(.items(.pullEnded(.clipboard, pull, .landed(.inline(Data())))), stranger)
+        connector.deliver(.items(.pullEnded(.clipboard, pull, .landed(.named(Data())))), stranger)
         let take = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
         connector.deliver(.dragTake(.ended(take, .taken)), stranger)
         connector.deliver(.items(.offerReceived(Self.header(3, .clipboard))), first)

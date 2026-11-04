@@ -35,9 +35,7 @@ struct ClipboardItemPullMainThreadTests {
                 return wait
             })
 
-        // A parked main thread could never run the completion. The hold has no
-        // deadline of its own: a lost fast path is ended by the test plan's
-        // per-test allowance.
+        // A parked main thread could never run the completion.
         let served = try #require(specs.first).provide(ClipboardContent.utf8TextUTI)
 
         #expect(served == Data("live".utf8))

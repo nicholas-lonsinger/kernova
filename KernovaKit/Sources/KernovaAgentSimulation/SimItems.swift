@@ -175,8 +175,7 @@ package struct ContainerItemSource: Sendable {
 
 /// An item sink that only decodes: it feeds each pull's container to a `ContainerDecoder`, stages the digest
 /// of the bytes it decodes, and lands that digest on `.commit`, reporting it published under its landing's
-/// name — an INLINE pull's bytes as the digest's four bytes. It records any effect that breaks the sink
-/// contract.
+/// name. It records any effect that breaks the sink contract.
 package struct DecodingItemSink {
     private struct Pull {
         var decoder: ContainerDecoder
@@ -247,7 +246,7 @@ package struct DecodingItemSink {
             }
             if let publishFailure { return .publishFailed(id, publishFailure) }
             landed[id] = digest
-            return .published(id, Self.published(digest, landing))
+            return .published(id, Self.published(landing))
         case .abort(let id):
             terminate(id)
             pulls[id] = nil
@@ -256,18 +255,15 @@ package struct DecodingItemSink {
         }
     }
 
-    /// What a pull that staged `digest` publishes as, landing as `landing`.
-    package static func published(_ digest: UInt32, _ landing: ItemLanding) -> LandedItem {
-        switch landing {
-        case .inline: .inline(withUnsafeBytes(of: digest.bigEndian) { Data($0) })
-        case .tree(_, .exactly(let name)), .tree(_, .keepingBoth(let name)): .named(name)
+    /// What a pull landing as `landing` publishes as.
+    package static func published(_ landing: ItemLanding) -> LandedItem {
+        switch landing.name {
+        case .exactly(let name), .keepingBoth(let name): .named(name)
         }
     }
 
-    /// The landing a sink takes a representation of `storage` as.
-    package static func landing(_ storage: Representation.Storage) -> ItemLanding {
-        storage == .inline ? .inline : .tree(directory: "/sim", name: .keepingBoth(Data("item".utf8)))
-    }
+    /// The landing a sink takes every representation as.
+    package static let landing = ItemLanding(directory: "/sim", name: .keepingBoth(Data("item".utf8)))
 
     private mutating func terminate(_ id: ItemPullID) {
         if !begun.contains(id) { violations.append("pull \(id.stream.rawValue) ended, never begun") }

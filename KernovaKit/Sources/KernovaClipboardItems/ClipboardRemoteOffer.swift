@@ -6,12 +6,16 @@ import KernovaSynchronization
 import KernovaWire
 
 /// The far side's clipboard offer as this side received it, its items read whole, and the pulls that land its
-/// representations here: an INLINE one as its bytes, a FILE or FOLDER in a fresh directory of this side's
-/// clipboard staging under the name the offer gives it.
+/// representations here: each in a fresh directory of this side's clipboard staging, a FILE or FOLDER under the
+/// name the offer gives it, an INLINE one as a file of its bytes, served mapped.
 ///
-/// A representation is pulled once and kept for every later paste that asks for it, so a paste served before
-/// the offer ended still serves after. Safe from any thread: a paste asks on whatever thread the pasteboard
-/// fires its provider on, and a pull ends on the connection's queue, so neither waits for the main actor.
+/// A representation is pulled once and kept for every later ask whose limit admits it, so a paste served before
+/// the offer ended still serves after. Its FILE and FOLDER pulls together land no more than the paste ceiling as
+/// it stood at the first of them: one budget the sink charges each landed entry to. Ending the offer here
+/// cancels every pull still running and fails everyone waiting on one.
+///
+/// Safe from any thread: a paste asks on whatever thread the pasteboard fires its provider on, and a pull ends
+/// on the connection's queue, so neither waits for the main actor.
 public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// The 16 bytes naming the offer.
     public let token: Data
@@ -27,43 +31,69 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private let registry: ClipboardPullRegistry
     private let logger: KernovaLogger
     private let landed: @Sendable () -> Void
+    private let failed: @Sendable (WireError) -> Void
     private let state = Locked(State())
 
     /// One representation of one item.
-    struct Key: Hashable, Sendable {
+    private struct Key: Hashable, Sendable {
         var item: Int
         var representation: Int
     }
 
-    /// What a pull landed.
-    enum Landed: Sendable, Equatable {
-        case bytes(Data)
-        case file(URL)
+    /// What a pull landed: the file or folder, and an INLINE representation's byte count.
+    private struct Landed {
+        var url: URL
+        /// Nil for a FILE or FOLDER, which every ask admits: each is charged once to the offer's one budget.
+        var byteCount: UInt64?
+
+        /// Whether an ask taking at most `ceiling` bytes — nil for a FILE or FOLDER ask — takes it.
+        func admitted(by ceiling: UInt64?) -> Bool {
+            guard let ceiling, let byteCount else { return true }
+            return byteCount <= ceiling
+        }
     }
 
-    /// A pull in flight, under the byte ceiling it was opened with, and everyone waiting on it.
+    /// One ask of a representation: the most bytes it takes, nil for a FILE or FOLDER ask, and its completion.
+    private struct Ask {
+        var ceiling: UInt64?
+        var completion: @Sendable (URL?) -> Void
+    }
+
+    /// The pull of a representation in flight, and every ask waiting on it.
     private struct Pulling {
-        var directory: URL?
-        var waiters: [@Sendable (Landed?) -> Void]
+        /// Tells this pull from a later one of the same representation.
+        var attempt: UInt64
+        /// An INLINE pull's byte ceiling; nil for a FILE or FOLDER pull, which the offer's budget bounds.
+        var ceiling: UInt64?
+        /// Its id, once the connection opened it.
+        var id: ItemPullID?
+        var asks: [Ask]
+    }
+
+    /// A pull the connection opened, until its end arrives.
+    private struct Opened {
+        var key: Key
+        var attempt: UInt64
+        var directory: URL
+        var isInline: Bool
     }
 
     private struct State {
         var landed: [Key: Landed] = [:]
-        var pulling: [PullingKey: Pulling] = [:]
-        var pulls: [ItemPullID: PullingKey] = [:]
+        var pulling: [Key: Pulling] = [:]
+        var opened: [ItemPullID: Opened] = [:]
+        /// What every FILE and FOLDER pull of the offer lands against, from the first of them.
+        var budget: ByteBudget?
+        var nextAttempt: UInt64 = 0
         /// No more pulls: released, or the far side ended the offer.
         var closed = false
-    }
-
-    private struct PullingKey: Hashable {
-        var key: Key
-        var ceiling: UInt64
     }
 
     init(
         header: ItemSetHeaderValue, items: [OfferedItem], link: any ClipboardItemLink,
         staging: ClipboardFileStaging, generation: UInt64, ceiling: @escaping @Sendable () -> UInt64,
-        registry: ClipboardPullRegistry, logger: KernovaLogger, landed: @escaping @Sendable () -> Void
+        registry: ClipboardPullRegistry, logger: KernovaLogger, landed: @escaping @Sendable () -> Void,
+        failed: @escaping @Sendable (WireError) -> Void
     ) {
         token = header.token
         concealed = header.concealed
@@ -75,49 +105,47 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         self.registry = registry
         self.logger = logger
         self.landed = landed
+        self.failed = failed
     }
 
     // MARK: ClipboardItemPulling
 
     /// The bytes of INLINE representation `representation` of item `item`, under the paste ceiling.
     public func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
-        pull(Key(item: item, representation: representation), byteCeiling: ceiling()) { landed in
-            if case .bytes(let data) = landed { completion(data) } else { completion(nil) }
+        ask(Key(item: item, representation: representation), ceiling: ceiling()) { url in
+            completion(url.flatMap { try? Data(contentsOf: $0, options: .mappedIfSafe) })
         }
     }
 
-    /// The file or folder FILE or FOLDER representation `representation` of item `item` landed at, under the
-    /// paste ceiling.
+    /// The file or folder FILE or FOLDER representation `representation` of item `item` landed at, its bytes
+    /// charged to the offer's budget.
     public func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
-        pull(Key(item: item, representation: representation), byteCeiling: ceiling()) { landed in
-            if case .file(let url) = landed { completion(url) } else { completion(nil) }
-        }
+        ask(Key(item: item, representation: representation), ceiling: nil, completion)
     }
 
     /// The bytes of INLINE representation `representation` of item `item`, pulled no larger than `byteCeiling`:
     /// what a bounded preview reads. Nil when the pull failed or the representation is larger.
     public func previewBytes(item: Int, representation: Int, byteCeiling: UInt64) async -> Data? {
         await withCheckedContinuation { continuation in
-            pull(Key(item: item, representation: representation), byteCeiling: byteCeiling) { landed in
-                if case .bytes(let data) = landed {
-                    continuation.resume(returning: data)
-                } else {
-                    continuation.resume(returning: nil)
-                }
+            ask(Key(item: item, representation: representation), ceiling: byteCeiling) { url in
+                continuation.resume(returning: url.flatMap { try? Data(contentsOf: $0, options: .mappedIfSafe) })
             }
         }
     }
 
-    /// The bytes or file each representation already landed, keyed by item and representation.
-    func landedSnapshot() -> [Key: Landed] {
-        state.withLock(\.landed)
-    }
-
     // MARK: Lifecycle
 
-    /// Ends the offer here: what landed stays servable, and nothing more is pulled.
+    /// Ends the offer here: what landed stays servable, nothing more is pulled, every pull in flight is
+    /// cancelled, and everyone waiting on one hears nil now.
     func close() {
-        state.withLock { $0.closed = true }
+        let (ids, asks) = state.withLock { state -> ([ItemPullID], [Ask]) in
+            state.closed = true
+            let pulling = state.pulling.values
+            state.pulling = [:]
+            return (pulling.compactMap(\.id), pulling.flatMap(\.asks))
+        }
+        for id in ids { link.cancelPull(id) }
+        for ask in asks { ask.completion(nil) }
     }
 
     /// Ends the offer here and tells the far side, over the connection it arrived on, that this side pulls
@@ -130,96 +158,141 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// Whether the offer is still the far side's, and pullable.
     public var isOpen: Bool { !state.withLock(\.closed) }
 
-    /// The pull `id` of this offer ended with `result`.
+    /// The pull `id` of this offer ended with `result`. What it landed is kept even once the offer is closed.
     func ended(_ id: ItemPullID, _ result: ItemPullResult) {
-        let (waiters, landed) = state.withLock { state -> ([@Sendable (Landed?) -> Void], Landed?) in
-            guard let pullingKey = state.pulls.removeValue(forKey: id),
-                let pulling = state.pulling.removeValue(forKey: pullingKey)
-            else { return ([], nil) }
-            var landed: Landed?
-            switch result {
-            case .landed(.inline(let data)):
-                landed = .bytes(data)
-            case .landed(.named(let name)):
-                landed = pulling.directory.map {
-                    .file($0.appendingPathComponent(String(decoding: name, as: UTF8.self)))
-                }
-            case .failed, .closed:
-                landed = nil
+        guard let opened = state.withLock({ $0.opened.removeValue(forKey: id) }) else { return }
+        var landed: Landed?
+        if case .landed(.named(let name)) = result {
+            let url = opened.directory.appendingPathComponent(String(decoding: name, as: UTF8.self))
+            if !opened.isInline {
+                landed = Landed(url: url)
+            } else if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                landed = Landed(url: url, byteCount: UInt64(size))
             }
-            if let landed { state.landed[pullingKey.key] = landed }
-            return (pulling.waiters, landed)
         }
-        if landed == nil {
+        guard let landed else {
             logger.log(
                 .notice, "A clipboard pull ended without landing: \(String(describing: result), privacy: .public)")
-        } else {
-            self.landed()
+            let error: WireError? =
+                switch result {
+                case .failed(let error), .closed(.resetByPeer(let error)): error
+                case .landed, .closed: nil
+                }
+            return settle(opened.key, opened.attempt, failedWith: error)
         }
-        for waiter in waiters { waiter(landed) }
+        self.landed()
+        let asks = state.withLock { state -> [Ask] in
+            state.landed[opened.key] = landed
+            guard state.pulling[opened.key]?.attempt == opened.attempt else { return [] }
+            return state.pulling.removeValue(forKey: opened.key)?.asks ?? []
+        }
+        for ask in asks { ask.completion(landed.admitted(by: ask.ceiling) ? landed.url : nil) }
     }
 
     // MARK: Pulling
 
-    private func pull(_ key: Key, byteCeiling: UInt64, _ completion: @escaping @Sendable (Landed?) -> Void) {
+    /// Answers `completion` from what landed, or joins or starts the pull of `key`.
+    private func ask(_ key: Key, ceiling: UInt64?, _ completion: @escaping @Sendable (URL?) -> Void) {
         enum Next {
-            case answer(Landed?)
+            case answer(URL?)
             case joined
-            case start(Representation)
+            case start(attempt: UInt64, ceiling: UInt64?)
         }
-        let pullingKey = PullingKey(key: key, ceiling: byteCeiling)
+        guard items.indices.contains(key.item), items[key.item].representations.indices.contains(key.representation)
+        else { return completion(nil) }
+        let isInline = items[key.item].representations[key.representation].storage == .inline
+        let ask = Ask(ceiling: isInline ? ceiling ?? 0 : nil, completion: completion)
         let next = state.withLock { state -> Next in
-            if let landed = state.landed[key] { return .answer(landed) }
-            if state.pulling[pullingKey] != nil {
-                state.pulling[pullingKey]?.waiters.append(completion)
+            if let landed = state.landed[key] { return .answer(landed.admitted(by: ask.ceiling) ? landed.url : nil) }
+            if state.pulling[key] != nil {
+                state.pulling[key]?.asks.append(ask)
                 return .joined
             }
-            guard !state.closed, items.indices.contains(key.item),
-                items[key.item].representations.indices.contains(key.representation)
-            else { return .answer(nil) }
-            state.pulling[pullingKey] = Pulling(directory: nil, waiters: [completion])
-            return .start(items[key.item].representations[key.representation])
+            guard !state.closed else { return .answer(nil) }
+            let attempt = state.nextAttempt
+            state.nextAttempt += 1
+            state.pulling[key] = Pulling(attempt: attempt, ceiling: ask.ceiling, asks: [ask])
+            return .start(attempt: attempt, ceiling: ask.ceiling)
         }
         switch next {
-        case .answer(let landed): completion(landed)
+        case .answer(let url): completion(url)
         case .joined: break
-        case .start(let representation): start(pullingKey, representation, byteCeiling: byteCeiling)
+        case .start(let attempt, let ceiling): start(key, attempt, ceiling: ceiling)
         }
     }
 
-    /// Opens the pull `pullingKey` names, or fails its waiters.
-    private func start(_ pullingKey: PullingKey, _ representation: Representation, byteCeiling: UInt64) {
+    /// Opens attempt `attempt` at pulling `key`, an INLINE pull no larger than `ceiling`, or settles it failed.
+    private func start(_ key: Key, _ attempt: UInt64, ceiling: UInt64?) {
+        let representation = items[key.item].representations[key.representation]
+        let isInline = representation.storage == .inline
+        let directory: URL
         let order: ItemPullOrder
         do {
-            var landing = ItemLanding.inline
-            if representation.storage != .inline {
-                let directory = try staging.reserveScratchDirectory(generation: generation)
-                state.withLock { $0.pulling[pullingKey]?.directory = directory }
-                landing = .tree(directory: directory.path, name: .exactly(representation.name))
-            }
+            directory = try staging.reserveScratchDirectory(generation: generation)
+            let budget = isInline ? nil : filesBudget()
             order = try link.order(
-                token: token, item: UInt32(pullingKey.key.item), representation: UInt32(pullingKey.key.representation),
-                byteCeiling: byteCeiling, landing: landing)
+                token: token, item: UInt32(key.item), representation: UInt32(key.representation),
+                byteCeiling: budget?.remaining ?? ceiling ?? 0,
+                landing: ItemLanding(
+                    directory: directory.path, name: .exactly(isInline ? Self.inlineName : representation.name)),
+                budget: budget)
         } catch {
             logger.log(.error, "Cannot land a clipboard pull: \(String(describing: error), privacy: .public)")
-            return fail(pullingKey)
+            return settle(key, attempt, failedWith: nil)
         }
         link.pullItem(order) { [self] result in
             switch result {
             case .success(let id):
-                state.withLock { $0.pulls[id] = pullingKey }
+                let wanted = state.withLock { state -> Bool in
+                    guard state.pulling[key]?.attempt == attempt else { return false }
+                    state.pulling[key]?.id = id
+                    state.opened[id] = Opened(key: key, attempt: attempt, directory: directory, isInline: isInline)
+                    return true
+                }
+                guard wanted else { return link.cancelPull(id) }
                 registry.register(id, self)
             case .failure(let error):
                 logger.log(.notice, "A clipboard pull did not open: \(String(describing: error), privacy: .public)")
-                fail(pullingKey)
+                settle(key, attempt, failedWith: error)
             }
         }
     }
 
-    private func fail(_ pullingKey: PullingKey) {
-        let waiters = state.withLock { $0.pulling.removeValue(forKey: pullingKey)?.waiters ?? [] }
-        for waiter in waiters { waiter(nil) }
+    /// The budget every FILE and FOLDER pull of the offer lands against: the paste ceiling as it stands at the
+    /// first of them.
+    private func filesBudget() -> ByteBudget {
+        state.withLock { state in
+            if let budget = state.budget { return budget }
+            let budget = ByteBudget(limit: ceiling())
+            state.budget = budget
+            return budget
+        }
     }
+
+    /// Attempt `attempt` at pulling `key` landed nothing, failing with `error` when it says why. A TOO_LARGE
+    /// INLINE pull is pulled again for the asks that take more than it did; every other ask hears nil, and its
+    /// owner hears the failure.
+    private func settle(_ key: Key, _ attempt: UInt64, failedWith error: WireError?) {
+        let (failing, retry) = state.withLock { state -> ([Ask], (attempt: UInt64, ceiling: UInt64)?) in
+            guard let pulling = state.pulling[key], pulling.attempt == attempt else { return ([], nil) }
+            state.pulling[key] = nil
+            guard error?.code == .tooLarge, !state.closed, let refused = pulling.ceiling else {
+                return (pulling.asks, nil)
+            }
+            let larger = pulling.asks.filter { ($0.ceiling ?? 0) > refused }
+            guard let next = larger.compactMap(\.ceiling).max() else { return (pulling.asks, nil) }
+            let retry = state.nextAttempt
+            state.nextAttempt += 1
+            state.pulling[key] = Pulling(attempt: retry, ceiling: next, asks: larger)
+            return (pulling.asks.filter { ($0.ceiling ?? 0) <= refused }, (retry, next))
+        }
+        if let error, !failing.isEmpty { failed(error) }
+        for ask in failing { ask.completion(nil) }
+        if let retry { start(key, retry.attempt, ceiling: retry.ceiling) }
+    }
+
+    /// The name an INLINE representation's file lands under, in a directory of its own.
+    private static let inlineName = Data("content".utf8)
 }
 
 /// Which remote offer each open pull belongs to, so a pull's end reaches it from the connection's queue.

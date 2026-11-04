@@ -167,7 +167,7 @@ final class MemoryItems: ItemSource, ItemSink {
         switch effect {
         case .bytes(let id, let bytes): return .consumed(id, bytes.count)
         case .finish(let id): return .verified(id)
-        case .commit(let id): return .published(id, .inline(Data()))
+        case .commit(let id): return .published(id, .named(Data()))
         case .begin, .abort: return nil
         }
     }

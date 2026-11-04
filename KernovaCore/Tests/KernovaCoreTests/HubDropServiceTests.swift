@@ -16,6 +16,10 @@ import Testing
 @MainActor
 @Suite("Hub drop service", .caseScoped)
 struct HubDropServiceTests {
+    /// The pull each served request stands for.
+    nonisolated private static let pull = ItemPullID(
+        generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+
     private let scratch = TestScratchDirectory(prefix: "HubDropServiceTests")
 
     init() throws {
@@ -91,7 +95,7 @@ struct HubDropServiceTests {
         request.token = offer.token
         request.item = 0
         let owner = instance.dropService.owner
-        let served = await Task.detached { owner.content(request, offer.items[0].representations[0]) }.value
+        let served = await Task.detached { owner.content(Self.pull, request, offer.items[0].representations[0]) }.value
         #expect(served == .success(.tree(path: a.path)))
     }
 
@@ -124,7 +128,7 @@ struct HubDropServiceTests {
         var request = PullRequest()
         request.token = offer.token
         let owner = instance.dropService.owner
-        let served = await Task.detached { owner.content(request, representation) }.value
+        let served = await Task.detached { owner.content(Self.pull, request, representation) }.value
         guard case .success(.tree(let path)) = served else {
             Issue.record("served \(served)"); return
         }
@@ -339,7 +343,7 @@ extension HubDropServiceTests {
         let second = pull
         let owner = instance.dropService.owner
         let representation = offer.items[1].representations[0]
-        let served = await Task.detached { owner.content(second, representation) }.value
+        let served = await Task.detached { owner.content(Self.pull, second, representation) }.value
         guard case .success(.tree(let path)) = served else {
             Issue.record("served \(served)"); return
         }

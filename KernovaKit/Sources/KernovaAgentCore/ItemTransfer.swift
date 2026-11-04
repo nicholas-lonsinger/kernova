@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaSynchronization
 import KernovaWire
 
 /// One item pull: the connection it runs on and its stream, on either side.
@@ -70,40 +71,43 @@ public enum ItemOfferOrigin: Sendable, Equatable {
     case remote
 }
 
-/// One pull of a representation of the far side's offer, and where its sink lands it. The sink builds it, since
-/// what the request accepts — the decmpfs types above all — is what that landing's volume reads back; nothing
-/// else can pair a request with a landing.
+/// One pull of a representation of the far side's offer, where its sink lands it, and the budget the landing
+/// draws on. The sink builds it, since what the request accepts — the decmpfs types above all — is what that
+/// landing's volume reads back; nothing else can pair a request with a landing.
 public struct ItemPullOrder: Sendable, Equatable {
     /// What the pull asks the far side for.
     public let request: PullRequest
     /// Where the sink lands it.
     public let landing: ItemLanding
+    /// The budget the sink charges each landed entry's bytes to, shared with the owner's other pulls; nil
+    /// when the request's byte ceiling is the only bound.
+    public let budget: ByteBudget?
 
-    /// Pairs `request` with `landing`, which the caller has made it accept.
-    package init(_ request: PullRequest, landing: ItemLanding) {
+    /// Pairs `request` with `landing`, which the caller has made it accept, charging what lands to `budget`.
+    package init(_ request: PullRequest, landing: ItemLanding, budget: ByteBudget? = nil) {
         self.request = request
         self.landing = landing
+        self.budget = budget
     }
 }
 
 /// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`
-/// without reading it. An INLINE representation lands as its bytes; a FILE or FOLDER in a directory.
-public enum ItemLanding: Sendable, Equatable {
-    /// The INLINE representation's bytes, which the sink publishes as `LandedItem.inline`.
-    case inline
-    /// A FILE or FOLDER, in the directory at the absolute path `directory`, under the name `name` chooses.
-    case tree(directory: String, name: ItemLandingName)
+/// without reading it. Every representation lands as one entry — an INLINE one as a file of its bytes — in the
+/// directory at the absolute path `directory`, under the name `name` chooses.
+public struct ItemLanding: Sendable, Equatable {
+    /// The absolute path of the directory it lands in.
+    public var directory: String
+    /// The name it lands under.
+    public var name: ItemLandingName
 
-    /// Whether this landing takes a representation of `storage`.
-    func takes(_ storage: Representation.Storage) -> Bool {
-        switch (self, storage) {
-        case (.inline, .inline), (.tree, .file), (.tree, .folder): true
-        default: false
-        }
+    /// A landing in `directory`, under `name`.
+    public init(directory: String, name: ItemLandingName) {
+        self.directory = directory
+        self.name = name
     }
 }
 
-/// The name a FILE or FOLDER lands under: one path component, as the volume's raw bytes.
+/// The name a representation lands under: one path component, as the volume's raw bytes.
 public enum ItemLandingName: Sendable, Equatable {
     /// Exactly this name; the publish fails `EEXIST` when anything has it.
     case exactly(Data)
@@ -113,9 +117,7 @@ public enum ItemLandingName: Sendable, Equatable {
 
 /// What a pull's sink published.
 public enum LandedItem: Sendable, Equatable {
-    /// An INLINE representation's bytes.
-    case inline(Data)
-    /// A FILE or FOLDER, under this name in its landing's directory.
+    /// The representation, under this name in its landing's directory.
     case named(Data)
 }
 
