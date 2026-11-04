@@ -13,6 +13,7 @@ import Testing
 @MainActor
 struct ClipboardCopyTests {
     private let scratch = TestScratchDirectory(prefix: "clipboard-copy")
+    private let stagingRoot = TestStagingRoot()
 
     private func snapshot(_ pasteboard: FakePasteboard) async throws -> ClipboardOfferSource {
         guard
@@ -295,11 +296,9 @@ struct ClipboardCopyTests {
         let receiver = FakeFilePromiseReceiver(
             name: "photo.png", fileType: "public.png", contents: .file(Data("png".utf8)))
         pasteboard.setFilePromise(receiver)
-        let destination = scratch.url
-
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, promiseDestination: { destination }, sizeOf: nil)
+                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root), sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(receiver.callIns == 1)
         let kept = try #require(source.items.first?.representations.first)
@@ -312,5 +311,91 @@ struct ClipboardCopyTests {
         }
         #expect(served.lastPathComponent == "photo.png")
         #expect(receiver.callIns == 1)
+    }
+
+    // MARK: - Lifetimes
+
+    @Test("A snapshot's called-in files outlive four later call-ins, and go once the snapshot does")
+    func snapshotFilesLiveAsLongAsTheSnapshot() async throws {
+        let staging = ClipboardFileStaging.leased(label: "copies", root: stagingRoot.root)
+        let pasteboard = FakePasteboard()
+        func snapshotOfAPromise(_ name: String) async throws -> (ClipboardOfferSource, URL) {
+            pasteboard.setFilePromise(
+                FakeFilePromiseReceiver(name: name, fileType: "public.png", contents: .file(Data(name.utf8))))
+            guard
+                case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
+                    from: pasteboard, staging: staging, sizeOf: nil),
+                case .file(let url) = try await source.serve(item: 0, representation: 0)
+            else { throw TestFailure("no snapshot of \(name)") }
+            return (source, url)
+        }
+        var (first, file): (ClipboardOfferSource?, URL) = try await snapshotOfAPromise("first.png")
+        var later: [ClipboardOfferSource] = []
+        for index in 1...4 { later.append(try await snapshotOfAPromise("later-\(index).png").0) }
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(try await first?.serve(item: 0, representation: 0) == .file(file))
+
+        first = nil
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(later.count == 4)
+    }
+
+    @Test("A write's source, a concealed puller with it, lives only as long as the pasteboard needs the write")
+    func writeSourceLivesAsLongAsItsWrite() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        var publisher: ClipboardPasteboardPublisher? = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        weak var watched: CountingPuller?
+        do {
+            let puller = CountingPuller(bytes: Data("a password".utf8))
+            watched = puller
+            #expect(
+                publisher?.publish(
+                    [item], concealed: true, puller: puller, servingOffer: Data(repeating: 1, count: 16)) == true)
+        }
+        #expect(watched != nil)
+        #expect(ledger.standingWrite(on: pasteboard) != nil)
+
+        // Another app's copy replaces the write, and the pasteboard lets go of its provider.
+        pasteboard.setString("copied since", forType: .string)
+        #expect(ledger.standingWrite(on: pasteboard) == nil)
+        #expect(watched == nil)
+        #expect(publisher?.retractWrite(servingOffer: Data(repeating: 1, count: 16)) == nil)
+        publisher = nil
+    }
+
+    @Test("A write that promises nothing holds no source: a snapshot of it reads its data from the pasteboard")
+    func dataOnlyWriteHoldsNoSource() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        weak var watched: CountingPuller?
+        do {
+            let puller = CountingPuller(bytes: Data())
+            watched = puller
+            let (written, promised) = publisher.publishCopy(
+                [item], concealed: true, servingFileURLs: true, landed: { _, _ in Data("hunter2".utf8) },
+                puller: puller, servingOffer: Data(repeating: 1, count: 16), onReleased: {})
+            #expect(written && !promised)
+        }
+        #expect(watched == nil)
+        #expect(ledger.standingWrite(on: pasteboard) == nil)
+
+        guard
+            case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, ledger: ledger, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(source.concealed)
+        #expect(source.items.map { $0.representations.compactMap(\.type.appleUTI) } == [[ClipboardContent.utf8TextUTI]])
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("hunter2".utf8)))
     }
 }

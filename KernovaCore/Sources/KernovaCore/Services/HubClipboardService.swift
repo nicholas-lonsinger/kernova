@@ -85,8 +85,10 @@ final class HubClipboardService: ClipboardServicing {
     /// The guest's offer, while it is the host's clipboard.
     @ObservationIgnored private var remote: ClipboardRemoteOffer?
 
-    /// Where a file promise copied on the Mac is called in.
+    /// Where a file promise copied on the Mac is called in when passthrough's offer of it is pulled.
     @ObservationIgnored private let promiseStaging: ClipboardFileStaging
+    /// Where a snapshot of the Mac's clipboard calls its file promises in, each into a lease of its own.
+    @ObservationIgnored let snapshotStaging: ClipboardFileStaging?
     @ObservationIgnored private var nextPromiseGeneration: UInt64 = 1
 
     nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubClipboardService")
@@ -103,6 +105,7 @@ final class HubClipboardService: ClipboardServicing {
             side: .host, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot, pasteCeiling: maxPasteBytes,
             logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "host-promises-\(stagingKey)", root: stagingRoot)
+        snapshotStaging = .leased(label: "host-copies-\(stagingKey)", root: stagingRoot)
         exchange.onRemoteOffer = { [weak self] in self?.received($0) }
         exchange.onRemoteOfferEnded = { [weak self] in self?.remoteEnded($0, $1) }
         exchange.holdsUnsentCopy = { [weak self] in self?.passthroughHoldsUnsentCopy() ?? false }

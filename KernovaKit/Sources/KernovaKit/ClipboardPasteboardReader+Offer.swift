@@ -92,13 +92,14 @@ extension ClipboardPasteboardReader {
     /// A pasteboard holding a write of this process (`ledger`) is never read: a write of the far side's offer
     /// `destinationOffer` is ``SnapshotOutcome/heldByDestination``, and any other is snapshotted from what it was
     /// made from (``ClipboardWriteSource``). Any other pasteboard is read as
-    /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises with it. No more than
-    /// `ceiling` bytes of what is not a file are read.
+    /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises called in now into a
+    /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does; with
+    /// no `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard, destinationOffer: Data? = nil,
         ceiling: Int = ClipboardPasteLimit.defaultBytes,
         ledger: ClipboardWriteLedger = .shared,
-        promiseDestination: @escaping @MainActor () throws -> URL = { throw ClipboardServeError.unavailable },
+        staging: ClipboardFileStaging? = nil,
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
     ) async -> SnapshotOutcome {
         do throws(ClipboardSnapshotTooLarge) {
@@ -111,11 +112,15 @@ extension ClipboardPasteboardReader {
                     else { return .nothing }
                     return .snapshot(snapshot, lost: lost)
                 }
+                let lease = staging?.lease()
                 let read = await readOffer(
                     from: pasteboard, promises: pasteboard.filePromiseReceivers,
-                    promiseDestination: promiseDestination, sizeOf: sizeOf)
+                    promiseDestination: {
+                        guard let lease else { throw ClipboardServeError.unavailable }
+                        return try lease.reserveScratchDirectory()
+                    }, sizeOf: sizeOf)
                 guard case .offer(let source, let lost) = read else { return .nothing }
-                if let snapshot = try await source.snapshot(inlineCeiling: ceiling) {
+                if let snapshot = try await source.snapshot(inlineCeiling: ceiling, holding: lease) {
                     return .snapshot(snapshot, lost: lost)
                 }
                 guard pasteboard.changeCount != source.changeCount else { return .nothing }

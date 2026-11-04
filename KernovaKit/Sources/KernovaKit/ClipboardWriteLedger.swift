@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import KernovaWire
 
@@ -54,9 +55,23 @@ public struct ClipboardWriteSource: Sendable {
     public static let nothing = ClipboardWriteSource(servingOffer: nil, parts: [])
 }
 
-/// The latest write this process made to each pasteboard, and what it was made from, whichever publisher made
-/// it: every publisher of one process records here, so a snapshot of one VM's pasteboard never reads another
-/// VM's promise either.
+/// A write of this process standing on a pasteboard while it promises something: what it was made from, and what
+/// it holds as data. Its providers are its only owners (``ClipboardPasteboardPublisher/write(_:source:onReleased:)``),
+/// so it goes once the pasteboard has finished with all of them; everything else holds it weakly.
+final class ClipboardStandingWrite: Sendable {
+    let source: ClipboardWriteSource
+    let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
+
+    init(source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]) {
+        self.source = source
+        self.data = data
+    }
+}
+
+/// The latest write this process made to each pasteboard that still promises something, and what it was made
+/// from, whichever publisher made it: every publisher of one process records here, so a snapshot of one VM's
+/// pasteboard never reads another VM's promise either. A write that promises nothing has no promise to read, so
+/// a snapshot reads its data from the pasteboard.
 @MainActor
 public final class ClipboardWriteLedger {
     /// The process's ledger, matching the one `NSPasteboard.general` every write targets.
@@ -65,7 +80,7 @@ public final class ClipboardWriteLedger {
     private struct Entry {
         weak var pasteboard: AnyObject?
         let changeCount: Int
-        let source: ClipboardWriteSource
+        weak var write: ClipboardStandingWrite?
     }
 
     private var entries: [ObjectIdentifier: Entry] = [:]
@@ -73,25 +88,25 @@ public final class ClipboardWriteLedger {
     /// An empty ledger; the process's own is ``shared``.
     public init() {}
 
-    /// Records that `pasteboard`, at its change count now, holds a write of `source`; nil when it holds no
-    /// write of this process.
-    func record(_ source: ClipboardWriteSource?, on pasteboard: any ClipboardWritePasteboard) {
-        entries = entries.filter { $0.value.pasteboard != nil }
+    /// Records that `pasteboard`, at its change count now, holds `write`; nil when it holds no write of this
+    /// process that promises anything.
+    func record(_ write: ClipboardStandingWrite?, on pasteboard: any ClipboardWritePasteboard) {
+        entries = entries.filter { $0.value.pasteboard != nil && $0.value.write != nil }
         let key = ObjectIdentifier(pasteboard)
-        guard let source else {
+        guard let write else {
             entries[key] = nil
             return
         }
-        entries[key] = Entry(pasteboard: pasteboard, changeCount: pasteboard.changeCount, source: source)
+        entries[key] = Entry(pasteboard: pasteboard, changeCount: pasteboard.changeCount, write: write)
     }
 
     /// What the write `pasteboard` holds was made from, while it holds a write of this process that nothing has
-    /// replaced since.
+    /// replaced since and whose promises the pasteboard still needs.
     public func standingWrite(on pasteboard: any ClipboardReadPasteboard) -> ClipboardWriteSource? {
         guard let entry = entries[ObjectIdentifier(pasteboard)], entry.pasteboard === pasteboard,
             entry.changeCount == pasteboard.changeCount
         else { return nil }
-        return entry.source
+        return entry.write?.source
     }
 }
 

@@ -69,11 +69,14 @@ public final class ClipboardOfferSource {
     private let promises: [any FilePromiseReceiving]
     private let promiseDestination: @MainActor () throws -> URL
     private var calledIn: [Int: Task<URL, any Error>] = [:]
+    /// The staging this offer's files live in, which lives as long as the offer.
+    private let leases: [ClipboardStagingLease]
 
     init(
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
-        promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL
+        promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL,
+        leases: [ClipboardStagingLease] = []
     ) {
         self.items = items
         self.origins = origins
@@ -82,12 +85,14 @@ public final class ClipboardOfferSource {
         self.changeCount = changeCount
         self.promises = promises
         self.promiseDestination = promiseDestination
+        self.leases = leases
     }
 
     /// This offer as a snapshot of the pasteboard now, independent of what it holds later: every INLINE
     /// representation's bytes read now and held in memory, each sized by what was read, every FILE and FOLDER
-    /// kept as the reference it is, read when pulled, and every file promise called in now, inside the
-    /// source's own staging, and kept as the file it landed.
+    /// kept as the reference it is, read when pulled, and every file promise called in now, where the source's
+    /// `promiseDestination` puts it, and kept as the file it landed. The snapshot holds `lease`, the staging
+    /// those files land in, for as long as it lives.
     ///
     /// A representation whose bytes can no longer be read, or whose promise lands nothing, is left out, and an
     /// item left with none is dropped. Nil when the pasteboard moved on from what was offered, or nothing
@@ -95,7 +100,9 @@ public final class ClipboardOfferSource {
     ///
     /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`,
     ///   reading nothing more.
-    public func snapshot(inlineCeiling: Int) async throws(ClipboardSnapshotTooLarge) -> ClipboardOfferSource? {
+    public func snapshot(inlineCeiling: Int, holding lease: ClipboardStagingLease? = nil)
+        async throws(ClipboardSnapshotTooLarge) -> ClipboardOfferSource?
+    {
         var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
         var frozenItems: [OfferedItem] = []
         var frozenOrigins: [[Origin]] = []
@@ -141,7 +148,8 @@ public final class ClipboardOfferSource {
         guard !frozenItems.isEmpty else { return nil }
         return ClipboardOfferSource(
             items: frozenItems, origins: frozenOrigins, concealed: concealed, pasteboard: nil, changeCount: 0,
-            promises: [], promiseDestination: { throw ClipboardServeError.unavailable })
+            promises: [], promiseDestination: { throw ClipboardServeError.unavailable },
+            leases: leases + (lease.map { [$0] } ?? []))
     }
 
     /// The file or folder `landing` lands, once it has, `kept` taking what landed: its storage, its size, and

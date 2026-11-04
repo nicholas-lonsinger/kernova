@@ -148,23 +148,15 @@ public final class ClipboardPasteboardPublisher {
     /// the user's own copy to something polling the same pasteboard.
     public private(set) var lastWriteChangeCount: Int?
 
-    /// The most recent write the pasteboard actually took, and the token of the offer whose promises it holds.
-    ///
-    /// Recorded on success alone, because it is what is *standing* on the
-    /// pasteboard: a write that failed left the prepare's empty pasteboard
-    /// behind, which is nothing to hold and nothing to withdraw. Only a write
-    /// serving an offer can be stranded by that offer's end, and
-    /// ``retractWrite(servingOffer:)`` retracts it by naming that offer, so no
-    /// other offer's end reaches it.
-    private var heldWrite: HeldWrite?
+    /// The pasteboard's change count right after the most recent write it took, retractions included; nil
+    /// before one, or after a write that failed, which left the prepare's empty pasteboard behind.
+    private var heldChangeCount: Int?
 
-    /// A write standing on the pasteboard: when it was made, the offer it serves, what it was made from, and
-    /// the data each of its items holds now.
-    private struct HeldWrite {
-        let changeCount: Int
-        let source: ClipboardWriteSource
-        let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
-    }
+    /// The most recent write the pasteboard took while that write still promises something: held by the
+    /// write's providers alone, so it, its source and its data go once the pasteboard has finished with every
+    /// one of them. Only a write serving an offer can be stranded by that offer's end, and
+    /// ``retractWrite(servingOffer:)`` retracts it by naming that offer, so no other offer's end reaches it.
+    private weak var standing: ClipboardStandingWrite?
 
     /// Creates a publisher over `pasteboard`, recording each write in `ledger`. `marksWrites` marks every item
     /// it writes (``ClipboardSnapshotPolicy/writeMarkerUTI``), for ``holdsMarkedWrite(_:)``.
@@ -191,9 +183,10 @@ public final class ClipboardPasteboardPublisher {
     /// promised types served lazily.
     ///
     /// The write serves `source`'s offer, the one ``retractWrite(servingOffer:)`` withdraws it for; nil for a
-    /// write that serves from what this side holds. `onReleased` runs once the pasteboard has finished with
-    /// every provider the write promised through, which is when nothing can ask the offer for more; a write
-    /// that promises nothing, or fails, never runs it.
+    /// write that serves from what this side holds. `source` and what the write holds as data live exactly as
+    /// long as the pasteboard needs the write's providers: they hold them, and nothing else does. `onReleased`
+    /// runs once the pasteboard has finished with every provider the write promised through, which is when
+    /// nothing can ask the offer for more; a write that promises nothing, or fails, never runs it.
     @discardableResult
     public func write(
         _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
@@ -205,16 +198,20 @@ public final class ClipboardPasteboardPublisher {
         let unfinished = Locked(promising)
         var providers: [LazyClipboardDataProvider] = []
         let marker = marksWrites ? [(type: ClipboardSnapshotPolicy.writeMarkerUTI, bytes: Data())] : []
-        let items = specs.map { spec -> ClipboardWriteItem in
-            let data = (spec.data + marker).compactMap {
-                type, bytes -> (type: NSPasteboard.PasteboardType, bytes: Data)? in
+        let data = specs.map { spec in
+            (spec.data + marker).compactMap { type, bytes -> (type: NSPasteboard.PasteboardType, bytes: Data)? in
                 Self.screened(bytes, servedAs: type).map { (NSPasteboard.PasteboardType(type), $0) }
             }
+        }
+        let record = ClipboardStandingWrite(source: source, data: data)
+        let items = zip(specs, data).map { spec, data -> ClipboardWriteItem in
             guard !spec.types.isEmpty else { return ClipboardWriteItem(data: data, promised: [], provider: nil) }
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
                 provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
                 onFinished: { provider in
+                    // The providers are the record's only owners.
+                    withExtendedLifetime(record) {}
                     registry.release(provider)
                     let last = unfinished.withLock { left -> Bool in
                         left -= 1
@@ -243,12 +240,14 @@ public final class ClipboardPasteboardPublisher {
         // never asked for anything, nothing has to hold them, and the empty
         // pasteboard it left is nobody's write.
         guard written else {
-            heldWrite = nil
+            heldChangeCount = nil
+            standing = nil
             ledger.record(nil, on: pasteboard)
             return false
         }
-        heldWrite = HeldWrite(changeCount: pasteboard.changeCount, source: source, data: items.map(\.data))
-        ledger.record(source, on: pasteboard)
+        heldChangeCount = pasteboard.changeCount
+        standing = record
+        ledger.record(record, on: pasteboard)
         providerRegistry.retain(providers)
         return true
     }
@@ -268,7 +267,7 @@ public final class ClipboardPasteboardPublisher {
     /// `true` while the pasteboard still holds this publisher's most recent
     /// successful write — nothing (the user included) has replaced it since.
     public var holdsLastWrite: Bool {
-        heldWrite?.changeCount == pasteboard.changeCount
+        heldChangeCount == pasteboard.changeCount
     }
 
     /// Withdraws the promises of this publisher's most recent write when the pasteboard still holds it and it
@@ -276,10 +275,10 @@ public final class ClipboardPasteboardPublisher {
     /// when nothing of that remains. Nil when nothing was withdrawn.
     ///
     /// A pasteboard the user has written over since is theirs and is left untouched, as is a write serving
-    /// another offer, or none.
+    /// another offer, or none, and one whose every promise the pasteboard has finished with.
     @discardableResult
     public func retractWrite(servingOffer token: Data) -> ClipboardRetraction? {
-        guard let held = heldWrite, held.source.servingOffer == token, held.changeCount == pasteboard.changeCount
+        guard let held = standing, held.source.servingOffer == token, heldChangeCount == pasteboard.changeCount
         else { return nil }
         let markers: Set<NSPasteboard.PasteboardType> = [
             .init(ClipboardSnapshotPolicy.concealedMarkerUTI), .init(ClipboardSnapshotPolicy.writeMarkerUTI),
@@ -292,18 +291,14 @@ public final class ClipboardPasteboardPublisher {
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         let written = pasteboard.writeItems(kept.map { ClipboardWriteItem(data: $0, promised: [], provider: nil) })
         lastWriteChangeCount = pasteboard.changeCount
+        // What is written again is data alone, which the pasteboard serves itself: nothing holds a record of it.
+        standing = nil
+        ledger.record(nil, on: pasteboard)
         guard written else {
-            heldWrite = nil
-            ledger.record(nil, on: pasteboard)
+            heldChangeCount = nil
             return .cleared
         }
-        let source = ClipboardWriteSource(
-            servingOffer: nil,
-            parts: held.source.parts.map {
-                .init(items: $0.items, concealed: $0.concealed, servingFileURLs: false, held: $0.held, puller: nil)
-            })
-        heldWrite = HeldWrite(changeCount: pasteboard.changeCount, source: source, data: kept)
-        ledger.record(source, on: pasteboard)
+        heldChangeCount = pasteboard.changeCount
         return .keptData
     }
 
@@ -311,8 +306,9 @@ public final class ClipboardPasteboardPublisher {
     public func clear() {
         pasteboard.clearContents()
         lastWriteChangeCount = pasteboard.changeCount
-        heldWrite = nil
-        ledger.record(.nothing, on: pasteboard)
+        heldChangeCount = nil
+        standing = nil
+        ledger.record(nil, on: pasteboard)
     }
 
     // MARK: - Planning

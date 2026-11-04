@@ -24,8 +24,10 @@ final class GuestClipboard {
     let exchange: ClipboardItemExchange
 
     private let pasteboard: any ClipboardPasteboard
-    /// Where a copied file promise is called in when the host pulls it.
+    /// Where a copied file promise is called in when the host pulls passthrough's offer of it.
     private let promiseStaging: ClipboardFileStaging
+    /// Where a snapshot calls its file promises in, each into a lease of its own.
+    private let snapshotStaging: ClipboardFileStaging
     private var nextPromiseGeneration: UInt64 = 1
     /// The one write choke point a host offer reaches the guest pasteboard through. Its provider registry is
     /// this agent's own: the providers it holds are the guest pasteboard's alone.
@@ -67,6 +69,7 @@ final class GuestClipboard {
             side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: { ceiling.withLock { $0 } },
             logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
+        snapshotStaging = .leased(label: "agent-copies", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(), marksWrites: true)
         seenChangeCount = pasteboard.changeCount
@@ -251,15 +254,11 @@ final class GuestClipboard {
     /// host holds already.
     private func sendSnapshot(answering ask: ClipboardItemExchange.CopyAsk) {
         guard isOffering else { return exchange.decline(ask, WireError(.clipboardNothingToCopy)) }
-        let promiseStaging = promiseStaging
-        let generation = nextPromiseGeneration
-        nextPromiseGeneration += 1
         let hostOffer = exchange.remote?.token
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, destinationOffer: hostOffer, ceiling: pasteCeilingBytes,
-                promiseDestination: { try promiseStaging.reserveScratchDirectory(generation: generation) })
+                from: pasteboard, destinationOffer: hostOffer, ceiling: pasteCeilingBytes, staging: snapshotStaging)
             switch outcome {
             case .snapshot(let snapshot, let lost):
                 exchange.answer(ask, with: snapshot)

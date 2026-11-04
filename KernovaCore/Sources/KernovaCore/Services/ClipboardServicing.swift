@@ -66,6 +66,10 @@ package protocol ClipboardServicing: AnyObject {
     /// nil when there is none, or the transport names none.
     var guestOfferToken: Data? { get }
 
+    /// Where a snapshot of the Mac's clipboard calls its file promises in, each snapshot holding the lease of
+    /// its own; nil when the transport carries no file. Default nil.
+    var snapshotStaging: ClipboardFileStaging? { get }
+
     /// Reserves a directory to call a file promise copied on the Mac in to when the guest pulls it, or `nil`
     /// when the transport can't stage one. Default `nil`: a text-only transport never takes a file.
     func reservePromiseDestination() -> URL?
@@ -152,6 +156,7 @@ package enum CopyToMacDropReason: Sendable, Equatable {
 
 extension ClipboardServicing {
     func reservePromiseDestination() -> URL? { nil }
+    var snapshotStaging: ClipboardFileStaging? { nil }
     func hostCopyOffersNothing() {}
     var resolvesCrossings: Bool { false }
     var connectionEpoch: UInt64 { 0 }

@@ -18,12 +18,7 @@ extension VMInstance {
             let outcome = await ClipboardPasteboardReader.readSnapshot(
                 from: pasteboard, destinationOffer: service?.guestOfferToken,
                 ceiling: self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes,
-                promiseDestination: {
-                    guard let destination = service?.reservePromiseDestination() else {
-                        throw ClipboardServeError.unavailable
-                    }
-                    return destination
-                })
+                staging: service?.snapshotStaging)
             guard let self, let service else { return }
             switch outcome {
             case .nothing:
