@@ -266,6 +266,27 @@ struct GuestClipboardTests {
                 == "Clipboard: too large to paste — over the \(ClipboardPasteLimit.displayLimit(limit)) transfer limit")
     }
 
+    @Test("A paste of the host's concealed text lands it in memory, creating nothing under the staging root")
+    func concealedPasteStagesNothing() async throws {
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        clipboard.setLink(link)
+        clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: true, count: 1)),
+            on: link)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
+
+        let password = Data("hunter2".utf8)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .init(ClipboardContent.utf8TextUTI)) }
+        try await link.changed.wait { link.opened.count == 1 }
+        clipboard.exchange.pullEnded(link.opened[0], .landed(.inline(password)))
+
+        #expect(await paste.value == password)
+        let staged = FileManager.default.enumerator(atPath: staging.root.url.path)?.allObjects ?? []
+        #expect(staged.isEmpty)
+    }
+
     // MARK: - Serving the host's pulls
 
     private static let promiseTypes: [NSPasteboard.PasteboardType] = [

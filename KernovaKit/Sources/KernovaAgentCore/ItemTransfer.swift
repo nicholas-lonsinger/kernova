@@ -101,18 +101,21 @@ public struct ItemPullOrder: Sendable, Equatable {
 }
 
 /// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`
-/// without reading it. Every representation lands as one entry — an INLINE one as a file of its bytes — in the
-/// directory at the absolute path `directory`, under the name `name` chooses.
-public struct ItemLanding: Sendable, Equatable {
-    /// The absolute path of the directory it lands in.
-    public var directory: String
-    /// The name it lands under.
-    public var name: ItemLandingName
+/// without reading it.
+public enum ItemLanding: Sendable, Equatable {
+    /// An INLINE representation's bytes, held in memory and published as `LandedItem.inline`: for content that
+    /// must reach no disk, since a file in staging persists until it is reclaimed.
+    case memory
+    /// Any representation as one entry — an INLINE one as a file of its bytes — in the directory at the
+    /// absolute path `directory`, under the name `name` chooses.
+    case staged(directory: String, name: ItemLandingName)
 
-    /// A landing in `directory`, under `name`.
-    public init(directory: String, name: ItemLandingName) {
-        self.directory = directory
-        self.name = name
+    /// Whether this landing takes a representation of `storage`.
+    func takes(_ storage: Representation.Storage) -> Bool {
+        switch self {
+        case .memory: storage == .inline
+        case .staged: true
+        }
     }
 }
 
@@ -126,6 +129,8 @@ public enum ItemLandingName: Sendable, Equatable {
 
 /// What a pull's sink published.
 public enum LandedItem: Sendable, Equatable {
+    /// An INLINE representation's bytes, landed in memory.
+    case inline(Data)
     /// The representation, under this name in its landing's directory.
     case named(Data)
 }

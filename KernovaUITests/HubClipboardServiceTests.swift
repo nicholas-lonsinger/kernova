@@ -70,15 +70,20 @@ struct HubClipboardServiceTests {
     private func land(
         _ content: Data, for order: ItemPullOrder, request: ItemRequestID, stream: UInt32, on probe: AgentHubProbe
     ) throws {
-        guard case .exactly(let name) = order.landing.name else {
+        let landed: LandedItem
+        switch order.landing {
+        case .memory:
+            landed = .inline(content)
+        case .staged(let directory, .exactly(let name)):
+            try content.write(
+                to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
+            landed = .named(name)
+        case .staged:
             Issue.record("landing \(order.landing)")
             return
         }
-        try content.write(
-            to: URL(fileURLWithPath: order.landing.directory)
-                .appendingPathComponent(String(decoding: name, as: UTF8.self)))
         let pull = open(request, stream: stream, on: probe)
-        probe.deliver(.items(.pullEnded(.clipboard, pull, .landed(.named(name)))), fromConnection: 0)
+        probe.deliver(.items(.pullEnded(.clipboard, pull, .landed(landed))), fromConnection: 0)
     }
 
     /// Has the guest end its offer, its clipboard having moved on.
@@ -283,6 +288,29 @@ struct HubClipboardServiceTests {
         #expect(instance.hubClipboard.clipboardContent.isEmpty)
         // Passthrough on: nothing is reported, since its Copy to Mac is not offered.
         #expect(instance.clipboardTransferReport == .idle)
+    }
+
+    @Test("A paste of the guest's concealed text lands it in memory, creating nothing under the staging root")
+    func concealedPasteStagesNothing() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        try await receive(Self.text, on: probe, into: instance, concealed: true)
+        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        let pasteboard = try hostPasteboard(instance)
+
+        let password = Data("hunter2".utf8)
+        let paste = Task.detached {
+            pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI))
+        }
+        try await probe.changed.wait { !pulls(probe).isEmpty }
+        let (requestID, order) = try #require(pulls(probe).first)
+        #expect(order.landing == .memory)
+        try land(password, for: order, request: requestID, stream: 3, on: probe)
+
+        #expect(await paste.value == password)
+        let exchangeStaging = ClipboardFileStaging.processRoot.url
+            .appendingPathComponent("host-\(instance.configuration.id.uuidString)")
+        #expect(!FileManager.default.fileExists(atPath: exchangeStaging.path))
     }
 
     @Test(
@@ -585,8 +613,7 @@ struct HubClipboardServiceTests {
         let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
         try await probe.changed.wait { !pulls(probe).isEmpty }
         let (requestID, order) = try #require(pulls(probe).first)
-        let directory = order.landing.directory
-        guard case .exactly(let name) = order.landing.name else {
+        guard case .staged(let directory, .exactly(let name)) = order.landing else {
             Issue.record("landing \(order.landing)")
             return
         }
@@ -716,7 +743,11 @@ struct HubClipboardServiceTests {
         #expect(order.budget == nil)
 
         // The INLINE representation lands as a file in clipboard staging, and the paste is served from it.
-        #expect(order.landing.directory.hasPrefix(ClipboardFileStaging.processRoot.url.path + "/"))
+        guard case .staged(let directory, _) = order.landing else {
+            Issue.record("landing \(order.landing)")
+            return
+        }
+        #expect(directory.hasPrefix(ClipboardFileStaging.processRoot.url.path + "/"))
         try land(content, for: order, request: requestID, stream: 5, on: probe)
         try await landed.wait { pasted.withLock { $0 } == content }
 

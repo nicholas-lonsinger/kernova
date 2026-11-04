@@ -832,6 +832,7 @@ package enum TranscriptEvents {
     static func describe(_ result: ItemPullResult) -> String {
         switch result {
         case .landed(.named(let name)): "landed name=\(FrozenFields.hex(name))"
+        case .landed(.inline(let bytes)): "landed inline=\(FrozenFields.hex(bytes))"
         case .failed(let error): "failed code=\(error.code.rawValue)"
         case .closed(let closure): "closed \(describe(closure))"
         }

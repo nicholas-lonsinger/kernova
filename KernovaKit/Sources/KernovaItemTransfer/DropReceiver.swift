@@ -126,7 +126,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         do throws(WireError) {
             order = try sink.order(
                 token: token, item: UInt32(index), representation: UInt32(representation), byteCeiling: .max,
-                landing: ItemLanding(
+                landing: .staged(
                     directory: directory, name: .keepingBoth(item.representations[representation].name)))
         } catch {
             logger.log(.error, "Cannot land a drop in \(directory, privacy: .private): \(error.code, privacy: .public)")
@@ -165,7 +165,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         case .failed(let error), .closed(.resetByPeer(let error)), .closed(.resetLocally(let error)):
             logger.log(.error, "A dropped item did not land: \(error.code, privacy: .public)")
             finish(token, refusing: error)
-        case .closed:
+        case .landed(.inline), .closed:
             logger.log(.error, "A dropped item did not land: \(String(describing: result), privacy: .public)")
             finish(token, refusing: WireError(.internal, debugDetail: "\(result)"))
         }

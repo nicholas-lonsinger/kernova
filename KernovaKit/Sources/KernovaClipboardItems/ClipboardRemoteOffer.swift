@@ -7,7 +7,8 @@ import KernovaWire
 
 /// The far side's clipboard offer as this side received it, its items read whole, and the pulls that land its
 /// representations here: each in a fresh directory of this side's clipboard staging, a FILE or FOLDER under the
-/// name the offer gives it, an INLINE one as a file of its bytes, served mapped.
+/// name the offer gives it, an INLINE one as a file of its bytes, served mapped — but a concealed offer's INLINE
+/// one in memory, within the paste ceiling, since staging persists and a password must reach no disk.
 ///
 /// A representation is pulled once and kept for every later ask whose limit admits it, so a paste served before
 /// the offer ended still serves after. Its FILE and FOLDER pulls together land no more than the paste ceiling as
@@ -40,9 +41,29 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var representation: Int
     }
 
-    /// What a pull landed: the file or folder, and an INLINE representation's byte count.
+    /// Where a pull landed a representation: a file or folder in staging, or a concealed offer's INLINE bytes
+    /// in memory.
+    private enum Content: Sendable {
+        case staged(URL)
+        case memory(Data)
+
+        /// The file or folder; nil for bytes in memory, which no FILE or FOLDER ask takes.
+        var url: URL? {
+            if case .staged(let url) = self { url } else { nil }
+        }
+
+        /// The bytes, the staged file's mapped.
+        var bytes: Data? {
+            switch self {
+            case .staged(let url): try? Data(contentsOf: url, options: .mappedIfSafe)
+            case .memory(let data): data
+            }
+        }
+    }
+
+    /// What a pull landed, and an INLINE representation's byte count.
     private struct Landed {
-        var url: URL
+        var content: Content
         /// Nil for a FILE or FOLDER, which every ask admits: each is charged once to the offer's one budget.
         var byteCount: UInt64?
 
@@ -56,7 +77,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// One ask of a representation: the most bytes it takes, nil for a FILE or FOLDER ask, and its completion.
     private struct Ask {
         var ceiling: UInt64?
-        var completion: @Sendable (URL?) -> Void
+        var completion: @Sendable (Content?) -> Void
     }
 
     /// The pull of a representation in flight, and every ask waiting on it.
@@ -74,7 +95,8 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private struct Opened {
         var key: Key
         var attempt: UInt64
-        var directory: URL
+        /// Where it lands in staging; nil for a pull landing in memory.
+        var directory: URL?
         var isInline: Bool
     }
 
@@ -112,23 +134,21 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
 
     /// The bytes of INLINE representation `representation` of item `item`, under the paste ceiling.
     public func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
-        ask(Key(item: item, representation: representation), ceiling: ceiling()) { url in
-            completion(url.flatMap { try? Data(contentsOf: $0, options: .mappedIfSafe) })
-        }
+        ask(Key(item: item, representation: representation), ceiling: ceiling()) { completion($0?.bytes) }
     }
 
     /// The file or folder FILE or FOLDER representation `representation` of item `item` landed at, its bytes
     /// charged to the offer's budget.
     public func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
-        ask(Key(item: item, representation: representation), ceiling: nil, completion)
+        ask(Key(item: item, representation: representation), ceiling: nil) { completion($0?.url) }
     }
 
     /// The bytes of INLINE representation `representation` of item `item`, pulled no larger than `byteCeiling`:
     /// what a bounded preview reads. Nil when the pull failed or the representation is larger.
     public func previewBytes(item: Int, representation: Int, byteCeiling: UInt64) async -> Data? {
         await withCheckedContinuation { continuation in
-            ask(Key(item: item, representation: representation), ceiling: byteCeiling) { url in
-                continuation.resume(returning: url.flatMap { try? Data(contentsOf: $0, options: .mappedIfSafe) })
+            ask(Key(item: item, representation: representation), ceiling: byteCeiling) {
+                continuation.resume(returning: $0?.bytes)
             }
         }
     }
@@ -162,13 +182,20 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     func ended(_ id: ItemPullID, _ result: ItemPullResult) {
         guard let opened = state.withLock({ $0.opened.removeValue(forKey: id) }) else { return }
         var landed: Landed?
-        if case .landed(.named(let name)) = result {
-            let url = opened.directory.appendingPathComponent(String(decoding: name, as: UTF8.self))
-            if !opened.isInline {
-                landed = Landed(url: url)
-            } else if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
-                landed = Landed(url: url, byteCount: UInt64(size))
+        switch result {
+        case .landed(.named(let name)):
+            guard let url = opened.directory?.appendingPathComponent(String(decoding: name, as: UTF8.self)) else {
+                break
             }
+            if !opened.isInline {
+                landed = Landed(content: .staged(url))
+            } else if let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+                landed = Landed(content: .staged(url), byteCount: UInt64(size))
+            }
+        case .landed(.inline(let data)):
+            if opened.directory == nil { landed = Landed(content: .memory(data), byteCount: UInt64(data.count)) }
+        case .failed, .closed:
+            break
         }
         guard let landed else {
             logger.log(
@@ -186,15 +213,15 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             guard state.pulling[opened.key]?.attempt == opened.attempt else { return [] }
             return state.pulling.removeValue(forKey: opened.key)?.asks ?? []
         }
-        for ask in asks { ask.completion(landed.admitted(by: ask.ceiling) ? landed.url : nil) }
+        for ask in asks { ask.completion(landed.admitted(by: ask.ceiling) ? landed.content : nil) }
     }
 
     // MARK: Pulling
 
     /// Answers `completion` from what landed, or joins or starts the pull of `key`.
-    private func ask(_ key: Key, ceiling: UInt64?, _ completion: @escaping @Sendable (URL?) -> Void) {
+    private func ask(_ key: Key, ceiling: UInt64?, _ completion: @escaping @Sendable (Content?) -> Void) {
         enum Next {
-            case answer(URL?)
+            case answer(Content?)
             case joined
             case start(attempt: UInt64, ceiling: UInt64?)
         }
@@ -203,7 +230,9 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         let isInline = items[key.item].representations[key.representation].storage == .inline
         let ask = Ask(ceiling: isInline ? ceiling ?? 0 : nil, completion: completion)
         let next = state.withLock { state -> Next in
-            if let landed = state.landed[key] { return .answer(landed.admitted(by: ask.ceiling) ? landed.url : nil) }
+            if let landed = state.landed[key] {
+                return .answer(landed.admitted(by: ask.ceiling) ? landed.content : nil)
+            }
             if state.pulling[key] != nil {
                 state.pulling[key]?.asks.append(ask)
                 return .joined
@@ -215,27 +244,34 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             return .start(attempt: attempt, ceiling: ask.ceiling)
         }
         switch next {
-        case .answer(let url): completion(url)
+        case .answer(let content): completion(content)
         case .joined: break
         case .start(let attempt, let ceiling): start(key, attempt, ceiling: ceiling)
         }
     }
 
-    /// Opens attempt `attempt` at pulling `key`, an INLINE pull no larger than `ceiling`, or settles it failed.
+    /// Opens attempt `attempt` at pulling `key`, an INLINE pull no larger than `ceiling`, or settles it failed. A
+    /// concealed offer's INLINE representation lands in memory: a password never reaches staging, which persists.
     private func start(_ key: Key, _ attempt: UInt64, ceiling: UInt64?) {
         let representation = items[key.item].representations[key.representation]
         let isInline = representation.storage == .inline
-        let directory: URL
+        let directory: URL?
         let order: ItemPullOrder
         do {
-            directory = try staging.reserveScratchDirectory(generation: generation)
+            let landing: ItemLanding
+            if isInline, concealed {
+                directory = nil
+                landing = .memory
+            } else {
+                let reserved = try staging.reserveScratchDirectory(generation: generation)
+                directory = reserved
+                landing = .staged(
+                    directory: reserved.path, name: .exactly(isInline ? Self.inlineName : representation.name))
+            }
             let budget = isInline ? nil : filesBudget()
             order = try link.order(
                 token: token, item: UInt32(key.item), representation: UInt32(key.representation),
-                byteCeiling: budget?.remaining ?? ceiling ?? 0,
-                landing: ItemLanding(
-                    directory: directory.path, name: .exactly(isInline ? Self.inlineName : representation.name)),
-                budget: budget)
+                byteCeiling: budget?.remaining ?? ceiling ?? 0, landing: landing, budget: budget)
         } catch {
             logger.log(.error, "Cannot land a clipboard pull: \(String(describing: error), privacy: .public)")
             return settle(key, attempt, failedWith: nil)

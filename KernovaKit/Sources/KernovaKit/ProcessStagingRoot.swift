@@ -38,7 +38,8 @@ public final class ProcessStagingRoot: Sendable {
     /// directory it locked is no longer the entry at ``url`` — the system's temp
     /// cleaner removes old directories whatever locks they hold.
     ///
-    /// Call before creating anything under ``url``. A rebuilt root is empty.
+    /// Call before creating anything under ``url``. A rebuilt root is empty. The parent, and with it everything
+    /// staged under it, is excluded from backups (``excludeFromBackups(_:)``).
     ///
     /// - Throws: the error that stopped the root being built, `Errno.fileExists`
     ///   when something else occupies ``url``; nothing is left under the parent,
@@ -52,6 +53,7 @@ public final class ProcessStagingRoot: Sendable {
 
             let manager = FileManager.default
             try manager.createDirectory(at: parent, withIntermediateDirectories: true)
+            Self.excludeFromBackups(parent)
             let building = parent.appendingPathComponent(
                 "." + url.lastPathComponent, isDirectory: true)
             try manager.createDirectory(at: building, withIntermediateDirectories: false)
@@ -89,6 +91,24 @@ public final class ProcessStagingRoot: Sendable {
             if mkdir(current.path, S_IRWXU | S_IRWXG | S_IRWXO) != 0, errno != EEXIST {
                 throw Errno(rawValue: errno)
             }
+        }
+    }
+
+    /// Marks `directory` excluded from backups, which excludes everything under it: what is staged is the user's
+    /// copied content, and neither the sandboxed app's temporary directory (its container's `Data/tmp`) nor the
+    /// guest agent's is excluded from Time Machine by any rule Apple documents. `isExcludedFromBackup`: "whether
+    /// the resource is excluded from all backups of app data"
+    /// ([URLResourceValues.isExcludedFromBackup](https://developer.apple.com/documentation/foundation/urlresourcevalues/isexcludedfrombackup)).
+    static func excludeFromBackups(_ directory: URL) {
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var directory = directory
+        do {
+            try directory.setResourceValues(values)
+        } catch {
+            logger.log(
+                .error,
+                "Could not exclude the staging directory from backups: \(String(describing: error), privacy: .public)")
         }
     }
 
