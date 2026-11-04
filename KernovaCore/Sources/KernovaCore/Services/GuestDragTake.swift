@@ -219,6 +219,10 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// ``GuestDragWriteError``.
     nonisolated func writeItem(
         at index: Int, to destination: URL, completion: @escaping @Sendable ((any Error)?) -> Void)
+
+    /// Runs `body` once the take retires — it delivers nothing more, so the
+    /// Mac session's promises must be withdrawn — or at once if it has.
+    func whenRetired(_ body: @escaping @MainActor () -> Void)
 }
 
 /// One guest drag the VM display took over at its edge: the hand-off that moves
@@ -248,6 +252,11 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// without asking yet has it started as the session ends. No wall clock bounds
 /// any of it: each wait ends on the guest's answer, the take's end, or the
 /// user's own release or return.
+///
+/// The Mac session's file promises live exactly as long as the take can keep
+/// them: the take retires once it delivers nothing more, and its retirement is
+/// what withdraws them (``whenRetired(_:)``), so the drag pasteboard never
+/// advertises a file Kernova can no longer deliver.
 @MainActor
 @Observable
 package final class GuestDragTake: GuestDragTaking {
@@ -376,13 +385,21 @@ package final class GuestDragTake: GuestDragTaking {
     @ObservationIgnored private var noDestinationAsks = false
     /// Whether the guest was asked to deliver the drag.
     @ObservationIgnored private var deliveryAsked = false
+    /// Whether a newer drag replaced this one, which takes the Mac's drag
+    /// pasteboard: no destination then asks for an item it has not asked for.
+    @ObservationIgnored private var superseded = false
     @ObservationIgnored private var isFinished = false
+    /// What runs once the take retires.
+    @ObservationIgnored private var retirement: [@MainActor () -> Void] = []
 
     // MARK: Writing items
 
     /// How the writes ended early, once they did.
     @ObservationIgnored private var terminal: Terminal?
     @ObservationIgnored private var written: Set<Int> = []
+    /// The items a Mac destination asked for: by name, which it asks before it
+    /// writes, or by a write.
+    nonisolated private let asked = Mutex<Set<Int>>([])
     /// The writes pulling now, by item index, each with what cancels it.
     @ObservationIgnored private var inFlight: [Int: @MainActor () -> Void] = [:]
     /// The writes waiting for the drag's delivery to say what to pull, by item
@@ -651,14 +668,32 @@ package final class GuestDragTake: GuestDragTaking {
 
     /// A newer take replaced this one: one not yet carried by a Mac session is
     /// abandoned, and one that is stops waiting for its guest drag, which
-    /// ended with its press, but still writes what its Mac destination asks
-    /// for.
+    /// ended with its press. Its session's promises give way to the newer
+    /// drag's, so it writes what its Mac destination has asked for and then
+    /// retires.
     func supersede() {
+        superseded = true
         switch phase {
         case .handingOff, .ready: abandon(because: "a newer drag replaced it")
         case .carried: endUnreleased(because: "a newer drag replaced it")
-        case .released, .unreleased, .abandoned: break
+        case .released, .unreleased, .abandoned: retireIfDone()
         }
+    }
+
+    /// The app is terminating: the take writes nothing more and retires now,
+    /// without waiting for the guest's answers, so its promises are withdrawn
+    /// before the process resolves them on its way out.
+    func endForTermination() {
+        switch phase {
+        case .handingOff, .ready: abandon(because: "the app is terminating")
+        case .carried: endUnreleased(because: "the app is terminating")
+        case .released: if takeOpen { transport.cancel() }
+        // Each called the take off as it ended.
+        case .unreleased, .abandoned: break
+        }
+        takeOpen = false
+        cancelWrites()
+        retire()
     }
 
     // MARK: - Hand-off steps
@@ -777,12 +812,14 @@ package final class GuestDragTake: GuestDragTaking {
     /// dropped into the guest.
     private var destinationMayAsk: Bool { hasHostSession && !noDestinationAsks }
 
-    /// Releases the guest's offers, and reports the take finished, once
-    /// nothing will pull from them again and the take's stream has closed.
+    /// Retires the take once nothing will pull from its offer again and its
+    /// stream has closed.
     ///
-    /// A Mac destination asks for the items after its session ends, and may
-    /// ask for only some of them, so a session a destination took holds the
-    /// offers until every item is written or the writes ended.
+    /// A Mac destination asks for the items after its session ends, at any
+    /// moment and for only some of them, and AppKit reports no end to its
+    /// asking. So a session a destination took holds the offer until every
+    /// item is written, the writes ended, or a newer drag replaced it — after
+    /// which only an item already asked for is still written.
     private func retireIfDone() {
         switch phase {
         case .handingOff, .ready, .carried: return
@@ -790,21 +827,38 @@ package final class GuestDragTake: GuestDragTaking {
         }
         guard !takeOpen, inFlight.isEmpty, owed.isEmpty else { return }
         if destinationMayAsk {
-            guard written.count == items.count || terminal != nil else { return }
+            let askedWritten = superseded && asked.withLock { $0.isSubset(of: written) }
+            guard written.count == items.count || terminal != nil || askedWritten else { return }
         }
+        retire()
+    }
+
+    /// Releases the guest's offer, withdraws the Mac session's promises and
+    /// reports the take finished, once.
+    private func retire() {
         if offerOpen {
             offerOpen = false
             transport.release()
         }
         guard !isFinished else { return }
         isFinished = true
+        let retired = retirement
+        retirement.removeAll()
+        for body in retired { body() }
+        Self.logger.log(.notice, "Retired the take: its Mac session's promises are withdrawn")
         onFinished(self)
+    }
+
+    package func whenRetired(_ body: @escaping @MainActor () -> Void) {
+        guard !isFinished else { return body() }
+        retirement.append(body)
     }
 
     // MARK: - Naming promised items
 
     nonisolated package func filename(forItemAt index: Int) -> String {
         guard items.indices.contains(index) else { return "Untitled" }
+        asked.withLock { _ = $0.insert(index) }
         let item = items[index]
         guard item.isPromised else { return item.filename }
         if let naming = delivery.naming { return Self.filename(of: index, item, naming) }
@@ -878,6 +932,7 @@ package final class GuestDragTake: GuestDragTaking {
         guard items.indices.contains(index), destinationMayAsk, inFlight[index] == nil, owed[index] == nil else {
             return completion(GuestDragWriteError.failed(.transferFailed))
         }
+        asked.withLock { _ = $0.insert(index) }
         guard !needsDelivery || delivery.settled != nil else {
             owed[index] = (destination, completion)
             return

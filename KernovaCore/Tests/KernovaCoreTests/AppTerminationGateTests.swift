@@ -1,4 +1,6 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
@@ -306,6 +308,39 @@ struct AppTerminationGateTests {
         #expect(controller.shouldTerminateOnQuit)
         #expect(controller.handleTerminationRequest() == .now)
         #expect(spy.closeCount == 0)
+    }
+
+    /// A display that takes nothing over.
+    @MainActor
+    private final class IdleDisplay: GuestDragDisplay {
+        func injectNudge(_ nudge: GuestDragNudge) {}
+        func injectDrag(at point: CGPoint) {}
+        func returnToExitPoint() {}
+        func injectRelease() {}
+        func beginHostSession(carrying take: any GuestDragTaking) -> Bool { false }
+        func resumeTracking() {}
+    }
+
+    @Test("A quit that terminates now retires every drag out of a guest before it answers")
+    func terminationRetiresDragsFirst() throws {
+        let (controller, viewModel) = makeController()
+        viewModel.keepInMenuBarOnQuit = false
+        let instance = viewModel.library.admitFixture(name: "Drag VM", guestOS: .macOS)
+        let hub = FakeDragOutHub()
+        let peer = PeerHandle(rawValue: 3)
+        instance.dragOut.hub = hub
+        instance.dragOut.consolePeerChanged(peer)
+        instance.dragOut.offerReceived(Data(repeating: 0x5A, count: 16), from: peer)
+        let display = IdleDisplay()
+        let taken = instance.dragOut.takeGuestDrag(display: display, while: { true })
+        let take = try #require(taken)
+        var retiredFirst = false
+        take.whenRetired { retiredFirst = true }
+
+        #expect(controller.handleTerminationRequest() == .now)
+
+        #expect(retiredFirst)
+        #expect(take.phase == .abandoned)
     }
 
     @Test("A quit a script sent terminates and saves, whichever handler delivered it")

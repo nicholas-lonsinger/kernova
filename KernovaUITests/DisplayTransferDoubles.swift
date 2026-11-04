@@ -89,8 +89,25 @@ final class FakeTake: GuestDragTaking {
     /// What a write fails with, or `nil` to succeed.
     nonisolated let writeError = Mutex<(any Error & Sendable)?>(nil)
 
+    /// What runs once the test retires the take.
+    private var retirement: [@MainActor () -> Void] = []
+    private(set) var isRetired = false
+
     init(items: [DraggedOutItem]) {
         self.items = items
+    }
+
+    func whenRetired(_ body: @escaping @MainActor () -> Void) {
+        guard !isRetired else { return body() }
+        retirement.append(body)
+    }
+
+    /// Retires the take, as a real one does once it delivers nothing more.
+    func retire() {
+        isRetired = true
+        let retired = retirement
+        retirement.removeAll()
+        for body in retired { body() }
     }
 
     func withheldDrag() {

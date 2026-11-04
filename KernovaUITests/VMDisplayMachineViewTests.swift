@@ -607,6 +607,45 @@ struct DisplayDragOutSourceTests {
         #expect(session.drawn.allSatisfy { $0.isEmpty })
     }
 
+    @Test("the take's retirement clears the drag pasteboard the session wrote, freeing the source")
+    func retirementWithdrawsThePromises() throws {
+        let pasteboard = NSPasteboard(name: .init("app.kernova.test.drag-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        weak var released: DisplayDragOutSource?
+        let take = FakeTake(items: [.declared("report.txt", type: .plainText)])
+        try autoreleasepool {
+            let source = DisplayDragOutSource(vmID: UUID(), take: take)
+            released = source
+            pasteboard.clearContents()
+            let providers = try providers(of: source)
+            #expect(pasteboard.writeObjects(providers))
+            source.withdrawPromisesAtRetirement(from: pasteboard)
+        }
+        #expect(pasteboard.pasteboardItems?.count == 1)
+
+        autoreleasepool { take.retire() }
+
+        #expect(pasteboard.pasteboardItems?.isEmpty ?? true)
+        #expect(released == nil, "the withdrawn promises still hold their source")
+    }
+
+    @Test("a drag pasteboard something else wrote since the session is left as it is")
+    func retirementLeavesAnotherOwnersPasteboard() throws {
+        let pasteboard = NSPasteboard(name: .init("app.kernova.test.drag-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let (source, take) = makeSource()
+        pasteboard.clearContents()
+        let providers = try providers(of: source)
+        #expect(pasteboard.writeObjects(providers))
+        source.withdrawPromisesAtRetirement(from: pasteboard)
+
+        pasteboard.clearContents()
+        pasteboard.setString("someone else's", forType: .string)
+        take.retire()
+
+        #expect(pasteboard.string(forType: .string) == "someone else's")
+    }
+
     @Test("writes run one at a time, off the main queue")
     func writesRunSerially() throws {
         let (source, _) = makeSource()

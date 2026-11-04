@@ -55,6 +55,16 @@ final class PullLanes<State>: Sendable {
         }
     }
 
+    /// Closes every lane now, dropping each one's state on its queue once what was queued before has run, and
+    /// returns once every state is dropped.
+    func closeAll() {
+        let closed = lanes.withLock { lanes in
+            defer { lanes.removeAll() }
+            return Array(lanes.values)
+        }
+        for lane in closed { lane.queue.sync { lane.state = nil } }
+    }
+
     /// Closes `key`'s lane: `body` runs last on it with its state, which is then dropped.
     func close(_ key: PullKey, _ body: @escaping @Sendable (inout State?) -> Void = { _ in }) {
         guard let lane = lanes.withLock({ $0.removeValue(forKey: key) }) else { return }

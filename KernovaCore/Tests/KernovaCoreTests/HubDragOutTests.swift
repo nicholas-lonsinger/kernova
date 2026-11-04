@@ -375,6 +375,20 @@ struct HubDragOutTests {
         #expect(hub.releaseCount == 0)
     }
 
+    @Test("termination retires every live take, calling it off and releasing its offer, before the guest answers")
+    func terminationRetiresEveryTake() async throws {
+        let take = try await carriedTake()
+        var retired = false
+        take.whenRetired { retired = true }
+
+        dragOut.endForTermination()
+
+        #expect(retired)
+        #expect(take.phase == .unreleased)
+        #expect(hub.state.withLock { $0.takeCancels } == [takeID])
+        #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
+    }
+
     @Test("a console move before the guest answers hands the press back")
     func consoleMoveMidHandOff() async throws {
         offer()

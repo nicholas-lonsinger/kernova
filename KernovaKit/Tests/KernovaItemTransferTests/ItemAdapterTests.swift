@@ -108,6 +108,43 @@ struct ItemAdapterTests {
         #expect(try bench.names("landed").isEmpty)
     }
 
+    @Test("a termination discard removes a landing mid-write before it returns")
+    func terminationDiscardRemoves() async throws {
+        let bench = try Bench()
+        try bench.write(Data(repeating: 3, count: 2_000_000), to: "source/big.bin")
+        try bench.makeDirectory("landed")
+        let fileSystem = POSIXTreeFileSystem()
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _ in
+            .success(.tree(path: bench.path("source/big.bin")))
+        }
+        let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
+        let order = try sink.order(
+            token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30,
+            landing: .exactPath(bench.path("landed/big.bin")))
+        var representation = Representation()
+        representation.storage = .file
+        let (sources, sourceReporter) = Inbox<ItemSourceInput>.make {
+            ItemSourceReporter(ItemConnection(role: .sessionPeer), $0)
+        }
+        let (sinks, sinkReporter) = Inbox<ItemSinkInput>.make { ItemSinkReporter(ItemConnection(role: .host), $0) }
+        source.handle(.serve(Bench.id, .clipboard, order.request, representation), reporter: sourceReporter)
+        defer { source.handle(.release(Bench.id), reporter: sourceReporter) }
+        sink.handle(.begin(Bench.id, order, representation), reporter: sinkReporter)
+        while (try? bench.names("landed"))?.isEmpty ?? true {
+            source.handle(.read(Bench.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
+            guard case .bytes(_, let bytes)? = await sources.next() else {
+                Issue.record("the source finished before the landing began")
+                return
+            }
+            sink.handle(.bytes(Bench.id, bytes), reporter: sinkReporter)
+            #expect(await sinks.next() == .consumed(Bench.id, bytes.count))
+        }
+
+        sink.discardForTermination()
+
+        #expect(try bench.names("landed").isEmpty)
+    }
+
     @Test(
         "INLINE bytes are served from the provider and published as bytes", arguments: [PeerRole.host, .sessionPeer])
     func inlineLands(_ server: PeerRole) async throws {

@@ -190,6 +190,13 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         }
     }
 
+    /// Drops every pull's landing now, removing what each created, and returns once all are removed: for a
+    /// process about to exit, which would never run the aborts its core emits. Each pull's work already
+    /// queued runs first; the core's later effects for these pulls do nothing.
+    public func discardForTermination() {
+        pulls.closeAll()
+    }
+
     /// A pull's landing, or why it cannot begin.
     private static func begin(
         _ acceptance: ContainerAcceptance, _ landing: ItemLanding, fileSystem: FileSystem, decodingWorkers: Int

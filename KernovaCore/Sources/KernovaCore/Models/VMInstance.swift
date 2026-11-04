@@ -382,11 +382,21 @@ package final class VMInstance {
     /// DRAG's owner: the guest's drag offers, and their takes over this VM's
     /// display.
     @ObservationIgnored let dragOut: HubDragOut
+    /// Where every pull of the guest's items lands.
+    @ObservationIgnored private let itemSink: ItemSinkAdapter<POSIXTreeFileSystem>
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
 
     package nonisolated var id: UUID { instanceID }
     package var name: String { configuration.name }
+
+    /// The app is terminating: every drag out of the guest retires, its
+    /// promises withdrawn, and every pull's landing is removed before this
+    /// returns, since the process exits before the pulls' own aborts would run.
+    func abandonTransfersForTermination() {
+        dragOut.endForTermination()
+        itemSink.discardForTermination()
+    }
 
     // MARK: - Network Attachment Recovery
 
@@ -450,6 +460,7 @@ package final class VMInstance {
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+        self.itemSink = itemSink
         let clipboardTransfers = ClipboardTransferReporter()
         self.clipboardTransfers = clipboardTransfers
         let dropService = HubDropService(stagingRoot: ClipboardFileStaging.processRoot, reporter: clipboardTransfers)

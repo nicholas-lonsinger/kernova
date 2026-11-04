@@ -696,6 +696,92 @@ struct GuestDragTakeTests {
         #expect(finished.count == 1)
     }
 
+    // MARK: - Retiring
+
+    @Test("retiring runs what waits on it once, and at once for what asks after")
+    func retirementRunsOnce() throws {
+        let take = try carriedTake()
+        var ran = 0
+        take.whenRetired { ran += 1 }
+        take.hostSessionEnded(dropped: false)
+        #expect(take.phase == .released(at: .catcher))
+        #expect(ran == 0, "retired before the take's stream closed")
+
+        transport.end(.caught(nil))
+        #expect(ran == 1)
+        #expect(finished.count == 1)
+        take.whenRetired { ran += 1 }
+        #expect(ran == 2)
+        transport.end(.caught(nil))
+        #expect(ran == 2)
+    }
+
+    @Test("a destination that asked for some items holds the take until a newer drag replaces it")
+    func partiallyAskedTakeRetires() async throws {
+        let take = try carriedTake(items: [Self.file, Self.file, Self.file])
+        var retired = false
+        take.whenRetired { retired = true }
+        take.hostSessionEnded(dropped: true)
+        transport.end(.caught(nil))
+        let folder = URL(fileURLWithPath: "/tmp/drag-out", isDirectory: true)
+
+        _ = take.filename(forItemAt: 0)
+        let first = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
+            $0.end(0, .success(()))
+        }
+        #expect(first == nil)
+        // Asked by name, which a destination does before it writes.
+        _ = take.filename(forItemAt: 1)
+        #expect(!retired, "retired while a destination could still ask")
+
+        take.supersede()
+        #expect(!retired, "retired before an item already asked for was written")
+
+        let second = try await write(take, item: 1, to: folder.appendingPathComponent("a 2.txt")) {
+            $0.end(1, .success(()))
+        }
+        #expect(second == nil)
+        #expect(retired)
+        #expect(transport.releases == 1)
+        #expect(finished.count == 1)
+        #expect(transport.pulls.count == 2)
+    }
+
+    @Test("termination retires a take at once, mid-write, calling off its pull and its stream")
+    func terminationRetiresMidWrite() async throws {
+        let take = try carriedTake(items: [Self.file, Self.file])
+        var retired = false
+        take.whenRetired { retired = true }
+        take.hostSessionEnded(dropped: true)
+        take.writeItem(at: 0, to: URL(fileURLWithPath: "/tmp/drag-out/a.txt")) { _ in }
+        try await transport.changed.wait { !transport.pulls.isEmpty }
+
+        take.endForTermination()
+
+        #expect(retired)
+        #expect(finished.count == 1)
+        #expect(transport.releases == 1)
+        #expect(transport.pulls[0].cancelled)
+        #expect(transport.cancels == 1)
+        let later = try await write(take, item: 1, to: URL(fileURLWithPath: "/tmp/drag-out/b.txt"))
+        #expect((later as? CocoaError)?.code == .userCancelled)
+    }
+
+    @Test("termination mid-hand-off hands the press back and retires without waiting for the guest")
+    func terminationRetiresMidHandOff() throws {
+        let take = makeTake()
+        var retired = false
+        take.whenRetired { retired = true }
+
+        take.endForTermination()
+
+        #expect(take.phase == .abandoned)
+        #expect(retired)
+        #expect(finished.count == 1)
+        #expect(transport.cancels == 1)
+        #expect(display.calls.contains(.resumeTracking))
+    }
+
     @Test("a failed pull fails its write and every write after it")
     func failedPullEndsTheWrites() async throws {
         let take = try carriedTake(items: [Self.file, Self.file])

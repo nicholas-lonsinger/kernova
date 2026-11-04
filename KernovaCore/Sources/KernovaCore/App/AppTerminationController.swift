@@ -346,7 +346,7 @@ package final class AppTerminationController {
             return .later
 
         case .terminateNow:
-            viewModel.abandonArrivalsForTermination()
+            viewModel.abandonWorkForTermination()
             return .now
 
         case .saveThenTerminate:
@@ -422,13 +422,15 @@ package final class AppTerminationController {
     /// and the pass never has to chase a guest brought up behind it.
     private func runSavePassThenEndTermination() {
         viewModel.beginTermination()
-        viewModel.abandonArrivalsForTermination()
+        viewModel.abandonWorkForTermination()
         Task { @MainActor in
             await self.runTerminationSavePass()
             // A drop/odoc delivered during the async save window above can
-            // register a fresh arrival, so sweep again before leaving or its
-            // staged tree waits for the next launch's reclaim.
-            self.viewModel.abandonArrivalsForTermination()
+            // register a fresh arrival, and a guest still running can begin a
+            // drag out, so sweep again before leaving: a staged tree would wait
+            // for the next launch's reclaim, and a drag's promises would be
+            // resolved on the way out.
+            self.viewModel.abandonWorkForTermination()
             self.hasCompletedTerminationSavePass = true
             let ending: TerminationEnding = self.owesDeferredTerminationReply ? .deferredReply : .terminate
             self.owesDeferredTerminationReply = false

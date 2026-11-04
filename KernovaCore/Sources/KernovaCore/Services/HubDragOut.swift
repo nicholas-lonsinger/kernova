@@ -121,10 +121,7 @@ package final class HubDragOut {
     ) -> GuestDragTake? {
         guard let offer, let hub else { return nil }
         self.offer = nil
-        var superseded = Set<ObjectIdentifier>()
-        for earlier in takes.values where superseded.insert(ObjectIdentifier(earlier)).inserted {
-            earlier.supersede()
-        }
+        for earlier in liveTakes { earlier.supersede() }
         let transport = Transport(owner: self, hub: hub, peer: offer.peer, token: offer.token)
         let take = GuestDragTake(
             transport: transport, display: display, reporter: reporter,
@@ -133,6 +130,18 @@ package final class HubDragOut {
         takes[offer.token] = take
         take.begin()
         return take
+    }
+
+    /// The app is terminating: every take still running retires now, its
+    /// promises withdrawn.
+    package func endForTermination() {
+        for take in liveTakes { take.endForTermination() }
+    }
+
+    /// Each take still running, once.
+    private var liveTakes: [GuestDragTake] {
+        var seen = Set<ObjectIdentifier>()
+        return takes.values.filter { seen.insert(ObjectIdentifier($0)).inserted }
     }
 
     // MARK: - The hub's events
