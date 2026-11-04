@@ -46,7 +46,8 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
             let bytes = state.withLock { $0.resolved }
             return zip(promised, writer.dataByItem).map { types, data in
                 FakePasteboardItem(
-                    types: Array(data.keys) + types, bytes: bytes.merging(data, uniquingKeysWith: { _, written in written }))
+                    types: Array(data.keys) + types,
+                    bytes: bytes.merging(data, uniquingKeysWith: { _, written in written }))
             }
         }
         let state = self.state

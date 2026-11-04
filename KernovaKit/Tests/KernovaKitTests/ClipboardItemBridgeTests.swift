@@ -656,7 +656,9 @@ struct ClipboardItemBridgeTests {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
         ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
-            .publish([item], concealed: false, puller: FixedPuller(bytes: bytes), servingOffer: Data(repeating: 1, count: 16))
+            .publish(
+                [item], concealed: false, puller: FixedPuller(bytes: bytes), servingOffer: Data(repeating: 1, count: 16)
+            )
         return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
     }
 

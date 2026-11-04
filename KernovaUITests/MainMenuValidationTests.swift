@@ -421,4 +421,65 @@ struct MainMenuValidationTests {
             .filter { MainMenuController.capability(for: $0.action) == nil }
         #expect(ungated.isEmpty, "Ungated: \(ungated.map(\.title))")
     }
+
+    // MARK: - The clipboard commands
+
+    /// Has a console peer carry `instance`'s clipboard through its hub.
+    private func carryClipboard(on instance: VMInstance) {
+        let peer = PeerHandle(rawValue: 1)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), consolePeers: [.clipboard: peer]))
+        instance.hubClipboard.setConsolePeer(peer)
+    }
+
+    @Test(
+        "A clipboard command is enabled only while an agent carries the clipboard and passthrough is off",
+        arguments: [
+            #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)),
+        ])
+    func clipboardCommandEnablement(action: Selector) {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
+        let item = makeMenuItem(action)
+        #expect(!fixture.validate(item))
+
+        carryClipboard(on: instance)
+        #expect(fixture.validate(item))
+
+        fixture.viewModel.library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
+        #expect(!fixture.validate(item))
+    }
+
+    @Test("The passthrough item is checked while passthrough is on, and enabled while sharing is")
+    func passthroughItemFollowsTheSetting() {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
+        let item = makeMenuItem(#selector(AppDelegate.toggleClipboardPassthrough(_:)))
+        #expect(fixture.validate(item))
+        #expect(item.state == .off)
+
+        fixture.viewModel.library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
+        #expect(fixture.validate(item))
+        #expect(item.state == .on)
+
+        // Turning it on rides on sharing, so with sharing off only turning it off is left.
+        fixture.viewModel.library.editConfiguration(of: instance) {
+            $0.clipboardSharingEnabled = false
+            $0.clipboardPassthroughEnabled = false
+        }
+        #expect(!fixture.validate(item))
+    }
+
+    @Test("The passthrough item is unchecked and disabled with no VM to act on")
+    func passthroughItemWithoutSelection() {
+        let fixture = makeFixture()
+        let item = makeMenuItem(#selector(AppDelegate.toggleClipboardPassthrough(_:)))
+        item.state = .on
+        #expect(!fixture.validate(item))
+        #expect(item.state == .off)
+    }
 }

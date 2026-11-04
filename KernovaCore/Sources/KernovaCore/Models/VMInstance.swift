@@ -519,6 +519,9 @@ package final class VMInstance {
         hubClipboard.passthroughHoldsUnsentCopy = { [weak self] in
             self?.sessionContext?.clipboardPassthroughCoordinator?.holdsUnsentCopy ?? false
         }
+        hubClipboard.passthroughReofferAfterReturn = { [weak self] in
+            self?.sessionContext?.clipboardPassthroughCoordinator?.reofferAfterReturn()
+        }
         hubClipboard.passthroughForwardNow = { [weak self] in
             self?.sessionContext?.clipboardPassthroughCoordinator?.forwardNow()
         }
@@ -1119,7 +1122,7 @@ package final class VMInstance {
     /// configuration and session state.
     ///
     /// Host-side only — no guest cooperation and no wire change — so it drives
-    /// both transports and works with the clipboard window closed.
+    /// both transports.
     func refreshClipboardPassthrough() {
         guard let context = sessionContext else { return }
         let shouldRun = configuration.clipboardPassthroughIsEffective && hasLiveVirtualMachine

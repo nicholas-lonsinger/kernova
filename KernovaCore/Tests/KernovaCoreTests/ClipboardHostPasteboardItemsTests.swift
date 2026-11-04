@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 @testable import KernovaCoreTestSupport
 
 /// Exercises `HostClipboardPublisher.hostPasteboardItems` — the pure
-/// "Copy to Mac" grouping/staging step that turns the buffer into one
+/// grouping/staging step that turns resolved content into one
 /// `ItemSpec` per inline-content block plus one per file payload.
 ///
 /// Each spec promises a set of types and serves their bytes lazily through

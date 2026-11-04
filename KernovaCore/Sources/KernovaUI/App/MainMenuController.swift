@@ -321,6 +321,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         case #selector(AppDelegate.deleteVM(_:)), #selector(AppDelegate.deleteImmediatelyVM(_:)):
             .delete
         case #selector(AppDelegate.showVMInFinder(_:)): .showInFinder
+        case #selector(AppDelegate.copyGuestClipboardToMac(_:)): .copyGuestClipboardToMac
+        case #selector(AppDelegate.copyMacClipboardToGuest(_:)): .copyMacClipboardToGuest
         case #selector(AppDelegate.showGuestAgentStatus(_:)): .showGuestAgentStatus
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
         case #selector(AppDelegate.attachUSBAccessory(_:)),
@@ -342,6 +344,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// ``validate(_:)`` with `workingInstance` as the VM the working window
     /// shows.
     func validate(_ menuItem: NSMenuItem, workingInstance: VMInstance?) -> Bool {
+        if menuItem.action == #selector(AppDelegate.toggleClipboardPassthrough(_:)) {
+            return validatePassthrough(menuItem, target: target(of: menuItem, workingInstance: workingInstance))
+        }
         // App-level commands — New, Show Library, Open VMs Folder, Check Config
         // Files, Quit Completely — are never gated on the selection, or a selected import
         // still copying would disable the GUI's only full-quit affordance.
@@ -392,6 +397,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             break
         }
         return isAvailable
+    }
+
+    /// Checks the passthrough item when `instance` runs passthrough, enabled while a write flipping it takes.
+    private func validatePassthrough(_ menuItem: NSMenuItem, target instance: VMInstance?) -> Bool {
+        guard let instance else {
+            menuItem.state = .off
+            return false
+        }
+        let isOn = instance.configuration.clipboardPassthroughEnabled
+        menuItem.state = isOn ? .on : .off
+        return viewModel.capabilities.isAvailable(
+            VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!isOn), on: instance)
     }
 
     // MARK: - Main Menu
@@ -477,6 +494,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        for item in ClipboardCommandMenu.items() { editMenu.addItem(item) }
         editMenu.addItem(.separator())
         // A guest display that captures system keys (System Key Forwarding
         // Always, the default, or Full Screen Only in full screen) receives ⌘F

@@ -231,6 +231,43 @@ struct MainMenuRebuildTests {
         #expect(revertMenu.items.first?.title.hasPrefix("Clean\u{2026}") == true)
     }
 
+    // MARK: - Edit menu
+
+    @Test("The Edit menu carries the clipboard commands with their shortcuts, and the passthrough switch")
+    func editMenuCarriesTheClipboardCommands() throws {
+        let fixture = makeFixture()
+        let editMenu = try #require(submenu(titled: "Edit", in: fixture.mainMenu))
+        let toMac = try #require(editMenu.items.first { $0.title == "Copy Guest Clipboard to Mac" })
+        #expect(toMac.action == #selector(AppDelegate.copyGuestClipboardToMac(_:)))
+        #expect(toMac.keyEquivalent == "c")
+        #expect(toMac.keyEquivalentModifierMask == [.control, .shift, .command])
+        let toGuest = try #require(editMenu.items.first { $0.title == "Copy Mac Clipboard to Guest" })
+        #expect(toGuest.action == #selector(AppDelegate.copyMacClipboardToGuest(_:)))
+        #expect(toGuest.keyEquivalent == "v")
+        #expect(toGuest.keyEquivalentModifierMask == [.control, .shift, .command])
+        let passthrough = try #require(editMenu.items.first { $0.title == "Automatic Clipboard Passthrough" })
+        #expect(passthrough.action == #selector(AppDelegate.toggleClipboardPassthrough(_:)))
+        #expect(passthrough.keyEquivalent.isEmpty)
+    }
+
+    @Test("No other item in the menu bar takes the clipboard commands' shortcuts")
+    func clipboardShortcutsAreTheirsAlone() {
+        let fixture = makeFixture()
+        var holders: [String] = []
+        func walk(_ menu: NSMenu) {
+            for item in menu.items {
+                if let submenu = item.submenu { walk(submenu) }
+                if item.keyEquivalentModifierMask == [.control, .shift, .command],
+                    ["c", "v"].contains(item.keyEquivalent)
+                {
+                    holders.append(item.title)
+                }
+            }
+        }
+        walk(fixture.mainMenu)
+        #expect(holders.sorted() == ["Copy Guest Clipboard to Mac", "Copy Mac Clipboard to Guest"])
+    }
+
     private func revertSubmenu(in mainMenu: NSMenu) -> NSMenu? {
         submenu(titled: "Virtual Machine", in: mainMenu)?
             .items.first { $0.title == SnapshotRevertMenu.title }?.submenu

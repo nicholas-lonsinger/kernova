@@ -4,7 +4,8 @@ import KernovaLogging
 import KernovaWire
 
 /// Writes a VM's clipboard to the host pasteboard: passthrough's write of the
-/// guest's clipboard, lazily.
+/// guest's clipboard, lazily, and a copy command's of it, as data with its files
+/// promised.
 ///
 /// Each item promises its types through a `LazyClipboardDataProvider`, handed to
 /// the app-scoped provider registry on a successful write — a paste can land
@@ -141,6 +142,22 @@ package final class HostClipboardPublisher {
             "Published the guest's clipboard to the host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
         return .written(representationCount: representationCount, droppedReasons: droppedReasons)
+    }
+
+    /// Writes the guest's copy `contents`: every representation but a file or folder as data, the files
+    /// promised, and withheld when `servingFileURLs` is false. The copy is released once the pasteboard lets its
+    /// files go, or at once when it promised none or the write failed. Returns whether the write was taken.
+    func writeCopy(_ contents: GuestCopyContents, servingFileURLs: Bool) -> Bool {
+        let (written, promised) = publisher.publishCopy(
+            contents.items, concealed: contents.concealed, servingFileURLs: servingFileURLs,
+            landed: contents.landed, puller: contents.puller, servingOffer: contents.token,
+            onReleased: contents.release)
+        if !written || !promised { contents.release() }
+        Self.logger.log(
+            .info,
+            "Wrote the guest's clipboard copy to the host pasteboard (written: \(written, privacy: .public), files promised: \(promised, privacy: .public))"
+        )
+        return written
     }
 
     /// `true` while the host pasteboard still holds this publisher's most recent

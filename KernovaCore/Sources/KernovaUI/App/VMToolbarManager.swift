@@ -5,7 +5,7 @@ import KernovaLogging
 
 /// Shared toolbar logic for VM window controllers.
 ///
-/// Creates and manages the lifecycle, suspend, and display toolbar
+/// Creates and manages the lifecycle, suspend, clipboard and display toolbar
 /// items that appear in both the main window and per-VM display windows. Each
 /// window controller creates its own manager with a ``Configuration`` capturing
 /// the per-controller differences and an `instanceProvider` closure that
@@ -21,6 +21,9 @@ final class VMToolbarManager: NSObject {
         /// Sits immediately after ``saveStateID`` with no space between, so the
         /// two capture-state actions share one glass capsule.
         let takeSnapshotID: NSToolbarItem.Identifier
+        /// Copy Guest Clipboard to Mac, followed with no space by ``copyToGuestID``, the two sharing one capsule.
+        let copyToMacID: NSToolbarItem.Identifier
+        let copyToGuestID: NSToolbarItem.Identifier
         let popOutID: NSToolbarItem.Identifier
         let fullscreenID: NSToolbarItem.Identifier
         /// When non-nil, a gear-icon button that toggles the detail pane between the live
@@ -43,6 +46,8 @@ final class VMToolbarManager: NSObject {
             configuration.shutDownAnywayID,
             configuration.saveStateID,
             configuration.takeSnapshotID,
+            configuration.copyToMacID,
+            configuration.copyToGuestID,
             configuration.popOutID,
             configuration.fullscreenID,
             configuration.settingsToggleID,
@@ -69,6 +74,7 @@ final class VMToolbarManager: NSObject {
     private var clusterStartIdentifiers: Set<NSToolbarItem.Identifier> {
         Set(
             [
+                configuration.copyToMacID,
                 configuration.popOutID,
                 configuration.settingsToggleID,
             ].compactMap { $0 })
@@ -79,6 +85,14 @@ final class VMToolbarManager: NSObject {
     private let instanceProvider: () -> VMInstance?
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMToolbarManager")
+
+    // MARK: - Clipboard transfer-progress state
+
+    /// The VM whose transfer report the clipboard buttons reflect; weak so it never keeps an instance alive, and
+    /// identity-compared to re-arm the observation only on a real selection swap.
+    private weak var clipboardObservedInstance: VMInstance?
+    private weak var clipboardProgressToolbar: NSToolbar?
+    private var clipboardProgressObservation: ObservationLoop?
 
     // MARK: - Tooltip Constants
 
@@ -93,6 +107,8 @@ final class VMToolbarManager: NSObject {
     private static let shutDownAnywayToolTip = "Shut macOS down without waiting for apps"
     private static let saveStateToolTip = "Suspend the virtual machine"
     private static let takeSnapshotToolTip = "Take a snapshot of the virtual machine"
+    private static let copyToMacToolTip = "Copy the guest\u{2019}s clipboard to the Mac\u{2019}s"
+    private static let copyToGuestToolTip = "Copy the Mac\u{2019}s clipboard to the guest\u{2019}s"
     private static let popOutToolTip = "Open display in a separate window"
     private static let popInToolTip = "Return display to the main window"
     private static let fullscreenToolTip = "Enter fullscreen display"
@@ -192,6 +208,16 @@ final class VMToolbarManager: NSObject {
                 toolTip: Self.takeSnapshotToolTip
             )
 
+        case configuration.copyToMacID:
+            return makeClipboardItem(
+                identifier: identifier, label: "Copy to Mac", symbol: "laptopcomputer.and.arrow.down",
+                action: #selector(AppDelegate.copyGuestClipboardToMac(_:)), toolTip: Self.copyToMacToolTip)
+
+        case configuration.copyToGuestID:
+            return makeClipboardItem(
+                identifier: identifier, label: "Copy to Guest", symbol: "display.and.arrow.down",
+                action: #selector(AppDelegate.copyMacClipboardToGuest(_:)), toolTip: Self.copyToGuestToolTip)
+
         case configuration.popOutID:
             return makeBorderedItem(
                 identifier: identifier,
@@ -228,6 +254,24 @@ final class VMToolbarManager: NSObject {
         }
     }
 
+    /// A clipboard command's item: view-backed, so the transfer bar is a real subview over the glyph rather than
+    /// baked into the item's image. The nil target sends the action down the responder chain, as the bordered
+    /// items do — from the overflow menu too: the entry AppKit synthesizes for a view-backed item carries the
+    /// label and the button's glyph and fires the button's action (measured on macOS 27.0 26A428).
+    private func makeClipboardItem(
+        identifier: NSToolbarItem.Identifier, label: String, symbol: String, action: Selector, toolTip: String
+    ) -> NSToolbarItem {
+        let button = ClipboardToolbarButton(symbol: symbol, accessibilityDescription: label)
+        button.action = action
+        button.toolTip = toolTip
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = label
+        item.paletteLabel = label
+        item.view = button
+        item.autovalidates = false
+        return item
+    }
+
     // MARK: - Toolbar State Updates
 
     /// Reads every value ``updateToolbarItems(in:)`` derives item state from,
@@ -247,6 +291,7 @@ final class VMToolbarManager: NSObject {
         _ = instance.displayMode
         _ = instance.detailPaneMode
         _ = instance.startAction
+        _ = instance.configuration.clipboardSharingEnabled
     }
 
     func updateToolbarItems(in toolbar: NSToolbar) {
@@ -263,6 +308,7 @@ final class VMToolbarManager: NSObject {
         updateItem(
             in: toolbar, configuration.takeSnapshotID,
             isEnabled: isAvailable(.takeSnapshot, on: instance))
+        updateClipboardItems(in: toolbar, instance: instance)
         updateDisplayItems(in: toolbar, instance: instance)
         updateSettingsToggleItem(in: toolbar, instance: instance)
     }
@@ -393,6 +439,55 @@ final class VMToolbarManager: NSObject {
         stop.isEnabled = isEnabled
         group.subitems[LifecycleSegment.restart.rawValue].isEnabled = isAvailable(
             .restart, on: instance)
+    }
+
+    private func updateClipboardItems(in toolbar: NSToolbar, instance: VMInstance?) {
+        updateItem(
+            in: toolbar, configuration.copyToMacID, isEnabled: isAvailable(.copyGuestClipboardToMac, on: instance))
+        updateItem(
+            in: toolbar, configuration.copyToGuestID, isEnabled: isAvailable(.copyMacClipboardToGuest, on: instance))
+
+        // Re-arm the transfer-progress observation onto the current VM, so the buttons' bars track in-flight
+        // transfers without re-running the whole toolbar update on every chunk.
+        if instance !== clipboardObservedInstance {
+            clipboardObservedInstance = instance
+            clipboardProgressToolbar = toolbar
+            clipboardProgressObservation?.cancel()
+            clipboardProgressObservation =
+                instance == nil
+                ? nil
+                : observeRecurring(
+                    track: { [weak self] in
+                        guard let observed = self?.clipboardObservedInstance else { return }
+                        _ = observed.clipboardTransferReport
+                        // Read too, so flipping the toggle mid-transfer clears the bar instead of leaving it on a
+                        // button the same flip disabled.
+                        _ = observed.configuration.clipboardSharingEnabled
+                    },
+                    apply: { [weak self] in self?.refreshClipboardTransferBars() })
+        }
+        refreshClipboardTransferBars()
+    }
+
+    /// Shows a running transfer's fraction on the button of its direction: one into the Mac on Copy to Mac, one
+    /// out of it on Copy to Guest.
+    private func refreshClipboardTransferBars() {
+        guard let toolbar = clipboardProgressToolbar else { return }
+        func button(_ identifier: NSToolbarItem.Identifier) -> ClipboardToolbarButton? {
+            toolbar.items.first { $0.itemIdentifier == identifier }?.view as? ClipboardToolbarButton
+        }
+        var running: ClipboardProgressSnapshot?
+        // The bars ride buttons the clipboard toggle disables, so they say nothing while it is off — including
+        // about a drop, which runs regardless and reports itself on the menu-bar status item instead.
+        if clipboardObservedInstance?.configuration.clipboardSharingEnabled == true,
+            case .running(let snapshot, _) = clipboardObservedInstance?.clipboardTransferReport
+        {
+            running = snapshot
+        }
+        button(configuration.copyToMacID)?.transferFraction =
+            running?.direction == .inbound ? running?.fractionComplete : nil
+        button(configuration.copyToGuestID)?.transferFraction =
+            running?.direction == .outbound ? running?.fractionComplete : nil
     }
 
     private func updateSettingsToggleItem(in toolbar: NSToolbar, instance: VMInstance?) {

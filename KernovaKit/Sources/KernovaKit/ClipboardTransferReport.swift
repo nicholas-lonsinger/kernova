@@ -10,9 +10,11 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     case peerPaste
     /// This side's clipboard window is filling in a preview of the peer's offer.
     case preview
-    /// Copy to Mac — the click, or the automatic passthrough publish of a guest
-    /// offer.
+    /// The guest's clipboard written to the Mac's — Copy Guest Clipboard to Mac,
+    /// or the automatic passthrough publish of a guest offer.
     case copy
+    /// Copy Mac Clipboard to Guest.
+    case send
     /// Automatic passthrough forwarded this side's copy to the peer.
     case forward
     /// Files dropped on the VM display — the host sends, the guest receives.
@@ -47,7 +49,7 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
         switch self {
         case .peerPaste: 2
         case .drop, .dragOut: 1
-        case .paste, .preview, .copy, .forward: 0
+        case .paste, .preview, .copy, .forward, .send: 0
         }
     }
 }
@@ -109,6 +111,14 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// A Mac destination asked for a promised item of a guest drag that the
     /// guest never named, so it holds a stand-in name nothing is written to.
     case dragItemUnnamed
+    /// The destination's clipboard changed before a copy to it landed, so it was
+    /// left as it is.
+    case clipboardChanged
+    /// The source's clipboard held nothing a copy could carry.
+    case nothingToCopy
+    /// The source's clipboard held no text, the one thing a text-only transport
+    /// carries.
+    case noTextToCopy
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.

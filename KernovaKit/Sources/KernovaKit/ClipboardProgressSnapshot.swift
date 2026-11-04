@@ -9,7 +9,7 @@ import Foundation
 public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// Which way the bytes are moving, from the rendering side's point of view.
     public enum Direction: Equatable, Sendable {
-        /// Arriving here — a paste materializing, a preview fetch, a Copy to Mac.
+        /// Arriving here — a paste materializing, a preview fetch, a copy to the Mac.
         case inbound
         /// Leaving here — serving a peer's pull of content this side offered.
         case outbound

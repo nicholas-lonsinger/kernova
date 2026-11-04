@@ -60,6 +60,10 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 shutDownAnywayID: NSToolbarItem.Identifier("displayShutDownAnyway"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("displayTakeSnapshot"),
+                // Target this window's VM: the nil-target actions resolve through
+                // `MainMenuController.activeInstance`, which answers the key display window's VM.
+                copyToMacID: NSToolbarItem.Identifier("displayCopyToMac"),
+                copyToGuestID: NSToolbarItem.Identifier("displayCopyToGuest"),
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,

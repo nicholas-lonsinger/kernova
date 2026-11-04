@@ -2096,10 +2096,11 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   public var copy: Bool = false
 
   /// CLIPBOARD_OFFER_BY_PEER only, on the peer's first offer on a connection:
-  /// its clipboard changed while no connection carried CLIPBOARD. The host
-  /// takes that offer over a copy of its own unless its own clipboard changed
-  /// meanwhile too. That first offer holds no items when the peer's clipboard
-  /// is empty, and then only reports.
+  /// its clipboard changed while no connection carried CLIPBOARD. That first
+  /// offer holds no items when the peer's clipboard is empty, and the host
+  /// releases it; when it also says the clipboard did not change, the host
+  /// offers the peer again its own clipboard offer the last connection carried,
+  /// which the peer lost with it.
   public var changedWhileUnlinked: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

@@ -17,8 +17,11 @@ import KernovaWire
 /// - The far side's offer arrives as ``ClipboardRemoteOffer``, its items read whole, for the end to publish.
 ///   Taking it withdraws this side's offer.
 /// - Offers made before either side saw the other's cross; the host's wins (``side``).
-/// - A connection's leaving ends both offers it carried: what an end published of the far side's is the end's
-///   to retract, since nothing more of it can be pulled.
+/// - A copy (``ItemOffer/copy``) is neither side's clipboard offer: the user sent it by command, and it lives as
+///   long as the receiver's write of it. This side serves each copy it sent until the far side lets it go; the
+///   receiver holds each copy it received until its end releases it.
+/// - A connection's leaving ends every offer and copy it carried: what an end wrote of the far side's is the
+///   end's to retract, since nothing more of it can be pulled.
 ///
 /// Offers and ends hop onto the main actor in the order the connection emitted them; a pull's end is handled on
 /// the connection's queue, so a paste waiting on a pull never needs the main actor.
@@ -44,6 +47,17 @@ public final class ClipboardItemExchange {
         case linkLost
     }
 
+    /// The guest's answer to the host's ask for its clipboard (``askForCopy(_:)``).
+    public enum CopyAnswer: Sendable {
+        /// The guest's copy, its items read; the host holds it until ``releaseCopy(_:)`` or
+        /// ``refuseCopy(_:_:)``.
+        case copy(ClipboardRemoteOffer)
+        /// The guest's clipboard holds nothing to copy.
+        case nothing
+        /// No copy came: the connection left, or the ask was not sent.
+        case failed(WireError)
+    }
+
     /// Hears each offer of the far side once its items are read: it is this end's clipboard now.
     public var onRemoteOffer: ((ClipboardRemoteOffer) -> Void)?
     /// Hears each offer of the far side that stopped being this end's clipboard, and how.
@@ -53,6 +67,19 @@ public final class ClipboardItemExchange {
     public var holdsUnsentCopy: () -> Bool = { false }
     /// The host: a guest offer was refused for crossing a copy of this side's; offer that copy now.
     public var onCrossingRefused: (() -> Void)?
+    /// The host: the guest's first offer on a connection reported an empty clipboard that did not change while
+    /// unlinked, so the copy of this side's it held went with the last connection.
+    public var onEmptyUnchangedReturn: (() -> Void)?
+    /// A guest: the host asks for this side's clipboard; answer with ``sendCopy(_:answering:)`` naming the ask.
+    public var onCopyAsked: ((_ ask: Data) -> Void)?
+    /// A guest: the host sent a copy of its clipboard, its items read; this end holds it until it releases it.
+    public var onCopyReceived: ((ClipboardRemoteOffer) -> Void)?
+    /// Hears each copy this end held that ended before it let it go: the connection left, or the far side
+    /// withdrew it. What this end wrote of it can be pulled no more.
+    public var onCopyEnded: ((ClipboardRemoteOffer) -> Void)?
+    /// Hears each copy this side sent that the far side refused, and why: `CLIPBOARD_CHANGED` when its clipboard
+    /// changed before the copy landed, `TOO_LARGE` over its paste ceiling.
+    public var onCopyRefused: ((WireError) -> Void)?
     /// Hears each pull of this side's offer that it served.
     public var onServed: (() -> Void)?
     /// Hears each pull of the far side's offer that landed here.
@@ -60,25 +87,37 @@ public final class ClipboardItemExchange {
     /// Hears each pull of the far side's offer that failed a paste, with the error it failed with:
     /// `TOO_LARGE` when the representation, or the offer's file set, is over the paste ceiling.
     public var onPullFailed: ((WireError) -> Void)?
-    /// Hears each change of ``localSource``.
-    public var onLocalSourceChanged: (() -> Void)?
 
     /// The far side's offer this end published, while it is this end's clipboard.
     public private(set) var remote: ClipboardRemoteOffer?
     /// This side's offer, while it is this end's clipboard and a connection carries it.
-    public private(set) var localSource: ClipboardOfferSource? {
-        didSet { if localSource !== oldValue { onLocalSourceChanged?() } }
-    }
+    public private(set) var localSource: ClipboardOfferSource?
+    /// The far side's copies this end holds, by token.
+    public private(set) var copies: [Data: ClipboardRemoteOffer] = [:]
+    /// Whether this side's offer was the far side's clipboard when last heard of: set once one opens, and
+    /// cleared only by the far side letting it go, a far-side offer taken, or this end withdrawing it — not by a
+    /// connection ending, which a far side whose clipboard lost the offer with it reports on the next.
+    public private(set) var localOfferStood = false
 
     /// Which end this is.
     public let side: Side
     private var link: (any ClipboardItemLink)?
+    /// This side's offer sent on `link` and not yet answered, and the source it is served from once it opens.
+    private var opening: (token: Data, source: ClipboardOfferSource)?
     /// The token of `localSource`'s offer on `link`.
     private var localToken: Data?
-    /// The host: the last offer sent on `link`. A guest: the last host offer received on it.
+    /// The host: the last offer the connection opened on `link`. A guest: the last host offer received on it.
     private var lastLinkToken: Data?
+    /// The host: whether the guest's first offer on `link` has arrived.
+    private var heardOnLink = false
     /// The tokens of the far side's offers whose items are still being read.
     private var reading: Set<Data> = []
+    /// The tokens of the far side's copies whose items are still being read.
+    private var readingCopies: Set<Data> = []
+    /// This side's copies on `link`, by token, each served until the far side lets it go.
+    private var sentCopies: [Data: ClipboardOfferSource] = [:]
+    /// The host: the ask awaiting the guest's copy on `link`.
+    private var ask: (token: Data, answer: (CopyAnswer) -> Void)?
     private var nextGeneration: UInt64 = 1
     private let staging: ClipboardFileStaging
     private let pasteCeiling: @Sendable () -> Int
@@ -103,15 +142,30 @@ public final class ClipboardItemExchange {
 
     // MARK: The connection
 
-    /// Runs over `link` from now on, or over nothing; this sends nothing. Both offers the connection before
-    /// carried end here: the far side's as `.linkLost`, its pulls cancelled, and this side's, whose end follows as
-    /// an event. What a new connection is offered is the end's to read from its pasteboard then.
+    /// Runs over `link` from now on, or over nothing; this sends nothing. Every offer and copy the connection
+    /// before carried ends here: the far side's offer as `.linkLost`, each copy held through ``onCopyEnded``,
+    /// their pulls cancelled; this side's, whose ends follow as events; and an ask unanswered. What a new
+    /// connection is offered is the end's to read from its pasteboard then.
     public func setLink(_ link: (any ClipboardItemLink)?) {
         self.link = link
+        opening = nil
         localToken = nil
         localSource = nil
         lastLinkToken = nil
+        heardOnLink = false
         reading.removeAll()
+        readingCopies.removeAll()
+        sentCopies.removeAll()
+        if let ask {
+            self.ask = nil
+            ask.answer(.failed(WireError(.cancelled, debugDetail: "the connection left")))
+        }
+        let held = copies.values
+        copies.removeAll()
+        for copy in held {
+            copy.close()
+            onCopyEnded?(copy)
+        }
         if let remote {
             self.remote = nil
             remote.close()
@@ -123,35 +177,71 @@ public final class ClipboardItemExchange {
 
     /// Makes `source` this end's clipboard and offers it on the connection, replacing this side's offer before
     /// it (`ITEM_OFFER_REPLACED`) and ending the far side's. A source with no items offers nothing, so it
-    /// withdraws this side's offer instead. With no connection, nothing is held.
-    public func offer(_ source: ClipboardOfferSource) {
+    /// withdraws this side's offer instead. With no connection, nothing is held. A guest's first offer on a
+    /// connection says whether its clipboard `changedWhileUnlinked`.
+    public func offer(_ source: ClipboardOfferSource, changedWhileUnlinked: Bool = false) {
         guard !source.items.isEmpty else { return withdrawLocal() }
         endRemote(.superseded)
-        open(source.items, concealed: source.concealed, servedBy: source)
-    }
-
-    /// Offers `items` on the connection as this side's offer, each pull served from `source`; with no
-    /// connection, nothing is held.
-    private func open(_ items: [OfferedItem], concealed: Bool, servedBy source: ClipboardOfferSource) {
         guard let link else { return }
         // A far-side offer still being read predates this side's offer too.
         for token in reading { link.releaseOffer(token) }
         reading.removeAll()
-        localSource = source
+        withdrawLocal()
         let token = Self.freshToken()
-        localToken = token
-        if side == .host { lastLinkToken = token }
-        let logger = logger
-        let count = items.count
+        opening = (token, source)
         let offer = ItemOffer(
-            token: token, concealed: concealed, items: items, after: side == .guest ? lastLinkToken ?? Data() : Data())
+            token: token, concealed: source.concealed, items: source.items, after: after,
+            changedWhileUnlinked: side == .guest && changedWhileUnlinked)
+        send(offer, on: link) {
+            [weak self] opened in self?.answered(token, opened: opened)
+        }
+    }
+
+    /// A guest: this side's first offer on a connection, when its clipboard holds nothing: a report of no items
+    /// saying whether its clipboard changed while unlinked, which the host releases.
+    public func reportEmpty(changedWhileUnlinked: Bool) {
+        withdrawLocal()
+        guard side == .guest, let link else { return }
+        send(
+            ItemOffer(token: Self.freshToken(), items: [], after: after, changedWhileUnlinked: changedWhileUnlinked),
+            on: link
+        ) { _ in }
+    }
+
+    /// The `after` this side's next offer carries: a guest's names the last host offer it received.
+    private var after: Data { side == .guest ? lastLinkToken ?? Data() : Data() }
+
+    /// The connection answered this side's offer `token`: it is this end's clipboard now, unless something
+    /// replaced it while it opened, when it is withdrawn at once.
+    private func answered(_ token: Data, opened: Bool) {
+        guard let opening, opening.token == token else {
+            if opened { link?.withdrawOffer(token) }
+            return
+        }
+        self.opening = nil
+        guard opened else { return }
+        localToken = token
+        localSource = opening.source
+        localOfferStood = true
+        if side == .host { lastLinkToken = token }
+    }
+
+    /// Sends `offer` on `link`, hearing on the main actor whether it opened.
+    private func send(
+        _ offer: ItemOffer, on link: any ClipboardItemLink, _ opened: @escaping @MainActor (Bool) -> Void
+    ) {
+        let logger = logger
+        let count = offer.items.count
+        let copy = offer.copy
         link.offerItems(offer) { refusal in
             if let refusal {
                 logger.log(
                     .notice, "The clipboard offer was not opened: \(String(describing: refusal), privacy: .public)")
             } else {
-                logger.log(.notice, "Offered the clipboard: \(count, privacy: .public) item(s)")
+                logger.log(
+                    .notice, "Offered the clipboard\(copy ? " as a copy" : ""): \(count, privacy: .public) item(s)")
             }
+            MainActorBridge.async { opened(refusal == nil) }
         }
     }
 
@@ -159,8 +249,10 @@ public final class ClipboardItemExchange {
     /// end's clipboard, stays so.
     public func withdrawLocal() {
         if let localToken { link?.withdrawOffer(localToken) }
+        opening = nil
         localToken = nil
         localSource = nil
+        localOfferStood = false
     }
 
     /// Ends the far side's offer as this end's clipboard, releasing it: this side pulls nothing more of it.
@@ -171,10 +263,10 @@ public final class ClipboardItemExchange {
         onRemoteOfferEnded?(remote, ending)
     }
 
-    /// The host: whether the guest made `header`'s offer before it received this side's latest, or while this
-    /// side holds a copy it has yet to offer.
+    /// The host: whether the guest made `header`'s offer before it received this side's latest — sent, or still
+    /// opening — or while this side holds a copy it has yet to offer.
     private func crosses(_ header: ItemSetHeaderValue) -> Bool {
-        if let lastLinkToken, header.after != lastLinkToken { return true }
+        if let sent = opening?.token ?? lastLinkToken, header.after != sent { return true }
         return holdsUnsentCopy()
     }
 
@@ -182,6 +274,109 @@ public final class ClipboardItemExchange {
         var generator = SystemRandomNumberGenerator()
         return Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
     }
+
+    // MARK: Copies
+
+    /// Sends `source` to the far side as a copy, `answering` the ask it answers, if any: served from `source`
+    /// until the far side lets it go, whatever this end's clipboard does meanwhile. A nil `source` answers that
+    /// this side's clipboard holds nothing to copy. Returns whether a connection carried it.
+    @discardableResult
+    public func sendCopy(_ source: ClipboardOfferSource?, answering ask: Data = Data()) -> Bool {
+        guard let link else { return false }
+        let token = Self.freshToken()
+        if let source { sentCopies[token] = source }
+        let offer = ItemOffer(
+            token: token, concealed: source?.concealed ?? false, items: source?.items ?? [], after: ask, copy: true)
+        send(offer, on: link) { [weak self] opened in
+            guard !opened, let self, self.sentCopies.removeValue(forKey: token) != nil else { return }
+            self.onCopyRefused?(WireError(.cancelled, debugDetail: "the copy was not opened"))
+        }
+        return true
+    }
+
+    /// The host: asks the guest for a copy of its clipboard as it stands now, replacing an ask still unanswered;
+    /// `answer` hears it once.
+    public func askForCopy(_ answer: @escaping (CopyAnswer) -> Void) {
+        if let ask {
+            self.ask = nil
+            ask.answer(.failed(WireError(.cancelled, debugDetail: "a newer ask replaced it")))
+        }
+        guard side == .host, let link else {
+            return answer(.failed(WireError(.cancelled, debugDetail: "no connection carries the clipboard")))
+        }
+        let token = Self.freshToken()
+        ask = (token, answer)
+        send(ItemOffer(token: token, items: [], copy: true), on: link) { [weak self] opened in
+            guard !opened, let self, let ask = self.ask, ask.token == token else { return }
+            self.ask = nil
+            ask.answer(.failed(WireError(.cancelled, debugDetail: "the ask was not opened")))
+        }
+    }
+
+    /// Lets `copy` go: this end's clipboard no longer holds what it wrote of it, so the far side serves it no
+    /// more.
+    public func releaseCopy(_ copy: ClipboardRemoteOffer) {
+        guard copies.removeValue(forKey: copy.token) != nil else { return }
+        copy.release()
+    }
+
+    /// Refuses `copy` with `error`, written nowhere: the far side hears why.
+    public func refuseCopy(_ copy: ClipboardRemoteOffer, _ error: WireError) {
+        guard copies.removeValue(forKey: copy.token) != nil else { return }
+        copy.refuse(error)
+    }
+
+    /// A copy of the far side's arrived: an ask, an answer to this side's ask, or a copy for this end to write.
+    private func receivedCopy(_ header: ItemSetHeaderValue, on link: any ClipboardItemLink) {
+        switch side {
+        case .guest:
+            guard header.count > 0 else {
+                link.releaseOffer(header.token)
+                onCopyAsked?(header.token)
+                return
+            }
+        case .host:
+            guard let ask, header.after == ask.token else {
+                logger.log(.notice, "Refused a guest clipboard copy that answers no ask of the host's")
+                link.releaseOffer(header.token)
+                return
+            }
+            guard header.count > 0 else {
+                link.releaseOffer(header.token)
+                self.ask = nil
+                ask.answer(.nothing)
+                return
+            }
+        }
+        readingCopies.insert(header.token)
+        readItems(of: header, on: link) { [weak self] items in self?.copyRead(header, items, on: link) }
+    }
+
+    private func copyRead(_ header: ItemSetHeaderValue, _ items: [OfferedItem]?, on link: any ClipboardItemLink) {
+        guard readingCopies.remove(header.token) != nil else { return }
+        guard let items else {
+            logger.log(.notice, "The far side's clipboard copy ended before its items were read")
+            link.releaseOffer(header.token)
+            if let ask, header.after == ask.token {
+                self.ask = nil
+                ask.answer(.failed(WireError(.cancelled, debugDetail: "the copy ended before it was read")))
+            }
+            return
+        }
+        let copy = remoteOffer(header, items, on: link)
+        copies[header.token] = copy
+        logger.log(.notice, "Received a clipboard copy: \(items.count, privacy: .public) item(s)")
+        switch side {
+        case .host:
+            guard let ask, header.after == ask.token else { return releaseCopy(copy) }
+            self.ask = nil
+            ask.answer(.copy(copy))
+        case .guest:
+            onCopyReceived?(copy)
+        }
+    }
+
+    // MARK: Serving
 
     /// The content of `representation` of this side's offer that pull `id`'s `request` pulls, served from its
     /// source. Called on the pull's own queue, never the main thread: it waits for the main actor to read the
@@ -200,8 +395,10 @@ public final class ClipboardItemExchange {
         return result
     }
 
+    /// Serves `request` from this side's offer, or from the copy it names.
     private func serve(_ request: PullRequest) async -> Result<ItemContent, WireError> {
-        guard let source = localSource, request.token == localToken else {
+        let source = request.token == localToken ? localSource : sentCopies[request.token]
+        guard let source else {
             return .failure(WireError(.itemRepresentationUnavailable, debugDetail: "not this side's open offer"))
         }
         do throws(ClipboardServeError) {
@@ -232,13 +429,32 @@ public final class ClipboardItemExchange {
         serves.end(by: event)
         switch event {
         case .offerReceived(let header):
-            received(header, on: link)
-        case .offerEnded(_, .local, let token, _):
+            if header.copy { receivedCopy(header, on: link) } else { received(header, on: link) }
+        case .offerEnded(_, .local, let token, let closure):
+            if sentCopies.removeValue(forKey: token) != nil {
+                if case .resetByPeer(let error) = closure { onCopyRefused?(error) }
+                return
+            }
+            if let ask, ask.token == token, case .resetByPeer(let error) = closure {
+                self.ask = nil
+                ask.answer(.failed(error))
+                return
+            }
             guard token == localToken else { return }
             localToken = nil
             localSource = nil
+            switch closure {
+            case .completed, .resetByPeer: localOfferStood = false
+            case .resetLocally, .connectionClosedLocally, .connectionClosedByPeer, .connectionLost: break
+            }
         case .offerEnded(_, .remote, let token, let closure):
             reading.remove(token)
+            readingCopies.remove(token)
+            if let copy = copies.removeValue(forKey: token) {
+                copy.close()
+                onCopyEnded?(copy)
+                return
+            }
             guard let remote, remote.token == token else { return }
             self.remote = nil
             remote.close()
@@ -272,12 +488,20 @@ public final class ClipboardItemExchange {
     }
 
     /// Reads every item of the far side's offer `header`, then hands the offer over, unless it ended meanwhile.
-    /// The host first refuses, unread, a guest offer that crosses a copy of its own.
+    /// The host first refuses, unread, a guest offer that crosses a copy of its own, and takes a guest's first
+    /// offer of no items as its report of an empty clipboard.
     private func received(_ header: ItemSetHeaderValue, on link: any ClipboardItemLink) {
         switch side {
         case .guest:
             lastLinkToken = header.token
         case .host:
+            let first = !heardOnLink
+            heardOnLink = true
+            if header.count == 0 {
+                link.releaseOffer(header.token)
+                if first, !header.changedWhileUnlinked { onEmptyUnchangedReturn?() }
+                return
+            }
             guard !crosses(header) else {
                 logger.log(.notice, "Refused a guest clipboard offer that crossed the host's newer copy")
                 link.releaseOffer(header.token)
@@ -291,14 +515,40 @@ public final class ClipboardItemExchange {
             remote.close()
         }
         reading.insert(header.token)
-        let generation = nextGeneration
-        nextGeneration += 1
+        readItems(of: header, on: link) { [weak self] items in self?.read(header, items, on: link) }
+    }
+
+    private func read(_ header: ItemSetHeaderValue, _ items: [OfferedItem]?, on link: any ClipboardItemLink) {
+        guard reading.remove(header.token) != nil else { return }
+        guard let items else {
+            logger.log(.notice, "The far side's clipboard offer ended before its items were read")
+            link.releaseOffer(header.token)
+            return
+        }
+        guard !items.isEmpty else {
+            logger.log(.notice, "Refused a clipboard offer of no items")
+            link.releaseOffer(header.token)
+            return
+        }
+        let remote = remoteOffer(header, items, on: link)
+        withdrawLocal()
+        self.remote = remote
+        logger.log(.notice, "Received a clipboard offer: \(items.count, privacy: .public) item(s)")
+        onRemoteOffer?(remote)
+    }
+
+    /// Reads every item of `header`'s offer at once, handing `done` them all, or nil once any is not held.
+    private func readItems(
+        of header: ItemSetHeaderValue, on link: any ClipboardItemLink,
+        _ done: @escaping @MainActor ([OfferedItem]?) -> Void
+    ) {
         let count = header.count
         let read = Locked<[OfferedItem?]>(Array(repeating: nil, count: count))
         let left = Locked(count)
-        let finish: @Sendable () -> Void = { [weak self] in
+        let finish: @Sendable () -> Void = {
             let items = read.withLock { $0 }
-            MainActorBridge.async { self?.read(header, items, on: link, generation: generation) }
+            let held = items.compactMap { $0 }
+            MainActorBridge.async { done(held.count == items.count ? held : nil) }
         }
         guard count > 0 else { return finish() }
         for index in 0..<count {
@@ -314,31 +564,18 @@ public final class ClipboardItemExchange {
         }
     }
 
-    private func read(
-        _ header: ItemSetHeaderValue, _ items: [OfferedItem?], on link: any ClipboardItemLink, generation: UInt64
-    ) {
-        guard reading.remove(header.token) != nil else { return }
-        let held = items.compactMap { $0 }
-        guard held.count == items.count else {
-            logger.log(.notice, "The far side's clipboard offer ended before its items were read")
-            link.releaseOffer(header.token)
-            return
-        }
-        guard !held.isEmpty else {
-            logger.log(.notice, "Refused a clipboard offer of no items")
-            link.releaseOffer(header.token)
-            return
-        }
+    /// The far side's offer `header` of `items`, its pulls landing in a staging generation of its own.
+    private func remoteOffer(
+        _ header: ItemSetHeaderValue, _ items: [OfferedItem], on link: any ClipboardItemLink
+    ) -> ClipboardRemoteOffer {
+        let generation = nextGeneration
+        nextGeneration += 1
         let ceiling = pasteCeiling
-        let remote = ClipboardRemoteOffer(
-            header: header, items: held, link: link, staging: staging, generation: generation,
+        return ClipboardRemoteOffer(
+            header: header, items: items, link: link, staging: staging, generation: generation,
             ceiling: { UInt64(clamping: max(ceiling(), 0)) }, registry: pulls, logger: logger,
             landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } },
             failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } })
-        withdrawLocal()
-        self.remote = remote
-        logger.log(.notice, "Received a clipboard offer: \(held.count, privacy: .public) item(s)")
-        onRemoteOffer?(remote)
     }
 }
 

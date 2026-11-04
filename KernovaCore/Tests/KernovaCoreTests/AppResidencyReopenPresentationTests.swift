@@ -10,8 +10,8 @@ import Testing
 ///
 /// A reopen with a user window — a miniaturized one included — must present
 /// nothing: that window owns the presentation, and re-presenting the library
-/// would drag it forward over a per-VM display or clipboard window the status
-/// item opened alone.
+/// would drag it forward over a per-VM display window the status item opened
+/// alone.
 @Suite("AppResidencyPolicy.reopenPresentation", .caseScoped)
 struct AppResidencyReopenPresentationTests {
     @Test("A reopen with a user window presents nothing")

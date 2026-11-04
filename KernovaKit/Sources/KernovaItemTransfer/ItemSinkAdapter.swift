@@ -25,7 +25,7 @@ import KernovaWire
 /// Lands the far side's items as `ItemSinkEffect` asks: a staged representation, INLINE as much as FILE or
 /// FOLDER, through a `TreeReceiver` staging beside its landing's directory and publishing under the landing's
 /// name, its landed bytes charged to the order's budget when it has one; an INLINE one landing in memory decoded
-/// there and published as its bytes. Each pull's work runs on a queue of its own.
+/// there, charged to that budget likewise, and published as its bytes. Each pull's work runs on a queue of its own.
 public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink {
     private enum Pull {
         case receiving(TreeReceiver<FileSystem>)
@@ -145,6 +145,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                         reporter.report(.publishFailed(id, error))
                     }
                 case .inline(let receiver):
+                    receiver.keep()
                     reporter.report(.published(id, .inline(receiver.bytes)))
                 case .refused, nil:
                     reporter.report(
@@ -162,7 +163,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         _ acceptance: ContainerAcceptance, _ order: ItemPullOrder, fileSystem: FileSystem, decodingWorkers: Int
     ) -> Result<Pull, WireError> {
         guard case .staged(let directory, let name) = order.landing else {
-            return .success(.inline(InlineReceiver(accepting: acceptance)))
+            return .success(.inline(InlineReceiver(accepting: acceptance, budget: order.budget)))
         }
         let path = Array(directory.utf8)
         do {
@@ -200,16 +201,24 @@ extension PublishName {
 }
 
 /// An INLINE representation's container decoded into the bytes of its one DATA entry, held to its acceptance's
-/// byte ceiling by the decoder.
+/// byte ceiling by the decoder, and to its budget, when it has one, by charging each byte as it decodes; what it
+/// charged returns to the budget unless ``keep()`` runs.
 struct InlineReceiver {
     private var decoder: ContainerDecoder
     private let acceptance: ContainerAcceptance
+    private let account: ByteBudget.Account?
     /// The DATA entry's bytes so far.
     private(set) var bytes = Data()
 
-    init(accepting acceptance: ContainerAcceptance) {
+    init(accepting acceptance: ContainerAcceptance, budget: ByteBudget? = nil) {
         decoder = ContainerDecoder(accepting: acceptance)
         self.acceptance = acceptance
+        account = budget?.account()
+    }
+
+    /// Makes what it charged the budget's for good: its bytes are published.
+    func keep() {
+        account?.keep()
     }
 
     /// Takes the container's next bytes.
@@ -229,17 +238,34 @@ struct InlineReceiver {
     }
 
     private mutating func drain() throws(WireError) {
-        do {
-            while let event = try decoder.next() {
-                switch event {
-                case .bytes(let data): bytes.append(data)
-                case .zeros(let count): bytes.append(Data(count: Int(count)))
-                default: break
-                }
+        while let event = try nextEvent() {
+            switch event {
+            case .bytes(let data):
+                try charge(UInt64(data.count))
+                bytes.append(data)
+            case .zeros(let count):
+                try charge(count)
+                bytes.append(Data(count: Int(count)))
+            default: break
             }
+        }
+    }
+
+    private mutating func nextEvent() throws(WireError) -> TreeEvent? {
+        do {
+            return try decoder.next()
         } catch {
             throw error.wireError(acceptance)
         }
+    }
+}
+
+extension InlineReceiver {
+    /// Charges `count` decoded bytes to the budget, or refuses them `TOO_LARGE` when it has fewer left.
+    fileprivate func charge(_ count: UInt64) throws(WireError) {
+        guard let account, !account.charge(count) else { return }
+        throw WireError(
+            .tooLarge, limit: account.budget.limit, debugDetail: "over the budget of every landing it shares")
     }
 }
 

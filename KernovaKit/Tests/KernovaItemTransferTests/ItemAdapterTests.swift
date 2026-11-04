@@ -77,6 +77,27 @@ struct ItemAdapterTests {
         #expect(try bench.names("").isEmpty)
     }
 
+    @Test("INLINE bytes landing in memory are charged to the order's budget, and kept once published")
+    func inlineInMemoryChargesTheBudget() async throws {
+        let bench = try Bench()
+        let bytes = Data((0..<600_000).map { UInt8(truncatingIfNeeded: $0 % 251) })
+        let budget = ByteBudget(limit: 1_000_000)
+        let result = try await bench.transfer(.inline(bytes), .inline, .memory, budget: budget)
+        #expect(result == .published(Bench.id, .inline(bytes)))
+        #expect(budget.remaining == 1_000_000 - UInt64(bytes.count))
+
+        // The next landing sharing the budget finds less than it needs left.
+        let refused = try await bench.transfer(.inline(bytes), .inline, .memory, budget: budget)
+        guard case .refused(_, let error)? = refused else {
+            Issue.record("landed over the budget: \(String(describing: refused))")
+            return
+        }
+        #expect(error.code == .tooLarge)
+        #expect(error.limit == 1_000_000)
+        // A refused landing gives back what it charged.
+        #expect(budget.remaining == 1_000_000 - UInt64(bytes.count))
+    }
+
     @Test(
         "a container compresses exactly when a guest serves it", arguments: [PeerRole.host, .sessionPeer, .systemPeer])
     func compressesGuestToHost(_ server: PeerRole) async throws {

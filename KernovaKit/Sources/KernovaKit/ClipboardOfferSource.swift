@@ -101,8 +101,10 @@ public final class ClipboardOfferSource {
                 case .pasteboard(let pasteboardItem, let type):
                     guard let pasteboard, pasteboard.changeCount == changeCount else { return nil }
                     let pasteboardItems = pasteboard.items
-                    held = pasteboardItems.indices.contains(pasteboardItem)
-                        ? pasteboardItems[pasteboardItem].data(forType: NSPasteboard.PasteboardType(type)).map(Origin.bytes)
+                    held =
+                        pasteboardItems.indices.contains(pasteboardItem)
+                        ? pasteboardItems[pasteboardItem].data(forType: NSPasteboard.PasteboardType(type)).map(
+                            Origin.bytes)
                         : nil
                 case .fileContents(let url):
                     held = await Task.detached { try? Data(contentsOf: url) }.value.map(Origin.bytes)

@@ -446,6 +446,23 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         viewModel.showVMInFinder(instance)
     }
 
+    @objc func copyGuestClipboardToMac(_ sender: Any?) {
+        target(of: sender)?.copyGuestClipboardToMac()
+    }
+
+    @objc func copyMacClipboardToGuest(_ sender: Any?) {
+        target(of: sender)?.copyMacClipboardToGuest()
+    }
+
+    /// Turning passthrough off is immediate; turning it on confirms first, on the working window.
+    @objc func toggleClipboardPassthrough(_ sender: Any?) {
+        guard let instance = target(of: sender) else { return }
+        ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
+            VMConfigurationKeyRegistry.clipboardPassthrough.assigning(
+                !instance.configuration.clipboardPassthroughEnabled),
+            confirmingIn: NSApp.keyWindow ?? NSApp.mainWindow)
+    }
+
     @objc func showGuestAgentStatus(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         windows.showGuestAgentStatus(for: instance)

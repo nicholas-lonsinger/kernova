@@ -77,7 +77,8 @@ struct ClipboardPassthroughCoordinatorTests {
         var copiesMaterialized = 0
 
         func stop() {}
-
+        func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
+        func guestClipboardCopy() async -> GuestClipboardCopy { .nothing }
 
         /// Mirrors both real transports: a disconnected service delivers nothing,
         /// so it reports `.undelivered` and leaves the copy retryable.
@@ -775,9 +776,16 @@ struct ClipboardPassthroughCoordinatorTests {
         @ObservationIgnored let puller = CountingPuller()
 
         func stop() {}
+        func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
+        func guestClipboardCopy() async -> GuestClipboardCopy { .nothing }
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
         func guestClipboardItems() -> [CopyToMacItem] {
-            [.offer(CopyToMacOffer(token: Data(repeating: 9, count: 16), items: items, concealed: false, servingFileURLs: true, puller: puller))]
+            [
+                .offer(
+                    CopyToMacOffer(
+                        token: Data(repeating: 9, count: 16), items: items, concealed: false, servingFileURLs: true,
+                        puller: puller))
+            ]
         }
 
         func simulateInboundOffer(_ items: [OfferedItem]) {

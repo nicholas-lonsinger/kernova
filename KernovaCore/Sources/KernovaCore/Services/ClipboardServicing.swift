@@ -50,6 +50,18 @@ package protocol ClipboardServicing: AnyObject {
     /// Whether the guest's offer is this clipboard's now, for passthrough to publish.
     var hasStandingGuestOffer: Bool { get }
 
+    /// The host pasteboard's change count when the last connection to the guest ended, after what its end
+    /// retracted; nil before any ended, or when the transport keeps no record. A Mac copy made since it is one
+    /// the guest has not seen.
+    var changeCountAtLinkLoss: Int? { get }
+
+    /// Copies `snapshot`, the Mac's clipboard as it stood at the command, to the guest's: what does not reach it
+    /// at once, or nil. A refusal the guest answers later goes to the VM's transfer report.
+    func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure?
+
+    /// The guest's clipboard as it stands now, every representation but a file or folder already landed here.
+    func guestClipboardCopy() async -> GuestClipboardCopy
+
     /// Reserves a directory to call a file promise copied on the Mac in to when the guest pulls it, or `nil`
     /// when the transport can't stage one. Default `nil`: a text-only transport never takes a file.
     func reservePromiseDestination() -> URL?
@@ -60,6 +72,31 @@ package protocol ClipboardServicing: AnyObject {
     /// transport already holds returns `.resolved`. Files that can never be served are reported as
     /// `.droppedFile`.
     func guestClipboardItems() -> [CopyToMacItem]
+}
+
+/// The guest's clipboard, as a copy command took it.
+package enum GuestClipboardCopy {
+    /// It held nothing to copy.
+    case nothing
+    /// It could not be copied, and why.
+    case failed(ClipboardTransferFailure)
+    /// The copy, to be written to the Mac.
+    case copy(GuestCopyContents)
+}
+
+/// A copy of the guest's clipboard: its items, every non-file representation landed, and the files still on
+/// the guest's disk, pulled when pasted.
+package struct GuestCopyContents {
+    /// The copy's token, which a retraction of its write names.
+    let token: Data
+    let items: [OfferedItem]
+    let concealed: Bool
+    /// The bytes INLINE representation `rep` of item `item` landed with.
+    let landed: @Sendable (_ item: Int, _ rep: Int) -> Data?
+    /// Pulls the copy's files when a paste asks.
+    let puller: any ClipboardItemPulling
+    /// Lets the copy go, the Mac's clipboard holding nothing more of it.
+    let release: @MainActor () -> Void
 }
 
 /// What became of an `offerHostCopy(_:)`.
@@ -112,4 +149,5 @@ extension ClipboardServicing {
     var connectionEpoch: UInt64 { 0 }
     var clipboardChangeMark: Int? { nil }
     var hasStandingGuestOffer: Bool { false }
+    var changeCountAtLinkLoss: Int? { nil }
 }

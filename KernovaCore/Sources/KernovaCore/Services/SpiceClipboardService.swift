@@ -94,6 +94,40 @@ final class SpiceClipboardService: ClipboardServicing {
         return ClipboardContent(text: guestText).representations.map { .resolved($0) }
     }
 
+    /// Grabs the guest's clipboard for `snapshot`'s text, the one thing this transport carries; the guest's
+    /// agent asks for it at paste, and it is answered from the snapshot, which nothing on the Mac changes.
+    func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? {
+        guard snapshot.offersUTF8Text else { return .noTextToCopy }
+        guard isConnected, carriesClipboard,
+            writeToGuest(SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text]))
+        else { return .transferFailed }
+        outbound = .copy(snapshot)
+        guestText = nil
+        if !guestSupportsByDemand {
+            Task { [weak self] in await self?.reply(from: .copy(snapshot)) }
+        }
+        Self.logger.log(.notice, "Grabbed the guest's clipboard for the Mac's copy")
+        return nil
+    }
+
+    /// The text the guest's agent sent at its last grab: the guest's clipboard as it stands, since each change
+    /// of it grabs anew.
+    func guestClipboardCopy() async -> GuestClipboardCopy {
+        guard let guestText else { return .nothing }
+        var text = Representation()
+        text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        text.storage = .inline
+        text.sizeEstimate = UInt64(guestText.utf8.count)
+        var item = OfferedItem()
+        item.representations = [text]
+        let bytes = Data(guestText.utf8)
+        var generator = SystemRandomNumberGenerator()
+        return .copy(
+            GuestCopyContents(
+                token: Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }), items: [item],
+                concealed: false, landed: { _, _ in bytes }, puller: NoFilesPuller(), release: {}))
+    }
+
     /// Grabs the copy's UTF-8 text, the one representation this transport carries, reading it only when the
     /// guest requests it; a legacy guest, which never requests, is sent it now. A copy with no text has nothing
     /// to send.
@@ -311,6 +345,17 @@ final class SpiceClipboardService: ClipboardServicing {
         let message = SpiceMessageBuilder.buildAnnounceCapabilities(request: true)
         _ = writeToGuest(message)
         Self.logger.log(.debug, "Sent ANNOUNCE_CAPABILITIES (requesting guest reply)")
+    }
+}
+
+/// The puller of a copy with no files, which nothing asks.
+private struct NoFilesPuller: ClipboardItemPulling {
+    func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+        completion(nil)
+    }
+
+    func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+        completion(nil)
     }
 }
 

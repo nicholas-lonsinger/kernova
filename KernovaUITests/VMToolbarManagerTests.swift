@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -45,6 +46,8 @@ struct VMToolbarManagerTests {
                 shutDownAnywayID: NSToolbarItem.Identifier("testShutDownAnyway"),
                 saveStateID: NSToolbarItem.Identifier("testSaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("testTakeSnapshot"),
+                copyToMacID: NSToolbarItem.Identifier("testCopyToMac"),
+                copyToGuestID: NSToolbarItem.Identifier("testCopyToGuest"),
                 popOutID: NSToolbarItem.Identifier("testPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("testFullscreen"),
                 settingsToggleID: includeSettingsToggle ? NSToolbarItem.Identifier("testSettingsToggle") : nil,
@@ -206,7 +209,9 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers contains all configured identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 7)
+        #expect(manager.sharedItemIdentifiers.count == 9)
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testCopyToMac")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testCopyToGuest")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testShutDownAnyway")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
@@ -219,7 +224,7 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers omits settings toggle when not configured")
     func sharedIdentifiersWithoutSettingsToggle() {
         let manager = makeManager(includeSettingsToggle: false)
-        #expect(manager.sharedItemIdentifiers.count == 6)
+        #expect(manager.sharedItemIdentifiers.count == 8)
         #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
 
@@ -231,6 +236,9 @@ struct VMToolbarManagerTests {
                 NSToolbarItem.Identifier("testLifecycle"),
                 NSToolbarItem.Identifier("testSaveState"),
                 NSToolbarItem.Identifier("testTakeSnapshot"),
+                .space,
+                NSToolbarItem.Identifier("testCopyToMac"),
+                NSToolbarItem.Identifier("testCopyToGuest"),
                 .space,
                 NSToolbarItem.Identifier("testPopOut"),
                 NSToolbarItem.Identifier("testFullscreen"),
@@ -279,6 +287,9 @@ struct VMToolbarManagerTests {
                 NSToolbarItem.Identifier("testSaveState"),
                 NSToolbarItem.Identifier("testTakeSnapshot"),
                 .space,
+                NSToolbarItem.Identifier("testCopyToMac"),
+                NSToolbarItem.Identifier("testCopyToGuest"),
+                .space,
                 NSToolbarItem.Identifier("testPopOut"),
                 NSToolbarItem.Identifier("testFullscreen"),
             ])
@@ -322,6 +333,103 @@ struct VMToolbarManagerTests {
 
         gate.release()
         await arrival.settle()
+    }
+
+    // MARK: - Clipboard commands
+
+    private func clipboardButton(_ raw: String, in toolbar: NSToolbar) -> ClipboardToolbarButton? {
+        item(raw, in: toolbar)?.view as? ClipboardToolbarButton
+    }
+
+    /// Has a console peer carry `instance`'s clipboard through its hub.
+    private func carryClipboard(on instance: VMInstance) {
+        let peer = PeerHandle(rawValue: 1)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), consolePeers: [.clipboard: peer]))
+        instance.hubClipboard.setConsolePeer(peer)
+    }
+
+    @Test(
+        "Each clipboard command's item is a view-backed button sending its action down the responder chain",
+        arguments: [
+            ("testCopyToMac", "Copy to Mac", #selector(AppDelegate.copyGuestClipboardToMac(_:))),
+            ("testCopyToGuest", "Copy to Guest", #selector(AppDelegate.copyMacClipboardToGuest(_:))),
+        ])
+    func clipboardItemStructure(raw: String, label: String, action: Selector) {
+        let manager = makeManager()
+        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier(raw))
+        #expect(item?.label == label)
+        #expect(item?.paletteLabel == label)
+        #expect(item?.autovalidates == false)
+        let button = item?.view as? ClipboardToolbarButton
+        #expect(button?.action == action)
+        #expect(button?.target == nil)
+    }
+
+    @Test("The clipboard buttons are enabled while an agent carries the clipboard and passthrough is off")
+    func clipboardButtonsFollowTheCommands() {
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+        manager.updateToolbarItems(in: toolbar)
+        #expect(clipboardButton("testCopyToMac", in: toolbar)?.isEnabled == false)
+        #expect(clipboardButton("testCopyToGuest", in: toolbar)?.isEnabled == false)
+
+        carryClipboard(on: instance)
+        manager.updateToolbarItems(in: toolbar)
+        #expect(clipboardButton("testCopyToMac", in: toolbar)?.isEnabled == true)
+        #expect(clipboardButton("testCopyToGuest", in: toolbar)?.isEnabled == true)
+
+        // Passthrough on: the two clipboards are one already.
+        let passthrough = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+        }
+        carryClipboard(on: passthrough)
+        let passthroughManager = makeManager(instance: passthrough)
+        let (passthroughToolbar, _, _) = makeToolbar(manager: passthroughManager)
+        passthroughManager.updateToolbarItems(in: passthroughToolbar)
+        #expect(clipboardButton("testCopyToMac", in: passthroughToolbar)?.isEnabled == false)
+        #expect(clipboardButton("testCopyToGuest", in: passthroughToolbar)?.isEnabled == false)
+    }
+
+    /// Stands a running readout on `instance` moving `direction`, as a producer's operation would, returning the
+    /// operation — the reporter holds only a weak reference, so the caller must keep it alive.
+    private func publishProgress(
+        transferred: UInt64, total: UInt64, direction: ClipboardProgressSnapshot.Direction, on instance: VMInstance
+    ) -> ClipboardTransferOperation {
+        let operation = ClipboardTransferOperation(
+            gesture: .paste, direction: direction, peerName: instance.name, revealDelay: 0,
+            clock: GatedEngineClock(), reporter: instance.clipboardTransfers)
+        instance.clipboardTransfers.publish(
+            from: operation,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: direction, peerName: instance.name, currentItemName: nil,
+                    filesCompleted: 0, fileCount: 1, bytesTransferred: transferred,
+                    totalBytes: total, bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
+                    elapsedSeconds: 1), since: Date()))
+        return operation
+    }
+
+    @Test(
+        "A running transfer's bar shows on the button of its direction, and leaves once it ends",
+        arguments: [
+            (ClipboardProgressSnapshot.Direction.inbound, "testCopyToMac", "testCopyToGuest"),
+            (.outbound, "testCopyToGuest", "testCopyToMac"),
+        ])
+    func clipboardBarFollowsDirection(direction: ClipboardProgressSnapshot.Direction, shown: String, hidden: String) {
+        let instance = makeInstance(phase: .running(sessionID: UUID()))
+        let operation = publishProgress(transferred: 25, total: 100, direction: direction, on: instance)
+        let manager = makeManager(instance: instance)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+        manager.updateToolbarItems(in: toolbar)
+        #expect(clipboardButton(shown, in: toolbar)?.transferFraction == 0.25)
+        #expect(clipboardButton(hidden, in: toolbar)?.transferFraction == nil)
+
+        instance.clipboardTransfers.retire(operation)
+        manager.updateToolbarItems(in: toolbar)
+        #expect(clipboardButton(shown, in: toolbar)?.transferFraction == nil)
     }
 
     // MARK: - Lifecycle Labels

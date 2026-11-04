@@ -192,14 +192,14 @@ struct ClipboardTransferWordingTests {
         )
     }
 
-    @Test("a retraction points at Copy to Mac only when an offer replaced what it removed")
+    @Test("a retraction points at Copy Guest Clipboard to Mac only when an offer replaced what it removed")
     func retractionNamesCopyToMacOnlyWithASuccessor() throws {
         let replaced = try #require(wording(.supersededCopyRetracted(hasSuccessor: true), .copy))
         let unreplaced = try #require(wording(.supersededCopyRetracted(hasSuccessor: false), .copy))
-        #expect(replaced.message.contains("use Copy to Mac"))
+        #expect(replaced.message.contains("use Copy Guest Clipboard to Mac"))
         // Without a successor the click has nothing to fetch, so the sentence
         // stops at what happened.
-        #expect(!unreplaced.message.contains("use Copy to Mac"))
+        #expect(!unreplaced.message.contains("use Copy Guest Clipboard to Mac"))
         #expect(unreplaced.message.hasSuffix("removed from the Mac clipboard."))
     }
 

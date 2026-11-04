@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -149,7 +150,8 @@ struct SpiceClipboardServiceTests {
 
         var payload = Data()
         payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-        await service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
+        await service.handleIncomingData(
+            buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
         #expect(service.guestText == "From guest")
         #expect(service.inboundOfferSeq == 1)
         guard case .resolved(let text)? = service.guestClipboardItems().first else {
@@ -310,6 +312,70 @@ struct SpiceClipboardServiceTests {
 
         #expect(await service.offerHostCopy(copy) == .settled)
         #expect(drainPipe(inputPipe).isEmpty)
+    }
+
+    // MARK: - The clipboard commands
+
+    /// The Mac's clipboard as a copy command snapshots it.
+    private func macSnapshot(_ pasteboard: FakePasteboard) async throws -> ClipboardOfferSource {
+        guard
+            case .snapshot(let snapshot, _) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, sizeOf: nil)
+        else {
+            Issue.record("the Mac's clipboard gave no snapshot")
+            throw CancellationError()
+        }
+        return snapshot
+    }
+
+    @Test(
+        "Copy to Guest grabs for the Mac's text as the command read it, answered so after the Mac's clipboard moves on")
+    func copyToGuestGrabsTheSnapshot() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        pasteboard.setText("from the Mac")
+        let snapshot = try await macSnapshot(pasteboard)
+
+        #expect(service.copyMacClipboardToGuest(snapshot) == nil)
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+        pasteboard.setText("copied since")
+        await service.handleIncomingData(textRequest)
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("from the Mac".utf8)])
+    }
+
+    @Test("Copy to Guest of a Mac clipboard with no text grabs nothing and says text is all SPICE carries")
+    func copyToGuestWithoutText() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        pasteboard.setData(Data([0x89, 0x50, 0x4E, 0x47]), forTypeIdentifier: "public.png")
+
+        #expect(service.copyMacClipboardToGuest(try await macSnapshot(pasteboard)) == .noTextToCopy)
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
+    @Test("Copy to Mac takes the text the guest's agent last sent, as data; nothing before it sends any")
+    func copyToMacTakesTheGuestsText() async throws {
+        let (service, _, _) = makeService()
+        await connect(service)
+        guard case .nothing = await service.guestClipboardCopy() else {
+            Issue.record("a copy before the guest sent any text")
+            return
+        }
+        var payload = Data()
+        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        await service.handleIncomingData(
+            buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
+
+        guard case .copy(let contents) = await service.guestClipboardCopy() else {
+            Issue.record("no copy of the guest's text")
+            return
+        }
+        #expect(contents.items.map { $0.representations.map(\.storage) } == [[.inline]])
+        #expect(contents.landed(0, 0) == Data("From guest".utf8))
     }
 
     // MARK: - Lifecycle
