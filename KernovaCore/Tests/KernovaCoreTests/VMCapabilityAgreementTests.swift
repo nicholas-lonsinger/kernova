@@ -40,6 +40,9 @@ struct VMCapabilityAgreementTests {
         switch capability {
         case .stop, .discardSavedState: return [.stop, .discardSavedState]
         case .forceStop: return [.forceStop, .discardSavedState]
+        // Its admission is Stop's; the agents' offer and a paused guest are
+        // refused past it, as steps.
+        case .shutDownAnyway: return [.shutDownAnyway, .stop]
         // One verb, whose edit the list's size and the VM's session route to
         // either capability.
         case .editSharedDirectories, .editLiveSharedDirectories:

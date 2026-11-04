@@ -1,4 +1,6 @@
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
 import Testing
@@ -110,6 +112,10 @@ struct VMCapabilityCatalogTests {
     func requestPerCapability() {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
+        // Shut Down Anyway names a request only where the guest's agents offer it.
+        #expect(VMCapability.shutDownAnyway.request(on: instance) == nil)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
         for capability in VMCapability.allCases {
             let request = capability.request(on: instance)
             switch capability {

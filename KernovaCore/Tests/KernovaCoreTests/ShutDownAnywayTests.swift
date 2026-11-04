@@ -99,23 +99,32 @@ struct ShutDownAnywayTests {
         let fixture = try await makeFixture(agents)
         let capabilities = fixture.harness.library.capabilities
         #expect(fixture.instance.agentHubSnapshot.shutsDownIgnoringApps == agents.canShutDownAnyway)
-        #expect(capabilities.isShutDownAnywayApplicable(to: fixture.instance) == agents.canShutDownAnyway)
-        #expect(capabilities.isShutDownAnywayAvailable(on: fixture.instance) == agents.canShutDownAnyway)
+        // One predicate answers every surface and the verb.
+        #expect(capabilities.isApplicable(.shutDownAnyway, to: fixture.instance) == agents.canShutDownAnyway)
+        #expect(capabilities.isAvailable(.shutDownAnyway, on: fixture.instance) == agents.canShutDownAnyway)
+        #expect(capabilities.accepts(.shutDownAnyway, on: fixture.instance) == agents.canShutDownAnyway)
+        #expect(
+            capabilities.decision(.shutDownAnyway, on: fixture.instance, posture: .offer)
+                == (agents.canShutDownAnyway ? .admit : nil))
     }
 
     @Test("A paused guest runs no agent: Shut Down Anyway is offered but not enabled")
     func pausedIsNotAvailable() async throws {
         let fixture = try await makeFixture(.forEveryone, phase: .livePaused(sessionID: UUID()))
         let capabilities = fixture.harness.library.capabilities
-        #expect(capabilities.isShutDownAnywayApplicable(to: fixture.instance))
-        #expect(!capabilities.isShutDownAnywayAvailable(on: fixture.instance))
+        #expect(capabilities.decision(.shutDownAnyway, on: fixture.instance, posture: .offer) == .refuse(.guestPaused))
+        #expect(capabilities.isApplicable(.shutDownAnyway, to: fixture.instance))
+        #expect(!capabilities.isAvailable(.shutDownAnyway, on: fixture.instance))
+        #expect(!capabilities.accepts(.shutDownAnyway, on: fixture.instance))
     }
 
     @Test("A stopped VM offers no Shut Down Anyway, and its verb is refused by state")
     func stoppedIsNotApplicable() async throws {
         let harness = WiredCommandCore(virtualization: MockVirtualizationService(), preferences: preferences)
         let instance = harness.register(name: "Stopped", phase: .stopped, guestOS: .macOS)
-        #expect(!harness.library.capabilities.isShutDownAnywayApplicable(to: instance))
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+        #expect(!harness.library.capabilities.isApplicable(.shutDownAnyway, to: instance))
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(.id(instance.id), disposition: .anyway, consent: .all)
         }

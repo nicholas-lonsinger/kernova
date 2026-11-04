@@ -812,12 +812,14 @@ extension VMCommandCore {
             }
             try await discardSavedState(instance, discard)
         case .anyway:
-            try require(anyOf: [.shutDownAnyway], on: instance)
-            if instance.isLivePaused {
-                throw CommandError.stepRequired(pausedStopRefusal(instance))
-            }
-            // Asked before the consent, so nobody agrees to what is then refused.
-            guard instance.agentHubSnapshot.shutsDownIgnoringApps else {
+            // The catalog's refusal, explained in order — Stop's admission, the
+            // paused guest, the agents' offer — before the consent is asked, so
+            // nobody agrees to what is then refused.
+            if !capabilities.accepts(.shutDownAnyway, on: instance) {
+                try require(anyOf: [.stop], on: instance)
+                if instance.isLivePaused {
+                    throw CommandError.stepRequired(pausedStopRefusal(instance))
+                }
                 throw CommandError.stepRequired(Self.shutDownAnywayUnavailable(instance))
             }
             guard consent.covers(.shutDownAnyway) else {

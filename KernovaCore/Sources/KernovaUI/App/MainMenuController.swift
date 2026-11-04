@@ -388,9 +388,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             // state admits; enablement is the availability read beside it.
             menuItem.title = viewModel.capabilities.stopAction(for: instance).menuTitle
             return viewModel.capabilities.isStopActionAvailable(on: instance)
-        case #selector(AppDelegate.shutDownAnywayVM(_:)):
-            // Listed always; enabled only where the guest's agents offer it.
-            return viewModel.capabilities.isShutDownAnywayAvailable(on: instance)
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             let model = GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
             menuItem.title = model.title

@@ -278,7 +278,6 @@ final class VMToolbarManager: NSObject {
         _ = instance.detailPaneMode
         _ = instance.startAction
         _ = instance.configuration.clipboardSharingEnabled
-        _ = capabilities.isShutDownAnywayAvailable(on: instance)
     }
 
     func updateToolbarItems(in toolbar: NSToolbar) {
@@ -289,7 +288,7 @@ final class VMToolbarManager: NSObject {
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateItem(
             in: toolbar, configuration.shutDownAnywayID,
-            isEnabled: instance.map { capabilities.isShutDownAnywayAvailable(on: $0) } ?? false)
+            isEnabled: isAvailable(.shutDownAnyway, on: instance))
         updateItem(
             in: toolbar, configuration.saveStateID, isEnabled: isAvailable(.suspend, on: instance))
         updateItem(

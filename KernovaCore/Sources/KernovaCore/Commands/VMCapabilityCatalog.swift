@@ -22,9 +22,9 @@ package enum VMCapability: CaseIterable, Hashable {
     case stop
     case restart
     case forceStop
-    /// Shut the guest down without waiting for apps — admitted as Stop is;
-    /// whether the guest's agents offer it is
-    /// ``VMCapabilityCatalog/isShutDownAnywayApplicable(to:)``'s to say.
+    /// Shut the guest down without waiting for apps: named only where the
+    /// guest's agents offer it, admitted as Stop is, and refused
+    /// ``VMAdmission/Refusal/guestPaused`` while the guest is paused.
     case shutDownAnyway
     case discardSavedState
     case pause
@@ -164,12 +164,15 @@ package enum VMCapability: CaseIterable, Hashable {
             return .start(recovery: true)
         case .cancelGuestSetup:
             return .cancel(.guestSetup)
-        case .stop, .restart, .shutDownAnyway:
-            // Virtualization refuses the shutdown request to a paused guest,
-            // and a paused guest's agents run nothing: restart resumes it
-            // first, and the stop verb refuses as a step, which the app's Stop
-            // takes as a resume and then a stop.
+        case .stop, .restart:
+            // Virtualization refuses the shutdown request to a paused guest:
+            // restart resumes it first, and the stop verb refuses as a step,
+            // which the app's Stop takes as a resume and then a stop.
             return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
+        case .shutDownAnyway:
+            // Only an agent runs it: a macOS guest's agent installed "For
+            // everyone", connected.
+            return instance.agentHubSnapshot.shutsDownIgnoringApps ? .sessionAction(.requestStop) : nil
         case .forceStop:
             return .sessionAction(.forceStop)
         case .discardSavedState:
@@ -276,12 +279,18 @@ package struct VMCapabilityCatalog {
     /// The one reading every level below is taken from, and the same decision
     /// ``VMActivity`` commits — so what a surface offers and what a verb takes
     /// agree by construction.
+    ///
+    /// Shut Down Anyway layers one rule over admission's: the agent that runs
+    /// it runs nothing while the guest is paused.
     func decision(
         _ capability: VMCapability, on instance: VMInstance, posture: VMAdmission.Posture
     ) -> VMAdmission.Decision? {
-        capability.request(on: instance).map {
-            instance.activity.decide($0, posture: posture)
+        guard let request = capability.request(on: instance) else { return nil }
+        let decision = instance.activity.decide(request, posture: posture)
+        if capability == .shutDownAnyway, decision == .admit, instance.isLivePaused {
+            return .refuse(.guestPaused)
         }
+        return decision
     }
 
     /// Whether the VM's own state admits `capability` at all — the level a
@@ -290,12 +299,12 @@ package struct VMCapabilityCatalog {
     /// An operation holding the VM is no reason to hide one: a VM that can be
     /// snapshotted still shows Take Snapshot while another operation runs,
     /// dimmed. Nor is the app's termination, another copy of Kernova
-    /// holding the VM, a rule that takes the VM stopped, or a stop request
-    /// still being sent.
+    /// holding the VM, a rule that takes the VM stopped, a stop request
+    /// still being sent, or a paused guest.
     package func isApplicable(_ capability: VMCapability, to instance: VMInstance) -> Bool {
         switch decision(capability, on: instance, posture: .offer) {
         case .admit, .join, .wait, .refuse(.busy), .refuse(.terminating), .refuse(.heldByAnotherCopy),
-            .refuse(.takesStoppedVM), .refuse(.stopRequestInFlight):
+            .refuse(.takesStoppedVM), .refuse(.stopRequestInFlight), .refuse(.guestPaused):
             true
         case .refuse, nil: false
         }
@@ -559,21 +568,6 @@ package struct VMCapabilityCatalog {
     static func deliverableGuestAccount(of configuration: VMConfiguration) -> GuestAccountIntent? {
         guard MacOSGuestProvisioning.hostSupportsProvisioning else { return nil }
         return configuration.pendingGuestAccount
-    }
-
-    /// Whether Shut Down Anyway is offered on `instance` at all — the level a
-    /// surface that hides it reads: the guest's agents shut it down without
-    /// waiting for apps (a macOS guest's agent installed "For everyone",
-    /// connected), and the VM's state admits a stop.
-    package func isShutDownAnywayApplicable(to instance: VMInstance) -> Bool {
-        instance.agentHubSnapshot.shutsDownIgnoringApps && isApplicable(.shutDownAnyway, to: instance)
-    }
-
-    /// Whether Shut Down Anyway can be invoked now: offered, and on a guest
-    /// awake to take it — a paused one runs no agent.
-    package func isShutDownAnywayAvailable(on instance: VMInstance) -> Bool {
-        isShutDownAnywayApplicable(to: instance) && !instance.isLivePaused
-            && isAvailable(.shutDownAnyway, on: instance)
     }
 
     /// Whether the stop slot can be invoked now.
