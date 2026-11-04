@@ -58,7 +58,10 @@ struct MacPowerMechanism: Sendable {
 
     /// The session peer's: the Apple event loginwindow takes to shut down or restart, while the session owns the
     /// console ([QA1134](https://developer.apple.com/library/archive/qa/qa1134/_index.html)). The sequence it
-    /// starts "can be cancelled by running applications".
+    /// starts "can be cancelled by running applications". In macOS 27.2 guests it always took loginwindow's
+    /// reopen-windows path, whatever the user's setting, so unsaved documents came back at the next start; an app
+    /// holding it showed its own prompt while the send still answered taken
+    /// (`docs/research/2026-11-04-macos-shutdown-request-by-session-state.md`).
     static func loginWindow(send: @escaping @Sendable (NSAppleEventDescriptor) -> OSStatus = LoginWindowPower.send)
         -> MacPowerMechanism
     {
