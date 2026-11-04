@@ -183,7 +183,9 @@ struct ItemPullClient: Sendable {
         }
         guard order.landing.takes(representation.storage) else {
             return .failure(
-                WireError(.internal, debugDetail: "a \(order.landing) landing for a \(representation.storage) representation"))
+                WireError(
+                    .internal, debugDetail: "a \(order.landing) landing for a \(representation.storage) representation"
+                ))
         }
         let kind: StreamKind = connection.role == .host ? .itemPullByHost : .itemPullByPeer
         if let refusal = connection.openRefusal(kind) { return .failure(refusal) }
