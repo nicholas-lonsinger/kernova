@@ -44,7 +44,8 @@ final class GuestClipboard {
     /// The host offer the guest pasteboard was last written with.
     private var published: ClipboardRemoteOffer?
     /// The pasteboard change when copies last stopped being offered, moved past every write this agent makes
-    /// meanwhile: what the next connection's first offer reports a change against. Nil before the first.
+    /// meanwhile: what the next connection's first offer reports a change against. Nil before the first, when
+    /// the first offer cannot tell.
     private var unlinkedChangeCount: Int?
     private var pollingTimer: Timer?
 
@@ -67,7 +68,7 @@ final class GuestClipboard {
             logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(), marksWrites: true)
         seenChangeCount = pasteboard.changeCount
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
         exchange.onRemoteOfferEnded = { [weak self] remote, ending in
@@ -150,7 +151,8 @@ final class GuestClipboard {
 
     /// The gate opening offers the pasteboard as it stands, saying whether it changed while the gate was
     /// closed, and that change is seen: the poll offers only a later one. Closing it marks where that change is
-    /// told from.
+    /// told from. A pasteboard holding a write of an earlier run of the agent cannot tell, and neither can a
+    /// first gate.
     private func gateChanged(from was: Bool) {
         guard isOffering != was else { return }
         let changeCount = pasteboard.changeCount
@@ -160,7 +162,24 @@ final class GuestClipboard {
         }
         Self.logger.log(.notice, "The clipboard is offered to the host again")
         seenChangeCount = changeCount
-        readAndOffer(changeCount, changedWhileUnlinked: unlinkedChangeCount.map { $0 != changeCount } ?? true)
+        let change: ClipboardUnlinkedChange
+        if let unlinked = unlinkedChangeCount, !holdsEarlierRunsWrite(changeCount) {
+            change = unlinked == changeCount ? .unchanged : .changed
+        } else {
+            change = .unknown
+        }
+        readAndOffer(changeCount, unlinkedChange: change)
+    }
+
+    /// Whether the pasteboard, at `changeCount`, holds a write of an agent's: this run's own, or an earlier
+    /// run's, its marker read from its types alone. Neither is a copy of the user's.
+    private func holdsAgentWrite(_ changeCount: Int) -> Bool {
+        changeCount == publisher.lastWriteChangeCount || ClipboardPasteboardPublisher.holdsMarkedWrite(pasteboard)
+    }
+
+    /// Whether the pasteboard, at `changeCount`, holds a write of an earlier run of the agent.
+    private func holdsEarlierRunsWrite(_ changeCount: Int) -> Bool {
+        changeCount != publisher.lastWriteChangeCount && ClipboardPasteboardPublisher.holdsMarkedWrite(pasteboard)
     }
 
     // MARK: Guest → host
@@ -188,14 +207,12 @@ final class GuestClipboard {
         readAndOffer(changeCount)
     }
 
-    /// Reads the pasteboard as it stands at `changeCount` and offers it, unless it is this agent's own write or
-    /// has moved on by the time the read lands. The connection's first offer, `changedWhileUnlinked` set, is
-    /// made whatever the pasteboard holds: a report of no items when it offers nothing.
-    private func readAndOffer(_ changeCount: Int, changedWhileUnlinked: Bool? = nil) {
-        if let changedWhileUnlinked, changeCount == publisher.lastWriteChangeCount {
-            return exchange.reportEmpty(changedWhileUnlinked: changedWhileUnlinked)
-        }
-        guard changeCount != publisher.lastWriteChangeCount, readingChangeCount != changeCount else { return }
+    /// Reads the pasteboard as it stands at `changeCount` and offers it, unless it is an agent's write or has
+    /// moved on by the time the read lands. The connection's first offer, `unlinkedChange` set, is made whatever
+    /// the pasteboard holds: a report of no items when it offers nothing of the user's.
+    private func readAndOffer(_ changeCount: Int, unlinkedChange: ClipboardUnlinkedChange? = nil) {
+        if let unlinkedChange, holdsAgentWrite(changeCount) { return exchange.reportEmpty(unlinkedChange) }
+        guard !holdsAgentWrite(changeCount), readingChangeCount != changeCount else { return }
         readingChangeCount = changeCount
         let promiseStaging = promiseStaging
         let generation = nextPromiseGeneration
@@ -210,23 +227,23 @@ final class GuestClipboard {
             guard pasteboard.changeCount == changeCount, isOffering else { return }
             switch outcome {
             case .offer(let source, let lost):
-                exchange.offer(source, changedWhileUnlinked: changedWhileUnlinked ?? false)
+                exchange.offer(source, unlinkedChange: unlinkedChange)
                 activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .offeredToHost
                 if lost > 0 { onNotice() }
             case .nothingOfferable:
-                reportNothing(changedWhileUnlinked)
+                reportNothing(unlinkedChange)
                 activity = .copyCarriedNothing
                 onNotice()
             case .empty, .suppressed:
-                reportNothing(changedWhileUnlinked)
+                reportNothing(unlinkedChange)
             }
         }
     }
 
     /// This side's clipboard offers nothing: its offer is withdrawn, and a connection's first offer reports it.
-    private func reportNothing(_ changedWhileUnlinked: Bool?) {
-        guard let changedWhileUnlinked else { return exchange.withdrawLocal() }
-        exchange.reportEmpty(changedWhileUnlinked: changedWhileUnlinked)
+    private func reportNothing(_ unlinkedChange: ClipboardUnlinkedChange?) {
+        guard let unlinkedChange else { return exchange.withdrawLocal() }
+        exchange.reportEmpty(unlinkedChange)
     }
 
     /// Answers the host's ask with a snapshot of the pasteboard now, or declines it: off the console or with

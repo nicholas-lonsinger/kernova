@@ -735,12 +735,12 @@ message ItemSetHeader {
   // CLIPBOARD only: what the offer is besides its opener's clipboard offer.
   ClipboardCopy copy = 6;
   // CLIPBOARD_OFFER_BY_PEER only, on the peer's first offer on a connection:
-  // its clipboard changed while no connection carried CLIPBOARD. That first
-  // offer holds no items when the peer's clipboard is empty, and the host
-  // releases it; when it also says the clipboard did not change, the host
-  // offers the peer again its own clipboard offer the last connection carried,
-  // which the peer lost with it.
-  bool changed_while_unlinked = 7;
+  // whether its clipboard changed while no connection carried CLIPBOARD. That
+  // first offer holds no items when the peer's clipboard offers nothing of its
+  // own, and the host releases it; unless it also says the clipboard changed,
+  // the host offers the peer again its own clipboard offer the last connection
+  // carried, which the peer lost with it.
+  ClipboardUnlinkedChange unlinked_change = 7;
 }
 
 // CLIPBOARD only: an offer the user's command sent, which is not its opener's
@@ -763,6 +763,19 @@ enum ClipboardCopy {
   // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, CLIPBOARD_ALREADY_HELD, or
   // TOO_LARGE when what is not a file is over the paste ceiling.
   CLIPBOARD_COPY_ASK = 2;
+}
+
+// Whether a peer's clipboard changed while no connection carried CLIPBOARD, as
+// its first CLIPBOARD_OFFER_BY_PEER on a connection reports it. Fallback for an
+// unrecognized value: CLIPBOARD_UNLINKED_CHANGE_UNKNOWN.
+enum ClipboardUnlinkedChange {
+  // Not the peer's first offer on the connection.
+  CLIPBOARD_UNLINKED_CHANGE_UNSPECIFIED = 0;
+  CLIPBOARD_UNLINKED_CHANGE_UNCHANGED = 1;
+  CLIPBOARD_UNLINKED_CHANGE_CHANGED = 2;
+  // The peer cannot tell: it started since the last connection, or its
+  // clipboard holds a write of an earlier run of it.
+  CLIPBOARD_UNLINKED_CHANGE_UNKNOWN = 3;
 }
 
 // The container codecs a destination decodes.

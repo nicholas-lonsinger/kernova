@@ -39,12 +39,13 @@ final class ClipboardPassthroughCoordinator {
     private var pollTimer: Timer?
 
     /// The outbound side of one guest connection. Over a transport that
-    /// resolves crossings, a new connection starts settled where the Mac's
-    /// clipboard stood when the last one ended
-    /// (``ClipboardServicing/changeCountAtLinkLoss``), so it is offered a Mac
+    /// resolves crossings, a returning connection starts settled where the
+    /// Mac's clipboard stood when the last one ended
+    /// (``ClipboardServicing/takeLinkLossMark()``), so it is offered a Mac
     /// copy only when one was made meanwhile — the first connection, with
     /// nothing before it, starts unsettled; over any other transport, it
-    /// forwards only copies made after it came up.
+    /// forwards only copies made after it came up. Turning passthrough on
+    /// builds the connection's own (``start()``).
     ///
     /// A poll that finds a different connected service, or a new connection of
     /// the same one (``ClipboardServicing/connectionEpoch``), starts a new one,
@@ -161,9 +162,11 @@ final class ClipboardPassthroughCoordinator {
         lastInboundOfferSeq = seq
         if let service, service.resolvesCrossings, service.isConnected {
             let current = pasteboard.changeCount
+            // This connection's outbound side is decided here, so its mark is not passthrough's to read.
+            _ = service.takeLinkLossMark()
             if pasteboardHoldsUserCopy, service.clipboardChangeMark.map({ $0 != current }) ?? true {
                 // The Mac's copy is newer: a connection with nothing settled offers it.
-                outbound = nil
+                outbound = OutboundConnection(service: service, settledChangeCount: nil)
             } else {
                 outbound = OutboundConnection(service: service, settledChangeCount: current)
                 if service.hasStandingGuestOffer { publishInbound(from: service, seq: seq) }
@@ -214,15 +217,7 @@ final class ClipboardPassthroughCoordinator {
             outbound = nil
             return
         }
-        let connection: OutboundConnection
-        if let outbound, outbound.serves(service) {
-            connection = outbound
-        } else {
-            connection = OutboundConnection(
-                service: service,
-                settledChangeCount: service.resolvesCrossings ? service.changeCountAtLinkLoss : pasteboard.changeCount)
-            outbound = connection
-        }
+        let connection = connection(to: service)
         let current = pasteboard.changeCount
         // Skip the change our own host-write produced, so guest content is never
         // re-forwarded back to the guest.
@@ -236,6 +231,18 @@ final class ClipboardPassthroughCoordinator {
         forwardHostClipboard(current, over: connection, to: service)
     }
 
+    /// The outbound side of `service`'s connection now, made the first time
+    /// anything asks for it: the one place a connection's link-loss mark is
+    /// read.
+    private func connection(to service: any ClipboardServicing) -> OutboundConnection {
+        if let outbound, outbound.serves(service) { return outbound }
+        let mark = service.takeLinkLossMark()
+        let connection = OutboundConnection(
+            service: service, settledChangeCount: service.resolvesCrossings ? mark : pasteboard.changeCount)
+        outbound = connection
+        return connection
+    }
+
     /// Whether the Mac's pasteboard holds a copy of the user's this connection
     /// has not settled — read now, or not read yet — which a guest offer made
     /// meanwhile crosses and loses to. Before the connection's first poll, that
@@ -243,21 +250,14 @@ final class ClipboardPassthroughCoordinator {
     var holdsUnsentCopy: Bool {
         guard isRunning, let service = instance?.clipboardService, service.isConnected else { return false }
         guard pasteboardHoldsUserCopy else { return false }
-        guard let outbound, outbound.serves(service) else {
-            return pasteboard.changeCount != service.changeCountAtLinkLoss
-        }
-        return pasteboard.changeCount != outbound.settledChangeCount
+        return pasteboard.changeCount != connection(to: service).settledChangeCount
     }
 
     /// Offers the Mac's copy to the connection now, settled or not: the guest
     /// lost it with the connection before.
     func reofferAfterReturn() {
         guard isRunning, let service = instance?.clipboardService, service.isConnected else { return }
-        if let outbound, outbound.serves(service) {
-            outbound.settledChangeCount = nil
-        } else {
-            outbound = OutboundConnection(service: service, settledChangeCount: nil)
-        }
+        connection(to: service).settledChangeCount = nil
         pollHostClipboard()
     }
 

@@ -85,6 +85,10 @@ public enum ClipboardSnapshotPolicy {
     /// managers), synced so it can still be pasted, and held in memory only.
     public static let concealedMarkerUTI = "org.nspasteboard.ConcealedType"
 
+    /// Marks every write a publisher that marks its writes makes, so a later run of the same program tells a
+    /// write of an earlier run from a copy of the user's. Never offered.
+    public static let writeMarkerUTI = "app.kernova.clipboard-write"
+
     /// What to do with an entire pasteboard snapshot, decided from its
     /// `org.nspasteboard.*` marker types before any data is read.
     public enum SnapshotDisposition: Equatable, Sendable {
@@ -177,7 +181,7 @@ public enum ClipboardSnapshotPolicy {
     /// type passes.
     private static func skipReasonBeforeReading(uti: String) -> SkipReason? {
         let identity = PasteboardTypeIdentity(uti)
-        if identity.isMarker { return .transientMarkerType }
+        if identity.isMarker || uti == writeMarkerUTI { return .transientMarkerType }
         if identity.isFileReference { return .fileReferenceType }
         return nil
     }

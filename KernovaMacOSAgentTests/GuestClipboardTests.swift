@@ -483,7 +483,7 @@ struct GuestClipboardTests {
         #expect(rig.clipboard.exchange.remote == nil)
         rig.clipboard.setLink(link)
         await drainMainQueue()
-        #expect(link.offers.last.map { $0.items.isEmpty && !$0.changedWhileUnlinked } == true)
+        #expect(link.offers.last.map { $0.items.isEmpty && $0.unlinkedChange == .unchanged } == true)
     }
 
     @Test("A host clipboard offer of no items is refused: released, and the guest's clipboard left as it is")
@@ -747,7 +747,9 @@ struct GuestClipboardTests {
         let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         rig.clipboard.setLink(link)
         let second = Data(repeating: 8, count: 16)
+        // Both arrive before either lands, each pull opened in turn so its order and its id pair up.
         rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { link.opened.count == 1 }
         rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: second, count: 1)), on: link)
         try await link.changed.wait { link.opened.count == 2 }
 
@@ -774,18 +776,49 @@ struct GuestClipboardTests {
         rig.clipboard.setOnConsole(true)
         rig.clipboard.setLink(link)
         try await link.changed.wait { link.offers.count == 1 }
-        // Never linked before: changed, and empty.
-        #expect(link.offers[0].items.isEmpty && link.offers[0].changedWhileUnlinked)
+        // Never linked before: it cannot say, and is empty.
+        #expect(link.offers[0].items.isEmpty && link.offers[0].unlinkedChange == .unknown)
 
         rig.clipboard.setLink(nil)
         rig.clipboard.setLink(link)
         try await link.changed.wait { link.offers.count == 2 }
-        #expect(link.offers[1].items.isEmpty && !link.offers[1].changedWhileUnlinked)
+        #expect(link.offers[1].items.isEmpty && link.offers[1].unlinkedChange == .unchanged)
 
         rig.clipboard.setLink(nil)
         #expect(rig.pasteboard.setString("copied while unlinked", forType: .string))
         rig.clipboard.setLink(link)
         try await link.changed.wait { link.offers.count == 3 }
-        #expect(!link.offers[2].items.isEmpty && link.offers[2].changedWhileUnlinked)
+        #expect(!link.offers[2].items.isEmpty && link.offers[2].unlinkedChange == .changed)
+    }
+
+    @Test(
+        "A pasteboard holding an earlier agent run's write is no copy of the user's: the first offer is empty, unknown")
+    func earlierRunsWriteIsUnknown() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        #expect(
+            rig.pasteboard.setItem([
+                (.string, Data("the host's, as an earlier agent wrote it".utf8)),
+                (NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.writeMarkerUTI), Data()),
+            ]))
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 1 }
+        #expect(link.offers[0].items.isEmpty && link.offers[0].unlinkedChange == .unknown)
+
+        // It stays no copy of the user's on a later connection too, though this run saw it unchanged.
+        rig.clipboard.setLink(nil)
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 2 }
+        #expect(link.offers[1].items.isEmpty && link.offers[1].unlinkedChange == .unknown)
+    }
+
+    @Test("Every write the agent makes carries its write marker")
+    func writesCarryTheMarker() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setLink(link)
+        try await receiveHostOffer(rig, link)
+        #expect(ClipboardPasteboardPublisher.holdsMarkedWrite(rig.pasteboard))
     }
 }

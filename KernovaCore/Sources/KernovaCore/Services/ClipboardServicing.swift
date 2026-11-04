@@ -50,10 +50,10 @@ package protocol ClipboardServicing: AnyObject {
     /// Whether the guest's offer is this clipboard's now, for passthrough to publish.
     var hasStandingGuestOffer: Bool { get }
 
-    /// The host pasteboard's change count when the last connection to the guest ended, after what its end
-    /// retracted; nil before any ended, or when the transport keeps no record. A Mac copy made since it is one
-    /// the guest has not seen.
-    var changeCountAtLinkLoss: Int? { get }
+    /// The host pasteboard's change count when the connection before the one now up ended, after what its end
+    /// retracted, given once to whatever asks first on this connection: a Mac copy made since it is one the
+    /// guest has not seen. Nil after that, before any connection ended, or when the transport keeps no record.
+    func takeLinkLossMark() -> Int?
 
     /// Copies `snapshot`, the Mac's clipboard as it stood at the command, to the guest's: what does not reach it
     /// at once, or nil. A refusal the guest answers later goes to the VM's transfer report.
@@ -157,6 +157,6 @@ extension ClipboardServicing {
     var connectionEpoch: UInt64 { 0 }
     var clipboardChangeMark: Int? { nil }
     var hasStandingGuestOffer: Bool { false }
-    var changeCountAtLinkLoss: Int? { nil }
+    func takeLinkLossMark() -> Int? { nil }
     var guestOfferToken: Data? { nil }
 }

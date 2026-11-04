@@ -75,9 +75,9 @@ public final class ClipboardItemExchange {
     public var holdsUnsentCopy: () -> Bool = { false }
     /// The host: a guest offer was refused for crossing a copy of this side's; offer that copy now.
     public var onCrossingRefused: (() -> Void)?
-    /// The host: the guest's first offer on a connection reported an empty clipboard that did not change while
-    /// unlinked, so the copy of this side's it held went with the last connection.
-    public var onEmptyUnchangedReturn: (() -> Void)?
+    /// The host: the guest's first offer on a connection reported an empty clipboard it did not change while
+    /// unlinked, or cannot say whether it did, so the copy of this side's it held went with the last connection.
+    public var onEmptyReturn: (() -> Void)?
     /// A guest: the host asks for a snapshot of this side's clipboard, to be answered once.
     public var onCopyAsked: ((CopyAsk) -> Void)?
     /// A guest: the host sent a copy of its clipboard, its items read; this end holds it until it releases it.
@@ -188,8 +188,8 @@ public final class ClipboardItemExchange {
     /// Makes `source` this end's clipboard and offers it on the connection, replacing this side's offer before
     /// it (`ITEM_OFFER_REPLACED`) and ending the far side's. A source with no items offers nothing, so it
     /// withdraws this side's offer instead. With no connection, nothing is held. A guest's first offer on a
-    /// connection says whether its clipboard `changedWhileUnlinked`.
-    public func offer(_ source: ClipboardOfferSource, changedWhileUnlinked: Bool = false) {
+    /// connection says whether its clipboard changed while unlinked (`unlinkedChange`).
+    public func offer(_ source: ClipboardOfferSource, unlinkedChange: ClipboardUnlinkedChange? = nil) {
         guard !source.items.isEmpty else { return withdrawLocal() }
         endRemote(.superseded)
         guard let link else { return }
@@ -201,20 +201,19 @@ public final class ClipboardItemExchange {
         opening = (token, source)
         let offer = ItemOffer(
             token: token, concealed: source.concealed, items: source.items, after: after,
-            changedWhileUnlinked: side == .guest && changedWhileUnlinked)
+            unlinkedChange: side == .guest ? unlinkedChange : nil)
         send(offer, on: link) {
             [weak self] opened in self?.answered(token, opened: opened)
         }
     }
 
-    /// A guest: this side's first offer on a connection, when its clipboard holds nothing: a report of no items
-    /// saying whether its clipboard changed while unlinked, which the host releases.
-    public func reportEmpty(changedWhileUnlinked: Bool) {
+    /// A guest: this side's first offer on a connection, when its clipboard offers nothing of its own: a report
+    /// of no items saying whether its clipboard changed while unlinked, which the host releases.
+    public func reportEmpty(_ unlinkedChange: ClipboardUnlinkedChange) {
         withdrawLocal()
         guard side == .guest, let link else { return }
         send(
-            ItemOffer(token: Self.freshToken(), items: [], after: after, changedWhileUnlinked: changedWhileUnlinked),
-            on: link
+            ItemOffer(token: Self.freshToken(), items: [], after: after, unlinkedChange: unlinkedChange), on: link
         ) { _ in }
     }
 
@@ -563,7 +562,7 @@ public final class ClipboardItemExchange {
             heardOnLink = true
             if header.count == 0 {
                 link.releaseOffer(header.token)
-                if first, !header.changedWhileUnlinked { onEmptyUnchangedReturn?() }
+                if first, header.unlinkedChange != .changed { onEmptyReturn?() }
                 return
             }
             guard !crosses(header) else {
