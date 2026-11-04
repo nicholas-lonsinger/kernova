@@ -82,17 +82,23 @@ public struct ItemPullOrder: Sendable, Equatable {
 }
 
 /// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`
-/// without reading it. An INLINE representation lands as its bytes; a FILE or FOLDER in a directory.
+/// without reading it. An INLINE representation lands as its bytes; a FILE or FOLDER in a directory, or at
+/// exactly one path.
 public enum ItemLanding: Sendable, Equatable {
     /// The INLINE representation's bytes, which the sink publishes as `LandedItem.inline`.
     case inline
-    /// A FILE or FOLDER, in the directory at the absolute path `directory`, under the name `name` chooses.
+    /// A FILE or FOLDER, staged in the directory at the absolute path `directory` and published there under
+    /// the name `name` chooses.
     case tree(directory: String, name: ItemLandingName)
+    /// A FILE or FOLDER created at exactly the absolute path `path`, which nothing may have yet, and written
+    /// beneath it: nothing beside it is opened or created, so a sink allowed only that one path — a file
+    /// promise's destination in a sandboxed app — lands it. It is published as the path's last component.
+    case exactPath(String)
 
     /// Whether this landing takes a representation of `storage`.
     func takes(_ storage: Representation.Storage) -> Bool {
         switch (self, storage) {
-        case (.inline, .inline), (.tree, .file), (.tree, .folder): true
+        case (.inline, .inline), (.tree, .file), (.tree, .folder), (.exactPath, .file), (.exactPath, .folder): true
         default: false
         }
     }

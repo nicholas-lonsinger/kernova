@@ -21,9 +21,10 @@ import KernovaFileTree
 import KernovaTreeTransfer
 import KernovaWire
 
-/// Lands the far side's items as `ItemSinkEffect` asks: a FILE or FOLDER through a `TreeReceiver` staging beside
-/// its landing's directory and publishing under the landing's name, an INLINE representation decoded into memory
-/// and published as its bytes. Each pull's work runs on a queue of its own.
+/// Lands the far side's items as `ItemSinkEffect` asks: a FILE or FOLDER through a `TreeReceiver` staging in its
+/// landing's directory and publishing under the landing's name, or creating it at its landing's exact path; an
+/// INLINE representation decoded into memory and published as its bytes. Each pull's work runs on a queue of its
+/// own.
 public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink {
     private enum Pull {
         case tree(TreeReceiver<FileSystem>)
@@ -53,9 +54,13 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
 
     /// The pull of representation `representation` of item `item` of the far side's offer `token`, to land as
     /// `landing` says: it decodes every codec this sink does, and lands compressed the decmpfs types the
-    /// volume holding a tree landing's directory reads back (`DecmpfsMatrix.acceptedTypes`).
+    /// volume holding a tree landing reads back (`DecmpfsMatrix.acceptedTypes`).
     ///
-    /// - Throws: `WireError` `WRITE_FAILED` when the landing's directory cannot be opened or its volume asked.
+    /// The volume is asked through the landing's directory, or, for an exact path, through an empty file created
+    /// at that path and removed again: the path is the one thing on the volume an exact-path landing may open.
+    ///
+    /// - Throws: `WireError` `WRITE_FAILED` when the landing's directory cannot be opened, its exact path
+    ///   cannot be created, or its volume asked.
     public func order(
         token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
     ) throws(WireError) -> ItemPullOrder {
@@ -65,15 +70,48 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         request.representation = representation
         request.byteCeiling = byteCeiling
         request.codecs = [.lz4]
-        guard case .tree(let directory, _) = landing else { return ItemPullOrder(request, landing: landing) }
-        do {
-            let opened = try fileSystem.openDirectory(Array(directory.utf8), in: AT_FDCWD)
-            defer { fileSystem.close(opened) }
-            request.decmpfsTypes = try DecmpfsMatrix.acceptedTypes(landingIn: opened, on: fileSystem).sorted()
-        } catch {
-            throw WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)")
+        switch landing {
+        case .inline:
+            break
+        case .tree(let directory, _):
+            do {
+                let opened = try fileSystem.openDirectory(Array(directory.utf8), in: AT_FDCWD)
+                defer { fileSystem.close(opened) }
+                request.decmpfsTypes = try DecmpfsMatrix.acceptedTypes(landingIn: opened, on: fileSystem).sorted()
+            } catch {
+                throw WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)")
+            }
+        case .exactPath(let path):
+            request.decmpfsTypes = try Self.acceptedTypes(at: Array(path.utf8), on: fileSystem).sorted()
         }
         return ItemPullOrder(request, landing: landing)
+    }
+
+    /// The decmpfs types a pull landing at exactly `path` accepts, asked through an empty file created there
+    /// exclusively and removed again.
+    private static func acceptedTypes(at path: [UInt8], on fileSystem: FileSystem) throws(WireError) -> Set<UInt32> {
+        guard path.first == UInt8(ascii: "/") else {
+            throw WireError(.writeFailed, posixErrno: EINVAL, debugDetail: "the landing's path is not absolute")
+        }
+        let probe: Int32
+        do {
+            probe = try fileSystem.createFile(path, in: treeRootDirectory)
+        } catch {
+            throw WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's path: \(error)")
+        }
+        let types = Result { () throws(TreeFileSystemError) in
+            try DecmpfsMatrix.acceptedTypes(landingIn: probe, on: fileSystem)
+        }
+        fileSystem.close(probe)
+        let removed = Result { () throws(TreeFileSystemError) in
+            try fileSystem.remove(path, in: treeRootDirectory, isDirectory: false)
+        }
+        do {
+            try removed.get()
+            return try types.get()
+        } catch {
+            throw WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's volume: \(error)")
+        }
     }
 
     /// Carries out `effect` on its pull's queue, reporting through `reporter`.
@@ -159,6 +197,12 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         switch landing {
         case .inline:
             return .success(.inline(InlineReceiver(accepting: acceptance)))
+        case .exactPath(let path):
+            return .success(
+                .tree(
+                    TreeReceiver(
+                        exactPath: Array(path.utf8), accepting: acceptance, decodingWorkers: decodingWorkers,
+                        fileSystem: fileSystem)))
         case .tree(let directory, let name):
             let path = Array(directory.utf8)
             do {

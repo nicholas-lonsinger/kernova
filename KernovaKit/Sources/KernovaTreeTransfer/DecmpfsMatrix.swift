@@ -57,11 +57,11 @@ public enum DecmpfsMatrix {
         #endif
     }()
 
-    /// The decmpfs types a pull landing in `directory` accepts, its `decmpfs_types`: those `kernel` reads back,
-    /// when the volume holding `directory` stores compressed files, and none otherwise.
+    /// The decmpfs types a pull landing on `directory`'s volume accepts, its `decmpfs_types`: those `kernel`
+    /// reads back, when the volume holding `directory` stores compressed files, and none otherwise.
     ///
     /// - Parameters:
-    ///   - directory: An open directory on the destination's volume.
+    ///   - directory: An open descriptor on the destination's volume: a directory, or a file landing there.
     ///   - fileSystem: The calls that ask the volume.
     ///   - kernel: The kernel that will read what lands.
     /// - Returns: The types, empty when none lands compressed.

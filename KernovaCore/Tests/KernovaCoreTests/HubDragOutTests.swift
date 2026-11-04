@@ -306,7 +306,7 @@ struct HubDragOutTests {
         try await waitForChange { take.phase == .abandoned }
     }
 
-    @Test("a promise is filled by a pull of its item into the promise URL's directory under exactly its name")
+    @Test("a promise is filled by a pull of its item to exactly the promise URL")
     func writePullsIntoThePromiseURL() async throws {
         let take = try await droppedTake()
         let destination = scratch.url.appendingPathComponent("notes 2.txt")
@@ -321,9 +321,7 @@ struct HubDragOutTests {
         #expect(pull.order.request.item == 0)
         #expect(pull.order.request.representation == 0)
         #expect(pull.order.request.byteCeiling == .max)
-        #expect(
-            pull.order.landing
-                == .tree(directory: scratch.url.path, name: .exactly(Data("notes 2.txt".utf8))))
+        #expect(pull.order.landing == .exactPath(destination.path))
 
         let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 9))
         pull.completion(.success(id))

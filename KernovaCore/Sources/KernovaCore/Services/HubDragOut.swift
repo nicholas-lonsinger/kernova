@@ -256,8 +256,11 @@ package final class HubDragOut {
             hub.cancelTake(id, on: peer)
         }
 
+        /// Lands the pull at exactly `destination`, a file promise's URL: a
+        /// sandboxed app may write that path and nothing beside it
+        /// (`NSFilePromiseProvider.h`: "Always use the supplied URL").
         func pull(
-            _ item: DraggedOutItem, at index: Int, into directory: URL, named name: String,
+            _ item: DraggedOutItem, at index: Int, to destination: URL,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             guard let owner else {
@@ -268,7 +271,7 @@ package final class HubDragOut {
             do throws(WireError) {
                 order = try owner.sink.order(
                     token: token, item: UInt32(index), representation: item.representation, byteCeiling: .max,
-                    landing: .tree(directory: directory.path, name: .exactly(Data(name.utf8))))
+                    landing: .exactPath(destination.path))
             } catch {
                 ended(.failure(error))
                 return {}

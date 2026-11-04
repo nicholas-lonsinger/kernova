@@ -31,16 +31,19 @@ import KernovaWire
 /// fails at its creation with `EEXIST`. A ``DirectoryCursor`` holds the stack, so at most two directories
 /// are open whatever the depth. Each directory's mode, flags and times land as it is left.
 ///
-/// The item's own entry is created in the destination under ``stagingName``, exclusively, and everything
-/// else inside it; it takes ``name`` — the item's name, which the caller supplies and the container's unnamed
-/// root does not carry — only when the module's ``TreeReceiver`` publishes it, after the producer confirmed
-/// the tree whole. A failure removes it, so nothing the writer created stays anywhere.
+/// The item's own entry is created exclusively, and everything else inside it, in one of two places. Staged,
+/// it is created in the destination under ``stagingName`` and takes ``name`` — the item's name, which the
+/// caller supplies and the container's unnamed root does not carry — only when the module's ``TreeReceiver``
+/// publishes it, after the producer confirmed the tree whole. At an exact path, it is created at that
+/// absolute path, and nothing beside it is opened or created. A failure removes it, so nothing the writer
+/// created stays anywhere.
 ///
 /// A folder's symlinks and small files are held in a batch and created side by side
 /// (``FolderBatch``) before the writer creates anything else or leaves the folder, so a failure among them
 /// is still the first in the producer's order.
 public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
-    /// The name the item's own entry has in the destination until it is published.
+    /// The name the item's own entry is created under: in the destination until it is published, or, at an
+    /// exact path, that absolute path.
     public let stagingName: [UInt8]
     /// The name the item's own entry is published under — or, where ``publishing`` keeps both, counted up from —
     /// and the first component of a failure's path once that entry has begun.
@@ -49,7 +52,12 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     public let publishing: PublishName
 
     private let fileSystem: FileSystem
+    /// The open destination a staged entry is created in, or ``treeRootDirectory`` for an exact path.
     private let destination: Int32
+    /// Whether the item's own entry is created at an exact path rather than staged in a destination.
+    private let atExactPath: Bool
+    /// Whether the exact path is absolute: one that is not names nothing the writer may create.
+    private let rootIsAbsolute: Bool
     private let destinationPathByteCount: Int
     private let logger: KernovaLogger
 
@@ -161,6 +169,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         publishing = name
         self.fileSystem = fileSystem
         self.destination = destination
+        atExactPath = false
+        rootIsAbsolute = true
         self.destinationPathByteCount = destinationPathByteCount
         sequence = TreeEventSequence(accepting: acceptance)
         self.logger = logger
@@ -169,9 +179,36 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         stagingName = Array(".kernova-".utf8) + suffix
     }
 
+    /// A writer creating the item at exactly the absolute path `path`, whose last component is the item's
+    /// name: the directory the path names it in is never opened, so a writer allowed only `path` lands it.
+    ///
+    /// - Parameters:
+    ///   - path: The item's absolute path; one that is not absolute, or whose last component is no name this OS
+    ///     lands, fails the item's own entry as it is created — `.container(.invalidName)`, or the refusal.
+    ///   - fileSystem: The calls the writer makes.
+    ///   - acceptance: What the pull accepts, which every event is held to.
+    ///   - logger: Where an entry the writer could not remove is reported.
+    public init(
+        exactPath path: [UInt8], fileSystem: FileSystem, accepting acceptance: ContainerAcceptance,
+        logger: KernovaLogger = TreeWriterLog.logger
+    ) {
+        let slash = UInt8(ascii: "/")
+        let name = Array(path.split(separator: slash, omittingEmptySubsequences: false).last ?? [])
+        self.name = name
+        publishing = .exactly(name)
+        self.fileSystem = fileSystem
+        destination = treeRootDirectory
+        atExactPath = true
+        rootIsAbsolute = path.first == slash
+        destinationPathByteCount = max(0, path.count - name.count - 1)
+        sequence = TreeEventSequence(accepting: acceptance)
+        self.logger = logger
+        stagingName = path
+    }
+
     deinit {
         discard()
-        fileSystem.close(destination)
+        if !atExactPath { fileSystem.close(destination) }
     }
 
     /// Takes the next event.
@@ -220,7 +257,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     }
 
     /// Gives the item's own entry ``name`` in the destination — or, where ``publishing`` keeps both, the first
-    /// free name `KeepBothName` counts up to — never replacing anything the writer did not create.
+    /// free name `KeepBothName` counts up to — never replacing anything the writer did not create. An entry
+    /// created at an exact path already has its name, which it keeps.
     ///
     /// Where the volume renames without replacing, the staged entry is renamed onto the name exclusively.
     /// Where it cannot (exFAT, FAT), the writer first claims the name — `O_CREAT | O_EXCL` for a file,
@@ -238,6 +276,11 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         guard let root else { preconditionFailure("ended with no root") }
         let staged = try? fileSystem.status(of: stagingName, in: destination)
         guard let staged, FolderBatch.Identity(staged) == root else { throw fail(.moved, at: [name]) }
+        if atExactPath {
+            cursor = nil
+            phase = .published
+            return name
+        }
         var exclusive: Bool
         do {
             exclusive = try fileSystem.renamesExclusively(in: destination)
@@ -321,10 +364,15 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         do {
             try TreeRemoval.remove(stagingName, in: destination, on: fileSystem)
         } catch {
-            let name = String(decoding: stagingName, as: UTF8.self)
             let reason = String(describing: error)
-            logger.log(
-                .error, "Could not remove the staging root \(name, privacy: .public): \(reason, privacy: .public)")
+            if atExactPath {
+                let path = String(decoding: stagingName, as: UTF8.self)
+                logger.log(.error, "Could not remove the item at \(path, privacy: .private): \(reason, privacy: .public)")
+            } else {
+                let name = String(decoding: stagingName, as: UTF8.self)
+                logger.log(
+                    .error, "Could not remove the staging root \(name, privacy: .public): \(reason, privacy: .public)")
+            }
         }
     }
 
@@ -595,8 +643,9 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ) {
         let name = header.depth == 0 ? self.name : Array(header.name)
         let path = entered.map(\.name) + [name]
-        // The sequence held every header's name to one path component; the caller's is held here.
-        guard header.depth > 0 || PathComponent.isValid(name) else {
+        // The sequence held every header's name to one path component; the caller's is held here, and an
+        // exact path to an absolute one.
+        guard header.depth > 0 || (rootIsAbsolute && PathComponent.isValid(name)) else {
             throw TreeWriteFailure(path: path, reason: .container(.invalidName))
         }
         // A Keep Both name can publish up to the longest count longer, which every path below it carries.

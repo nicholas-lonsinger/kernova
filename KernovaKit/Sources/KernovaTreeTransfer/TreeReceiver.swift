@@ -34,7 +34,7 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         return decoder.bufferedByteCount + decoder.heldBytes
     }
 
-    /// The name the item has in the destination until it is published.
+    /// The name the item is created under: in the destination until it is published, or its exact path.
     public var stagingName: [UInt8] { writer.stagingName }
 
     /// A receiver landing what `acceptance` admits in `destination`, as the item `name`.
@@ -58,6 +58,16 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
             name: name, fileSystem: fileSystem, destination: destination,
             destinationPathByteCount: destinationPathByteCount,
             accepting: acceptance, logger: logger)
+    }
+
+    /// A receiver landing what `acceptance` admits at exactly the absolute path `path`, which its publish leaves
+    /// as it is: `TreeWriter.init(exactPath:fileSystem:accepting:logger:)`.
+    public init(
+        exactPath path: [UInt8], accepting acceptance: ContainerAcceptance, decodingWorkers: Int,
+        fileSystem: FileSystem, logger: KernovaLogger = TreeWriterLog.logger
+    ) {
+        state = .receiving(ContainerDecodePipeline(accepting: acceptance, workers: decodingWorkers))
+        writer = TreeWriter(exactPath: path, fileSystem: fileSystem, accepting: acceptance, logger: logger)
     }
 
     /// Takes the container's next bytes, landing the entries they complete as their decompression completes: an entry

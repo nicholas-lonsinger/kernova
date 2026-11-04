@@ -101,11 +101,11 @@ package protocol GuestDragTransport: AnyObject {
     /// Calls the take off; its end follows.
     func cancel()
 
-    /// Pulls `item`, item `index` of the taken offer, into `directory` under
-    /// exactly `name`, calling `ended` once with how the pull ended, and
+    /// Pulls `item`, item `index` of the taken offer, to exactly
+    /// `destination`, calling `ended` once with how the pull ended, and
     /// returns what cancels it.
     func pull(
-        _ item: DraggedOutItem, at index: Int, into directory: URL, named name: String,
+        _ item: DraggedOutItem, at index: Int, to destination: URL,
         ended: @escaping @MainActor (Result<Void, WireError>) -> Void
     ) -> @MainActor () -> Void
 
@@ -923,10 +923,7 @@ package final class GuestDragTake: GuestDragTaking {
         }
         operation.unitBegan(id: UInt64(index), expectedBytes: item.sizeEstimate, name: item.filename)
         var ended = false
-        let cancel = transport.pull(
-            item, at: index, into: destination.deletingLastPathComponent(),
-            named: destination.lastPathComponent
-        ) { [weak self] result in
+        let cancel = transport.pull(item, at: index, to: destination) { [weak self] result in
             ended = true
             self?.endWrite(index, result, operation: operation, completion)
         }

@@ -139,8 +139,9 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     /// or the OS holds no resource fork there.
     func writeResourceFork(_ descriptor: Int32, from buffer: UnsafeRawBufferPointer, at offset: UInt64)
         throws(TreeFileSystemError) -> Bool
-    /// Whether the volume holding the open directory `directory` stores
-    /// decmpfs-compressed files; `false` where the OS stores none.
+    /// Whether the volume holding the open descriptor `directory` — a
+    /// directory or a file — stores decmpfs-compressed files; `false` where
+    /// the OS stores none.
     func volumeStoresCompressedFiles(_ directory: Int32) throws(TreeFileSystemError) -> Bool
     /// Sets the `com.apple.decmpfs` attribute of the open, empty regular
     /// file, which is not yet compressed: ``CompressedFile``'s first step,

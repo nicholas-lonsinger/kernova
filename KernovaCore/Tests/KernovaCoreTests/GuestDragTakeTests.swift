@@ -62,8 +62,7 @@ struct GuestDragTakeTests {
     final class FakeTransport: GuestDragTransport {
         struct Pull {
             let index: Int
-            let directory: URL
-            let name: String
+            let destination: URL
             let ended: @MainActor (Result<Void, WireError>) -> Void
             var cancelled = false
         }
@@ -95,11 +94,11 @@ struct GuestDragTakeTests {
         }
 
         func pull(
-            _ item: DraggedOutItem, at index: Int, into directory: URL, named name: String,
+            _ item: DraggedOutItem, at index: Int, to destination: URL,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             let position = pulls.count
-            pulls.append(Pull(index: index, directory: directory, name: name, ended: ended))
+            pulls.append(Pull(index: index, destination: destination, ended: ended))
             changed.notify()
             return { [weak self] in self?.pulls[position].cancelled = true }
         }
@@ -481,8 +480,7 @@ struct GuestDragTakeTests {
         }
         #expect(outcome == nil)
         let pull = try #require(transport.pulls.first)
-        #expect(pull.directory.path == "/Users/me/Desktop")
-        #expect(pull.name == "a 2.txt")
+        #expect(pull.destination.path == "/Users/me/Desktop/a 2.txt")
         #expect(transport.releases == 0)
         transport.end(.caught(nil))
         #expect(transport.releases == 1)
@@ -508,7 +506,7 @@ struct GuestDragTakeTests {
         transport.end(.caught(Self.delivery), delivered: [Self.namedPromise, Self.sizedFolder])
 
         try await transport.changed.wait { !transport.pulls.isEmpty }
-        #expect(transport.pulls.first?.name == "IMG_0042.jpeg")
+        #expect(transport.pulls.first?.destination.lastPathComponent == "IMG_0042.jpeg")
         // The one offer is held until every item is written.
         #expect(transport.releases == 0)
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")

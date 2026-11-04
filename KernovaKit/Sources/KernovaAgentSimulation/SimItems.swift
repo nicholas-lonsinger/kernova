@@ -269,6 +269,7 @@ package struct DecodingItemSink {
         switch landing {
         case .inline: .inline(withUnsafeBytes(of: digest.bigEndian) { Data($0) })
         case .tree(_, .exactly(let name)), .tree(_, .keepingBoth(let name)): .named(name)
+        case .exactPath(let path): .named(Data(path.utf8.split(separator: UInt8(ascii: "/")).last ?? []))
         }
     }
 

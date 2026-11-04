@@ -55,6 +55,60 @@ struct ItemAdapterTests {
     }
 
     @Test(
+        "an item lands at exactly its own path though the folder above it cannot be opened, beside nothing",
+        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"),
+        arguments: [Representation.Storage.file, .folder])
+    func exactPathLands(_ storage: Representation.Storage) async throws {
+        let bench = try Bench()
+        let name = storage == .file ? "IMG_0042.jpg" : "Folder"
+        if storage == .file {
+            try bench.write(Data(repeating: 7, count: 400_000), to: "source/\(name)")
+        } else {
+            try bench.write(Data("a".utf8), to: "source/Folder/a.txt")
+            try bench.write(Data(repeating: 9, count: 300_000), to: "source/Folder/sub/b.bin")
+        }
+        try bench.makeDirectory("landed")
+        // Writable and searchable, unreadable: the item's path resolves and takes a new entry, and an open of
+        // the folder itself fails.
+        try #require(chmod(bench.path("landed"), 0o300) == 0)
+        defer { _ = chmod(bench.path("landed"), 0o755) }
+        try #require(open(bench.path("landed"), O_RDONLY | O_DIRECTORY) == -1)
+
+        let result = try await bench.transfer(
+            .tree(path: bench.path("source/\(name)")), storage, .exactPath(bench.path("landed/\(name)")))
+
+        #expect(result == .published(Bench.id, .named(Data(name.utf8))))
+        try #require(chmod(bench.path("landed"), 0o755) == 0)
+        #expect(try bench.names("landed") == [name])
+        if storage == .file {
+            #expect(try bench.read("landed/\(name)") == Data(repeating: 7, count: 400_000))
+        } else {
+            #expect(try bench.read("landed/Folder/a.txt") == Data("a".utf8))
+            #expect(try bench.read("landed/Folder/sub/b.bin") == Data(repeating: 9, count: 300_000))
+        }
+    }
+
+    @Test("a landing at an exact path that fails leaves nothing at the path")
+    func exactPathFailureRemoves() async throws {
+        let bench = try Bench()
+        try bench.write(Data("a".utf8), to: "source/Folder/a.txt")
+        try bench.write(Data(repeating: 9, count: 300_000), to: "source/Folder/sub/b.bin")
+        try bench.makeDirectory("landed")
+
+        // The sink accepts less than the folder's second file, which fails it once its root has landed.
+        let result = try await bench.transfer(
+            .tree(path: bench.path("source/Folder")), .folder, .exactPath(bench.path("landed/Folder")),
+            sinkByteCeiling: 100_000)
+
+        guard case .refused(_, let error)? = result else {
+            Issue.record("\(String(describing: result))")
+            return
+        }
+        #expect(error.code == .tooLarge)
+        #expect(try bench.names("landed").isEmpty)
+    }
+
+    @Test(
         "INLINE bytes are served from the provider and published as bytes", arguments: [PeerRole.host, .sessionPeer])
     func inlineLands(_ server: PeerRole) async throws {
         let bench = try Bench()
@@ -204,6 +258,37 @@ struct ItemAdapterTests {
                 landing: .tree(directory: bench.path("missing"), name: .exactly(Data("x".utf8))))
         }
     }
+
+    @Test("an exact path's order asks its volume through the path alone, leaving nothing there or beside it")
+    func exactPathOrder() throws {
+        let bench = try Bench()
+        try bench.makeDirectory("landed")
+        let fileSystem = POSIXTreeFileSystem()
+        let sink = ItemSinkAdapter(fileSystem: fileSystem)
+        let directory = try fileSystem.openDirectory(Array(bench.path("landed").utf8), in: AT_FDCWD)
+        defer { fileSystem.close(directory) }
+
+        let order = try sink.order(
+            token: Data(count: 16), item: 0, representation: 0, byteCeiling: 9,
+            landing: .exactPath(bench.path("landed/x.jpg")))
+
+        #expect(
+            order.request.decmpfsTypes
+                == (try DecmpfsMatrix.acceptedTypes(landingIn: directory, on: fileSystem)).sorted())
+        #expect(try bench.names("landed").isEmpty)
+        try bench.write(Data("old".utf8), to: "landed/x.jpg")
+        let taken = #expect(throws: WireError.self) {
+            try sink.order(
+                token: Data(count: 16), item: 0, representation: 0, byteCeiling: 9,
+                landing: .exactPath(bench.path("landed/x.jpg")))
+        }
+        #expect(taken?.posixErrno == EEXIST)
+        #expect(try bench.read("landed/x.jpg") == Data("old".utf8))
+        #expect(throws: WireError.self) {
+            try sink.order(
+                token: Data(count: 16), item: 0, representation: 0, byteCeiling: 9, landing: .exactPath("x.jpg"))
+        }
+    }
 }
 
 /// A scratch directory, and a source and a sink moving one pull through it.
@@ -239,9 +324,11 @@ final class Bench: Sendable {
     /// Serves `content` as a representation of `storage` from a side of role `server` and lands it as `landing`
     /// on the far side, as the core would: the sink's publish report, or its refusal, or nil when the source
     /// failed.
+    ///
+    /// The sink accepts `sinkByteCeiling` bytes, by default what the source is asked for.
     func transfer(
         _ content: ItemContent, _ storage: Representation.Storage, _ landing: ItemLanding,
-        servedBy server: PeerRole = .sessionPeer
+        servedBy server: PeerRole = .sessionPeer, sinkByteCeiling: UInt64 = 1 << 30
     ) async throws -> ItemSinkInput? {
         if case .tree(let directory, _) = landing {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -251,6 +338,8 @@ final class Bench: Sendable {
         let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
         let order = try sink.order(
             token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30, landing: landing)
+        let sinkOrder = try sink.order(
+            token: Data(count: 16), item: 0, representation: 0, byteCeiling: sinkByteCeiling, landing: landing)
         var representation = Representation()
         representation.storage = storage
         let puller: PeerRole = server == .host ? .sessionPeer : .host
@@ -259,14 +348,15 @@ final class Bench: Sendable {
         }
         let (sinks, sinkReporter) = Inbox<ItemSinkInput>.make { ItemSinkReporter(ItemConnection(role: puller), $0) }
         source.handle(.serve(Self.id, .clipboard, order.request, representation), reporter: sourceReporter)
-        sink.handle(.begin(Self.id, order, representation), reporter: sinkReporter)
+        sink.handle(.begin(Self.id, sinkOrder, representation), reporter: sinkReporter)
         defer { source.handle(.release(Self.id), reporter: sourceReporter) }
         reading: while true {
             source.handle(.read(Self.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
             switch await sources.next() {
             case .bytes(_, let bytes)?:
                 sink.handle(.bytes(Self.id, bytes), reporter: sinkReporter)
-                guard case .consumed? = await sinks.next() else { return nil }
+                let report = await sinks.next()
+                guard case .consumed? = report else { return report }
             case .finished?:
                 break reading
             default:

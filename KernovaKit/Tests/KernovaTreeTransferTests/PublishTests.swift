@@ -56,6 +56,31 @@ struct PublishTests {
         try landing.expectNothingOutside(landed: bytes("Chosen"))
     }
 
+    @Test("an item at an exact path lands there, and its publish keeps that name", arguments: [false, true])
+    func exactPathKeepsItsName(_ folder: Bool) throws {
+        let landing = try Landing(kernelContainment: true)
+        let name = folder ? "Chosen" : "chosen.txt"
+        let receiver = TreeReceiver(
+            exactPath: bytes(landing.destinationPath + "/" + name), accepting: acceptance(folder ? .folder : .file),
+            decodingWorkers: 0, fileSystem: POSIXTreeFileSystem())
+        let result = Result { () throws(TreeWriteFailure) in
+            try receiver.receive(folder ? Self.folderContainer : Self.fileContainer)
+            try receiver.finish()
+            return try receiver.publish()
+        }
+        #expect(result.success == bytes(name))
+        try landing.expectNothingOutside(landed: bytes(name))
+    }
+
+    @Test("an exact path that is not absolute, or ends in no name, creates nothing", arguments: ["chosen.txt", "/"])
+    func exactPathRefused(_ path: String) throws {
+        let receiver = TreeReceiver(
+            exactPath: bytes(path), accepting: acceptance(.file), decodingWorkers: 0, fileSystem: POSIXTreeFileSystem())
+        let failure = #expect(throws: TreeWriteFailure.self) { try receiver.receive(Self.fileContainer) }
+        #expect(failure?.reason == .container(.invalidName))
+        if path != "/" { #expect(access(path, F_OK) != 0) }
+    }
+
     @Test("Keep Both lands past every taken name, replacing none", arguments: renames)
     func keepBothCollides(_ rename: InterposedFileSystem.ExclusiveRename) throws {
         let landing = try Landing(kernelContainment: true)
