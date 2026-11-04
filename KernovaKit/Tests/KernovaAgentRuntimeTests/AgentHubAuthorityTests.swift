@@ -84,9 +84,12 @@ struct AgentHubAuthorityTests {
             scripted.items.elements
                 == Self.console(firstHandle) + [
                     .items(firstHandle, .offerReceived(Self.header(3, .clipboard))),
+                    // No peer is CLIPBOARD's console peer until the new connection's features arrive.
                     .items(
                         firstHandle,
-                        .offerEnded(.clipboard, .remote, token: SimItems.token(3), AgentHubState.endedByHub)),
+                        .offerEnded(
+                            .clipboard, .remote, token: SimItems.token(3),
+                            .resetLocally(WireError(.featureUnavailable, absence: .noAgent)))),
                 ]
                 // The new connection's features arrive after its Hello displaced the first.
                 + Self.console(nil) + Self.console(PeerHandle(rawValue: 3)))

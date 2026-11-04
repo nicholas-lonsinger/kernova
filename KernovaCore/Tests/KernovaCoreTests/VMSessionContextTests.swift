@@ -75,7 +75,6 @@ struct VMSessionContextTests {
         #expect(context.vsock.control == nil)
         #expect(context.vsock.log == nil)
         #expect(context.vsock.clipboard == nil)
-        #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
         // What the run warned about is its record, which the run's end reads.
@@ -100,7 +99,6 @@ struct VMSessionContextTests {
         #expect(instance.session == nil)
         #expect(instance.clipboardService == nil)
         #expect(instance.vsockControlService == nil)
-        #expect(instance.vsockDropService == nil)
         #expect(instance.vsockLogService == nil)
         #expect(instance.networkAttachmentCoordinator == nil)
         #expect(instance.networkAttachmentPending == false)
@@ -303,10 +301,6 @@ struct VMSessionContextTests {
         #expect(
             observationFires(reading: { _ = instance.agentPresentation?.status }) {
                 context.warnedAgentScopes = [.login]
-            })
-        #expect(
-            observationFires(reading: { _ = instance.displayDropAvailability }) {
-                context.vsock.drop = nil
             })
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {

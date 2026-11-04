@@ -10,8 +10,6 @@ enum FeatureChannelRequirement {
     case none
     /// The clipboard channel: `clipboard.transfer.v3`.
     case clipboardStreaming
-    /// The drop channel: `drop.files.v3`.
-    case dropFiles
 
     /// The capability tag a guest must advertise, or `nil` when none is
     /// needed.
@@ -19,7 +17,6 @@ enum FeatureChannelRequirement {
         switch self {
         case .none: return nil
         case .clipboardStreaming: return KernovaCapability.clipboardTransferV3
-        case .dropFiles: return KernovaCapability.dropFilesV3
         }
     }
 }

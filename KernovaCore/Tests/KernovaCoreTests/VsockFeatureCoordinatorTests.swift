@@ -21,7 +21,7 @@ struct VsockFeatureCoordinatorTests {
     func descriptorPortsAreDistinctAndRegistered() {
         let registered: Set<UInt32> = [
             KernovaVsockPort.control, KernovaVsockPort.clipboard, KernovaVsockPort.log,
-            KernovaVsockPort.drop, KernovaVsockPort.clipboardData, KernovaVsockPort.dropData,
+            KernovaVsockPort.clipboardData,
         ]
         let ports = VsockFeatureDescriptor.all.flatMap(\.ports)
 
@@ -30,7 +30,6 @@ struct VsockFeatureCoordinatorTests {
         // The framed port comes first, so a pair installs the channel ahead of
         // the data port that only has meaning behind it.
         #expect(VsockFeatureDescriptor.clipboard.ports.first == KernovaVsockPort.clipboard)
-        #expect(VsockFeatureDescriptor.drop.ports.first == KernovaVsockPort.drop)
     }
 
     /// Gating the control channel on the gate its own handshake fills would
@@ -38,7 +37,7 @@ struct VsockFeatureCoordinatorTests {
     @Test("Only the control channel skips the admission gate, and each feature names its capability")
     func onlyControlSkipsAdmission() {
         #expect(VsockFeatureDescriptor.control.requirement == nil)
-        for descriptor in [VsockFeatureDescriptor.log, .clipboard, .drop] {
+        for descriptor in [VsockFeatureDescriptor.log, .clipboard] {
             #expect(descriptor.requirement != nil, "\(descriptor.name): admits ungated")
         }
         // Log forwarding asks for the handshake and nothing more.
@@ -46,8 +45,6 @@ struct VsockFeatureCoordinatorTests {
         #expect(
             VsockFeatureDescriptor.clipboard.requirement?.capability
                 == KernovaCapability.clipboardTransferV3)
-        #expect(
-            VsockFeatureDescriptor.drop.requirement?.capability == KernovaCapability.dropFilesV3)
     }
 
     @Test("Each descriptor's install-time gate tracks its own configuration flag")
@@ -57,21 +54,17 @@ struct VsockFeatureCoordinatorTests {
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.clipboardSharingEnabled = false
         config.agentLogForwardingEnabled = false
-        config.dropFilesEnabled = false
 
         // The control plane runs whatever the feature toggles say.
         #expect(VsockFeatureDescriptor.control.isEnabled(config))
         #expect(!VsockFeatureDescriptor.log.isEnabled(config))
         #expect(!VsockFeatureDescriptor.clipboard.isEnabled(config))
-        #expect(!VsockFeatureDescriptor.drop.isEnabled(config))
 
         config.clipboardSharingEnabled = true
         config.agentLogForwardingEnabled = true
-        config.dropFilesEnabled = true
 
         #expect(VsockFeatureDescriptor.log.isEnabled(config))
         #expect(VsockFeatureDescriptor.clipboard.isEnabled(config))
-        #expect(VsockFeatureDescriptor.drop.isEnabled(config))
     }
 
     @Test("A Linux session binds no channel with every toggle on, and a macOS one binds them all")
@@ -146,7 +139,6 @@ struct VsockFeatureCoordinatorTests {
         }
         #expect(instance.vsockAdmissionGate.admission(for: .none) != .admit)
         try expectSinkCleared(instance.clipboardDataSink)
-        try expectSinkCleared(instance.dropDataSink)
         instance.cancelAgentAbsenceWatchdog()
     }
 }

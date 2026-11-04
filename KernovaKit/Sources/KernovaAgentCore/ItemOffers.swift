@@ -177,14 +177,23 @@ package struct ItemOfferRegistry: Sendable {
         connection.reset(entry.stream, WireError(.cancelled))
     }
 
-    /// Ends the far side's offer of `token` from this side: END once the set is whole, RESET CANCELLED before.
-    mutating func release(_ token: Data, connection: inout Connection) {
+    /// Ends the far side's offer of `token` from this side: END with `endBody` once the set is whole, RESET
+    /// CANCELLED before.
+    mutating func release(_ token: Data, endBody: Data, connection: inout Connection) {
         guard let entry = remote.first(where: { $0.header.token == token }) else { return }
         if entry.complete, connection.canQueue(on: entry.stream) {
-            connection.end(entry.stream, body: Data())
+            connection.end(entry.stream, body: endBody)
         } else if connection.canReset(entry.stream) {
             connection.reset(entry.stream, WireError(.cancelled))
         }
+    }
+
+    /// Resets the far side's offer of `token` with `error`.
+    mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+        guard let entry = remote.first(where: { $0.header.token == token }), connection.canReset(entry.stream) else {
+            return
+        }
+        connection.reset(entry.stream, error)
     }
 
     private mutating func pump(_ stream: StreamID, _ connection: inout Connection) {

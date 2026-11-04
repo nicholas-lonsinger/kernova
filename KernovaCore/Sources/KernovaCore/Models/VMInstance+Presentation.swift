@@ -1,6 +1,8 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
+import KernovaWire
 
 /// Whether the VM display takes files dragged onto it, and if not, why.
 package enum DisplayDropAvailability {
@@ -25,43 +27,32 @@ extension VMInstance {
     /// The single read site for the gesture's three states. `.none` is decided
     /// from persisted state (`dropFilesEnabled`, `lastSeenAgentVersion`), so it
     /// survives restarts and a VM that has never had an agent — or has the
-    /// feature switched off — never advertises a drop it cannot do; the live
-    /// channel decides the rest, so an agent that goes away mid-session
-    /// downgrades to a refusal on the next observation tick.
+    /// feature switched off — never advertises a drop it cannot do; the hub
+    /// decides the rest, so an agent that goes away mid-session downgrades to a
+    /// refusal on the next observation tick.
     ///
-    /// A VM that is not running refuses too: pausing tears down no vsock, so the
-    /// channel stays connected while the guest is frozen and cannot answer.
+    /// A VM that is not running refuses too: pausing ends no connection, so the
+    /// hub keeps DROP's console peer while the guest is frozen and cannot answer.
     package var displayDropAvailability: DisplayDropAvailability {
         guard configuration.guestOS == .macOS, configuration.dropFilesEnabled,
             lastSeenAgentVersion != nil
         else { return .none }
-        guard status == .running else { return .disconnected }
-        guard let drop = vsockDropService, drop.isConnected,
-            vsockControlService?.guestSupportsDropFiles == true
-        else { return .disconnected }
+        guard status == .running, agentHubSnapshot.consolePeers[.drop] != nil else { return .disconnected }
         return .available
     }
 
-    /// Sends `urls` to the guest's Downloads folder, reporting whether the drop
-    /// was taken up.
+    /// Sends what is dropped on the display to the guest's Downloads folder,
+    /// reporting whether the drop was taken up: `pasteboard` is the drag's,
+    /// and `promises` its file promises as `readObjects` returns them.
     ///
-    /// Re-checks availability itself: a drag can outlive the channel it was
-    /// started over, and a drop the service can no longer serve must spring back
+    /// Re-checks availability itself: a drag can outlive the agent it was
+    /// started toward, and a drop that cannot be offered must spring back
     /// rather than silently vanish.
-    ///
-    /// `stagedIn` is where a promise drag wrote its files; the service holds it
-    /// until that drop settles, and a refused drop leaves it to the caller.
-    package func sendDroppedFilesToGuest(_ urls: [URL], stagedIn stagingDirectory: URL? = nil) -> Bool {
-        guard displayDropAvailability == .available, let service = vsockDropService else {
-            return false
-        }
-        return service.startDrop(urls: urls, stagedIn: stagingDirectory)
-    }
-
-    /// Reports a drag the display took that produced no file to send — a file
-    /// promise the source failed to write.
-    package func reportUnreadableDropToGuest() {
-        vsockDropService?.reportUnreadableDrop()
+    package func dropOnGuest(
+        _ pasteboard: any ClipboardReadPasteboard, promises: [any FilePromiseReceiving]
+    ) -> Bool {
+        guard displayDropAvailability == .available else { return false }
+        return dropService.drop(pasteboard, promises: promises, peerName: name)
     }
 
     /// The guest drag this VM's display may take over when the pointer leaves

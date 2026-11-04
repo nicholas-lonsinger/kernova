@@ -15,12 +15,6 @@ public enum KernovaVsockPort {
     /// Guest agent log forwarding.
     public static let log: UInt32 = 49153
 
-    /// Files dragged onto the VM display, streamed host→guest into Downloads.
-    public static let drop: UInt32 = 49155
-
     /// One connection per clipboard transfer, carrying that transfer's bytes.
     public static let clipboardData: UInt32 = 49156
-
-    /// One connection per dropped item, carrying that item's bytes.
-    public static let dropData: UInt32 = 49157
 }

@@ -114,17 +114,6 @@ package final class VsockControlService: VsockFeatureService {
     /// clipboard-channel admission check requires.
     var guestSupportsClipboardStreaming: Bool { guestSupportsClipboardStreamingStorage }
 
-    /// Whether the connected guest agent advertised `drop.files.v3` in its
-    /// `Hello`.
-    ///
-    /// Set on Hello, reset on stop. An agent without it runs no drop client, so
-    /// the display refuses the gesture rather than offering files nothing will
-    /// pull.
-    private var guestSupportsDropFilesStorage = false
-
-    /// Whether the guest can receive files dropped onto the VM display.
-    package var guestSupportsDropFiles: Bool { guestSupportsDropFilesStorage }
-
     // MARK: - Settle contract
 
     /// Notified once when the channel dies on its own, never on an
@@ -254,7 +243,6 @@ package final class VsockControlService: VsockFeatureService {
         isConnected = false
         liveness.reset()
         guestSupportsClipboardStreamingStorage = false
-        guestSupportsDropFilesStorage = false
         admissionGate?.clear()
         Self.logger.log(.info, "Vsock control service stopped for '\(self.label, privacy: .public)'")
         // Last, so the owner observes fully-settled state from inside the
@@ -428,8 +416,6 @@ package final class VsockControlService: VsockFeatureService {
             let reportedVersion = Self.boundedField(hello.agentInfo.agentVersion)
             guestSupportsClipboardStreamingStorage = hello.capabilities.contains(
                 KernovaCapability.clipboardTransferV3)
-            guestSupportsDropFilesStorage = hello.capabilities.contains(
-                KernovaCapability.dropFilesV3)
             admissionGate?.publish(
                 VsockAdmissionGate.State(
                     handshakeComplete: true, capabilities: Set(hello.capabilities)))

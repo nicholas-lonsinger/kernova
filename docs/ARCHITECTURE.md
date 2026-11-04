@@ -109,10 +109,10 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   `VMLibrary`.
 - Vsock, macOS guests: `KernovaVsockPort` and `VsockListener`, which the
   session hosts as a `VsockListenerHost`; per VM, a
-  `VsockAdmissionGate` and two `VsockDataConnectionSink`s held by `VMInstance`;
+  `VsockAdmissionGate` and a `VsockDataConnectionSink` held by `VMInstance`;
   per session, `VsockFeatureCoordinator` (held by `VMSessionContext`) over
   `VsockFeatureDescriptor.all` — `VsockControlService`, `VsockGuestLogService`,
-  `VsockClipboardService`, `VsockDropService`.
+  `VsockClipboardService`.
 - Agent hub, every VM with a socket device: one `AgentHub` (KernovaKit's
   `KernovaAgentHost`) per `VMInstance`, beside the macOS ports above; each
   session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`

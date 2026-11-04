@@ -356,7 +356,7 @@ final class GuestDragServedOffers: Sendable {
     }
 
     private static func tree(_ url: URL) -> ItemContent {
-        .tree(directory: url.deletingLastPathComponent().path, name: Array(url.lastPathComponent.utf8))
+        .tree(path: url.path)
     }
 }
 

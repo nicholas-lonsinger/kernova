@@ -176,6 +176,30 @@ public struct DropOffers: FeatureMachine {
     }
 }
 
+/// What a peer's END of a DROP offer says landed: the index of each of the offer's items it landed, ascending.
+public struct DropLanded: Sendable, Equatable {
+    /// The landed items' indexes.
+    public var items: [Int]
+
+    /// Says `items` landed.
+    public init(items: [Int]) {
+        self.items = items
+    }
+
+    /// What `endBody`, a peer's END body on DROP_OFFER, says landed; nil when it does not decode.
+    public init?(endBody: Data) {
+        guard let landed = try? Kernova_V2_DropLanded(serializedBytes: endBody) else { return nil }
+        items = landed.items.map(Int.init)
+    }
+
+    /// The END body saying so.
+    public var endBody: Data {
+        var landed = Kernova_V2_DropLanded()
+        landed.items = items.map { UInt32(clamping: $0) }
+        return landed.encoded
+    }
+}
+
 /// DRAG on one connection: the peer's offers of drags in progress in the guest, and the host's takes of them.
 /// Only a peer opens DRAG_OFFER and only the host DRAG_TAKE. A take runs both ways: the host sends
 /// `DragTakeControl`s, the peer `DragTakeReport`s and then its END, which the host's END answers; the host's RESET

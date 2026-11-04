@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaSynchronization
 import KernovaWire
 import UniformTypeIdentifiers
 
@@ -31,7 +30,8 @@ public enum ClipboardServeError: Error, Equatable, Sendable {
 /// representation's bytes come from when a peer pulls it.
 ///
 /// Built by ``ClipboardPasteboardReader/readOffer(from:promises:promiseDestination:sizeOf:)``
-/// from a pasteboard, or by ``init(content:)`` from content already held. No
+/// or ``ClipboardPasteboardReader/readDropOffer(from:promises:sizeOf:)`` from a
+/// pasteboard, or by ``init(content:)`` from content already held. No
 /// byte is read until ``serve(item:representation:)``.
 @MainActor
 public final class ClipboardOfferSource {
@@ -51,6 +51,8 @@ public final class ClipboardOfferSource {
         /// A file promise, by its index in ``ClipboardOfferSource/promises``,
         /// called in on its first pull.
         case promise(Int)
+        /// A file a promise called in before the offer was read lands.
+        case landing(Task<URL, any Error>)
     }
 
     /// The items, in the order they are offered.
@@ -68,8 +70,7 @@ public final class ClipboardOfferSource {
     init(
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
-        promises: [any FilePromiseReceiving],
-        promiseDestination: @escaping @MainActor () throws -> URL
+        promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL
     ) {
         self.items = items
         self.origins = origins
@@ -130,10 +131,11 @@ public final class ClipboardOfferSource {
     /// Serves one representation for a pull, reading its bytes now.
     ///
     /// A pasteboard type is read only while the pasteboard still holds the
-    /// snapshot that was offered. A promise is called in on its first pull,
-    /// into a fresh directory from the reader's `promiseDestination`, and
-    /// every later pull of it serves what that call-in wrote; its source sets
-    /// no deadline, so neither does this.
+    /// snapshot that was offered. A drop's promise was called in before its
+    /// offer was read, and a clipboard's is called in on its first pull, into
+    /// a fresh directory from the reader's `promiseDestination`; every pull of
+    /// a promised file serves what its call-in wrote, waiting for it as long as
+    /// its source takes.
     public func serve(item: Int, representation: Int) async throws(ClipboardServeError)
         -> ClipboardServedRepresentation
     {
@@ -160,44 +162,37 @@ public final class ClipboardOfferSource {
         case .folder(let url):
             return try Self.served(url, as: .folder)
         case .promise(let index):
-            let landed: URL
-            do {
-                landed = try await callIn(index).value
-            } catch {
-                throw .readFailed
-            }
-            return try Self.served(landed, as: storage)
+            return try await Self.served(landing: callIn(index), as: storage)
+        case .landing(let file):
+            return try await Self.served(landing: file, as: storage)
         }
     }
 
-    /// The call-in of promise `index`, started on its first pull.
+    /// The call-in of promise `index`, started on its first pull: the first file it lands is the item.
     private func callIn(_ index: Int) -> Task<URL, any Error> {
         if let task = calledIn[index] { return task }
         let receiver = promises[index]
-        let destination = Result { try promiseDestination() }
-        let task = Task<URL, any Error> { @MainActor in
-            let folder = try destination.get()
-            return try await withCheckedThrowingContinuation { continuation in
-                let once = Locked(false)
-                receiver.receivePromisedFiles(
-                    atDestination: folder, options: [:], operationQueue: OperationQueue()
-                ) { url, error in
-                    // A receiver writing several files reports each; the item is its first.
-                    let first = once.withLock { resumed -> Bool in
-                        defer { resumed = true }
-                        return !resumed
-                    }
-                    guard first else { return }
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else {
-                        continuation.resume(returning: url)
-                    }
-                }
-            }
+        let task: Task<URL, any Error>
+        do {
+            task = CalledInFilePromise.callIn(receiver, into: try promiseDestination()).files[0].landed
+        } catch {
+            task = Task { throw error }
         }
         calledIn[index] = task
         return task
+    }
+
+    /// The file `landing` lands, once it has, served as `storage` names it.
+    private static func served(landing: Task<URL, any Error>, as storage: Representation.Storage)
+        async throws(ClipboardServeError) -> ClipboardServedRepresentation
+    {
+        let landed: URL
+        do {
+            landed = try await landing.value
+        } catch {
+            throw .readFailed
+        }
+        return try served(landed, as: storage)
     }
 
     /// `url` served as `storage` names it, or why it cannot be.

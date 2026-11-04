@@ -31,6 +31,16 @@ struct VsockGuestControlAgentTests {
         return frame
     }
 
+    /// A PolicyUpdate frame: the agent hands each to `onPolicy` in the order
+    /// it read its channel, so its arrival proves every frame before it was
+    /// handled.
+    private func makePolicyFrame() -> Frame {
+        var frame = Frame()
+        frame.protocolVersion = 1
+        frame.policyUpdate = Kernova_V1_PolicyUpdate.with { $0.logForwardingEnabled = true }
+        return frame
+    }
+
     private func makeHeartbeatFrame(nonce: UInt64 = 1) -> Frame {
         var frame = Frame()
         frame.protocolVersion = 1
@@ -69,8 +79,7 @@ struct VsockGuestControlAgentTests {
         unresponsiveAfter: TimeInterval? = nil,
         terminateAfter: TimeInterval? = nil,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
-        onHostCapabilitiesChanged: (@Sendable (HostDropCapabilities) -> Void)? = nil
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) -> VsockGuestControlAgent {
         let provided = AtomicInt()
         let provider: VsockSocketProvider = { _, _ in
@@ -89,8 +98,7 @@ struct VsockGuestControlAgentTests {
                 unresponsiveAfter: unresponsiveAfter ?? Self.watchdogDisabledUnresponsive,
                 terminateAfter: terminateAfter ?? Self.watchdogDisabledTerminate),
             onPolicy: onPolicy,
-            onStateChange: onStateChange,
-            onHostCapabilitiesChanged: onHostCapabilitiesChanged
+            onStateChange: onStateChange
         )
     }
 
@@ -199,25 +207,26 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let notified = AtomicInt()
+        let policies = AtomicInt()
         let agent = makeAgent(
             agentFd: agentFd,
             heartbeatInterval: 0.1,
-            onHostCapabilitiesChanged: { _ in notified.increment() })
+            onPolicy: { _ in policies.increment() })
         defer { agent.stop() }
         agent.start()
 
         // Discard agent's outbound Hello.
         _ = try await nextFrame(from: host)
 
-        // The agent handles its channel's frames in order, so the report the
-        // trailing Hello raises — the second, after the connection's own — is
-        // also proof the heartbeats ahead of it were handled.
+        // The agent handles its channel's frames in order, so the trailing
+        // policy reaching `onPolicy` proves the heartbeats and the Hello ahead
+        // of it were handled.
         for n in 1...3 {
             try host.send(makeHeartbeatFrame(nonce: UInt64(n)))
         }
         try host.send(makeHostHelloFrame())
-        try await notified.changed.wait { notified.value >= 2 }
+        try host.send(makePolicyFrame())
+        try await policies.changed.wait { policies.value >= 1 }
         #expect(agent.connectionState == .connected)
 
         // The agent should still be sending heartbeats: read the next frame
@@ -242,25 +251,24 @@ struct VsockGuestControlAgentTests {
         host.start()
         defer { host.close() }
 
-        let notified = AtomicInt()
+        let policies = AtomicInt()
         let agent = makeAgent(
             agentFd: agentFd,
             heartbeatInterval: 0.1,
-            onHostCapabilitiesChanged: { _ in notified.increment() })
+            onPolicy: { _ in policies.increment() })
         defer { agent.stop() }
         agent.start()
 
         // Once the agent's outbound Hello has been sent, serve() has already
         // marked the channel connected.
         _ = try await nextFrame(from: host)
-        // The connection itself clears the previous host's capabilities.
-        try await notified.changed.wait { notified.value >= 1 }
         #expect(agent.connectionState == .connected)
         // No Hello received yet → host bundled version still unknown (empty).
         #expect(agent.hostBundledAgentVersion == "")
 
         try host.send(makeHostHelloFrame(bundledAgentVersion: "9.9.9"))
-        try await notified.changed.wait { notified.value >= 2 }
+        try host.send(makePolicyFrame())
+        try await policies.changed.wait { policies.value >= 1 }
         #expect(agent.hostBundledAgentVersion == "9.9.9")
         #expect(agent.connectionState == .connected)
     }
@@ -421,63 +429,6 @@ struct VsockGuestControlAgentTests {
         // Log forwarding passes through; clipboard is forced off by the gate.
         #expect(policy.logForwardingEnabled == true)
         #expect(policy.clipboardSharingEnabled == false)
-    }
-
-    // MARK: - Display drops
-
-    /// Collects every drop-channel capability set `onHostCapabilitiesChanged`
-    /// reports, in order.
-    private func recordingDropCapability(
-        into reported: AtomicBox<[HostDropCapabilities]>
-    ) -> @Sendable (HostDropCapabilities) -> Void {
-        { capabilities in reported.update { $0 = ($0 ?? []) + [capabilities] } }
-    }
-
-    @Test("the host's drop capability is reported from its Hello")
-    func hostDropCapabilityObservedFromHello() async throws {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        host.start()
-        defer { host.close() }
-
-        let reported = AtomicBox<[HostDropCapabilities]>()
-        let agent = makeAgent(
-            agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
-        agent.start()
-        defer { agent.stop() }
-
-        _ = try await nextFrame(from: host)  // drain outbound Hello
-        // The connection itself clears the previous host's capabilities, which
-        // is a change the drop client has to hear about too.
-        try await reported.changed.wait { (reported.value?.count ?? 0) >= 1 }
-        #expect(reported.value == [.unadvertised])
-
-        try host.send(makeHostHelloFrame())
-        try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
-        #expect(
-            reported.value == [
-                .unadvertised, HostDropCapabilities(supportsDropFiles: true),
-            ])
-    }
-
-    @Test("a host that advertises no drop capability leaves it off")
-    func hostWithoutDropCapability() async throws {
-        let (agentFd, hostFd) = try makeRawSocketPair()
-        let host = VsockChannel(fileDescriptor: hostFd)
-        host.start()
-        defer { host.close() }
-
-        let reported = AtomicBox<[HostDropCapabilities]>()
-        let agent = makeAgent(
-            agentFd: agentFd, onHostCapabilitiesChanged: recordingDropCapability(into: reported))
-        agent.start()
-        defer { agent.stop() }
-
-        _ = try await nextFrame(from: host)  // drain outbound Hello
-        try host.send(makeHostHelloFrame(streamingCapable: false))
-        try await reported.changed.wait { (reported.value?.count ?? 0) >= 2 }
-
-        #expect(reported.value == [.unadvertised, .unadvertised])
     }
 
     @Test("A stop() taken inside onPolicy drops the policy buffered behind it")

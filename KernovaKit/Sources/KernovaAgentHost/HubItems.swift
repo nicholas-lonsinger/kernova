@@ -10,7 +10,8 @@ import KernovaWire
 
 /// An item event of one peer's connection, as the hub hands it on under console authority: a peer's offer
 /// only from its feature's console peer, and every other event only about what the owner holds open there.
-/// When the hub ends an item itself, its event closes `.resetLocally(CANCELLED)`.
+/// When the hub ends an item itself, its event closes `.resetLocally`: an offer `FEATURE_UNAVAILABLE`, with
+/// why, while no peer is its feature's console peer, and every other end `CANCELLED`.
 public enum HubItemEvent: Sendable, Equatable {
     /// An offer or pull on `PeerHandle`'s connection changed.
     case items(PeerHandle, ItemTransferEvent)
@@ -52,7 +53,7 @@ struct HubOpenItems: Sendable {
 /// unforwarded, and once a feature's console peer changes, the host's offers of it on the peer that lost it
 /// are withdrawn and the offers the hub forwarded from that peer released. A connection that leaves the peer
 /// set hands on nothing more, so everything the owner held on it ends there. Each such end reaches the owner as
-/// the event it stands for, closed `.resetLocally(CANCELLED)`.
+/// the event it stands for, closed as ``HubItemEvent`` says.
 extension AgentHubState {
     /// What console authority does with item event `event` of `handle`'s connection: whether the owner hears
     /// it, and the command the connection is sent instead.
@@ -128,12 +129,16 @@ extension AgentHubState {
             guard var items = connections[handle]?.items else { continue }
             let isPeer = connections[handle]?.peer != nil
             func held(_ offer: HubOpenItems.Offer) -> Bool { console[offer.feature] == handle }
+            func closure(_ offer: HubOpenItems.Offer) -> StreamClosure {
+                guard (console[offer.feature] ?? nil) == nil else { return Self.endedByHub }
+                return .resetLocally(WireError(.featureUnavailable, absence: consoleAbsence(of: offer.feature)))
+            }
             for offer in items.hostOffers where !held(offer) {
-                let end = ItemTransferEvent.offerEnded(offer.feature, .local, token: offer.token, Self.endedByHub)
+                let end = ItemTransferEvent.offerEnded(offer.feature, .local, token: offer.token, closure(offer))
                 ended.append((handle, .withdraw(token: offer.token), .items(handle, end)))
             }
             for offer in items.forwardedOffers where !held(offer) {
-                let end = ItemTransferEvent.offerEnded(offer.feature, .remote, token: offer.token, Self.endedByHub)
+                let end = ItemTransferEvent.offerEnded(offer.feature, .remote, token: offer.token, closure(offer))
                 ended.append((handle, .release(token: offer.token), .items(handle, end)))
             }
             items.hostOffers.removeAll { !held($0) }
@@ -167,7 +172,8 @@ extension AgentHubState {
         return changes
     }
 
-    /// How an item the hub ended for console authority closed.
+    /// How an item the hub ended for console authority closed, but for an offer of a feature no peer is the
+    /// console peer of.
     static let endedByHub = StreamClosure.resetLocally(
         WireError(.cancelled, debugDetail: "not on the feature's console peer"))
 }

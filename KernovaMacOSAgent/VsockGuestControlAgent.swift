@@ -69,16 +69,6 @@ final class VsockGuestControlAgent: Sendable {
         }
     }
 
-    /// Invoked whenever the host's advertised capabilities change — on each
-    /// `Hello`, and on each connection teardown that clears them — with what
-    /// the host now takes over the drop channel.
-    ///
-    /// A host without `drop.files.v3` runs no drop listener, so the guest's
-    /// drop client stays paused rather than redialling a port nothing is bound
-    /// to. Separate from `onStateChange`, which is change-gated on a state
-    /// already set to `.connected` before any `Hello` arrives and so never
-    /// fires for the capabilities themselves. Called off the main thread.
-    private let onHostCapabilitiesChanged: (@Sendable (HostDropCapabilities) -> Void)?
 
     /// Creates the control agent; tests inject a socketpair-backed client and
     /// small cadences.
@@ -88,8 +78,7 @@ final class VsockGuestControlAgent: Sendable {
             port: KernovaVsockPort.control, label: "control"),
         cadence: ControlChannelCadence = .production,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
-        onHostCapabilitiesChanged: (@Sendable (HostDropCapabilities) -> Void)? = nil
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) {
         self.clock = clock
         self.client = client
@@ -97,7 +86,6 @@ final class VsockGuestControlAgent: Sendable {
         self.state = Locked(State(cadence: cadence))
         self.onPolicy = onPolicy
         self.onStateChange = onStateChange
-        self.onHostCapabilitiesChanged = onHostCapabilitiesChanged
     }
 
     // MARK: - UI state accessors
@@ -138,9 +126,6 @@ final class VsockGuestControlAgent: Sendable {
             state.hostSupportsClipboardStreaming = false
             return state.transition(to: .connected)
         }
-        // The clearing is a capability change like any other: a client enabled by
-        // the previous host's Hello has to stand down until this one says Hello.
-        onHostCapabilitiesChanged?(.unadvertised)
         if connected { onStateChange?(.connected) }
 
         sendHello(on: channel)
@@ -200,7 +185,6 @@ final class VsockGuestControlAgent: Sendable {
                 state.hostSupportsClipboardStreaming = hostStreams
                 state.hostBundledAgentVersion = hello.bundledAgentVersion
             }
-            onHostCapabilitiesChanged?(HostDropCapabilities(advertised: hello.capabilities))
             // `logDescription` bounds the peer-supplied capability strings; these
             // records can be forwarded into the host's log store.
             Self.logger.log(
@@ -298,20 +282,3 @@ final class VsockGuestControlAgent: Sendable {
     }
 }
 
-/// What a host's `Hello` says it takes over the drop channel.
-struct HostDropCapabilities: Equatable, Sendable {
-    /// `drop.files.v3`: the host runs a drop listener at all.
-    var supportsDropFiles: Bool
-
-    /// What a host that has not said `Hello` takes: nothing.
-    static let unadvertised = HostDropCapabilities(supportsDropFiles: false)
-
-    init(supportsDropFiles: Bool) {
-        self.supportsDropFiles = supportsDropFiles
-    }
-
-    /// What `capabilities`, a `Hello`'s list, includes.
-    init(advertised capabilities: [String]) {
-        supportsDropFiles = capabilities.contains(KernovaCapability.dropFilesV3)
-    }
-}

@@ -144,7 +144,7 @@ extension VsockFeatureDescriptor {
 extension VsockFeatureDescriptor {
     /// Every vsock channel a session serves, in the order a session installs
     /// them and a live edit applies them.
-    static let all: [VsockFeatureDescriptor] = [control, log, clipboard, drop]
+    static let all: [VsockFeatureDescriptor] = [control, log, clipboard]
 
     static let control = channel(
         name: "control",
@@ -186,22 +186,6 @@ extension VsockFeatureDescriptor {
             makeClipboardService(for: instance, channel: channel)
         })
 
-    static let drop = streamingChannel(
-        name: "drop",
-        port: KernovaVsockPort.drop,
-        dataPort: KernovaVsockPort.dropData,
-        dataSink: \.dropDataSink,
-        requirement: .dropFiles,
-        toggle: { $0.dropFilesEnabled },
-        slot: \.drop,
-        // The slot is kept on channel loss too: the settled service's
-        // `isConnected == false` already refuses the display gesture.
-        make: { instance, channel in
-            VsockDropService(
-                channel: channel, label: instance.name, reporter: instance.clipboardTransfers,
-                stagingRoot: ClipboardFileStaging.processRoot,
-                stagingKey: instance.instanceID.uuidString)
-        })
 
     /// Builds the clipboard service for one accepted channel, wired to the VM's
     /// transfer reporter, its live paste ceiling, and the host-pasteboard hooks
@@ -262,9 +246,6 @@ final class VsockFeatureCoordinator {
     /// connection.
     @ObservationIgnored fileprivate let clipboardDataSink: VsockDataConnectionSink
 
-    /// Where the drop data listener lands each accepted item connection.
-    @ObservationIgnored fileprivate let dropDataSink: VsockDataConnectionSink
-
     // MARK: - Service slots
 
     /// The always-on control channel's service, replaced by every reconnect.
@@ -277,22 +258,16 @@ final class VsockFeatureCoordinator {
     /// ``VMSessionContext/clipboardService``.
     var clipboard: VsockClipboardService?
 
-    /// Serves files dropped on this VM's display; populated once the guest
-    /// agent's drop client connects.
-    var drop: VsockDropService?
-
     // MARK: - Initializer
 
     init(
         instance: VMInstance,
         admissionGate: VsockAdmissionGate,
-        clipboardDataSink: VsockDataConnectionSink,
-        dropDataSink: VsockDataConnectionSink
+        clipboardDataSink: VsockDataConnectionSink
     ) {
         self.instance = instance
         self.admissionGate = admissionGate
         self.clipboardDataSink = clipboardDataSink
-        self.dropDataSink = dropDataSink
     }
 
     /// The service currently serving `descriptor`'s channel, type-erased.
@@ -451,7 +426,7 @@ final class VsockFeatureCoordinator {
             guard let live = self, live.isLive(session) else { return }
             Self.logger.log(
                 .notice,
-                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public), dropFiles=\(newConfig.dropFilesEnabled, privacy: .public))"
+                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
             )
         }
     }

@@ -139,6 +139,10 @@ package final class VMInstance {
     /// published outlives that service, so a refusal belongs to the VM.
     @ObservationIgnored let clipboardTransfers: ClipboardTransferReporter
 
+    /// Offers what is dropped on this VM's display to the agent hub's DROP
+    /// console peer.
+    @ObservationIgnored let dropService: HubDropService
+
     /// This VM's clipboard transfer state — running, finished, or idle — which
     /// every surface renders.
     ///
@@ -152,10 +156,6 @@ package final class VMInstance {
 
     package var vsockControlService: VsockControlService? { sessionContext?.vsock.control }
 
-    /// Serves files dropped on this VM's display; populated once the guest
-    /// agent's drop client connects.
-    package var vsockDropService: VsockDropService? { sessionContext?.vsock.drop }
-
     /// Where the feature listeners read admission verdicts, off the main actor.
     ///
     /// One per VM across every control-service generation: the accept path
@@ -166,10 +166,6 @@ package final class VMInstance {
     /// Where the clipboard data listener lands each accepted transfer
     /// connection, pointed at the live `VsockClipboardService`.
     @ObservationIgnored let clipboardDataSink = VsockDataConnectionSink()
-
-    /// Where the drop data listener lands each accepted item connection,
-    /// pointed at the live `VsockDropService`.
-    @ObservationIgnored let dropDataSink = VsockDataConnectionSink()
 
     /// `true` while the absence watchdog warns about some agent scope
     /// (``warnedMissingAgents``).
@@ -373,10 +369,12 @@ package final class VMInstance {
     #endif
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
-    /// forwards guest logs, and DRAG exactly when files move by drag and drop.
+    /// forwards guest logs, and DROP and DRAG exactly when files move by drag
+    /// and drop.
     static func agentHubPolicy(for configuration: VMConfiguration) -> PolicySnapshot {
         PolicySnapshot([
             FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
+            FeaturePolicyValue(feature: .drop, enabled: configuration.dropFilesEnabled),
             FeaturePolicyValue(feature: .drag, enabled: configuration.dropFilesEnabled),
         ])
     }
@@ -452,13 +450,15 @@ package final class VMInstance {
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
-        let transfers = ClipboardTransferReporter()
-        clipboardTransfers = transfers
-        let dragOut = HubDragOut(sink: itemSink, reporter: transfers) { [snapshots] in
+        let clipboardTransfers = ClipboardTransferReporter()
+        self.clipboardTransfers = clipboardTransfers
+        let dropService = HubDropService(stagingRoot: ClipboardFileStaging.processRoot, reporter: clipboardTransfers)
+        self.dropService = dropService
+        let dragOut = HubDragOut(sink: itemSink, reporter: clipboardTransfers) { [snapshots] in
             snapshots.instance?.name ?? ""
         }
         self.dragOut = dragOut
-        let itemRouter = ItemFeatureRouter<PeerHandle>(drag: dragOut.owner)
+        let itemRouter = ItemFeatureRouter<PeerHandle>(drop: dropService.owner, drag: dragOut.owner)
         let items = ItemAdapters(
             source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
             sink: itemSink, features: itemRouter.features)
@@ -472,6 +472,7 @@ package final class VMInstance {
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
         }
+        dropService.attach(agentHub)
         dragOut.hub = agentHub
         activity.owner = self
         snapshots.instance = self
@@ -940,8 +941,7 @@ package final class VMInstance {
             vsock: VsockFeatureCoordinator(
                 instance: self,
                 admissionGate: vsockAdmissionGate,
-                clipboardDataSink: clipboardDataSink,
-                dropDataSink: dropDataSink),
+                clipboardDataSink: clipboardDataSink),
             agentHub: agentHub)
         openRuntimeFileAccess(into: context)
         return context

@@ -123,43 +123,6 @@ struct VMInstanceLiveVsockPolicyTests {
         try expectSinkCleared(instance.clipboardDataSink)
     }
 
-    // MARK: - Drop ports
-
-    @Test("Enabling drag and drop live installs the channel and data ports in one hop")
-    func enablingDropInstallsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        let installer = MockVsockListenerInstall()
-
-        try await coordinator(of: instance)
-            .applyLive(.drop, enabled: true, on: installer, sessionID: sessionID)
-
-        #expect(installer.attached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
-        #expect(installer.detached.isEmpty)
-    }
-
-    /// Same rule as the clipboard pair: an item connection admitted onto the
-    /// data port after the drop service is gone has nothing to serve it.
-    @Test("Disabling drag and drop live withdraws both ports and stops the service")
-    func disablingDropWithdrawsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        var guests: [VsockChannel] = []
-        defer { guests.forEach { $0.close() } }
-        try await connectGuest(
-            to: try framedHost(for: .drop, on: instance, sessionID: sessionID),
-            keptOpenBy: &guests)
-        #expect(instance.vsockDropService != nil)
-        instance.dropDataSink.set(RecordingAcceptor())
-
-        let installer = MockVsockListenerInstall()
-        try await coordinator(of: instance)
-            .applyLive(.drop, enabled: false, on: installer, sessionID: sessionID)
-
-        #expect(installer.detached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
-        #expect(installer.attached.isEmpty)
-        #expect(instance.vsockDropService == nil)
-        try expectSinkCleared(instance.dropDataSink)
-    }
-
     // MARK: - The channel dying under a service
 
     /// The keep-versus-nil half of the settle contract, pinned per service: the
@@ -228,27 +191,6 @@ struct VMInstanceLiveVsockPolicyTests {
         await drainMainQueue()
 
         #expect(instance.vsockLogService == nil)
-        await expectEOF(on: guest)
-    }
-
-    @Test("A drop hand-off queued before the toggle-off installs nothing")
-    func dropHandOffCrossingDisableIsRefused() async throws {
-        let library = makeWiredLibrary()
-        let (instance, sessionID) = library.registerInstanceWithLiveSession(named: "Live Policy VM")
-        let host = try framedHost(for: .drop, on: instance, sessionID: sessionID)
-        let (acceptedFd, guestFd) = try makeRawSocketPair()
-        let guest = VsockChannel(fileDescriptor: guestFd)
-        guest.start()
-        defer { guest.close() }
-
-        #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
-        instance.dropDataSink.set(nil)
-        library.editConfiguration(of: instance) { $0.dropFilesEnabled = false }
-
-        await drainMainQueue()
-
-        #expect(instance.vsockDropService == nil)
-        try expectSinkCleared(instance.dropDataSink)
         await expectEOF(on: guest)
     }
 

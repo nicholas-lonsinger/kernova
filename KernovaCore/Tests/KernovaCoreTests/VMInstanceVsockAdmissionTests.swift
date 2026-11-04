@@ -191,39 +191,6 @@ struct VMInstanceVsockAdmissionTests {
         #expect(instance.vsockControlService !== first)
     }
 
-    // MARK: - Drop channel
-
-    @Test("The drop channel is refused before the handshake, and without drop.files.v3")
-    func dropAdmissionFollowsItsOwnCapability() async throws {
-        let instance = makeInstance()
-        let (guestFd, hostFd) = try makeRawSocketPair()
-        let guest = VsockChannel(fileDescriptor: guestFd)
-        let host = VsockChannel(fileDescriptor: hostFd)
-        guest.start()
-        host.start()
-        defer { guest.close() }
-
-        #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .dropFiles)))
-
-        let control = makeControlService(for: instance, channel: host)
-        defer { control.stop() }
-
-        // An agent that streams the clipboard but predates display drops gets
-        // the log and clipboard channels and not this one.
-        try guest.send(
-            makeGuestHello(capabilities: [
-                KernovaCapability.controlV1, KernovaCapability.controlHeartbeatV1,
-                KernovaCapability.clipboardTransferV3,
-            ]))
-        try await waitForChange { control.guestSupportsClipboardStreaming }
-        #expect(admits(instance, clipboard: true))
-        #expect(isDenied(instance.vsockAdmissionGate.admission(for: .dropFiles)))
-
-        try guest.send(makeGuestHello(capabilities: KernovaCapability.controlChannelDefaults))
-        try await waitForChange { control.guestSupportsDropFiles }
-        #expect(instance.vsockAdmissionGate.admission(for: .dropFiles) == .admit)
-    }
-
     // MARK: - Data ports
 
     /// Each transfer dials a port of its own, so a collision would silently hand
@@ -232,12 +199,12 @@ struct VMInstanceVsockAdmissionTests {
     func portsAreDistinct() {
         let ports = [
             KernovaVsockPort.control, KernovaVsockPort.clipboard, KernovaVsockPort.log,
-            KernovaVsockPort.drop, KernovaVsockPort.clipboardData, KernovaVsockPort.dropData,
+            KernovaVsockPort.clipboardData,
         ]
         #expect(Set(ports).count == ports.count)
     }
 
-    @Test("Tearing the vsock services down clears the gate and the data sinks")
+    @Test("Tearing the vsock services down clears the gate and the data sink")
     func stopClearsGateAndSinks() throws {
         let instance = makeInstance()
         instance.vsockAdmissionGate.publish(
@@ -247,14 +214,11 @@ struct VMInstanceVsockAdmissionTests {
         // A probe that would keep a forwarded descriptor open, so EOF below
         // proves the sink was cleared rather than never set.
         instance.clipboardDataSink.set(RecordingAcceptor())
-        instance.dropDataSink.set(RecordingAcceptor())
 
         instance.stopVsockServices()
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
-        for sink in [instance.clipboardDataSink, instance.dropDataSink] {
-            try expectSinkCleared(sink)
-        }
+        try expectSinkCleared(instance.clipboardDataSink)
     }
 
     // MARK: - Stale-session hand-offs

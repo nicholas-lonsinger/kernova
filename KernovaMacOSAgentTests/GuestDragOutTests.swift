@@ -1054,10 +1054,10 @@ struct GuestDragOutTests {
 
         #expect(
             served.content(request(token, item: 0))
-                == .success(.tree(directory: one.deletingLastPathComponent().path, name: Array("one.txt".utf8))))
+                == .success(.tree(path: one.path)))
         #expect(
             served.content(request(token, item: 1))
-                == .success(.tree(directory: tree.deletingLastPathComponent().path, name: Array("Tree".utf8))))
+                == .success(.tree(path: tree.path)))
         #expect(failureCode(served.content(request(token, item: 2))) == .itemRepresentationUnavailable)
         #expect(
             failureCode(served.content(request(Data(repeating: 3, count: 16), item: 0)))
@@ -1087,7 +1087,7 @@ struct GuestDragOutTests {
         let pull = try await startPull(rig, token: try rig.token(1), item: 1)
         try photo.write("IMG_0001.HEIC", contents: Data(count: 1_234))
 
-        #expect(await pull.value == .success(.tree(directory: folder.path, name: Array("IMG_0001.HEIC".utf8))))
+        #expect(await pull.value == .success(.tree(path: folder.appendingPathComponent("IMG_0001.HEIC").path)))
     }
 
     @Test("a receiver naming several files serves the one it was named by, whatever order they land in")
@@ -1100,7 +1100,7 @@ struct GuestDragOutTests {
         try burst.write("IMG_0003.JPG", contents: Data(count: 3))
         try burst.write("IMG_0002.JPG", contents: Data(count: 2))
 
-        #expect(await pull.value == .success(.tree(directory: folder.path, name: Array("IMG_0002.JPG".utf8))))
+        #expect(await pull.value == .success(.tree(path: folder.appendingPathComponent("IMG_0002.JPG").path)))
     }
 
     @Test("a receiver naming several files whose named file never lands is unavailable once its callbacks are in")
@@ -1135,7 +1135,7 @@ struct GuestDragOutTests {
         let folder = try #require(album.destination)
         let pull = try await startPull(rig, token: try rig.token(1), item: 1)
         try album.writeFolder("Album")
-        #expect(await pull.value == .success(.tree(directory: folder.path, name: Array("Album".utf8))))
+        #expect(await pull.value == .success(.tree(path: folder.appendingPathComponent("Album").path)))
 
         let flat = FakePromiseReceiver(names: ["Album"])
         let (other, _) = try deliveredRig(["public.folder"], receivers: [flat])

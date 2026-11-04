@@ -14,9 +14,12 @@ final class FakeTransferHost: VMDisplayTransferHosting {
     let id = UUID()
     var displayDropAvailability: DisplayDropAvailability = .none
 
-    /// Answers a drop; refuses by default.
-    @ObservationIgnored var onDropFiles: (_ urls: [URL], _ stagedIn: URL?) -> Bool = { _, _ in false }
-    @ObservationIgnored var onDropUnreadable: () -> Void = {}
+    /// Answers a drop of the drag's pasteboard and its promises; refuses by
+    /// default.
+    @ObservationIgnored var onDrop:
+        (_ pasteboard: any ClipboardReadPasteboard, _ promises: [any FilePromiseReceiving]) -> Bool = { _, _ in
+            false
+        }
 
     /// The take the next `takeGuestDrag` hands out, or `nil` for no drag on
     /// offer.
@@ -26,11 +29,9 @@ final class FakeTransferHost: VMDisplayTransferHosting {
     /// How many presses the display reported.
     @ObservationIgnored private(set) var pressCount = 0
 
-    func sendDroppedFilesToGuest(_ urls: [URL], stagedIn stagingDirectory: URL?) -> Bool {
-        onDropFiles(urls, stagingDirectory)
+    func dropOnGuest(_ pasteboard: any ClipboardReadPasteboard, promises: [any FilePromiseReceiving]) -> Bool {
+        onDrop(pasteboard, promises)
     }
-
-    func reportUnreadableDropToGuest() { onDropUnreadable() }
 
     func displayPressBegan() { pressCount += 1 }
 

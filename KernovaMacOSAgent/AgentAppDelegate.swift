@@ -8,8 +8,8 @@ import KernovaSynchronization
 
 // Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
 // `session`, it is the session peer: an `.accessory` menu-bar app holding the
-// v2 peer's connection to the host beside the clipboard, drop and control
-// channels. Every other command — the system peer, the installer, the
+// v2 peer's connection to the host, which lands drops, beside the clipboard,
+// drag-out and control channels. Every other command — the system peer, the installer, the
 // rollback check — runs headless (`MacAgentTools`).
 
 @main
@@ -54,7 +54,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private var peer: MacAgentPeer?
     private var dragOut: GuestDragOut?
     private var clipboardAgent: VsockGuestClipboardAgent?
-    private var dropAgent: VsockGuestDropAgent?
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
 
@@ -127,7 +126,10 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         self.dragOut = dragOut
         let peer = MacAgentPeer(
             role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer(),
-            drag: dragOut.owner)
+            drag: dragOut.owner,
+            revealDrop: { urls in
+                DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            })
         dragPeer.peer = peer
         self.peer = peer
         followSession(peer)
@@ -144,12 +146,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                     self?.statusItemController?.clipboardNoticeRaised()
                 }
             })
-        let dropAgent = VsockGuestDropAgent(stagingRoot: stagingRoot, reporter: transferReporter)
 
-        // `onPolicy` gates the clipboard and drop capabilities and says whether
-        // the host forwards logs; `onStateChange` drives the status-item icon;
-        // `onHostCapabilitiesChanged` is what tells the drop agent whether this
-        // host has a drop listener at all, and whether it takes drags out.
+        // `onPolicy` gates the clipboard capability and says whether the host
+        // forwards logs; `onStateChange` drives the status-item icon.
         let logForwardingEnabled = self.logForwardingEnabled
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { policy in
@@ -157,22 +156,17 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 clipboardAgent.applyPolicy(
                     enabled: policy.clipboardSharingEnabled,
                     maxPasteBytes: ClipboardPasteLimit.fromPolicy(policy.clipboardMaxPasteBytes))
-                dropAgent.applyPolicy(enabled: policy.dropFilesEnabled)
             },
             onStateChange: { [weak self] _ in
                 // Called off-main; hop to the main actor to touch the status item.
                 Task { @MainActor in
                     self?.statusItemController?.connectionStateChanged()
                 }
-            },
-            onHostCapabilitiesChanged: { [weak dropAgent] capabilities in
-                dropAgent?.applyHostCapabilities(capabilities)
             }
         )
 
         self.transferReporter = transferReporter
         self.clipboardAgent = clipboardAgent
-        self.dropAgent = dropAgent
         self.controlAgent = controlAgent
 
         // The LaunchAgent's `KeepAlive={SuccessfulExit:false}` keeps only a
@@ -182,7 +176,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             Self.logger.log(.notice, "Shutting down, exit status \(status, privacy: .public)")
             controlAgent.stop()
             clipboardAgent.stop()
-            dropAgent.stop()
             MainActorBridge.async { dragOut.stop() }
             peer.exit(status: status)
         }
@@ -203,7 +196,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
         peer.start()
         clipboardAgent.start()
-        dropAgent.start()
         controlAgent.start()
     }
 
@@ -223,10 +215,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         // Stop control first so heartbeat cessation is the cleanest going-away
-        // signal to the host; clipboard and drop follow.
+        // signal to the host; clipboard follows.
         controlAgent?.stop()
         clipboardAgent?.stop()
-        dropAgent?.stop()
         dragOut?.stop()
     }
 

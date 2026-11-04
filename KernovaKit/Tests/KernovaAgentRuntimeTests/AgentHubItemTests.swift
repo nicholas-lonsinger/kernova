@@ -130,7 +130,7 @@ struct AgentHubItemTests {
     }
 
     @Test(
-        "A console move withdraws the host's offer from the old peer, the owner hears its end once, and a re-offer reaches the new console peer"
+        "A console move withdraws the host's offer from the old peer, the owner hears its end once with why no peer holds it, and a re-offer reaches the new console peer"
     )
     func consoleMoveWithdrawsOffer() async {
         let harness = await harness()
@@ -147,13 +147,14 @@ struct AgentHubItemTests {
 
         var log = harness.itemLog.waiter()
         first.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
-        second.setPeerState(PeerSessionState(console: .on, sessionID: "2", userName: "other"))
         let ended = await log.next { if case .event(.items(_, .offerEnded)) = $0 { true } else { false } }
-        #expect(
-            ended == .event(.items(one, .offerEnded(.clipboard, .local, token: Self.token, AgentHubState.endedByHub))))
+        // No session is on the console until the second says it is.
+        let unheld = StreamClosure.resetLocally(WireError(.featureUnavailable, absence: .notOnConsole))
+        #expect(ended == .event(.items(one, .offerEnded(.clipboard, .local, token: Self.token, unheld))))
         _ = await oneWaiter.next {
             if case .items(.offerEnded(.clipboard, .remote, Self.token, _)) = $0 { true } else { false }
         }
+        second.setPeerState(PeerSessionState(console: .on, sessionID: "2", userName: "other"))
 
         _ = await harness.snapshot { $0.consolePeers[.clipboard] == two }
         #expect(await offer(harness, .clipboard) == .success(two))

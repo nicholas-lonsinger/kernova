@@ -24,20 +24,10 @@ public enum KernovaCapability {
     /// port to dial.
     public static let clipboardTransferV3 = "clipboard.transfer.v3"
 
-    /// The drop channel: files dragged onto the VM display, offered on their
-    /// own vsock channel and streamed in the `clipboardTransferV3` payload
-    /// encoding into the guest's Downloads folder.
-    ///
-    /// Independent of clipboard sharing: the drop channel carries its own offers
-    /// and never touches a pasteboard. A peer without it has no drop listener or
-    /// drop client at all, so the display refuses the gesture rather than
-    /// starting a transfer nothing will answer.
-    public static let dropFilesV3 = "drop.files.v3"
-
     /// The capabilities advertised by both the host control service and the
     /// guest control agent today.
     public static let controlChannelDefaults = [
-        controlV1, controlHeartbeatV1, clipboardTransferV3, dropFilesV3,
+        controlV1, controlHeartbeatV1, clipboardTransferV3,
     ]
 
     /// Every capability tag this build recognizes — the allowlist for
