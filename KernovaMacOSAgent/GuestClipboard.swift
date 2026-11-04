@@ -53,7 +53,8 @@ final class GuestClipboard {
         self.pasteboard = pasteboard
         self.onNotice = onNotice
         exchange = ClipboardItemExchange(
-            side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: pasteCeiling, logger: Self.logger)
+            side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: pasteCeiling,
+            logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())

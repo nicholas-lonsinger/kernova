@@ -306,7 +306,7 @@ struct HubClipboardServiceTests {
         #expect(await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac".utf8))))
     }
 
-    @Test("A connection lost leaves the guest's copy on the Mac and in the window; its return offers a Mac copy made meanwhile")
+    @Test("A lost connection leaves the guest's copy on the Mac and in the window; its return offers a later Mac copy")
     func linkLossKeepsThenReoffers() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
@@ -372,7 +372,7 @@ struct HubClipboardServiceTests {
         #expect(offers(probe).count == 1)
     }
 
-    @Test("With passthrough on, a Mac copy replaces the guest's clipboard: its offer is released and the window empties")
+    @Test("With passthrough on, a Mac copy replaces the guest's clipboard: its offer released, the window emptied")
     func macCopySupersedesGuestOffer() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
