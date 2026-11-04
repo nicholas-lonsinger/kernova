@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 16)
+        #expect(VMCommandRequest.currentProtocolVersion == 17)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -383,6 +383,27 @@ struct VMCommandEnvelopeRouterTests {
         #expect(vm.id == instance.id)
         #expect(verb == .stop)
         #expect(seconds == 60)
+        #expect(instance.status == .running)
+    }
+
+    @Test(
+        "stop --anyway crosses the wire; a guest whose agents don't offer it is refused naming the For everyone install"
+    )
+    func shutDownAnywayCrossesTheWire() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
+        let instance = makeInstance(in: harness, name: "Anyway", phase: .running(sessionID: UUID()))
+
+        let response = try await harness.transport.send(
+            .stop(.id(instance.id), disposition: .anyway, consent: .all, timeout: nil))
+
+        guard case .stepRequired(let requirement) = response.failure else {
+            Issue.record("expected a step refusal, got \(response.result)")
+            return
+        }
+        #expect(requirement.routes.isEmpty)
+        #expect(requirement.message.contains("\u{201C}For everyone\u{201D}"))
+        #expect(virtualization.stopCallCount == 0)
         #expect(instance.status == .running)
     }
 

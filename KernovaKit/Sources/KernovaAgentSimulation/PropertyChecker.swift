@@ -587,7 +587,7 @@ package final class PropertyChecker {
                 break
             case .output(let output):
                 switch output {
-                case .ask(let peer, _):
+                case .ask(let peer, _, _):
                     if concluded {
                         asked = []
                         accepted = false
@@ -598,9 +598,9 @@ package final class PropertyChecker {
                         violations.append("property 8: peer \(peer.rawValue) asked twice in one routing")
                     }
                     asked.append(peer)
-                case .acpi(_, let refusals):
+                case .untaken(_, let refusals):
                     if refusals.count != asked.count {
-                        violations.append("property 8: ACPI after \(refusals.count) of \(asked.count) refusals")
+                        violations.append("property 8: untaken after \(refusals.count) of \(asked.count) refusals")
                     }
                     concluded = true
                 case .busy, .progress:

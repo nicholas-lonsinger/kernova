@@ -46,6 +46,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("lifecycle"),
+                shutDownAnywayID: NSToolbarItem.Identifier("shutDownAnyway"),
                 saveStateID: NSToolbarItem.Identifier("saveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("takeSnapshot"),
                 clipboardID: NSToolbarItem.Identifier("clipboard"),

@@ -178,6 +178,8 @@ final class MemoryItems: ItemSource, ItemSink {
 final class FakePowerAdapter: PowerAdapter {
     private let reporter = Locked<PowerReporter?>(nil)
     let performed = Recorder<PowerRequestID>()
+    /// The requests performed without waiting for apps.
+    let performedIgnoringApps = Recorder<PowerRequestID>()
     let cancelled = Recorder<PowerRequestID>()
     let accepts: Bool
     let handsOff: Bool
@@ -197,8 +199,9 @@ final class FakePowerAdapter: PowerAdapter {
         reporter.report(.availability(initial))
     }
 
-    func perform(_ id: PowerRequestID, _ action: PowerAction) {
+    func perform(_ id: PowerRequestID, _ action: PowerAction, ignoringApps: Bool) {
         performed.record(id)
+        if ignoringApps { performedIgnoringApps.record(id) }
         guard accepts else { return }
         let reporter = reporter.withLock { $0 }
         reporter?.report(.accepted(id))

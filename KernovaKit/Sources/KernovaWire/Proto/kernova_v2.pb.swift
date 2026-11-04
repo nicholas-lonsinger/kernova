@@ -1459,6 +1459,11 @@ public nonisolated struct Kernova_V2_PowerCapability: Sendable {
   /// inhibitors), so apps can save, and may block.
   public var asksAppsToQuit: Bool = false
 
+  /// The actions this peer can perform right now without waiting for apps:
+  /// apps still open quit without being asked to save. At most one entry
+  /// each; independent of `actions`, which may be empty beside it.
+  public var ignoreAppsActions: [Kernova_V2_PowerAction] = []
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1477,6 +1482,11 @@ public nonisolated struct Kernova_V2_PowerRequest: Sendable {
   /// once the OS confirms nothing was started, ENDs REFUSED with
   /// ERROR_CODE_TIMEOUT. The host waits longer, for that refusal to arrive.
   public var acceptanceDeadlineMs: UInt32 = 0
+
+  /// Perform `action` without waiting for apps. Set only toward a peer whose
+  /// PowerCapability lists `action` in ignore_apps_actions; a peer that does
+  /// not list it refuses with POWER_ACTION_UNSUPPORTED.
+  public var ignoreApps: Bool = false
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -3361,7 +3371,7 @@ nonisolated extension Kernova_V2_SessionExtension: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PowerCapability"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}actions\0\u{3}asks_apps_to_quit\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}actions\0\u{3}asks_apps_to_quit\0\u{3}ignore_apps_actions\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3371,6 +3381,7 @@ nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftPr
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedEnumField(value: &self.actions) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.asksAppsToQuit) }()
+      case 3: try { try decoder.decodeRepeatedEnumField(value: &self.ignoreAppsActions) }()
       default: break
       }
     }
@@ -3383,12 +3394,16 @@ nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftPr
     if self.asksAppsToQuit != false {
       try visitor.visitSingularBoolField(value: self.asksAppsToQuit, fieldNumber: 2)
     }
+    if !self.ignoreAppsActions.isEmpty {
+      try visitor.visitPackedEnumField(value: self.ignoreAppsActions, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_PowerCapability, rhs: Kernova_V2_PowerCapability) -> Bool {
     if lhs.actions != rhs.actions {return false}
     if lhs.asksAppsToQuit != rhs.asksAppsToQuit {return false}
+    if lhs.ignoreAppsActions != rhs.ignoreAppsActions {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -3396,7 +3411,7 @@ nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Kernova_V2_PowerRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PowerRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}action\0\u{3}acceptance_deadline_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}action\0\u{3}acceptance_deadline_ms\0\u{3}ignore_apps\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3406,6 +3421,7 @@ nonisolated extension Kernova_V2_PowerRequest: SwiftProtobuf.Message, SwiftProto
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.action) }()
       case 2: try { try decoder.decodeSingularUInt32Field(value: &self.acceptanceDeadlineMs) }()
+      case 3: try { try decoder.decodeSingularBoolField(value: &self.ignoreApps) }()
       default: break
       }
     }
@@ -3418,12 +3434,16 @@ nonisolated extension Kernova_V2_PowerRequest: SwiftProtobuf.Message, SwiftProto
     if self.acceptanceDeadlineMs != 0 {
       try visitor.visitSingularUInt32Field(value: self.acceptanceDeadlineMs, fieldNumber: 2)
     }
+    if self.ignoreApps != false {
+      try visitor.visitSingularBoolField(value: self.ignoreApps, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_PowerRequest, rhs: Kernova_V2_PowerRequest) -> Bool {
     if lhs.action != rhs.action {return false}
     if lhs.acceptanceDeadlineMs != rhs.acceptanceDeadlineMs {return false}
+    if lhs.ignoreApps != rhs.ignoreApps {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

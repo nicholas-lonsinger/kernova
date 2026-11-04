@@ -1,6 +1,8 @@
 import Cocoa
 import CoreServices
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
 import Testing
@@ -115,6 +117,39 @@ struct VMLifecycleScriptCommandsTests {
         #expect(virtualization.forceStopCallCount == 1)
         #expect(virtualization.stopCallCount == 0)
         #expect(alpha.status == .stopped)
+    }
+
+    @Test(
+        "stop by shut down anyway asks for its consent where offered, and is refused naming the For everyone install where not"
+    )
+    func stopShutDownAnywayRoutes() async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        func command(confirmation: Bool) throws -> VMStopScriptCommand {
+            try makeCommand(
+                VMStopScriptCommand.init(commandDescription:), code: "Stop",
+                arguments: [
+                    "StopMethod": NSNumber(value: VMScriptStopMethod.shutDownAnyway.code),
+                    "Confirmation": confirmation,
+                ])
+        }
+
+        let unoffered = try await #require(throws: CommandError.self) {
+            try await command(confirmation: true).run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(unoffered.stepRequirement?.message.contains("\u{201C}For everyone\u{201D}") == true)
+
+        alpha.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+        let unconsented = try await #require(throws: CommandError.self) {
+            try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(unconsented.confirmationPrompt?.kind == .shutDownAnyway)
+
+        #expect(virtualization.stopCallCount == 0)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(alpha.status == .running)
     }
 
     @Test("stop's deadline bounds the wait for the power-off")

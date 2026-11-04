@@ -899,6 +899,11 @@ extension SidebarViewController {
             }
             menu.addItem(forceStop)
         }
+        if capabilities.isApplicable(.shutDownAnyway, to: instance) {
+            let anyway = item("Shut Down Anyway…", #selector(menuShutDownAnyway(_:)), instance)
+            anyway.isEnabled = capabilities.isAvailable(.shutDownAnyway, on: instance)
+            menu.addItem(anyway)
+        }
         if capabilities.isApplicable(.restart, to: instance) {
             let restart = item("Restart", #selector(menuRestart(_:)), instance)
             restart.isEnabled = capabilities.isAvailable(.restart, on: instance)
@@ -1081,6 +1086,11 @@ extension SidebarViewController {
     @objc private func menuForceStop(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
         viewModel.requestForceStop(instance)
+    }
+
+    @objc private func menuShutDownAnyway(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        Task { await viewModel.shutDownAnyway(instance) }
     }
 
     @objc private func menuSuspend(_ sender: NSMenuItem) {

@@ -317,6 +317,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // State…") is the one surface for that action, and two enabled items
         // must not alias one action under two names.
         case #selector(AppDelegate.forceStopVM(_:)): .forceStop
+        case #selector(AppDelegate.shutDownAnywayVM(_:)): .shutDownAnyway
         case #selector(AppDelegate.restartVM(_:)): .restart
         case #selector(AppDelegate.saveVM(_:)): .suspend
         case #selector(AppDelegate.takeSnapshot(_:)): .takeSnapshot
@@ -542,6 +543,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         resumeItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(
             withTitle: "Stop", action: #selector(AppDelegate.stopVM(_:)), keyEquivalent: "")
+        vmMenu.addItem(
+            withTitle: "Shut Down Anyway…", action: #selector(AppDelegate.shutDownAnywayVM(_:)),
+            keyEquivalent: "")
         vmMenu.addItem(
             withTitle: "Force Stop…", action: #selector(AppDelegate.forceStopVM(_:)),
             keyEquivalent: "")

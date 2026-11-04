@@ -183,6 +183,8 @@ public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
     public var powerUsable: Bool
     /// The actions its `PowerCapability` lists.
     public var actions: [PowerAction]
+    /// The actions its `PowerCapability` lists as performed without waiting for apps.
+    public var ignoringAppsActions: [PowerAction]
 
     /// The view of a peer from its latest `featuresChanged` table: POWER usable
     /// when the table says so, the actions its `PowerCapability` lists.
@@ -191,15 +193,16 @@ public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
         features: FeatureStatusTable
     ) {
         let power = features[.power]
+        let offer = power.params.flatMap(PowerOffer.init(params:))
         self.init(
             handle: handle, role: role, state: state, connectedOrder: connectedOrder, powerUsable: power.isAvailable,
-            actions: power.params.flatMap(PowerOffer.init(params:))?.actions ?? [])
+            actions: offer?.actions ?? [], ignoringAppsActions: offer?.ignoringApps ?? [])
     }
 
     /// Creates a view.
     public init(
         handle: PeerHandle, role: PeerRole, state: PeerSessionState, connectedOrder: UInt64, powerUsable: Bool,
-        actions: [PowerAction]
+        actions: [PowerAction], ignoringAppsActions: [PowerAction] = []
     ) {
         self.handle = handle
         self.role = role
@@ -207,13 +210,20 @@ public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
         self.connectedOrder = connectedOrder
         self.powerUsable = powerUsable
         self.actions = actions
+        self.ignoringAppsActions = ignoringAppsActions
+    }
+
+    /// Whether its `PowerCapability` lists `action`, among the actions performed without waiting for apps when
+    /// `ignoringApps`.
+    public func offers(_ action: PowerAction, ignoringApps: Bool) -> Bool {
+        (ignoringApps ? ignoringAppsActions : actions).contains(action)
     }
 }
 
 /// What routing asks the hub to do, or reports.
 public enum RoutingOutput: Sendable, Equatable {
-    /// Send `action` to this peer as a power request.
-    case ask(PeerHandle, PowerAction)
+    /// Send `action` to this peer as a power request, without waiting for apps when `ignoringApps`.
+    case ask(PeerHandle, PowerAction, ignoringApps: Bool = false)
     /// Progress after acceptance.
     case progress(PeerHandle, PowerStage, [AppValue])
     /// The guest is going down.
@@ -228,8 +238,9 @@ public enum RoutingOutput: Sendable, Equatable {
     case indeterminate(PeerHandle)
     /// The connection ended after acceptance.
     case lostAfterAcceptance(PeerHandle)
-    /// Every peer candidate refused: use ACPI.
-    case acpi(PowerAction, refusals: [PeerRefusal])
+    /// No peer took it, and nothing was done: every candidate refused, or there was none. A graceful action
+    /// falls back to the ACPI button.
+    case untaken(PowerAction, refusals: [PeerRefusal])
     /// A routing is already running for this VM.
     case busy
 }
@@ -252,6 +263,7 @@ public struct PeerRefusal: Sendable, Equatable {
 public struct PowerRouting: Sendable {
     private struct Active: Sendable {
         var action: PowerAction
+        var ignoringApps: Bool
         var asked: [PeerHandle] = []
         var refusals: [PeerRefusal] = []
         var current: PeerHandle?
@@ -267,10 +279,10 @@ public struct PowerRouting: Sendable {
     /// Whether a routing is running.
     public var isRouting: Bool { active != nil }
 
-    /// Starts routing `action`, or reports `.busy`.
-    public mutating func begin(_ action: PowerAction, peers: [RoutingPeer]) {
+    /// Starts routing `action`, without waiting for apps when `ignoringApps`, or reports `.busy`.
+    public mutating func begin(_ action: PowerAction, ignoringApps: Bool = false, peers: [RoutingPeer]) {
         guard active == nil else { return outputs.append(.busy) }
-        active = Active(action: action)
+        active = Active(action: action, ignoringApps: ignoringApps)
         askNext(peers)
     }
 
@@ -308,12 +320,14 @@ public struct PowerRouting: Sendable {
         outputs.isEmpty ? nil : outputs.removeFirst()
     }
 
-    /// The candidates for `action` in order, excluding `asked`: `ConsoleAuthority`'s console peers, then the
-    /// system peer.
-    public static func candidates(for action: PowerAction, peers: [RoutingPeer], excluding asked: [PeerHandle])
-        -> [PeerHandle]
-    {
-        let eligible = peers.filter { $0.powerUsable && $0.actions.contains(action) && !asked.contains($0.handle) }
+    /// The candidates for `action`, performed without waiting for apps when `ignoringApps`, in order, excluding
+    /// `asked`: `ConsoleAuthority`'s console peers, then the system peer.
+    public static func candidates(
+        for action: PowerAction, ignoringApps: Bool = false, peers: [RoutingPeer], excluding asked: [PeerHandle]
+    ) -> [PeerHandle] {
+        let eligible = peers.filter {
+            $0.powerUsable && $0.offers(action, ignoringApps: ignoringApps) && !asked.contains($0.handle)
+        }
         let consoleHandles = ConsoleAuthority.consolePeers(peers).map(\.handle)
         let systemHandles = peers.filter { $0.role == .systemPeer }.map(\.handle)
         return (consoleHandles + systemHandles).filter { handle in eligible.contains { $0.handle == handle } }
@@ -321,13 +335,17 @@ public struct PowerRouting: Sendable {
 
     private mutating func askNext(_ peers: [RoutingPeer]) {
         guard var routing = active else { return }
-        guard let next = Self.candidates(for: routing.action, peers: peers, excluding: routing.asked).first else {
-            return end(.acpi(routing.action, refusals: routing.refusals))
+        guard
+            let next = Self.candidates(
+                for: routing.action, ignoringApps: routing.ignoringApps, peers: peers, excluding: routing.asked
+            ).first
+        else {
+            return end(.untaken(routing.action, refusals: routing.refusals))
         }
         routing.asked.append(next)
         routing.current = next
         active = routing
-        outputs.append(.ask(next, routing.action))
+        outputs.append(.ask(next, routing.action, ignoringApps: routing.ignoringApps))
     }
 
     private mutating func end(_ output: RoutingOutput) {
