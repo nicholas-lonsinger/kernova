@@ -141,10 +141,14 @@ final class GuestClipboard {
     /// Copies are offered while this is true.
     var isOffering: Bool { onConsole && link != nil }
 
+    /// The gate opening offers the pasteboard as it stands, and that change is seen: the poll offers only a later
+    /// one.
     private func gateChanged(from was: Bool) {
         guard isOffering, !was else { return }
         Self.logger.log(.notice, "The clipboard is offered to the host again")
-        readAndOffer(pasteboard.changeCount)
+        let changeCount = pasteboard.changeCount
+        seenChangeCount = changeCount
+        readAndOffer(changeCount)
     }
 
     // MARK: Guest → host

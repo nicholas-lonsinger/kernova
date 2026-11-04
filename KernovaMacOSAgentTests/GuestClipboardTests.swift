@@ -129,6 +129,20 @@ struct GuestClipboardTests {
         #expect(offeredUTIs(link) == [[ClipboardContent.utf8TextUTI]])
     }
 
+    @Test("A copy the gate opening offered is not offered again by the next poll")
+    func gateOfferIsSeen() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 1 }
+
+        rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.count == 1)
+    }
+
     @Test("Usability returning re-offers the clipboard as it stands")
     func usabilityReturningReoffers() async throws {
         let rig = rig()
