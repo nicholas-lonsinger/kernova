@@ -143,7 +143,8 @@ struct ClipboardPasteboardPublisherTests {
 
         publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], promised: true)
         #expect(publisher.retractPromisedWrite())
-        #expect(publisher.lastWriteChangeCount == nil)
+        // The clear is the publisher's own write, which no poll may read as a copy.
+        #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
         // Idempotent: the retracted write is forgotten.
         #expect(!publisher.retractPromisedWrite())
 

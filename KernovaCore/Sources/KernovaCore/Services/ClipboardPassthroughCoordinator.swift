@@ -165,13 +165,15 @@ final class ClipboardPassthroughCoordinator {
         let service = instance?.clipboardService
         let seq = service?.inboundOfferSeq ?? 0
         lastInboundOfferSeq = seq
-        let current = pasteboard.changeCount
-        let macCopyIsNewer =
-            service?.resolvesCrossings == true && pasteboardHoldsUserCopy
-            && service?.clipboardChangeMark.map { $0 != current } ?? true
-        if let service, service.isConnected, !macCopyIsNewer {
-            outbound = OutboundConnection(service: service, settledChangeCount: current)
-            if service.hasStandingGuestOffer { publishInbound(from: service, seq: seq) }
+        if let service, service.resolvesCrossings, service.isConnected {
+            let current = pasteboard.changeCount
+            if pasteboardHoldsUserCopy, service.clipboardChangeMark.map({ $0 != current }) ?? true {
+                // The Mac's copy is newer: a connection with nothing settled offers it.
+                outbound = nil
+            } else {
+                outbound = OutboundConnection(service: service, settledChangeCount: current)
+                if service.hasStandingGuestOffer { publishInbound(from: service, seq: seq) }
+            }
         }
         startPolling()
         observeInbound()
