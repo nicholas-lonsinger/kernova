@@ -45,7 +45,8 @@ struct DragDeliveryTests {
         let run = HostileRun(local: .host, seed: 1, items: true)
         run.feed(
             [
-                HostileItems.peerHello, WireFrames.open(1, .dragOffer, body: HostileItems.header(token: token, count: 0)),
+                HostileItems.peerHello,
+                WireFrames.open(1, .dragOffer, body: HostileItems.header(token: token, count: 0)),
                 Unit.end(1),
             ], preamble: true)
         let id = try #require(run.takeDrag(token)).get()
@@ -180,7 +181,8 @@ struct DragDeliveryTests {
         ("estimates past 2^63-1", [named("a", .file, size: Int(Int64.max)), named("b", .file, size: 1)]),
     ]
 
-    @Test("a first TARGETED its offer cannot carry resets the take MALFORMED_MESSAGE", arguments: hostileTargets.indices)
+    @Test(
+        "a first TARGETED its offer cannot carry resets the take MALFORMED_MESSAGE", arguments: hostileTargets.indices)
     func hostileTarget(_ index: Int) throws {
         let (run, id) = try Self.opened()
         run.feed([Self.targeted(id, Self.hostileTargets[index].items)])
@@ -209,7 +211,8 @@ struct DragDeliveryTests {
         let run = HostileRun(local: .host, seed: 1, items: true)
         run.feed(
             [
-                HostileItems.peerHello, WireFrames.open(1, .dragOffer, body: HostileItems.header(token: Self.token, count: 1)),
+                HostileItems.peerHello,
+                WireFrames.open(1, .dragOffer, body: HostileItems.header(token: Self.token, count: 1)),
             ], preamble: true)
         #expect(run.streamResets.map(\.code) == [.malformedMessage])
 

@@ -137,7 +137,9 @@ struct ItemFeatureRouterTests {
         await harness.attached()
         let runtime = Locked<PeerAgentRuntime?>(nil)
         let peerRouter: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: peerHeard) { event in
-            if case .requested(let id, _) = event { runtime.withLock { $0 }?.answerDragTake(id, .caught(folderSizes: nil)) }
+            if case .requested(let id, _) = event {
+                runtime.withLock { $0 }?.answerDragTake(id, .caught(folderSizes: nil))
+            }
         }
         let peer = PeerAgentRuntime(
             claim: Fixture.peerClaim, state: Fixture.peerState,

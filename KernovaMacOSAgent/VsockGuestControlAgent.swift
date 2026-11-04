@@ -69,7 +69,6 @@ final class VsockGuestControlAgent: Sendable {
         }
     }
 
-
     /// Creates the control agent; tests inject a socketpair-backed client and
     /// small cadences.
     init(
@@ -281,4 +280,3 @@ final class VsockGuestControlAgent: Sendable {
         }
     }
 }
-

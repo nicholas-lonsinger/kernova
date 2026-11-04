@@ -74,7 +74,6 @@ final class FakeDragOutHub: DragOutHub, Sendable {
         changed.notify()
     }
 
-
     var takeCount: Int { state.withLock { $0.takes.count } }
     var pullCount: Int { state.withLock { $0.pulls.count } }
     var releaseCount: Int { state.withLock { $0.releases.count } }
@@ -159,7 +158,6 @@ struct HubDragOutTests {
         item("Untitled.jpeg", storage: .file, uti: "public.jpeg", promised: true),
         item("Photos", storage: .folder, uti: "public.folder"),
     ]
-
 
     /// The take's event `event`, as the hub hands it to DRAG's owner: on the
     /// hub's queue first, then a hop to the main queue.

@@ -610,7 +610,9 @@ public struct DragOffers: FeatureMachine {
         switch outcome.kind {
         case .caught:
             guard let names = take.names else {
-                if !outcome.folderSizes.isEmpty { diagnostics.append(.remoteViolation("folder sizes with no STEP_NAMED")) }
+                if !outcome.folderSizes.isEmpty {
+                    diagnostics.append(.remoteViolation("folder sizes with no STEP_NAMED"))
+                }
                 return .caught(nil)
             }
             guard let sizes = DragItems.checkedFolderSizes(outcome.folderSizes, of: take.items) else {

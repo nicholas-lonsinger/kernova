@@ -186,7 +186,6 @@ extension VsockFeatureDescriptor {
             makeClipboardService(for: instance, channel: channel)
         })
 
-
     /// Builds the clipboard service for one accepted channel, wired to the VM's
     /// transfer reporter, its live paste ceiling, and the host-pasteboard hooks
     /// that keep a stale promised write from outliving the offer behind it.
