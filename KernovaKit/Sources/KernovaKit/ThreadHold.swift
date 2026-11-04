@@ -70,11 +70,23 @@ extension ThreadHold {
         func hold<Value>(recheckingEvery interval: TimeInterval = .infinity, until resolved: @Sendable () -> Value?)
             -> Value
         {
-            guard
-                let value = ThreadHold.hold(
-                    eventLoop: eventLoop, semaphore: semaphore, recheckingEvery: interval, until: resolved)
-            else { preconditionFailure("A hold with no deadline returned without its value") }
+            guard let value = hold(deadline: .distantFuture, recheckingEvery: interval, until: resolved) else {
+                preconditionFailure("A hold with no deadline returned without its value")
+            }
             return value
+        }
+
+        /// Holds until `resolved` returns a value, re-checking it at least
+        /// every `interval`, or until `deadline` passes.
+        ///
+        /// - Returns: the value, or `nil` once `deadline` passed without one.
+        func hold<Value>(
+            deadline: DispatchTime, recheckingEvery interval: TimeInterval = .infinity,
+            until resolved: @Sendable () -> Value?
+        ) -> Value? {
+            ThreadHold.hold(
+                eventLoop: eventLoop, semaphore: semaphore, deadline: deadline, recheckingEvery: interval,
+                until: resolved)
         }
     }
 }

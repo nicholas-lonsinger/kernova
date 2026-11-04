@@ -6,6 +6,7 @@ import KernovaClipboardItems
 import KernovaKit
 import KernovaLogging
 import KernovaPlatformDarwin
+import KernovaSynchronization
 import KernovaWire
 
 /// The guest's clipboard over the session peer's CLIPBOARD items: each copy in this session offered to the host
@@ -28,6 +29,8 @@ final class GuestClipboard {
     /// this agent's own: the providers it holds are the guest pasteboard's alone.
     private let publisher: ClipboardPasteboardPublisher
     private let onNotice: @Sendable () -> Void
+    /// The paste ceiling the host's policy sets: what the exchange's pulls read, from any thread.
+    private let pasteCeiling: Locked<Int>
 
     private var onConsole = false
     private var link: (any ClipboardItemLink)?
@@ -43,8 +46,8 @@ final class GuestClipboard {
     /// The latest clipboard activity, for the menu-bar status line.
     private(set) var activity: ClipboardActivity = .disabled
 
-    /// A clipboard over `pasteboard`, landing the host's files and calling in copied promises under
-    /// `stagingRoot`, and raising `onNotice` when a refusal lands in ``activity``. Each pull lands no more than
+    /// A clipboard over `pasteboard`, landing the host's representations and calling in copied promises under
+    /// `stagingRoot`, and raising `onNotice` when a refusal lands in ``activity``. A paste lands no more than
     /// `pasteCeiling` bytes until the host's policy sets it.
     init(
         pasteboard: any ClipboardPasteboard, stagingRoot: ProcessStagingRoot,
@@ -52,8 +55,10 @@ final class GuestClipboard {
     ) {
         self.pasteboard = pasteboard
         self.onNotice = onNotice
+        let ceiling = Locked(pasteCeiling)
+        self.pasteCeiling = ceiling
         exchange = ClipboardItemExchange(
-            side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: pasteCeiling,
+            side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: { ceiling.withLock { $0 } },
             logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
@@ -69,6 +74,7 @@ final class GuestClipboard {
         }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
+        exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
     }
 
     /// The general pasteboard's clipboard.
@@ -88,7 +94,7 @@ final class GuestClipboard {
                 if case .pullEnded(_, let id, let result) = event { return exchange.pullEnded(id, result) }
                 MainActorBridge.async { exchange.handle(event, on: link) }
             },
-            content: { exchange.content($0, $1) },
+            content: { exchange.content($0, $1, $2) },
             policy: { [weak self] policy in MainActorBridge.async { self?.apply(policy) } })
     }
 
@@ -96,10 +102,16 @@ final class GuestClipboard {
     /// and pull.
     func apply(_ policy: PolicySnapshot) {
         let ceiling = ClipboardPasteLimit.fromPolicy(ClipboardPolicyValue(policy)?.maxPasteBytes ?? 0)
-        guard ceiling != exchange.pasteCeilingBytes else { return }
-        exchange.setPasteCeiling(ceiling)
+        let changed = pasteCeiling.withLock { held in
+            defer { held = ceiling }
+            return held != ceiling
+        }
+        guard changed else { return }
         Self.logger.log(.notice, "The host sets the paste ceiling to \(ceiling, privacy: .public) bytes")
     }
+
+    /// The paste ceiling in force.
+    var pasteCeilingBytes: Int { pasteCeiling.withLock { $0 } }
 
     // MARK: Gating
 
@@ -196,7 +208,7 @@ final class GuestClipboard {
     /// Publishes the host's offer on the guest pasteboard, promised: nothing is pulled until a paste asks. A file
     /// set over the paste ceiling is published without its file URLs, and the refusal shown.
     private func publish(_ remote: ClipboardRemoteOffer) {
-        let ceiling = exchange.pasteCeilingBytes
+        let ceiling = pasteCeilingBytes
         let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
         let written = publisher.publish(
             remote.items, concealed: remote.concealed, servingFileURLs: !budget.exceeds, puller: remote)
@@ -212,11 +224,22 @@ final class GuestClipboard {
                 .notice,
                 "The host's files total \(budget.total, privacy: .public) bytes, over the \(ceiling, privacy: .public)-byte paste ceiling: published without them"
             )
-            activity = .pasteRefused(.copyTooLarge, pasteLimitBytes: ceiling)
+            activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
             onNotice()
         } else {
             activity = .offeredFromHost
         }
+    }
+
+    /// A pull of the host's offer failed a paste: one over the paste ceiling — the representation, or the offer's
+    /// file set — is shown as the refusal a publish over it shows.
+    private func pullFailed(_ error: WireError) {
+        guard error.code == .tooLarge else { return }
+        let ceiling = pasteCeilingBytes
+        Self.logger.log(
+            .notice, "A paste of the host's clipboard is over the \(ceiling, privacy: .public)-byte paste ceiling")
+        activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
+        onNotice()
     }
 
     /// The host's clipboard moved on: a promise still standing for its offer could serve only what already
@@ -259,9 +282,11 @@ struct AgentClipboardLink: ClipboardItemLink {
     func cancelPull(_ id: ItemPullID) { calls.cancelPull(id) }
 
     func order(
-        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
+        budget: ByteBudget?
     ) throws(WireError) -> ItemPullOrder {
         try calls.order(
-            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing)
+            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
+            budget: budget)
     }
 }

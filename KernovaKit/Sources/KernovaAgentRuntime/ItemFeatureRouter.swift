@@ -24,9 +24,10 @@ public struct ItemFeatureOwner<Peer: Sendable>: Sendable {
     /// Hears each item event of the feature, from the connection of the peer it names, in the order the end
     /// delivers them and on its queue.
     public var events: @Sendable (Peer, ItemTransferEvent) -> Void
-    /// Produces the content of a representation of this end's offer of the feature that a pull names, or why
-    /// it cannot: called on the pull's own queue, so it may wait, as a promise called in does.
-    public var content: @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
+    /// Produces the content of a representation of this end's offer of the feature that pull `ItemPullID`
+    /// names, or why it cannot: called on the pull's own queue, so it may wait, as a promise called in does,
+    /// until that pull's `.serveEnded` reaches ``events``.
+    public var content: @Sendable (ItemPullID, PullRequest, Representation) -> Result<ItemContent, WireError>
     /// Hears the host's policy each time a guest agent's connection receives it, in order with the item events;
     /// never on the host, whose policy it is.
     public var policy: @Sendable (PolicySnapshot) -> Void
@@ -35,7 +36,7 @@ public struct ItemFeatureOwner<Peer: Sendable>: Sendable {
     public init(
         usable: @escaping @Sendable (Peer?) -> Void,
         events: @escaping @Sendable (Peer, ItemTransferEvent) -> Void,
-        content: @escaping @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>,
+        content: @escaping @Sendable (ItemPullID, PullRequest, Representation) -> Result<ItemContent, WireError>,
         policy: @escaping @Sendable (PolicySnapshot) -> Void = { _ in }
     ) {
         self.usable = usable
@@ -108,15 +109,15 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
         drag.takes(peer, event)
     }
 
-    /// The content of `representation` of this end's offer of `feature` that `request` pulls, from its owner:
-    /// the `ItemSourceAdapter.Content` this end's source serves.
+    /// The content of `representation` of this end's offer of `feature` that pull `id`'s `request` pulls, from
+    /// its owner: the `ItemSourceAdapter.Content` this end's source serves.
     public func content(
-        _ feature: FeatureID, _ request: PullRequest, _ representation: Representation
+        _ feature: FeatureID, _ id: ItemPullID, _ request: PullRequest, _ representation: Representation
     ) -> Result<ItemContent, WireError> {
         guard let owner = owner(of: feature) else {
             return .failure(WireError(.itemRepresentationUnavailable, debugDetail: "\(feature) has no owner"))
         }
-        return owner.content(request, representation)
+        return owner.content(id, request, representation)
     }
 
     private func owner(of feature: FeatureID) -> ItemFeatureOwner<Peer>? {

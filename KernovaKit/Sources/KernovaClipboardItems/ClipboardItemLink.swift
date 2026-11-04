@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentCore
+import KernovaSynchronization
 import KernovaWire
 
 /// The CLIPBOARD item calls of the one connection an end's clipboard runs over: the host's to the feature's
@@ -20,8 +21,9 @@ public protocol ClipboardItemLink: Sendable {
     /// Cancels a pull this side opened; its `.pullEnded` follows.
     func cancelPull(_ id: ItemPullID)
     /// The pull of representation `representation` of item `item` of the far side's offer `token`, landing as
-    /// `landing` says, as this end's item sink builds it.
+    /// `landing` says and charging what lands to `budget`, as this end's item sink builds it.
     func order(
-        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
+        budget: ByteBudget?
     ) throws(WireError) -> ItemPullOrder
 }

@@ -54,6 +54,9 @@ public final class ClipboardItemExchange {
     public var onServed: (() -> Void)?
     /// Hears each pull of the far side's offer that landed here.
     public var onLanded: (() -> Void)?
+    /// Hears each pull of the far side's offer that failed a paste, with the error it failed with:
+    /// `TOO_LARGE` when the representation, or the offer's file set, is over the paste ceiling.
+    public var onPullFailed: ((WireError) -> Void)?
 
     /// The far side's offer this end published, while it is this end's clipboard.
     public private(set) var remote: ClipboardRemoteOffer?
@@ -71,27 +74,21 @@ public final class ClipboardItemExchange {
     private var reading: Set<Data> = []
     private var nextGeneration: UInt64 = 1
     private let staging: ClipboardFileStaging
-    private let pasteCeiling: Locked<Int>
+    private let pasteCeiling: @Sendable () -> Int
     private let pulls = ClipboardPullRegistry()
+    private let serves = ClipboardServeWaits()
     private let logger: KernovaLogger
 
-    /// An exchange landing the far side's FILE and FOLDER representations in clipboard staging labelled
-    /// `stagingLabel` under `stagingRoot`, each pull no larger than `pasteCeiling` bytes.
+    /// An exchange landing the far side's representations in clipboard staging labelled `stagingLabel` under
+    /// `stagingRoot`, reading the paste ceiling from `pasteCeiling` each time a pull needs it.
     public init(
-        side: Side, stagingLabel: String, stagingRoot: ProcessStagingRoot, pasteCeiling: Int, logger: KernovaLogger
+        side: Side, stagingLabel: String, stagingRoot: ProcessStagingRoot,
+        pasteCeiling: @escaping @Sendable () -> Int, logger: KernovaLogger
     ) {
         self.side = side
         staging = ClipboardFileStaging(label: stagingLabel, root: stagingRoot)
-        self.pasteCeiling = Locked(pasteCeiling)
+        self.pasteCeiling = pasteCeiling
         self.logger = logger
-    }
-
-    /// The most bytes one paste's file set, and any one pull, may land.
-    public var pasteCeilingBytes: Int { pasteCeiling.withLock { $0 } }
-
-    /// Changes ``pasteCeilingBytes`` for every later pull.
-    public func setPasteCeiling(_ bytes: Int) {
-        pasteCeiling.withLock { $0 = bytes }
     }
 
     /// Whether a connection can carry the clipboard now.
@@ -168,21 +165,21 @@ public final class ClipboardItemExchange {
         return Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
     }
 
-    /// The content of `representation` of this side's offer that `request` pulls, served from its source. Called
-    /// on the pull's own queue, never the main thread: it waits for the main actor to read the source.
+    /// The content of `representation` of this side's offer that pull `id`'s `request` pulls, served from its
+    /// source. Called on the pull's own queue, never the main thread: it waits for the main actor to read the
+    /// source, and for as long as a promise it calls in takes, until the pull or its offer ends.
     nonisolated public func content(
-        _ request: PullRequest, _ representation: Representation
+        _ id: ItemPullID, _ request: PullRequest, _ representation: Representation
     ) -> Result<ItemContent, WireError> {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        let answer = Locked<Result<ItemContent, WireError>?>(nil)
-        let served = DispatchSemaphore(value: 0)
-        Task { @MainActor in
-            let result = await self.serve(request)
-            answer.withLock { $0 = result }
-            served.signal()
+        guard let wait = serves.open(id, token: request.token) else {
+            return .failure(WireError(.cancelled, debugDetail: "the pull ended before it was served"))
         }
-        served.wait()
-        return answer.withLock { $0 } ?? .failure(WireError(.itemRepresentationUnavailable))
+        let serving = Task { @MainActor in wait.answer(await self.serve(request)) }
+        let result = wait.result()
+        serving.cancel()
+        serves.served(id)
+        return result
     }
 
     private func serve(_ request: PullRequest) async -> Result<ItemContent, WireError> {
@@ -214,6 +211,7 @@ public final class ClipboardItemExchange {
 
     /// Hands `event`, of the connection `link` names, to the exchange. Pulls' ends go to ``pullEnded(_:_:)``.
     public func handle(_ event: ItemTransferEvent, on link: any ClipboardItemLink) {
+        serves.end(by: event)
         switch event {
         case .offerReceived(let header):
             received(header, on: link)
@@ -311,11 +309,109 @@ public final class ClipboardItemExchange {
         let ceiling = pasteCeiling
         let remote = ClipboardRemoteOffer(
             header: header, items: held, link: link, staging: staging, generation: generation,
-            ceiling: { UInt64(clamping: max(ceiling.withLock { $0 }, 0)) }, registry: pulls, logger: logger,
-            landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } })
+            ceiling: { UInt64(clamping: max(ceiling(), 0)) }, registry: pulls, logger: logger,
+            landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } },
+            failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } })
         withdrawLocal()
         self.remote = remote
         logger.log(.notice, "Received a clipboard offer: \(held.count, privacy: .public) item(s)")
         onRemoteOffer?(remote)
+    }
+}
+
+/// The waits of the pulls this side serves, each ended by its pull's end or its offer's: every pull's content is
+/// asked for once and its `.serveEnded` arrives once, in either order, and an entry lasts until both have.
+final class ClipboardServeWaits: Sendable {
+    /// One pull's wait for its content: the first answer wins.
+    final class Wait: Sendable {
+        let token: Data
+        private let answered = Locked<Result<ItemContent, WireError>?>(nil)
+        private let signal = DispatchSemaphore(value: 0)
+
+        init(token: Data) {
+            self.token = token
+        }
+
+        func answer(_ result: Result<ItemContent, WireError>) {
+            let first = answered.withLock { answered -> Bool in
+                guard answered == nil else { return false }
+                answered = result
+                return true
+            }
+            if first { signal.signal() }
+        }
+
+        /// Parks the calling thread until the first answer.
+        func result() -> Result<ItemContent, WireError> {
+            signal.wait()
+            guard let result = answered.withLock({ $0 }) else { preconditionFailure("a wait signalled unanswered") }
+            return result
+        }
+    }
+
+    private enum Entry {
+        /// Its content is being served.
+        case serving(Wait)
+        /// Its content was served; its end is still to come.
+        case served
+        /// It ended before its content was asked for.
+        case ended
+    }
+
+    private let entries = Locked<[ItemPullID: Entry]>([:])
+
+    /// The wait for pull `id`'s content, of the offer `token`; nil when the pull already ended.
+    func open(_ id: ItemPullID, token: Data) -> Wait? {
+        entries.withLock { entries in
+            if case .ended = entries[id] {
+                entries[id] = nil
+                return nil
+            }
+            let wait = Wait(token: token)
+            entries[id] = .serving(wait)
+            return wait
+        }
+    }
+
+    /// Pull `id`'s content was answered.
+    func served(_ id: ItemPullID) {
+        entries.withLock { entries in
+            switch entries[id] {
+            case .serving: entries[id] = .served
+            case .served, .ended, nil: entries[id] = nil
+            }
+        }
+    }
+
+    /// Ends the waits `event` ends: a pull's at its `.serveEnded`, every pull's of an offer of this side's at
+    /// its `.offerEnded`.
+    func end(by event: ItemTransferEvent) {
+        switch event {
+        case .serveEnded(_, let id, _):
+            let wait = entries.withLock { entries -> Wait? in
+                switch entries.removeValue(forKey: id) {
+                case .serving(let wait):
+                    entries[id] = .served
+                    return wait
+                case .served, .ended:
+                    return nil
+                case nil:
+                    entries[id] = .ended
+                    return nil
+                }
+            }
+            wait?.answer(.failure(WireError(.cancelled, debugDetail: "the pull ended")))
+        case .offerEnded(_, .local, let token, _):
+            let waits = entries.withLock { entries in
+                entries.values.compactMap { entry -> Wait? in
+                    if case .serving(let wait) = entry, wait.token == token { wait } else { nil }
+                }
+            }
+            for wait in waits {
+                wait.answer(.failure(WireError(.itemRepresentationUnavailable, debugDetail: "the offer ended")))
+            }
+        case .offerReceived, .offerEnded, .pullEnded:
+            break
+        }
     }
 }

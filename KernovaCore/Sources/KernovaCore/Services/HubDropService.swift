@@ -53,7 +53,7 @@ package final class HubDropService: Sendable {
             events: { [self] _, event in
                 DispatchQueue.main.async { [self] in MainActor.assumeIsolated { handle(event) } }
             },
-            content: { [self] request, _ in content(request) })
+            content: { [self] _, request, _ in content(request) })
     }
 
     /// Offers through `hub`, the one built with ``owner``.

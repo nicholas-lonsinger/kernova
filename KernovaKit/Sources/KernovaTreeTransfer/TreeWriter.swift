@@ -16,6 +16,7 @@ import ucrt
 import KernovaContainer
 import KernovaFileTree
 import KernovaLogging
+import KernovaSynchronization
 import KernovaWire
 
 /// Lands a tree from its `TreeEvent`s, never resolving a path.
@@ -39,6 +40,10 @@ import KernovaWire
 /// A folder's symlinks and small files are held in a batch and created side by side
 /// (``FolderBatch``) before the writer creates anything else or leaves the folder, so a failure among them
 /// is still the first in the producer's order.
+///
+/// Given a budget, the writer charges each entry's landed bytes to an account of its own as it admits the
+/// entry, refusing one the budget cannot hold; the account keeps what it charged once the item is published,
+/// and gives it back when the writer removes what it created.
 public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     /// The name the item's own entry has in the destination until it is published.
     public let stagingName: [UInt8]
@@ -52,6 +57,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private let destination: Int32
     private let destinationPathByteCount: Int
     private let logger: KernovaLogger
+    /// What this item's landed bytes are charged to, when a budget bounds it.
+    private let account: ByteBudget.Account?
 
     private enum Phase {
         case writing
@@ -152,10 +159,13 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///     this OS's limit on a landed entry's path is measured.
     ///   - acceptance: What the pull accepts, which every event is held to: the root's type, the byte ceiling,
     ///     the decmpfs types it lands compressed, and its codecs.
+    ///   - budget: What each entry's landed bytes are charged to, beside the acceptance's byte ceiling; an entry
+    ///     the budget cannot hold fails `.container(.exceedsByteCeiling)`.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
         name: PublishName, fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
-        accepting acceptance: ContainerAcceptance, logger: KernovaLogger = TreeWriterLog.logger
+        accepting acceptance: ContainerAcceptance, budget: ByteBudget? = nil,
+        logger: KernovaLogger = TreeWriterLog.logger
     ) {
         self.name = name.base
         publishing = name
@@ -163,6 +173,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         self.destination = destination
         self.destinationPathByteCount = destinationPathByteCount
         sequence = TreeEventSequence(accepting: acceptance)
+        account = budget?.account()
         self.logger = logger
         var generator = SystemRandomNumberGenerator()
         let suffix = (0..<16).map { _ in Array("0123456789abcdef".utf8)[Int(generator.next() % 16)] }
@@ -181,8 +192,13 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     public func write(_ event: TreeEvent) throws(TreeWriteFailure) {
         if case .failed(let failure) = phase { throw failure }
         let admitted: TreeEventSequence.Admitted
-        do {
+        do throws(ContainerError) {
             admitted = try sequence.admit(event)
+            if case .entry(let entry) = admitted, let account, !account.charge(entry.landedByteCount) {
+                let budget = account.budget
+                throw .exceedsByteCeiling(
+                    declared: (budget.limit - budget.remaining) &+ entry.landedByteCount, ceiling: budget.limit)
+            }
         } catch {
             throw fail(.container(error), at: path(of: event))
         }
@@ -254,6 +270,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             do {
                 try place(as: candidate, directory: staged.kind == .directory, exclusive: &exclusive)
                 cursor = nil
+                account?.keep()
                 phase = .published
                 return candidate
             } catch  where error.code == EEXIST && publishing.keepsBoth && number < KeepBothName.largestNumber {
@@ -312,6 +329,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
 
     /// Removes everything the writer created, unless it was published.
     func discard() {
+        account?.giveBack()
         if let written = file?.written { fileSystem.close(written.descriptor) }
         // A compressed file closes itself as it goes.
         file = nil

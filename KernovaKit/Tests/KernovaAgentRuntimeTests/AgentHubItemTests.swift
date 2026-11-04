@@ -19,7 +19,7 @@ struct AgentHubItemTests {
     static let allEnabled = SimItems.policy(PolicySnapshot())
     static let offer = SimItems.offer(1, [[SimItems.representation(.inline, size: 64)]])
     static let token = SimItems.token(1)
-    static let order = ItemPullOrder(SimItems.request(1), landing: .inline)
+    static let order = ItemPullOrder(SimItems.request(1), landing: DecodingItemSink.landing)
 
     private func harness(policy: PolicySnapshot = Self.allEnabled) async -> HubHarness {
         let harness = HubHarness(policy: policy, items: MemoryItems().adapters())

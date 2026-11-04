@@ -67,7 +67,7 @@ public final class MacAgentPeer: Sendable {
         let items =
             role == .sessionPeer
             ? ItemAdapters(
-                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
+                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2, $3) },
                 sink: sink, features: itemRouter.features)
             : nil
         runtime = PeerAgentRuntime(
@@ -288,13 +288,15 @@ public final class PeerItemCalls: Sendable {
         bound?.answerDragTake(id, answer)
     }
 
-    /// The pull the peer's item sink lands, as ``ItemSinkAdapter/order(token:item:representation:byteCeiling:landing:)``
-    /// builds it.
+    /// The pull the peer's item sink lands, as
+    /// ``ItemSinkAdapter/order(token:item:representation:byteCeiling:landing:budget:)`` builds it.
     public func order(
-        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
+        budget: ByteBudget?
     ) throws(WireError) -> ItemPullOrder {
         try sink.order(
-            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing)
+            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
+            budget: budget)
     }
 }
 

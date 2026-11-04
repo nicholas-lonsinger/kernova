@@ -35,7 +35,7 @@ private func router<Peer: Sendable>(
         return ItemFeatureOwner(
             usable: { peer in heard.record(.usable(feature, on: peer.map { "\($0)" })) },
             events: { _, event in heard.record(.items(feature, event)) },
-            content: { request, _ in
+            content: { _, request, _ in
                 heard.record(.content(feature, token: request.token))
                 return .success(content)
             },
@@ -99,7 +99,9 @@ struct ItemFeatureRouterTests {
     func contentReachesOwner(_ feature: FeatureID) {
         let heard = Recorder<Heard>()
         let router: ItemFeatureRouter<PeerHandle> = router(heard: heard)
-        let result = router.content(feature, SimItems.request(3), SimItems.representation(.inline, size: 6))
+        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+        let result = router.content(
+            feature, pull, SimItems.request(3), SimItems.representation(.inline, size: 6))
         #expect(result == .success(.inline(Data("routed".utf8))))
         #expect(heard.elements == [.content(feature, token: SimItems.token(3))])
     }
@@ -110,7 +112,8 @@ struct ItemFeatureRouterTests {
         let router: ItemFeatureRouter<PeerHandle> = router([.clipboard, .drag], heard: heard)
         #expect(router.features == [.clipboard, .drag])
         #expect(ItemFeatureRouter<PeerHandle>().features.isEmpty)
-        let content = router.content(.drop, SimItems.request(1), SimItems.representation(.inline, size: 1))
+        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+        let content = router.content(.drop, pull, SimItems.request(1), SimItems.representation(.inline, size: 1))
         guard case .failure(let error) = content else { Issue.record("content of an unowned feature"); return }
         #expect(error.code == .itemRepresentationUnavailable)
         #expect(heard.elements.isEmpty)
@@ -157,7 +160,7 @@ struct ItemFeatureRouterTests {
             claim: Fixture.peerClaim, state: Fixture.peerState,
             registry: PeerFeatureRegistry(
                 items: ItemAdapters(
-                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { peerRouter.content($0, $1, $2) },
+                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { peerRouter.content($0, $1, $2, $3) },
                     sink: MemoryItems(), features: peerRouter.features)),
             dialer: HubDialer(harness: harness), scheduler: SystemScheduler(), logger: Fixture.logger,
             handlers: PeerAgentRuntime.Handlers(event: { peerRouter.deliver($0) }, stop: { _ in }))
@@ -174,12 +177,12 @@ struct ItemFeatureRouterTests {
         var host = hostHeard.waiter()
         _ = await host.next { if case .items(.clipboard, .offerReceived) = $0 { true } else { false } }
         let pulled = await withCheckedContinuation { continuation in
-            harness.hub.pullItem(ItemPullOrder(SimItems.request(1), landing: .inline), from: handle) {
+            harness.hub.pullItem(ItemPullOrder(SimItems.request(1), landing: DecodingItemSink.landing), from: handle) {
                 continuation.resume(returning: $0)
             }
         }
         guard case .success(let id) = pulled else { Issue.record("pulled \(pulled)"); return }
-        _ = await host.next { $0 == .items(.clipboard, .pullEnded(.clipboard, id, .landed(.inline(Data())))) }
+        _ = await host.next { $0 == .items(.clipboard, .pullEnded(.clipboard, id, .landed(.named(Data())))) }
         var served = peerHeard.waiter()
         _ = await served.next { $0 == .content(.clipboard, token: SimItems.token(1)) }
         _ = await served.next {

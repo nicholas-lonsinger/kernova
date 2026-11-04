@@ -486,7 +486,7 @@ package final class VMInstance {
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
         let hubClipboard = HubClipboardService(
             sink: itemSink, stagingRoot: ClipboardFileStaging.processRoot,
-            stagingKey: bundle.configuration.id.uuidString)
+            stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes })
         self.hubClipboard = hubClipboard
         let clipboardTransfers = ClipboardTransferReporter()
         self.clipboardTransfers = clipboardTransfers
@@ -494,7 +494,7 @@ package final class VMInstance {
         self.dropService = dropService
         let itemRouter = ItemFeatureRouter<PeerHandle>(clipboard: hubClipboard.owner(), drop: dropService.owner)
         let items = ItemAdapters(
-            source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
+            source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2, $3) },
             sink: itemSink, features: itemRouter.features)
         agentHub = AgentHub(
             connector: agentConnector
@@ -516,16 +516,13 @@ package final class VMInstance {
         wireHubClipboard()
     }
 
-    /// Points ``hubClipboard`` at this VM's hub, report, paste ceiling and
-    /// host-pasteboard writer.
+    /// Points ``hubClipboard`` at this VM's hub, report and host-pasteboard
+    /// writer.
     private func wireHubClipboard() {
         let publisher = hostClipboardPublisher
         hubClipboard.hub = agentHub
         hubClipboard.reporter = clipboardTransfers
         hubClipboard.label = { [weak self] in self?.name ?? "VM" }
-        hubClipboard.maxPasteBytes = { [weak self] in
-            self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-        }
         hubClipboard.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
         hubClipboard.retractStaleHostWrite = { publisher.retractPromisedWrite() }
         hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
