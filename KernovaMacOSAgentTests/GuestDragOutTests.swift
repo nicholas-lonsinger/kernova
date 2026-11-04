@@ -537,6 +537,26 @@ struct GuestDragOutTests {
         #expect(rig.peer.answers(to: id) == [.armed])
         #expect(!rig.surface.isShown)
         #expect(rig.surface.showCount == 1)
+        #expect(
+            failureCode(rig.dragOut.served.content(request(try rig.token(), item: 0)))
+                == .itemRepresentationUnavailable)
+    }
+
+    @Test("a read that comes back after its offer ended serves nothing, however the take's end is heard")
+    func aReadAfterTheOfferEndedServesNothing() throws {
+        let urls = [try file("one.txt")]
+        let rig = Rig()
+        rig.pressAndDrag(urls.map(fileItem))
+        let id = try rig.take(1)
+        let token = try rig.token()
+        _ = rig.catcher.draggingEntered(dragged(urls))
+
+        // The offer's end is heard before the take's cancel.
+        rig.dragOut.offerEnded(token)
+        rig.input.deliverResolves()
+        rig.dragOut.cancelled(id)
+
+        #expect(failureCode(rig.dragOut.served.content(request(token, item: 0))) == .itemRepresentationUnavailable)
     }
 
     @Test("a read that comes back into a newer take is dropped, and the newer take carries its own drag")
@@ -1311,7 +1331,7 @@ struct GuestDragOutTests {
     ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
         let peer = FakeGuestDragPeer()
         let catcher = GuestDragCatcher(
-            peer: peer, makeSurface: { _ in FakeCatcherSurface() }, carry: { _, _, done in done(nil) })
+            peer: peer, makeSurface: { _ in FakeCatcherSurface() }, carry: { _, done in done(nil) })
         let icons = FakeGuestDragTypeIcons()
         let panel = GuestDragCatcherPanel(catcher: catcher, typeIcon: icons.icon(for:))
         panel.layOut(items: items, over: screen)

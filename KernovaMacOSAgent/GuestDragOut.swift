@@ -54,13 +54,13 @@ final class GuestDragOut {
         self.input = input
         watcher = GuestDragWatcher(input: input, peer: peer)
         promises = GuestDragPromises(stagingRoot: stagingRoot)
-        let served = served
-        catcher = GuestDragCatcher(peer: peer, makeSurface: system.makeCatcherSurface) {
-            [weak input] items, token, done in
+        catcher = GuestDragCatcher(peer: peer, makeSurface: system.makeCatcherSurface) { [weak input] items, done in
             guard let input else { return done(nil) }
-            Self.carry(items, as: token, input: input, served: served, done)
+            Self.carry(items, input: input, done)
         }
         watcher.onPressEnded = { [weak catcher] press in catcher?.pressEnded(press) }
+        let served = served
+        catcher.onCarried = { claim, carried in _ = served.serve(claim.token, carried.sources) }
         catcher.onDeliver = { [weak self] id, claim, carried, receivers in
             self?.deliver(id, claim, carried, receivers: receivers)
         }
@@ -76,6 +76,7 @@ final class GuestDragOut {
     func take(_ id: DragTakeID, token: Data) {
         switch watcher.claim(token: token) {
         case .success(let claim):
+            served.open(token)
             catcher.arm(claim, take: id)
         case .failure(let refusal):
             Self.logger.log(.notice, "Refused the host's take: \(refusal.message, privacy: .public)")
@@ -116,17 +117,17 @@ final class GuestDragOut {
 
     // MARK: - Carrying
 
-    /// Resolves `items`' file URLs off the main actor, then serves the offer of
-    /// `token` from them and hands back what the take carries, or nil unless
-    /// every item can go out.
+    /// Resolves `items`' file URLs off the main actor, then hands back what a
+    /// take of them carries, or nil unless every item can go out.
     private static func carry(
-        _ items: [GuestDragItem], as token: Data, input: any GuestDragInput, served: GuestDragServedOffers,
+        _ items: [GuestDragItem], input: any GuestDragInput,
         _ done: @escaping @MainActor (GuestDragCatcher.Carried?) -> Void
     ) {
         input.resolveFiles(items.compactMap(\.fileURL)) { intake in
             guard let offered = GuestDraggedItems.offerItems(items, resolvedFiles: intake) else { return done(nil) }
-            served.register(token, offered.map(\.source))
-            done(GuestDragCatcher.Carried(items: items, intake: intake, offered: offered.map(\.item)))
+            done(
+                GuestDragCatcher.Carried(
+                    items: items, intake: intake, offered: offered.map(\.item), sources: offered.map(\.source)))
         }
     }
 
@@ -159,7 +160,10 @@ final class GuestDragOut {
                 promises.complete(callIn)
                 return peer.answerTake(id, .caught(folderSizes: nil))
             }
-            served.register(claim.token, offered.map(\.source))
+            guard served.serve(claim.token, offered.map(\.source)) else {
+                promises.complete(callIn)
+                return peer.answerTake(id, .caught(folderSizes: nil))
+            }
             callIns[claim.token] = callIn
             names = carried.items.indices.compactMap { callIn.offered[$0].map { Data($0.name.utf8) } }
         }
@@ -322,9 +326,23 @@ enum GuestDragSource: Sendable {
 final class GuestDragServedOffers: Sendable {
     private let offers = Locked([Data: [GuestDragSource]]())
 
-    /// Serves `sources`, in the offer's item order, for the offer of `token`.
-    func register(_ token: Data, _ sources: [GuestDragSource]) {
-        offers.withLock { $0[token] = sources }
+    /// Holds a place for the offer of `token`, whose take claimed it, serving
+    /// nothing yet; ``remove(_:)`` ends it once the offer ends.
+    func open(_ token: Data) {
+        offers.withLock { $0[token] = [] }
+    }
+
+    /// Serves `sources`, in the offer's item order, for the offer of `token`
+    /// while ``open(_:)`` holds its place; false once the offer has ended,
+    /// its promises then answered unavailable.
+    func serve(_ token: Data, _ sources: [GuestDragSource]) -> Bool {
+        let served = offers.withLock { offers in
+            guard offers[token] != nil else { return false }
+            offers[token] = sources
+            return true
+        }
+        if !served { Self.abandon(sources) }
+        return served
     }
 
     /// Serves nothing more of the offer of `token`; a pull waiting on one of

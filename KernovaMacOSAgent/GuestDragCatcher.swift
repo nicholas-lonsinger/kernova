@@ -86,6 +86,8 @@ final class GuestDragCatcher {
         let intake: ClipboardPasteboardReader.FileIntake
         /// The items as the take lists them.
         let offered: [OfferedItem]
+        /// What the offer serves each item from, in the same order.
+        let sources: [GuestDragSource]
     }
 
     /// The drag a take armed the catcher for.
@@ -112,10 +114,13 @@ final class GuestDragCatcher {
     private var surface: (any GuestDragCatcherSurface)?
     private var take: Take?
 
-    /// Reads `items`, the drag's as the surface saw them, into what take
-    /// `token`'s offer serves, calling back with them, or nil when some cannot
-    /// go out.
-    private let carry: @MainActor ([GuestDragItem], Data, @escaping @MainActor (Carried?) -> Void) -> Void
+    /// Reads `items`, the drag's as the surface saw them, into what a take of
+    /// them carries, calling back with it, or nil when some cannot go out.
+    private let carry: @MainActor ([GuestDragItem], @escaping @MainActor (Carried?) -> Void) -> Void
+
+    /// Hears what a take carries once the take accepted it, before `TARGETED`
+    /// lists it: the take's claim and what it carries.
+    var onCarried: ((GuestDragWatcher.Claim, Carried) -> Void)?
 
     /// Hears each delivering drop: the take it ended, the claim and what it
     /// carried, and the drop's file promises. It ends the take itself.
@@ -124,7 +129,7 @@ final class GuestDragCatcher {
     init(
         peer: any GuestDragOutPeer,
         makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface,
-        carry: @escaping @MainActor ([GuestDragItem], Data, @escaping @MainActor (Carried?) -> Void) -> Void
+        carry: @escaping @MainActor ([GuestDragItem], @escaping @MainActor (Carried?) -> Void) -> Void
     ) {
         self.peer = peer
         self.makeSurface = makeSurface
@@ -281,7 +286,7 @@ final class GuestDragCatcher {
     private func startCarrying(_ items: [GuestDragItem], for current: Take) {
         guard !current.carrying else { return }
         take?.carrying = true
-        carry(items, current.claim.token) { [weak self] carried in
+        carry(items) { [weak self] carried in
             guard let self, let now = self.take, now.id == current.id, !now.ended else { return }
             self.take?.carrying = false
             guard let carried else {
@@ -289,6 +294,7 @@ final class GuestDragCatcher {
                     refusing: WireError(.dragNotCurrent, debugDetail: "Some of the drag's items cannot go out"))
             }
             self.take?.carried = carried
+            self.onCarried?(current.claim, carried)
             if now.showing != nil { _ = self.surface?.show(items: carried.items) }
             Self.logger.log(.notice, "Catcher read the drag: \(carried.items.count, privacy: .public) item(s)")
             guard let latest = self.take, latest.showing?.entered == true else { return }
