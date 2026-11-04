@@ -176,7 +176,7 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
 /// | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 /// | CLIPBOARD_OFFER_BY_HOST | CLIPBOARD | host | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
 /// | CLIPBOARD_OFFER_BY_PEER | CLIPBOARD | peer | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
-/// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
+/// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | DropLanded    |
 /// | DRAG_OFFER    | DRAG    | peer   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
 /// | DRAG_TAKE     | DRAG    | host   | DragTake     | nothing            | nothing              | empty, at once | DragTakeOutcome |
 ///
@@ -2469,6 +2469,22 @@ public nonisolated struct Kernova_V2_DropPolicy: Sendable {
   public init() {}
 }
 
+/// The peer's END body on DROP_OFFER, sent once every item has landed or been
+/// skipped. A RESET instead says why the drop stopped.
+public nonisolated struct Kernova_V2_DropLanded: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The index of each item the peer landed, ascending. An item not listed
+  /// did not land.
+  public var items: [UInt32] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 /// FeatureAdvert.params for DRAG, both sides.
 public nonisolated struct Kernova_V2_DragCapability: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -4609,6 +4625,36 @@ nonisolated extension Kernova_V2_DropPolicy: SwiftProtobuf.Message, SwiftProtobu
   }
 
   public static func ==(lhs: Kernova_V2_DropPolicy, rhs: Kernova_V2_DropPolicy) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Kernova_V2_DropLanded: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".DropLanded"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}items\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedUInt32Field(value: &self.items) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.items.isEmpty {
+      try visitor.visitPackedUInt32Field(value: self.items, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Kernova_V2_DropLanded, rhs: Kernova_V2_DropLanded) -> Bool {
+    if lhs.items != rhs.items {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

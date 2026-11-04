@@ -40,10 +40,13 @@ public final class MacAgentPeer: Sendable {
     private let queue: DispatchQueue
 
     /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
-    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer serves the item
-    /// features `owners` builds owners for, each calling into the connection through the calls it is handed.
+    /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer lands what the
+    /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`, and serves the
+    /// other item features `owners` builds owners for, each calling into the connection through the calls it
+    /// is handed.
     public init(
         role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?,
+        revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in },
         owners: (PeerItemCalls) -> ItemFeatureOwners = { _ in ItemFeatureOwners() }
     ) {
         claim = DarwinIdentity.current(role: role, versionLabel: label)
@@ -59,7 +62,8 @@ public final class MacAgentPeer: Sendable {
         self.power = power
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
         let built = role == .sessionPeer ? owners(calls) : ItemFeatureOwners()
-        let itemRouter = ItemFeatureRouter<Void>(clipboard: built.clipboard, drop: built.drop, drag: built.drag)
+        let drop = role == .sessionPeer ? Self.dropReceiver(sink: sink, reveal: revealDrop) : nil
+        let itemRouter = ItemFeatureRouter<Void>(clipboard: built.clipboard, drop: drop?.owner, drag: built.drag)
         let items =
             role == .sessionPeer
             ? ItemAdapters(
@@ -82,6 +86,7 @@ public final class MacAgentPeer: Sendable {
                 }))
         calls.bind(runtime)
         peer.withLock { $0 = self }
+        drop?.attach(runtime)
         if let running, claim.scope != .unspecified {
             let watcher = SlotLinkWatcher(root: running.root, runningSlot: running.slot, queue: queue) {
                 [self] change in
@@ -126,6 +131,25 @@ public final class MacAgentPeer: Sendable {
         else { return }
         watcher.withLock { $0 }?.cancel()
         runtime.close { Darwin.exit(status) }
+    }
+
+    /// DROP's receiver: it lands each drop in the user's Downloads folder, which the agent, unsandboxed, reads
+    /// as the real one, and hands what landed to `reveal`.
+    private static func dropReceiver(
+        sink: ItemSinkAdapter<POSIXTreeFileSystem>, reveal: @escaping @Sendable ([URL]) -> Void
+    ) -> DropReceiver<POSIXTreeFileSystem> {
+        let downloads =
+            FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
+        return DropReceiver(
+            directory: downloads.path, sink: sink,
+            logger: KernovaLogger(subsystem: "app.kernova.macosagent", category: "Drop")
+        ) { names in
+            reveal(
+                names.map { name in
+                    downloads.appendingPathComponent(String(decoding: name, as: UTF8.self))
+                })
+        }
     }
 
     /// The update adapter `claim` registers, and the installer behind it when it has one.
@@ -185,22 +209,17 @@ public final class MacAgentPeer: Sendable {
     }
 }
 
-/// The owners of the item features a session peer serves; a feature with none is advertised absent.
+/// The owners of the item features a session peer serves besides DROP, which the peer owns itself; a feature
+/// with none is advertised absent.
 public struct ItemFeatureOwners: Sendable {
     /// CLIPBOARD's owner.
     public var clipboard: ItemFeatureOwner<Void>?
-    /// DROP's owner.
-    public var drop: ItemFeatureOwner<Void>?
     /// DRAG's owner.
     public var drag: DragFeatureOwner<Void>?
 
     /// Owners for the features given one.
-    public init(
-        clipboard: ItemFeatureOwner<Void>? = nil, drop: ItemFeatureOwner<Void>? = nil,
-        drag: DragFeatureOwner<Void>? = nil
-    ) {
+    public init(clipboard: ItemFeatureOwner<Void>? = nil, drag: DragFeatureOwner<Void>? = nil) {
         self.clipboard = clipboard
-        self.drop = drop
         self.drag = drag
     }
 }

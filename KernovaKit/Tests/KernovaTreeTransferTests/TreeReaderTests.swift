@@ -46,6 +46,37 @@ struct TreeReaderTests {
         #expect(failure?.wireError.code == .readFailed)
     }
 
+    @Test(
+        "an item is opened by its own path, so a folder above it that cannot be opened does not stop it",
+        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
+    func rootOpenedByItsOwnPath() throws {
+        let bench = try FidelityBench()
+        try bench.makeDirectory([bytes("locked")])
+        try bench.makeDirectory([bytes("locked"), bytes("item")])
+        try bench.makeFile([bytes("locked"), bytes("item"), bytes("a")], Data("a".utf8))
+        let locked = String(decoding: bench.path([bytes("locked")]), as: UTF8.self)
+        // Searchable, unreadable: the item's path resolves, and an open of the folder itself fails.
+        try #require(chmod(locked, 0o111) == 0)
+        defer { _ = chmod(locked, 0o755) }
+        try #require(open(locked, O_RDONLY | O_DIRECTORY) == -1)
+        let reader = try TreeReader(
+            fileSystem: bench.fileSystem, root: bench.path([bytes("locked"), bytes("item")]), accepting: Self.folder)
+        var events: [TreeEvent] = []
+        while let event = try reader.next() { events.append(event) }
+        #expect(events.last == .end)
+        #expect(events.contains(.bytes(Data("a".utf8))))
+    }
+
+    @Test("a root that is no absolute path, or ends in no name, is refused before anything resolves it")
+    func rootPathRefused() throws {
+        let bench = try FidelityBench()
+        for root in ["relative/item", "/", String(decoding: bench.path([]), as: UTF8.self) + "/"] {
+            #expect(throws: TreeReadFailure.self, "\(root)") {
+                try TreeReader(fileSystem: bench.fileSystem, root: bytes(root), accepting: Self.folder)
+            }
+        }
+    }
+
     @Test("an item that is not what its storage names is refused")
     func rootTypeRefused() throws {
         let bench = try FidelityBench()
@@ -78,10 +109,8 @@ struct TreeReaderTests {
         let bench = try FidelityBench()
         let name = bytes("growing")
         try bench.makeFile([name], randomBytes(1 << 20, seed: 1))
-        let parent = try bench.fileSystem.openDirectory(bytes(bench.sourcePath), in: AT_FDCWD)
-        defer { bench.fileSystem.close(parent) }
         let reader = try TreeReader(
-            fileSystem: bench.fileSystem, item: name, in: parent,
+            fileSystem: bench.fileSystem, root: bench.path([name]),
             accepting: ContainerAcceptance(storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false))
         _ = try reader.next()
         _ = try reader.next()

@@ -8,9 +8,9 @@ import KernovaSynchronization
 
 // Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
 // `session`, it is the session peer: an `.accessory` menu-bar app holding the
-// v2 peer's connection to the host, which carries the clipboard, beside the
-// drop and control channels. Every other command — the system peer, the installer, the
-// rollback check — runs headless (`MacAgentTools`).
+// v2 peer's connection to the host, which carries the clipboard and lands
+// drops, beside the drop, drag-out and control channels. Every other command —
+// the system peer, the installer, the rollback check — runs headless (`MacAgentTools`).
 
 @main
 @MainActor
@@ -132,6 +132,9 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         clipboard.setOnConsole(state.console == .on)
         let peer = MacAgentPeer(
             role: .sessionPeer, label: Self.versionLabel, logs: logs, state: state,
+            revealDrop: { urls in
+                DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            },
             owners: { calls in ItemFeatureOwners(clipboard: clipboard.owner(calls: calls)) })
         self.peer = peer
         self.clipboard = clipboard

@@ -56,6 +56,9 @@ struct ClipboardTransferWordingTests {
             (.itemsUnreadable, .forward),
             (.itemsUnreadable, .drop),
             (.sendFailed, .drop),
+            (.dropStopped(.turnedOff), .drop),
+            (.dropStopped(.noAgent), .drop),
+            (.dropStopped(.movedToAnotherAgent), .drop),
             (.unclaimed, .drop),
             (.diskFull(needed: 4096, available: 1024), .dragOut),
             (.interrupted(fileCount: nil), .dragOut),
@@ -234,14 +237,35 @@ struct ClipboardTransferWordingTests {
         }
     }
 
-    @Test("an interrupted drop counts the files it was carrying")
+    @Test("an interrupted drop counts the files it was carrying, and names only the connection ending")
     func interruptedDropCountsItsFiles() throws {
         #expect(
             try #require(wording(.interrupted(fileCount: 1), .drop)).message
-                == "The file stopped transferring when the VM disconnected.")
+                == "The file stopped transferring when the connection to the VM ended.")
         #expect(
             try #require(wording(.interrupted(fileCount: 3), .drop)).message
-                == "The files stopped transferring when the VM disconnected.")
+                == "The files stopped transferring when the connection to the VM ended.")
+    }
+
+    @Test("a drop this side ended is worded by what it observed, and claims no disconnect")
+    func droppedStopWording() throws {
+        let expected: [(ClipboardDropStop, String)] = [
+            (
+                .turnedOff,
+                "\u{201C}Drag and drop files\u{201D} was off in the VM's settings, so the drop didn't finish."
+            ),
+            (.noAgent, "No guest agent in the VM was taking drops, so the drop didn't finish."),
+            (.movedToAnotherAgent, "Another guest agent in the VM took over drops, so the drop didn't finish."),
+        ]
+        for (stop, message) in expected {
+            let copy = try #require(wording(.dropStopped(stop), .drop))
+            #expect(copy.headline == "Files not copied to \(quotedVM).", "\(stop)")
+            #expect(copy.message == message, "\(stop)")
+            #expect(!copy.message.contains("disconnect"), "\(stop)")
+        }
+        #expect(
+            try #require(wording(.sendFailed, .drop)).message
+                == "The files couldn't be offered to the VM, so none were sent.")
     }
 
     @Test("a guest drop failure says the drop didn't finish, not that nothing was saved")
@@ -466,6 +490,9 @@ struct ClipboardTransferWordingTests {
             ),
             (.peerReported(.dropFailed), .drop, "Drop: the files didn't reach the VM"),
             (.sendFailed, .drop, "Drop: the files didn't reach the VM"),
+            (.dropStopped(.turnedOff), .drop, "Drop: \u{201C}Drag and drop files\u{201D} was off"),
+            (.dropStopped(.noAgent), .drop, "Drop: no guest agent was taking drops"),
+            (.dropStopped(.movedToAnotherAgent), .drop, "Drop: another guest agent took over drops"),
             (.itemsSkipped(count: 1), .drop, "Drop: some files weren't sent"),
             (.unclaimed, .drop, "Drop: the VM never took the files"),
             (.timedOut, .drop, "Drop: the VM stopped taking the files"),

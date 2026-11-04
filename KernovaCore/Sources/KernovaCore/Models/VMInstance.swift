@@ -160,7 +160,11 @@ package final class VMInstance {
     ///
     /// One per VM rather than per connection: a promise a clipboard service
     /// published outlives that service, so a refusal belongs to the VM.
-    @ObservationIgnored let clipboardTransfers = ClipboardTransferReporter()
+    @ObservationIgnored let clipboardTransfers: ClipboardTransferReporter
+
+    /// Offers what is dropped on this VM's display to the agent hub's DROP
+    /// console peer.
+    @ObservationIgnored let dropService: HubDropService
 
     /// This VM's clipboard transfer state — running, finished, or idle — which
     /// every surface renders.
@@ -396,12 +400,14 @@ package final class VMInstance {
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
     /// forwards guest logs, CLIPBOARD exactly when it shares the clipboard, its
-    /// paste ceiling `maxPasteBytes`.
+    /// paste ceiling `maxPasteBytes`, and DROP when files dragged onto the
+    /// display go to the guest.
     static func agentHubPolicy(for configuration: VMConfiguration, maxPasteBytes: Int) -> PolicySnapshot {
         PolicySnapshot([
             FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
             ClipboardPolicyValue(maxPasteBytes: UInt64(clamping: maxPasteBytes))
                 .policy(enabled: configuration.clipboardSharingEnabled),
+            FeaturePolicyValue(feature: .drop, enabled: configuration.dropFilesEnabled),
         ])
     }
 
@@ -482,7 +488,11 @@ package final class VMInstance {
             sink: itemSink, stagingRoot: ClipboardFileStaging.processRoot,
             stagingKey: bundle.configuration.id.uuidString)
         self.hubClipboard = hubClipboard
-        let itemRouter = ItemFeatureRouter<PeerHandle>(clipboard: hubClipboard.owner())
+        let clipboardTransfers = ClipboardTransferReporter()
+        self.clipboardTransfers = clipboardTransfers
+        let dropService = HubDropService(stagingRoot: ClipboardFileStaging.processRoot, reporter: clipboardTransfers)
+        self.dropService = dropService
+        let itemRouter = ItemFeatureRouter<PeerHandle>(clipboard: hubClipboard.owner(), drop: dropService.owner)
         let items = ItemAdapters(
             source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
             sink: itemSink, features: itemRouter.features)
@@ -497,6 +507,7 @@ package final class VMInstance {
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
         }
+        dropService.attach(agentHub)
         activity.owner = self
         snapshots.instance = self
         clipboardTransfers.onReportChanged = { [weak self] report in

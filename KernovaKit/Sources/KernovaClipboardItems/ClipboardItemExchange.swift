@@ -148,9 +148,7 @@ public final class ClipboardItemExchange {
             case .bytes(let data):
                 return .success(.inline(data))
             case .file(let url), .folder(let url):
-                return .success(
-                    .tree(
-                        directory: url.deletingLastPathComponent().path, name: Array(url.lastPathComponent.utf8)))
+                return .success(.tree(path: url.path))
             }
         } catch {
             switch error {

@@ -1,7 +1,10 @@
 import Foundation
 import KernovaCommandModel
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import SwiftProtobuf
 import Testing
 
@@ -14,7 +17,7 @@ import Testing
 @Suite("VMInstance display drop availability", .caseScoped)
 @MainActor
 struct VMInstanceDisplayDropTests {
-    /// A VM instance plus the socket pairs its control and drop services run on.
+    /// A VM instance plus the socket pairs its drag-out service runs on.
     private final class Harness {
         let instance: VMInstance
         private var channels: [VsockChannel] = []
@@ -36,20 +39,14 @@ struct VMInstanceDisplayDropTests {
             instance.beginSessionContextForTesting()
         }
 
-        /// Installs a started control service and hands back the guest end, so a
-        /// test can drive the `Hello` that carries the capability.
+        /// Publishes a hub snapshot whose DROP console peer is `peer`.
         @MainActor
-        func attachControl() throws -> VsockChannel {
-            let (guest, host) = try makePair()
-            let control = VsockControlService(
-                channel: host, label: "drop-test", hostVersion: AppBundleProducts.testing.hostVersion)
-            instance.sessionContext?.vsock.control = control
-            control.start()
-            return guest
+        func publishConsolePeer(_ peer: PeerHandle?) {
+            instance.publishAgentHubSnapshotForTesting(
+                AgentHubSnapshot(
+                    peers: [], features: FeatureStatus.merge([]), consolePeers: peer.map { [.drop: $0] } ?? [:]))
         }
 
-        /// Installs a started drop service and hands back the guest end, so a
-        /// test can offer a drag on it.
         @MainActor
         @discardableResult
         func attachDrop() throws -> VsockChannel {
@@ -92,23 +89,8 @@ struct VMInstanceDisplayDropTests {
         @MainActor
         func tearDown() {
             instance.vsockDropService?.stop()
-            instance.vsockControlService?.stop()
             for channel in channels { channel.close() }
         }
-    }
-
-    private func makeHello(capabilities: [String]) -> Frame {
-        var frame = Frame()
-        frame.protocolVersion = 1
-        frame.hello = Kernova_V1_Hello.with {
-            $0.serviceVersion = 1
-            $0.capabilities = capabilities
-            $0.agentInfo = Kernova_V1_AgentInfo.with {
-                $0.os = "macOS"
-                $0.agentVersion = "1.0.0"
-            }
-        }
-        return frame
     }
 
     @Test("a VM that has never seen an agent is not a drag destination")
@@ -139,89 +121,88 @@ struct VMInstanceDisplayDropTests {
         #expect(harness.instance.displayDropAvailability == .disconnected)
     }
 
-    @Test("a live drop channel without the capability still refuses")
-    func requiresTheCapability() async throws {
+    @Test("a hub whose peers offer no DROP still refuses")
+    func requiresADropConsolePeer() {
         let harness = Harness()
         defer { harness.tearDown() }
-        let guest = try harness.attachControl()
-        try harness.attachDrop()
 
-        try guest.send(
-            makeHello(capabilities: [
-                KernovaCapability.controlV1, KernovaCapability.clipboardTransferV3,
-            ]))
-        try await waitForChange { harness.instance.vsockControlService?.isConnected == true }
+        harness.publishConsolePeer(nil)
 
         #expect(harness.instance.displayDropAvailability == .disconnected)
+        #expect(!harness.instance.dropOnGuest(FakePasteboard(), promises: []))
+    }
+
+    @Test("a DROP console peer makes a running VM a destination that takes the drop")
+    func consolePeerMakesItAvailable() {
+        let harness = Harness()
+        defer { harness.tearDown() }
+
+        harness.publishConsolePeer(PeerHandle(rawValue: 1))
+
+        #expect(harness.instance.displayDropAvailability == .available)
     }
 
     // MARK: - The per-VM toggle
 
     @Test("a VM with drag and drop switched off is not a drag destination")
-    func dropToggleOffIsNotADestination() async throws {
+    func dropToggleOffIsNotADestination() {
         let harness = Harness(dropFilesEnabled: false)
         defer { harness.tearDown() }
-        let guest = try harness.attachControl()
-        try harness.attachDrop()
-
-        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
-        try await waitForChange {
-            harness.instance.vsockControlService?.guestSupportsDropFiles == true
-        }
+        harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
         // `.none` rather than `.disconnected`: the display unregisters, so a drag
         // over it behaves as if Kernova were not there at all.
         #expect(harness.instance.displayDropAvailability == .none)
-        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+        #expect(!harness.instance.dropOnGuest(FakePasteboard(), promises: []))
     }
 
-    @Test("Clipboard Sharing has no say over the drop gate — the drop toggle does")
-    func clipboardSharingDoesNotGateDrops() async throws {
+    @Test("drag and drop is independent of clipboard sharing")
+    func dropIsIndependentOfClipboardSharing() {
         let harness = Harness(clipboardSharingEnabled: false)
         defer { harness.tearDown() }
-        let guest = try harness.attachControl()
-        try harness.attachDrop()
 
-        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
-        try await waitForChange { harness.instance.displayDropAvailability == .available }
+        harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
+        #expect(harness.instance.displayDropAvailability == .available)
         #expect(!harness.instance.configuration.clipboardSharingEnabled)
+    }
+
+    @Test("the policy turns DROP on and off with the drag and drop setting", arguments: [true, false])
+    func policyFollowsTheSetting(enabled: Bool) {
+        let harness = Harness(dropFilesEnabled: enabled)
+        defer { harness.tearDown() }
+
+        let policy = harness.instance.agentHubPolicy(for: harness.instance.configuration)
+
+        #expect(policy.isEnabled(.drop) == enabled)
     }
 
     // MARK: - A VM that isn't running
 
     @Test("a paused VM refuses the drag — its guest is frozen, not gone")
-    func pausedRefusesTheDrag() async throws {
+    func pausedRefusesTheDrag() {
         let harness = Harness()
         defer { harness.tearDown() }
-        let guest = try harness.attachControl()
-        try harness.attachDrop()
-        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
-        try await waitForChange { harness.instance.displayDropAvailability == .available }
+        harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
-        // Pausing tears down no vsock, so every channel below still reads as
-        // connected — only the phase says the guest cannot answer.
+        // Pausing ends no connection, so the hub still names DROP's console
+        // peer — only the phase says the guest cannot answer.
         harness.instance.activity.placeForTesting(.suspended)
 
-        #expect(harness.instance.vsockDropService?.isConnected == true)
         #expect(harness.instance.displayDropAvailability == .disconnected)
-        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
+        #expect(!harness.instance.dropOnGuest(FakePasteboard(), promises: []))
     }
 
-    @Test("a stopped drop service downgrades an available VM back to a refusal")
-    func stoppingTheServiceRefusesAgain() async throws {
+    @Test("losing DROP's console peer downgrades an available VM back to a refusal")
+    func losingTheConsolePeerRefusesAgain() {
         let harness = Harness()
         defer { harness.tearDown() }
-        let guest = try harness.attachControl()
-        try harness.attachDrop()
-        try guest.send(makeHello(capabilities: KernovaCapability.controlChannelDefaults))
-        try await waitForChange { harness.instance.displayDropAvailability == .available }
+        harness.publishConsolePeer(PeerHandle(rawValue: 1))
+        #expect(harness.instance.displayDropAvailability == .available)
 
-        harness.instance.vsockDropService?.stop()
+        harness.publishConsolePeer(nil)
 
         #expect(harness.instance.displayDropAvailability == .disconnected)
-        // And a drop attempted in that state is refused rather than swallowed.
-        #expect(!harness.instance.sendDroppedFilesToGuest([URL(fileURLWithPath: "/tmp/a.txt")]))
     }
 
     // MARK: - Reporting a drop the clipboard toggle has no say over

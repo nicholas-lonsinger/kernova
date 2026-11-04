@@ -116,8 +116,10 @@ struct TreeBench {
                 + "\(compression.encodingWorkers) encoding lanes, \(decodingWorkers) decoding lanes")
         print("- load before: \(loadAverage())")
 
+        let root = parentPath.hasPrefix("/") ? parentPath : FileManager.default.currentDirectoryPath + "/" + parentPath
         let transfer = move(
-            itemName, in: parent, acceptance: acceptance, compression: compression, decodingWorkers: decodingWorkers)
+            itemName, at: Array(root.utf8) + [UInt8(ascii: "/")] + itemName, acceptance: acceptance,
+            compression: compression, decodingWorkers: decodingWorkers)
         print("- load after: \(loadAverage())")
         print("")
         print("## Transfer")
@@ -160,8 +162,9 @@ struct TreeBench {
         var landedName: [UInt8] = []
     }
 
+    /// Moves the item `name` at the absolute path `root` into the destination.
     private func move(
-        _ name: [UInt8], in parent: Int32, acceptance: ContainerAcceptance, compression: TransferCompression,
+        _ name: [UInt8], at root: [UInt8], acceptance: ContainerAcceptance, compression: TransferCompression,
         decodingWorkers: Int
     ) -> Transfer {
         let sending = compression.sending(acceptance)
@@ -173,7 +176,7 @@ struct TreeBench {
         let start = DispatchTime.now().uptimeNanoseconds
         func since(_ mark: UInt64) -> Double { Double(DispatchTime.now().uptimeNanoseconds - mark) * 1e-9 }
         do {
-            let reader = try TreeReader(fileSystem: fileSystem, item: name, in: parent, accepting: sending)
+            let reader = try TreeReader(fileSystem: fileSystem, root: root, accepting: sending)
             let encoder = ContainerEncodePipeline(
                 accepting: sending, policy: compression.chunkPolicy, workers: compression.encodingWorkers)
             let receiver = TreeReceiver(

@@ -138,11 +138,10 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         mainMenu.install()
 
         // Staged file URLs outlive the window and the process that staged them
-        // (paste-after-close, a queued promise drop), so staging is reclaimed
-        // only here, and only from processes that have exited.
+        // (paste-after-close, a drop's promises still being pulled), so staging
+        // is reclaimed only here, and only from processes that have exited.
         Task.detached(priority: .utility) {
             ClipboardFileStaging.processRoot.reclaimAbandonedRoots()
-            DropPromiseStaging.processRoot.reclaimAbandonedRoots()
         }
 
         lifecycle.start(provenance: readLaunchProvenance())

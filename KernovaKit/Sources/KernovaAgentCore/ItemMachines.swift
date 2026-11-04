@@ -155,9 +155,14 @@ struct ItemMachines: Sendable {
         transfer.withdraw(token, connection: &connection)
     }
 
-    /// Releases the far side's offer of `token`.
-    mutating func release(_ token: Data, connection: inout Connection) {
-        transfer.release(token, connection: &connection)
+    /// Releases the far side's offer of `token`, END carrying `endBody` once it is whole.
+    mutating func release(_ token: Data, endBody: Data, connection: inout Connection) {
+        transfer.release(token, endBody: endBody, connection: &connection)
+    }
+
+    /// Refuses the far side's offer of `token` with `error`.
+    mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+        transfer.refuse(token, error, connection: &connection)
     }
 
     /// Host: takes the peer's open drag offer of `token`.

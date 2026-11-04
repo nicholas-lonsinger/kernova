@@ -156,6 +156,20 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return true
     }
 
+    /// Places one item per URL, each its file URL alone — a Finder drag of
+    /// those files.
+    @discardableResult
+    public func setFiles(_ urls: [URL]) -> Bool {
+        setItems(urls.map { [(type: .fileURL, data: Data($0.absoluteString.utf8))] })
+    }
+
+    /// Places one item carrying a file promise and nothing else — a Photos
+    /// drag's shape, which `NSFilePromiseReceiver` reads a receiver from.
+    @discardableResult
+    public func setFilePromise() -> Bool {
+        setItem(NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
+    }
+
     /// Replaces the resident item with a single text representation —
     /// equivalent to a user copying text inside the guest.
     @discardableResult
