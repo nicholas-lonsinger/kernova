@@ -13,7 +13,9 @@ public struct ClipboardWriteSource: Sendable {
 
     /// One offer's items, as the write placed them.
     public struct Part: Sendable {
+        /// The items, as the offer sent them.
         public let items: [OfferedItem]
+        /// The offer marked its content concealed.
         public let concealed: Bool
         /// False when the write left `public.file-url` off every item.
         public let servingFileURLs: Bool
@@ -23,6 +25,7 @@ public struct ClipboardWriteSource: Sendable {
         /// Pulls what `held` does not hold; nil when it holds everything.
         public let puller: (any ClipboardItemPulling)?
 
+        /// A part of `items`, its representations held as `held` says and the rest brought by `puller`.
         public init(
             items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
             held: @escaping @Sendable (_ item: Int, _ representation: Int) -> Held? = { _, _ in nil },
@@ -38,8 +41,10 @@ public struct ClipboardWriteSource: Sendable {
 
     /// The far side's offer or copy the write serves; nil for one serving nothing of the far side's.
     public let servingOffer: Data?
+    /// What the write placed, offer by offer.
     public let parts: [Part]
 
+    /// A write of `parts`, serving `servingOffer`.
     public init(servingOffer: Data?, parts: [Part]) {
         self.servingOffer = servingOffer
         self.parts = parts
@@ -65,6 +70,7 @@ public final class ClipboardWriteLedger {
 
     private var entries: [ObjectIdentifier: Entry] = [:]
 
+    /// An empty ledger; the process's own is ``shared``.
     public init() {}
 
     /// Records that `pasteboard`, at its change count now, holds a write of `source`; nil when it holds no
