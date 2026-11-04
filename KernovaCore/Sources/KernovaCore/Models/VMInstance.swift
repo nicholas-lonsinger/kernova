@@ -1122,7 +1122,8 @@ package final class VMInstance {
     }
 
     /// Starts or stops automatic clipboard passthrough to match the current
-    /// configuration and session state.
+    /// configuration and session state. Stopping it ends what it carried
+    /// across (``ClipboardServicing/passthroughStopped()``).
     ///
     /// Host-side only — no guest cooperation and no wire change — so it drives
     /// both transports.
@@ -1137,9 +1138,10 @@ package final class VMInstance {
                     reporter: clipboardTransfers)
             context.clipboardPassthroughCoordinator = coordinator
             coordinator.start()
-        } else {
-            context.clipboardPassthroughCoordinator?.stop()
+        } else if let coordinator = context.clipboardPassthroughCoordinator {
+            coordinator.stop()
             context.clipboardPassthroughCoordinator = nil
+            clipboardService?.passthroughStopped()
         }
     }
 

@@ -121,6 +121,9 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case nothingToCopy
     /// A copy was written without its `count` files, which together are over the transfer ceiling `limitBytes`.
     case filesLeftOut(count: Int, limitBytes: Int)
+    /// A copy named what the destination had sent, and the destination no longer had some of it, so it was
+    /// left out.
+    case partsGone
     /// The source's clipboard held no text, the one thing a text-only transport
     /// carries.
     case noTextToCopy

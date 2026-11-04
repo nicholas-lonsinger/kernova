@@ -204,6 +204,22 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: files left out, too large to copy to the guest",
                 mentionsMacClipboardKept: false)
 
+        case (.partsGone, .copy):
+            return ClipboardTransferWording(
+                headline: "Clipboard copied from \(vm) without some of it.",
+                message:
+                    "Part of the guest\u{2019}s clipboard was what the Mac sent it, and the Mac no longer has it, so it was left out.",
+                menuLine: "Clipboard: part of the copy was no longer on the Mac",
+                mentionsMacClipboardKept: false)
+
+        case (.partsGone, _):
+            return ClipboardTransferWording(
+                headline: "Clipboard copied to \(vm) without some of it.",
+                message:
+                    "Part of the Mac clipboard was what the guest sent it, and the guest no longer has it, so it was left out.",
+                menuLine: "Clipboard: part of the copy was no longer in the guest",
+                mentionsMacClipboardKept: false)
+
         case (.incompleteFileSet, _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted from \(vm).",
@@ -457,7 +473,7 @@ package struct ClipboardTransferWording: Equatable {
             menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
         case .tooLarge, .supersededCopyRetracted, .disconnectedCopyRetracted, .disconnectedFilesRetracted,
             .incompleteFileSet, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed,
-            .dropStopped, .clipboardChanged, .nothingToCopy, .filesLeftOut, .noTextToCopy:
+            .dropStopped, .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }

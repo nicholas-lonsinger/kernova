@@ -204,12 +204,13 @@ enum ErrorCode {
   ERROR_CODE_ITEM_DECMPFS_REFUSED = 1004;           // the destination could not land a decmpfs entry; Error.item names it
   ERROR_CODE_DRAG_NOT_CURRENT = 1005;               // the take names no drag the peer offers, or one already taken
   ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
-  ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows
+  ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows; a CLIPBOARD copy's RESET by its receiver: the sender's next copy arrived before it landed, so it was not written
   ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is
   ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY = 1009;      // a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
-  ERROR_CODE_CLIPBOARD_ALREADY_HELD = 1010;         // a CLIPBOARD ask's RESET by the peer: its clipboard is its write of the host's current clipboard offer, which the host already holds
+  ERROR_CODE_CLIPBOARD_ALREADY_HELD = 1010;         // a CLIPBOARD copy's RESET by its receiver: the copy is only references to one offer of the receiver's that its clipboard still holds, so nothing was written
   ERROR_CODE_CLIPBOARD_FILES_WITHHELD = 1011;       // a CLIPBOARD copy's RESET by its receiver: its clipboard was written without the copy's files, which total over the paste ceiling; Error.limit names it
-  reserved 1012 to 1199;
+  ERROR_CODE_CLIPBOARD_PARTS_GONE = 1012;           // a CLIPBOARD copy's RESET by its receiver: references of the copy named what the receiver's offer could no longer give, so they were left out of what it wrote
+  reserved 1013 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -707,6 +708,20 @@ message Representation {
   // container's own entry carries none. Empty for INLINE. Bytes, not a
   // string: names need not be valid UTF-8.
   bytes name = 5;
+  // CLIPBOARD_COPY_SNAPSHOT only: the representation is the receiver's own,
+  // which the sender held only as the receiver's promise. The receiver pulls
+  // nothing of it and fills it from its own offer this names, as that
+  // offer's sources give it now; one it can no longer fill is left out.
+  RepresentationReference reference = 6;
+}
+
+// A representation of an offer or copy the receiver of a CLIPBOARD copy sent.
+message RepresentationReference {
+  // The token of the receiver's offer or copy.
+  bytes offer = 1;
+  // The item and representation of that offer, by index.
+  uint32 item = 2;
+  uint32 representation = 3;
 }
 
 // One offered item. Item MESSAGE on an offer stream, at most 64 KiB.
@@ -749,19 +764,25 @@ message ItemSetHeader {
 enum ClipboardCopy {
   // The opener's clipboard offer, and every offer of another feature.
   CLIPBOARD_COPY_UNSPECIFIED = 0;
-  // A snapshot of the opener's clipboard. The receiver lands every INLINE
-  // representation first, writes its clipboard only if that has not changed
-  // since the copy arrived (else RESET(CLIPBOARD_CHANGED)), and releases the
-  // copy once its clipboard no longer holds what it wrote. Its files over the
-  // paste ceiling are left out of that write, and the copy RESET
+  // A snapshot of the opener's clipboard: what the opener holds as data, sent
+  // as data, and what it holds only as the receiver's promise, named by
+  // reference (Representation.reference). The receiver fills each reference,
+  // lands every INLINE representation, and writes its clipboard only if that
+  // has not changed since the copy arrived (else RESET(CLIPBOARD_CHANGED)) and
+  // no newer copy arrived meanwhile (else RESET(ITEM_OFFER_REPLACED)); it
+  // releases the copy once its clipboard no longer holds what it wrote. A
+  // copy of only references to one offer its clipboard still holds is RESET
+  // CLIPBOARD_ALREADY_HELD and writes nothing; references it can no longer
+  // fill are left out, and the copy RESET CLIPBOARD_PARTS_GONE. Its files over
+  // the paste ceiling are left out of that write, and the copy RESET
   // CLIPBOARD_FILES_WITHHELD; with nothing else in it, nothing is written and
   // the copy is RESET TOO_LARGE. A peer's names the host's ask it answers in
   // `after`.
   CLIPBOARD_COPY_SNAPSHOT = 1;
   // Host only, of no items: asks the peer for a snapshot of its clipboard. The
   // peer answers with a CLIPBOARD_COPY_SNAPSHOT naming it, then releases it,
-  // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, CLIPBOARD_ALREADY_HELD, or
-  // TOO_LARGE when what is not a file is over the paste ceiling.
+  // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, or TOO_LARGE when what is not a
+  // file is over the paste ceiling.
   CLIPBOARD_COPY_ASK = 2;
 }
 

@@ -21,7 +21,8 @@ import KernovaWire
 ///   long as the receiver's write of it. This side serves each copy it sent until the far side lets it go; the
 ///   receiver holds each copy it received until its end releases it. A copy that arrives while an earlier one is
 ///   still landing supersedes it: the earlier one is refused there and then, and never written
-///   (``land(_:then:)``).
+///   (``land(_:then:)``). What a copy names of the receiver's own offers by reference
+///   (`Representation.reference`) is filled from those offers as they stood when it arrived, never pulled.
 /// - A connection's leaving ends every offer and copy it carried: what an end wrote of the far side's is the
 ///   end's to retract, since nothing more of it can be pulled.
 ///
@@ -51,8 +52,12 @@ public final class ClipboardItemExchange {
 
     /// How landing a copy ended (``land(_:then:)``).
     public enum CopyLanding: Sendable, Equatable {
-        /// Every INLINE representation landed and no newer copy arrived: the end wrote it.
-        case written
+        /// Every INLINE representation landed and no newer copy arrived: the end wrote it. `referencesLeftOut`
+        /// counts the representations naming this side's own offer that it could no longer fill.
+        case written(referencesLeftOut: Int)
+        /// The copy is only references to one offer of this side's that this end's pasteboard still holds: it
+        /// was refused `CLIPBOARD_ALREADY_HELD`, and nothing written.
+        case alreadyHeld
         /// A newer copy arrived before this one landed, and refused it `ITEM_OFFER_REPLACED`, or it ended: nothing
         /// was written.
         case superseded
@@ -67,8 +72,6 @@ public final class ClipboardItemExchange {
         case copy(ClipboardRemoteOffer)
         /// The guest's clipboard holds nothing to copy.
         case nothing
-        /// The guest's clipboard is its write of the host's current offer, which the host holds already.
-        case alreadyHeld
         /// No copy came, and why: the connection left, the ask was not sent, or the guest refused it.
         case failed(WireError)
     }
@@ -146,6 +149,9 @@ public final class ClipboardItemExchange {
     /// The far side's newest copy on `link`, from its arrival until it is written: the one copy landing. A copy
     /// arriving refuses the one here before it.
     private var landing: Data?
+    /// This side's offers each copy of the far side's on `link` may name by reference, as they stood when the
+    /// copy arrived, by the copy's token: what the far side could see when it made the copy.
+    private var fillSources: [Data: [Data: ClipboardOfferSource]] = [:]
     private var nextGeneration: UInt64 = 1
     private let staging: ClipboardFileStaging
     private let pasteCeiling: @Sendable () -> Int
@@ -186,6 +192,7 @@ public final class ClipboardItemExchange {
         sentCopies.removeAll()
         asks.removeAll()
         landing = nil
+        fillSources.removeAll()
         answerAsk(.failed(WireError(.cancelled, debugDetail: "the connection left")))
         let held = copies.values
         copies.removeAll()
@@ -369,7 +376,7 @@ public final class ClipboardItemExchange {
     }
 
     /// A guest: answers the host's `ask` with no copy, saying why with `error`: ``ErrorCode/clipboardNothingToCopy``,
-    /// ``ErrorCode/clipboardAlreadyHeld``, or ``ErrorCode/tooLarge`` with the ceiling.
+    /// or ``ErrorCode/tooLarge`` with the ceiling.
     public func decline(_ ask: CopyAsk, _ error: WireError) {
         guard asks.remove(ask.token) != nil else { return }
         link?.refuseOffer(ask.token, error)
@@ -378,6 +385,7 @@ public final class ClipboardItemExchange {
     /// Lets `copy` go: this end's clipboard no longer holds what it wrote of it, so the far side serves it no
     /// more.
     public func releaseCopy(_ copy: ClipboardRemoteOffer) {
+        fillSources[copy.token] = nil
         if landing == copy.token { landing = nil }
         guard copies.removeValue(forKey: copy.token) != nil else { return }
         copy.release()
@@ -385,6 +393,7 @@ public final class ClipboardItemExchange {
 
     /// Refuses `copy` with `error`, written nowhere: the far side hears why.
     public func refuseCopy(_ copy: ClipboardRemoteOffer, _ error: WireError) {
+        fillSources[copy.token] = nil
         if landing == copy.token { landing = nil }
         guard copies.removeValue(forKey: copy.token) != nil else { return }
         copy.refuse(error)
@@ -416,6 +425,9 @@ public final class ClipboardItemExchange {
             return
         }
         supersedeLanding(by: header.token, on: link)
+        var sources = sentCopies
+        if let localToken, let localSource { sources[localToken] = localSource }
+        fillSources[header.token] = sources
         readingCopies.insert(header.token)
         readItems(of: header, on: link) { [weak self] items in self?.copyRead(header, items, on: link) }
     }
@@ -425,17 +437,46 @@ public final class ClipboardItemExchange {
     private func supersedeLanding(by token: Data, on link: any ClipboardItemLink) {
         defer { landing = token }
         guard let older = landing else { return }
+        fillSources[older] = nil
         logger.log(.notice, "A newer clipboard copy arrived before the last one landed: the last is not written")
         let replaced = WireError(.itemOfferReplaced, debugDetail: "a newer copy arrived before this one landed")
         if readingCopies.remove(older) != nil { return link.refuseOffer(older, replaced) }
         copies.removeValue(forKey: older)?.refuse(replaced)
     }
 
-    /// Lands every INLINE representation of `copy`, then has `write` write it — synchronously, unless a newer
-    /// copy arrived meanwhile, so an older copy never writes over a newer one. A failed pull refuses it.
-    /// `write` decides everything after: whether to write, and whether to release or refuse it.
+    /// Fills every representation of `copy` that names this side's own offer by reference, from that offer's
+    /// sources as they stand now, lands every INLINE one, then has `write` write it — synchronously, unless a
+    /// newer copy arrived meanwhile, so an older copy never writes over a newer one. `write` hears how many
+    /// references it could not fill, which it leaves out. A copy of only references to one offer this end's
+    /// pasteboard still holds changes nothing, so it is refused `CLIPBOARD_ALREADY_HELD`; a failed pull refuses
+    /// it too. `write` decides everything after: whether to write, and whether to release or refuse it.
     @discardableResult
-    public func land(_ copy: ClipboardRemoteOffer, then write: @MainActor () -> Void) async -> CopyLanding {
+    public func land(_ copy: ClipboardRemoteOffer, then write: @MainActor (_ referencesLeftOut: Int) -> Void) async
+        -> CopyLanding
+    {
+        guard landing == copy.token else { return .superseded }
+        let sources = fillSources.removeValue(forKey: copy.token) ?? [:]
+        let references = copy.references
+        if copy.isOnlyReferences, let offer = references.first?.reference.offer,
+            references.allSatisfy({ $0.reference.offer == offer }), sources[offer]?.standsOnItsPasteboard == true
+        {
+            logger.log(.notice, "A clipboard copy names only what this side's clipboard holds: nothing written")
+            landing = nil
+            refuseCopy(copy, WireError(.clipboardAlreadyHeld))
+            return .alreadyHeld
+        }
+        var leftOut = 0
+        for (item, representation, reference) in references {
+            guard let source = sources[reference.offer],
+                let served = try? await source.serve(
+                    item: Int(reference.item), representation: Int(reference.representation)),
+                await copy.fill(
+                    item: item, representation: representation, with: served, copying: Self.isOwned(served, by: source))
+            else {
+                leftOut += 1
+                continue
+            }
+        }
         guard landing == copy.token else { return .superseded }
         if let error = await copy.landInline() {
             guard landing == copy.token else { return .superseded }
@@ -445,13 +486,25 @@ public final class ClipboardItemExchange {
         }
         guard landing == copy.token else { return .superseded }
         landing = nil
-        write()
-        return .written
+        if leftOut > 0 {
+            logger.log(.notice, "\(leftOut, privacy: .public) reference(s) of a clipboard copy could not be filled")
+        }
+        write(leftOut)
+        return .written(referencesLeftOut: leftOut)
+    }
+
+    /// Whether `served` is a file of `source`'s own staging, which goes when `source` does.
+    private static func isOwned(_ served: ClipboardServedRepresentation, by source: ClipboardOfferSource) -> Bool {
+        switch served {
+        case .bytes: false
+        case .file(let url), .folder(let url): source.owns(url)
+        }
     }
 
     private func copyRead(_ header: ItemSetHeaderValue, _ items: [OfferedItem]?, on link: any ClipboardItemLink) {
         guard readingCopies.remove(header.token) != nil else { return }
         guard let items else {
+            fillSources[header.token] = nil
             if landing == header.token { landing = nil }
             logger.log(.notice, "The far side's clipboard copy ended before its items were read")
             link.releaseOffer(header.token)
@@ -554,6 +607,7 @@ public final class ClipboardItemExchange {
             reading.remove(token)
             readingCopies.remove(token)
             asks.remove(token)
+            fillSources[token] = nil
             if landing == token { landing = nil }
             if let copy = copies.removeValue(forKey: token) {
                 copy.close()
@@ -575,7 +629,6 @@ public final class ClipboardItemExchange {
     static func answer(declined error: WireError) -> CopyAnswer {
         switch error.code {
         case .clipboardNothingToCopy: .nothing
-        case .clipboardAlreadyHeld: .alreadyHeld
         default: .failed(error)
         }
     }

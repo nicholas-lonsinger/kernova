@@ -7,8 +7,8 @@ import KernovaKit
 /// connection ends. A destination that changed after the command is left as it is. Every outcome short of
 /// that goes to the VM's transfer report, which the status item shows.
 extension VMInstance {
-    /// Copies the Mac's clipboard as it stands now to the guest's. A Mac clipboard that is this VM's write of
-    /// the guest's own offer is the guest's clipboard already, so nothing is copied.
+    /// Copies the Mac's clipboard as it stands now to the guest's. What the Mac holds only as the guest's
+    /// promise goes by reference, which the guest fills from its own offer.
     package func copyMacClipboardToGuest() {
         guard let service = clipboardService, service.isConnected, begin(.copyMacClipboardToGuest) else { return }
         let pasteboard = hostClipboardPublisher.pasteboard
@@ -16,7 +16,7 @@ extension VMInstance {
         Task { @MainActor [weak self, weak service] in
             defer { self?.runningClipboardCommands.remove(.copyMacClipboardToGuest) }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, destinationOffer: service?.guestOfferToken,
+                from: pasteboard,
                 ceiling: self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes,
                 staging: service?.snapshotStaging)
             guard let self, let service else { return }
@@ -25,8 +25,6 @@ extension VMInstance {
                 reportClipboardCommand(.send, .nothingToCopy)
             case .changed:
                 reportClipboardCommand(.send, .transferFailed)
-            case .heldByDestination:
-                break
             case .tooLarge(let limitBytes):
                 reportClipboardCommand(.send, .tooLarge(limitBytes: limitBytes))
             case .snapshot(let snapshot, let lost):
@@ -40,8 +38,9 @@ extension VMInstance {
     }
 
     /// Copies the guest's clipboard as it stands now to the Mac's, unless the Mac's changes before it lands. A file set over the paste ceiling is left off, and said so; with nothing
-    /// else to copy, nothing is written. A guest clipboard that is its write of this
-    /// VM's own offer is the Mac's clipboard already, so nothing is copied.
+    /// else to copy, nothing is written. What the guest holds only as this VM's
+    /// promise comes by reference, filled from what this VM sent; a copy naming
+    /// only what the Mac's clipboard still holds changes nothing.
     package func copyGuestClipboardToMac() {
         guard let service = clipboardService, service.isConnected, begin(.copyGuestClipboardToMac) else { return }
         let publisher = hostClipboardPublisher
@@ -79,10 +78,12 @@ extension VMInstance {
             return reportClipboardCommand(.copy, .tooLarge(limitBytes: ceiling))
         }
         guard publisher.writeCopy(contents, servingFileURLs: contents.plan.servesFileURLs) else {
-            return reportClipboardCommand(.copy, .transferFailed)
+            return reportClipboardCommand(.copy, contents.referencesLeftOut > 0 ? .partsGone : .transferFailed)
         }
         if case .withoutFiles(let count) = contents.plan {
             reportClipboardCommand(.copy, .filesLeftOut(count: count, limitBytes: ceiling))
+        } else if contents.referencesLeftOut > 0 {
+            reportClipboardCommand(.copy, .partsGone)
         }
     }
 

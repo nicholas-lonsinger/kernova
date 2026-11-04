@@ -22,6 +22,10 @@ package protocol ClipboardServicing: AnyObject {
     /// Stops protocol I/O. Idempotent.
     func stop()
 
+    /// Passthrough stopped: what passthrough carried across ends, and each side's write of the other's is
+    /// retracted. Default: nothing to end.
+    func passthroughStopped()
+
     /// Offers a copy on the Mac to the guest, as passthrough read it from the host pasteboard: metadata only,
     /// each representation's bytes read from `copy` when this transport sends them.
     ///
@@ -63,10 +67,6 @@ package protocol ClipboardServicing: AnyObject {
     /// here, `write` is handed it, synchronously, unless a newer copy of the guest's arrived first.
     func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy
 
-    /// The token of the guest's offer that is this clipboard's now, which a host-pasteboard write of it serves;
-    /// nil when there is none, or the transport names none.
-    var guestOfferToken: Data? { get }
-
     /// Where a snapshot of the Mac's clipboard calls its file promises in, each snapshot holding the lease of
     /// its own; nil when the transport carries no file. Default nil.
     var snapshotStaging: ClipboardFileStaging? { get }
@@ -87,7 +87,7 @@ package protocol ClipboardServicing: AnyObject {
 package enum GuestClipboardCopy {
     /// It held nothing to copy.
     case nothing
-    /// It held its write of the host's own offer, which the Mac's clipboard holds already.
+    /// Its copy named only what the Mac's clipboard holds already: nothing was written.
     case alreadyHeld
     /// It could not be copied, and why.
     case failed(ClipboardTransferFailure)
@@ -104,10 +104,13 @@ package struct GuestCopyContents {
     let concealed: Bool
     /// How the copy is written within the paste ceiling, decided once its INLINE representations landed.
     let plan: ClipboardPromisePolicy.CopyPlan
-    /// The bytes INLINE representation `rep` of item `item` landed with.
-    let landed: @Sendable (_ item: Int, _ rep: Int) -> Data?
+    /// What this side holds of representation `rep` of item `item`: an INLINE one's landed bytes, or a file a
+    /// reference to this side's own offer was filled with.
+    let held: @Sendable (_ item: Int, _ rep: Int) -> ClipboardWriteSource.Held?
     /// Pulls the copy's files when a paste asks.
     let puller: any ClipboardItemPulling
+    /// How many of its references to this side's own offers could not be filled, and are left out.
+    let referencesLeftOut: Int
     /// Lets the copy go, the Mac's clipboard holding nothing more of it.
     let release: @MainActor () -> Void
 }
@@ -164,5 +167,5 @@ extension ClipboardServicing {
     var clipboardChangeMark: Int? { nil }
     var hasStandingGuestOffer: Bool { false }
     func takeLinkLossMark() -> Int? { nil }
-    var guestOfferToken: Data? { nil }
+    func passthroughStopped() {}
 }

@@ -395,7 +395,7 @@ struct SpiceClipboardServiceTests {
             return
         }
         #expect(contents.items.map { $0.representations.map(\.storage) } == [[.inline]])
-        #expect(contents.landed(0, 0) == Data("From guest".utf8))
+        #expect(contents.held(0, 0) == .bytes(Data("From guest".utf8)))
     }
 
     // MARK: - Lifecycle

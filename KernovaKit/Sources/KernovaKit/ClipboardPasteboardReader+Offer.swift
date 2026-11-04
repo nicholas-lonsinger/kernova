@@ -76,9 +76,6 @@ extension ClipboardPasteboardReader {
         case nothing
         /// The snapshot (``ClipboardOfferSource/snapshot()``), with `lost` counting the items it leaves out.
         case snapshot(ClipboardOfferSource, lost: Int)
-        /// The pasteboard holds this process's write of the destination's own offer: the destination holds what
-        /// a snapshot would carry already.
-        case heldByDestination
         /// The pasteboard changed while it was read, twice.
         case changed
         /// What is not a file or folder came to more than the ceiling: nothing is copied.
@@ -89,14 +86,14 @@ extension ClipboardPasteboardReader {
     /// the pasteboard holds later reaches it, and each file kept as the reference it is. A pasteboard that
     /// changed while it was read is read once more.
     ///
-    /// A pasteboard holding a write of this process (`ledger`) is never read: a write of the far side's offer
-    /// `destinationOffer` is ``SnapshotOutcome/heldByDestination``, and any other is snapshotted from what it was
-    /// made from (``ClipboardWriteSource``). Any other pasteboard is read as
+    /// A pasteboard holding a write of this process (`ledger`) is never read: it is snapshotted from what the
+    /// write was made from (``ClipboardWriteSource``), what it holds only as the far side's promise named by
+    /// reference. Any other pasteboard is read as
     /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises called in now into a
     /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does; with
     /// no `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read.
     public static func readSnapshot(
-        from pasteboard: any ClipboardReadPasteboard, destinationOffer: Data? = nil,
+        from pasteboard: any ClipboardReadPasteboard,
         ceiling: Int = ClipboardPasteLimit.defaultBytes,
         ledger: ClipboardWriteLedger = .shared,
         staging: ClipboardFileStaging? = nil,
@@ -105,10 +102,9 @@ extension ClipboardPasteboardReader {
         do throws(ClipboardSnapshotTooLarge) {
             for _ in 0..<2 {
                 if let written = ledger.standingWrite(on: pasteboard) {
-                    if let serving = written.servingOffer, serving == destinationOffer { return .heldByDestination }
                     guard
-                        let (snapshot, lost) = try await ClipboardOfferSource.snapshot(
-                            of: written, inlineCeiling: ceiling)
+                        let (snapshot, lost) = try ClipboardOfferSource.snapshot(
+                            of: written, on: pasteboard, inlineCeiling: ceiling)
                     else { return .nothing }
                     return .snapshot(snapshot, lost: lost)
                 }

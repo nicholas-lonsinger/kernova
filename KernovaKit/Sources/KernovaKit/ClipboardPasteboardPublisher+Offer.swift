@@ -52,46 +52,52 @@ extension ClipboardPasteboardPublisher {
             Self.itemSpecs(for: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller),
             source: ClipboardWriteSource(
                 servingOffer: token,
-                parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller)]))
+                parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs)]))
     }
 
     /// Writes a peer's copy: each kept INLINE representation as the data
-    /// `landed` holds for it, now, and each FILE or FOLDER promised through
-    /// `puller`, so only files transfer when pasted.
+    /// `held` holds for it, now, each FILE or FOLDER `held` holds as the file
+    /// URL it is, now, and every other FILE or FOLDER promised through `puller`,
+    /// so only those transfer when pasted. A representation that names this
+    /// side's own offer (`Representation.reference`) and that `held` does not
+    /// hold is left out: nothing of it can be pulled.
     ///
     /// The write serves the copy `token`, and `onReleased` runs once the
     /// pasteboard is done with every file it promised. Returns whether the
     /// pasteboard took the write, and whether it promised anything.
     public func publishCopy(
         _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
-        landed: @escaping @Sendable (_ item: Int, _ rep: Int) -> Data?,
+        held: @escaping @Sendable (_ item: Int, _ rep: Int) -> ClipboardWriteSource.Held?,
         puller: any ClipboardItemPulling, servingOffer token: Data,
         onReleased: @escaping @MainActor @Sendable () -> Void
     ) -> (written: Bool, promised: Bool) {
+        // What is held now, read once: the write's record must not hold the copy, nor what pulls it.
+        var table: [[ClipboardWriteSource.Held?]] = []
+        for (index, item) in items.enumerated() {
+            table.append(item.representations.indices.map { held(index, $0) })
+        }
+        let heldNow = table
+        let lookup: @Sendable (Int, Int) -> ClipboardWriteSource.Held? = { item, representation in
+            heldNow.indices.contains(item) && heldNow[item].indices.contains(representation)
+                ? heldNow[item][representation] : nil
+        }
         let specs = Self.copySpecs(
-            for: items, concealed: concealed, servingFileURLs: servingFileURLs, landed: landed, puller: puller,
+            for: items, concealed: concealed, servingFileURLs: servingFileURLs, holding: lookup, puller: puller,
             eventLoopWait: { NestedEventLoopWait.current() })
         guard !specs.isEmpty else { return (false, false) }
         let promised = specs.contains { !$0.types.isEmpty }
         let source = ClipboardWriteSource(
             servingOffer: token,
-            parts: [
-                .init(
-                    items: items, concealed: concealed, servingFileURLs: servingFileURLs,
-                    held: { item, representation in
-                        // Only an INLINE representation was written as the data it landed with.
-                        items[item].representations[representation].storage == .inline
-                            ? landed(item, representation).map(ClipboardWriteSource.Held.bytes) : nil
-                    }, puller: puller)
-            ])
+            parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs, held: lookup)])
         return (write(specs, source: source, onReleased: onReleased), promised)
     }
 
-    /// The item specs ``publishCopy(_:concealed:servingFileURLs:landed:puller:servingOffer:onReleased:)``
-    /// writes. A type whose landed bytes are missing is left off its item, and an item left with nothing is
+    /// The item specs ``publishCopy(_:concealed:servingFileURLs:held:puller:servingOffer:onReleased:)``
+    /// writes. A type whose held content is missing is left off its item, and an item left with nothing is
     /// dropped.
     nonisolated static func copySpecs(
-        for items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, landed: (Int, Int) -> Data?,
+        for items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
+        holding heldContent: (Int, Int) -> ClipboardWriteSource.Held?,
         puller: any ClipboardItemPulling, holdLimit: TimeInterval = pasteRequesterDeadline,
         eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
     ) -> [ItemSpec] {
@@ -99,10 +105,15 @@ extension ClipboardPasteboardPublisher {
             var data: [(type: String, bytes: Data)] = []
             var files: [Int] = []
             for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: servingFileURLs) {
-                if promised.isFileURL {
-                    files.append(promised.representation)
-                } else if let bytes = landed(index, promised.representation) {
+                switch heldContent(index, promised.representation) {
+                case .bytes(let bytes) where !promised.isFileURL:
                     data.append((promised.pasteboardType, bytes))
+                case .file(let url) where promised.isFileURL:
+                    data.append((ItemSpec.fileURLType, Data(url.absoluteString.utf8)))
+                case nil where promised.isFileURL && !item.representations[promised.representation].hasReference:
+                    files.append(promised.representation)
+                case .bytes, .file, nil:
+                    break
                 }
             }
             guard !data.isEmpty || !files.isEmpty else { return nil }

@@ -25,6 +25,9 @@ public typealias Codec = Kernova_V2_Codec
 /// One form of an offered item: its type, and whether it travels as bytes, a file or a folder.
 public typealias Representation = Kernova_V2_Representation
 
+/// A representation of a CLIPBOARD copy's receiver's own offer, by index.
+public typealias RepresentationReference = Kernova_V2_RepresentationReference
+
 /// One item of an offer: its representations, best first.
 public typealias OfferedItem = Kernova_V2_Item
 

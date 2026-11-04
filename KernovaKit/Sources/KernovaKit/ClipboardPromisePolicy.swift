@@ -97,7 +97,9 @@ public enum ClipboardPromisePolicy {
     public static func pasteBudget(_ items: [OfferedItem], limit: Int) -> PasteBudget {
         var total: UInt64 = 0
         for item in items {
-            for promised in promisedTypes(for: item) where promised.isFileURL {
+            // A reference names the receiver's own offer: nothing of it crosses the wire.
+            for promised in promisedTypes(for: item)
+            where promised.isFileURL && !item.representations[promised.representation].hasReference {
                 total = total.saturatingAdding(item.representations[promised.representation].sizeEstimate)
             }
         }

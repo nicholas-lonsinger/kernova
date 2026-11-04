@@ -125,7 +125,8 @@ final class SpiceClipboardService: ClipboardServicing {
         write(
             GuestCopyContents(
                 token: Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }), items: [item],
-                concealed: false, plan: .whole, landed: { _, _ in bytes }, puller: NoFilesPuller(), release: {}))
+                concealed: false, plan: .whole, held: { _, _ in .bytes(bytes) }, puller: NoFilesPuller(),
+                referencesLeftOut: 0, release: {}))
         return .landed
     }
 

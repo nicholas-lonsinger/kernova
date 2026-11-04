@@ -250,23 +250,18 @@ final class GuestClipboard {
     }
 
     /// Answers the host's ask with a snapshot of the pasteboard now, or declines it: off the console or with
-    /// nothing to copy, and when the pasteboard is this agent's write of the host's current offer, which the
-    /// host holds already.
+    /// nothing to copy. What the pasteboard holds only as the host's promise goes by reference.
     private func sendSnapshot(answering ask: ClipboardItemExchange.CopyAsk) {
         guard isOffering else { return exchange.decline(ask, WireError(.clipboardNothingToCopy)) }
-        let hostOffer = exchange.remote?.token
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, destinationOffer: hostOffer, ceiling: pasteCeilingBytes, staging: snapshotStaging)
+                from: pasteboard, ceiling: pasteCeilingBytes, staging: snapshotStaging)
             switch outcome {
             case .snapshot(let snapshot, let lost):
                 exchange.answer(ask, with: snapshot)
                 activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .sentToHost
                 if lost > 0 { onNotice() }
-            case .heldByDestination:
-                Self.logger.log(.notice, "The host asked for the clipboard, which holds the host's own copy")
-                exchange.decline(ask, WireError(.clipboardAlreadyHeld))
             case .nothing:
                 Self.logger.log(.notice, "The host asked for the clipboard, which holds nothing to copy")
                 exchange.decline(ask, WireError(.clipboardNothingToCopy))
@@ -283,20 +278,23 @@ final class GuestClipboard {
 
     /// Writes the host's copy once every INLINE representation landed, as data, its files promised — unless the
     /// pasteboard changed since the copy arrived, when it is left as it is and the host told why, or a newer copy
-    /// arrived first (``ClipboardItemExchange/land(_:then:)``). Files over the paste ceiling are left out of the
-    /// write, and the host told that too; with nothing else in the copy, nothing is written. The copy is released
-    /// once the pasteboard lets its files go, or at once when it promised none.
+    /// arrived first (``ClipboardItemExchange/land(_:then:)``). What it names of this agent's own offers by
+    /// reference is filled from them; what they can no longer give is left out, and the host told so. Files
+    /// over the paste ceiling are left out of the write, and the host told that too; with nothing else in the
+    /// copy, nothing is written. The copy is released once the pasteboard lets its files go, or at once when it
+    /// promised none.
     private func write(_ copy: ClipboardRemoteOffer) {
         let arrivedAt = pasteboard.changeCount
         let exchange = exchange
         Task { @MainActor [weak self] in
-            let landing = await exchange.land(copy) { self?.writeLanded(copy, arrivedAt: arrivedAt) }
+            let landing = await exchange.land(copy) { self?.writeLanded(copy, arrivedAt: arrivedAt, leftOut: $0) }
             if case .failed(let error) = landing, error.code == .tooLarge { self?.pullFailed(error) }
         }
     }
 
-    /// Writes `copy`, every INLINE representation landed, unless the pasteboard changed since `arrivedAt`.
-    private func writeLanded(_ copy: ClipboardRemoteOffer, arrivedAt: Int) {
+    /// Writes `copy`, every INLINE representation landed and every reference filled but `leftOut`, unless the
+    /// pasteboard changed since `arrivedAt`.
+    private func writeLanded(_ copy: ClipboardRemoteOffer, arrivedAt: Int, leftOut: Int) {
         guard pasteboard.changeCount == arrivedAt else {
             Self.logger.log(.notice, "The clipboard changed before the host's copy landed: left as it is")
             exchange.refuseCopy(copy, WireError(.clipboardChanged))
@@ -313,10 +311,15 @@ final class GuestClipboard {
         }
         let (written, promised) = publisher.publishCopy(
             copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
-            landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy, servingOffer: copy.token,
+            held: { copy.held(item: $0, representation: $1) }, puller: copy, servingOffer: copy.token,
             onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
         if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
+            guard leftOut == 0 else {
+                Self.logger.log(.notice, "Nothing the host's copy named of this agent's clipboard remains: not written")
+                exchange.refuseCopy(copy, WireError(.clipboardPartsGone))
+                return
+            }
             Self.logger.log(.error, "The host's clipboard copy could not be written to the pasteboard")
             exchange.refuseCopy(copy, WireError(.writeFailed))
             return
@@ -333,7 +336,13 @@ final class GuestClipboard {
             activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
             onNotice()
         } else if !promised {
-            exchange.releaseCopy(copy)
+            // A copy naming this agent's own offers by reference promises nothing: its references are all it
+            // names of the agent's, so the host hears now what was left out.
+            if leftOut > 0 {
+                exchange.refuseCopy(copy, WireError(.clipboardPartsGone))
+            } else {
+                exchange.releaseCopy(copy)
+            }
         }
     }
 

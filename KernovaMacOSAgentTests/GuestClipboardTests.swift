@@ -591,8 +591,8 @@ struct GuestClipboardTests {
         #expect(link.offers.isEmpty)
     }
 
-    @Test("The host's ask of a pasteboard that is the guest's write of the host's offer is declined, held already")
-    func askOfTheHostsOwnOfferIsHeld() async throws {
+    @Test("The host's ask of a pasteboard holding the guest's write of the host's offer names it by reference")
+    func askOfTheHostsOfferNamesIt() async throws {
         let rig = rig()
         let link = RecordingLink(items: [Self.textItem()])
         rig.clipboard.setOnConsole(true)
@@ -602,12 +602,127 @@ struct GuestClipboardTests {
         let offersBefore = link.offers.count
 
         rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { link.offers.count == offersBefore + 1 && link.releases == [Self.askToken] }
+        let copy = try #require(link.offers.last)
+        #expect(copy.copy == .snapshot)
+        let reference = try #require(copy.items.first?.representations.first?.reference)
+        #expect(reference.offer == Self.hostToken && reference.item == 0 && reference.representation == 0)
+        #expect(rig.pasteboard.changeCount == before)
+        #expect(rig.pasteboard.providerInvocations == 0)
+        #expect(link.opened.isEmpty)
+    }
+
+    private let scratch = TestScratchDirectory(prefix: "guest-clipboard")
+
+    /// Has the host ask for the guest's clipboard, which holds `file`, returning the guest's copy.
+    private func sendFileCopy(_ file: URL, _ rig: Rig, _ link: RecordingLink) async throws -> ItemOffer {
+        #expect(rig.pasteboard.setFiles([file]))
+        rig.clipboard.checkPasteboard()
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { link.offers.contains { $0.copy == .snapshot } }
+        return try #require(link.offers.last { $0.copy == .snapshot })
+    }
+
+    /// A host copy's one item: a FILE naming representation `representation` of item 0 of the guest's `offer`.
+    private static func referenceItem(to offer: Data, representation: UInt32 = 0) -> OfferedItem {
+        var file = Representation()
+        file.type = TypeDescriptor(appleUTI: "public.data")
+        file.storage = .file
+        file.name = Data("a.bin".utf8)
+        var reference = RepresentationReference()
+        reference.offer = offer
+        reference.item = 0
+        reference.representation = representation
+        file.reference = reference
+        var item = OfferedItem()
+        item.representations = [file]
+        return item
+    }
+
+    private func guestFile() throws -> URL {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("a.bin")
+        try Data("the guest's file".utf8).write(to: file)
+        return file
+    }
+
+    @Test("A host copy naming the guest's own copy by reference is filled from it and written as data, pulling nothing")
+    func hostCopyOfReferencesIsFilled() async throws {
+        let rig = rig()
+        let file = try guestFile()
+        rig.clipboard.setOnConsole(true)
+        let first = RecordingLink()
+        rig.clipboard.setLink(first)
+        let guestCopy = try await sendFileCopy(file, rig, first)
+        // The guest's clipboard moved on; the host's copy names the file of the copy it still serves.
+        #expect(rig.pasteboard.setString("copied since", forType: .string))
+        // Reads of the host copy's items answer with its one item.
+        let link = RecordingLink(items: [Self.referenceItem(to: guestCopy.token)])
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { !link.releases.isEmpty || !link.refusals.isEmpty }
+        #expect(link.refusals.isEmpty)
+        #expect(link.releases == [Self.copyToken])
+        #expect(link.opened.isEmpty)
+        #expect(rig.pasteboard.dataByItem.first?[.fileURL] == Data(file.absoluteString.utf8))
+        #expect(rig.pasteboard.promisedTypes.isEmpty)
+    }
+
+    @Test("A reference filled from a file the guest's copy called in is cloned, so it outlives that copy")
+    func filledCallInOutlivesItsCopy() async throws {
+        let rig = rig()
+        rig.clipboard.setOnConsole(true)
+        let first = RecordingLink()
+        rig.clipboard.setLink(first)
+        rig.pasteboard.setFilePromise(
+            FakeFilePromiseReceiver(name: "photo.png", fileType: "public.png", contents: .file(Data("png".utf8))))
+        rig.clipboard.checkPasteboard()
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: first)
+        try await first.changed.wait { first.offers.contains { $0.copy == .snapshot } }
+        let guestCopy = try #require(first.offers.last { $0.copy == .snapshot })
+        #expect(rig.pasteboard.setString("copied since", forType: .string))
+
+        let link = RecordingLink(items: [Self.referenceItem(to: guestCopy.token)])
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { !link.releases.isEmpty || !link.refusals.isEmpty }
+        let written = try #require(rig.pasteboard.dataByItem.first?[.fileURL])
+        let url = try #require(URL(string: String(decoding: written, as: UTF8.self)))
+        #expect(url.lastPathComponent == "photo.png")
+
+        // The host lets the guest's copy go, and its called-in file with it; the written clone stays.
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .local, token: guestCopy.token, .completed(remoteEndBody: Data())), on: first)
+        await drainMainQueue()
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        #expect(try Data(contentsOf: url) == Data("png".utf8))
+    }
+
+    @Test("A host copy of only references to what the guest's clipboard still holds changes nothing, said held already")
+    func hostCopyOfStandingReferencesIsHeld() async throws {
+        let rig = rig()
+        let file = try guestFile()
+        rig.clipboard.setOnConsole(true)
+        let first = RecordingLink()
+        rig.clipboard.setLink(first)
+        let guestCopy = try await sendFileCopy(file, rig, first)
+        let before = rig.pasteboard.changeCount
+        let link = RecordingLink(items: [Self.referenceItem(to: guestCopy.token)])
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
         try await link.changed.wait { !link.refusals.isEmpty }
-        #expect(link.refusals.map(\.token) == [Self.askToken])
         #expect(link.refusals.map(\.code) == [.clipboardAlreadyHeld])
         #expect(rig.pasteboard.changeCount == before)
-        #expect(!rig.pasteboard.promisedTypes.isEmpty)
-        #expect(link.offers.count == offersBefore)
+    }
+
+    @Test("A host copy's reference the guest can no longer fill is left out, and the host told so")
+    func hostCopyOfGoneReferencesIsPartsGone() async throws {
+        let rig = rig()
+        #expect(rig.pasteboard.setString("the guest's", forType: .string))
+        let before = rig.pasteboard.changeCount
+        let link = RecordingLink(items: [Self.referenceItem(to: Data(repeating: 3, count: 16))])
+        rig.clipboard.setLink(link)
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.code) == [.clipboardPartsGone])
+        #expect(rig.pasteboard.changeCount == before)
         #expect(link.opened.isEmpty)
     }
 

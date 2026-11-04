@@ -167,6 +167,22 @@ final class HubClipboardService: ClipboardServicing {
     /// next console peer.
     func stop() {}
 
+    /// Passthrough stopped, and both ends' passthrough offers end with it: the host's offer, which only
+    /// passthrough makes, is withdrawn, so the guest retracts its write of it; the guest's offer is let go, and
+    /// the Mac's write of it retracted as at a link's end, what it wrote as data kept and its promises gone.
+    /// Nothing crosses after that but a command, and the guest's next copy, which the host holds unwritten.
+    func passthroughStopped() {
+        exchange.withdrawLocal()
+        guard let remote else { return }
+        self.remote = nil
+        exchange.release(remote)
+        guard retractHostWrite(remote.token) != nil else { return }
+        Self.logger.log(
+            .notice,
+            "Retracted the guest's clipboard from the host pasteboard for '\(self.label(), privacy: .public)': passthrough stopped"
+        )
+    }
+
     /// Makes the Mac's copy the host's clipboard and offers it: a new connection is passthrough's to offer again,
     /// so nothing is owed a retry.
     func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
@@ -207,8 +223,6 @@ final class HubClipboardService: ClipboardServicing {
         exchange.sendCopy(snapshot) ? nil : .transferFailed
     }
 
-    var guestOfferToken: Data? { exchange.remote?.token }
-
     /// Asks the guest for its clipboard, lands every representation of its copy but a file or folder, and has
     /// `write` write it unless a newer copy arrived first.
     func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
@@ -218,24 +232,23 @@ final class HubClipboardService: ClipboardServicing {
         switch answer {
         case .nothing:
             return .nothing
-        case .alreadyHeld:
-            return .alreadyHeld
         case .failed(let error):
             Self.logger.log(
                 .notice, "The guest's clipboard was not copied: \(String(describing: error), privacy: .public)")
             return .failed(Self.failure(error))
         case .copy(let copy):
             let exchange = exchange
-            let landing = await exchange.land(copy) {
+            let landing = await exchange.land(copy) { leftOut in
                 write(
                     GuestCopyContents(
                         token: copy.token, items: copy.items, concealed: copy.concealed,
                         plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
-                        landed: { copy.landedBytes(item: $0, representation: $1) }, puller: copy,
-                        release: { exchange.releaseCopy(copy) }))
+                        held: { copy.held(item: $0, representation: $1) }, puller: copy,
+                        referencesLeftOut: leftOut, release: { exchange.releaseCopy(copy) }))
             }
             switch landing {
             case .written: return .landed
+            case .alreadyHeld: return .alreadyHeld
             case .superseded: return .failed(.transferFailed)
             case .failed(let error): return .failed(Self.failure(error))
             }
@@ -254,21 +267,30 @@ final class HubClipboardService: ClipboardServicing {
             gesture: .copy, retraction == .keptData ? .disconnectedFilesRetracted : .disconnectedCopyRetracted)
     }
 
-    /// The guest refused `copy` of the Mac's clipboard, or wrote it without its files.
+    /// The guest refused `copy` of the Mac's clipboard, or wrote it without some of it. A copy only naming what
+    /// the guest's clipboard holds already, and one a newer copy superseded, are the user's to make again: nothing
+    /// is said.
     private func copyRefused(_ copy: ClipboardOfferSource, _ error: WireError) {
         Self.logger.log(
             .notice, "The guest refused the Mac's clipboard copy: \(String(describing: error), privacy: .public)")
-        guard error.code == .clipboardFilesWithheld else { return reportRefusal(gesture: .send, Self.failure(error)) }
-        reportRefusal(
-            gesture: .send,
-            .filesLeftOut(
-                count: ClipboardPromisePolicy.fileCount(copy.items), limitBytes: Int(clamping: error.limit)))
+        switch error.code {
+        case .clipboardAlreadyHeld, .itemOfferReplaced:
+            return
+        case .clipboardFilesWithheld:
+            reportRefusal(
+                gesture: .send,
+                .filesLeftOut(
+                    count: ClipboardPromisePolicy.fileCount(copy.items), limitBytes: Int(clamping: error.limit)))
+        default:
+            reportRefusal(gesture: .send, Self.failure(error))
+        }
     }
 
     /// The failure a copy ending with `error` reports.
     private static func failure(_ error: WireError) -> ClipboardTransferFailure {
         switch error.code {
         case .clipboardChanged: .clipboardChanged
+        case .clipboardPartsGone: .partsGone
         case .tooLarge: .tooLarge(limitBytes: Int(clamping: error.limit))
         default: .transferFailed
         }

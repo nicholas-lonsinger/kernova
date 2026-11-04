@@ -151,7 +151,9 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var keys: [Key] = []
         for (item, offered) in items.enumerated() {
             for (index, representation) in offered.representations.enumerated()
-            where representation.storage == .inline && ClipboardPromisePolicy.keeps(representation) {
+            where representation.storage == .inline && !representation.hasReference
+                && ClipboardPromisePolicy.keeps(representation)
+            {
                 keys.append(Key(item: item, representation: index))
             }
         }
@@ -166,9 +168,63 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         }
     }
 
-    /// The bytes INLINE representation `representation` of item `item` landed with; nil until it landed.
-    public func landedBytes(item: Int, representation: Int) -> Data? {
-        state.withLock { $0.landed[Key(item: item, representation: representation)] }?.content.bytes
+    /// What this side holds of representation `representation` of item `item` now: an INLINE one's bytes, or
+    /// the file or folder a FILE or FOLDER one landed at or was filled with; nil until it has either.
+    public func held(item: Int, representation: Int) -> ClipboardWriteSource.Held? {
+        guard let landed = state.withLock({ $0.landed[Key(item: item, representation: representation)] }) else {
+            return nil
+        }
+        if landed.byteCount != nil { return landed.content.bytes.map(ClipboardWriteSource.Held.bytes) }
+        return landed.content.url.map(ClipboardWriteSource.Held.file)
+    }
+
+    /// Every representation that names this side's own offer by reference, which nothing pulls.
+    public var references: [(item: Int, representation: Int, reference: RepresentationReference)] {
+        items.enumerated().flatMap { index, item in
+            item.representations.enumerated().compactMap { position, representation in
+                representation.hasReference ? (index, position, representation.reference) : nil
+            }
+        }
+    }
+
+    /// Whether every representation of the copy names this side's own offer by reference.
+    public var isOnlyReferences: Bool {
+        !items.isEmpty
+            && items.allSatisfy { !$0.representations.isEmpty && $0.representations.allSatisfy(\.hasReference) }
+    }
+
+    /// Fills reference `representation` of item `item` with what this side's own offer gives: bytes, or a file
+    /// or folder, which a FILE or FOLDER that lives in staging of that offer's own is first cloned into this
+    /// offer's, since that staging goes with the offer. Returns whether it was filled.
+    public func fill(item: Int, representation: Int, with served: ClipboardServedRepresentation, copying: Bool)
+        async -> Bool
+    {
+        let key = Key(item: item, representation: representation)
+        guard items.indices.contains(item), items[item].representations.indices.contains(representation),
+            items[item].representations[representation].hasReference
+        else { return false }
+        let landed: Landed
+        switch served {
+        case .bytes(let data):
+            landed = Landed(content: .memory(data), byteCount: UInt64(data.count))
+        case .file(let url), .folder(let url):
+            guard copying else {
+                landed = Landed(content: .staged(url))
+                break
+            }
+            let staging = staging
+            let generation = generation
+            let clone = await Task.detached { () -> URL? in
+                guard let directory = try? staging.reserveScratchDirectory(generation: generation) else { return nil }
+                let destination = directory.appendingPathComponent(url.lastPathComponent)
+                // On APFS a copy is a clone: no bytes are copied.
+                return (try? FileManager.default.copyItem(at: url, to: destination)).map { destination }
+            }.value
+            guard let clone else { return false }
+            landed = Landed(content: .staged(clone))
+        }
+        state.withLock { $0.landed[key] = landed }
+        return true
     }
 
     private func land(_ key: Key) async -> WireError? {
@@ -260,6 +316,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         }
         guard items.indices.contains(key.item), items[key.item].representations.indices.contains(key.representation)
         else { return completion(nil) }
+        let isReference = items[key.item].representations[key.representation].hasReference
         let isInline = items[key.item].representations[key.representation].storage == .inline
         let ask = Ask(ceiling: isInline ? ceiling ?? 0 : nil, completion: completion)
         let next = state.withLock { state -> Next in
@@ -270,7 +327,8 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 state.pulling[key]?.asks.append(ask)
                 return .joined
             }
-            guard !state.closed else { return .answer(nil) }
+            // A reference names this side's own offer: nothing of it crosses the wire.
+            guard !state.closed, !isReference else { return .answer(nil) }
             let attempt = state.nextAttempt
             state.nextAttempt += 1
             state.pulling[key] = Pulling(attempt: attempt, ceiling: ask.ceiling, asks: [ask])

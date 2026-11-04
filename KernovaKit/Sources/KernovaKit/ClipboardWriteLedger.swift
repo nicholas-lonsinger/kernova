@@ -4,10 +4,11 @@ import KernovaWire
 
 /// What one pasteboard write of this process was made from. A snapshot of the pasteboard holding the write is
 /// built from it, never read back through the write's own promises: a promise fired in-process holds the reading
-/// thread for as long as its pull takes.
+/// thread for as long as its pull takes. What the write holds only as the far side's promise is named by
+/// reference to the far side's offer (``servingOffer``), never pulled.
 public struct ClipboardWriteSource: Sendable {
     /// What this side holds already of one representation a write placed.
-    public enum Held: Sendable {
+    public enum Held: Sendable, Equatable {
         case bytes(Data)
         case file(URL)
     }
@@ -20,27 +21,24 @@ public struct ClipboardWriteSource: Sendable {
         public let concealed: Bool
         /// False when the write left `public.file-url` off every item.
         public let servingFileURLs: Bool
-        /// What this side holds already of representation `representation` of item `item`; nil for one only
-        /// `puller` can bring.
+        /// What this side holds already of representation `representation` of item `item`; nil for one the write
+        /// holds only as the far side's promise.
         public let held: @Sendable (_ item: Int, _ representation: Int) -> Held?
-        /// Pulls what `held` does not hold; nil when it holds everything.
-        public let puller: (any ClipboardItemPulling)?
 
-        /// A part of `items`, its representations held as `held` says and the rest brought by `puller`.
+        /// A part of `items`, its representations held as `held` says and the rest the far side's promise.
         public init(
             items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
-            held: @escaping @Sendable (_ item: Int, _ representation: Int) -> Held? = { _, _ in nil },
-            puller: (any ClipboardItemPulling)?
+            held: @escaping @Sendable (_ item: Int, _ representation: Int) -> Held? = { _, _ in nil }
         ) {
             self.items = items
             self.concealed = concealed
             self.servingFileURLs = servingFileURLs
             self.held = held
-            self.puller = puller
         }
     }
 
-    /// The far side's offer or copy the write serves; nil for one serving nothing of the far side's.
+    /// The far side's offer or copy the write serves, whose promises back what no part holds; nil for one
+    /// serving nothing of the far side's.
     public let servingOffer: Data?
     /// What the write placed, offer by offer.
     public let parts: [Part]
@@ -50,14 +48,14 @@ public struct ClipboardWriteSource: Sendable {
         self.servingOffer = servingOffer
         self.parts = parts
     }
-
-    /// A write that placed nothing: a clear.
-    public static let nothing = ClipboardWriteSource(servingOffer: nil, parts: [])
 }
 
 /// A write of this process standing on a pasteboard while it promises something: what it was made from, and what
 /// it holds as data. Its providers are its only owners (``ClipboardPasteboardPublisher/write(_:source:onReleased:)``),
-/// so it goes once the pasteboard has finished with all of them; everything else holds it weakly.
+/// so it goes once the pasteboard has finished with all of them; everything else holds it weakly. AppKit finishes
+/// with a provider when anything replaces the write, and also once it has provided every type the provider promised
+/// while the write still stands (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md), when nothing
+/// of it is promised any more.
 final class ClipboardStandingWrite: Sendable {
     let source: ClipboardWriteSource
     let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
@@ -138,7 +136,6 @@ extension ClipboardWriteSource.Part {
             held: { item, representation in
                 table.indices.contains(item) && table[item].indices.contains(representation)
                     ? table[item][representation] : nil
-            },
-            puller: nil)
+            })
     }
 }
