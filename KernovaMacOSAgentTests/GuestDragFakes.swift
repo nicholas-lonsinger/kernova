@@ -2,32 +2,56 @@ import AppKit
 import Foundation
 import KernovaAgentCore
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
 import UniformTypeIdentifiers
+
+/// The guest's drag pasteboard, written by hand: a source writing a drag moves
+/// the change count, and a source still filling the drag it wrote adds items
+/// without moving it.
+final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
+    private struct State: Sendable {
+        var items: [FakePasteboardItem] = []
+        var changeCount = 0
+    }
+
+    private let state = Locked(State())
+
+    var changeCount: Int { state.withLock { $0.changeCount } }
+    var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
+
+    /// A source writes a drag of `items`, moving the change count.
+    func write(_ items: [FakePasteboardItem]) {
+        state.withLock { state in
+            state.items = items
+            state.changeCount += 1
+        }
+    }
+
+    /// The source of the drag already written goes on filling it to `items`,
+    /// leaving the change count where it is.
+    func fill(_ items: [FakePasteboardItem]) {
+        state.withLock { $0.items = items }
+    }
+}
 
 /// The guest's event stream and drag pasteboard, driven by hand: a test
 /// presses and releases the button, fires the press timer, decides when each
 /// off-main resolve comes back, and sets the file promises the drag carries.
 @MainActor
 final class FakeGuestDragInput: GuestDragInput {
-    let pasteboard = FakeReadPasteboard()
+    let pasteboard = FakeDragPasteboard()
     var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
     var isPrimaryButtonHeld = false
-
-    /// Fires on every registration, cancellation, and queued resolve.
-    nonisolated let changed = AsyncGate()
-
-    /// Hands each resolve back on the next main-queue turn instead of holding
-    /// it for ``deliverResolves(_:)``.
-    var resolvesOnItsOwn = false
 
     private var pressHandler: (@MainActor @Sendable () -> Void)?
     private var tick: (@MainActor @Sendable () -> Void)?
     private(set) var tickInterval: TimeInterval?
     private(set) var isHoldingActivity = false
-    private(set) var resolveCount = 0
+    /// Every set of file URLs resolved, in order.
+    private(set) var resolved: [[URL]] = []
     private var pendingResolves:
         [(urls: [URL], completion: @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)] = []
     /// The file promises the drag pasteboard holds, as a drop on the catcher
@@ -36,20 +60,11 @@ final class FakeGuestDragInput: GuestDragInput {
     /// Every set of folders measured, by item index.
     private(set) var measured: [[Int: URL]] = []
 
-    /// How many connections have built a drag-out on this input.
-    private(set) var connectionCount = 0
-
     var isObservingPresses: Bool { pressHandler != nil }
     var isTicking: Bool { tick != nil }
     var pendingResolveCount: Int { pendingResolves.count }
 
     // MARK: Driving it
-
-    /// A connection built a drag-out on this input.
-    func connected() {
-        connectionCount += 1
-        changed.notify()
-    }
 
     /// The button goes down in another app, and the monitor reports it.
     func press() {
@@ -69,23 +84,22 @@ final class FakeGuestDragInput: GuestDragInput {
 
     /// Writes one drag's items as a source would, bumping the change count.
     func drag(_ items: [FakePasteboardItem]) {
-        pasteboard.setItems(items)
+        pasteboard.write(items)
     }
 
-    /// Hands back every queued resolve, each the real resolve of its URLs
-    /// unless `intake` stands in for it.
-    func deliverResolves(_ intake: ClipboardPasteboardReader.FileIntake? = nil) {
+    /// The drag's source goes on filling the drag it wrote to `items`, the
+    /// change count unmoved.
+    func fill(_ items: [FakePasteboardItem]) {
+        pasteboard.fill(items)
+    }
+
+    /// Hands back every queued resolve, each the real resolve of its URLs.
+    func deliverResolves() {
         let pending = pendingResolves
         pendingResolves.removeAll()
         for resolve in pending {
-            resolve.completion(intake ?? Self.offerResolve(resolve.urls))
+            resolve.completion(ClipboardPasteboardReader.resolve(filesAt: resolve.urls, sizeOf: nil))
         }
-    }
-
-    /// The resolve the live input runs for an offer, which reads nothing inside
-    /// a folder.
-    private nonisolated static func offerResolve(_ urls: [URL]) -> ClipboardPasteboardReader.FileIntake {
-        ClipboardPasteboardReader.resolve(filesAt: urls, sizeOf: nil)
     }
 
     // MARK: GuestDragInput
@@ -94,11 +108,7 @@ final class FakeGuestDragInput: GuestDragInput {
         _ handler: @escaping @MainActor @Sendable () -> Void
     ) -> GuestDragCancel {
         pressHandler = handler
-        changed.notify()
-        return { [weak self] in
-            self?.pressHandler = nil
-            self?.changed.notify()
-        }
+        return { [weak self] in self?.pressHandler = nil }
     }
 
     func repeatEvery(
@@ -114,17 +124,14 @@ final class FakeGuestDragInput: GuestDragInput {
         return { [weak self] in self?.isHoldingActivity = false }
     }
 
+    /// Queues the resolve until ``deliverResolves()``, which runs the live
+    /// input's: a stat each, reading nothing inside a folder.
     func resolveFiles(
         _ urls: [URL],
         then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void
     ) {
-        resolveCount += 1
-        if resolvesOnItsOwn {
-            MainActorBridge.async { completion(Self.offerResolve(urls)) }
-        } else {
-            pendingResolves.append((urls, completion))
-        }
-        changed.notify()
+        resolved.append(urls)
+        pendingResolves.append((urls, completion))
     }
 
     /// Measures each folder as the live input does, and hands the sizes back
@@ -146,19 +153,16 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
     private(set) var shownItems: [GuestDragItem]?
     /// Whether a screen is there to cover.
     var hasScreen = true
-    nonisolated let changed = AsyncGate()
 
     func show(items: [GuestDragItem]) -> Bool {
         showCount += 1
         shownItems = items
         isShown = hasScreen
-        changed.notify()
         return hasScreen
     }
 
     func hide() {
         isShown = false
-        changed.notify()
     }
 }
 
@@ -166,21 +170,21 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
 @MainActor
 final class FakeGuestDragPeer: GuestDragOutPeer {
     enum Event: Equatable {
-        /// An offer, each item by its one representation's name.
-        case offered(token: Data, names: [String])
+        case offered(token: Data)
         case withdrew(token: Data)
         case answered(DragTakeID, DragTakeAnswer)
     }
 
-    /// A take's answer: a step, or its end, a refusal by its code alone and a
-    /// catch by whether it named a new offer.
+    /// A take's answer: a step, or its end, each item a report lists by its
+    /// one representation's name and a refusal by its code alone.
     enum Answer: Equatable {
         case armed
-        case targeted
+        case targeted([String])
         case delivering
         case deliverRefused
         case stoodDown
-        case caught(reoffered: Bool)
+        case named([String])
+        case caught(folderSizes: [UInt64]?)
         case returned
         case refused(ErrorCode)
     }
@@ -200,14 +204,23 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
             guard case .answered(let answered, let answer) = event, answered == id else { return nil }
             switch answer {
             case .report(.armed): return .armed
-            case .report(.targeted): return .targeted
+            case .report(.targeted(let items)): return .targeted(items.map(Self.name))
             case .report(.delivering): return .delivering
             case .report(.deliverRefused): return .deliverRefused
             case .report(.stoodDown): return .stoodDown
-            case .caught(let reoffer): return .caught(reoffered: reoffer != nil)
+            case .report(.named(let names)): return .named(names.map { String(decoding: $0, as: UTF8.self) })
+            case .caught(let folderSizes): return .caught(folderSizes: folderSizes)
             case .returned: return .returned
             case .refused(let error): return .refused(error.code)
             }
+        }
+    }
+
+    /// The items each `TARGETED` of take `id` listed, in order.
+    func targeted(_ id: DragTakeID) -> [[OfferedItem]] {
+        events.compactMap { event in
+            guard case .answered(id, .report(.targeted(let items))) = event else { return nil }
+            return items
         }
     }
 
@@ -216,18 +229,13 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         events.count { if case .answered = $0 { true } else { false } }
     }
 
-    /// The new offer a catch of take `id` named, if any.
-    func reoffer(of id: DragTakeID) -> Data? {
-        for case .answered(let answered, .caught(let reoffer?)) in events where answered == id { return reoffer }
-        return nil
+    private static func name(_ item: OfferedItem) -> String {
+        String(decoding: item.representations.first?.name ?? Data(), as: UTF8.self)
     }
 
     func offerDrag(_ offer: ItemOffer, _ completion: @escaping @MainActor (WireError?) -> Void) {
         offers.append(offer)
-        events.append(
-            .offered(
-                token: offer.token,
-                names: offer.items.map { String(decoding: $0.representations.first?.name ?? Data(), as: UTF8.self) }))
+        events.append(.offered(token: offer.token))
         completion(nil)
     }
 
@@ -308,10 +316,7 @@ extension GuestDragOutSystem {
         input: FakeGuestDragInput, surface: FakeCatcherSurface
     ) -> GuestDragOutSystem {
         GuestDragOutSystem(
-            makeInput: {
-                input.connected()
-                return input
-            },
+            makeInput: { input },
             makeCatcherSurface: { _ in surface })
     }
 }
