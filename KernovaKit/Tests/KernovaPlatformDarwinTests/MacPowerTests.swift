@@ -101,7 +101,8 @@ struct MacPowerTests {
     func systemPeerAdvert() {
         let harness = Harness(.shutdownCommand(run: { _ in 0 }))
         func offer(buttonIgnored: Bool) -> PowerInput {
-            .availability(.available(PowerOffer(actions: [], ignoringApps: [.shutdown], powerButtonIgnored: buttonIgnored)))
+            .availability(
+                .available(PowerOffer(actions: [], ignoringApps: [.shutdown], powerButtonIgnored: buttonIgnored)))
         }
         #expect(harness.take() == [offer(buttonIgnored: false)])
 
@@ -111,7 +112,8 @@ struct MacPowerTests {
         }
     }
 
-    @Test("The system peer refuses a graceful shutdown or restart POWER_ACTION_UNSUPPORTED in every console state, running nothing",
+    @Test(
+        "The system peer refuses a graceful shutdown or restart POWER_ACTION_UNSUPPORTED in every console state, running nothing",
         arguments: [ConsoleState.off, .on, .unknown], [PowerAction.shutdown, .restart])
     func systemPeerRefusesGraceful(console: ConsoleState, action: PowerAction) {
         let ran = Locked(0)
