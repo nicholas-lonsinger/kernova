@@ -841,9 +841,17 @@ package final class GuestDragTake: GuestDragTaking {
     /// while it waits.
     nonisolated private func waitForDelivery() -> GuestDragDelivery.Outcome {
         let onMain = Thread.isMainThread
-        return delivery.wait(
+        let began = ContinuousClock.now
+        let outcome = delivery.wait(
             releasing: onMain
                 ? { MainActor.assumeIsolated { self.deliveryAnswered(delivering: true) } } : nil)
+        let waited = (ContinuousClock.now - began).components
+        let milliseconds = waited.seconds * 1_000 + waited.attoseconds / 1_000_000_000_000_000
+        Self.logger.log(
+            .notice,
+            "Waited \(milliseconds, privacy: .public) ms for the guest to deliver \(self.items.count, privacy: .public) dragged item(s) (main thread: \(onMain, privacy: .public))"
+        )
+        return outcome
     }
 
     nonisolated private static func filename(
