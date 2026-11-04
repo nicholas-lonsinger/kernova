@@ -72,6 +72,26 @@ struct PublishTests {
         try landing.expectNothingOutside(landed: bytes(name))
     }
 
+    @Test("an exact-path publish that finds another item at its path fails moved and leaves both", arguments: [false, true])
+    func exactPathMovedLeavesTheOther(_ folder: Bool) throws {
+        let landing = try Landing(kernelContainment: true)
+        let path = landing.destinationPath + "/chosen"
+        let receiver = TreeReceiver(
+            exactPath: bytes(path), accepting: acceptance(folder ? .folder : .file), decodingWorkers: 0,
+            fileSystem: POSIXTreeFileSystem())
+        try receiver.receive(folder ? Self.folderContainer : Self.fileContainer)
+        try receiver.finish()
+        // The user moves the landing item away and puts their own item under the same name.
+        #expect(rename(path, landing.destinationPath + "/moved-away") == 0)
+        let own = folder ? path + "/own.txt" : path
+        if folder { #expect(mkdir(path, 0o755) == 0) }
+        try Data("the user's own".utf8).write(to: URL(fileURLWithPath: own))
+        let result = Result { () throws(TreeWriteFailure) in try receiver.publish() }
+        #expect(result.failure?.reason == .moved)
+        #expect(access(own, F_OK) == 0, "the publish removed an item the writer did not create")
+        #expect(access(landing.destinationPath + "/moved-away", F_OK) == 0)
+    }
+
     @Test("an exact path that is not absolute, or ends in no name, creates nothing", arguments: ["chosen.txt", "/"])
     func exactPathRefused(_ path: String) throws {
         let receiver = TreeReceiver(

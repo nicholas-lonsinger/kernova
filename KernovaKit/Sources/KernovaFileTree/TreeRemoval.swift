@@ -17,13 +17,32 @@ public enum TreeRemoval {
     public static func remove<FileSystem: MutableTreeFileSystem>(
         _ name: [UInt8], in directory: Int32, on fileSystem: FileSystem
     ) throws {
+        _ = try remove(name, in: directory, on: fileSystem, whileItIs: { _ in true })
+    }
+
+    /// Removes `name` in `directory` only while it is the entry `isTarget`
+    /// accepts the status of: asked of the entry the name holds before
+    /// anything changes, of a directory once it is open and before it is
+    /// emptied through that descriptor, and of the name again before it is
+    /// unlinked.
+    ///
+    /// - Returns: whether it removed the entry; `false` when the name held
+    ///   another one at any of those checks, which is left as it is.
+    /// - Throws: as ``remove(_:in:on:)``.
+    public static func remove<FileSystem: MutableTreeFileSystem>(
+        _ name: [UInt8], in directory: Int32, on fileSystem: FileSystem,
+        whileItIs isTarget: (FileStatus) -> Bool
+    ) throws -> Bool {
         let status = try fileSystem.status(of: name, in: directory)
-        guard status.kind == .directory else {
-            try fileSystem.remove(name, in: directory, isDirectory: false)
-            return
+        guard isTarget(status) else { return false }
+        if status.kind == .directory {
+            guard try empty(name, status: status, in: directory, on: fileSystem, whileItIs: isTarget) else {
+                return false
+            }
+            guard isTarget(try fileSystem.status(of: name, in: directory)) else { return false }
         }
-        try empty(name, status: status, in: directory, on: fileSystem)
-        try fileSystem.remove(name, in: directory, isDirectory: true)
+        try fileSystem.remove(name, in: directory, isDirectory: status.kind == .directory)
+        return true
     }
 
     /// A directory being emptied: its name in its parent, and the names in it
@@ -34,11 +53,19 @@ public enum TreeRemoval {
     }
 
     /// Removes everything inside the directory `name` in `directory`, whose
-    /// status is `status`.
+    /// status is `status`, once the directory open is one `isTarget` accepts.
+    ///
+    /// - Returns: whether it was; `false` when it was not, and nothing changed
+    ///   inside it.
     private static func empty<FileSystem: MutableTreeFileSystem>(
-        _ name: [UInt8], status: FileStatus, in directory: Int32, on fileSystem: FileSystem
-    ) throws {
-        guard let top = try open(name, status: status, in: directory, on: fileSystem) else { return }
+        _ name: [UInt8], status: FileStatus, in directory: Int32, on fileSystem: FileSystem,
+        whileItIs isTarget: (FileStatus) -> Bool
+    ) throws -> Bool {
+        guard let top = try open(name, status: status, in: directory, on: fileSystem) else { return true }
+        guard isTarget(top.status) else {
+            fileSystem.close(top.descriptor)
+            return false
+        }
         var cursor = DirectoryCursor(
             fileSystem: fileSystem, descriptor: top.descriptor, status: top.status,
             frame: Frame(name: name, pending: top.names))
@@ -61,7 +88,7 @@ public enum TreeRemoval {
                 let left = try cursor.ascend()
                 try fileSystem.remove(left.name, in: cursor.descriptor, isDirectory: true)
             } else {
-                return
+                return true
             }
         }
     }

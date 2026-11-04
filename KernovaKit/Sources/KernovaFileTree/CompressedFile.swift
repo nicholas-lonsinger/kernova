@@ -11,7 +11,7 @@
 /// `UF_COMPRESSED`, so no other write can reach it.
 public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
     private let fileSystem: FileSystem
-    /// The open file; nil once it is finished or abandoned.
+    /// The open file; nil once it is closed.
     private var descriptor: Int32?
     /// The logical size its `com.apple.decmpfs` attribute declares.
     public let logicalSize: UInt64
@@ -52,7 +52,7 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
         self.descriptor = descriptor
     }
 
-    /// The status of the file, not yet finished.
+    /// The status of the file, not yet closed: before ``finish(_:)``, or after one that failed before its close.
     public func status() throws(TreeFileSystemError) -> FileStatus {
         guard let descriptor else { preconditionFailure("the status of a finished file") }
         return try fileSystem.status(of: descriptor)
@@ -81,19 +81,14 @@ public final class CompressedFile<FileSystem: MutableTreeFileSystem> {
     ///
     /// - Parameter attributes: What the file lands with; its flags carry no `UF_COMPRESSED` of their own.
     /// - Returns: The file's status once the system took it compressed.
-    /// - Throws: ``CompressedFileFailure``; the file is then closed.
+    /// - Throws: ``CompressedFileFailure``; a failure before the close leaves the file open, for
+    ///   ``status()``, until it is released.
     public func finish(_ attributes: TreeEntryAttributes) throws(CompressedFileFailure) -> FileStatus {
         guard let descriptor else { preconditionFailure("a file finished twice") }
+        let status = try seal(descriptor, flags: attributes.flags ?? 0)
+        // The flag write resets the modification time, so the times go after it.
+        try settle(descriptor, attributes)
         self.descriptor = nil
-        let status: FileStatus
-        do {
-            status = try seal(descriptor, flags: attributes.flags ?? 0)
-            // The flag write resets the modification time, so the times go after it.
-            try settle(descriptor, attributes)
-        } catch {
-            fileSystem.close(descriptor)
-            throw error
-        }
         do {
             try fileSystem.closeWritten(descriptor)
         } catch {
