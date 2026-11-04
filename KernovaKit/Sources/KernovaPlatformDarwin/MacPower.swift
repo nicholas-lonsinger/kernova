@@ -76,7 +76,7 @@ struct MacPowerMechanism: Sendable {
     ///
     /// Its console reads off at the login window, where macOS does not act on the VM's power button: a Stop
     /// that pressed it there left the guest running
-    /// (`docs/research/2026-11-04-macos-shutdown-request-from-a-background-session.md`).
+    /// (`docs/research/2026-11-04-macos-shutdown-request-by-session-state.md`).
     static func shutdownCommand(run: @escaping @Sendable ([String]) -> Int32 = { Installer.spawn($0) })
         -> MacPowerMechanism
     {
