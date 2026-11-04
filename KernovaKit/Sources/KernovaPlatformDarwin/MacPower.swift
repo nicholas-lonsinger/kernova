@@ -20,8 +20,32 @@ enum MacPowerAnswer: Sendable, Equatable {
     case unconfirmed
 }
 
-/// How a macOS peer asks its OS for a power action: the console state it serves in, and the blocking call.
+/// The guest's sessions as a macOS peer's power mechanism reads them.
+struct MacSessions: Sendable, Equatable {
+    /// The peer's console state.
+    var console = ConsoleState.unknown
+    /// Whether any GUI login session exists, at the console or behind the login window; nil until read.
+    var guiLoginExists: Bool?
+}
+
+/// How a macOS peer asks its OS for a power action: the sessions it serves in, and the blocking call.
 struct MacPowerMechanism: Sendable {
+    /// Where a mechanism's shutdown and restart are offered.
+    enum Condition: Sendable, Equatable {
+        /// While the peer's session owns the console.
+        case ownsConsole
+        /// While no GUI login session exists: no user session owns the console, and none waits behind the login
+        /// window.
+        case noGUILogin
+
+        func holds(in sessions: MacSessions) -> Bool {
+            switch self {
+            case .ownsConsole: sessions.console == .on
+            case .noGUILogin: sessions.console == .off && sessions.guiLoginExists == false
+            }
+        }
+    }
+
     /// The blocking call, by when it says the OS has taken the request.
     enum Call: Sendable {
         /// A call whose answer says whether the OS took the request.
@@ -31,15 +55,15 @@ struct MacPowerMechanism: Sendable {
         case committing(@Sendable (PowerAction) -> WireError?)
     }
 
-    /// The peer's console state while the mechanism is offered.
-    let offeredWhile: ConsoleState
+    /// Where the mechanism is offered.
+    let offeredWhile: Condition
     /// Whether the OS asks running apps to quit, which may stop the request.
     let asksAppsToQuit: Bool
-    /// Why the mechanism is not offered in any other console state, for the host's log.
+    /// Why the mechanism is not offered anywhere else, for the host's log.
     let absentDetail: String
     /// Asks the OS for the action, blocking until the call returns.
     let call: Call
-    /// What the mechanism performs without waiting for apps, in every console state; nil for nothing.
+    /// What the mechanism performs without waiting for apps, in every state; nil for nothing.
     let ignoringApps: IgnoringApps?
 
     /// Actions performed without waiting for apps, and the call that performs them.
@@ -57,16 +81,16 @@ struct MacPowerMechanism: Sendable {
         -> MacPowerMechanism
     {
         MacPowerMechanism(
-            offeredWhile: .on, asksAppsToQuit: true, absentDetail: "this session does not own the console",
+            offeredWhile: .ownsConsole, asksAppsToQuit: true, absentDetail: "this session does not own the console",
             call: .answering { action in LoginWindowPower.answer(send(LoginWindowPower.event(for: action))) },
             ignoringApps: nil)
     }
 
-    /// The system peer's: `shutdown(8)`, while no user session owns the console. QA1134: "In the case where there
-    /// are no GUI login sessions a daemon can issue the standard shutdown command". It commits: in macOS 12.7.6
-    /// and 27.2 guests the peer logged nothing after starting it
-    /// (`docs/research/2026-11-03-macos-guest-power-through-agents.md`). With a user logged in it shuts down
-    /// without waiting for apps: no app asked anything, and the guest powered off
+    /// The system peer's: `shutdown(8)`, while no GUI login session exists — none at the console, and none Fast
+    /// User Switching left behind the login window. QA1134: "In the case where there are no GUI login sessions a
+    /// daemon can issue the standard shutdown command". It commits: in macOS 12.7.6 and 27.2 guests the peer
+    /// logged nothing after starting it (`docs/research/2026-11-03-macos-guest-power-through-agents.md`). With a
+    /// user logged in it shuts down without waiting for apps: no app asked anything, and the guest powered off
     /// (`docs/research/2026-11-03-macos-shutdown-without-waiting-for-apps.md`).
     static func shutdownCommand(run: @escaping @Sendable ([String]) -> Int32 = { Installer.spawn($0) })
         -> MacPowerMechanism
@@ -75,20 +99,22 @@ struct MacPowerMechanism: Sendable {
             ShutdownCommand.failure(run(ShutdownCommand.arguments(for: action)))
         }
         return MacPowerMechanism(
-            offeredWhile: .off, asksAppsToQuit: false, absentDetail: "a user session owns the console", call: call,
+            offeredWhile: .noGUILogin, asksAppsToQuit: false, absentDetail: "a GUI login session exists", call: call,
             ignoringApps: IgnoringApps(actions: [.shutdown], call: call))
     }
 }
 
-/// A macOS peer's POWER: shutdown and restart while the peer's console state is the one its mechanism serves
-/// in, and what the mechanism performs without waiting for apps in every state; absent `NOT_ON_CONSOLE` when
-/// neither is offered.
+/// A macOS peer's POWER: shutdown and restart while the guest's sessions are where its mechanism is offered, and
+/// what the mechanism performs without waiting for apps in every state; absent `NOT_ON_CONSOLE` when neither is
+/// offered.
 public final class MacPowerAdapter: PowerAdapter {
     private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "Power")
 
     private struct State {
         var reporter: PowerReporter?
-        var console = ConsoleState.unknown
+        var sessions = MacSessions()
+        /// The advert last reported.
+        var advertised: Availability<PowerOffer>?
         /// The request whose call has not returned and that `cancel` has not let go, and whether it was
         /// reported accepted.
         var calling: (id: PowerRequestID, accepted: Bool)?
@@ -118,32 +144,51 @@ public final class MacPowerAdapter: PowerAdapter {
 
     /// The peer's console state is now `console`.
     public func consoleChanged(_ console: ConsoleState) {
+        sessionsChanged { $0.console = console }
+    }
+
+    /// The guest now holds a GUI login session, or holds none.
+    public func guiLoginChanged(exists: Bool) {
+        sessionsChanged { $0.guiLoginExists = exists }
+    }
+
+    private func sessionsChanged(_ change: @escaping @Sendable (inout MacSessions) -> Void) {
         queue.async { [self] in
-            let reporter = state.withLock { state -> PowerReporter? in
-                guard state.console != console else { return nil }
-                state.console = console
-                return state.reporter
+            let (reporter, advert) = state.withLock { state -> (PowerReporter?, Availability<PowerOffer>) in
+                change(&state.sessions)
+                return (state.reporter, availability(state.sessions))
             }
-            reporter?.report(.availability(availability(console)))
+            guard let reporter else { return }
+            report(advert, to: reporter)
         }
     }
 
-    /// Reports the advert of the console state given so far.
+    /// Reports the advert of the sessions given so far.
     public func start(reporter: PowerReporter) {
         queue.async { [self] in
-            let console = state.withLock { state in
+            let sessions = state.withLock { state in
                 state.reporter = reporter
-                return state.console
+                state.advertised = nil
+                return state.sessions
             }
-            reporter.report(.availability(availability(console)))
+            report(availability(sessions), to: reporter)
         }
     }
 
-    /// Makes the mechanism's call, or refuses `NOT_ON_CONSOLE` outside its console state; `ignoringApps`, the
-    /// call that does not wait for apps, in any console state.
+    /// Reports `advert` unless it is the one last reported.
+    private func report(_ advert: Availability<PowerOffer>, to reporter: PowerReporter) {
+        let changed = state.withLock { state in
+            defer { state.advertised = advert }
+            return state.advertised != advert
+        }
+        if changed { reporter.report(.availability(advert)) }
+    }
+
+    /// Makes the mechanism's call, or refuses `NOT_ON_CONSOLE` where it is not offered; `ignoringApps`, the call
+    /// that does not wait for apps, in any state.
     public func perform(_ id: PowerRequestID, _ action: PowerAction, ignoringApps: Bool) {
         queue.async { [self] in
-            let (console, reporter) = state.withLock { ($0.console, $0.reporter) }
+            let (sessions, reporter) = state.withLock { ($0.sessions, $0.reporter) }
             let call: MacPowerMechanism.Call
             if ignoringApps {
                 guard let offered = mechanism.ignoringApps, offered.actions.contains(action) else {
@@ -152,7 +197,7 @@ public final class MacPowerAdapter: PowerAdapter {
                 }
                 call = offered.call
             } else {
-                guard console == mechanism.offeredWhile else {
+                guard mechanism.offeredWhile.holds(in: sessions) else {
                     reporter?.report(.refused(id, WireError(.powerNotOnConsole, debugDetail: mechanism.absentDetail)))
                     return
                 }
@@ -197,10 +242,10 @@ public final class MacPowerAdapter: PowerAdapter {
         }
     }
 
-    /// Shutdown and restart in the mechanism's console state, beside what it performs without waiting for apps
-    /// in every state; absent `NOT_ON_CONSOLE` when that leaves nothing.
-    private func availability(_ console: ConsoleState) -> Availability<PowerOffer> {
-        let actions: [PowerAction] = console == mechanism.offeredWhile ? [.shutdown, .restart] : []
+    /// Shutdown and restart where the mechanism is offered, beside what it performs without waiting for apps in
+    /// every state; absent `NOT_ON_CONSOLE` when that leaves nothing.
+    private func availability(_ sessions: MacSessions) -> Availability<PowerOffer> {
+        let actions: [PowerAction] = mechanism.offeredWhile.holds(in: sessions) ? [.shutdown, .restart] : []
         let ignoringApps = mechanism.ignoringApps?.actions ?? []
         guard !actions.isEmpty || !ignoringApps.isEmpty else {
             return .absent(.notOnConsole, debugDetail: mechanism.absentDetail)

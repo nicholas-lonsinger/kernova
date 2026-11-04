@@ -43,6 +43,22 @@ struct DarwinPeerTests {
         #expect(DarwinSessionState.systemPeer(consoleUser: "pbear") == PeerSessionState(console: .unknown))
     }
 
+    @Test(
+        "The GUI login sessions are the console line's user processes: Fast User Switching's background sessions among them, terminal logins and dead records not"
+    )
+    func guiLoginUsers() {
+        typealias Record = DarwinSessionState.LoginRecord
+        let records = [
+            Record(type: Int16(BOOT_TIME), line: "~", user: ""),
+            Record(type: Int16(USER_PROCESS), line: "console", user: "pbear"),
+            Record(type: Int16(USER_PROCESS), line: "ttys000", user: "pbear"),
+            Record(type: Int16(USER_PROCESS), line: "console", user: "tester"),
+            Record(type: Int16(DEAD_PROCESS), line: "console", user: "gone"),
+        ]
+        #expect(DarwinSessionState.guiLoginUsers(in: records) == ["pbear", "tester"])
+        #expect(DarwinSessionState.guiLoginUsers(in: Array(records.prefix(1) + records[2...2])).isEmpty)
+    }
+
     @Test("The session peer reports its own audit session")
     func sessionPeerState() {
         let state = DarwinSessionState.sessionPeer()

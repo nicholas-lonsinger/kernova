@@ -7,6 +7,7 @@ import KernovaAgentCore
 import KernovaAgentInstall
 import KernovaSynchronization
 import SystemConfiguration
+import notify
 
 /// A macOS peer's place in the guest's sessions.
 public enum DarwinSessionState {
@@ -58,6 +59,81 @@ public enum DarwinSessionState {
     public static func consoleUserID() -> uid_t? {
         guard let user = consoleUser(), user.name != loginWindowUser, user.uid != 0 else { return nil }
         return user.uid
+    }
+}
+
+extension DarwinSessionState {
+    /// One utmpx record, as `getutxent(3)` reads it.
+    struct LoginRecord: Equatable {
+        /// `ut_type`.
+        var type: Int16
+        /// `ut_line`: `console` for a login at the window server, a tty for a terminal or SSH login.
+        var line: String
+        /// `ut_user`.
+        var user: String
+    }
+
+    /// The `ut_line` loginwindow records a GUI login session under.
+    static let guiLoginLine = "console"
+
+    /// The users of the GUI login sessions among `records`: each `USER_PROCESS` login on the console line,
+    /// the session at the console and every Fast User Switching session behind the login window alike.
+    static func guiLoginUsers(in records: [LoginRecord]) -> [String] {
+        records.filter { $0.type == Int16(USER_PROCESS) && $0.line == guiLoginLine }.map(\.user)
+    }
+
+    /// The utmpx database's records now. `getutxent(3)` walks process-wide state, so the caller reads from one
+    /// queue.
+    static func loginRecords() -> [LoginRecord] {
+        setutxent()
+        defer { endutxent() }
+        var records: [LoginRecord] = []
+        while let entry = getutxent() {
+            records.append(
+                LoginRecord(
+                    type: entry.pointee.ut_type, line: cString(entry.pointee.ut_line),
+                    user: cString(entry.pointee.ut_user)))
+        }
+        return records
+    }
+
+    private static func cString<T>(_ field: T) -> String {
+        withUnsafeBytes(of: field) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }
+}
+
+/// Follows the guest's GUI login sessions in the utmpx database, handing their users to `onChange` on `queue`:
+/// once at start, then on every `UTMPX_CHANGE_NOTIFICATION`, which libc posts as a record is written.
+public final class GUILoginWatcher: Sendable {
+    private let token: Int32
+    private let cancelled = Locked(false)
+
+    /// A watcher calling `onChange` on `queue`; nil when the notification cannot be registered.
+    public init?(queue: DispatchQueue, _ onChange: @escaping @Sendable ([String]) -> Void) {
+        let fire: @Sendable () -> Void = {
+            onChange(DarwinSessionState.guiLoginUsers(in: DarwinSessionState.loginRecords()))
+        }
+        var token: Int32 = 0
+        guard notify_register_dispatch(UTMPX_CHANGE_NOTIFICATION, &token, queue, { _ in fire() }) == NOTIFY_STATUS_OK
+        else { return nil }
+        self.token = token
+        queue.async(execute: fire)
+    }
+
+    /// Stops watching.
+    public func cancel() {
+        guard
+            !cancelled.withLock({ cancelled in
+                defer { cancelled = true }; return cancelled
+            })
+        else { return }
+        notify_cancel(token)
+    }
+
+    deinit {
+        cancel()
     }
 }
 

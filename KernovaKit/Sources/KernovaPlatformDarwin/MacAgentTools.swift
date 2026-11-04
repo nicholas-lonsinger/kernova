@@ -19,6 +19,7 @@ public enum MacAgentTools {
     private struct Held: Sendable {
         var peer: MacAgentPeer?
         var consoleWatcher: ConsoleUserWatcher?
+        var guiLoginWatcher: GUILoginWatcher?
         var termination: (any DispatchSourceSignal)?
     }
 
@@ -57,7 +58,8 @@ public enum MacAgentTools {
 
     // MARK: The system peer
 
-    /// Runs the system peer: a "For everyone" install's daemon, reporting the console from the dynamic store and
+    /// Runs the system peer: a "For everyone" install's daemon, reporting the console from the dynamic store,
+    /// following the GUI login sessions in utmpx, and
     /// forwarding its own records when the host's policy turns LOGS on, until SIGTERM.
     private static func runSystemPeer(label: String) -> Never {
         let logs = LogForwarding()
@@ -79,7 +81,18 @@ public enum MacAgentTools {
             logger.log(.error, "The system peer cannot follow the console user")
             exit(1)
         }
-        held.withLock { $0.consoleWatcher = watcher }
+        let guiLogins = GUILoginWatcher(queue: DispatchQueue(label: "app.kernova.macosagent.logins")) { users in
+            logger.log(.notice, "GUI login sessions: \(users.count, privacy: .public)")
+            peer.setGUILogin(exists: !users.isEmpty)
+        }
+        guard let guiLogins else {
+            logger.log(.error, "The system peer cannot follow the GUI login sessions")
+            exit(1)
+        }
+        held.withLock {
+            $0.consoleWatcher = watcher
+            $0.guiLoginWatcher = guiLogins
+        }
         dispatchMain()
     }
 
