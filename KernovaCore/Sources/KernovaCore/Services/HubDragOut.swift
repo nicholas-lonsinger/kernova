@@ -60,8 +60,9 @@ package final class HubDragOut {
     @ObservationIgnored private let reporter: ClipboardTransferReporter
     @ObservationIgnored private let peerName: @MainActor () -> String
 
-    /// Every take still running, by its offer's token.
-    @ObservationIgnored private var takes: [Data: GuestDragTake] = [:]
+    /// Every take still running, each with its offer's token: held by the
+    /// take, since a guest may offer a token again while a take of it runs.
+    @ObservationIgnored private var takes: [(token: Data, take: GuestDragTake)] = []
     /// Each take's id once the hub opened it, with the token it took and what
     /// hears its events.
     @ObservationIgnored private var takeEvents:
@@ -127,9 +128,9 @@ package final class HubDragOut {
         let take = GuestDragTake(
             transport: transport, display: display, reporter: reporter,
             peerName: peerName(), holds: holds,
-            onFinished: { [weak self] finished in self?.takes = self?.takes.filter { $0.value !== finished } ?? [:] },
+            onFinished: { [weak self] finished in self?.takes.removeAll { $0.take === finished } },
             onHostSessionBegan: { [weak self] began in self?.hostSessionBegan(began) })
-        takes[offer.token] = take
+        takes.append((offer.token, take))
         take.begin()
         return take
     }
@@ -146,11 +147,7 @@ package final class HubDragOut {
         for take in liveTakes where take !== began { take.promisesReplaced() }
     }
 
-    /// Each take still running, once.
-    private var liveTakes: [GuestDragTake] {
-        var seen = Set<ObjectIdentifier>()
-        return takes.values.filter { seen.insert(ObjectIdentifier($0)).inserted }
-    }
+    private var liveTakes: [GuestDragTake] { takes.map(\.take) }
 
     // MARK: - The hub's events
 
@@ -185,7 +182,7 @@ package final class HubDragOut {
     /// The guest's offer of `token` ended.
     func offerEnded(_ token: Data) {
         if offer?.token == token { offer = nil }
-        takes[token]?.offerEnded()
+        for live in takes where live.token == token { live.take.offerEnded() }
     }
 
     /// Pull `id` ended as `result`.

@@ -408,6 +408,21 @@ struct HubDragOutTests {
         #expect(hub.state.withLock { $0.releases.map(\.token) }.contains(token))
     }
 
+    @Test("a take of a token the guest offers again leaves the earlier take of it visible to termination")
+    func reusedTokenKeepsBothTakes() async throws {
+        let earlier = try await droppedTake()
+        var retired = false
+        earlier.whenRetired { retired = true }
+        offer()
+        let newer = try takeOffer()
+
+        dragOut.endForTermination()
+
+        #expect(retired, "termination missed the earlier take of the reused token")
+        #expect(newer.phase == .abandoned)
+        #expect(hub.state.withLock { $0.releases.map(\.token) } == [token, token])
+    }
+
     @Test("a console move before the guest answers hands the press back")
     func consoleMoveMidHandOff() async throws {
         offer()
