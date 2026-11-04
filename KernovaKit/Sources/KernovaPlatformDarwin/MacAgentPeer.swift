@@ -115,11 +115,6 @@ public final class MacAgentPeer: Sendable {
         runtime.setPeerState(state)
     }
 
-    /// The guest now holds a GUI login session, or holds none.
-    public func setGUILogin(exists: Bool) {
-        power.guiLoginChanged(exists: exists)
-    }
-
     /// Closes the connection with `SHUTTING_DOWN`, then exits with `status`; once, whoever asks first.
     public func exit(status: Int32) {
         guard

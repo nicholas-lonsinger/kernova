@@ -20,10 +20,9 @@ struct MacPowerTests {
         private let queue = DispatchQueue(label: "test.power")
         private let callQueue = DispatchQueue(label: "test.power.call")
 
-        init(_ mechanism: MacPowerMechanism, console: ConsoleState? = nil, guiLoginExists: Bool? = nil) {
+        init(_ mechanism: MacPowerMechanism, console: ConsoleState? = nil) {
             adapter = MacPowerAdapter(mechanism, queue: queue, callQueue: callQueue)
             if let console { adapter.consoleChanged(console) }
-            if let guiLoginExists { adapter.guiLoginChanged(exists: guiLoginExists) }
             adapter.start(reporter: PowerReporter { [reports] input in reports.withLock { $0.append(input) } })
             settle()
         }
@@ -33,12 +32,6 @@ struct MacPowerTests {
             queue.sync {}
             callQueue.sync {}
             queue.sync {}
-        }
-
-        /// Gives the adapter `sessions`.
-        func set(_ sessions: MacSessions) {
-            adapter.consoleChanged(sessions.console)
-            if let exists = sessions.guiLoginExists { adapter.guiLoginChanged(exists: exists) }
         }
 
         /// The reports made so far and not yet taken, without waiting for anything queued.
@@ -79,49 +72,33 @@ struct MacPowerTests {
 
     // MARK: - Adverts
 
-    /// The sessions each adapter offers shutdown and restart in, and others it offers them in none of.
-    static let adverts: [(mechanism: MacPowerMechanism, offered: MacSessions, elsewhere: [MacSessions])] = [
-        (
-            .loginWindow(send: { _ in noErr }), MacSessions(console: .on),
-            [MacSessions(console: .off), MacSessions(console: .unknown)]
-        ),
-        (
-            .shutdownCommand(run: { _ in 0 }), MacSessions(console: .off, guiLoginExists: false),
-            [
-                // A user at the console.
-                MacSessions(console: .unknown, guiLoginExists: true),
-                // The login window, with a Fast User Switching session behind it.
-                MacSessions(console: .off, guiLoginExists: true),
-                MacSessions(console: .on, guiLoginExists: false),
-            ]
-        ),
-    ]
-
     @Test(
-        "Each adapter offers shutdown and restart only in its sessions: the session peer's console, and for the system peer no GUI login session at all; the system peer offers shutdown without waiting for apps everywhere",
-        arguments: adverts.indices)
-    func advertFollowsSessions(row: Int) {
-        let (mechanism, offeredIn, elsewhere) = Self.adverts[row]
-        let ignoringApps = mechanism.ignoringApps?.actions ?? []
+        "Each adapter offers shutdown and restart only in its console state: the session peer's on, the system peer's off; the system peer offers shutdown without waiting for apps in every state",
+        arguments: [
+            (MacPowerMechanism.loginWindow(send: { _ in noErr }), ConsoleState.on, true, [PowerAction]()),
+            (MacPowerMechanism.shutdownCommand(run: { _ in 0 }), ConsoleState.off, false, [.shutdown]),
+        ])
+    func advertFollowsConsole(
+        mechanism: MacPowerMechanism, offeredWhile: ConsoleState, asksAppsToQuit: Bool, ignoringApps: [PowerAction]
+    ) {
         let harness = Harness(mechanism)
-        let absent: Availability<PowerOffer> =
+        let elsewhere: Availability<PowerOffer> =
             ignoringApps.isEmpty
             ? .absent(.notOnConsole, debugDetail: mechanism.absentDetail)
-            : .available(PowerOffer(actions: [], asksAppsToQuit: mechanism.asksAppsToQuit, ignoringApps: ignoringApps))
+            : .available(PowerOffer(actions: [], asksAppsToQuit: asksAppsToQuit, ignoringApps: ignoringApps))
         let offered = Availability.available(
-            PowerOffer(
-                actions: [.shutdown, .restart], asksAppsToQuit: mechanism.asksAppsToQuit, ignoringApps: ignoringApps))
-        #expect(harness.take() == [.availability(absent)])
+            PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: asksAppsToQuit, ignoringApps: ignoringApps))
+        #expect(harness.take() == [.availability(elsewhere)])
 
-        harness.set(offeredIn)
+        harness.adapter.consoleChanged(offeredWhile)
         #expect(harness.take() == [.availability(offered)])
-        harness.set(offeredIn)
+        harness.adapter.consoleChanged(offeredWhile)
         #expect(harness.take() == [])
 
-        for other in elsewhere {
-            harness.set(other)
-            #expect(harness.take() == [.availability(absent)], "\(other)")
-            harness.set(offeredIn)
+        for other in [ConsoleState.on, .off, .unknown] where other != offeredWhile {
+            harness.adapter.consoleChanged(other)
+            #expect(harness.take() == [.availability(elsewhere)], "\(other)")
+            harness.adapter.consoleChanged(offeredWhile)
             #expect(harness.take() == [.availability(offered)], "\(other)")
         }
     }
@@ -174,7 +151,7 @@ struct MacPowerTests {
             seenAtStart.withLock { $0 = harness.withLock { $0 }?.reported }
             return status
         })
-        let built = Harness(mechanism, console: .off, guiLoginExists: false)
+        let built = Harness(mechanism, console: .off)
         harness.withLock { $0 = built }
         _ = built.take()
 
@@ -192,7 +169,7 @@ struct MacPowerTests {
                 running.signal()
                 release.wait()
                 return 0
-            }), console: .off, guiLoginExists: false)
+            }), console: .off)
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
@@ -202,13 +179,11 @@ struct MacPowerTests {
         #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
     }
 
-    @Test(
-        "A request outside the offered sessions is refused NOT_ON_CONSOLE without a call: the system peer's with a user at the console, or at the login window with a session behind it",
-        arguments: [ConsoleState.unknown, .off])
-    func requestOffConsoleRefused(console: ConsoleState) {
+    @Test("A request outside the offered console state is refused NOT_ON_CONSOLE without a call")
+    func requestOffConsoleRefused() {
         let calls = Locked<[PowerAction]>([])
         let mechanism = Self.mechanism(.shutdownCommand(), answering: .tookIt, calls: calls)
-        let harness = Harness(mechanism, console: console, guiLoginExists: true)
+        let harness = Harness(mechanism, console: .unknown)
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
@@ -271,7 +246,7 @@ struct MacPowerTests {
         let calling = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
         let mechanism = MacPowerMechanism(
-            offeredWhile: .ownsConsole, asksAppsToQuit: true, absentDetail: "",
+            offeredWhile: .on, asksAppsToQuit: true, absentDetail: "",
             call: .answering { _ in
                 calling.signal()
                 release.wait()
