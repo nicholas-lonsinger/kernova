@@ -367,7 +367,8 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
             let reason = String(describing: error)
             if atExactPath {
                 let path = String(decoding: stagingName, as: UTF8.self)
-                logger.log(.error, "Could not remove the item at \(path, privacy: .private): \(reason, privacy: .public)")
+                logger.log(
+                    .error, "Could not remove the item at \(path, privacy: .private): \(reason, privacy: .public)")
             } else {
                 let name = String(decoding: stagingName, as: UTF8.self)
                 logger.log(
