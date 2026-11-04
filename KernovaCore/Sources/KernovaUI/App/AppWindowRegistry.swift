@@ -6,7 +6,7 @@ import KernovaLogging
 /// on screen.
 ///
 /// Every window a person can see belongs here — the library, Settings, the
-/// config check, the per-VM clipboard and guest-agent status windows, and the
+/// config check, the per-VM guest-agent status windows, and the
 /// display windows
 /// ``VMDisplayPlacementController`` places — so the presence question has a
 /// single answer rather than one per owner.
@@ -28,7 +28,6 @@ final class AppWindowRegistry {
     let presence: any AppPresence
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
-    private var clipboardWindows: [UUID: ClipboardWindowController] = [:]
     private var guestAgentStatusWindows: [UUID: GuestAgentStatusWindowController] = [:]
 
     /// Reports that this registry put a window on screen — an event no
@@ -177,33 +176,6 @@ final class AppWindowRegistry {
         }
     }
 
-    // MARK: - Clipboard
-
-    /// Shows or focuses the clipboard window for `instance`, when the VM's state
-    /// admits one.
-    func showClipboard(for instance: VMInstance) {
-        guard viewModel.capabilities.accepts(.showClipboard, on: instance) else { return }
-        residency?.prepareToPresentWindow()
-
-        let vmID = instance.instanceID
-        if let existing = clipboardWindows[vmID] {
-            existing.window?.makeKeyAndOrderFront(nil)
-            shown(existing.window)
-            return
-        }
-
-        let controller = ClipboardWindowController(
-            instance: instance, viewModel: viewModel, stage: stage)
-        controller.onWillClose = { [weak self] in
-            self?.clipboardWindows.removeValue(forKey: vmID)
-        }
-        clipboardWindows[vmID] = controller
-        controller.showWindow(nil)
-        shown(controller.window)
-    }
-
-    func clipboardWindow(for vmID: UUID) -> NSWindow? { clipboardWindows[vmID]?.window }
-
     // MARK: - Guest Agent Status
 
     /// Shows or focuses the guest-agent status window for `instance`, when the
@@ -232,7 +204,7 @@ final class AppWindowRegistry {
 
     // MARK: - Working Window
 
-    /// The VM `window` shows: a display, clipboard or guest-agent status
+    /// The VM `window` shows: a display or guest-agent status
     /// window's own VM, or the library's selection while the library window is
     /// visible; `nil` for any other window. A sheet answers for the window it
     /// is attached to.
@@ -243,7 +215,7 @@ final class AppWindowRegistry {
         return viewModel.selectedInstance
     }
 
-    /// The VMs `window` can act on: a display, clipboard or guest-agent status
+    /// The VMs `window` can act on: a display or guest-agent status
     /// window's own VM, or every VM the library lists while the library window
     /// is visible — its sidebar acts on any of them, not only the selection. A
     /// sheet answers for the window it is attached to.
@@ -254,10 +226,9 @@ final class AppWindowRegistry {
         return Set(viewModel.instances.map(\.id))
     }
 
-    /// The VM a display, clipboard or guest-agent status window belongs to.
+    /// The VM a display or guest-agent status window belongs to.
     private func ownInstance(of window: NSWindow) -> VMInstance? {
         displayPlacement.instance(forDisplayWindow: window)
-            ?? clipboardWindows.values.first { $0.window === window }?.instance
             ?? guestAgentStatusWindows.values.first { $0.window === window }?.instance
     }
 
@@ -305,7 +276,6 @@ final class AppWindowRegistry {
         }
         if isPresent(libraryWindow) { return true }
         if displayPlacement.hasWindow(where: { isPresent($0) }) { return true }
-        if clipboardWindows.values.contains(where: { isPresent($0.window) }) { return true }
         if guestAgentStatusWindows.values.contains(where: { isPresent($0.window) }) { return true }
         if isPresent(settingsWindow) { return true }
         if isPresent(configCheckWindow) { return true }
@@ -351,7 +321,6 @@ final class AppWindowRegistry {
     /// mutates them.
     func closeAll() {
         displayPlacement.closeAllForAppDismissal()
-        for controller in Array(clipboardWindows.values) { controller.window?.close() }
         for controller in Array(guestAgentStatusWindows.values) { controller.window?.close() }
         settingsWindow?.close()
         configCheckWindow?.close()

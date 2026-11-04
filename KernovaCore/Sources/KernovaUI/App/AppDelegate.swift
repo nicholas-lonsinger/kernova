@@ -446,11 +446,6 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         viewModel.showVMInFinder(instance)
     }
 
-    @objc func showClipboard(_ sender: Any?) {
-        guard let instance = activeInstance else { return }
-        windows.showClipboard(for: instance)
-    }
-
     @objc func showGuestAgentStatus(_ sender: Any?) {
         guard let instance = activeInstance else { return }
         windows.showGuestAgentStatus(for: instance)

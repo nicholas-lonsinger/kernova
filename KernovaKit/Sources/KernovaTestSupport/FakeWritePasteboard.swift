@@ -14,11 +14,12 @@ import KernovaSynchronization
 /// until the lazy pull behind the promise resolves, so it runs off the test's
 /// main actor while the setup and assertions run on it.
 public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
-    /// One promised pasteboard item: the types it offers and the provider
-    /// serving them.
+    /// One written pasteboard item: the data written now, the types it
+    /// promises and the provider serving them.
     private struct PromisedItem: Sendable {
+        let data: [NSPasteboard.PasteboardType: Data]
         let types: [NSPasteboard.PasteboardType]
-        let provider: any NSPasteboardItemDataProvider & Sendable
+        let provider: (any NSPasteboardItemDataProvider & Sendable)?
     }
 
     private struct State: Sendable {
@@ -34,7 +35,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         /// were serving it.
         mutating func takeItems() -> [any NSPasteboardItemDataProvider & Sendable] {
             defer { items.removeAll() }
-            return items.map(\.provider)
+            return items.compactMap(\.provider)
         }
     }
 
@@ -80,6 +81,11 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         state.withLock { $0.items.map(\.types) }
     }
 
+    /// The data each item was written with, in item order.
+    public var dataByItem: [[NSPasteboard.PasteboardType: Data]] {
+        state.withLock { $0.items.map(\.data) }
+    }
+
     /// How many promised items the last successful write registered.
     public var promisedItemCount: Int { state.withLock { $0.items.count } }
 
@@ -108,11 +114,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
 
     /// Records one promise per entry, unless a failure was armed.
     @discardableResult
-    public func writeItems(
-        _ entries: [(
-            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-        )]
-    ) -> Bool {
+    public func writeItems(_ entries: [ClipboardWriteItem]) -> Bool {
         let (written, displaced) = state.withLock {
             state -> (Bool, [any NSPasteboardItemDataProvider & Sendable]) in
             state.writeAttempts += 1
@@ -121,7 +123,11 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
                 return (false, [])
             }
             let displaced = state.takeItems()
-            state.items = entries.map { PromisedItem(types: $0.types, provider: $0.provider) }
+            state.items = entries.map { entry in
+                PromisedItem(
+                    data: Dictionary(entry.data.map { ($0.type, $0.bytes) }, uniquingKeysWith: { first, _ in first }),
+                    types: entry.promised, provider: entry.provider)
+            }
             return (true, displaced)
         }
         finish(displaced)
@@ -176,7 +182,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
                 let item = state.items.indices.contains(itemIndex) ? state.items[itemIndex] : nil
                 provider = item.flatMap { $0.types.contains(type) ? $0.provider : nil }
             } else {
-                provider = state.items.first { $0.types.contains(type) }?.provider
+                provider = state.items.first { $0.types.contains(type) && $0.provider != nil }?.provider
             }
             if provider != nil { state.providerInvocations += 1 }
             return provider

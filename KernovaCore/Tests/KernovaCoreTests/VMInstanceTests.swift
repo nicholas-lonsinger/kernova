@@ -884,7 +884,7 @@ struct VMInstanceTests {
     }
 
     @Test(
-        "A session's agent status ignores a SPICE agent, which only the Clipboard window's line reads",
+        "A session's agent status ignores a SPICE agent",
         arguments: VMGuestOS.allCases)
     func agentPresentationIgnoresSpice(guestOS: VMGuestOS) {
         let instance = VMInstanceFixture.make(guestOS: guestOS)
@@ -894,7 +894,6 @@ struct VMInstanceTests {
         context.hasAgentTransport = true
         #expect(instance.agentPresentation == GuestAgentPresentation(hub: .empty))
         #expect(instance.agentPresentation?.status == .waiting)
-        #expect(instance.clipboardChannelStatus == spice.agentStatus)
     }
 
     // MARK: - An operation's ending

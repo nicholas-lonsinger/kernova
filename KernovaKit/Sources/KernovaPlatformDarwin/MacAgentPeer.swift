@@ -262,6 +262,11 @@ public final class PeerItemCalls: Sendable {
         bound?.releaseOffer(token)
     }
 
+    /// ``PeerAgentRuntime/refuseOffer(_:_:)``.
+    public func refuseOffer(_ token: Data, _ error: WireError) {
+        bound?.refuseOffer(token, error)
+    }
+
     /// ``PeerAgentRuntime/pullItem(_:_:)``.
     public func pullItem(
         _ order: ItemPullOrder, _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void

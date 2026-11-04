@@ -2,14 +2,13 @@ import Foundation
 import KernovaKit
 import KernovaLogging
 
-/// Drives automatic clipboard passthrough for one VM, whether or not its
-/// clipboard window is open: it polls the host pasteboard and offers copies
-/// made while the guest is connected, read as metadata only, and writes inbound
-/// guest offers straight to the host pasteboard.
+/// Drives automatic clipboard passthrough for one VM: it polls the host
+/// pasteboard and offers copies made while the guest is connected, read as
+/// metadata only, and writes inbound guest offers straight to the host
+/// pasteboard.
 ///
-/// Inbound offers go through the publisher the clipboard window's Copy to Mac
-/// uses. Echo suppression is change-count based: a content digest can't be the
-/// key, since an inbound write places lazy promised items whose digest need not
+/// Echo suppression is change-count based: a content digest can't be the key,
+/// since an inbound write places lazy promised items whose digest need not
 /// match the offer's.
 @MainActor
 final class ClipboardPassthroughCoordinator {
@@ -17,11 +16,9 @@ final class ClipboardPassthroughCoordinator {
     /// owns the coordinator.
     private weak var instance: VMInstance?
 
-    /// The shared per-VM host-pasteboard writer, also used by the clipboard
-    /// window's "Copy to Mac".
-    ///
-    /// Sharing it is what lets the poll recognize a manual copy's write (via
-    /// `lastWriteChangeCount`) and not re-forward it.
+    /// The per-VM host-pasteboard writer, shared with the VM's clipboard
+    /// commands, so the poll recognizes every write it makes (via
+    /// `lastWriteChangeCount`) and never forwards one.
     private let publisher: HostClipboardPublisher
 
     /// The pasteboard polled for outbound changes and written for inbound
@@ -95,7 +92,7 @@ final class ClipboardPassthroughCoordinator {
     private var inboundPublishTask: Task<Void, Never>?
 
     /// The inbound-offer sequence already published to the host pasteboard, so a
-    /// re-observation (or per-rep materialization) doesn't re-publish.
+    /// re-observation doesn't re-publish.
     private var lastInboundOfferSeq: UInt64 = 0
 
     /// The offer whose files the paste ceiling withheld.
@@ -110,12 +107,7 @@ final class ClipboardPassthroughCoordinator {
     ///
     /// Cleared by any publish that drops nothing, so only a live refusal is ever
     /// replayed.
-    ///
-    /// `digest` pins the buffer's *contents*, which the sequence alone does not:
-    /// an outbound poll writes the host clipboard into the same buffer without
-    /// advancing the inbound sequence, so a replay keyed on the sequence could
-    /// publish content the refusal was never about.
-    private var budgetRefusedOffer: (seq: UInt64, ceiling: Int, pasteboardChangeCount: Int, digest: Data)?
+    private var budgetRefusedOffer: (seq: UInt64, ceiling: Int, pasteboardChangeCount: Int)?
 
     private var isRunning = false
 
@@ -343,8 +335,8 @@ final class ClipboardPassthroughCoordinator {
     /// Raises a loss the user is owed — a partial copy's lost items, or a copy
     /// none of whose items could be read — as a finished forward.
     ///
-    /// The window shows these inline for its own paste/drop gestures; this poll
-    /// has no gesture to answer, so the report is the only surface they get.
+    /// This poll has no gesture to answer, so the report is the only surface
+    /// they get.
     private func reportUnforwarded(_ failure: ClipboardTransferFailure) {
         let name = instance?.name ?? "?"
         Self.logger.log(
@@ -393,7 +385,7 @@ final class ClipboardPassthroughCoordinator {
             }
             self.budgetRefusedOffer =
                 outcome.droppedReasons.contains(.overPasteBudget)
-                ? (seq, ceiling, self.pasteboard.changeCount, service.clipboardContent.digest)
+                ? (seq, ceiling, self.pasteboard.changeCount)
                 : nil
             #if DEBUG
             self.onInboundPublishedForTesting?()
@@ -418,7 +410,6 @@ final class ClipboardPassthroughCoordinator {
         guard isRunning, let refused = budgetRefusedOffer,
             let instance, let service = instance.clipboardService,
             service.inboundOfferSeq == refused.seq,
-            service.clipboardContent.digest == refused.digest,
             instance.effectiveClipboardMaxPasteBytes > refused.ceiling,
             pasteboard.changeCount == refused.pasteboardChangeCount
         else { return }

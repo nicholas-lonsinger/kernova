@@ -60,10 +60,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 shutDownAnywayID: NSToolbarItem.Identifier("displayShutDownAnyway"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("displayTakeSnapshot"),
-                // Targets this window's VM: the nil-target showClipboard action
-                // resolves through `MainMenuController.activeInstance`, which
-                // answers the key display window's VM.
-                clipboardID: NSToolbarItem.Identifier("displayClipboard"),
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,

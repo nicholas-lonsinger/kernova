@@ -106,6 +106,8 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var opened: [ItemPullID: Opened] = [:]
         /// What every FILE and FOLDER pull of the offer lands against, from the first of them.
         var budget: ByteBudget?
+        /// Why each representation's last pull failed, when its end said.
+        var failures: [Key: WireError] = [:]
         var nextAttempt: UInt64 = 0
         /// No more pulls: released, or the far side ended the offer.
         var closed = false
@@ -143,14 +145,39 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         ask(Key(item: item, representation: representation), ceiling: nil) { completion($0?.url) }
     }
 
-    /// The bytes of INLINE representation `representation` of item `item`, pulled no larger than `byteCeiling`:
-    /// what a bounded preview reads. Nil when the pull failed or the representation is larger.
-    public func previewBytes(item: Int, representation: Int, byteCeiling: UInt64) async -> Data? {
-        await withCheckedContinuation { continuation in
-            ask(Key(item: item, representation: representation), ceiling: byteCeiling) {
-                continuation.resume(returning: $0?.bytes)
+    /// Pulls every kept INLINE representation now, all at once, and waits for each: nil once all landed, or
+    /// the error the first to fail ended with. What a copy is written from.
+    public func landInline() async -> WireError? {
+        var keys: [Key] = []
+        for (item, offered) in items.enumerated() {
+            for (index, representation) in offered.representations.enumerated()
+            where representation.storage == .inline && ClipboardPromisePolicy.keeps(representation) {
+                keys.append(Key(item: item, representation: index))
             }
         }
+        return await withTaskGroup(of: WireError?.self) { group in
+            for key in keys { group.addTask { await self.land(key) } }
+            for await error in group {
+                guard let error else { continue }
+                group.cancelAll()
+                return error
+            }
+            return nil
+        }
+    }
+
+    /// The bytes INLINE representation `representation` of item `item` landed with; nil until it landed.
+    public func landedBytes(item: Int, representation: Int) -> Data? {
+        state.withLock { $0.landed[Key(item: item, representation: representation)] }?.content.bytes
+    }
+
+    private func land(_ key: Key) async -> WireError? {
+        let content = await withCheckedContinuation { continuation in
+            ask(key, ceiling: ceiling()) { continuation.resume(returning: $0) }
+        }
+        if case .some = content { return nil }
+        return state.withLock { $0.failures[key] }
+            ?? WireError(.readFailed, debugDetail: "the representation did not land")
     }
 
     // MARK: Lifecycle
@@ -312,6 +339,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         let (failing, retry) = state.withLock { state -> ([Ask], (attempt: UInt64, ceiling: UInt64)?) in
             guard let pulling = state.pulling[key], pulling.attempt == attempt else { return ([], nil) }
             state.pulling[key] = nil
+            state.failures[key] = error
             guard error?.code == .tooLarge, !state.closed, let refused = pulling.ceiling else {
                 return (pulling.asks, nil)
             }

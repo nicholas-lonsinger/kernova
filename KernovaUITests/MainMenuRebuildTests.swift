@@ -231,25 +231,6 @@ struct MainMenuRebuildTests {
         #expect(revertMenu.items.first?.title.hasPrefix("Clean\u{2026}") == true)
     }
 
-    // MARK: - Window menu
-
-    @Test("The clipboard item follows the active VM's clipboard availability")
-    func clipboardItemFollowsActiveInstance() throws {
-        let fixture = makeFixture()
-        makeMenuInstance(in: fixture.viewModel, guestOS: .linux, phase: .running(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-        }
-        let windowMenu = try #require(submenu(titled: "Window", in: fixture.mainMenu))
-        let clipboardItem = try #require(windowMenu.items.first { $0.title == "Clipboard" })
-
-        fixture.update(windowMenu)
-        #expect(clipboardItem.isEnabled)
-
-        fixture.viewModel.library.selection = nil
-        fixture.update(windowMenu)
-        #expect(!clipboardItem.isEnabled)
-    }
-
     private func revertSubmenu(in mainMenu: NSMenu) -> NSMenu? {
         submenu(titled: "Virtual Machine", in: mainMenu)?
             .items.first { $0.title == SnapshotRevertMenu.title }?.submenu

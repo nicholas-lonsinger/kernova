@@ -152,7 +152,7 @@ struct ClipboardItemBridgeTests {
         #expect(
             publisher.publish(
                 source.items, concealed: source.concealed, servingFileURLs: servingFileURLs,
-                puller: OfferPuller(source: source, landing: landing)))
+                puller: OfferPuller(source: source, landing: landing), servingOffer: Data(repeating: 1, count: 16)))
         return Published(destination: destination, registry: registry, landing: landing)
     }
 
@@ -656,7 +656,7 @@ struct ClipboardItemBridgeTests {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
         ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
-            .publish([item], concealed: false, puller: FixedPuller(bytes: bytes))
+            .publish([item], concealed: false, puller: FixedPuller(bytes: bytes), servingOffer: Data(repeating: 1, count: 16))
         return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
     }
 
@@ -765,30 +765,5 @@ struct ClipboardItemBridgeTests {
 
         #expect(specs.first?.provide(ClipboardContent.utf8TextUTI) == nil)
         #expect(puller.starts.withLock { $0 } == 0)
-    }
-
-    // MARK: - Content
-
-    @Test("held content offers its text inline and its files by name, and previews as pending metadata")
-    func contentOffersAndPreviews() async throws {
-        let file = try directory("held").appendingPathComponent("photo.png")
-        try pngBytes.write(to: file)
-        let content = ClipboardContent(
-            representations: [
-                .init(uti: ClipboardContent.utf8TextUTI, data: Data("caption".utf8)),
-                .init(uti: "public.png", fileURL: file, byteCount: pngBytes.count, filename: "photo.png"),
-            ], isConcealed: true)
-
-        let source = ClipboardOfferSource(content: content)
-        #expect(source.concealed)
-        #expect(source.items.map { $0.representations.map(\.storage) } == [[.inline], [.file, .inline]])
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("caption".utf8)))
-        #expect(try await source.serve(item: 1, representation: 1) == .bytes(pngBytes))
-
-        let preview = ClipboardContent(previewOf: source.items, concealed: source.concealed)
-        #expect(preview.isConcealed)
-        #expect(preview.representations.map(\.filename) == ["", "photo.png"])
-        #expect(preview.representations.allSatisfy { $0.isPendingRemote })
-        #expect(preview.representations.last?.byteCount == pngBytes.count)
     }
 }

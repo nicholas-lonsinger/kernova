@@ -69,6 +69,35 @@ extension ClipboardPasteboardReader {
         }
     }
 
+    /// What a pasteboard holds as a snapshot.
+    public enum SnapshotOutcome {
+        /// The pasteboard holds no item, or a marker suppressed it, or none of its items is offerable: nothing
+        /// to copy.
+        case nothing
+        /// The snapshot (``ClipboardOfferSource/snapshot()``), with `lost` counting the items it leaves out.
+        case snapshot(ClipboardOfferSource, lost: Int)
+        /// The pasteboard changed while it was read.
+        case changed
+    }
+
+    /// Reads `pasteboard` as ``readOffer(from:promises:promiseDestination:sizeOf:)`` does, then as a snapshot of
+    /// it now: every representation that is not a file or folder read whole, so nothing the pasteboard holds
+    /// later reaches it.
+    public static func readSnapshot(
+        from pasteboard: any ClipboardReadPasteboard,
+        promises: [any FilePromiseReceiving] = [],
+        promiseDestination: @escaping @MainActor () throws -> URL = { throw ClipboardServeError.unavailable },
+        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
+    ) async -> SnapshotOutcome {
+        let read = await readOffer(
+            from: pasteboard, promises: promises, promiseDestination: promiseDestination, sizeOf: sizeOf)
+        guard case .offer(let source, let lost) = read else { return .nothing }
+        guard let snapshot = await source.snapshot() else {
+            return pasteboard.changeCount == source.changeCount ? .nothing : .changed
+        }
+        return .snapshot(snapshot, lost: lost)
+    }
+
     /// Reads what a drop of `pasteboard` offers: one item per file or folder a pasteboard item names on disk,
     /// and one per file a pasteboard item's file promise names, each a single FILE or FOLDER representation,
     /// reading no content.

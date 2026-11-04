@@ -49,7 +49,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
                 shutDownAnywayID: NSToolbarItem.Identifier("shutDownAnyway"),
                 saveStateID: NSToolbarItem.Identifier("saveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("takeSnapshot"),
-                clipboardID: NSToolbarItem.Identifier("clipboard"),
                 popOutID: NSToolbarItem.Identifier("popOut"),
                 fullscreenID: NSToolbarItem.Identifier("fullscreen"),
                 settingsToggleID: NSToolbarItem.Identifier("settingsToggle"),

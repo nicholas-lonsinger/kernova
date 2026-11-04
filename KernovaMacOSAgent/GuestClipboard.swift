@@ -68,10 +68,9 @@ final class GuestClipboard {
         exchange.onRemoteOfferEnded = { [weak self] remote, ending in
             switch ending {
             case .byFarSide, .linkLost: self?.retract(remote)
-            case .superseded, .cleared: if self?.published === remote { self?.published = nil }
+            case .superseded: if self?.published === remote { self?.published = nil }
             }
         }
-        exchange.onCleared = { [weak self] in self?.clearForHost() }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
         exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
@@ -215,7 +214,8 @@ final class GuestClipboard {
         let ceiling = pasteCeilingBytes
         let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
         let written = publisher.publish(
-            remote.items, concealed: remote.concealed, servingFileURLs: !budget.exceeds, puller: remote)
+            remote.items, concealed: remote.concealed, servingFileURLs: !budget.exceeds, puller: remote,
+            servingOffer: remote.token)
         if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
             Self.logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
@@ -246,21 +246,13 @@ final class GuestClipboard {
         onNotice()
     }
 
-    /// The host cleared the clipboard: the guest pasteboard is emptied, as this agent's own write.
-    private func clearForHost() {
-        published = nil
-        publisher.clear()
-        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
-        activity = .enabled
-    }
-
     /// The host's offer ended — its clipboard moved on, or the connection carrying it left: a promise still
     /// standing for it could serve only what already landed, so it is withdrawn, unless a copy has replaced it
     /// since. The host's next connection offers what it holds then.
     private func retract(_ remote: ClipboardRemoteOffer) {
         guard published === remote else { return }
         published = nil
-        guard publisher.retractPromisedWrite() else { return }
+        guard publisher.retractWrite(servingOffer: remote.token) else { return }
         // The clear moved the pasteboard on; the poll must not read that as a copy.
         seenChangeCount = pasteboard.changeCount
     }
@@ -282,6 +274,7 @@ struct AgentClipboardLink: ClipboardItemLink {
 
     func withdrawOffer(_ token: Data) { calls.withdrawOffer(token) }
     func releaseOffer(_ token: Data) { calls.releaseOffer(token) }
+    func refuseOffer(_ token: Data, _ error: WireError) { calls.refuseOffer(token, error) }
 
     func readItem(_ token: Data, item: UInt32, _ completion: @escaping @Sendable (OfferedItem?) -> Void) {
         calls.readItem(token, item: item, completion)

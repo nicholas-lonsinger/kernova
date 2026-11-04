@@ -116,8 +116,8 @@ package final class VMInstance {
 
     /// The clipboard service ``clipboardRoute`` names: ``hubClipboard`` while
     /// a console peer carries CLIPBOARD, the session's SPICE service otherwise,
-    /// and nil with neither. One existential, so no window controller branches
-    /// on transport.
+    /// and nil with neither. One existential, so no surface branches on
+    /// transport.
     package var clipboardService: (any ClipboardServicing)? {
         switch clipboardRoute {
         case .hub: hubClipboard
@@ -148,11 +148,8 @@ package final class VMInstance {
         spice.carriesClipboard = carries
     }
 
-    /// Host-pasteboard writer shared by the clipboard window's "Copy to Mac" and
-    /// the passthrough coordinator.
-    ///
-    /// One per VM so echo suppression sees both writers — the coordinator's poll
-    /// skips whatever change count this publisher last produced.
+    /// The one host-pasteboard writer for this VM's clipboard, so passthrough's
+    /// poll skips whatever change count it last produced.
     @ObservationIgnored package let hostClipboardPublisher: HostClipboardPublisher
 
     /// Where this VM's clipboard and drop producers publish, and the owner of the
@@ -299,15 +296,6 @@ package final class VMInstance {
     /// session attached the agent hub a transport. Admission, and through
     /// ``agentPresentation`` every surface, decide the installer disk from it.
     var reachesGuestAgent: Bool { sessionContext?.hasAgentTransport ?? false }
-
-    /// The status of whatever carries the Clipboard window's clipboard: the
-    /// SPICE agent's own while it does, and the guest agent's otherwise.
-    package var clipboardChannelStatus: AgentStatus? {
-        if clipboardRoute == .spice, let spice = sessionContext?.clipboardService as? SpiceClipboardService {
-            return spice.agentStatus
-        }
-        return agentPresentation?.status
-    }
 
     // MARK: - Agent Hub
 
@@ -523,8 +511,7 @@ package final class VMInstance {
         hubClipboard.hub = agentHub
         hubClipboard.reporter = clipboardTransfers
         hubClipboard.label = { [weak self] in self?.name ?? "VM" }
-        hubClipboard.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
-        hubClipboard.retractStaleHostWrite = { publisher.retractPromisedWrite() }
+        hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0) }
         hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
         hubClipboard.passthroughRuns = { [weak self] in
             self?.sessionContext?.clipboardPassthroughCoordinator != nil

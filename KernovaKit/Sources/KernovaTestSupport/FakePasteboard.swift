@@ -44,7 +44,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         let promised = writer.promisedTypesByItem
         guard promised.isEmpty else {
             let bytes = state.withLock { $0.resolved }
-            return promised.map { FakePasteboardItem(types: $0, bytes: bytes) }
+            return zip(promised, writer.dataByItem).map { types, data in
+                FakePasteboardItem(
+                    types: Array(data.keys) + types, bytes: bytes.merging(data, uniquingKeysWith: { _, written in written }))
+            }
         }
         let state = self.state
         return state.withLock { $0.residents }.map { representations in
@@ -84,6 +87,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// until the first promise write.
     public var lastPrepareOptions: NSPasteboard.ContentsOptions? { writer.lastPrepareOptions }
 
+    /// The data each written item holds now, in item order — what a write
+    /// placed as real data rather than promised.
+    public var dataByItem: [[NSPasteboard.PasteboardType: Data]] { writer.dataByItem }
+
     /// How many promised providers have been fired, for a test proving a
     /// poll fired none.
     public var providerInvocations: Int { writer.providerInvocations }
@@ -117,11 +124,7 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
 
     /// Registers one lazy promise per item, recording no bytes.
     @discardableResult
-    public func writeItems(
-        _ items: [(
-            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-        )]
-    ) -> Bool {
+    public func writeItems(_ items: [ClipboardWriteItem]) -> Bool {
         let written = writer.writeItems(items)
         if written { clearResidents() }
         return written
@@ -181,6 +184,13 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     @discardableResult
     public func setText(_ text: String) -> Bool {
         setString(text, forType: .string)
+    }
+
+    /// Replaces the resident item with `data` as its one representation, of type `uti`, for a test target that
+    /// does not import AppKit.
+    @discardableResult
+    public func setData(_ data: Data, forTypeIdentifier uti: String) -> Bool {
+        setItem([(type: NSPasteboard.PasteboardType(uti), data: data)])
     }
 
     private func clearResidents() {

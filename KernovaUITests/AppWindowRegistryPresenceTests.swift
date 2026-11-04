@@ -30,14 +30,6 @@ struct AppWindowRegistryPresenceTests {
         makeWindowRegistry(makeLibraryViewModel(preferences: preferences), presence: presence)
     }
 
-    /// A VM the clipboard window opens for: sharing on, and a live session, which
-    /// is what `accepts(.showClipboard, on:)` asks for.
-    private func makeClipboardEligibleInstance() -> VMInstance {
-        VMInstanceFixture.make(name: "Clipboard VM", phase: .running(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-        }
-    }
-
     @Test("A registry that has shown nothing has no on-screen window")
     func nothingShown() {
         let registry = makeRegistry()
@@ -104,36 +96,5 @@ struct AppWindowRegistryPresenceTests {
         registry.showConfigCheck(.user)
         #expect(window.isVisible)
         #expect(presence.requests == [.activate])
-    }
-
-    @Test("Showing a clipboard window asks residency to prepare, and its close deregisters it")
-    func clipboardWindowDrivesResidency() throws {
-        let registry = makeRegistry()
-        let host = StubResidencyHost()
-        registry.residency = host
-        let instance = makeClipboardEligibleInstance()
-
-        registry.showClipboard(for: instance)
-        let window = try #require(registry.clipboardWindow(for: instance.instanceID))
-
-        #expect(host.prepareCount == 1)
-        #expect(registry.hasTrackedUserWindow)
-
-        // The close is answered by the registry's own deregistration; the
-        // resident app's global `willClose` observer runs the reconcile, since
-        // a clipboard window is titled.
-        window.close()
-
-        #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
-    }
-
-    @Test("A VM whose state refuses the clipboard opens no window")
-    func clipboardRefusedForIneligibleVM() {
-        let registry = makeRegistry()
-        let instance = VMInstanceFixture.make(name: "Stopped VM")
-
-        registry.showClipboard(for: instance)
-
-        #expect(registry.clipboardWindow(for: instance.instanceID) == nil)
     }
 }

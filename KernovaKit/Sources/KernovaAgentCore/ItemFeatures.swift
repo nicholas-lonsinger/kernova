@@ -51,7 +51,8 @@ public enum DragTakeEvent: Sendable, Equatable {
 
 /// CLIPBOARD on one connection: this side's pasteboard offers, on the clipboard offer kind its role opens.
 /// This side keeps at most one open: a new offer withdraws the previous one first, `ITEM_OFFER_REPLACED`, so
-/// the far side knows a newer one follows and a pull of the old one ends `ITEM_OFFER_STALE`.
+/// the far side knows a newer one follows and a pull of the old one ends `ITEM_OFFER_STALE`. A copy
+/// (``ItemOffer/copy``) is not one of them: it withdraws nothing, and nothing but its own end withdraws it.
 public struct ClipboardOffers: FeatureMachine {
     /// CLIPBOARD.
     public static let feature = FeatureID.clipboard
@@ -79,11 +80,12 @@ public struct ClipboardOffers: FeatureMachine {
         }
     }
 
-    /// Withdraws this side's previous clipboard offer, then offers `offer`; nil when opened, or why not.
+    /// Withdraws this side's previous clipboard offer, then offers `offer`; nil when opened, or why not. A copy
+    /// withdraws nothing.
     public func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection)
         -> WireError?
     {
-        for token in items.offers.localTokens(of: Self.feature) {
+        for token in offer.copy ? [] : items.offers.localTokens(of: Self.feature) {
             items.withdraw(token, code: .itemOfferReplaced, connection: &connection)
         }
         let kind: StreamKind = connection.role == .host ? .clipboardOfferByHost : .clipboardOfferByPeer

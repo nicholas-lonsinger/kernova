@@ -68,14 +68,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// to a View menu stay clear of it.
     private var viewMenuSidebarSectionEnd: NSMenuItem?
 
-    /// The Window menu, retained so its opening can set the clipboard item's
-    /// enablement and so the presence check reads this controller's own menu.
+    /// The Window menu, retained so the presence check reads this controller's
+    /// own menu.
     private var windowsMenu: NSMenu?
     /// The Services menu AppKit fills, retained for the `NSApp` handoff.
     private var servicesMenu: NSMenu?
     /// The Help menu, retained for the `NSApp` handoff.
     private var helpMenu: NSMenu?
-    private var clipboardMenuItem: NSMenuItem?
 
     /// Value snapshot of the revert submenu's rendered contents.
     private struct RevertSnapshotMenuModel: Equatable {
@@ -143,12 +142,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// ``menuNeedsUpdate(_:)`` for `menu`, with `workingInstance` as the VM the
     /// working window shows.
     func update(_ menu: NSMenu, workingInstance: VMInstance?) {
-        if menu === windowsMenu {
-            clipboardMenuItem?.isEnabled =
-                workingInstance.map {
-                    viewModel.capabilities.isAvailable(.showClipboard, on: $0)
-                } ?? false
-        } else if menu === viewMenu {
+        if menu === viewMenu {
             rebuildViewMenuSidebarSection()
         } else if menu === appMenu {
             // Re-derive the quit section so a Settings toggle flip is reflected on
@@ -327,11 +321,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         case #selector(AppDelegate.deleteVM(_:)), #selector(AppDelegate.deleteImmediatelyVM(_:)):
             .delete
         case #selector(AppDelegate.showVMInFinder(_:)): .showInFinder
-        // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
-        // menuNeedsUpdate(_:) handles the Clipboard item's visual state. This
-        // entry covers its keyboard shortcut, which still routes through
-        // validateMenuItem(_:).
-        case #selector(AppDelegate.showClipboard(_:)): .showClipboard
         case #selector(AppDelegate.showGuestAgentStatus(_:)): .showGuestAgentStatus
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
         case #selector(AppDelegate.attachUSBAccessory(_:)),
@@ -662,15 +651,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             keyEquivalent: "0"
         )
         windowMenu.addItem(showLibraryItem)
-        windowMenu.addItem(.separator())
-        let clipboardItem = NSMenuItem(
-            title: "Clipboard",
-            action: #selector(AppDelegate.showClipboard(_:)),
-            keyEquivalent: "v"
-        )
-        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
-        clipboardMenuItem = clipboardItem
-        windowMenu.addItem(clipboardItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

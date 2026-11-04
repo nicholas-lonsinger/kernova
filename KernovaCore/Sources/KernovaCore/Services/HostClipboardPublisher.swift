@@ -3,14 +3,12 @@ import KernovaKit
 import KernovaLogging
 import KernovaWire
 
-/// Writes a clipboard service's current content to the host pasteboard,
-/// lazily — the window-independent home of the "Copy to Mac" write-back path.
+/// Writes a VM's clipboard to the host pasteboard: passthrough's write of the
+/// guest's clipboard, lazily.
 ///
-/// The single inbound-publication mechanism: the clipboard window's button and
-/// the automatic passthrough coordinator both publish through the same per-VM
-/// instance. Each item promises its types through a `LazyClipboardDataProvider`,
-/// handed to the app-scoped provider registry on a successful write — a paste
-/// can land long after the window, or the VM, is gone.
+/// Each item promises its types through a `LazyClipboardDataProvider`, handed to
+/// the app-scoped provider registry on a successful write — a paste can land
+/// long after the VM is gone.
 @MainActor
 package final class HostClipboardPublisher {
     /// Label for the host-side clipboard staging root.
@@ -69,7 +67,7 @@ package final class HostClipboardPublisher {
             label: HostClipboardPublisher.stagingLabel, root: stagingRoot)
     }
 
-    /// Builds the service's "Copy to Mac" items and writes them to the host
+    /// Builds the service's guest clipboard items and writes them to the host
     /// pasteboard as lazy promised items, returning the terminal outcome.
     ///
     /// A live guest offer publishes from metadata alone — every promised type's
@@ -87,7 +85,7 @@ package final class HostClipboardPublisher {
         let generation = stagingGeneration
         stagingGeneration += 1
 
-        let copyItems = service.materializeForCopy()
+        let copyItems = service.guestClipboardItems()
         var resolvedReps: [ClipboardContent.Representation] = []
         var offers: [CopyToMacOffer] = []
         var droppedReasons: [CopyToMacDropReason] = []
@@ -132,7 +130,7 @@ package final class HostClipboardPublisher {
             return .stagingFailed
         }
 
-        guard publisher.write(specs, promised: !offers.isEmpty) else {
+        guard publisher.write(specs, servingOffer: offers.first?.token) else {
             Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }
@@ -140,7 +138,7 @@ package final class HostClipboardPublisher {
             resolvedReps.count + offers.reduce(0) { $0 + $1.items.reduce(0) { $0 + $1.representations.count } }
         Self.logger.log(
             .info,
-            "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
+            "Published the guest's clipboard to the host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
         return .written(representationCount: representationCount, droppedReasons: droppedReasons)
     }
@@ -150,11 +148,11 @@ package final class HostClipboardPublisher {
     var pasteboardHoldsLastWrite: Bool { publisher.holdsLastWrite }
 
     /// Clears the host pasteboard when it still holds this publisher's most
-    /// recent *promised* write, returning whether it did — the stale-promise
-    /// retraction the clipboard service triggers when the guest's clipboard
-    /// supersedes an offer whose promises can no longer be served.
-    func retractPromisedWrite() -> Bool {
-        guard publisher.retractPromisedWrite() else { return false }
+    /// recent write and that write serves the offer `token`, returning whether
+    /// it did: what the offer's end owes a write whose promises it can no
+    /// longer serve.
+    func retractWrite(servingOffer token: Data) -> Bool {
+        guard publisher.retractWrite(servingOffer: token) else { return false }
         Self.logger.log(.notice, "Retracted stale promised clipboard write from the host pasteboard")
         return true
     }

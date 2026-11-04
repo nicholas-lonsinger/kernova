@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaSynchronization
 
 // MARK: - Seams
 
@@ -19,31 +20,47 @@ public protocol ClipboardWritePasteboard: AnyObject {
     @discardableResult
     func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int
 
-    /// Writes one pasteboard item per entry, each **promising** its types lazily
-    /// served by its own `provider` when the OS asks for one.
+    /// Writes one pasteboard item per entry: its data now, and its promised
+    /// types served lazily by its own provider when the OS asks for one.
     @discardableResult
-    func writeItems(
-        _ items: [(
-            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-        )]
-    ) -> Bool
+    func writeItems(_ items: [ClipboardWriteItem]) -> Bool
 
     /// Empties the pasteboard.
     @discardableResult func clearContents() -> Int
 }
 
+/// One pasteboard item a write places: the types written as data now, and the
+/// types its provider serves when a paste asks.
+public struct ClipboardWriteItem: Sendable {
+    /// Each type written now, with its bytes.
+    public let data: [(type: NSPasteboard.PasteboardType, bytes: Data)]
+    /// The types `provider` serves.
+    public let promised: [NSPasteboard.PasteboardType]
+    /// Serves `promised`; nil when the item promises nothing.
+    public let provider: (any NSPasteboardItemDataProvider & Sendable)?
+
+    /// An item of `data` now and `promised` served by `provider`.
+    public init(
+        data: [(type: NSPasteboard.PasteboardType, bytes: Data)] = [], promised: [NSPasteboard.PasteboardType],
+        provider: (any NSPasteboardItemDataProvider & Sendable)?
+    ) {
+        self.data = data
+        self.promised = promised
+        self.provider = provider
+    }
+}
+
 extension NSPasteboard: ClipboardWritePasteboard {
-    /// Writes one `NSPasteboardItem` per entry, its types promised by the
-    /// entry's own data provider.
-    public func writeItems(
-        _ items: [(
-            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-        )]
-    ) -> Bool {
+    /// Writes one `NSPasteboardItem` per entry, its data set now and its
+    /// promised types served by the entry's own data provider.
+    public func writeItems(_ items: [ClipboardWriteItem]) -> Bool {
         writeObjects(
             items.map { entry in
                 let item = NSPasteboardItem()
-                item.setDataProvider(entry.provider, forTypes: entry.types)
+                for (type, bytes) in entry.data { item.setData(bytes, forType: type) }
+                if let provider = entry.provider, !entry.promised.isEmpty {
+                    item.setDataProvider(provider, forTypes: entry.promised)
+                }
                 return item
             })
     }
@@ -75,12 +92,15 @@ public protocol ClipboardPromiseServing: AnyObject, Sendable {
 /// connection — or the window, or the VM — that offered it is gone.
 @MainActor
 public final class ClipboardPasteboardPublisher {
-    /// One pasteboard item to write: the types it promises, by uniform type
-    /// identifier, and a closure that lazily serves the bytes for each
-    /// requested type.
+    /// One pasteboard item to write: the types written as data now, the types
+    /// it promises, by uniform type identifier, and a closure that lazily
+    /// serves the bytes for each promised type.
     public struct ItemSpec: Sendable {
         /// The type identifier an item promises a file URL under.
         public static let fileURLType = NSPasteboard.PasteboardType.fileURL.rawValue
+
+        /// Each type identifier written as data now, with its bytes.
+        public let data: [(type: String, bytes: Data)]
 
         /// The type identifiers this item promises.
         public let types: [String]
@@ -89,8 +109,12 @@ public final class ClipboardPasteboardPublisher {
         /// it empty.
         public let provide: @Sendable (String) -> Data?
 
-        /// Creates one item's promise.
-        public init(types: [String], provide: @escaping @Sendable (String) -> Data?) {
+        /// Creates one item: `data` written now, and `types` promised.
+        public init(
+            data: [(type: String, bytes: Data)] = [], types: [String],
+            provide: @escaping @Sendable (String) -> Data?
+        ) {
+            self.data = data
             self.types = types
             self.provide = provide
         }
@@ -110,16 +134,15 @@ public final class ClipboardPasteboardPublisher {
     /// the user's own copy to something polling the same pasteboard.
     public private(set) var lastWriteChangeCount: Int?
 
-    /// The most recent write the pasteboard actually took.
+    /// The most recent write the pasteboard actually took, and the token of the offer whose promises it holds.
     ///
     /// Recorded on success alone, because it is what is *standing* on the
     /// pasteboard: a write that failed left the prepare's empty pasteboard
-    /// behind, which is nothing to hold and nothing to withdraw. `promised`
-    /// marks the offer-addressed kind, the only one a supersession can strand
-    /// and so the only one ``retractPromisedWrite()`` retracts — a fully
-    /// resolved write serves from local staging and survives the offer behind it
-    /// moving on.
-    private var heldWrite: (changeCount: Int, promised: Bool)?
+    /// behind, which is nothing to hold and nothing to withdraw. Only a write
+    /// serving an offer can be stranded by that offer's end, and
+    /// ``retractWrite(servingOffer:)`` retracts it by naming that offer, so no
+    /// other offer's end reaches it.
+    private var heldWrite: (changeCount: Int, servingOffer: Data?)?
 
     /// Creates a publisher over `pasteboard`.
     public init(
@@ -130,27 +153,45 @@ public final class ClipboardPasteboardPublisher {
         self.providerRegistry = providerRegistry
     }
 
-    /// Writes `specs` as lazily promised pasteboard items, reporting whether the
-    /// pasteboard took them.
+    /// Writes `specs`, reporting whether the pasteboard took them: each item's
+    /// data now, its promised types served lazily.
     ///
-    /// `promised` marks a publication addressed by offer coordinates — the only
-    /// kind ``retractPromisedWrite()`` can withdraw.
+    /// `servingOffer` names the offer whose promises the write holds, the one
+    /// ``retractWrite(servingOffer:)`` withdraws it for; nil for a write that
+    /// serves from what this side holds. `onReleased` runs once the pasteboard
+    /// has finished with every provider the write promised through, which is
+    /// when nothing can ask the offer for more; a write that promises nothing,
+    /// or fails, never runs it.
     @discardableResult
-    public func write(_ specs: [ItemSpec], promised: Bool) -> Bool {
+    public func write(
+        _ specs: [ItemSpec], servingOffer: Data?, onReleased: (@MainActor @Sendable () -> Void)? = nil
+    ) -> Bool {
         // Captures the registry, not `self`, so a provider's lifetime is
         // decoupled from this object.
         let registry = providerRegistry
+        let promising = specs.filter { !$0.types.isEmpty }.count
+        let unfinished = Locked(promising)
         var providers: [LazyClipboardDataProvider] = []
-        let items = specs.map {
-            spec -> (
-                types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-            ) in
+        let items = specs.map { spec -> ClipboardWriteItem in
+            let data = spec.data.compactMap { type, bytes -> (type: NSPasteboard.PasteboardType, bytes: Data)? in
+                Self.screened(bytes, servedAs: type).map { (NSPasteboard.PasteboardType(type), $0) }
+            }
+            guard !spec.types.isEmpty else { return ClipboardWriteItem(data: data, promised: [], provider: nil) }
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
                 provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
-                onFinished: { provider in registry.release(provider) })
+                onFinished: { provider in
+                    registry.release(provider)
+                    let last = unfinished.withLock { left -> Bool in
+                        left -= 1
+                        return left == 0
+                    }
+                    guard last, let onReleased else { return }
+                    MainActorBridge.async { onReleased() }
+                })
             providers.append(provider)
-            return (types: spec.types.map(NSPasteboard.PasteboardType.init(rawValue:)), provider: provider)
+            return ClipboardWriteItem(
+                data: data, promised: spec.types.map(NSPasteboard.PasteboardType.init(rawValue:)), provider: provider)
         }
 
         // `.currentHostOnly` keeps the write off the continuity advertiser,
@@ -171,7 +212,7 @@ public final class ClipboardPasteboardPublisher {
             heldWrite = nil
             return false
         }
-        heldWrite = (changeCount: pasteboard.changeCount, promised: promised)
+        heldWrite = (changeCount: pasteboard.changeCount, servingOffer: servingOffer)
         providerRegistry.retain(providers)
         return true
     }
@@ -195,14 +236,13 @@ public final class ClipboardPasteboardPublisher {
     }
 
     /// Clears the pasteboard when it still holds this publisher's most recent
-    /// *promised* write, reporting whether it did.
+    /// write and that write serves the offer `token`, reporting whether it did.
     ///
     /// A pasteboard the user has written over since is theirs and is left
-    /// untouched, as is a fully resolved write — it keeps serving from local
-    /// staging.
+    /// untouched, as is a write serving another offer, or none.
     @discardableResult
-    public func retractPromisedWrite() -> Bool {
-        guard let held = heldWrite, held.promised, held.changeCount == pasteboard.changeCount
+    public func retractWrite(servingOffer token: Data) -> Bool {
+        guard let held = heldWrite, held.servingOffer == token, held.changeCount == pasteboard.changeCount
         else { return false }
         clear()
         return true

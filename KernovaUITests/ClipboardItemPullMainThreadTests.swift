@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaSynchronization
+import KernovaWire
 import Testing
 
 @testable import KernovaKit
@@ -26,7 +27,12 @@ struct ClipboardItemPullMainThreadTests {
     @Test("a main-thread paste keeps the run loop turning: a block performed on it completes the pull")
     func performedMainRunLoopBlockCompletesPull() throws {
         let waits = Locked<[NestedEventLoopWait]>([])
-        let items = ClipboardOfferSource(content: ClipboardContent(text: "offered")).items
+        var text = Representation()
+        text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        text.storage = .inline
+        var item = OfferedItem()
+        item.representations = [text]
+        let items = [item]
         let specs = ClipboardPasteboardPublisher.itemSpecs(
             for: items, concealed: false, puller: RunLoopPuller(),
             eventLoopWait: {

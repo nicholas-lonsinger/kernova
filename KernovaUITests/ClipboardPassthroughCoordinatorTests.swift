@@ -34,7 +34,7 @@ struct ClipboardPassthroughCoordinatorTests {
     @MainActor
     @Observable
     final class FakePassthroughService: ClipboardServicing {
-        var clipboardContent: ClipboardContent = .empty
+        var guestContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
         private(set) var inboundOfferSeq: UInt64 = 0
@@ -63,7 +63,7 @@ struct ClipboardPassthroughCoordinatorTests {
         /// simulate a send that never left.
         var grabOutcome: ClipboardGrabOutcome = .settled
 
-        /// Makes `materializeForCopy` refuse the way `HubClipboardService` does
+        /// Makes `guestClipboardItems` refuse the way `HubClipboardService` does
         /// over the deadline-safe cap: every file dropped, and the refusal
         /// reported in the same step.
         var refusesOverCopyBudget = false
@@ -72,14 +72,12 @@ struct ClipboardPassthroughCoordinatorTests {
         /// resolves on the event itself.
         @ObservationIgnored let grabRecorded = AsyncGate()
 
-        /// How many times `materializeForCopy` has run — a publish's first step,
+        /// How many times `guestClipboardItems` has run — a publish's first step,
         /// and so how far a publish a test is holding has got.
         var copiesMaterialized = 0
 
         func stop() {}
-        func clearBuffer() { clipboardContent = .empty }
 
-        func grabIfChanged() -> ClipboardGrabOutcome { .settled }
 
         /// Mirrors both real transports: a disconnected service delivers nothing,
         /// so it reports `.undelivered` and leaves the copy retryable.
@@ -91,10 +89,10 @@ struct ClipboardPassthroughCoordinatorTests {
             return grabOutcome
         }
 
-        func materializeForCopy() -> [CopyToMacItem] {
+        func guestClipboardItems() -> [CopyToMacItem] {
             copiesMaterialized += 1
             guard refusesOverCopyBudget else {
-                return clipboardContent.representations.map { .resolved($0) }
+                return guestContent.representations.map { .resolved($0) }
             }
             reporter?.finish(
                 ClipboardTransferFinish(
@@ -108,7 +106,7 @@ struct ClipboardPassthroughCoordinatorTests {
         /// Simulates a new inbound guest offer: publishes `content` and bumps the
         /// inbound sequence the coordinator observes.
         func simulateInboundOffer(_ content: ClipboardContent) {
-            clipboardContent = content
+            guestContent = content
             inboundOfferSeq &+= 1
         }
     }
@@ -341,7 +339,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // Simulate a guest offer landing and publish it to the host pasteboard —
         // exactly what the inbound path (or a manual "Copy to Mac") does through
         // the shared publisher.
-        h.service.clipboardContent = ClipboardContent(text: "from guest")
+        h.service.guestContent = ClipboardContent(text: "from guest")
         let outcome = try await h.publisher.publish(from: h.service)
         guard case .written = outcome else {
             Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
@@ -669,7 +667,7 @@ struct ClipboardPassthroughCoordinatorTests {
         writeText(hostContent, to: h.pasteboard)
 
         // Wait on the publish *completing*, not on the transfer report: the
-        // service reports the refusal inside `materializeForCopy`, while the
+        // service reports the refusal inside `guestClipboardItems`, while the
         // coordinator records it only once the publish returns. Keying on the
         // report lets the raise land before there is a refusal to replay.
         var publishCompleted = false
@@ -763,26 +761,23 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.pasteboard.string(forType: .string) == "previous host content")
     }
 
-    /// A guest-offer service: `materializeForCopy` returns the offer whole, and
+    /// A guest-offer service: `guestClipboardItems` returns the offer whole, and
     /// its puller counts the pulls a paste starts, so a test can prove the
     /// publish itself moved no bytes.
     @MainActor
     @Observable
     final class PromisedPassthroughService: ClipboardServicing {
-        var clipboardContent: ClipboardContent = .empty
         var isConnected = true
         var supportsBinaryRepresentations = true
         private(set) var inboundOfferSeq: UInt64 = 0
-        /// What the next `materializeForCopy` offers.
+        /// What the next `guestClipboardItems` offers.
         var items: [OfferedItem] = []
         @ObservationIgnored let puller = CountingPuller()
 
         func stop() {}
-        func grabIfChanged() -> ClipboardGrabOutcome { .settled }
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
-        func clearBuffer() { clipboardContent = .empty }
-        func materializeForCopy() -> [CopyToMacItem] {
-            [.offer(CopyToMacOffer(items: items, concealed: false, servingFileURLs: true, puller: puller))]
+        func guestClipboardItems() -> [CopyToMacItem] {
+            [.offer(CopyToMacOffer(token: Data(repeating: 9, count: 16), items: items, concealed: false, servingFileURLs: true, puller: puller))]
         }
 
         func simulateInboundOffer(_ items: [OfferedItem]) {
@@ -882,7 +877,7 @@ struct ClipboardPassthroughCoordinatorTests {
     }
 
     /// Starts a session and parks its one inbound publish at the write: past
-    /// `materializeForCopy` *and* past the publisher's off-actor stage, the
+    /// `guestClipboardItems` *and* past the publisher's off-actor stage, the
     /// window a cancellation has to land in for the write to be stopped.
     private func makeHeldPublishHarness() async throws -> (Harness, PublishHold) {
         let h = makeHarness()
@@ -892,7 +887,7 @@ struct ClipboardPassthroughCoordinatorTests {
         h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
         try await hold.waitUntilAtWrite()
         // Where the park sits: the publish has planned and staged its items, the
-        // state a gate on `materializeForCopy` — synchronous, before the first
+        // state a gate on `guestClipboardItems` — synchronous, before the first
         // await — cannot hold a publish in.
         #expect(h.service.copiesMaterialized == 1)
         return (h, hold)
@@ -974,7 +969,7 @@ struct ClipboardPassthroughCoordinatorTests {
 }
 
 /// Parks every publish one step short of its pasteboard write — past
-/// `materializeForCopy` and the staging hop — so a test can drive a `stop()`, or
+/// `guestClipboardItems` and the staging hop — so a test can drive a `stop()`, or
 /// a superseding offer, into the window a gate before the publish's first await
 /// never reaches.
 ///

@@ -330,6 +330,12 @@ public final class AgentHub: Sendable {
         queue.async { [self] in send(.release(token: token), to: peer) }
     }
 
+    /// Refuses `peer`'s offer of `token` with `error`: the host pulls nothing of it, and the peer's
+    /// `.offerEnded` closes `.resetByPeer(error)`.
+    public func refuseOffer(_ token: Data, _ error: WireError, of peer: PeerHandle) {
+        queue.async { [self] in send(.refuse(token: token, error), to: peer) }
+    }
+
     /// Pulls one representation of `peer`'s open offer as `order` says, and calls `completion` once with the
     /// pull's id, whose one `.pullEnded` follows, or why it was not opened: `ITEM_OFFER_STALE` for an offer the
     /// hub has not forwarded, or no longer holds.

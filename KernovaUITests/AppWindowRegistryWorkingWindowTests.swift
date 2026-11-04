@@ -34,22 +34,21 @@ struct AppWindowRegistryWorkingWindowTests {
     func sheetResolvesThroughItsParent() throws {
         let fixture = makeFixture()
         makeMenuInstance(in: fixture.viewModel, name: "Selected")
-        let instance = VMInstanceFixture.make(name: "Clipboard VM", phase: .running(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-        }
-        fixture.registry.showClipboard(for: instance)
-        let clipboard = try #require(fixture.registry.clipboardWindow(for: instance.instanceID))
+        let instance = VMInstanceFixture.make(name: "Status VM", guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        fixture.registry.showGuestAgentStatus(for: instance)
+        let status = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
         let sheet = makeTestWindow(styleMask: [.titled])
-        clipboard.beginSheet(sheet)
-        #expect(sheet.sheetParent === clipboard)
+        status.beginSheet(sheet)
+        #expect(sheet.sheetParent === status)
 
-        #expect(fixture.registry.workingInstance(keyWindow: sheet, mainWindow: clipboard) === instance)
+        #expect(fixture.registry.workingInstance(keyWindow: sheet, mainWindow: status) === instance)
         #expect(fixture.registry.workingInstance(keyWindow: sheet, mainWindow: nil) === instance)
 
         // An alert raised there goes to the window the sheet is on, not the
         // sheet.
         let scene = fixture.registry.alertScene(keyWindow: sheet, mainWindow: nil)
-        #expect(scene.working.first?.window === clipboard)
+        #expect(scene.working.first?.window === status)
         #expect(scene.working.first?.vmIDs == [instance.id])
     }
 

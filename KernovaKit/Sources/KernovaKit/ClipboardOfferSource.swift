@@ -32,8 +32,7 @@ public enum ClipboardServeError: Error, Equatable, Sendable {
 ///
 /// Built by ``ClipboardPasteboardReader/readOffer(from:promises:promiseDestination:sizeOf:)``
 /// or ``ClipboardPasteboardReader/readDropOffer(from:promises:sizeOf:)`` from a
-/// pasteboard, or by ``init(content:)`` from content already held. No
-/// byte is read until ``serve(item:representation:)``.
+/// pasteboard. No byte is read until ``serve(item:representation:)``.
 @MainActor
 public final class ClipboardOfferSource {
     /// Where one representation's bytes come from.
@@ -63,7 +62,8 @@ public final class ClipboardOfferSource {
 
     private let origins: [[Origin]]
     private let pasteboard: (any ClipboardReadPasteboard)?
-    private let changeCount: Int
+    /// The pasteboard change the offer was read at.
+    let changeCount: Int
     private let promises: [any FilePromiseReceiving]
     private let promiseDestination: @MainActor () throws -> URL
     private var calledIn: [Int: Task<URL, any Error>] = [:]
@@ -82,51 +82,48 @@ public final class ClipboardOfferSource {
         self.promiseDestination = promiseDestination
     }
 
-    /// An offer of `content`: its inline representations as one item, then
-    /// one item per file or folder, an image file also offering its bytes
-    /// INLINE so a paste can show it in place.
+    /// This offer as a snapshot of the pasteboard now, independent of what it holds later: every INLINE
+    /// representation's bytes read now and held in memory, each sized by what was read, and every FILE and
+    /// FOLDER kept as the reference it is, read when pulled.
     ///
-    /// A representation whose bytes are not here — a pending remote one, or
-    /// a named one held only in memory, which no file backs — is not offered.
-    public convenience init(content: ClipboardContent) {
-        var inline = OfferedItem()
-        var inlineOrigins: [Origin] = []
-        var items: [OfferedItem] = []
-        var origins: [[Origin]] = []
-        for representation in content.representations {
-            let type = TypeDescriptor(appleUTI: representation.uti)
-            let size = representation.byteCount
-            switch representation.source {
-            case .inMemory(let data) where representation.filename.isEmpty:
-                inline.representations.append(.make(type, .inline, size: size))
-                inlineOrigins.append(.bytes(data))
-            case .file(let url, _, _) where representation.isDirectory:
-                items.append(.with(.make(type, .folder, size: size, name: representation.filename)))
-                origins.append([.folder(url)])
-            case .file(let url, _, _):
-                var item = OfferedItem.with(.make(type, .file, size: size, name: representation.filename))
-                var itemOrigins: [Origin] = [.file(url)]
-                if representation.shouldInlineOnPasteboard {
-                    item.representations.append(.make(type, .inline, size: size))
-                    itemOrigins.append(.fileContents(url))
+    /// A representation whose bytes can no longer be read is left out, and an item left with none is dropped.
+    /// Nil when the pasteboard moved on from what was offered, or nothing remains.
+    public func snapshot() async -> ClipboardOfferSource? {
+        var frozenItems: [OfferedItem] = []
+        var frozenOrigins: [[Origin]] = []
+        for (index, item) in items.enumerated() {
+            var frozen = OfferedItem()
+            var itemOrigins: [Origin] = []
+            for (position, representation) in item.representations.enumerated() {
+                let origin = origins[index][position]
+                let held: Origin?
+                switch origin {
+                case .pasteboard(let pasteboardItem, let type):
+                    guard let pasteboard, pasteboard.changeCount == changeCount else { return nil }
+                    let pasteboardItems = pasteboard.items
+                    held = pasteboardItems.indices.contains(pasteboardItem)
+                        ? pasteboardItems[pasteboardItem].data(forType: NSPasteboard.PasteboardType(type)).map(Origin.bytes)
+                        : nil
+                case .fileContents(let url):
+                    held = await Task.detached { try? Data(contentsOf: url) }.value.map(Origin.bytes)
+                case .bytes, .file, .folder, .promise, .landing:
+                    held = origin
                 }
-                items.append(item)
-                origins.append(itemOrigins)
-            case .directory(let url, let estimate):
-                items.append(.with(.make(type, .folder, size: estimate, name: representation.filename)))
-                origins.append([.folder(url)])
-            case .inMemory, .pendingRemote:
-                continue
+                guard let held else { continue }
+                var kept = representation
+                if case .bytes(let data) = held { kept.sizeEstimate = UInt64(data.count) }
+                frozen.representations.append(kept)
+                itemOrigins.append(held)
             }
+            guard !frozen.representations.isEmpty else { continue }
+            frozenItems.append(frozen)
+            frozenOrigins.append(itemOrigins)
         }
-        if !inline.representations.isEmpty {
-            items.insert(inline, at: 0)
-            origins.insert(inlineOrigins, at: 0)
-        }
-        self.init(
-            items: items, origins: origins, concealed: content.isConcealed,
-            pasteboard: nil, changeCount: 0, promises: [],
-            promiseDestination: { throw ClipboardServeError.unavailable })
+        if let pasteboard, pasteboard.changeCount != changeCount { return nil }
+        guard !frozenItems.isEmpty else { return nil }
+        return ClipboardOfferSource(
+            items: frozenItems, origins: frozenOrigins, concealed: concealed, pasteboard: nil, changeCount: 0,
+            promises: promises, promiseDestination: promiseDestination)
     }
 
     /// Serves one representation for a pull, reading its bytes now.

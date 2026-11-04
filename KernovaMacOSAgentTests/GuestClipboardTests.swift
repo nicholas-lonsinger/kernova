@@ -25,6 +25,7 @@ struct GuestClipboardTests {
             var offers: [ItemOffer] = []
             var withdrawals: [Data] = []
             var releases: [Data] = []
+            var refusals: [(token: Data, code: ErrorCode)] = []
             var ceilings: [UInt64] = []
             var opened: [ItemPullID] = []
         }
@@ -42,6 +43,7 @@ struct GuestClipboardTests {
         var offers: [ItemOffer] { calls.withLock(\.offers) }
         var withdrawals: [Data] { calls.withLock(\.withdrawals) }
         var releases: [Data] { calls.withLock(\.releases) }
+        var refusals: [(token: Data, code: ErrorCode)] { calls.withLock(\.refusals) }
         /// The `byte_ceiling` of each pull ordered, in order.
         var ceilings: [UInt64] { calls.withLock(\.ceilings) }
         /// The id of each pull opened, in order.
@@ -60,6 +62,11 @@ struct GuestClipboardTests {
 
         func releaseOffer(_ token: Data) {
             calls.withLock { $0.releases.append(token) }
+            changed.notify()
+        }
+
+        func refuseOffer(_ token: Data, _ error: WireError) {
+            calls.withLock { $0.refusals.append((token, error.code)) }
             changed.notify()
         }
 
@@ -467,8 +474,8 @@ struct GuestClipboardTests {
         #expect(link.offers.isEmpty)
     }
 
-    @Test("The host's offer of no items is its clear: the pasteboard empties, the guest's offer and the clear end")
-    func hostClearEmptiesTheClipboard() async throws {
+    @Test("A host clipboard offer of no items is refused: released, and the guest's clipboard left as it is")
+    func hostOfferOfNoItemsIsRefused() async throws {
         let rig = rig()
         let link = RecordingLink()
         rig.clipboard.setOnConsole(true)
@@ -479,14 +486,9 @@ struct GuestClipboardTests {
         rig.clipboard.exchange.handle(
             .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 0)),
             on: link)
-        try await rig.pasteboard.changed.wait { rig.pasteboard.items.isEmpty }
         try await link.changed.wait { link.releases == [Self.hostToken] }
-        #expect(link.withdrawals == [link.offers[0].token])
-        #expect(rig.clipboard.exchange.remote == nil)
-        // The clear is the agent's own write: the poll reads no copy from it.
-        rig.clipboard.checkPasteboard()
-        await drainMainQueue()
-        #expect(link.offers.count == 1)
+        #expect(link.withdrawals.isEmpty)
+        #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("copied in the guest".utf8))
     }
 
     @Test("A copy that offers nothing withdraws the guest's offer")

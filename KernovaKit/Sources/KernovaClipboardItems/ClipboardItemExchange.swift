@@ -17,7 +17,6 @@ import KernovaWire
 /// - The far side's offer arrives as ``ClipboardRemoteOffer``, its items read whole, for the end to publish.
 ///   Taking it withdraws this side's offer.
 /// - Offers made before either side saw the other's cross; the host's wins (``side``).
-/// - The host's offer of no items is its clear (``clear()``): the guest empties its clipboard.
 /// - A connection's leaving ends both offers it carried: what an end published of the far side's is the end's
 ///   to retract, since nothing more of it can be pulled.
 ///
@@ -40,8 +39,6 @@ public final class ClipboardItemExchange {
         case byFarSide(hasSuccessor: Bool)
         /// This side made a copy of its own.
         case superseded
-        /// This side cleared the clipboard: neither end holds anything now.
-        case cleared
         /// The connection left or no longer carries the feature, so nothing more of it can be pulled; the far
         /// side's clipboard may hold it still, and offers it again on the next connection.
         case linkLost
@@ -63,8 +60,6 @@ public final class ClipboardItemExchange {
     /// Hears each pull of the far side's offer that failed a paste, with the error it failed with:
     /// `TOO_LARGE` when the representation, or the offer's file set, is over the paste ceiling.
     public var onPullFailed: ((WireError) -> Void)?
-    /// A guest: the host cleared the clipboard, so this end empties its own.
-    public var onCleared: (() -> Void)?
     /// Hears each change of ``localSource``.
     public var onLocalSourceChanged: (() -> Void)?
 
@@ -135,17 +130,9 @@ public final class ClipboardItemExchange {
         open(source.items, concealed: source.concealed, servedBy: source)
     }
 
-    /// Empties this end's clipboard and the far side's: the far side's offer ends (`.cleared`), and this side
-    /// offers no items in place of its own, which the far side publishes as a clear. With no connection, only the
-    /// far side's offer ends.
-    public func clear() {
-        endRemote(.cleared)
-        open([], concealed: false, servedBy: nil)
-    }
-
     /// Offers `items` on the connection as this side's offer, each pull served from `source`; with no
     /// connection, nothing is held.
-    private func open(_ items: [OfferedItem], concealed: Bool, servedBy source: ClipboardOfferSource?) {
+    private func open(_ items: [OfferedItem], concealed: Bool, servedBy source: ClipboardOfferSource) {
         guard let link else { return }
         // A far-side offer still being read predates this side's offer too.
         for token in reading { link.releaseOffer(token) }
@@ -337,7 +324,11 @@ public final class ClipboardItemExchange {
             link.releaseOffer(header.token)
             return
         }
-        guard !held.isEmpty else { return farSideCleared(header, on: link) }
+        guard !held.isEmpty else {
+            logger.log(.notice, "Refused a clipboard offer of no items")
+            link.releaseOffer(header.token)
+            return
+        }
         let ceiling = pasteCeiling
         let remote = ClipboardRemoteOffer(
             header: header, items: held, link: link, staging: staging, generation: generation,
@@ -348,19 +339,6 @@ public final class ClipboardItemExchange {
         self.remote = remote
         logger.log(.notice, "Received a clipboard offer: \(held.count, privacy: .public) item(s)")
         onRemoteOffer?(remote)
-    }
-
-    /// The far side offered no items: a guest takes it as the host's clear, emptying its clipboard; the host
-    /// takes none from a guest, whose clipboard emptying withdraws its offer instead. Either way the offer,
-    /// which has nothing to pull, is released.
-    private func farSideCleared(_ header: ItemSetHeaderValue, on link: any ClipboardItemLink) {
-        link.releaseOffer(header.token)
-        guard side == .guest else {
-            return logger.log(.notice, "Refused a guest clipboard offer of no items")
-        }
-        withdrawLocal()
-        logger.log(.notice, "The host cleared the clipboard")
-        onCleared?()
     }
 }
 

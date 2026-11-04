@@ -41,15 +41,67 @@ extension ClipboardPasteboardPublisher {
     ///
     /// `servingFileURLs` false withholds `public.file-url`, as a paste over
     /// the cap requires. A concealed offer marks each item with
-    /// `org.nspasteboard.ConcealedType`. The write is promised: it serves the
-    /// offer, so ``retractPromisedWrite()`` withdraws it once the offer ends.
+    /// `org.nspasteboard.ConcealedType`. The write serves the offer `token`, so
+    /// ``retractWrite(servingOffer:)`` withdraws it once that offer ends.
     @discardableResult
     public func publish(
-        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool = true, puller: any ClipboardItemPulling
+        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool = true, puller: any ClipboardItemPulling,
+        servingOffer token: Data
     ) -> Bool {
         write(
             Self.itemSpecs(for: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller),
-            promised: true)
+            servingOffer: token)
+    }
+
+    /// Writes a peer's copy: each kept INLINE representation as the data
+    /// `landed` holds for it, now, and each FILE or FOLDER promised through
+    /// `puller`, so only files transfer when pasted.
+    ///
+    /// The write serves the copy `token`, and `onReleased` runs once the
+    /// pasteboard is done with every file it promised. Returns whether the
+    /// pasteboard took the write, and whether it promised anything.
+    public func publishCopy(
+        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, landed: (_ item: Int, _ rep: Int) -> Data?,
+        puller: any ClipboardItemPulling, servingOffer token: Data,
+        onReleased: @escaping @MainActor @Sendable () -> Void
+    ) -> (written: Bool, promised: Bool) {
+        let specs = Self.copySpecs(
+            for: items, concealed: concealed, servingFileURLs: servingFileURLs, landed: landed, puller: puller,
+            eventLoopWait: { NestedEventLoopWait.current() })
+        guard !specs.isEmpty else { return (false, false) }
+        let promised = specs.contains { !$0.types.isEmpty }
+        return (write(specs, servingOffer: token, onReleased: onReleased), promised)
+    }
+
+    /// The item specs ``publishCopy(_:concealed:servingFileURLs:landed:puller:servingOffer:onReleased:)``
+    /// writes. A type whose landed bytes are missing is left off its item, and an item left with nothing is
+    /// dropped.
+    nonisolated static func copySpecs(
+        for items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, landed: (Int, Int) -> Data?,
+        puller: any ClipboardItemPulling, holdLimit: TimeInterval = pasteRequesterDeadline,
+        eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
+    ) -> [ItemSpec] {
+        items.enumerated().compactMap { index, item -> ItemSpec? in
+            var data: [(type: String, bytes: Data)] = []
+            var files: [Int] = []
+            for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: servingFileURLs) {
+                if promised.isFileURL {
+                    files.append(promised.representation)
+                } else if let bytes = landed(index, promised.representation) {
+                    data.append((promised.pasteboardType, bytes))
+                }
+            }
+            guard !data.isEmpty || !files.isEmpty else { return nil }
+            if concealed { data.append((ClipboardSnapshotPolicy.concealedMarkerUTI, Data())) }
+            guard let file = files.first else { return ItemSpec(data: data, types: []) { _ in nil } }
+            return ItemSpec(data: data, types: [ItemSpec.fileURLType]) { type in
+                guard type == ItemSpec.fileURLType else { return nil }
+                return held(eventLoopWait, for: holdLimit) {
+                    puller.pullFile(item: index, representation: file, completion: $0)
+                }
+                .map { Data($0.absoluteString.utf8) }
+            }
+        }
     }
 
     /// The item specs promising `items`, as ``publish(_:concealed:servingFileURLs:puller:)``

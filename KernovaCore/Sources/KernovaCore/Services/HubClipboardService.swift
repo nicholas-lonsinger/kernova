@@ -9,39 +9,25 @@ import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
-import UniformTypeIdentifiers
 
 /// A VM's clipboard over the guest agent's CLIPBOARD items, through the agent hub to the feature's console
-/// peer: the buffer the clipboard window shows, the host's offer — of the buffer, or of a copy on the Mac
-/// passthrough read from its pasteboard — and the guest's offer.
+/// peer: the host's offer of a copy on the Mac passthrough read from its pasteboard, and the guest's offer.
 ///
-/// The buffer is the guest's clipboard as Kernova carries it: a guest copy shows at once, and a Mac copy never
-/// does — the buffer empties while the guest holds one (``guestHoldsMacCopy``). One per VM, for its whole
-/// life: its owner is registered with the hub's item router before the hub exists. Each console peer the hub
-/// names is offered the buffer when it holds the window's own content; passthrough offers the Mac's copy
-/// itself. The guest's offer stays held while it is the host's clipboard and the buffer shows it or the host
-/// pasteboard holds this VM's write.
+/// One per VM, for its whole life: its owner is registered with the hub's item router before the hub exists.
+/// The guest's offer stays held while it is the host's clipboard, whether or not passthrough wrote it to the
+/// Mac, so turning passthrough on can publish it.
 @MainActor
 @Observable
 final class HubClipboardService: ClipboardServicing {
     // MARK: - Observable state
-
-    /// The buffer. A change that leaves the guest's offer shown nowhere releases it, once the host pasteboard
-    /// no longer holds this VM's write either.
-    var clipboardContent: ClipboardContent = .empty {
-        didSet { releaseRemoteIfUnheld() }
-    }
 
     /// `true` while a console peer carries CLIPBOARD.
     private(set) var isConnected = false
 
     var supportsBinaryRepresentations: Bool { true }
 
-    /// Bumped once per guest offer shown in the buffer, never by its preview's pulls.
+    /// Bumped once per guest offer taken.
     private(set) var inboundOfferSeq: UInt64 = 0
-
-    /// Whether the host's offer the guest holds is the Mac's copy passthrough offered it.
-    private(set) var guestHoldsMacCopy = false
 
     // MARK: - Wiring
 
@@ -60,12 +46,9 @@ final class HubClipboardService: ClipboardServicing {
     /// The paste ceiling in force: what the exchange's pulls read, from any thread.
     @ObservationIgnored let maxPasteBytes: @Sendable () -> Int
 
-    /// Whether the host pasteboard still holds this VM's most recent write.
-    @ObservationIgnored var hostPasteboardHoldsOurWrite: () -> Bool = { false }
-
-    /// Retracts this VM's promised write from the host pasteboard if it still holds it, returning whether it
-    /// did: what the guest's clipboard moving on owes a write whose offer has ended.
-    @ObservationIgnored var retractStaleHostWrite: () -> Bool = { false }
+    /// Retracts this VM's write serving the offer named, if the host pasteboard still holds it, returning
+    /// whether it did: what an offer's end owes a write of it.
+    @ObservationIgnored var retractHostWrite: (_ servingOffer: Data) -> Bool = { _ in false }
 
     /// Whether passthrough runs: it decides only whether a retraction is reported.
     @ObservationIgnored var passthroughRuns: () -> Bool = { false }
@@ -89,23 +72,10 @@ final class HubClipboardService: ClipboardServicing {
     @ObservationIgnored private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
     @ObservationIgnored private var peer: PeerHandle?
 
-    /// The guest's offer, while the buffer or the host pasteboard may still need it.
+    /// The guest's offer, while it is the host's clipboard.
     @ObservationIgnored private var remote: ClipboardRemoteOffer?
 
-    /// The digest of the buffer as the guest's offer last set it: once the buffer's differs, the user has
-    /// replaced what it showed.
-    @ObservationIgnored private var remoteDigest: Data?
-
-    /// The digest of the buffer last offered to the guest, or shown from it.
-    @ObservationIgnored private var offeredDigest: Data?
-
-    /// The guest offer whose preview has run, by token.
-    @ObservationIgnored private var previewedToken: Data?
-
-    /// The Mac's copy passthrough last offered, while the exchange may still hold it.
-    @ObservationIgnored private weak var macCopy: ClipboardOfferSource?
-
-    /// Where a file promise, dropped on the window or copied on the Mac, is called in.
+    /// Where a file promise copied on the Mac is called in.
     @ObservationIgnored private let promiseStaging: ClipboardFileStaging
     @ObservationIgnored private var nextPromiseGeneration: UInt64 = 1
 
@@ -127,7 +97,6 @@ final class HubClipboardService: ClipboardServicing {
         exchange.onRemoteOfferEnded = { [weak self] in self?.remoteEnded($0, $1) }
         exchange.holdsUnsentCopy = { [weak self] in self?.passthroughHoldsUnsentCopy() ?? false }
         exchange.onCrossingRefused = { [weak self] in self?.passthroughForwardNow() }
-        exchange.onLocalSourceChanged = { [weak self] in self?.localSourceChanged() }
     }
 
     /// CLIPBOARD's owner on the hub's connections.
@@ -144,8 +113,7 @@ final class HubClipboardService: ClipboardServicing {
 
     // MARK: - The console peer
 
-    /// CLIPBOARD's console peer is now `peer`, or none. A new one is offered the buffer when it holds the
-    /// window's own content and passthrough, which offers the Mac's copy itself, is off.
+    /// CLIPBOARD's console peer is now `peer`, or none.
     func setConsolePeer(_ peer: PeerHandle?) {
         guard peer != self.peer else { return }
         self.peer = peer
@@ -157,9 +125,6 @@ final class HubClipboardService: ClipboardServicing {
             .notice,
             "The guest agent's peer \(peer.rawValue, privacy: .public) carries the clipboard for '\(self.label(), privacy: .public)'"
         )
-        guard !passthroughRuns() else { return }
-        offeredDigest = nil
-        _ = grabIfChanged()
     }
 
     private func link(to peer: PeerHandle) -> HubClipboardLink? {
@@ -177,37 +142,16 @@ final class HubClipboardService: ClipboardServicing {
 
     // MARK: - ClipboardServicing
 
-    /// Nothing to stop: the hub's connections end with the session, and the buffer and the host's offer outlive
-    /// it, for the next console peer.
+    /// Nothing to stop: the hub's connections end with the session, and the host's offer outlives it, for the
+    /// next console peer.
     func stop() {}
 
-    func grabIfChanged() -> ClipboardGrabOutcome {
-        guard !clipboardContent.isEmpty else { return .settled }
-        // A placeholder has no bytes to serve, and is the guest's own content.
-        guard !clipboardContent.representations.contains(where: \.isPendingRemote) else { return .settled }
-        let digest = clipboardContent.digest
-        // The guest's offer shown is the guest's own.
-        guard digest != offeredDigest, digest != remoteDigest else { return .settled }
-        offeredDigest = digest
-        // A new console peer is offered the buffer again, so nothing is owed a retry.
-        exchange.offer(ClipboardOfferSource(content: clipboardContent))
-        clipboardChangeMark = hostPasteboardChangeCount()
-        return .settled
-    }
-
     /// Makes the Mac's copy the host's clipboard and offers it: a new connection is passthrough's to offer again,
-    /// so nothing is owed a retry. The buffer never shows it, and empties, since the guest no longer holds what
-    /// it showed.
+    /// so nothing is owed a retry.
     func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
-        macCopy = copy
         exchange.offer(copy)
-        if guestHoldsMacCopy { showNothing() }
         clipboardChangeMark = hostPasteboardChangeCount()
         return .settled
-    }
-
-    private func localSourceChanged() {
-        guestHoldsMacCopy = macCopy != nil && exchange.localSource === macCopy
     }
 
     /// The Mac's pasteboard changed to something it offers nothing of: the host's offer is withdrawn, and the
@@ -219,18 +163,6 @@ final class HubClipboardService: ClipboardServicing {
     var resolvesCrossings: Bool { true }
 
     var hasStandingGuestOffer: Bool { remote?.isOpen == true && exchange.remote === remote }
-
-    /// Empties the buffer and the guest's clipboard: the guest's copy it showed is cleared there, and a write
-    /// of it on the Mac retracted; the window's own content it held is withdrawn, which the guest retracts.
-    func clearBuffer() {
-        if clipboardContent.digest == remoteDigest {
-            exchange.clear()
-        } else {
-            exchange.withdrawLocal()
-        }
-        offeredDigest = nil
-        clipboardContent = .empty
-    }
 
     func reservePromiseDestination() -> URL? {
         let generation = nextPromiseGeneration
@@ -246,41 +178,17 @@ final class HubClipboardService: ClipboardServicing {
         }
     }
 
-    /// Pulls, for the window to render, each INLINE representation of the guest's offer it renders richly, each
-    /// no larger than the window's limit for its kind. Once per offer; never for concealed content.
-    func materializeForPreview() async {
-        guard let remote, remote.isOpen, !remote.concealed, clipboardContent.digest == remoteDigest,
-            previewedToken != remote.token
-        else { return }
-        previewedToken = remote.token
-        var pulled: [ItemRepresentation: Data] = [:]
-        for (item, offered) in remote.items.enumerated() {
-            for (index, representation) in offered.representations.enumerated() {
-                guard let ceiling = Self.previewCeiling(representation) else { continue }
-                if let data = await remote.previewBytes(item: item, representation: index, byteCeiling: ceiling) {
-                    pulled[ItemRepresentation(item: item, representation: index)] = data
-                }
-                guard self.remote === remote else { return }
-            }
-        }
-        guard !pulled.isEmpty, self.remote === remote, clipboardContent.digest == remoteDigest else { return }
-        show(Self.content(of: remote, pulled: pulled))
-    }
-
-    /// The guest's live offer, whole, when the buffer still shows it; the buffer's own content otherwise. A file
-    /// set over the paste ceiling is offered without its file URLs, each withheld one reported dropped.
-    func materializeForCopy() -> [CopyToMacItem] {
-        guard let remote, remote.isOpen, clipboardContent.digest == remoteDigest else {
-            let reps = clipboardContent.representations.filter { !$0.isPendingRemote }
-            return reps.map { .resolved($0) }
-        }
+    /// The guest's live offer, whole. A file set over the paste ceiling is offered without its file URLs, each
+    /// withheld one reported dropped.
+    func guestClipboardItems() -> [CopyToMacItem] {
+        guard let remote, remote.isOpen else { return [] }
         let ceiling = maxPasteBytes()
         let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
         var items: [CopyToMacItem] = []
         if budget.exceeds {
             Self.logger.log(
                 .warning,
-                "Copy-to-Mac refused the files: they total \(budget.total, privacy: .public) bytes, over the \(ceiling, privacy: .public)-byte cap"
+                "Refused the guest's files: they total \(budget.total, privacy: .public) bytes, over the \(ceiling, privacy: .public)-byte cap"
             )
             reportRefusal(gesture: .copy, .tooLarge(limitBytes: ceiling))
             for item in remote.items {
@@ -296,8 +204,8 @@ final class HubClipboardService: ClipboardServicing {
             items.append(
                 .offer(
                     CopyToMacOffer(
-                        items: remote.items, concealed: remote.concealed, servingFileURLs: servingFileURLs,
-                        puller: remote)))
+                        token: remote.token, items: remote.items, concealed: remote.concealed,
+                        servingFileURLs: servingFileURLs, puller: remote)))
         }
         return items
     }
@@ -306,54 +214,33 @@ final class HubClipboardService: ClipboardServicing {
 
     private func received(_ remote: ClipboardRemoteOffer) {
         self.remote = remote
-        previewedToken = nil
         clipboardChangeMark = hostPasteboardChangeCount()
-        show(ClipboardContent(previewOf: remote.items, concealed: remote.concealed))
         inboundOfferSeq &+= 1
     }
 
-    /// Shows `content` from the guest's offer: never offered back, and the mark edits are told apart by.
-    private func show(_ content: ClipboardContent) {
-        remoteDigest = content.digest
-        offeredDigest = content.digest
-        clipboardContent = content
-    }
-
-    /// The guest's offer stopped being the host's clipboard. A write of it the host pasteboard still holds,
-    /// whether passthrough or Copy to Mac made it, is retracted unless a Mac copy replaced it, since nothing more
-    /// of it can be pulled; a retraction the user did not make is reported only with passthrough off, where the
-    /// window's Copy to Mac is the way back.
+    /// The guest's offer stopped being the host's clipboard. A write of it the host pasteboard still holds is
+    /// retracted, since nothing more of it can be pulled; a Mac copy that replaced it already replaced the
+    /// write. A retraction is reported only with passthrough off, where it took away a copy passthrough made
+    /// while it ran.
     ///
-    /// - The guest ended it: its clipboard moved on. The buffer empties unless the guest's next offer follows.
-    /// - A Mac copy replaced it: the guest's clipboard is that copy now, which the buffer never shows.
-    /// - The window's Clear cleared it, and the buffer with it.
-    /// - The connection left: the buffer keeps it, since the guest may hold it still, and its return re-offers
-    ///   it.
+    /// - The guest ended it: its clipboard moved on.
+    /// - A Mac copy replaced it: the guest's clipboard is that copy now.
+    /// - The connection left: the guest may hold it still, and its return re-offers it.
     private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         guard self.remote === remote else { return }
-        let shown = clipboardContent.digest == remoteDigest
         self.remote = nil
-        previewedToken = nil
         switch ending {
         case .superseded:
-            if shown { showNothing() }
-        case .cleared:
-            if shown { showNothing() }
-            guard retractStaleHostWrite() else { return }
-            Self.logger.log(
-                .notice,
-                "Retracted the host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's clipboard was cleared"
-            )
+            return
         case .linkLost:
-            guard retractStaleHostWrite() else { return }
+            guard retractHostWrite(remote.token) else { return }
             Self.logger.log(
                 .notice,
                 "Retracted the host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's connection ended"
             )
             if !passthroughRuns() { reportRefusal(gesture: .copy, .disconnectedCopyRetracted) }
         case .byFarSide(let hasSuccessor):
-            if shown, !hasSuccessor { showNothing() }
-            guard retractStaleHostWrite() else { return }
+            guard retractHostWrite(remote.token) else { return }
             Self.logger.log(
                 .notice,
                 "Retracted the stale host-pasteboard promise for '\(self.label(), privacy: .public)': the guest's clipboard moved on"
@@ -364,86 +251,8 @@ final class HubClipboardService: ClipboardServicing {
         }
     }
 
-    /// Empties the buffer for a guest clipboard it cannot show.
-    private func showNothing() {
-        remoteDigest = nil
-        offeredDigest = ClipboardContent.empty.digest
-        clipboardContent = .empty
-    }
-
-    /// Releases the guest's offer once the buffer no longer shows it and the host pasteboard no longer holds
-    /// this VM's write.
-    private func releaseRemoteIfUnheld() {
-        guard let remote, clipboardContent.digest != remoteDigest, !hostPasteboardHoldsOurWrite() else { return }
-        self.remote = nil
-        remoteDigest = nil
-        previewedToken = nil
-        exchange.release(remote)
-    }
-
     private func reportRefusal(gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure) {
         reporter?.finish(ClipboardTransferFinish(gesture: gesture, outcome: .failed(failure), peerName: label()))
-    }
-
-    // MARK: - Preview
-
-    private struct ItemRepresentation: Hashable {
-        var item: Int
-        var representation: Int
-    }
-
-    /// The most bytes the window's preview pulls of `representation`, or nil when it renders none of it: text
-    /// within the editor's limit, and rich text or an image within the preview's.
-    private static func previewCeiling(_ representation: Representation) -> UInt64? {
-        guard representation.storage == .inline, ClipboardPromisePolicy.keeps(representation),
-            let uti = representation.type.appleUTI
-        else { return nil }
-        let type = UTType(uti)
-        if type?.conforms(to: .image) == true || type?.conformsToRTFFamily == true {
-            return UInt64(ClipboardPreviewPolicy.maxEagerPreviewBytes)
-        }
-        if uti == ClipboardContent.utf8TextUTI || type?.conforms(to: .text) == true {
-            return UInt64(ClipboardPreviewPolicy.maxEditableTextBytes)
-        }
-        return nil
-    }
-
-    /// `remote`'s items as ``ClipboardContent/init(previewOf:concealed:)`` shows them, each representation in
-    /// `pulled` holding its bytes: a file item by its image's.
-    private static func content(of remote: ClipboardRemoteOffer, pulled: [ItemRepresentation: Data]) -> ClipboardContent
-    {
-        var representations: [ClipboardContent.Representation] = []
-        for (item, offered) in remote.items.enumerated() {
-            let kept = offered.representations.enumerated().filter { ClipboardPromisePolicy.keeps($0.element) }
-            if let file = kept.first(where: { $0.element.storage != .inline }) {
-                let name = String(decoding: file.element.name, as: UTF8.self)
-                let image = kept.first { pulled[ItemRepresentation(item: item, representation: $0.offset)] != nil }
-                if let image, let uti = image.element.type.appleUTI,
-                    let data = pulled[ItemRepresentation(item: item, representation: image.offset)]
-                {
-                    representations.append(ClipboardContent.Representation(uti: uti, data: data, filename: name))
-                } else {
-                    representations.append(
-                        ClipboardContent.Representation(
-                            pendingRemoteUTI: file.element.type.appleUTI
-                                ?? (file.element.storage == .folder ? UTType.folder : UTType.data).identifier,
-                            byteCount: Int(clamping: file.element.sizeEstimate), filename: name,
-                            isDirectory: file.element.storage == .folder))
-                }
-                continue
-            }
-            for (index, inline) in kept {
-                guard let uti = inline.type.appleUTI else { continue }
-                if let data = pulled[ItemRepresentation(item: item, representation: index)] {
-                    representations.append(ClipboardContent.Representation(uti: uti, data: data))
-                } else {
-                    representations.append(
-                        ClipboardContent.Representation(
-                            pendingRemoteUTI: uti, byteCount: Int(clamping: inline.sizeEstimate)))
-                }
-            }
-        }
-        return ClipboardContent(representations: representations, isConcealed: remote.concealed)
     }
 }
 
@@ -461,6 +270,7 @@ struct HubClipboardLink: ClipboardItemLink {
 
     func withdrawOffer(_ token: Data) { hub.withdrawOffer(token, from: peer) }
     func releaseOffer(_ token: Data) { hub.releaseOffer(token, of: peer) }
+    func refuseOffer(_ token: Data, _ error: WireError) { hub.refuseOffer(token, error, of: peer) }
 
     func readItem(_ token: Data, item: UInt32, _ completion: @escaping @Sendable (OfferedItem?) -> Void) {
         hub.readItem(token, item: item, of: peer, completion)

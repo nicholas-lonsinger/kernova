@@ -17,27 +17,26 @@ import Testing
 @MainActor
 struct HostClipboardPublisherCancellationTests {
     /// Minimal in-memory `ClipboardServicing` that counts the publish's one
-    /// request for items — `materializeForCopy` is where a real transport
+    /// request for items — `guestClipboardItems` is where a real transport
     /// reports its refusals and retires its offer, so a publish nobody is
     /// waiting on must never reach it.
     @MainActor
     @Observable
     final class CountingService: ClipboardServicing {
-        var clipboardContent: ClipboardContent
+        var guestContent: ClipboardContent
         var isConnected = true
         var supportsBinaryRepresentations = true
+        let inboundOfferSeq: UInt64 = 0
         private(set) var materializeCount = 0
 
-        init(content: ClipboardContent) { clipboardContent = content }
+        init(content: ClipboardContent) { guestContent = content }
 
         func stop() {}
-        func grabIfChanged() -> ClipboardGrabOutcome { .settled }
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
-        func clearBuffer() { clipboardContent = .empty }
 
-        func materializeForCopy() -> [CopyToMacItem] {
+        func guestClipboardItems() -> [CopyToMacItem] {
             materializeCount += 1
-            return clipboardContent.representations.map { .resolved($0) }
+            return guestContent.representations.map { .resolved($0) }
         }
     }
 
@@ -143,27 +142,25 @@ struct HostClipboardPublisherCancellationTests {
     }
 }
 
-/// Maps what `materializeForCopy` hands `HostClipboardPublisher.publish(from:)`,
+/// Maps what `guestClipboardItems` hands `HostClipboardPublisher.publish(from:)`,
 /// and what the pasteboard write does, to each terminal outcome.
 @Suite("HostClipboardPublisher outcomes", .caseScoped)
 @MainActor
 struct HostClipboardPublisherOutcomeTests {
-    /// Hands the publisher a fixed `materializeForCopy` result.
+    /// Hands the publisher a fixed `guestClipboardItems` result.
     @MainActor
     @Observable
     final class ScriptedService: ClipboardServicing {
-        var clipboardContent = ClipboardContent(text: "buffer bytes")
         var isConnected = true
         var supportsBinaryRepresentations = true
+        let inboundOfferSeq: UInt64 = 0
         let copyItems: [CopyToMacItem]
 
         init(copyItems: [CopyToMacItem]) { self.copyItems = copyItems }
 
         func stop() {}
-        func grabIfChanged() -> ClipboardGrabOutcome { .settled }
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
-        func clearBuffer() { clipboardContent = .empty }
-        func materializeForCopy() -> [CopyToMacItem] { copyItems }
+        func guestClipboardItems() -> [CopyToMacItem] { copyItems }
     }
 
     private let stagingRoot = TestStagingRoot()

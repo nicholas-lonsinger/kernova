@@ -205,7 +205,8 @@ enum ErrorCode {
   ERROR_CODE_DRAG_NOT_CURRENT = 1005;               // the take names no drag the peer offers, or one already taken
   ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
   ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows
-  reserved 1008 to 1199;
+  ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is
+  reserved 1009 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -716,17 +717,33 @@ message ItemSetHeader {
   // The content is sensitive (a password): the receiver keeps it out of
   // history and logs.
   bool concealed = 1;
-  // The Item messages that follow. A CLIPBOARD_OFFER_BY_HOST of none is the
-  // host's clear: the peer empties its clipboard and releases the offer. The
-  // host refuses a CLIPBOARD_OFFER_BY_PEER of none.
+  // The Item messages that follow. Only a copy (`copy`), or a peer's first
+  // CLIPBOARD_OFFER_BY_PEER on a connection, holds none; any other CLIPBOARD
+  // offer of none is refused.
   uint32 count = 3;
   // 16 random bytes naming this offer; a pull quotes it.
   bytes token = 4;
   // CLIPBOARD_OFFER_BY_PEER only: the token of the last
   // CLIPBOARD_OFFER_BY_HOST the peer received on this connection, empty when
   // none. The host takes the offer only when it has sent no newer one: when
-  // it sent none, or this names its last. Empty on every other kind.
+  // it sent none, or this names its last. A copy (`copy`) names the host's
+  // ask it answers instead. Empty on every other kind.
   bytes after = 5;
+  // CLIPBOARD only: a copy, sent because the user asked for this clipboard on
+  // the far side. It is not the opener's clipboard offer, so the opener's next
+  // offer does not withdraw it: the receiver lands every INLINE representation
+  // first, writes its clipboard only if that has not changed since the copy
+  // arrived (else RESET(CLIPBOARD_CHANGED)), and releases the copy once its
+  // clipboard no longer holds what it wrote. A host copy of no items is an
+  // ask: the peer releases it and answers with a copy of its clipboard whose
+  // `after` names the ask, of no items when it holds nothing to copy.
+  bool copy = 6;
+  // CLIPBOARD_OFFER_BY_PEER only, on the peer's first offer on a connection:
+  // its clipboard changed while no connection carried CLIPBOARD. The host
+  // takes that offer over a copy of its own unless its own clipboard changed
+  // meanwhile too. That first offer holds no items when the peer's clipboard
+  // is empty, and then only reports.
+  bool changed_while_unlinked = 7;
 }
 
 // The container codecs a destination decodes.
@@ -863,7 +880,8 @@ message EndRecord {
 // Each feature offers items on its own item-set offer kinds, and every byte
 // moves by ITEM_PULL. CLIPBOARD: each side keeps at most one clipboard offer
 // open, withdrawing the previous one with RESET(ITEM_OFFER_REPLACED) before
-// it offers the next, and with RESET(CANCELLED) when it offers nothing next.
+// it offers the next, and with RESET(CANCELLED) when it offers nothing next;
+// a copy (ItemSetHeader.copy) is not one of them.
 // DROP: the host offers what was dropped onto the VM. DRAG: the peer offers a
 // drag in progress in the guest, and the host takes it with DRAG_TAKE before
 // it pulls.

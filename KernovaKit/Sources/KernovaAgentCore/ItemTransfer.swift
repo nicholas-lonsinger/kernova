@@ -31,15 +31,26 @@ public struct ItemOffer: Sendable, Equatable {
     /// The items, in the order they are sent.
     public var items: [OfferedItem]
     /// A peer's CLIPBOARD offer: the token of the last host clipboard offer it received on the connection,
-    /// empty when none (`ItemSetHeader.after`). Empty on every other offer.
+    /// empty when none (`ItemSetHeader.after`); a copy's, the ask it answers. Empty on every other offer.
     public var after: Data
+    /// A CLIPBOARD copy (`ItemSetHeader.copy`): not this side's clipboard offer, so a later one does not
+    /// withdraw it.
+    public var copy: Bool
+    /// A peer's first CLIPBOARD offer on a connection: its clipboard changed while no connection carried the
+    /// feature (`ItemSetHeader.changed_while_unlinked`).
+    public var changedWhileUnlinked: Bool
 
     /// Creates an offer.
-    public init(token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data()) {
+    public init(
+        token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(), copy: Bool = false,
+        changedWhileUnlinked: Bool = false
+    ) {
         self.token = token
         self.concealed = concealed
         self.items = items
         self.after = after
+        self.copy = copy
+        self.changedWhileUnlinked = changedWhileUnlinked
     }
 }
 
@@ -55,20 +66,29 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var count: Int
     /// ``ItemOffer/after``, as the OPEN carried it.
     public var after: Data
+    /// ``ItemOffer/copy``, as the OPEN carried it.
+    public var copy: Bool
+    /// ``ItemOffer/changedWhileUnlinked``, as the OPEN carried it.
+    public var changedWhileUnlinked: Bool
 
     /// A header announcing `count` items of `feature`'s offer `token`.
-    public init(feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data()) {
+    public init(
+        feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(), copy: Bool = false,
+        changedWhileUnlinked: Bool = false
+    ) {
         self.feature = feature
         self.token = token
         self.concealed = concealed
         self.count = count
         self.after = after
+        self.copy = copy
+        self.changedWhileUnlinked = changedWhileUnlinked
     }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after)
+            after: header.after, copy: header.copy, changedWhileUnlinked: header.changedWhileUnlinked)
     }
 }
 
