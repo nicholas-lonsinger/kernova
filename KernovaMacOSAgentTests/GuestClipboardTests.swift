@@ -20,6 +20,7 @@ struct GuestClipboardTests {
     private final class RecordingLink: ClipboardItemLink {
         private struct Calls {
             var offers: [ItemOffer] = []
+            var withdrawals: [Data] = []
             var releases: [Data] = []
             var ceilings: [UInt64] = []
         }
@@ -33,6 +34,7 @@ struct GuestClipboardTests {
         }
 
         var offers: [ItemOffer] { calls.withLock(\.offers) }
+        var withdrawals: [Data] { calls.withLock(\.withdrawals) }
         var releases: [Data] { calls.withLock(\.releases) }
         /// The `byte_ceiling` of each pull ordered, in order.
         var ceilings: [UInt64] { calls.withLock(\.ceilings) }
@@ -43,7 +45,10 @@ struct GuestClipboardTests {
             completion(nil)
         }
 
-        func withdrawOffer(_ token: Data) {}
+        func withdrawOffer(_ token: Data) {
+            calls.withLock { $0.withdrawals.append(token) }
+            changed.notify()
+        }
 
         func releaseOffer(_ token: Data) {
             calls.withLock { $0.releases.append(token) }
@@ -204,5 +209,115 @@ struct GuestClipboardTests {
         _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
         #expect(link.ceilings == [UInt64(first), UInt64(raised)])
         #expect(rig.clipboard.exchange.pasteCeilingBytes == raised)
+    }
+
+    // MARK: - One current clipboard
+
+    private static let hostToken = Data(repeating: 9, count: 16)
+
+    private static func textItem() -> OfferedItem {
+        var item = OfferedItem()
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.storage = .inline
+        item.representations = [representation]
+        return item
+    }
+
+    /// Has the host offer one text item on `link` and waits for the guest pasteboard to promise it.
+    private func receiveHostOffer(_ rig: Rig, _ link: RecordingLink, token: Data = hostToken) async throws {
+        rig.clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 1)),
+            on: link)
+        try await rig.pasteboard.changed.wait { rig.clipboard.exchange.remote?.token == token }
+    }
+
+    @Test("A guest offer names the last host offer the guest received on its connection")
+    func offerNamesTheLastHostOffer() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        try await receiveHostOffer(rig, link)
+
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        rig.clipboard.checkPasteboard()
+        try await link.changed.wait { link.offers.count == 1 }
+        #expect(link.offers[0].after == Self.hostToken)
+
+        // A new connection has received nothing yet.
+        rig.clipboard.setLink(nil)
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 2 }
+        #expect(link.offers[1].after.isEmpty)
+    }
+
+    @Test("Publishing the host's offer withdraws the guest's own: one current clipboard")
+    func publishingWithdrawsTheGuestsOffer() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setOnConsole(true)
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 1 }
+
+        try await receiveHostOffer(rig, link)
+        try await link.changed.wait { link.withdrawals == [link.offers[0].token] }
+        #expect(rig.clipboard.exchange.localSource == nil)
+    }
+
+    @Test(
+        "A host offer the host ends is retracted, with or without a successor; one its connection drops keeps serving",
+        arguments: [
+            (StreamClosure.resetByPeer(WireError(.cancelled)), true),
+            (StreamClosure.resetByPeer(WireError(.itemOfferReplaced)), true),
+            (StreamClosure.connectionLost, false),
+        ])
+    func hostEndRetracts(closure: StreamClosure, retracted: Bool) async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setLink(link)
+        try await receiveHostOffer(rig, link)
+        #expect(!rig.pasteboard.promisedTypes.isEmpty)
+
+        rig.clipboard.exchange.handle(.offerEnded(.clipboard, .remote, token: Self.hostToken, closure), on: link)
+        #expect(rig.pasteboard.promisedTypes.isEmpty == retracted)
+        // The retraction's clear is the agent's own write: the poll reads no copy from it.
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
+    }
+
+    @Test("A copy that offers nothing withdraws the guest's offer")
+    func emptyCopyWithdraws() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        rig.clipboard.setLink(link)
+        try await link.changed.wait { link.offers.count == 1 }
+
+        // A password manager clears the clipboard.
+        _ = rig.pasteboard.clearContents()
+        rig.clipboard.checkPasteboard()
+        try await link.changed.wait { link.withdrawals == [link.offers[0].token] }
+        #expect(link.offers.count == 1)
+    }
+
+    @Test("The connection returning re-offers a copy of the guest's own, never the host's write it holds")
+    func returnReoffersOnlyLocalCopies() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        try await receiveHostOffer(rig, link)
+
+        rig.clipboard.setLink(nil)
+        rig.clipboard.setLink(link)
+        rig.clipboard.setOnConsole(false)
+        rig.clipboard.setOnConsole(true)
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
     }
 }

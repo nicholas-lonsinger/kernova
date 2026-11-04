@@ -8,8 +8,8 @@ import KernovaLogging
 ///
 /// Conflict policy is last-writer-wins: every keystroke pushes the edit into
 /// `clipboardService.clipboardContent`, so a guest update landing mid-edit is
-/// simply a newer writer. Echo suppression is digest-based — `lastAppliedDigest`
-/// is set *before* writing the model, so the resulting observation pass
+/// simply a newer writer. Echo suppression is keyed on what is shown —
+/// `lastAppliedKey` is set *before* writing the model, so the resulting observation pass
 /// recognizes the content as already displayed instead of re-applying it.
 @MainActor
 final class ClipboardContentViewController: NSViewController, NSTextViewDelegate,
@@ -56,11 +56,26 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     // MARK: - State
 
-    /// Digest of the content currently rendered in the content area.
+    /// What the content area renders: the content's digest, and whether it is
+    /// concealed, which the digest leaves out but the rendering doesn't.
     ///
-    /// A matching observed digest skips the rebuild — both for no-op passes and
+    /// A matching observed key skips the rebuild — both for no-op passes and
     /// for the echo of our own writes.
-    private var lastAppliedDigest: Data?
+    private var lastAppliedKey: AppliedKey?
+
+    private struct AppliedKey: Equatable {
+        let digest: Data
+        let isConcealed: Bool
+
+        init(_ content: ClipboardContent) {
+            digest = content.digest
+            isConcealed = content.isConcealed
+        }
+    }
+
+    /// Whether the window can cross to the guest now: Paste, drop and Copy to
+    /// Mac act on a connected guest's clipboard, so they are offered only then.
+    private var isGuestConnected: Bool { instance.clipboardService?.isConnected == true }
 
     /// Debounced off-actor commit of the editor buffer.
     ///
@@ -192,7 +207,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     override func loadView() {
         let container = dropContainer
         container.canAcceptDrop = { [weak self] in
-            self?.instance.clipboardService != nil
+            self?.isGuestConnected == true
         }
         container.onDrop = { [weak self] draggingInfo in
             self?.handleDrop(draggingInfo) ?? false
@@ -323,7 +338,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         hasUserEdit = true
         // Prime the digest before the write so the observation pass doesn't
         // rebuild the view out from under the user.
-        lastAppliedDigest = edited.digest
+        lastAppliedKey = AppliedKey(edited)
         service.clipboardContent = edited
     }
 
@@ -336,7 +351,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
         hasPendingEdit = false
         hasUserEdit = true
         let edited = ClipboardContent(text: textView.string)
-        lastAppliedDigest = edited.digest
+        lastAppliedKey = AppliedKey(edited)
         service.clipboardContent = edited
     }
 
@@ -382,6 +397,10 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     }
 
     var isCopyingToMacForTesting: Bool { isCopyingToMac }
+
+    var isShowingConcealedForTesting: Bool { !concealedPreview.isHidden }
+
+    var isEditorEditableForTesting: Bool { textView.isEditable }
 
     /// The status line's transient slot — empty unless a message is up.
     var indicatorTextForTesting: String { statusMessage.stringValue }
@@ -512,11 +531,11 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
         if let service {
             let content = service.clipboardContent
-            if content.digest != lastAppliedDigest {
+            if AppliedKey(content) != lastAppliedKey {
                 // An external update is replacing the editor; drop any debounced
                 // edit so it can't later flush stale text over this content.
                 cancelPendingEdit()
-                lastAppliedDigest = content.digest
+                lastAppliedKey = AppliedKey(content)
                 apply(content: content)
                 bufferCard.setContentType(ClipboardContentDescriber.indicatorText(for: content))
             }
@@ -547,8 +566,7 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
 
     /// The one place the three command buttons' enablement is decided.
     private func refreshCommandButtons() {
-        let connected = instance.clipboardService != nil
-        let offered = connected && !isPassthroughOn
+        let offered = isGuestConnected && !isPassthroughOn
         commandBar.pasteButton.isEnabled = offered
         commandBar.copyButton.isEnabled = offered && hasBufferContent && !isCopyingToMac
         commandBar.clearButton.isEnabled = offered && hasBufferContent
@@ -929,9 +947,9 @@ final class ClipboardContentViewController: NSViewController, NSTextViewDelegate
     func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(paste(_:)):
-            return !isPassthroughOn && instance.clipboardService != nil
+            return !isPassthroughOn && isGuestConnected
         case #selector(copy(_:)):
-            guard !isPassthroughOn, let service = instance.clipboardService else { return false }
+            guard !isPassthroughOn, isGuestConnected, let service = instance.clipboardService else { return false }
             return !service.clipboardContent.isEmpty && !isCopyingToMac
         default:
             return true

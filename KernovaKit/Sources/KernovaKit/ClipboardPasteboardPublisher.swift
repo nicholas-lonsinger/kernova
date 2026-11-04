@@ -102,8 +102,8 @@ public final class ClipboardPasteboardPublisher {
     /// Process-lifetime owner of the lazy data providers a write promises.
     private let providerRegistry: LazyClipboardProviderRegistry
 
-    /// The pasteboard's `changeCount` right after the most recent write, or `nil`
-    /// before any write and after a retraction.
+    /// The pasteboard's `changeCount` right after the most recent write — a
+    /// retraction's clear included — or `nil` before any write.
     ///
     /// Recorded whether or not the write succeeded: a failed one still cleared
     /// the pasteboard and bumped the count, and that change must never read as
@@ -205,7 +205,7 @@ public final class ClipboardPasteboardPublisher {
         guard let held = heldWrite, held.promised, held.changeCount == pasteboard.changeCount
         else { return false }
         pasteboard.clearContents()
-        lastWriteChangeCount = nil
+        lastWriteChangeCount = pasteboard.changeCount
         heldWrite = nil
         return true
     }

@@ -441,6 +441,37 @@ struct ClipboardContentViewControllerPassthroughChromeTests {
         return (vc, instance)
     }
 
+    @Test("a disconnected guest withdraws Paste, Copy to Mac and Clear, and leaves the buffer editable")
+    func disconnectedGuestDisablesCrossings() throws {
+        let (vc, instance) = makeConnectedController()
+        let service = try #require(instance.sessionContext?.clipboardService as? FakeClipboardService)
+        #expect(vc.areCommandActionsEnabledForTesting == true)
+
+        service.isConnected = false
+        vc.simulateObservationForTesting()
+        #expect(vc.areCommandActionsEnabledForTesting == false)
+        let pasteItem = NSMenuItem(
+            title: "Paste", action: #selector(ClipboardContentViewController.paste(_:)), keyEquivalent: "")
+        #expect(vc.validateUserInterfaceItem(pasteItem) == false)
+        #expect(vc.isEditorEditableForTesting)
+    }
+
+    @Test("a plain guest copy after a concealed one with the same digest replaces the concealed view")
+    func plainCopyAfterConcealedRerenders() {
+        let (vc, instance) = makeConnectedController()
+        let service = instance.sessionContext?.clipboardService
+        let pending = ClipboardContent.Representation(pendingRemoteUTI: ClipboardContent.utf8TextUTI, byteCount: 0)
+        service?.clipboardContent = ClipboardContent(representations: [pending], isConcealed: true)
+        vc.simulateObservationForTesting()
+        #expect(vc.isShowingConcealedForTesting)
+
+        let plain = ClipboardContent(representations: [pending], isConcealed: false)
+        #expect(plain.digest == service?.clipboardContent.digest)
+        service?.clipboardContent = plain
+        vc.simulateObservationForTesting()
+        #expect(!vc.isShowingConcealedForTesting)
+    }
+
     @Test("passthrough on at open keeps the command row and withdraws its actions")
     func passthroughOnAtOpenDisablesCommandActions() {
         let (vc, _) = makeConnectedController(passthroughEnabled: true)

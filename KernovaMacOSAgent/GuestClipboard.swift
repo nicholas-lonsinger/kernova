@@ -53,14 +53,18 @@ final class GuestClipboard {
         self.pasteboard = pasteboard
         self.onNotice = onNotice
         exchange = ClipboardItemExchange(
-            stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: pasteCeiling, logger: Self.logger)
+            side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: pasteCeiling, logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         seenChangeCount = pasteboard.changeCount
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
-        exchange.onRemoteOfferEnded = { [weak self] remote, byFarSide in
-            if byFarSide { self?.retract(remote) }
+        exchange.onRemoteOfferEnded = { [weak self] remote, ending in
+            switch ending {
+            case .byFarSide: self?.retract(remote)
+            case .superseded: if self?.published === remote { self?.published = nil }
+            case .linkLost: break
+            }
         }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
@@ -216,7 +220,7 @@ final class GuestClipboard {
 
     /// The host's clipboard moved on: a promise still standing for its offer could serve only what already
     /// landed, so it is withdrawn, unless a copy has replaced it since. An offer ended by the connection leaving
-    /// keeps its promise, serving what landed.
+    /// keeps its promise, serving what landed, until the host's return offers what it holds then.
     private func retract(_ remote: ClipboardRemoteOffer) {
         guard published === remote else { return }
         published = nil

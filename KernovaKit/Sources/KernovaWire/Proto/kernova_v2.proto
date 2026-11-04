@@ -204,7 +204,8 @@ enum ErrorCode {
   ERROR_CODE_ITEM_DECMPFS_REFUSED = 1004;           // the destination could not land a decmpfs entry; Error.item names it
   ERROR_CODE_DRAG_NOT_CURRENT = 1005;               // the take names no drag the peer offers, or one already taken
   ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
-  reserved 1007 to 1199;
+  ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows
+  reserved 1008 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -711,6 +712,11 @@ message ItemSetHeader {
   uint32 count = 3;
   // 16 random bytes naming this offer; a pull quotes it.
   bytes token = 4;
+  // CLIPBOARD_OFFER_BY_PEER only: the token of the last
+  // CLIPBOARD_OFFER_BY_HOST the peer received on this connection, empty when
+  // none. The host takes the offer only when it has sent no newer one: when
+  // it sent none, or this names its last. Empty on every other kind.
+  bytes after = 5;
 }
 
 // The container codecs a destination decodes.
@@ -846,10 +852,11 @@ message EndRecord {
 //
 // Each feature offers items on its own item-set offer kinds, and every byte
 // moves by ITEM_PULL. CLIPBOARD: each side keeps at most one clipboard offer
-// open, withdrawing the previous one before it offers the next. DROP: the
-// host offers what was dropped onto the VM. DRAG: the peer offers a drag in
-// progress in the guest, and the host takes it with DRAG_TAKE before it
-// pulls.
+// open, withdrawing the previous one with RESET(ITEM_OFFER_REPLACED) before
+// it offers the next, and with RESET(CANCELLED) when it offers nothing next.
+// DROP: the host offers what was dropped onto the VM. DRAG: the peer offers a
+// drag in progress in the guest, and the host takes it with DRAG_TAKE before
+// it pulls.
 
 // FeatureAdvert.params for CLIPBOARD, both sides.
 message ClipboardCapability {

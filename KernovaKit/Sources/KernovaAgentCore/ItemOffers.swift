@@ -151,6 +151,7 @@ package struct ItemOfferRegistry: Sendable {
         header.concealed = offer.concealed
         header.count = UInt32(clamping: offer.items.count)
         header.token = offer.token
+        header.after = offer.after
         let body = header.encoded
         if let oversize = (encoded + [body]).first(where: { $0.count > WireConstants.maxControlPayload }) {
             return WireError(
@@ -163,12 +164,12 @@ package struct ItemOfferRegistry: Sendable {
         return nil
     }
 
-    /// Resets this side's offer of `token` CANCELLED.
-    mutating func withdraw(_ token: Data, connection: inout Connection) {
+    /// Resets this side's offer of `token` with `code`.
+    mutating func withdraw(_ token: Data, code: ErrorCode, connection: inout Connection) {
         guard let entry = local.first(where: { $0.offer.token == token }), connection.canReset(entry.stream) else {
             return
         }
-        connection.reset(entry.stream, WireError(.cancelled))
+        connection.reset(entry.stream, WireError(code))
     }
 
     /// Ends the far side's offer of `token` from this side: END with `endBody` once the set is whole, RESET

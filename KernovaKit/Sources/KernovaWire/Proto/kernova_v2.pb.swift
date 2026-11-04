@@ -369,6 +369,9 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
 
   /// the press that carried the drag is over
   case dragPressOver // = 1006
+
+  /// a CLIPBOARD offer's RESET: the opener's next offer follows
+  case itemOfferReplaced // = 1007
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -420,6 +423,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case 1004: self = .itemDecmpfsRefused
     case 1005: self = .dragNotCurrent
     case 1006: self = .dragPressOver
+    case 1007: self = .itemOfferReplaced
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -469,6 +473,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case .itemDecmpfsRefused: return 1004
     case .dragNotCurrent: return 1005
     case .dragPressOver: return 1006
+    case .itemOfferReplaced: return 1007
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -518,6 +523,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     .itemDecmpfsRefused,
     .dragNotCurrent,
     .dragPressOver,
+    .itemOfferReplaced,
   ]
 
 }
@@ -2054,6 +2060,12 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// 16 random bytes naming this offer; a pull quotes it.
   public var token: Data = Data()
 
+  /// CLIPBOARD_OFFER_BY_PEER only: the token of the last
+  /// CLIPBOARD_OFFER_BY_HOST the peer received on this connection, empty when
+  /// none. The host takes the offer only when it has sent no newer one: when
+  /// it sent none, or this names its last. Empty on every other kind.
+  public var after: Data = Data()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2603,7 +2615,7 @@ nonisolated extension Kernova_V2_StreamKind: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0\u{1}ERROR_CODE_ITEM_OFFER_REPLACED\0")
 }
 
 nonisolated extension Kernova_V2_AbsenceReason: SwiftProtobuf._ProtoNameProviding {
@@ -4074,7 +4086,7 @@ nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4085,6 +4097,7 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
       case 1: try { try decoder.decodeSingularBoolField(value: &self.concealed) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.count) }()
       case 4: try { try decoder.decodeSingularBytesField(value: &self.token) }()
+      case 5: try { try decoder.decodeSingularBytesField(value: &self.after) }()
       default: break
       }
     }
@@ -4100,6 +4113,9 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if !self.token.isEmpty {
       try visitor.visitSingularBytesField(value: self.token, fieldNumber: 4)
     }
+    if !self.after.isEmpty {
+      try visitor.visitSingularBytesField(value: self.after, fieldNumber: 5)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4107,6 +4123,7 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if lhs.concealed != rhs.concealed {return false}
     if lhs.count != rhs.count {return false}
     if lhs.token != rhs.token {return false}
+    if lhs.after != rhs.after {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

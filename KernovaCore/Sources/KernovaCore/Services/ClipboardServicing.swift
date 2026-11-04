@@ -51,6 +51,26 @@ package protocol ClipboardServicing: AnyObject {
     /// ``grabIfChanged()``'s does.
     func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome
 
+    /// The Mac's pasteboard changed to a copy passthrough offers nothing of — empty, transient, or none of it
+    /// readable: the host's offer of the copy before it is withdrawn. Default: nothing to withdraw.
+    func hostCopyOffersNothing()
+
+    /// Whether the transport resolves offers that cross, the host's winning: passthrough then offers each new
+    /// connection the Mac's copy as it stands, and turning it on leaves both sides the newer copy. A transport
+    /// that does not would swap two clipboards that crossed, so it is offered only copies made while connected.
+    var resolvesCrossings: Bool { get }
+
+    /// Bumped once per connection to the guest, so passthrough tells a new connection from the last however
+    /// fast one replaced the other. Default 0: a transport whose service is per connection.
+    var connectionEpoch: UInt64 { get }
+
+    /// The host pasteboard's change count when this clipboard last changed, so turning passthrough on can tell
+    /// whether the Mac's copy or the guest's is newer; nil when the transport keeps no record.
+    var clipboardChangeMark: Int? { get }
+
+    /// Whether the guest's offer is this clipboard's now, for passthrough to publish.
+    var hasStandingGuestOffer: Bool { get }
+
     /// Empties the buffer (the window's "Clear" gesture) and resets the
     /// outbound dedup state.
     ///
@@ -142,4 +162,10 @@ extension ClipboardServicing {
 
     /// Transports that never receive report no inbound offers.
     var inboundOfferSeq: UInt64 { 0 }
+
+    func hostCopyOffersNothing() {}
+    var resolvesCrossings: Bool { false }
+    var connectionEpoch: UInt64 { 0 }
+    var clipboardChangeMark: Int? { nil }
+    var hasStandingGuestOffer: Bool { false }
 }

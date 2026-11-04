@@ -29,12 +29,16 @@ public struct ItemOffer: Sendable, Equatable {
     public var concealed: Bool
     /// The items, in the order they are sent.
     public var items: [OfferedItem]
+    /// A peer's CLIPBOARD offer: the token of the last host clipboard offer it received on the connection,
+    /// empty when none (`ItemSetHeader.after`). Empty on every other offer.
+    public var after: Data
 
     /// Creates an offer.
-    public init(token: Data, concealed: Bool = false, items: [OfferedItem]) {
+    public init(token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data()) {
         self.token = token
         self.concealed = concealed
         self.items = items
+        self.after = after
     }
 }
 
@@ -48,17 +52,22 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var concealed: Bool
     /// The items the offer sends.
     public var count: Int
+    /// ``ItemOffer/after``, as the OPEN carried it.
+    public var after: Data
 
     /// A header announcing `count` items of `feature`'s offer `token`.
-    public init(feature: FeatureID, token: Data, concealed: Bool, count: Int) {
+    public init(feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data()) {
         self.feature = feature
         self.token = token
         self.concealed = concealed
         self.count = count
+        self.after = after
     }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
-        self.init(feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count))
+        self.init(
+            feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
+            after: header.after)
     }
 }
 
@@ -306,9 +315,9 @@ public struct ItemTransfer: FeatureMachine {
         offers.offer(offer, kind: kind, connection: &connection)
     }
 
-    /// Withdraws this side's offer of `token`.
-    public mutating func withdraw(_ token: Data, connection: inout Connection) {
-        offers.withdraw(token, connection: &connection)
+    /// Withdraws this side's offer of `token`, resetting it with `code`.
+    public mutating func withdraw(_ token: Data, code: ErrorCode = .cancelled, connection: inout Connection) {
+        offers.withdraw(token, code: code, connection: &connection)
     }
 
     /// Releases the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole

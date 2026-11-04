@@ -45,6 +45,17 @@ extension NSPasteboard: ClipboardReadPasteboard {
     }
 }
 
+extension ClipboardReadPasteboard {
+    /// Whether what the pasteboard holds may offer something, read from its
+    /// types alone so nothing is fetched: it is not empty, and not marked
+    /// transient.
+    public var mayOfferSomething: Bool {
+        let types = items.flatMap(\.types)
+        let transient = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI)
+        return !types.isEmpty && !types.contains(transient)
+    }
+}
+
 /// Both halves of a pasteboard: the one a clipboard end polls for the user's
 /// copies and writes its peer's offers to.
 public protocol ClipboardPasteboard: ClipboardReadPasteboard, ClipboardWritePasteboard {}

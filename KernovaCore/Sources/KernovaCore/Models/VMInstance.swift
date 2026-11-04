@@ -527,13 +527,16 @@ package final class VMInstance {
             self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
         }
         hubClipboard.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
-        hubClipboard.retractStaleHostWrite = { [weak self] in
-            // With passthrough on, the newer offer's automatic publish is what
-            // supersedes the stale write; retracting too would only flash an
-            // empty pasteboard and a Copy-to-Mac hint for a button passthrough
-            // hides.
-            guard let self, sessionContext?.clipboardPassthroughCoordinator == nil else { return false }
-            return publisher.retractPromisedWrite()
+        hubClipboard.retractStaleHostWrite = { publisher.retractPromisedWrite() }
+        hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
+        hubClipboard.passthroughRuns = { [weak self] in
+            self?.sessionContext?.clipboardPassthroughCoordinator != nil
+        }
+        hubClipboard.passthroughHoldsUnsentCopy = { [weak self] in
+            self?.sessionContext?.clipboardPassthroughCoordinator?.holdsUnsentCopy ?? false
+        }
+        hubClipboard.passthroughForwardNow = { [weak self] in
+            self?.sessionContext?.clipboardPassthroughCoordinator?.forwardNow()
         }
     }
 
