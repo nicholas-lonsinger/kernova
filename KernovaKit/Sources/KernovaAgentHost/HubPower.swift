@@ -24,6 +24,9 @@ public enum PowerRoutingOutcome: Sendable, Equatable {
     /// No peer took it, and nothing was done: a graceful action's caller presses the ACPI button. `refusals`
     /// say why each peer asked declined.
     case untaken(refusals: [PeerRefusal])
+    /// No peer took a graceful action, nothing was done, and a peer says the guest's OS does not act on the
+    /// VM's power button now: its caller sends nothing.
+    case powerButtonIgnored
     /// Another routing is running for this VM.
     case busy
 }
@@ -97,6 +100,7 @@ extension PowerRoutingOutcome {
         case .indeterminate: self = .indeterminate
         case .lostAfterAcceptance: self = .lostAfterAcceptance
         case .untaken(_, let refusals): self = .untaken(refusals: refusals)
+        case .powerButtonIgnored: self = .powerButtonIgnored
         case .busy: self = .busy
         }
     }

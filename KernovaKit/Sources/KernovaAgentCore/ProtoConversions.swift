@@ -210,6 +210,7 @@ extension PowerOffer {
         capability.actions = actions
         capability.asksAppsToQuit = asksAppsToQuit
         capability.ignoreAppsActions = ignoringApps
+        capability.powerButtonIgnored = powerButtonIgnored
         return capability.encoded
     }
 
@@ -218,7 +219,7 @@ extension PowerOffer {
         guard let capability = try? Kernova_V2_PowerCapability(serializedBytes: params) else { return nil }
         self.init(
             actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit,
-            ignoringApps: capability.ignoreAppsActions)
+            ignoringApps: capability.ignoreAppsActions, powerButtonIgnored: capability.powerButtonIgnored)
     }
 }
 

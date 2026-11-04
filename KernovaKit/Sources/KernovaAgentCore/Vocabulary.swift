@@ -403,12 +403,18 @@ public struct PowerOffer: Sendable, Equatable {
     public var asksAppsToQuit: Bool
     /// The actions it can perform now without waiting for apps, independent of `actions`.
     public var ignoringApps: [PowerAction]
+    /// Whether the guest's OS does not act on the VM's power button now.
+    public var powerButtonIgnored: Bool
 
     /// Creates an offer.
-    public init(actions: [PowerAction], asksAppsToQuit: Bool = false, ignoringApps: [PowerAction] = []) {
+    public init(
+        actions: [PowerAction], asksAppsToQuit: Bool = false, ignoringApps: [PowerAction] = [],
+        powerButtonIgnored: Bool = false
+    ) {
         self.actions = actions
         self.asksAppsToQuit = asksAppsToQuit
         self.ignoringApps = ignoringApps
+        self.powerButtonIgnored = powerButtonIgnored
     }
 
     /// The actions offered with apps waited for, or, `ignoringApps`, without.

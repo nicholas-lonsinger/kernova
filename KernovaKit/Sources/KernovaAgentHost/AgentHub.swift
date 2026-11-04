@@ -179,7 +179,7 @@ public final class AgentHub: Sendable {
     /// Routes `action`, performed without waiting for apps when `ignoringApps`, across the peers that offer it
     /// (spec §6.4) — `ConsoleAuthority`'s console peers newest first, then the system peer — and calls
     /// `completion` once, on the hub's queue, with how it ended. The hub never presses the ACPI button:
-    /// `.untaken` hands that back to the caller.
+    /// `.untaken` hands that back to the caller, and `.powerButtonIgnored` says the guest's OS would not act on it.
     public func requestPower(
         _ action: PowerAction, ignoringApps: Bool = false,
         _ completion: @escaping @Sendable (PowerRoutingOutcome) -> Void

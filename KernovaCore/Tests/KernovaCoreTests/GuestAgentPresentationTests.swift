@@ -285,10 +285,7 @@ struct GuestAgentPresentationTests {
     @Test(
         "The shutdown row says why no agent would take a shutdown",
         arguments: [
-            (
-                AbsenceReason.notOnConsole,
-                "Available to the session at the guest\u{2019}s screen, or to the system service at the login window."
-            ),
+            (AbsenceReason.notOnConsole, "Available to the session at the guest\u{2019}s screen."),
             (.noAgent, "No Kernova agent is connected."),
             (.disabledByPolicy, "Turned off in Settings."),
             (.versionMismatch, "The agent is out of date."),

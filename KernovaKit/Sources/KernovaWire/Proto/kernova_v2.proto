@@ -466,6 +466,10 @@ message PowerCapability {
   // apps still open quit without being asked to save. At most one entry
   // each; independent of `actions`, which may be empty beside it.
   repeated PowerAction ignore_apps_actions = 3;
+  // The guest's OS does not act on the VM's power button (the ACPI shutdown
+  // request) right now, so a shutdown or restart no peer takes has nothing
+  // to fall back to: the host sends none.
+  bool power_button_ignored = 4;
 }
 
 // FROZEN. OPEN body of POWER_REQUEST (host -> peer).

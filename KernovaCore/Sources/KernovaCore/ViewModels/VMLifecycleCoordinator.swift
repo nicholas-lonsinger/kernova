@@ -134,7 +134,9 @@ final class VMLifecycleCoordinator {
     ///
     /// Returns once the request is sent; the session's end is what follows it.
     /// Throws ``GuestShutdownNotCarriedOut`` when an agent took the request
-    /// and the guest did not go down, or Kernova can't tell whether it is.
+    /// and the guest did not go down, or Kernova can't tell whether it is, and
+    /// ``ShutdownRequestIgnored`` when no agent took it and an agent says the
+    /// guest would not act on the button either.
     /// `ignoringApps` asks the agents for the shutdown that does not wait for
     /// apps, and throws ``ShutdownIgnoringAppsUntaken`` where the graceful one
     /// presses the button.
@@ -150,6 +152,8 @@ final class VMLifecycleCoordinator {
             // left to press the button on.
             guard instance.liveSessionID == session else { return }
             return try await virtualizationService.requestStop(instance)
+        case .powerButtonIgnored:
+            throw ShutdownRequestIgnored()
         case .handedOff, .lostAfterAcceptance:
             return
         case .busy:
@@ -165,7 +169,9 @@ final class VMLifecycleCoordinator {
         Self.logger.log(
             .notice,
             "'\(instance.name, privacy: .public)' didn't shut down: \(String(describing: failure), privacy: .public)")
-        throw GuestShutdownNotCarriedOut(vmName: instance.name, session: session, reason: failure)
+        throw GuestShutdownNotCarriedOut(
+            vmName: instance.name, session: session, reason: failure,
+            offersShutDownAnyway: instance.agentHubSnapshot.shutsDownIgnoringApps)
     }
 
     /// Immediately terminates the VM — see ``VMActivity/forceStop(_:)``.
@@ -1142,3 +1148,7 @@ final class VMLifecycleCoordinator {
 /// No agent of the guest took a shutdown that does not wait for apps, and
 /// nothing was done.
 struct ShutdownIgnoringAppsUntaken: Error {}
+
+/// No agent of the guest took a graceful shutdown, and nothing was done: an
+/// agent says the guest's OS does not act on the VM's power button now.
+struct ShutdownRequestIgnored: Error {}

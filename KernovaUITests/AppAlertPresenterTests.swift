@@ -919,7 +919,8 @@ struct AppAlertPresenterTests {
     private func shutdownNotCarriedOut(_ vm: VMInstance) throws -> CommandError {
         .shutdownNotCarriedOut(
             GuestShutdownNotCarriedOut(
-                vmName: vm.name, session: try #require(vm.liveSessionID), reason: .indeterminate))
+                vmName: vm.name, session: try #require(vm.liveSessionID), reason: .indeterminate,
+                offersShutDownAnyway: false))
     }
 
     @Test("A shutdown the guest didn't carry out is shown about its session, and taken down when the session ends")

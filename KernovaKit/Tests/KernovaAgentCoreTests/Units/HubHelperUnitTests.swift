@@ -23,13 +23,22 @@ extension CoreUnits {
 
         static func system(
             _ handle: UInt64, console: ConsoleState = .on, consoleSessionID: String = "", usable: Bool = true,
-            actions: [PowerAction] = [.shutdown, .restart], ignoringApps: [PowerAction] = []
+            actions: [PowerAction] = [.shutdown, .restart], ignoringApps: [PowerAction] = [],
+            powerButtonIgnored: Bool = false
         ) -> RoutingPeer {
             RoutingPeer(
                 handle: PeerHandle(rawValue: handle), role: .systemPeer,
                 state: PeerSessionState(console: console, consoleSessionID: consoleSessionID),
-                connectedOrder: handle, powerUsable: usable, actions: actions, ignoringAppsActions: ignoringApps)
+                connectedOrder: handle, powerUsable: usable, actions: actions, ignoringAppsActions: ignoringApps,
+                powerButtonIgnored: powerButtonIgnored)
         }
+
+        /// A macOS guest at its login window: background sessions' peers, and the system peer reporting the
+        /// console off, offering only shutdown without waiting for apps, and saying macOS ignores the power button.
+        static let atLoginWindow = [
+            Self.session(1, "a", console: .off), Self.session(2, "b", console: .off),
+            Self.system(9, console: .off, actions: [], ignoringApps: [.shutdown], powerButtonIgnored: true),
+        ]
 
         static func handles(_ raw: [UInt64]) -> [PeerHandle] {
             raw.map { PeerHandle(rawValue: $0) }
@@ -164,6 +173,27 @@ extension CoreUnits {
                         ])
                 ])
             #expect(!routing.isRouting)
+        }
+
+        @Test(
+            "At the login window a graceful action asks no peer and ends .powerButtonIgnored; without waiting for apps it goes to the system peer",
+            arguments: [PowerAction.shutdown, .restart])
+        func atLoginWindow(action: PowerAction) {
+            var routing = PowerRouting()
+            routing.begin(action, peers: Self.atLoginWindow)
+            #expect(Self.outputs(&routing) == [.powerButtonIgnored(action)])
+            #expect(!routing.isRouting)
+
+            routing.begin(.shutdown, ignoringApps: true, peers: Self.atLoginWindow)
+            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 9), .shutdown, ignoringApps: true)])
+        }
+
+        @Test("A system peer reporting the console off without saying the power button is ignored leaves .untaken")
+        func consoleOffButtonHeeded() {
+            let peers = [Self.session(1, "a", console: .off), Self.system(9, console: .off, actions: [])]
+            var routing = PowerRouting()
+            routing.begin(.shutdown, peers: peers)
+            #expect(Self.outputs(&routing) == [.untaken(.shutdown, refusals: [])])
         }
 
         @Test("No candidate at all → .untaken at once with no refusals")

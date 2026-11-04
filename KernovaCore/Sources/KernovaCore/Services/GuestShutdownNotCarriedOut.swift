@@ -21,6 +21,8 @@ package struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatabl
     /// The session the stop was asked of.
     package let session: UUID
     let reason: Reason
+    /// Whether the guest's agents offered Shut Down Anyway when the stop ended.
+    let offersShutDownAnyway: Bool
 
     package var alertTitle: String? {
         switch reason {
@@ -32,16 +34,20 @@ package struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatabl
     package var errorDescription: String? {
         switch reason {
         case .blocked(let apps):
-            Self.blockers(apps)
-                + " To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."
+            Self.blockers(apps) + " "
+                + (offersShutDownAnyway
+                    ? "Use Shut Down Anyway\u{2026} to shut it down without waiting for apps, or Force Stop\u{2026}, "
+                    : "To shut it down anyway, use Force Stop\u{2026}, ")
+                + "which loses any unsaved data inside the guest."
         case .cancelledInGuest:
             "Shutting down was cancelled inside \u{201C}\(vmName)\u{201D}."
         case .failed(let error):
             "\u{201C}\(vmName)\u{201D} couldn\u{2019}t shut down"
                 + (error.posixErrno == 0 ? "" : ": \(String(cString: strerror(error.posixErrno)))") + "."
         case .indeterminate:
-            "Kernova can\u{2019}t tell whether \u{201C}\(vmName)\u{201D} is shutting down. "
-                + "If it doesn\u{2019}t stop, use Force Stop."
+            "Kernova can\u{2019}t tell whether \u{201C}\(vmName)\u{201D} is shutting down. Use "
+                + (offersShutDownAnyway ? "Shut Down Anyway\u{2026} or Force Stop\u{2026}" : "Force Stop\u{2026}")
+                + " if it doesn\u{2019}t stop."
         }
     }
 

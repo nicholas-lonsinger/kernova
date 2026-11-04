@@ -193,10 +193,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             return CapabilityRow(title: title, isAvailable: true, detail: "Through the session agent")
         case .absent(.notOnConsole):
             return CapabilityRow(
-                title: title, isAvailable: false,
-                detail:
-                    "Available to the session at the guest\u{2019}s screen, or to the system service at the login window."
-            )
+                title: title, isAvailable: false, detail: "Available to the session at the guest\u{2019}s screen.")
         case .absent(let reason):
             return CapabilityRow(title: title, isAvailable: false, detail: Self.reason(reason))
         }
