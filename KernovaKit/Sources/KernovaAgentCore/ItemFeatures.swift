@@ -85,7 +85,7 @@ public struct ClipboardOffers: FeatureMachine {
     public func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection)
         -> WireError?
     {
-        for token in offer.copy ? [] : items.offers.localTokens(of: Self.feature) {
+        for token in offer.copy == .notACopy ? items.offers.localTokens(of: Self.feature) : [] {
             items.withdraw(token, code: .itemOfferReplaced, connection: &connection)
         }
         let kind: StreamKind = connection.role == .host ? .clipboardOfferByHost : .clipboardOfferByPeer

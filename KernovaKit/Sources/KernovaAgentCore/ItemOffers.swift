@@ -59,7 +59,7 @@ package struct ItemOfferRegistry: Sendable {
 
     /// The tokens of this side's open offers of `feature`, its copies (``ItemOffer/copy``) left out.
     package func localTokens(of feature: FeatureID) -> [Data] {
-        local.filter { $0.feature == feature && !$0.offer.copy }.map(\.offer.token)
+        local.filter { $0.feature == feature && $0.offer.copy == .notACopy }.map(\.offer.token)
     }
 
     /// The feature of this side's open offer of `token`; nil when none is open.
@@ -152,7 +152,7 @@ package struct ItemOfferRegistry: Sendable {
         header.count = UInt32(clamping: offer.items.count)
         header.token = offer.token
         header.after = offer.after
-        header.copy = offer.copy
+        header.copy = offer.copy.wire
         header.changedWhileUnlinked = offer.changedWhileUnlinked
         let body = header.encoded
         if let oversize = (encoded + [body]).first(where: { $0.count > WireConstants.maxControlPayload }) {

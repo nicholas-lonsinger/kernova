@@ -126,6 +126,9 @@ public final class ClipboardPasteboardPublisher {
     /// Process-lifetime owner of the lazy data providers a write promises.
     private let providerRegistry: LazyClipboardProviderRegistry
 
+    /// Where each write records what it was made from, for a snapshot of the pasteboard holding it.
+    private let ledger: ClipboardWriteLedger
+
     /// The pasteboard's `changeCount` right after the most recent write — a
     /// retraction's clear included — or `nil` before any write.
     ///
@@ -144,27 +147,27 @@ public final class ClipboardPasteboardPublisher {
     /// other offer's end reaches it.
     private var heldWrite: (changeCount: Int, servingOffer: Data?)?
 
-    /// Creates a publisher over `pasteboard`.
+    /// Creates a publisher over `pasteboard`, recording each write in `ledger`.
     public init(
         pasteboard: any ClipboardWritePasteboard,
-        providerRegistry: LazyClipboardProviderRegistry = .shared
+        providerRegistry: LazyClipboardProviderRegistry = .shared,
+        ledger: ClipboardWriteLedger = .shared
     ) {
         self.pasteboard = pasteboard
         self.providerRegistry = providerRegistry
+        self.ledger = ledger
     }
 
-    /// Writes `specs`, reporting whether the pasteboard took them: each item's
-    /// data now, its promised types served lazily.
+    /// Writes `specs`, made from `source`, reporting whether the pasteboard took them: each item's data now, its
+    /// promised types served lazily.
     ///
-    /// `servingOffer` names the offer whose promises the write holds, the one
-    /// ``retractWrite(servingOffer:)`` withdraws it for; nil for a write that
-    /// serves from what this side holds. `onReleased` runs once the pasteboard
-    /// has finished with every provider the write promised through, which is
-    /// when nothing can ask the offer for more; a write that promises nothing,
-    /// or fails, never runs it.
+    /// The write serves `source`'s offer, the one ``retractWrite(servingOffer:)`` withdraws it for; nil for a
+    /// write that serves from what this side holds. `onReleased` runs once the pasteboard has finished with
+    /// every provider the write promised through, which is when nothing can ask the offer for more; a write
+    /// that promises nothing, or fails, never runs it.
     @discardableResult
     public func write(
-        _ specs: [ItemSpec], servingOffer: Data?, onReleased: (@MainActor @Sendable () -> Void)? = nil
+        _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
     ) -> Bool {
         // Captures the registry, not `self`, so a provider's lifetime is
         // decoupled from this object.
@@ -210,9 +213,11 @@ public final class ClipboardPasteboardPublisher {
         // pasteboard it left is nobody's write.
         guard written else {
             heldWrite = nil
+            ledger.record(nil, on: pasteboard)
             return false
         }
-        heldWrite = (changeCount: pasteboard.changeCount, servingOffer: servingOffer)
+        heldWrite = (changeCount: pasteboard.changeCount, servingOffer: source.servingOffer)
+        ledger.record(source, on: pasteboard)
         providerRegistry.retain(providers)
         return true
     }
@@ -253,6 +258,7 @@ public final class ClipboardPasteboardPublisher {
         pasteboard.clearContents()
         lastWriteChangeCount = pasteboard.changeCount
         heldWrite = nil
+        ledger.record(.nothing, on: pasteboard)
     }
 
     // MARK: - Planning

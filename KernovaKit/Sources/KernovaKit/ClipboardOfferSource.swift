@@ -128,6 +128,69 @@ public final class ClipboardOfferSource {
             promises: promises, promiseDestination: promiseDestination)
     }
 
+    /// A snapshot of what a write of this process placed, built from what it was made from — what `source`
+    /// holds, and what its puller brings now, each file pulled whole — so nothing the pasteboard or the write's
+    /// source does later reaches it. Only the representations the write promised are kept; one that cannot be
+    /// brought is left out, and an item left with none is dropped. Nil when nothing remains.
+    ///
+    /// - Returns: the snapshot, and how many of the write's items it left out.
+    static func snapshot(of source: ClipboardWriteSource) async -> (ClipboardOfferSource, lost: Int)? {
+        var frozenItems: [OfferedItem] = []
+        var frozenOrigins: [[Origin]] = []
+        var lost = 0
+        for part in source.parts {
+            for (index, item) in part.items.enumerated() {
+                var frozen = OfferedItem()
+                var itemOrigins: [Origin] = []
+                for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: part.servingFileURLs) {
+                    var kept = item.representations[promised.representation]
+                    guard let origin = await Self.origin(of: kept, item: index, promised.representation, in: part)
+                    else { continue }
+                    if case .bytes(let data) = origin { kept.sizeEstimate = UInt64(data.count) }
+                    kept.promised = false
+                    frozen.representations.append(kept)
+                    itemOrigins.append(origin)
+                }
+                guard !frozen.representations.isEmpty else {
+                    lost += 1
+                    continue
+                }
+                frozenItems.append(frozen)
+                frozenOrigins.append(itemOrigins)
+            }
+        }
+        guard !frozenItems.isEmpty else { return nil }
+        let snapshot = ClipboardOfferSource(
+            items: frozenItems, origins: frozenOrigins, concealed: source.parts.contains(where: \.concealed),
+            pasteboard: nil, changeCount: 0, promises: [], promiseDestination: { throw ClipboardServeError.unavailable }
+        )
+        return (snapshot, lost)
+    }
+
+    /// Representation `representation` of item `item` of `part`, as `part` holds it or its puller brings it now.
+    private static func origin(
+        of kept: Representation, item: Int, _ representation: Int, in part: ClipboardWriteSource.Part
+    ) async -> Origin? {
+        switch part.held(item, representation) {
+        case .bytes(let data):
+            return .bytes(data)
+        case .file(let url):
+            return kept.storage == .folder ? .folder(url) : .file(url)
+        case nil:
+            guard let puller = part.puller else { return nil }
+            if kept.storage == .inline {
+                let data = await withCheckedContinuation { continuation in
+                    puller.pullBytes(item: item, representation: representation) { continuation.resume(returning: $0) }
+                }
+                return data.map(Origin.bytes)
+            }
+            let url = await withCheckedContinuation { continuation in
+                puller.pullFile(item: item, representation: representation) { continuation.resume(returning: $0) }
+            }
+            return url.map { kept.storage == .folder ? .folder($0) : .file($0) }
+        }
+    }
+
     /// Serves one representation for a pull, reading its bytes now.
     ///
     /// A pasteboard type is read only while the pasteboard still holds the

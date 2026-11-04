@@ -170,6 +170,9 @@ package final class VMInstance {
     /// macOS 12 and cannot be `@Observable` itself.
     package private(set) var clipboardTransferReport: ClipboardTransferReport = .idle
 
+    /// The clipboard commands running now: one of each at a time, a repeat while it runs joining it.
+    package internal(set) var runningClipboardCommands: Set<ClipboardCommand> = []
+
     // MARK: - Vsock Channel (macOS guests)
 
     var vsockLogService: VsockGuestLogService? { sessionContext?.vsock.log }

@@ -229,35 +229,34 @@ final class GuestClipboard {
         exchange.reportEmpty(changedWhileUnlinked: changedWhileUnlinked)
     }
 
-    /// Answers the host's ask with a snapshot of the pasteboard now — or nothing, off the console or with nothing
-    /// to copy. A pasteboard that changed while it was read is read once more.
-    private func sendSnapshot(answering ask: Data) {
-        guard isOffering else {
-            exchange.sendCopy(nil, answering: ask)
-            return
-        }
+    /// Answers the host's ask with a snapshot of the pasteboard now, or declines it: off the console or with
+    /// nothing to copy, and when the pasteboard is this agent's write of the host's current offer, which the
+    /// host holds already.
+    private func sendSnapshot(answering ask: ClipboardItemExchange.CopyAsk) {
+        guard isOffering else { return exchange.decline(ask, WireError(.clipboardNothingToCopy)) }
         let promiseStaging = promiseStaging
         let generation = nextPromiseGeneration
         nextPromiseGeneration += 1
-        let receivers = pasteboard.filePromiseReceivers
+        let hostOffer = exchange.remote?.token
         Task { @MainActor [weak self] in
             guard let self else { return }
-            var outcome = ClipboardPasteboardReader.SnapshotOutcome.changed
-            for _ in 0..<2 {
-                outcome = await ClipboardPasteboardReader.readSnapshot(
-                    from: pasteboard, promises: receivers,
-                    promiseDestination: { try promiseStaging.reserveScratchDirectory(generation: generation) })
-                if case .changed = outcome { continue }
-                break
-            }
-            guard case .snapshot(let snapshot, let lost) = outcome else {
+            let outcome = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, destinationOffer: hostOffer,
+                promiseDestination: { try promiseStaging.reserveScratchDirectory(generation: generation) })
+            switch outcome {
+            case .snapshot(let snapshot, let lost):
+                exchange.answer(ask, with: snapshot)
+                activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .sentToHost
+                if lost > 0 { onNotice() }
+            case .heldByDestination:
+                Self.logger.log(.notice, "The host asked for the clipboard, which holds the host's own copy")
+                exchange.decline(ask, WireError(.clipboardAlreadyHeld))
+            case .nothing:
                 Self.logger.log(.notice, "The host asked for the clipboard, which holds nothing to copy")
-                exchange.sendCopy(nil, answering: ask)
-                return
+                exchange.decline(ask, WireError(.clipboardNothingToCopy))
+            case .changed:
+                exchange.decline(ask, WireError(.cancelled, debugDetail: "the clipboard kept changing as it was read"))
             }
-            exchange.sendCopy(snapshot, answering: ask)
-            activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .sentToHost
-            if lost > 0 { onNotice() }
         }
     }
 

@@ -206,7 +206,9 @@ enum ErrorCode {
   ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
   ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows
   ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is
-  reserved 1009 to 1199;
+  ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY = 1009;      // a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
+  ERROR_CODE_CLIPBOARD_ALREADY_HELD = 1010;         // a CLIPBOARD ask's RESET by the peer: its clipboard is its write of the host's current clipboard offer, which the host already holds
+  reserved 1011 to 1199;
 }
 
 // FROZEN. Why a feature is absent.
@@ -717,7 +719,7 @@ message ItemSetHeader {
   // The content is sensitive (a password): the receiver keeps it out of
   // history and logs.
   bool concealed = 1;
-  // The Item messages that follow. Only a copy (`copy`), or a peer's first
+  // The Item messages that follow. Only an ask (`copy`), or a peer's first
   // CLIPBOARD_OFFER_BY_PEER on a connection, holds none; any other CLIPBOARD
   // offer of none is refused.
   uint32 count = 3;
@@ -729,15 +731,8 @@ message ItemSetHeader {
   // it sent none, or this names its last. A copy (`copy`) names the host's
   // ask it answers instead. Empty on every other kind.
   bytes after = 5;
-  // CLIPBOARD only: a copy, sent because the user asked for this clipboard on
-  // the far side. It is not the opener's clipboard offer, so the opener's next
-  // offer does not withdraw it: the receiver lands every INLINE representation
-  // first, writes its clipboard only if that has not changed since the copy
-  // arrived (else RESET(CLIPBOARD_CHANGED)), and releases the copy once its
-  // clipboard no longer holds what it wrote. A host copy of no items is an
-  // ask: the peer releases it and answers with a copy of its clipboard whose
-  // `after` names the ask, of no items when it holds nothing to copy.
-  bool copy = 6;
+  // CLIPBOARD only: what the offer is besides its opener's clipboard offer.
+  ClipboardCopy copy = 6;
   // CLIPBOARD_OFFER_BY_PEER only, on the peer's first offer on a connection:
   // its clipboard changed while no connection carried CLIPBOARD. That first
   // offer holds no items when the peer's clipboard is empty, and the host
@@ -745,6 +740,25 @@ message ItemSetHeader {
   // offers the peer again its own clipboard offer the last connection carried,
   // which the peer lost with it.
   bool changed_while_unlinked = 7;
+}
+
+// CLIPBOARD only: an offer the user's command sent, which is not its opener's
+// clipboard offer, so the opener's next offer does not withdraw it. Fallback
+// for an unrecognized value: CLIPBOARD_COPY_UNSPECIFIED.
+enum ClipboardCopy {
+  // The opener's clipboard offer, and every offer of another feature.
+  CLIPBOARD_COPY_UNSPECIFIED = 0;
+  // A snapshot of the opener's clipboard. The receiver lands every INLINE
+  // representation first, writes its clipboard only if that has not changed
+  // since the copy arrived (else RESET(CLIPBOARD_CHANGED)), and releases the
+  // copy once its clipboard no longer holds what it wrote. A peer's names the
+  // host's ask it answers in `after`.
+  CLIPBOARD_COPY_SNAPSHOT = 1;
+  // Host only, of no items: asks the peer for a snapshot of its clipboard. The
+  // peer answers with a CLIPBOARD_COPY_SNAPSHOT naming it, then releases it,
+  // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, CLIPBOARD_ALREADY_HELD, or
+  // TOO_LARGE when what is not a file is over the paste ceiling.
+  CLIPBOARD_COPY_ASK = 2;
 }
 
 // The container codecs a destination decodes.

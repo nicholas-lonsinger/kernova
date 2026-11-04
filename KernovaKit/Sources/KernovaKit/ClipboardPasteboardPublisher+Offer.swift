@@ -50,7 +50,9 @@ extension ClipboardPasteboardPublisher {
     ) -> Bool {
         write(
             Self.itemSpecs(for: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller),
-            servingOffer: token)
+            source: ClipboardWriteSource(
+                servingOffer: token,
+                parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller)]))
     }
 
     /// Writes a peer's copy: each kept INLINE representation as the data
@@ -61,7 +63,8 @@ extension ClipboardPasteboardPublisher {
     /// pasteboard is done with every file it promised. Returns whether the
     /// pasteboard took the write, and whether it promised anything.
     public func publishCopy(
-        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, landed: (_ item: Int, _ rep: Int) -> Data?,
+        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
+        landed: @escaping @Sendable (_ item: Int, _ rep: Int) -> Data?,
         puller: any ClipboardItemPulling, servingOffer token: Data,
         onReleased: @escaping @MainActor @Sendable () -> Void
     ) -> (written: Bool, promised: Bool) {
@@ -70,7 +73,18 @@ extension ClipboardPasteboardPublisher {
             eventLoopWait: { NestedEventLoopWait.current() })
         guard !specs.isEmpty else { return (false, false) }
         let promised = specs.contains { !$0.types.isEmpty }
-        return (write(specs, servingOffer: token, onReleased: onReleased), promised)
+        let source = ClipboardWriteSource(
+            servingOffer: token,
+            parts: [
+                .init(
+                    items: items, concealed: concealed, servingFileURLs: servingFileURLs,
+                    held: { item, representation in
+                        // Only an INLINE representation was written as the data it landed with.
+                        items[item].representations[representation].storage == .inline
+                            ? landed(item, representation).map(ClipboardWriteSource.Held.bytes) : nil
+                    }, puller: puller)
+            ])
+        return (write(specs, source: source, onReleased: onReleased), promised)
     }
 
     /// The item specs ``publishCopy(_:concealed:servingFileURLs:landed:puller:servingOffer:onReleased:)``

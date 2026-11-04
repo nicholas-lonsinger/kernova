@@ -62,6 +62,10 @@ package protocol ClipboardServicing: AnyObject {
     /// The guest's clipboard as it stands now, every representation but a file or folder already landed here.
     func guestClipboardCopy() async -> GuestClipboardCopy
 
+    /// The token of the guest's offer that is this clipboard's now, which a host-pasteboard write of it serves;
+    /// nil when there is none, or the transport names none.
+    var guestOfferToken: Data? { get }
+
     /// Reserves a directory to call a file promise copied on the Mac in to when the guest pulls it, or `nil`
     /// when the transport can't stage one. Default `nil`: a text-only transport never takes a file.
     func reservePromiseDestination() -> URL?
@@ -78,6 +82,8 @@ package protocol ClipboardServicing: AnyObject {
 package enum GuestClipboardCopy {
     /// It held nothing to copy.
     case nothing
+    /// It held its write of the host's own offer, which the Mac's clipboard holds already.
+    case alreadyHeld
     /// It could not be copied, and why.
     case failed(ClipboardTransferFailure)
     /// The copy, to be written to the Mac.
@@ -150,4 +156,5 @@ extension ClipboardServicing {
     var clipboardChangeMark: Int? { nil }
     var hasStandingGuestOffer: Bool { false }
     var changeCountAtLinkLoss: Int? { nil }
+    var guestOfferToken: Data? { nil }
 }

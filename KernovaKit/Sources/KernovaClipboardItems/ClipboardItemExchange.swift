@@ -54,8 +54,16 @@ public final class ClipboardItemExchange {
         case copy(ClipboardRemoteOffer)
         /// The guest's clipboard holds nothing to copy.
         case nothing
-        /// No copy came: the connection left, or the ask was not sent.
+        /// The guest's clipboard is its write of the host's current offer, which the host holds already.
+        case alreadyHeld
+        /// No copy came, and why: the connection left, the ask was not sent, or the guest refused it.
         case failed(WireError)
+    }
+
+    /// The host's ask for a snapshot of a guest's clipboard, which the guest answers once: with
+    /// ``answer(_:with:)``, or ``decline(_:_:)``.
+    public struct CopyAsk: Sendable, Hashable {
+        fileprivate let token: Data
     }
 
     /// Hears each offer of the far side once its items are read: it is this end's clipboard now.
@@ -70,8 +78,8 @@ public final class ClipboardItemExchange {
     /// The host: the guest's first offer on a connection reported an empty clipboard that did not change while
     /// unlinked, so the copy of this side's it held went with the last connection.
     public var onEmptyUnchangedReturn: (() -> Void)?
-    /// A guest: the host asks for this side's clipboard; answer with ``sendCopy(_:answering:)`` naming the ask.
-    public var onCopyAsked: ((_ ask: Data) -> Void)?
+    /// A guest: the host asks for a snapshot of this side's clipboard, to be answered once.
+    public var onCopyAsked: ((CopyAsk) -> Void)?
     /// A guest: the host sent a copy of its clipboard, its items read; this end holds it until it releases it.
     public var onCopyReceived: ((ClipboardRemoteOffer) -> Void)?
     /// Hears each copy this end held that ended before it let it go: the connection left, or the far side
@@ -116,8 +124,11 @@ public final class ClipboardItemExchange {
     private var readingCopies: Set<Data> = []
     /// This side's copies on `link`, by token, each served until the far side lets it go.
     private var sentCopies: [Data: ClipboardOfferSource] = [:]
-    /// The host: the ask awaiting the guest's copy on `link`.
-    private var ask: (token: Data, answer: (CopyAnswer) -> Void)?
+    /// The host: the ask awaiting the guest's answer on `link`, everyone waiting on it, and the guest's copy
+    /// answering it once one arrived.
+    private var ask: (token: Data, answers: [(CopyAnswer) -> Void], answeredBy: Data?)?
+    /// A guest: the host's asks on `link` still to be answered.
+    private var asks: Set<Data> = []
     private var nextGeneration: UInt64 = 1
     private let staging: ClipboardFileStaging
     private let pasteCeiling: @Sendable () -> Int
@@ -156,10 +167,8 @@ public final class ClipboardItemExchange {
         reading.removeAll()
         readingCopies.removeAll()
         sentCopies.removeAll()
-        if let ask {
-            self.ask = nil
-            ask.answer(.failed(WireError(.cancelled, debugDetail: "the connection left")))
-        }
+        asks.removeAll()
+        answerAsk(.failed(WireError(.cancelled, debugDetail: "the connection left")))
         let held = copies.values
         copies.removeAll()
         for copy in held {
@@ -232,14 +241,19 @@ public final class ClipboardItemExchange {
     ) {
         let logger = logger
         let count = offer.items.count
-        let copy = offer.copy
+        let role =
+            switch offer.copy {
+            case .notACopy: ""
+            case .snapshot: " as a copy"
+            case .ask: " as an ask"
+            }
         link.offerItems(offer) { refusal in
             if let refusal {
                 logger.log(
                     .notice, "The clipboard offer was not opened: \(String(describing: refusal), privacy: .public)")
             } else {
                 logger.log(
-                    .notice, "Offered the clipboard\(copy ? " as a copy" : ""): \(count, privacy: .public) item(s)")
+                    .notice, "Offered the clipboard\(role, privacy: .public): \(count, privacy: .public) item(s)")
             }
             MainActorBridge.async { opened(refusal == nil) }
         }
@@ -277,40 +291,71 @@ public final class ClipboardItemExchange {
 
     // MARK: Copies
 
-    /// Sends `source` to the far side as a copy, `answering` the ask it answers, if any: served from `source`
-    /// until the far side lets it go, whatever this end's clipboard does meanwhile. A nil `source` answers that
-    /// this side's clipboard holds nothing to copy. Returns whether a connection carried it.
+    /// Sends `source` to the far side as a copy: served from `source` until the far side lets it go, whatever
+    /// this end's clipboard does meanwhile. Returns whether a connection carried it.
     @discardableResult
-    public func sendCopy(_ source: ClipboardOfferSource?, answering ask: Data = Data()) -> Bool {
+    public func sendCopy(_ source: ClipboardOfferSource) -> Bool {
+        sendCopy(source, answering: nil)
+    }
+
+    /// Sends `source` as a copy, naming the ask it answers, and hears on the main actor whether it opened.
+    @discardableResult
+    private func sendCopy(
+        _ source: ClipboardOfferSource, answering ask: Data?, opened: @escaping @MainActor (Bool) -> Void = { _ in }
+    ) -> Bool {
         guard let link else { return false }
         let token = Self.freshToken()
-        if let source { sentCopies[token] = source }
+        sentCopies[token] = source
         let offer = ItemOffer(
-            token: token, concealed: source?.concealed ?? false, items: source?.items ?? [], after: ask, copy: true)
-        send(offer, on: link) { [weak self] opened in
-            guard !opened, let self, self.sentCopies.removeValue(forKey: token) != nil else { return }
+            token: token, concealed: source.concealed, items: source.items, after: ask ?? Data(), copy: .snapshot)
+        send(offer, on: link) { [weak self] wasOpened in
+            opened(wasOpened)
+            guard !wasOpened, let self, self.sentCopies.removeValue(forKey: token) != nil else { return }
             self.onCopyRefused?(WireError(.cancelled, debugDetail: "the copy was not opened"))
         }
         return true
     }
 
-    /// The host: asks the guest for a copy of its clipboard as it stands now, replacing an ask still unanswered;
-    /// `answer` hears it once.
+    /// The host: asks the guest for a snapshot of its clipboard as it stands now; `answer` hears the guest's
+    /// answer once. An ask made while one is unanswered joins it.
     public func askForCopy(_ answer: @escaping (CopyAnswer) -> Void) {
-        if let ask {
-            self.ask = nil
-            ask.answer(.failed(WireError(.cancelled, debugDetail: "a newer ask replaced it")))
-        }
+        if ask != nil { return ask?.answers.append(answer) ?? () }
         guard side == .host, let link else {
             return answer(.failed(WireError(.cancelled, debugDetail: "no connection carries the clipboard")))
         }
         let token = Self.freshToken()
-        ask = (token, answer)
-        send(ItemOffer(token: token, items: [], copy: true), on: link) { [weak self] opened in
-            guard !opened, let self, let ask = self.ask, ask.token == token else { return }
-            self.ask = nil
-            ask.answer(.failed(WireError(.cancelled, debugDetail: "the ask was not opened")))
+        ask = (token, [answer], nil)
+        send(ItemOffer(token: token, items: [], copy: .ask), on: link) { [weak self] opened in
+            guard !opened, let self, self.ask?.token == token else { return }
+            self.answerAsk(.failed(WireError(.cancelled, debugDetail: "the ask was not opened")))
         }
+    }
+
+    /// Ends the host's ask, everyone waiting on it hearing `answer`.
+    private func answerAsk(_ answer: CopyAnswer) {
+        guard let ask else { return }
+        self.ask = nil
+        for waiting in ask.answers { waiting(answer) }
+    }
+
+    /// A guest: answers the host's `ask` with a copy of `source`, served as ``sendCopy(_:)`` serves one. The ask
+    /// is released once the copy opens, or refused when it does not.
+    public func answer(_ ask: CopyAsk, with source: ClipboardOfferSource) {
+        guard asks.remove(ask.token) != nil, let link else { return }
+        sendCopy(source, answering: ask.token) { opened in
+            if opened {
+                link.releaseOffer(ask.token)
+            } else {
+                link.refuseOffer(ask.token, WireError(.cancelled, debugDetail: "the answer was not opened"))
+            }
+        }
+    }
+
+    /// A guest: answers the host's `ask` with no copy, saying why with `error`: ``ErrorCode/clipboardNothingToCopy``,
+    /// ``ErrorCode/clipboardAlreadyHeld``, or ``ErrorCode/tooLarge`` with the ceiling.
+    public func decline(_ ask: CopyAsk, _ error: WireError) {
+        guard asks.remove(ask.token) != nil else { return }
+        link?.refuseOffer(ask.token, error)
     }
 
     /// Lets `copy` go: this end's clipboard no longer holds what it wrote of it, so the far side serves it no
@@ -328,25 +373,28 @@ public final class ClipboardItemExchange {
 
     /// A copy of the far side's arrived: an ask, an answer to this side's ask, or a copy for this end to write.
     private func receivedCopy(_ header: ItemSetHeaderValue, on link: any ClipboardItemLink) {
-        switch side {
-        case .guest:
-            guard header.count > 0 else {
-                link.releaseOffer(header.token)
-                onCopyAsked?(header.token)
-                return
-            }
-        case .host:
-            guard let ask, header.after == ask.token else {
+        switch (side, header.copy) {
+        case (.guest, .ask):
+            asks.insert(header.token)
+            onCopyAsked?(CopyAsk(token: header.token))
+            return
+        case (.guest, .snapshot) where header.count > 0:
+            break
+        case (.host, .snapshot):
+            guard let ask, header.after == ask.token, ask.answeredBy == nil else {
                 logger.log(.notice, "Refused a guest clipboard copy that answers no ask of the host's")
                 link.releaseOffer(header.token)
                 return
             }
+            self.ask?.answeredBy = header.token
             guard header.count > 0 else {
                 link.releaseOffer(header.token)
-                self.ask = nil
-                ask.answer(.nothing)
-                return
+                return answerAsk(.failed(WireError(.streamProtocolError, debugDetail: "a copy of no items")))
             }
+        case (.guest, _), (.host, _):
+            logger.log(.notice, "Refused a clipboard copy this side does not take")
+            link.releaseOffer(header.token)
+            return
         }
         readingCopies.insert(header.token)
         readItems(of: header, on: link) { [weak self] items in self?.copyRead(header, items, on: link) }
@@ -357,9 +405,8 @@ public final class ClipboardItemExchange {
         guard let items else {
             logger.log(.notice, "The far side's clipboard copy ended before its items were read")
             link.releaseOffer(header.token)
-            if let ask, header.after == ask.token {
-                self.ask = nil
-                ask.answer(.failed(WireError(.cancelled, debugDetail: "the copy ended before it was read")))
+            if ask?.answeredBy == header.token {
+                answerAsk(.failed(WireError(.cancelled, debugDetail: "the copy ended before it was read")))
             }
             return
         }
@@ -368,9 +415,8 @@ public final class ClipboardItemExchange {
         logger.log(.notice, "Received a clipboard copy: \(items.count, privacy: .public) item(s)")
         switch side {
         case .host:
-            guard let ask, header.after == ask.token else { return releaseCopy(copy) }
-            self.ask = nil
-            ask.answer(.copy(copy))
+            guard ask?.answeredBy == header.token else { return releaseCopy(copy) }
+            answerAsk(.copy(copy))
         case .guest:
             onCopyReceived?(copy)
         }
@@ -429,15 +475,19 @@ public final class ClipboardItemExchange {
         serves.end(by: event)
         switch event {
         case .offerReceived(let header):
-            if header.copy { receivedCopy(header, on: link) } else { received(header, on: link) }
+            if header.copy == .notACopy { received(header, on: link) } else { receivedCopy(header, on: link) }
         case .offerEnded(_, .local, let token, let closure):
             if sentCopies.removeValue(forKey: token) != nil {
                 if case .resetByPeer(let error) = closure { onCopyRefused?(error) }
                 return
             }
-            if let ask, ask.token == token, case .resetByPeer(let error) = closure {
-                self.ask = nil
-                ask.answer(.failed(error))
+            if let ask, ask.token == token {
+                // A guest releases its ask once its copy answering it opened, which arrived first.
+                if case .resetByPeer(let error) = closure {
+                    answerAsk(Self.answer(declined: error))
+                } else if ask.answeredBy == nil {
+                    answerAsk(.failed(WireError(.cancelled, debugDetail: "the ask ended unanswered")))
+                }
                 return
             }
             guard token == localToken else { return }
@@ -450,6 +500,7 @@ public final class ClipboardItemExchange {
         case .offerEnded(_, .remote, let token, let closure):
             reading.remove(token)
             readingCopies.remove(token)
+            asks.remove(token)
             if let copy = copies.removeValue(forKey: token) {
                 copy.close()
                 onCopyEnded?(copy)
@@ -463,6 +514,15 @@ public final class ClipboardItemExchange {
             pullEnded(id, result)
         case .serveEnded:
             break
+        }
+    }
+
+    /// The host's answer when the guest refused its ask with `error`.
+    static func answer(declined error: WireError) -> CopyAnswer {
+        switch error.code {
+        case .clipboardNothingToCopy: .nothing
+        case .clipboardAlreadyHeld: .alreadyHeld
+        default: .failed(error)
         }
     }
 

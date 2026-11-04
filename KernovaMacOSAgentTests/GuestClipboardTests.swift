@@ -535,8 +535,12 @@ struct GuestClipboardTests {
     private static let copyToken = Data(repeating: 6, count: 16)
 
     private static func copyHeader(token: Data, count: Int, concealed: Bool = false) -> ItemSetHeaderValue {
-        ItemSetHeaderValue(feature: .clipboard, token: token, concealed: concealed, count: count, copy: true)
+        ItemSetHeaderValue(feature: .clipboard, token: token, concealed: concealed, count: count, copy: .snapshot)
     }
+
+    /// The host's ask for a snapshot of the guest's clipboard.
+    private static let askHeader = ItemSetHeaderValue(
+        feature: .clipboard, token: askToken, concealed: false, count: 0, copy: .ask)
 
     @Test(
         "The host's ask is answered with a snapshot of the pasteboard naming it, served after the pasteboard moves on")
@@ -548,11 +552,10 @@ struct GuestClipboardTests {
         rig.clipboard.setLink(link)
         try await link.changed.wait { link.offers.count == 1 }
 
-        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.askToken, count: 0)), on: link)
-        try await link.changed.wait { link.offers.count == 2 }
-        #expect(link.releases == [Self.askToken])
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { link.offers.count == 2 && link.releases == [Self.askToken] }
         let copy = try #require(link.offers.last)
-        #expect(copy.copy && copy.after == Self.askToken)
+        #expect(copy.copy == .snapshot && copy.after == Self.askToken)
         #expect(copy.items[0].representations[0].sizeEstimate == UInt64("copied in the guest".utf8.count))
 
         // A copy in the guest since neither withdraws the snapshot nor changes what it serves.
@@ -568,17 +571,38 @@ struct GuestClipboardTests {
         #expect(!link.withdrawals.contains(copy.token))
     }
 
-    @Test("Off the console the host's ask is answered with a copy of nothing")
+    @Test("Off the console the host's ask is declined: nothing to copy")
     func askOffTheConsoleAnswersNothing() async throws {
         let rig = rig()
         let link = RecordingLink()
         #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
         rig.clipboard.setLink(link)
 
-        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.askToken, count: 0)), on: link)
-        try await link.changed.wait { link.offers.count == 1 }
-        let copy = try #require(link.offers.last)
-        #expect(copy.copy && copy.items.isEmpty && copy.after == Self.askToken)
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.token) == [Self.askToken])
+        #expect(link.refusals.map(\.code) == [.clipboardNothingToCopy])
+        #expect(link.offers.isEmpty)
+    }
+
+    @Test("The host's ask of a pasteboard that is the guest's write of the host's offer is declined, held already")
+    func askOfTheHostsOwnOfferIsHeld() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()])
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        try await receiveHostOffer(rig, link)
+        let before = rig.pasteboard.changeCount
+        let offersBefore = link.offers.count
+
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.token) == [Self.askToken])
+        #expect(link.refusals.map(\.code) == [.clipboardAlreadyHeld])
+        #expect(rig.pasteboard.changeCount == before)
+        #expect(!rig.pasteboard.promisedTypes.isEmpty)
+        #expect(link.offers.count == offersBefore)
+        #expect(link.opened.isEmpty)
     }
 
     private static func textAndFileItem() -> OfferedItem {

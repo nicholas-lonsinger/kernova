@@ -147,4 +147,106 @@ struct ClipboardCopyTests {
                 == Data())
         #expect(registry.countForTesting == 0)
     }
+
+    // MARK: - A snapshot of this process's own write
+
+    /// Answers each INLINE pull with `bytes` and each file pull with `url`, counting the pulls.
+    private final class CountingPuller: ClipboardItemPulling {
+        let bytes: Data
+        let url: URL?
+        private let pulled = Locked<[Int]>([])
+        init(bytes: Data, url: URL? = nil) {
+            self.bytes = bytes
+            self.url = url
+        }
+        /// The representation each pull asked for, in order.
+        var pulls: [Int] { pulled.withLock { $0 } }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            pulled.withLock { $0.append(representation) }
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            pulled.withLock { $0.append(representation) }
+            completion(url)
+        }
+    }
+
+    @Test(
+        "A snapshot of a pasteboard holding this process's write of a far-side offer is built by pulling it, the write's promise never read"
+    )
+    func snapshotOfOwnWritePulls() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        let puller = CountingPuller(bytes: Data("the far side's".utf8))
+        #expect(
+            publisher.publish([item], concealed: false, puller: puller, servingOffer: Data(repeating: 1, count: 16)))
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, destinationOffer: Data(repeating: 2, count: 16), ledger: ledger, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 0)
+        #expect(puller.pulls == [0])
+        #expect(pasteboard.providerInvocations == 0)
+        #expect(source.items[0].representations[0].sizeEstimate == UInt64("the far side's".utf8.count))
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("the far side's".utf8)))
+    }
+
+    @Test("A pasteboard holding this process's write of the destination's own offer holds what a snapshot would carry")
+    func ownWriteOfTheDestinationsOfferIsHeld() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        let puller = CountingPuller(bytes: Data("the far side's".utf8))
+        let offer = Data(repeating: 1, count: 16)
+        #expect(publisher.publish([item], concealed: false, puller: puller, servingOffer: offer))
+
+        guard
+            case .heldByDestination = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, destinationOffer: offer, ledger: ledger, sizeOf: nil)
+        else { throw TestFailure("snapshotted the destination's own offer") }
+        #expect(puller.pulls.isEmpty)
+        #expect(pasteboard.providerInvocations == 0)
+    }
+
+    @Test(
+        "A snapshot of this process's copy write takes its data as written and pulls its file, its promise never read")
+    func snapshotOfOwnCopyWrite() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let landed = scratch.url.appendingPathComponent("a.bin")
+        try Data("file bytes".utf8).write(to: landed)
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [
+            Self.representation(ClipboardContent.utf8TextUTI, .inline),
+            Self.representation("public.data", .file, name: "a.bin"),
+        ]
+        let puller = CountingPuller(bytes: Data(), url: landed)
+        _ = publisher.publishCopy(
+            [item], concealed: false, servingFileURLs: true, landed: { _, _ in Data("text".utf8) }, puller: puller,
+            servingOffer: Data(repeating: 1, count: 16), onReleased: {})
+
+        guard
+            case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, ledger: ledger, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(puller.pulls == [1])
+        #expect(pasteboard.providerInvocations == 0)
+        #expect(source.items[0].representations.map(\.storage) == [.inline, .file])
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("text".utf8)))
+        #expect(try await source.serve(item: 0, representation: 1) == .file(landed))
+    }
 }

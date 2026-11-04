@@ -131,7 +131,13 @@ package final class HostClipboardPublisher {
             return .stagingFailed
         }
 
-        guard publisher.write(specs, servingOffer: offers.first?.token) else {
+        var parts = offers.map {
+            ClipboardWriteSource.Part(
+                items: $0.items, concealed: $0.concealed, servingFileURLs: $0.servingFileURLs, puller: $0.puller)
+        }
+        if !resolvedReps.isEmpty { parts.insert(.init(holding: resolvedReps), at: 0) }
+        guard publisher.write(specs, source: ClipboardWriteSource(servingOffer: offers.first?.token, parts: parts))
+        else {
             Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }

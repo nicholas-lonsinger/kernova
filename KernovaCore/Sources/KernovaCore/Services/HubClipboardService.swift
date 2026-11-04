@@ -195,6 +195,8 @@ final class HubClipboardService: ClipboardServicing {
         exchange.sendCopy(snapshot) ? nil : .transferFailed
     }
 
+    var guestOfferToken: Data? { exchange.remote?.token }
+
     /// Asks the guest for its clipboard, and lands every representation of its copy but a file or folder.
     func guestClipboardCopy() async -> GuestClipboardCopy {
         let answer = await withCheckedContinuation { continuation in
@@ -203,6 +205,8 @@ final class HubClipboardService: ClipboardServicing {
         switch answer {
         case .nothing:
             return .nothing
+        case .alreadyHeld:
+            return .alreadyHeld
         case .failed(let error):
             Self.logger.log(
                 .notice, "The guest's clipboard was not copied: \(String(describing: error), privacy: .public)")

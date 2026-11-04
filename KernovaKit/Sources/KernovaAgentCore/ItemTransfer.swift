@@ -33,17 +33,17 @@ public struct ItemOffer: Sendable, Equatable {
     /// A peer's CLIPBOARD offer: the token of the last host clipboard offer it received on the connection,
     /// empty when none (`ItemSetHeader.after`); a copy's, the ask it answers. Empty on every other offer.
     public var after: Data
-    /// A CLIPBOARD copy (`ItemSetHeader.copy`): not this side's clipboard offer, so a later one does not
-    /// withdraw it.
-    public var copy: Bool
+    /// What a CLIPBOARD offer is besides its opener's clipboard offer (`ItemSetHeader.copy`): a copy is not
+    /// this side's clipboard offer, so a later one does not withdraw it.
+    public var copy: ClipboardCopyRole
     /// A peer's first CLIPBOARD offer on a connection: its clipboard changed while no connection carried the
     /// feature (`ItemSetHeader.changed_while_unlinked`).
     public var changedWhileUnlinked: Bool
 
     /// Creates an offer.
     public init(
-        token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(), copy: Bool = false,
-        changedWhileUnlinked: Bool = false
+        token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(),
+        copy: ClipboardCopyRole = .notACopy, changedWhileUnlinked: Bool = false
     ) {
         self.token = token
         self.concealed = concealed
@@ -67,14 +67,14 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     /// ``ItemOffer/after``, as the OPEN carried it.
     public var after: Data
     /// ``ItemOffer/copy``, as the OPEN carried it.
-    public var copy: Bool
+    public var copy: ClipboardCopyRole
     /// ``ItemOffer/changedWhileUnlinked``, as the OPEN carried it.
     public var changedWhileUnlinked: Bool
 
     /// A header announcing `count` items of `feature`'s offer `token`.
     public init(
-        feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(), copy: Bool = false,
-        changedWhileUnlinked: Bool = false
+        feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(),
+        copy: ClipboardCopyRole = .notACopy, changedWhileUnlinked: Bool = false
     ) {
         self.feature = feature
         self.token = token
@@ -88,7 +88,37 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after, copy: header.copy, changedWhileUnlinked: header.changedWhileUnlinked)
+            after: header.after, copy: ClipboardCopyRole(header.copy), changedWhileUnlinked: header.changedWhileUnlinked
+        )
+    }
+}
+
+/// What a CLIPBOARD offer is besides its opener's clipboard offer, sent because the user asked for a clipboard
+/// on the far side.
+public enum ClipboardCopyRole: Sendable, Equatable {
+    /// The opener's clipboard offer, and every offer of another feature.
+    case notACopy
+    /// A snapshot of the opener's clipboard.
+    case snapshot
+    /// The host's ask for a snapshot of the peer's clipboard, of no items.
+    case ask
+
+    /// The role `wire` names; an unrecognized one is no copy.
+    init(_ wire: Kernova_V2_ClipboardCopy) {
+        switch wire {
+        case .snapshot: self = .snapshot
+        case .ask: self = .ask
+        case .unspecified, .UNRECOGNIZED: self = .notACopy
+        }
+    }
+
+    /// The wire's spelling.
+    var wire: Kernova_V2_ClipboardCopy {
+        switch self {
+        case .notACopy: .unspecified
+        case .snapshot: .snapshot
+        case .ask: .ask
+        }
     }
 }
 
