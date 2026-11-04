@@ -389,6 +389,25 @@ struct HubDragOutTests {
         #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
     }
 
+    @Test("a newer take that begins no Mac session leaves the earlier take's promises; a session's start replaces them")
+    func promisesLastUntilANewerSession() async throws {
+        let earlier = try await droppedTake()
+        var retired = false
+        earlier.whenRetired { retired = true }
+
+        dragOut.offerReceived(Data(repeating: 0xCD, count: 16), from: peer)
+        let abandoned = try takeOffer()
+        abandoned.pointerReturned()
+        #expect(abandoned.phase == .abandoned)
+        #expect(!retired, "a take that began no session withdrew the earlier take's promises")
+
+        dragOut.offerReceived(Data(repeating: 0xEF, count: 16), from: peer)
+        let newer = try takeOffer()
+        newer.hostSessionWillBegin()
+        #expect(retired)
+        #expect(hub.state.withLock { $0.releases.map(\.token) }.contains(token))
+    }
+
     @Test("a console move before the guest answers hands the press back")
     func consoleMoveMidHandOff() async throws {
         offer()

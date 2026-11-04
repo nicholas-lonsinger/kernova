@@ -106,6 +106,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
     func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
         followImages(of: session)
         withdrawPromisesAtRetirement(from: session.draggingPasteboard)
+        take.hostSessionWillBegin()
     }
 
     /// Clears `pasteboard`, which the session has just written its promises

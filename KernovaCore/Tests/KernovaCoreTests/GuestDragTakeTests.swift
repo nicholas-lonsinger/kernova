@@ -194,7 +194,7 @@ struct GuestDragTakeTests {
         let take = GuestDragTake(
             transport: transport, display: display,
             reporter: ClipboardTransferReporter(), peerName: "Test VM", holds: { running.isRunning },
-            onFinished: { _ in finished.count += 1 })
+            onFinished: { _ in finished.count += 1 }, onHostSessionBegan: { _ in })
         take.begin()
         return take
     }
@@ -716,7 +716,7 @@ struct GuestDragTakeTests {
         #expect(ran == 2)
     }
 
-    @Test("a destination that asked for some items holds the take until a newer drag replaces it")
+    @Test("a destination that asked for some items holds the take until a newer session replaces its promises")
     func partiallyAskedTakeRetires() async throws {
         let take = try carriedTake(items: [Self.file, Self.file, Self.file])
         var retired = false
@@ -734,7 +734,9 @@ struct GuestDragTakeTests {
         _ = take.filename(forItemAt: 1)
         #expect(!retired, "retired while a destination could still ask")
 
-        take.supersede()
+        take.newerTakeBegan()
+        #expect(!retired, "retired before a newer session replaced its promises")
+        take.promisesReplaced()
         #expect(!retired, "retired before an item already asked for was written")
 
         let second = try await write(take, item: 1, to: folder.appendingPathComponent("a 2.txt")) {

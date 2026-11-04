@@ -51,6 +51,7 @@ final class FakeTake: GuestDragTaking {
         case withheldMouseUp
         case pointerReturned
         case displayAbandoned
+        case hostSessionWillBegin
         case hostSessionMoved
         case hostSessionOver(CGPoint)
         case hostSessionLeft
@@ -126,6 +127,8 @@ final class FakeTake: GuestDragTaking {
     }
 
     func displayAbandoned() { events.append(.displayAbandoned) }
+
+    func hostSessionWillBegin() { events.append(.hostSessionWillBegin) }
 
     func hostSessionMoved() { events.append(.hostSessionMoved) }
 

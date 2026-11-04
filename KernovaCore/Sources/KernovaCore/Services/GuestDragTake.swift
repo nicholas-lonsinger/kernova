@@ -180,6 +180,10 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// new press began without the last one ending.
     func displayAbandoned()
 
+    /// The Mac drag session carrying the take is beginning, its promises just
+    /// written to the drag pasteboard over whatever an earlier drag put there.
+    func hostSessionWillBegin()
+
     /// The Mac drag session moved, wherever it is.
     func hostSessionMoved()
 
@@ -337,6 +341,7 @@ package final class GuestDragTake: GuestDragTaking {
     @ObservationIgnored private let progressIdleGap: TimeInterval
     @ObservationIgnored private let holds: @MainActor () -> Bool
     @ObservationIgnored private let onFinished: @MainActor (GuestDragTake) -> Void
+    @ObservationIgnored private let onHostSessionBegan: @MainActor (GuestDragTake) -> Void
 
     @ObservationIgnored private var nextNudge: GuestDragNudge = .exitPoint
     @ObservationIgnored private var holdsWatch: ObservationLoop?
@@ -385,8 +390,9 @@ package final class GuestDragTake: GuestDragTaking {
     @ObservationIgnored private var noDestinationAsks = false
     /// Whether the guest was asked to deliver the drag.
     @ObservationIgnored private var deliveryAsked = false
-    /// Whether a newer drag replaced this one, which takes the Mac's drag
-    /// pasteboard: no destination then asks for an item it has not asked for.
+    /// Whether a newer drag's Mac session wrote the drag pasteboard over this
+    /// one's promises: no destination then asks for an item it has not asked
+    /// for.
     @ObservationIgnored private var superseded = false
     @ObservationIgnored private var isFinished = false
     /// What runs once the take retires.
@@ -420,15 +426,17 @@ package final class GuestDragTake: GuestDragTaking {
     /// true.
     ///
     /// `onFinished` is called once, when the take's stream has closed, its
-    /// offers are released or ended, and no write is still pulling. Nothing is
-    /// sent until ``begin()``.
+    /// offers are released or ended, and no write is still pulling;
+    /// `onHostSessionBegan` as its Mac session begins. Nothing is sent until
+    /// ``begin()``.
     init(
         transport: any GuestDragTransport, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         holds: @escaping @MainActor () -> Bool,
-        onFinished: @escaping @MainActor (GuestDragTake) -> Void
+        onFinished: @escaping @MainActor (GuestDragTake) -> Void,
+        onHostSessionBegan: @escaping @MainActor (GuestDragTake) -> Void
     ) {
         self.transport = transport
         self.display = display
@@ -438,6 +446,7 @@ package final class GuestDragTake: GuestDragTaking {
         self.progressIdleGap = progressIdleGap
         self.holds = holds
         self.onFinished = onFinished
+        self.onHostSessionBegan = onHostSessionBegan
     }
 
     /// Asks the guest to hand the drag over, and starts watching the condition
@@ -511,6 +520,10 @@ package final class GuestDragTake: GuestDragTaking {
         case .released, .unreleased, .abandoned:
             break
         }
+    }
+
+    package func hostSessionWillBegin() {
+        onHostSessionBegan(self)
     }
 
     package func hostSessionMoved() {
@@ -666,18 +679,24 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
-    /// A newer take replaced this one: one not yet carried by a Mac session is
-    /// abandoned, and one that is stops waiting for its guest drag, which
-    /// ended with its press. Its session's promises give way to the newer
-    /// drag's, so it writes what its Mac destination has asked for and then
-    /// retires.
-    func supersede() {
-        superseded = true
+    /// A newer take began, its press ending this take's guest drag: one not
+    /// yet carried by a Mac session is abandoned, and one that is stops
+    /// waiting for its guest drag. Its session's promises stay on the drag
+    /// pasteboard until a newer session writes it (``promisesReplaced()``).
+    func newerTakeBegan() {
         switch phase {
         case .handingOff, .ready: abandon(because: "a newer drag replaced it")
         case .carried: endUnreleased(because: "a newer drag replaced it")
-        case .released, .unreleased, .abandoned: retireIfDone()
+        case .released, .unreleased, .abandoned: break
         }
+    }
+
+    /// A newer drag's Mac session wrote the drag pasteboard over this take's
+    /// promises, so it writes what its Mac destination has asked for and then
+    /// retires.
+    func promisesReplaced() {
+        superseded = true
+        retireIfDone()
     }
 
     /// The app is terminating: the take writes nothing more and retires now,
@@ -818,8 +837,9 @@ package final class GuestDragTake: GuestDragTaking {
     /// A Mac destination asks for the items after its session ends, at any
     /// moment and for only some of them, and AppKit reports no end to its
     /// asking. So a session a destination took holds the offer until every
-    /// item is written, the writes ended, or a newer drag replaced it — after
-    /// which only an item already asked for is still written.
+    /// item is written, the writes ended, or a newer drag's session replaced
+    /// its promises — after which only an item already asked for is still
+    /// written.
     private func retireIfDone() {
         switch phase {
         case .handingOff, .ready, .carried: return

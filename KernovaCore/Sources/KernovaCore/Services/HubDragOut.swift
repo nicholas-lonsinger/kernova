@@ -113,20 +113,22 @@ package final class HubDragOut {
 
     /// Takes over ``offer`` for `display`, or returns nil when there is none.
     ///
-    /// The take runs while `holds` stays true. Any earlier take is superseded:
-    /// one before its Mac session ends, and one a Mac session carries keeps
-    /// writing what its destination asks for.
+    /// The take runs while `holds` stays true. Any earlier take's guest drag
+    /// ended with this press: one before its Mac session ends, and one a Mac
+    /// session carried keeps its promises until this take's session begins,
+    /// which writes the drag pasteboard over them.
     package func takeGuestDrag(
         display: any GuestDragDisplay, while holds: @escaping @MainActor () -> Bool
     ) -> GuestDragTake? {
         guard let offer, let hub else { return nil }
         self.offer = nil
-        for earlier in liveTakes { earlier.supersede() }
+        for earlier in liveTakes { earlier.newerTakeBegan() }
         let transport = Transport(owner: self, hub: hub, peer: offer.peer, token: offer.token)
         let take = GuestDragTake(
             transport: transport, display: display, reporter: reporter,
             peerName: peerName(), holds: holds,
-            onFinished: { [weak self] finished in self?.takes = self?.takes.filter { $0.value !== finished } ?? [:] })
+            onFinished: { [weak self] finished in self?.takes = self?.takes.filter { $0.value !== finished } ?? [:] },
+            onHostSessionBegan: { [weak self] began in self?.hostSessionBegan(began) })
         takes[offer.token] = take
         take.begin()
         return take
@@ -136,6 +138,12 @@ package final class HubDragOut {
     /// promises withdrawn.
     package func endForTermination() {
         for take in liveTakes { take.endForTermination() }
+    }
+
+    /// `began`'s Mac session wrote the drag pasteboard: every other take's
+    /// promises are gone from it.
+    private func hostSessionBegan(_ began: GuestDragTake) {
+        for take in liveTakes where take !== began { take.promisesReplaced() }
     }
 
     /// Each take still running, once.
