@@ -37,8 +37,9 @@ extension ClipboardPasteboardReader {
         case file(
             URL, inliningImage: Bool, promise: (index: Int, representation: Representation)?,
             others: (item: Int, types: [String]))
-        /// A file promise: the index of its receiver, and its representation.
-        case promise(Int, Representation)
+        /// A file promise: the index of its receiver, and its representation, offered with the item's `others`
+        /// types INLINE beside it.
+        case promise(Int, Representation, others: (item: Int, types: [String]))
         /// A file a called-in promise lands, and its representation.
         case landing(Task<URL, any Error>, Representation)
     }
@@ -55,10 +56,12 @@ extension ClipboardPasteboardReader {
     /// - `promises` are the receivers `readObjects(forClasses:
     ///   [NSFilePromiseReceiver.self])` yields: one per item that carries one
     ///   (``carriesPromiseReceiver(_:)``), in order. Every such item takes the
-    ///   next, whether or not it offers it. An item naming no file on disk
-    ///   offers its receiver `promised`: it is called in only when pulled, into
-    ///   a directory `promiseDestination` makes, and offered under the name the
-    ///   promise gives so far.
+    ///   next, whether or not it offers it. An item naming no file on disk, or
+    ///   one this process cannot open, offers its receiver `promised`: it is
+    ///   called in only when pulled, into a directory `promiseDestination`
+    ///   makes, and offered under the name the promise gives so far, every
+    ///   other type of the item INLINE beside it but those naming a file or the
+    ///   promise, which the far side rebuilds from the file it lands.
     /// - Any other item offers each of its types INLINE, its bytes read from
     ///   the pasteboard when pulled, and only while the pasteboard is
     ///   unchanged. Marker and file-reference types are never offered, nor the
@@ -212,7 +215,7 @@ extension ClipboardPasteboardReader {
                 continue
             }
             if case .notAFile = resolution, let receiver {
-                pending.append(.promise(receiver, promisedRepresentation(promises[receiver])))
+                pending.append(.promise(receiver, promisedRepresentation(promises[receiver]), others: (index, offerable)))
                 continue
             }
             if case .vanished = resolution, rule == .drop {
@@ -251,8 +254,9 @@ extension ClipboardPasteboardReader {
         return .offer(source, lost: lost + incomplete.count)
     }
 
-    /// The types of an item, of `types`, offered INLINE: every type but a marker, a file reference, and — when
-    /// the item names a file — a type carrying its URL or its path as text.
+    /// The types of an item, of `types`, offered INLINE: every type but a marker, a file reference — a file
+    /// promise's own types among them (``PasteboardTypeIdentity/isFileReference``) — and, when the item names a
+    /// file or promises one, a type carrying its URL or its path as text.
     private static func inlineTypes(of types: [String]) -> [String] {
         let isFileItem = types.contains(where: ClipboardSnapshotPolicy.isFileReference(uti:))
         return types.filter {
@@ -272,8 +276,8 @@ extension ClipboardPasteboardReader {
         switch pending {
         case .inline(let index, let types, let fileLeftOut):
             return inline(item: index, types: types, fileLeftOut: fileLeftOut)
-        case .promise(let index, let representation):
-            return Resolved(item: .with(representation), origins: [.promise(index)])
+        case .promise(let index, let representation, let others):
+            return promised(index, representation, others: others)
         case .landing(let file, let representation):
             return Resolved(item: .with(representation), origins: [.landing(file)])
         case .file(let url, let inliningImage, let promise, let others):
@@ -287,7 +291,7 @@ extension ClipboardPasteboardReader {
                     return others.types.isEmpty
                         ? nil : inline(item: others.item, types: others.types, fileLeftOut: true)
                 }
-                return Resolved(item: .with(promise.representation), origins: [.promise(promise.index)])
+                return promised(promise.index, promise.representation, others: others)
             }
             let name = url.lastPathComponent
             var resolved: Resolved
@@ -312,6 +316,17 @@ extension ClipboardPasteboardReader {
             resolved.origins += rest.origins
             return resolved
         }
+    }
+
+    /// The file promise `index` as `representation`, with pasteboard item `others.item`'s `others.types` INLINE
+    /// beside it.
+    nonisolated private static func promised(
+        _ index: Int, _ representation: Representation, others: (item: Int, types: [String])
+    ) -> Resolved {
+        let rest = inline(item: others.item, types: others.types, fileLeftOut: false)
+        var item = OfferedItem.with(representation)
+        item.representations += rest.item.representations
+        return Resolved(item: item, origins: [.promise(index)] + rest.origins)
     }
 
     /// Pasteboard item `index`'s `types`, offered INLINE, none of them read.

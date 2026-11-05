@@ -139,6 +139,14 @@ public enum ClipboardDropStop: Equatable, Sendable {
 }
 
 extension ClipboardTransferFailure {
+    /// Whether the gesture delivered the rest of what it carried, leaving only this part out.
+    public var deliveredTheRest: Bool {
+        switch self {
+        case .itemsSkipped, .filesLeftOut, .partsGone: true
+        default: false
+        }
+    }
+
     /// The failure a `diskFull` abort carries, from whatever numbers it knew.
     public static func diskFull(from info: ClipboardStreamAbortInfo) -> ClipboardTransferFailure {
         .diskFull(
@@ -215,6 +223,14 @@ public struct ClipboardTransferFinish: Equatable, Sendable {
         case .completed(let final), .cancelled(let final): return final
         case .failed: return nil
         }
+    }
+
+    /// What the log records of a finish that did not deliver everything, partial or failed; nil for one that
+    /// did.
+    var logLine: String? {
+        guard let failure else { return nil }
+        let ending = failure.deliveredTheRest ? "was partial" : "failed"
+        return "\(gesture) from '\(peerName)' \(ending): \(failure)"
     }
 
     /// Whether two finishes describe the same news, ignoring when it happened.

@@ -265,11 +265,8 @@ public final class ClipboardTransferReporter {
         lastFinish = finish
         absorbsRepeats = true
         failureAwaitsDisplacement = finish.failure != nil
-        if let failure = finish.failure, finish.gesture.isMadeHere {
-            Self.logger.log(
-                .notice,
-                "\(String(describing: finish.gesture), privacy: .public) from '\(finish.peerName, privacy: .public)' failed: \(String(describing: failure), privacy: .public)"
-            )
+        if let line = finish.logLine, finish.gesture.isMadeHere {
+            Self.logger.log(.notice, "\(line, privacy: .public)")
         }
         recompute()
     }

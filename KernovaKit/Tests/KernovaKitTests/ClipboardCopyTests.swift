@@ -619,6 +619,89 @@ struct ClipboardCopyTests {
         #expect(served.lastPathComponent == "photo.jpeg")
     }
 
+    /// Types a file promise of the source's places, beside `NSFilePromiseReceiver`'s readable ones.
+    private static let promiseTypes: [(type: NSPasteboard.PasteboardType, data: Data)] = [
+        (NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"), Data("file:///tmp/photo.jpeg".utf8)),
+        (NSPasteboard.PasteboardType("com.apple.NSFilePromiseItemMetaData"), Data("meta".utf8)),
+    ]
+
+    @Test(
+        "An item whose file cannot be opened crosses as its promise, called in, and every type not naming a file or the promise, as data"
+    )
+    func unreadableFileItemCrossesItsPromiseAndItsData() async throws {
+        let pasteboard = FakePasteboard()
+        let receiver = FakeFilePromiseReceiver(
+            name: "photo.jpeg", fileType: "public.jpeg", contents: .file(Data("jpeg".utf8)))
+        #expect(
+            pasteboard.setItem(
+                photosCopy(naming: try unreadableFile("derivative.jpeg")) + Self.promiseTypes, promising: receiver))
+        let crossing = [
+            "com.apple.photos.object-reference.asset", "public.jpeg", "CorePasteboardFlavorType 0x4A504547",
+            "dyn.ah62d4rv4gu8za0cuqf31k3pcr7u1e3cmsvw04vdbsvuyq4pqqznzexcdr71004pfnv61a3k",
+            "PXPasteboardItemDataFileURLCookieType", "public.tiff", "NeXT TIFF v4.0 pasteboard type",
+        ]
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root),
+                copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 0)
+        #expect(receiver.callIns == 1)
+        let item = try #require(source.items.first)
+        #expect(source.items.count == 1)
+        #expect(item.representations.compactMap(\.type.appleUTI) == ["public.jpeg"] + crossing)
+        #expect(item.representations.map(\.storage) == [.file] + crossing.map { _ in .inline })
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+            throw TestFailure("the called-in file was not served")
+        }
+        #expect(served.lastPathComponent == "photo.jpeg")
+        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("jpeg".utf8)))
+
+        // Passthrough's offer reads the item by the same rule.
+        guard
+            case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, promises: pasteboard.filePromiseReceivers)
+        else { throw TestFailure("no offer") }
+        #expect(offerLost == 0)
+        #expect(offer.items.map { $0.representations.compactMap(\.type.appleUTI) } == [["public.jpeg"] + crossing])
+    }
+
+    @Test("An item that is only a promise of a file crosses as its promise and every type not naming the promise")
+    func promiseItemCrossesItsOtherTypes() async throws {
+        let pasteboard = FakePasteboard()
+        let receiver = FakeFilePromiseReceiver(
+            name: "photo.heic", fileType: "public.heic", contents: .file(Data("heic".utf8)))
+        let other: [(type: NSPasteboard.PasteboardType, data: Data)] = [
+            (NSPasteboard.PasteboardType("public.jpeg"), Data("jpeg".utf8)),
+            (NSPasteboard.PasteboardType("com.example.private-state"), Data("private".utf8)),
+        ]
+        #expect(pasteboard.setItem(other + Self.promiseTypes, promising: receiver))
+        let crossing = ["public.jpeg", "com.example.private-state"]
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root),
+                copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 0)
+        #expect(receiver.callIns == 1)
+        let item = try #require(source.items.first)
+        #expect(item.representations.compactMap(\.type.appleUTI) == ["public.heic"] + crossing)
+        #expect(item.representations.map(\.storage) == [.file, .inline, .inline])
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+            throw TestFailure("the called-in file was not served")
+        }
+        #expect(served.lastPathComponent == "photo.heic")
+        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("private".utf8)))
+
+        guard
+            case .offer(let offer, _) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, promises: pasteboard.filePromiseReceivers)
+        else { throw TestFailure("no offer") }
+        #expect(offer.items.map { $0.representations.compactMap(\.type.appleUTI) } == [["public.heic"] + crossing])
+    }
+
     // MARK: - Lifetimes
 
     @Test("A snapshot's called-in files outlive four later call-ins, and go once the snapshot does")

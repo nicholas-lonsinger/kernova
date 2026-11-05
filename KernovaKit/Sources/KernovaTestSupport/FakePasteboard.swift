@@ -199,9 +199,17 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     @MainActor
     @discardableResult
     public func setFile(_ file: URL, promising receiver: any FilePromiseReceiving) -> Bool {
-        setItem(
-            [(type: .fileURL, data: Data(file.absoluteString.utf8))]
-                + NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
+        setItem([(type: .fileURL, data: Data(file.absoluteString.utf8))], promising: receiver)
+    }
+
+    /// Places one item of `representations` beside `receiver`'s file promise, `receiver` the receiver every
+    /// later read of the pasteboard's promises yields.
+    @MainActor
+    @discardableResult
+    public func setItem(
+        _ representations: [(type: NSPasteboard.PasteboardType, data: Data)], promising receiver: any FilePromiseReceiving
+    ) -> Bool {
+        setItem(representations + NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
         promiseReceivers = [receiver]
         return true
     }
