@@ -3,11 +3,11 @@ import Foundation
 import KernovaCommandModel
 
 extension KernovaCommand {
-    /// How `kernova stop` reaches a powered-off guest.
+    /// How `kernova stop` and `kernova restart` take the guest down.
     enum StopMethod: String, EnumerableFlag {
         /// Ask the guest to shut itself down.
         case graceful
-        /// Terminate the guest immediately, losing unsaved state.
+        /// Terminate the guest immediately, losing anything in it that isn’t saved to disk.
         case force
         /// Shut a macOS guest down without waiting for apps.
         case anyway
@@ -21,11 +21,20 @@ extension KernovaCommand {
             }
         }
 
+        /// The flag a group action refuses, `nil` for the default.
+        var singleVMFlag: String? {
+            switch self {
+            case .graceful: nil
+            case .force: "--force"
+            case .anyway: "--anyway"
+            }
+        }
+
         /// What each flag's help says.
         static func help(for value: StopMethod) -> ArgumentHelp? {
             switch value {
             case .graceful: "Ask the guest to shut down (the default)."
-            case .force: "Terminate the guest immediately, losing unsaved state."
+            case .force: "Terminate the guest immediately, losing \(StopDisposition.forceLoss)."
             case .anyway:
                 "Shut a macOS guest down without waiting for apps. Apps still open quit without asking to save."
             }
@@ -48,7 +57,9 @@ extension KernovaCommand {
                 + "denies turning terminal echo off, and such a start exits 5.\n\nA virtual "
                 + "machine with the same machine ID as one that is active is refused. With Offer "
                 + "to start duplicate machine IDs anyway on in Kernova\u{2019}s Settings, --yes "
-                + "starts it anyway.\n\nA virtual machine whose MAC address another active one "
+                + "starts it anyway, and so does no flag once Don\u{2019}t ask again is chosen on "
+                + "Kernova\u{2019}s question, until the question is turned back on in Settings "
+                + "\u{25B8} Reminders.\n\nA virtual machine whose MAC address another active one "
                 + "uses on the same network is refused, printing the commands that change its "
                 + "network first where it can take them.\n\nWith --smart-group or --folder, starts each "
                 + "virtual machine in the group that can be started or resumed, one after another, "
@@ -145,8 +156,7 @@ extension KernovaCommand {
             try groups.validateTarget(
                 vm: vm,
                 singleVMFlags: [
-                    method == .force ? "--force" : nil, method == .anyway ? "--anyway" : nil,
-                    timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
+                    method.singleVMFlag, timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
                 ].compactMap(\.self))
         }
 
@@ -268,10 +278,16 @@ extension KernovaCommand {
                 + "the verb that puts a display there. --timeout bounds the shutdown half: a "
                 + "guest still up when it expires exits 7 and is not started again. A virtual "
                 + "machine with the same machine ID as one that is active is refused before the "
-                + "guest goes down, unless --yes starts it anyway where Kernova's Settings allow. "
+                + "guest goes down, unless --yes starts it anyway where Kernova's Settings allow; "
+                + "there, no flag is needed once Don\u{2019}t ask again is chosen on Kernova\u{2019}s "
+                + "question, until the question is turned back on in Settings \u{25B8} Reminders. "
                 + "One whose MAC address another active one uses on the same network is refused "
                 + "there too, printing the command that moves it to a network of its own where it "
                 + "can take it."
+                + "\n\n--force terminates the guest instead of asking it to shut down, and "
+                + "--anyway shuts a macOS guest down without waiting for apps; each asks for --yes, "
+                + "as `kernova stop` does. --anyway takes a macOS guest whose Kernova agent is "
+                + "installed \u{201C}For everyone\u{201D} and connected; any other guest refuses it."
                 + "\n\nWith --smart-group or --folder, restarts every running guest in the group "
                 + "at once and, once each is back up or has failed, prints a line for each; a guest "
                 + "that never shuts down holds the report, not the others' restarts. A paused or suspended virtual machine is skipped, as a group stop skips "
@@ -286,6 +302,10 @@ extension KernovaCommand {
 
         /// The group whose virtual machines the verb acts on instead.
         @OptionGroup var groups: GroupTargetOptions
+
+        /// How the guest goes down before it starts again.
+        @Flag(exclusivity: .exclusive)
+        var method: StopMethod = .graceful
 
         /// How long to wait for the guest to power off, or `nil` to wait as
         /// long as it takes.
@@ -302,16 +322,17 @@ extension KernovaCommand {
             try TimeoutOption.validate(timeout)
             try groups.validateTarget(
                 vm: vm,
-                singleVMFlags: [timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil]
-                    .compactMap(\.self))
+                singleVMFlags: [
+                    method.singleVMFlag, timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
+                ].compactMap(\.self))
         }
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
             if let group = groups.target { return .groupAction(.restart, group: group) }
             return .restart(
-                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id), timeout: timeout,
-                consent: options.consent)
+                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id),
+                disposition: method.disposition, timeout: timeout, consent: options.consent)
         }
 
         /// Restarts the VM, or every running one in the group.

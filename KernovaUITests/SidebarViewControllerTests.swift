@@ -1052,70 +1052,92 @@ struct SidebarViewControllerTests {
         #expect(forceStop?.isAlternate == false)
     }
 
-    /// A running VM whose guest's agents offer Shut Down Anyway, or not.
+    /// A running VM whose guest's agents offer Stop Anyway, or not.
     private func runningInstance(
-        in viewModel: VMLibraryViewModel, offeringShutDownAnyway offered: Bool
+        in viewModel: VMLibraryViewModel, offeringStopAnyway offered: Bool
     ) -> VMInstance {
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
+            AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]),
+                powerIgnoringApps: offered ? .agent(.systemPeer) : .absent(.noAgent)))
         return instance
     }
 
     @Test(
-        "Shut Down Anyway… is a plain item right after the Stop row, Force Stop… stays Stop's Option alternate",
+        "Each power verb's Force form is its Option alternate and its Anyway form a plain item after it; with advanced options on, all six show in the menu bar's order",
         arguments: [false, true])
-    func contextMenuShutDownAnywayFollowsStop(advanced: Bool) throws {
+    func contextMenuPowerRows(advanced: Bool) throws {
         preferences.alwaysShowAdvancedOptions = advanced
         let viewModel = makeViewModel()
-        let instance = runningInstance(in: viewModel, offeringShutDownAnyway: true)
+        let instance = runningInstance(in: viewModel, offeringStopAnyway: true)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
-        // The item array is the same in both modes: without Option AppKit shows
-        // Stop, Shut Down Anyway…, Restart, and holding it Force Stop… in Stop's
-        // row; with advanced options on every row is shown.
+        // Without Option AppKit shows Stop, Stop Anyway…, Restart, Restart
+        // Anyway…, and holding it each Force form in its verb's row.
         let titles = menu.items.map(\.title)
         let stop = try #require(titles.firstIndex(of: "Stop"))
-        #expect(Array(titles[stop...].prefix(4)) == ["Stop", "Force Stop…", "Shut Down Anyway…", "Restart"])
-        let anyway = try #require(menuItem("Shut Down Anyway…", in: menu))
-        #expect(!anyway.isAlternate)
-        #expect(anyway.isEnabled)
-        #expect(menuItem("Force Stop…", in: menu)?.isAlternate == !advanced)
-        #expect(menuItem("Restart", in: menu)?.isAlternate == false)
+        #expect(
+            Array(titles[stop...].prefix(6))
+                == (advanced
+                    ? ["Stop", "Stop Anyway…", "Force Stop…", "Restart", "Restart Anyway…", "Force Restart…"]
+                    : ["Stop", "Force Stop…", "Stop Anyway…", "Restart", "Force Restart…", "Restart Anyway…"]))
+        for title in ["Stop Anyway…", "Restart Anyway…"] {
+            let anyway = try #require(menuItem(title, in: menu))
+            #expect(!anyway.isAlternate, "\(title)")
+            #expect(anyway.isEnabled, "\(title)")
+        }
+        for (primary, force) in [("Stop", "Force Stop…"), ("Restart", "Force Restart…")] {
+            let primaryItem = try #require(menuItem(primary, in: menu))
+            let forceItem = try #require(menuItem(force, in: menu))
+            #expect(!primaryItem.isAlternate)
+            #expect(forceItem.isAlternate == !advanced, "\(force)")
+            #expect(forceItem.isEnabled, "\(force)")
+            if !advanced {
+                #expect(forceItem.keyEquivalentModifierMask == [.option])
+                #expect(primaryItem.keyEquivalentModifierMask == [])
+            }
+        }
     }
 
-    @Test("Where not offered, Shut Down Anyway… is not in the menu at all, in either mode", arguments: [false, true])
-    func contextMenuShutDownAnywayAbsentWhereNotOffered(advanced: Bool) throws {
+    @Test(
+        "Where not offered, neither Anyway form is in the menu at all, in either mode", arguments: [false, true])
+    func contextMenuAnywayAbsentWhereNotOffered(advanced: Bool) throws {
         preferences.alwaysShowAdvancedOptions = advanced
         let viewModel = makeViewModel()
-        let instance = runningInstance(in: viewModel, offeringShutDownAnyway: false)
+        let instance = runningInstance(in: viewModel, offeringStopAnyway: false)
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
-        #expect(menuItem("Shut Down Anyway…", in: menu) == nil)
+        #expect(menuItem("Stop Anyway…", in: menu) == nil)
+        #expect(menuItem("Restart Anyway…", in: menu) == nil)
         let titles = menu.items.map(\.title)
         let stop = try #require(titles.firstIndex(of: "Stop"))
-        #expect(Array(titles[stop...].prefix(3)) == ["Stop", "Force Stop…", "Restart"])
+        #expect(Array(titles[stop...].prefix(4)) == ["Stop", "Force Stop…", "Restart", "Force Restart…"])
     }
 
-    @Test("On a paused guest Shut Down Anyway… is listed in its place, disabled")
-    func contextMenuShutDownAnywayDisabledWhilePaused() throws {
+    @Test("On a paused guest both Anyway forms are listed in their places, disabled")
+    func contextMenuAnywayDisabledWhilePaused() throws {
         preferences.alwaysShowAdvancedOptions = false
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .livePaused(sessionID: UUID()))
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)
 
         let titles = menu.items.map(\.title)
         let stop = try #require(titles.firstIndex(of: "Stop"))
-        #expect(titles[stop + 2] == "Shut Down Anyway…")
-        #expect(menuItem("Shut Down Anyway…", in: menu)?.isEnabled == false)
+        #expect(titles[stop + 2] == "Stop Anyway…")
+        #expect(titles[stop + 5] == "Restart Anyway…")
+        #expect(menuItem("Stop Anyway…", in: menu)?.isEnabled == false)
+        #expect(menuItem("Restart Anyway…", in: menu)?.isEnabled == false)
+        // A paused guest is terminated where it is, so its Force forms stay live.
+        #expect(menuItem("Force Restart…", in: menu)?.isEnabled == true)
     }
 
     /// The lifecycle items, in the order each expectation lists them.
@@ -1176,9 +1198,12 @@ struct SidebarViewControllerTests {
                 return item.isEnabled ? "E" : "D"
             })
         #expect(actual == expected, "\(phase)")
-        // Restart stands wherever Stop does, enabled alike.
+        // Restart stands wherever Stop does, enabled alike, and Force
+        // Restart… wherever Force Stop… does.
         let column = Array(actual)
         #expect(column[6] == column[4], "\(phase)")
+        let forceRestart = menuItem("Force Restart…", in: menu).map { $0.isEnabled ? "E" : "D" } ?? "-"
+        #expect(Character(forceRestart) == column[5], "\(phase)")
     }
 
     @Test("Restart in a running VM's menu restarts it")

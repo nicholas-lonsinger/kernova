@@ -515,12 +515,16 @@ final class VMScriptingGateway {
             verb)
     }
 
+    /// Restarts each VM, taking it down the way `method` names, with
+    /// `confirmation` as the consent a destructive restart refuses without.
     func restart(
-        _ selectors: [VMSelector], confirmation: Bool, givingUpAfter timeout: TimeInterval?
+        _ selectors: [VMSelector], method: StopDisposition, confirmation: Bool,
+        givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.restart, on: selectors) { selector in
             try await Self.consenting(confirmation) { consent in
-                try await self.commands.restart(selector, timeout: timeout, consent: consent)
+                try await self.commands.restart(
+                    selector, disposition: method, timeout: timeout, consent: consent)
             }
         }
     }

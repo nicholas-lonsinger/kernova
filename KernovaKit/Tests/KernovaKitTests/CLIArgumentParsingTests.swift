@@ -529,11 +529,27 @@ struct CLIArgumentParsingTests {
         }
     }
 
-    @Test("Two stop methods at once is a usage error, not a silent winner")
+    @Test("Two stop methods at once is a usage error, not a silent winner, for stop and restart alike")
     func stopMethodsAreExclusive() {
-        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--force", "--graceful"]) }
-        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--anyway", "--force"]) }
-        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--anyway", "--graceful"]) }
+        for verb in ["stop", "restart"] {
+            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--force", "--graceful"]) }
+            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--force"]) }
+            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--graceful"]) }
+        }
+    }
+
+    @Test("restart defaults to asking the guest, and takes each stop method with a deadline")
+    func restartMethodsMapToDispositions() throws {
+        let byDefault = try #require(try parse(["restart", "Alpha"]) as? KernovaCommand.Restart)
+        #expect(byDefault.method == .graceful)
+        for (flag, disposition) in [
+            ("--graceful", StopDisposition.graceful), ("--force", .force), ("--anyway", .anyway),
+        ] {
+            let restart = try #require(
+                try parse(["restart", "Alpha", flag, "--timeout", "5"]) as? KernovaCommand.Restart)
+            #expect(restart.method.disposition == disposition, "\(flag)")
+            #expect(restart.timeout == 5)
+        }
     }
 
     @Test("Every stop method maps onto a wire disposition, exhaustively")

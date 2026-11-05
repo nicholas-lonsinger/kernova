@@ -2,7 +2,8 @@ import AppIntents
 import Foundation
 import KernovaCommandModel
 
-/// How a stop reaches a guest, offered as a Shortcuts picker.
+/// How a stop, or the stop half of a restart, takes the guest down, offered
+/// as a Shortcuts picker on both verbs.
 ///
 /// Mirrors ``StopDisposition`` rather than conforming it: the App Intents
 /// metadata processor reads an `AppEnum`'s cases and case display
@@ -13,26 +14,29 @@ import KernovaCommandModel
 /// reaching Shortcuts unnamed.
 enum VMStopMethod: String, AppEnum {
     /// Request an ACPI shutdown and let the guest power itself off.
-    case shutDown
-    /// Terminate the virtual machine immediately, losing unsaved guest state.
-    case force
+    case graceful
     /// Shut a macOS guest down without waiting for apps.
-    case shutDownAnyway
+    case anyway
+    /// Terminate the virtual machine immediately, losing anything in the guest
+    /// that isn’t saved to disk.
+    case force
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Stop Method")
 
+    /// Named for the verb they qualify, which the intent's own title holds:
+    /// Stop, Stop Anyway, Force Stop; Restart, Restart Anyway, Force Restart.
     static let caseDisplayRepresentations: [VMStopMethod: DisplayRepresentation] = [
-        .shutDown: "Shut Down",
-        .force: "Force Stop",
-        .shutDownAnyway: "Shut Down Anyway",
+        .graceful: "Normal",
+        .anyway: "Anyway",
+        .force: "Force",
     ]
 
     /// The disposition this method names.
     var disposition: StopDisposition {
         switch self {
-        case .shutDown: .graceful
+        case .graceful: .graceful
+        case .anyway: .anyway
         case .force: .force
-        case .shutDownAnyway: .anyway
         }
     }
 
@@ -40,9 +44,9 @@ enum VMStopMethod: String, AppEnum {
     init(_ disposition: StopDisposition) {
         self =
             switch disposition {
-            case .graceful: .shutDown
+            case .graceful: .graceful
+            case .anyway: .anyway
             case .force: .force
-            case .anyway: .shutDownAnyway
             }
     }
 }

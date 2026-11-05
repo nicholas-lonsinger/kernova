@@ -282,14 +282,4 @@ struct AppPreferencesTests {
         defaults.set(3 * 1024 * 1024 * 1024, forKey: "clipboardMaxPasteBytes")
         #expect(ClipboardPasteLimit.choices.contains(prefs.clipboardMaxPasteBytes))
     }
-
-    @Test("resetHostReminders clears the host reminder flag")
-    func resetHostRemindersClearsTheFlag() {
-        let (prefs, _) = makePreferences()
-        prefs.menuBarQuitReminderDismissed = true
-
-        prefs.resetHostReminders()
-
-        #expect(prefs.menuBarQuitReminderDismissed == false)
-    }
 }

@@ -490,7 +490,7 @@ struct VMScriptingGatewayTests {
         #expect(timedOut == .timedOut(vm: wired.core.summary(stubborn), verb: .stop, seconds: 30))
         #expect(virtualization.stopCallCount == 1)
 
-        try await gateway.restart([.name("Restarting")], confirmation: false, givingUpAfter: nil)
+        try await gateway.restart([.name("Restarting")], method: .graceful, confirmation: false, givingUpAfter: nil)
         #expect(virtualization.stopCallCount == 2)
         #expect(virtualization.startCallCount == 2)
         #expect(restarting.status == .running)
@@ -1160,7 +1160,7 @@ struct VMScriptingGatewayTests {
 
         try await gateway.start([.name("Starting")], recoveryMode: false, confirmation: false)
         try await gateway.resume([.name("Resuming")], confirmation: false)
-        try await gateway.restart([.name("Restarting")], confirmation: false, givingUpAfter: nil)
+        try await gateway.restart([.name("Restarting")], method: .graceful, confirmation: false, givingUpAfter: nil)
         try await gateway.stop([.name("Stopping")], method: .graceful, confirmation: false, givingUpAfter: nil)
         try await gateway.pause([.name("Pausing")])
         try await gateway.suspend([.name("Suspending")])

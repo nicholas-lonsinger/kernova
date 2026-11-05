@@ -34,15 +34,17 @@ struct VMLiveIdentitiesTests {
             return
         }
         #expect(conflict.other === first)
-        #expect(conflict.reason == .machineIdentity)
+        #expect(conflict.reason == .machineIdentity(overrideSettingOn: false))
         #expect(second.phase == .stopped)
         withExtendedLifetime(library) {}
     }
 
-    /// One row of the decision: the setting, what the request brings, and
-    /// whether the twin also shares the MAC address on one network.
+    /// One row of the decision: the setting, the standing choice not to be
+    /// asked, what the request brings, and whether the twin also shares the
+    /// MAC address on one network.
     struct Row: Sendable, CustomTestStringConvertible {
         let allowsOverride: Bool
+        var questionDismissed = false
         let override: VMIdentityOverride
         let sharesMAC: Bool
         /// `nil` admits; otherwise the reason refused and whether it asks to
@@ -50,33 +52,58 @@ struct VMLiveIdentitiesTests {
         let expected: (reason: ConflictReason, asks: Bool)?
 
         var testDescription: String {
-            "setting \(allowsOverride ? "on" : "off"), \(override), MAC \(sharesMAC ? "shared" : "own")"
+            "setting \(allowsOverride ? "on" : "off"), question \(questionDismissed ? "dismissed" : "asked"), "
+                + "\(override), MAC \(sharesMAC ? "shared" : "own")"
         }
     }
 
+    /// A shared machine ID's refusal, with the setting that offers starting
+    /// anyway off and on.
+    nonisolated static let identityOff = ConflictReason.machineIdentity(overrideSettingOn: false)
+    nonisolated static let identityOn = ConflictReason.machineIdentity(overrideSettingOn: true)
+
     nonisolated static let rows: [Row] = [
-        Row(allowsOverride: false, override: .unavailable, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: false, override: .askable, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: false, override: .confirmed, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: true, override: .unavailable, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: true, override: .askable, sharesMAC: false, expected: (.machineIdentity, true)),
+        Row(allowsOverride: false, override: .unavailable, sharesMAC: false, expected: (identityOff, false)),
+        Row(allowsOverride: false, override: .askable, sharesMAC: false, expected: (identityOff, false)),
+        Row(allowsOverride: false, override: .confirmed, sharesMAC: false, expected: (identityOff, false)),
+        Row(allowsOverride: true, override: .unavailable, sharesMAC: false, expected: (identityOn, false)),
+        Row(allowsOverride: true, override: .askable, sharesMAC: false, expected: (identityOn, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: false, expected: nil),
-        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (.machineIdentity, false)),
-        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.machineIdentity, false)),
-        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.machineIdentity, true)),
+        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (identityOff, false)),
+        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (identityOff, false)),
+        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (identityOn, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: true, expected: (.macAddress, false)),
         // A boot chained after the call that asked keeps the confirmation and asks nothing.
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: false, expected: nil),
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: true, expected: (.macAddress, false)),
-        Row(allowsOverride: true, override: .askable.unattended, sharesMAC: false, expected: (.machineIdentity, false)),
+        Row(allowsOverride: true, override: .askable.unattended, sharesMAC: false, expected: (identityOn, false)),
+        // The standing choice not to be asked waives it for every request, the
+        // unaskable ones included — but only while the setting is on, and
+        // never a MAC address.
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .unavailable, sharesMAC: false,
+            expected: nil),
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .askable, sharesMAC: false,
+            expected: nil),
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .askable.unattended, sharesMAC: false,
+            expected: nil),
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .unavailable, sharesMAC: true,
+            expected: (.macAddress, false)),
+        Row(
+            allowsOverride: false, questionDismissed: true, override: .askable, sharesMAC: false,
+            expected: (identityOff, false)),
     ]
 
     @Test(
-        "A shared machine ID is answered first and waived only by a confirmed override the setting allows; a MAC address after it, never waived",
+        "A shared machine ID is answered first and waived only, while the setting is on, by a confirmed override or the standing choice not to be asked; a MAC address after it, never waived",
         arguments: rows)
     func decisionTable(row: Row) {
         let preferences = makeTestPreferences()
         preferences.allowsDuplicateMachineIDOverride = row.allowsOverride
+        preferences.duplicateMachineIDQuestionDismissed = row.questionDismissed
         let identity = Data([2, 7, 1, 8])
         let library = makeWiredLibrary(preferences: preferences)
         let live = library.registerFixture(

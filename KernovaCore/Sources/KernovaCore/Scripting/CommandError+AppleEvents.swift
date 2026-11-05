@@ -21,7 +21,7 @@ extension CommandError {
             .unsupportedByMacOS, .conflict,
             .confirmationRequired, .guestAccountPasswordRequired, .busy,
             .heldByAnotherCopy,
-            .terminating, .operationFailed, .filesKept, .shutdownNotCarriedOut:
+            .terminating, .operationFailed, .filesKept, .shutdownNotCarriedOut, .restartCancelledByStop:
             Int(errAEEventFailed)
         }
     }

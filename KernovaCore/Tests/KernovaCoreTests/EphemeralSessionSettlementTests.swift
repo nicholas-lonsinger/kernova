@@ -311,7 +311,7 @@ struct EphemeralSessionSettlementTests {
         let (instance, _, _) = try makeVM(in: harness, phase: .running(sessionID: session))
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         switch end {
@@ -333,6 +333,28 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.hostState.hasUnsettledSession)
     }
 
+    @Test("A Force Restart keeps an Ephemeral VM's session and boots it, as its prompt says, with no revert")
+    func forceRestartKeepsTheSession() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
+        let message = VMCommandCore.forceRestartPrompt(instance).message
+        #expect(
+            message.hasSuffix(
+                " It is ephemeral, and a restart keeps its session rather than returning it to "
+                    + "\u{201C}\(baseline.name)\u{201D}."))
+        #expect(VMCommandCore.restartAnywayPrompt(instance).message.hasSuffix(String(message.suffix(60))))
+
+        try await harness.core.restart(
+            .id(instance.id), disposition: .force, timeout: nil, consent: Consent([.forceRestart]))
+
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(virtualization.revertCallCount == 0)
+        #expect(virtualization.lastStartRoute == .coldBoot)
+        #expect(instance.status == .running)
+        #expect(instance.hostState.hasUnsettledSession)
+    }
+
     /// A stop someone asks for while a Restart waits.
     enum StopDuringRestart: CaseIterable, Sendable { case graceful, force }
 
@@ -347,7 +369,7 @@ struct EphemeralSessionSettlementTests {
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         // The prompt a Force Stop asks with names the baseline it returns to.
@@ -364,8 +386,10 @@ struct EphemeralSessionSettlementTests {
         }
 
         let error = try await #require(throws: CommandError.self) { try await restart.value }
-        guard case .operationFailed(.restart, _, let message, _) = error else {
-            Issue.record("Expected the restart to report its cancellation, got \(error)")
+        #expect(error == .restartCancelledByStop(vm: harness.core.summary(instance)))
+        // A waiting caller reads it as the restart that ran and did not complete.
+        guard case .operationFailed(.restart, _, let message, _) = error.dto else {
+            Issue.record("Expected the restart to cross as a failed restart, got \(error.dto)")
             return
         }
         #expect(message.contains("was stopped while it restarted"))
@@ -413,7 +437,7 @@ struct EphemeralSessionSettlementTests {
         try await waitForChange { instance.agentHubSnapshot.power == .agent(.sessionPeer) }
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await probe.changed.wait { probe.powerRequests.count == 1 }
         // The observed mark first: the continuations are not observed, so
@@ -435,7 +459,7 @@ struct EphemeralSessionSettlementTests {
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         #expect(virtualization.revertCallCount == 0)
 
         try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
@@ -456,7 +480,7 @@ struct EphemeralSessionSettlementTests {
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 30, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 30, consent: .none)
         }
         // The parked sleep is the power-off deadline: the restart is waiting,
         // its boot owed to the session's end.
@@ -497,7 +521,7 @@ struct EphemeralSessionSettlementTests {
         ) { $0.genericMachineIdentifierData = identity }
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         // Started beside the restarting VM while it waits, so the boot — which
@@ -525,7 +549,7 @@ struct EphemeralSessionSettlementTests {
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         virtualization.startError = Probe()

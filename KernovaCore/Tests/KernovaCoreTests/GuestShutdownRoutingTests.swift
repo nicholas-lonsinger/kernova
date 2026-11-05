@@ -136,7 +136,8 @@ struct GuestShutdownRoutingTests {
     func restartThroughAgent() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
         let restart = Task { @MainActor in
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(
+                .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 1 }
         try await waitForChange {
@@ -155,7 +156,8 @@ struct GuestShutdownRoutingTests {
     @Test("A Restart with no agent to take it takes the same request through the ACPI button")
     func restartThroughACPI() async throws {
         let fixture = try await makeFixture(peer: false)
-        try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+        try await fixture.harness.core.restart(
+            .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         #expect(fixture.probe.powerRequests.isEmpty)
         #expect(fixture.harness.virtualization.stopCallCount == 1)
         #expect(fixture.harness.virtualization.startCallCount == 1)
@@ -166,7 +168,8 @@ struct GuestShutdownRoutingTests {
     func blockedRestartWithdrawsItsBoot() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.blocked(Self.blocking))] }
         let error = try await #require(throws: CommandError.self) {
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(
+                .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         #expect(error.alertTitle == "\u{201C}Routed\u{201D} Didn\u{2019}t Shut Down")
         #expect(!fixture.instance.activity.liveSessionContinues)
@@ -179,7 +182,8 @@ struct GuestShutdownRoutingTests {
     func stopWithdrawsAWaitingRestart() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
         let restart = Task { @MainActor in
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(
+                .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 1 }
         try await waitForChange {
@@ -202,7 +206,7 @@ struct GuestShutdownRoutingTests {
     /// A running macOS VM: pbear's session in the background, recording each
     /// power request it is sent into `background`; alice's session on screen
     /// when `consoleSession`, and the login window otherwise; and the system
-    /// service, offering only Shut Down Anyway.
+    /// service, offering only Stop Anyway.
     private func makeMacFixture(
         consoleSession: Bool, background: Locked<[PowerAction]> = Locked([])
     ) async throws -> Fixture {
@@ -260,7 +264,8 @@ struct GuestShutdownRoutingTests {
     @Test("At the login window, Restart asks no agent and takes the ACPI button")
     func restartAtLoginWindow() async throws {
         let fixture = try await makeMacFixture(consoleSession: false)
-        try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+        try await fixture.harness.core.restart(
+            .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         #expect(fixture.probe.powerRequests.isEmpty)
         #expect(fixture.harness.virtualization.stopCallCount == 1)
         #expect(fixture.harness.virtualization.startCallCount == 1)
@@ -278,13 +283,13 @@ struct GuestShutdownRoutingTests {
     }
 
     @Test(
-        "Shut Down Anyway goes to the system service, at the login window and with a session on screen",
+        "Stop Anyway goes to the system service, at the login window and with a session on screen",
         arguments: [false, true])
-    func shutDownAnywayReachesSystemService(consoleSession: Bool) async throws {
+    func stopAnywayReachesSystemService(consoleSession: Bool) async throws {
         let background = Locked<[PowerAction]>([])
         let fixture = try await makeMacFixture(consoleSession: consoleSession, background: background)
         try await fixture.harness.core.stop(
-            .id(fixture.instance.id), disposition: .anyway, consent: Consent([.shutDownAnyway]))
+            .id(fixture.instance.id), disposition: .anyway, consent: Consent([.stopAnyway]))
         #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
         #expect(fixture.probe.powerRequests.count == 1)
         #expect(background.withLock { $0 }.isEmpty)
@@ -331,7 +336,8 @@ struct GuestShutdownRoutingTests {
 
     @Test("Apps blocking the shutdown are named, and Force Stop is how to shut it down anyway")
     func blockedCopy() {
-        let forceStop = " To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."
+        let forceStop =
+            " To shut it down anyway, use Force Stop, which loses anything in the guest that isn\u{2019}t saved to disk."
         let one = Self.copy(.blocked([AppValue(displayName: "Text Editor")]))
         #expect(one.title == "\u{201C}Fedora\u{201D} Didn\u{2019}t Shut Down")
         #expect(one.message == "Text Editor is blocking it." + forceStop)

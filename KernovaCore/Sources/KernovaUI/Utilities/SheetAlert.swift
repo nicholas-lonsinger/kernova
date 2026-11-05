@@ -17,14 +17,26 @@ struct SheetAlert {
     /// `NSAlert` puts the focus on its default button otherwise, leaving a sheet
     /// that exists to take typing with nowhere for the first keystroke to land.
     let initialFirstResponder: NSView?
+    /// The checkbox drawn as the alert's `suppressionButton`, or `nil` for
+    /// none.
+    let suppression: Suppression?
+
+    /// An alert's suppression checkbox: its title, and what learns its state
+    /// as the sheet ends — before the chosen button's action runs, so that
+    /// action can read it.
+    struct Suppression {
+        let title: String
+        let ended: (_ isChecked: Bool) -> Void
+    }
 
     init(
         _ configuration: AlertConfiguration, accessoryView: NSView? = nil,
-        initialFirstResponder: NSView? = nil
+        initialFirstResponder: NSView? = nil, suppression: Suppression? = nil
     ) {
         self.configuration = configuration
         self.accessoryView = accessoryView
         self.initialFirstResponder = initialFirstResponder
+        self.suppression = suppression
     }
 
     subscript<Value>(dynamicMember keyPath: KeyPath<AlertConfiguration, Value>) -> Value {
@@ -74,6 +86,10 @@ func presentSheetAlert(
     alert.messageText = sheet.title
     alert.informativeText = sheet.message
     alert.accessoryView = sheet.accessoryView
+    if let suppression = sheet.suppression {
+        alert.showsSuppressionButton = true
+        alert.suppressionButton?.title = suppression.title
+    }
 
     for button in sheet.buttons {
         let nsButton = alert.addButton(withTitle: button.title)
@@ -88,7 +104,8 @@ func presentSheetAlert(
 
     let dismissal = makeSheetAlertDismissal(
         buttons: sheet.buttons, didDismiss: didDismiss, completion: completion)
-    alert.beginSheetModal(for: window) { response in
+    alert.beginSheetModal(for: window) { [suppression = sheet.suppression] response in
+        suppression?.ended(alert.suppressionButton?.state == .on)
         dismissal(response)
     }
     return alert

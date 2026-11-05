@@ -57,7 +57,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
-                shutDownAnywayID: NSToolbarItem.Identifier("displayShutDownAnyway"),
+                stopAnywayID: NSToolbarItem.Identifier("displayStopAnyway"),
+                restartAnywayID: NSToolbarItem.Identifier("displayRestartAnyway"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("displayTakeSnapshot"),
                 // Targets this window's VM: the nil-target showClipboard action

@@ -43,9 +43,9 @@ struct AlertConfigurationTests {
     private func destructiveConfirmPrompt() -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .forceStop, title: "Force Stop \u{201C}VM\u{201D}?",
-            message: "Unsaved guest state is lost.",
+            message: "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
             confirmTitle: "Force Stop", dismissTitle: "Cancel",
-            alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
+            alternatives: [ConfirmationAlternative(title: "Stop", disposition: .graceful)])
     }
 
     /// The inverse — a confirm that is the gentle route.
@@ -53,7 +53,7 @@ struct AlertConfigurationTests {
         ConfirmationPrompt(
             kind: .cancelGuestSetup, title: "Stop \u{201C}VM\u{201D}?",
             message: "Resume it first, or terminate it.",
-            confirmTitle: "Resume and Shut Down", confirmIsDestructive: false,
+            confirmTitle: "Resume and Stop", confirmIsDestructive: false,
             dismissTitle: "Cancel",
             alternatives: [
                 ConfirmationAlternative(title: "Force Stop", isDestructive: true, disposition: .force)
@@ -65,7 +65,7 @@ struct AlertConfigurationTests {
         let config = AlertConfiguration(
             confirming: destructiveConfirmPrompt(), confirm: {}, alternative: { _ in })
 
-        #expect(config.buttons.map(\.title) == ["Shut Down", "Cancel", "Force Stop"])
+        #expect(config.buttons.map(\.title) == ["Stop", "Cancel", "Force Stop"])
         #expect(config.buttons.map(\.role) == [.default, .cancel, .destructive])
     }
 
@@ -74,7 +74,7 @@ struct AlertConfigurationTests {
         let config = AlertConfiguration(
             confirming: safeConfirmPrompt(), confirm: {}, alternative: { _ in })
 
-        #expect(config.buttons.map(\.title) == ["Resume and Shut Down", "Cancel", "Force Stop"])
+        #expect(config.buttons.map(\.title) == ["Resume and Stop", "Cancel", "Force Stop"])
         #expect(config.buttons.map(\.role) == [.default, .cancel, .destructive])
     }
 

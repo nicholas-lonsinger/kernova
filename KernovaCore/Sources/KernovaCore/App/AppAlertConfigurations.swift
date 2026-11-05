@@ -115,6 +115,21 @@ package struct AppAlertConfigurations {
             })
     }
 
+    /// An error alert with Open Settings beside OK, which shows Kernova's
+    /// Settings window on `destination`: a refusal a setting can lift.
+    package func errorConfig(
+        title: String, message: String, openingSettingsAt destination: SettingsDestination
+    ) -> AlertConfiguration {
+        AlertConfiguration(
+            title: title, message: message,
+            buttons: [
+                AlertButton("OK", role: .default),
+                AlertButton("Open Settings") { [weak viewModel] in
+                    viewModel?.showSettings(at: destination)
+                },
+            ])
+    }
+
     package func recoveryBootConfig(_ vm: VMInstance) -> AlertConfiguration {
         AlertConfiguration(
             title: "Start “\(vm.name)” in Recovery Mode?",
@@ -146,9 +161,9 @@ package struct AppAlertConfigurations {
         return AlertConfiguration(
             title: "Stop \u{201C}\(vm.name)\u{201D}?",
             message:
-                "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).\(ephemeralReturn)",
+                "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately, which loses \(StopDisposition.forceLoss).\(ephemeralReturn)",
             buttons: [
-                AlertButton("Resume and Shut Down", role: .default) { [weak viewModel] in
+                AlertButton("Resume and Stop", role: .default) { [weak viewModel] in
                     guard let viewModel else { return }
                     Task { await viewModel.resumeAndStop(vm) }
                 },

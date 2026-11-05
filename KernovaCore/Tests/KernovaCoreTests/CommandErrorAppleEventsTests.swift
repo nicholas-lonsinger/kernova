@@ -15,7 +15,8 @@ struct CommandErrorAppleEventsTests {
 
     private func makePrompt(kind: ConfirmationKind = .forceStop) -> ConfirmationPrompt {
         ConfirmationPrompt(
-            kind: kind, title: "Force stop?", message: "Unsaved guest state is lost.",
+            kind: kind, title: "Force stop?",
+            message: "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
             confirmTitle: "Force Stop", dismissTitle: "Keep Running")
     }
 
@@ -49,7 +50,7 @@ struct CommandErrorAppleEventsTests {
         let refusals: [CommandError] = [
             .invalidState(vm: vm, current: .running, allowed: [.stop]),
             .unsupported(capability: "Recovery"),
-            .conflict(vm: vm, with: vm, reason: .machineIdentity),
+            .conflict(vm: vm, with: vm, reason: .machineIdentity(overrideSettingOn: false)),
             .confirmationRequired(makePrompt()),
             .busy(vm: vm, operation: "starting"),
             .operationFailed(verb: .stop, message: "The guest did not go down."),
