@@ -59,7 +59,7 @@ struct MacPowerTests {
                     calls.withLock { $0.append(action) }
                     return answer
                 }),
-            ignoringApps: nil, powerButtonIgnoredWhileOff: false)
+            ignoringApps: nil)
     }
 
     static let absentDetail = MacPowerMechanism.loginWindow().graceful?.absentDetail ?? ""
@@ -96,19 +96,16 @@ struct MacPowerTests {
     }
 
     @Test(
-        "The system peer offers no graceful shutdown or restart in any console state, Shut Down Anyway in every one, and says macOS ignores the power button exactly while the console is off"
+        "The system peer offers no graceful shutdown or restart in any console state, and Shut Down Anyway in every one"
     )
     func systemPeerAdvert() {
         let harness = Harness(.shutdownCommand(run: { _ in 0 }))
-        func offer(buttonIgnored: Bool) -> PowerInput {
-            .availability(
-                .available(PowerOffer(actions: [], ignoringApps: [.shutdown], powerButtonIgnored: buttonIgnored)))
-        }
-        #expect(harness.take() == [offer(buttonIgnored: false)])
+        let offer = PowerInput.availability(.available(PowerOffer(actions: [], ignoringApps: [.shutdown])))
+        #expect(harness.take() == [offer])
 
-        for (console, buttonIgnored) in [(ConsoleState.off, true), (.on, false), (.off, true), (.unknown, false)] {
+        for console in [ConsoleState.off, .on, .unknown] {
             harness.adapter.consoleChanged(console)
-            #expect(harness.take() == [offer(buttonIgnored: buttonIgnored)], "\(console)")
+            #expect(harness.take() == [offer], "\(console)")
         }
     }
 
@@ -277,7 +274,7 @@ struct MacPowerTests {
                     release.wait()
                     return .tookIt
                 }),
-            ignoringApps: nil, powerButtonIgnoredWhileOff: false)
+            ignoringApps: nil)
         let harness = Harness(mechanism, console: .on)
         _ = harness.take()
 

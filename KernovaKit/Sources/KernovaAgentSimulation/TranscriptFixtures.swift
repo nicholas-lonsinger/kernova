@@ -264,13 +264,11 @@ package enum FrozenFields {
                 if feature == .power {
                     let capability =
                         (try? Kernova_V2_PowerCapability(serializedBytes: params)) ?? Kernova_V2_PowerCapability()
-                    // `ignore_apps_actions` and `power_button_ignored` are stated only when set, as they are
-                    // encoded.
+                    // `ignore_apps_actions` is stated only when listed, as it is encoded.
                     let ignored = capability.ignoreAppsActions.map { "\($0.rawValue)" }.joined(separator: ",")
                     let ignoring = capability.ignoreAppsActions.isEmpty ? "" : ":ignore[\(ignored)]"
-                    let button = capability.powerButtonIgnored ? ":buttonIgnored" : ""
                     return
-                        "\(feature.rawValue)=v\(advert.version):actions[\(capability.actions.map { "\($0.rawValue)" }.joined(separator: ","))]:asks=\(capability.asksAppsToQuit)\(ignoring)\(button)"
+                        "\(feature.rawValue)=v\(advert.version):actions[\(capability.actions.map { "\($0.rawValue)" }.joined(separator: ","))]:asks=\(capability.asksAppsToQuit)\(ignoring)"
                 }
                 let capability =
                     (try? Kernova_V2_UpdateCapability(serializedBytes: params)) ?? Kernova_V2_UpdateCapability()

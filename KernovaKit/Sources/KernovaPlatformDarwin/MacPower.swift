@@ -53,8 +53,6 @@ struct MacPowerMechanism: Sendable {
     let graceful: Graceful?
     /// What the mechanism performs without waiting for apps; nil for nothing.
     let ignoringApps: IgnoringApps?
-    /// Whether the peer's console reading off means macOS does not act on the VM's power button.
-    let powerButtonIgnoredWhileOff: Bool
 
     /// The session peer's: the Apple event loginwindow takes to shut down or restart, while the session owns the
     /// console ([QA1134](https://developer.apple.com/library/archive/qa/qa1134/_index.html)). The sequence it
@@ -69,17 +67,13 @@ struct MacPowerMechanism: Sendable {
             graceful: Graceful(
                 absentDetail: "this session does not own the console",
                 call: .answering { action in LoginWindowPower.answer(send(LoginWindowPower.event(for: action))) }),
-            ignoringApps: nil, powerButtonIgnoredWhileOff: false)
+            ignoringApps: nil)
     }
 
     /// The system peer's: `shutdown(8)`, without waiting for apps, in every console state. It commits: in macOS
     /// 12.7.6 and 27.2 guests the peer logged nothing after starting it
     /// (`docs/research/2026-11-03-macos-guest-power-through-agents.md`). With a user logged in no app was asked
     /// anything, and the guest powered off (`docs/research/2026-11-03-macos-shutdown-without-waiting-for-apps.md`).
-    ///
-    /// Its console reads off at the login window, where macOS does not act on the VM's power button: a Stop
-    /// that pressed it there left the guest running
-    /// (`docs/research/2026-11-04-macos-shutdown-request-by-session-state.md`).
     static func shutdownCommand(run: @escaping @Sendable ([String]) -> Int32 = { Installer.spawn($0) })
         -> MacPowerMechanism
     {
@@ -87,8 +81,7 @@ struct MacPowerMechanism: Sendable {
             graceful: nil,
             ignoringApps: IgnoringApps(
                 actions: [.shutdown],
-                call: .committing { action in ShutdownCommand.failure(run(ShutdownCommand.arguments(for: action))) }),
-            powerButtonIgnoredWhileOff: true)
+                call: .committing { action in ShutdownCommand.failure(run(ShutdownCommand.arguments(for: action))) }))
     }
 }
 
@@ -224,8 +217,7 @@ public final class MacPowerAdapter: PowerAdapter {
         return .available(
             PowerOffer(
                 actions: graceful == nil ? [] : [.shutdown, .restart], asksAppsToQuit: graceful != nil,
-                ignoringApps: ignoringApps,
-                powerButtonIgnored: mechanism.powerButtonIgnoredWhileOff && console == .off))
+                ignoringApps: ignoringApps))
     }
 
     private func answered(_ id: PowerRequestID, _ answer: MacPowerAnswer) {

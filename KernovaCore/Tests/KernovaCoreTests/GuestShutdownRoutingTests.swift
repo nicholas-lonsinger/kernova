@@ -2,6 +2,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
+import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -196,13 +197,15 @@ struct GuestShutdownRoutingTests {
         #expect(fixture.instance.status == .stopped)
     }
 
-    // MARK: - At the login window
+    // MARK: - A macOS guest's sessions
 
-    /// A running macOS VM at its login window: a background session's peer,
-    /// and the system service reporting the console off and saying macOS
-    /// ignores the power button there, offering Shut Down Anyway when
-    /// `anyway`.
-    private func makeLoginWindowFixture(anyway: Bool) async throws -> Fixture {
+    /// A running macOS VM: pbear's session in the background, recording each
+    /// power request it is sent into `background`; alice's session on screen
+    /// when `consoleSession`, and the login window otherwise; and the system
+    /// service, offering only Shut Down Anyway.
+    private func makeMacFixture(
+        consoleSession: Bool, background: Locked<[PowerAction]> = Locked([])
+    ) async throws -> Fixture {
         let virtualization = MockVirtualizationService()
         let harness = WiredCommandCore.Scripted<MockVirtualizationService>(
             WiredCommandCore(virtualization: virtualization, preferences: preferences))
@@ -214,81 +217,77 @@ struct GuestShutdownRoutingTests {
             probe, policy: PolicySnapshot(), republisher: GuestLogRepublisher(vmLabel: instance.name))
         try await probe.changed.wait { probe.isStarted }
         let handsOff: @Sendable (PowerAction) -> [PowerRequestResult] = { _ in [.accepted, .finished(.handedOff)] }
+        let sessionClaim = PeerClaim(role: .sessionPeer, scope: .system, os: .macOS, architecture: .arm64)
+        let graceful = PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)
         #expect(
             probe.connectPowerPeer(
-                claim: PeerClaim(role: .sessionPeer, scope: .system, os: .macOS, architecture: .arm64),
-                state: PeerSessionState(console: .off, sessionID: "2", userName: "pbear"),
-                offer: PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true), answering: handsOff)
-                != nil)
+                claim: sessionClaim, state: PeerSessionState(console: .off, sessionID: "2", userName: "pbear"),
+                offer: graceful,
+                answering: { action in
+                    background.withLock { $0.append(action) }
+                    return [.accepted, .finished(.handedOff)]
+                }) != nil)
+        if consoleSession {
+            #expect(
+                probe.connectPowerPeer(
+                    claim: sessionClaim, state: PeerSessionState(console: .on, sessionID: "3", userName: "alice"),
+                    offer: graceful, answering: handsOff) != nil)
+        }
         #expect(
             probe.connectPowerPeer(
                 claim: PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64),
-                state: PeerSessionState(console: .off),
-                offer: PowerOffer(actions: [], ignoringApps: anyway ? [.shutdown] : [], powerButtonIgnored: true),
-                answering: handsOff) != nil)
+                state: PeerSessionState(
+                    console: consoleSession ? .on : .off, consoleSessionID: consoleSession ? "3" : ""),
+                offer: PowerOffer(actions: [], ignoringApps: [.shutdown]), answering: handsOff) != nil)
+        let peers = consoleSession ? 3 : 2
         try await waitForChange {
-            instance.agentHubSnapshot.peers.count == 2
-                && instance.agentHubSnapshot.shutsDownIgnoringApps == anyway
-                && instance.agentHubSnapshot.features[.power].isAvailable
+            instance.agentHubSnapshot.peers.count == peers && instance.agentHubSnapshot.shutsDownIgnoringApps
+                && instance.agentHubSnapshot.power == (consoleSession ? .agent(.sessionPeer) : .absent(.notOnConsole))
         }
         return Fixture(harness: harness, instance: instance, session: session, probe: probe)
     }
 
-    nonisolated static let loginWindow =
-        "\u{201C}Routed\u{201D} is at its login window, where macOS doesn\u{2019}t act on a shutdown request."
+    @Test("At the login window, Stop asks no agent and presses the ACPI button")
+    func stopAtLoginWindow() async throws {
+        let background = Locked<[PowerAction]>([])
+        let fixture = try await makeMacFixture(consoleSession: false, background: background)
+        try await stop(fixture)
+        #expect(fixture.probe.powerRequests.isEmpty)
+        #expect(background.withLock { $0 }.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 1)
+    }
 
-    /// The ways out the login window's refusal names, by whether the guest offers Shut Down Anyway.
-    nonisolated static func ways(anyway: Bool) -> String {
-        anyway ? "Shut Down Anyway\u{2026} or Force Stop\u{2026}" : "Force Stop\u{2026}"
+    @Test("At the login window, Restart asks no agent and takes the ACPI button")
+    func restartAtLoginWindow() async throws {
+        let fixture = try await makeMacFixture(consoleSession: false)
+        try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+        #expect(fixture.probe.powerRequests.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 1)
+        #expect(fixture.harness.virtualization.startCallCount == 1)
+    }
+
+    @Test("With a session on screen, Stop goes to that session's agent alone and presses no button")
+    func stopWithConsoleSession() async throws {
+        let background = Locked<[PowerAction]>([])
+        let fixture = try await makeMacFixture(consoleSession: true, background: background)
+        try await stop(fixture)
+        #expect(fixture.probe.powerRequests.map(\.action) == [.shutdown])
+        #expect(fixture.probe.powerRequestsIgnoringApps.isEmpty)
+        #expect(background.withLock { $0 }.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
     }
 
     @Test(
-        "At the login window, Stop sends nothing and refuses as a step naming Shut Down Anyway… exactly when the guest offers it",
-        arguments: [true, false])
-    func stopAtLoginWindow(anyway: Bool) async throws {
-        let fixture = try await makeLoginWindowFixture(anyway: anyway)
-        let error = try await #require(throws: CommandError.self) { try await stop(fixture) }
-        guard case .stepRequired(let step) = error else {
-            Issue.record("Expected a step refusal, got \(error)")
-            return
-        }
-        #expect(step.title == "Can\u{2019}t Shut Down \u{201C}Routed\u{201D}")
-        #expect(step.message == Self.loginWindow + " Use \(Self.ways(anyway: anyway)) to stop it.")
-        #expect(step.routes.isEmpty)
-        #expect(fixture.probe.powerRequests.isEmpty)
-        #expect(fixture.harness.virtualization.stopCallCount == 0)
-        #expect(fixture.instance.status == .running)
-        #expect(!fixture.instance.activity.isRequestingStop)
-    }
-
-    @Test("At the login window, Restart sends nothing, boots nothing, and refuses as a step", arguments: [true, false])
-    func restartAtLoginWindow(anyway: Bool) async throws {
-        let fixture = try await makeLoginWindowFixture(anyway: anyway)
-        let error = try await #require(throws: CommandError.self) {
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
-        }
-        guard case .stepRequired(let step) = error else {
-            Issue.record("Expected a step refusal, got \(error)")
-            return
-        }
-        #expect(step.title == "Can\u{2019}t Restart \u{201C}Routed\u{201D}")
-        #expect(
-            step.message == Self.loginWindow + " Use \(Self.ways(anyway: anyway)) to stop it, then start it again.")
-        #expect(!fixture.instance.activity.liveSessionContinues)
-        #expect(fixture.probe.powerRequests.isEmpty)
-        #expect(fixture.harness.virtualization.stopCallCount == 0)
-        #expect(fixture.harness.virtualization.startCallCount == 0)
-        #expect(fixture.instance.status == .running)
-    }
-
-    @Test("At the login window, Shut Down Anyway goes to the system service")
-    func shutDownAnywayAtLoginWindow() async throws {
-        let fixture = try await makeLoginWindowFixture(anyway: true)
-        _ = try await #require(throws: CommandError.self) { try await stop(fixture) }
+        "Shut Down Anyway goes to the system service, at the login window and with a session on screen",
+        arguments: [false, true])
+    func shutDownAnywayReachesSystemService(consoleSession: Bool) async throws {
+        let background = Locked<[PowerAction]>([])
+        let fixture = try await makeMacFixture(consoleSession: consoleSession, background: background)
         try await fixture.harness.core.stop(
             .id(fixture.instance.id), disposition: .anyway, consent: Consent([.shutDownAnyway]))
         #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
         #expect(fixture.probe.powerRequests.count == 1)
+        #expect(background.withLock { $0 }.isEmpty)
         #expect(fixture.harness.virtualization.stopCallCount == 0)
     }
 
@@ -325,18 +324,14 @@ struct GuestShutdownRoutingTests {
 
     // MARK: - Copy
 
-    private static func copy(
-        _ reason: GuestShutdownNotCarriedOut.Reason, anyway: Bool = false
-    ) -> (title: String?, message: String?) {
-        let error = GuestShutdownNotCarriedOut(
-            vmName: "Fedora", session: UUID(), reason: reason, offersShutDownAnyway: anyway)
+    private static func copy(_ reason: GuestShutdownNotCarriedOut.Reason) -> (title: String?, message: String?) {
+        let error = GuestShutdownNotCarriedOut(vmName: "Fedora", session: UUID(), reason: reason)
         return (error.alertTitle, error.errorDescription)
     }
 
-    @Test("Apps blocking the shutdown are named, and Force Stop… is how to shut it down anyway")
+    @Test("Apps blocking the shutdown are named, and Force Stop is how to shut it down anyway")
     func blockedCopy() {
-        let forceStop =
-            " To shut it down anyway, use Force Stop\u{2026}, which loses any unsaved data inside the guest."
+        let forceStop = " To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."
         let one = Self.copy(.blocked([AppValue(displayName: "Text Editor")]))
         #expect(one.title == "\u{201C}Fedora\u{201D} Didn\u{2019}t Shut Down")
         #expect(one.message == "Text Editor is blocking it." + forceStop)
@@ -344,18 +339,6 @@ struct GuestShutdownRoutingTests {
         let three = Self.blocking + [AppValue(displayName: "", identifier: "firefox")]
         #expect(Self.copy(.blocked(three)).message == "Text Editor, Terminal, and firefox are blocking it." + forceStop)
         #expect(Self.copy(.blocked([])).message == "An app is blocking it." + forceStop)
-    }
-
-    @Test("Where the guest offers Shut Down Anyway…, the blocked and can't-tell alerts name it beside Force Stop…")
-    func shutDownAnywayCopy() {
-        #expect(
-            Self.copy(.blocked([AppValue(displayName: "Text Editor")]), anyway: true).message
-                == "Text Editor is blocking it. Use Shut Down Anyway\u{2026} to shut it down without waiting for apps, "
-                + "or Force Stop\u{2026}, which loses any unsaved data inside the guest.")
-        #expect(
-            Self.copy(.indeterminate, anyway: true).message
-                == "Kernova can\u{2019}t tell whether \u{201C}Fedora\u{201D} is shutting down. "
-                + "Use Shut Down Anyway\u{2026} or Force Stop\u{2026} if it doesn\u{2019}t stop.")
     }
 
     @Test("A cancel inside the guest, an OS failure, and an outcome Kernova can't tell each read as what is known")
@@ -371,7 +354,7 @@ struct GuestShutdownRoutingTests {
         #expect(indeterminate.title == nil)
         #expect(
             indeterminate.message
-                == "Kernova can\u{2019}t tell whether \u{201C}Fedora\u{201D} is shutting down. Use Force Stop\u{2026} if it doesn\u{2019}t stop."
+                == "Kernova can\u{2019}t tell whether \u{201C}Fedora\u{201D} is shutting down. If it doesn\u{2019}t stop, use Force Stop."
         )
     }
 }

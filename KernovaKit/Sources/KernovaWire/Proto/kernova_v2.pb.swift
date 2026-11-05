@@ -1464,11 +1464,6 @@ public nonisolated struct Kernova_V2_PowerCapability: Sendable {
   /// each; independent of `actions`, which may be empty beside it.
   public var ignoreAppsActions: [Kernova_V2_PowerAction] = []
 
-  /// The guest's OS does not act on the VM's power button (the ACPI shutdown
-  /// request) right now, so a shutdown or restart no peer takes has nothing
-  /// to fall back to: the host sends none.
-  public var powerButtonIgnored: Bool = false
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -3376,7 +3371,7 @@ nonisolated extension Kernova_V2_SessionExtension: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".PowerCapability"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}actions\0\u{3}asks_apps_to_quit\0\u{3}ignore_apps_actions\0\u{3}power_button_ignored\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}actions\0\u{3}asks_apps_to_quit\0\u{3}ignore_apps_actions\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3387,7 +3382,6 @@ nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftPr
       case 1: try { try decoder.decodeRepeatedEnumField(value: &self.actions) }()
       case 2: try { try decoder.decodeSingularBoolField(value: &self.asksAppsToQuit) }()
       case 3: try { try decoder.decodeRepeatedEnumField(value: &self.ignoreAppsActions) }()
-      case 4: try { try decoder.decodeSingularBoolField(value: &self.powerButtonIgnored) }()
       default: break
       }
     }
@@ -3403,9 +3397,6 @@ nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftPr
     if !self.ignoreAppsActions.isEmpty {
       try visitor.visitPackedEnumField(value: self.ignoreAppsActions, fieldNumber: 3)
     }
-    if self.powerButtonIgnored != false {
-      try visitor.visitSingularBoolField(value: self.powerButtonIgnored, fieldNumber: 4)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -3413,7 +3404,6 @@ nonisolated extension Kernova_V2_PowerCapability: SwiftProtobuf.Message, SwiftPr
     if lhs.actions != rhs.actions {return false}
     if lhs.asksAppsToQuit != rhs.asksAppsToQuit {return false}
     if lhs.ignoreAppsActions != rhs.ignoreAppsActions {return false}
-    if lhs.powerButtonIgnored != rhs.powerButtonIgnored {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

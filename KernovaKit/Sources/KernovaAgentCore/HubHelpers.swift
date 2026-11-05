@@ -185,8 +185,6 @@ public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
     public var actions: [PowerAction]
     /// The actions its `PowerCapability` lists as performed without waiting for apps.
     public var ignoringAppsActions: [PowerAction]
-    /// Whether its `PowerCapability` says the guest's OS does not act on the VM's power button now.
-    public var powerButtonIgnored: Bool
 
     /// The view of a peer from its latest `featuresChanged` table: POWER usable
     /// when the table says so, the actions its `PowerCapability` lists.
@@ -198,14 +196,13 @@ public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
         let offer = power.params.flatMap(PowerOffer.init(params:))
         self.init(
             handle: handle, role: role, state: state, connectedOrder: connectedOrder, powerUsable: power.isAvailable,
-            actions: offer?.actions ?? [], ignoringAppsActions: offer?.ignoringApps ?? [],
-            powerButtonIgnored: offer?.powerButtonIgnored ?? false)
+            actions: offer?.actions ?? [], ignoringAppsActions: offer?.ignoringApps ?? [])
     }
 
     /// Creates a view.
     public init(
         handle: PeerHandle, role: PeerRole, state: PeerSessionState, connectedOrder: UInt64, powerUsable: Bool,
-        actions: [PowerAction], ignoringAppsActions: [PowerAction] = [], powerButtonIgnored: Bool = false
+        actions: [PowerAction], ignoringAppsActions: [PowerAction] = []
     ) {
         self.handle = handle
         self.role = role
@@ -214,7 +211,6 @@ public struct RoutingPeer: ConsolePeer, Sendable, Equatable {
         self.powerUsable = powerUsable
         self.actions = actions
         self.ignoringAppsActions = ignoringAppsActions
-        self.powerButtonIgnored = powerButtonIgnored
     }
 
     /// Whether its `PowerCapability` lists `action`, among the actions performed without waiting for apps when
@@ -245,9 +241,6 @@ public enum RoutingOutput: Sendable, Equatable {
     /// No peer took it, and nothing was done: every candidate refused, or there was none. A graceful action
     /// falls back to the ACPI button.
     case untaken(PowerAction, refusals: [PeerRefusal])
-    /// No peer took a graceful `action`, nothing was done, and a peer says the guest's OS does not act on the
-    /// VM's power button now: there is nothing to fall back to.
-    case powerButtonIgnored(PowerAction)
     /// A routing is already running for this VM.
     case busy
 }
@@ -349,9 +342,6 @@ public struct PowerRouting: Sendable {
                 for: routing.action, ignoringApps: routing.ignoringApps, peers: peers, excluding: routing.asked
             ).first
         else {
-            guard routing.ignoringApps || !peers.contains(where: \.powerButtonIgnored) else {
-                return end(.powerButtonIgnored(routing.action))
-            }
             return end(.untaken(routing.action, refusals: routing.refusals))
         }
         routing.asked.append(next)

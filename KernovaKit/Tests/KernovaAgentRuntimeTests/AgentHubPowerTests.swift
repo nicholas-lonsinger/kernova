@@ -178,14 +178,14 @@ struct AgentHubPowerTests {
     }
 
     @Test(
-        "At a login window, with only a background session's peer and the system peer saying the guest ignores the power button, a graceful action asks no one and the hub says so"
+        "At a login window, with only a background session's peer and the system peer, a graceful action asks no one and is untaken"
     )
-    func loginWindowIgnoresPowerButton() async {
+    func loginWindowGracefulUntaken() async {
         let harness = HubHarness()
         await harness.attached()
         let sessionPower = FakePowerAdapter(initial: .available(PowerOffer(actions: [.shutdown, .restart])))
         let systemPower = FakePowerAdapter(
-            initial: .available(PowerOffer(actions: [], ignoringApps: [.shutdown], powerButtonIgnored: true)))
+            initial: .available(PowerOffer(actions: [], ignoringApps: [.shutdown])))
         let session = await connect(
             harness, sessionPower, state: PeerSessionState(console: .off, sessionID: "1", userName: "user"))
         let system = await connect(
@@ -193,8 +193,8 @@ struct AgentHubPowerTests {
         let ready = await harness.snapshot { $0.shutsDownIgnoringApps }
         #expect(ready.power == .absent(.notOnConsole))
 
-        #expect(await harness.hub.requestPower(.shutdown) == .powerButtonIgnored)
-        #expect(await harness.hub.requestPower(.restart) == .powerButtonIgnored)
+        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
+        #expect(await harness.hub.requestPower(.restart) == .untaken(refusals: []))
         #expect(sessionPower.performed.elements.isEmpty)
         #expect(systemPower.performed.elements.isEmpty)
 

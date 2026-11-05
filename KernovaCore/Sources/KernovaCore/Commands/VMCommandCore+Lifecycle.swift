@@ -724,9 +724,7 @@ extension VMCommandCore {
     /// Stops the VM the way `disposition` names.
     ///
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
-    /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume;
-    /// so does a `.graceful` no agent took whose guest would not act on the
-    /// ACPI button (``shutdownRequestIgnoredRefusal(_:verb:)``).
+    /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume.
     /// `.force` always asks: it discards unsaved guest state. `.anyway` asks
     /// too, and refuses as a step a guest whose agents do not offer it.
     ///
@@ -788,8 +786,6 @@ extension VMCommandCore {
             guard let discard = instance.savedStateDiscard else {
                 do {
                     try await lifecycle.requestStop(instance)
-                } catch is ShutdownRequestIgnored {
-                    throw CommandError.stepRequired(Self.shutdownRequestIgnoredRefusal(instance, verb: .stop))
                 } catch {
                     throw failure(error, verb: .stop, on: instance)
                 }
@@ -863,23 +859,6 @@ extension VMCommandCore {
                 + "macOS guest with the Kernova agent installed \u{201C}For everyone\u{201D} and connected.")
     }
 
-    /// The refusal of a Stop or Restart no agent took and nothing was sent
-    /// for: the guest's agents say its OS does not act on the ACPI shutdown
-    /// request now, which only a macOS guest's system service says, at the
-    /// login window. It names Shut Down Anyway where the agents offer it, and
-    /// Force Stop always.
-    static func shutdownRequestIgnoredRefusal(_ instance: VMInstance, verb: VMVerb) -> StepRequirement {
-        let ways =
-            instance.agentHubSnapshot.shutsDownIgnoringApps
-            ? "Shut Down Anyway\u{2026} or Force Stop\u{2026}" : "Force Stop\u{2026}"
-        let restarts = verb == .restart
-        return StepRequirement(
-            title: "Can\u{2019}t \(restarts ? "Restart" : "Shut Down") \u{201C}\(instance.name)\u{201D}",
-            message:
-                "\u{201C}\(instance.name)\u{201D} is at its login window, where macOS doesn\u{2019}t act on a "
-                + "shutdown request. Use \(ways) to stop it\(restarts ? ", then start it again" : "").")
-    }
-
     /// Takes the stop's `discard` of the saved state `instance` holds.
     ///
     /// An Ephemeral Mode VM's is the revert to its baseline: deleting the save
@@ -933,8 +912,6 @@ extension VMCommandCore {
     private func shutDown(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
         do {
             try await lifecycle.requestRestartStop(instance, continuingWith: boot)
-        } catch is ShutdownRequestIgnored {
-            throw CommandError.stepRequired(Self.shutdownRequestIgnoredRefusal(instance, verb: .restart))
         } catch {
             throw failure(error, verb: .stop, on: instance)
         }
