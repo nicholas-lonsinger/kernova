@@ -189,7 +189,7 @@ final class HubClipboardService: ClipboardServicing {
 
     // MARK: - The clipboard commands
 
-    /// Sends `snapshot` to the guest as a copy, served until the guest's clipboard lets it go.
+    /// Sends `snapshot` to the guest as a copy, served until the guest releases it, its write replaced.
     func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? {
         exchange.sendCopy(snapshot) ? nil : .transferFailed
     }

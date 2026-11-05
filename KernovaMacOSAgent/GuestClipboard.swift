@@ -253,7 +253,7 @@ final class GuestClipboard {
     /// arrived first (``ClipboardItemExchange/land(_:then:)``). What it names of this agent's own offers by
     /// reference is filled from them; what they can no longer give is left out, and the host told so. Files
     /// over the paste ceiling are left out of the write, and the host told that too; with nothing else in the
-    /// copy, nothing is written. The copy is released once the pasteboard lets its files go, or at once when it
+    /// copy, nothing is written. The copy is released once something replaces its write, or at once when it
     /// promised none.
     private func write(_ copy: ClipboardRemoteOffer) {
         let arrivedAt = pasteboard.changeCount

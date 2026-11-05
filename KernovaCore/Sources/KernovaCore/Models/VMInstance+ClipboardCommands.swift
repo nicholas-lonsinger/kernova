@@ -3,7 +3,7 @@ import KernovaKit
 
 /// The two clipboard commands: each copies a snapshot of one side's clipboard to the other's, everything on it
 /// as it is. What is not a file or folder crosses at the command and lands as data; files cross as references
-/// to the source's disk and transfer when pasted, served until the destination's clipboard lets them go or the
+/// to the source's disk and transfer when pasted, served until the destination's clipboard moves on or the
 /// connection ends. A destination that changed after the command is left as it is. Every outcome short of
 /// that goes to the VM's transfer report, which the status item shows.
 extension VMInstance {

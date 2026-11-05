@@ -830,7 +830,7 @@ struct HubClipboardServiceTests {
         try await probe.changed.wait { released(Self.copyToken, probe) }
     }
 
-    @Test("Copy to Mac's files stay served until the Mac's clipboard lets them go, and the copy is released then")
+    @Test("Copy to Mac's files stay served until the Mac's clipboard moves on, and the copy is released then")
     func copyToMacReleasesWhenTheMacMovesOn() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
@@ -1365,7 +1365,7 @@ struct HubClipboardServiceTests {
             }
             if ended { handler() }
         }
-        /// Ends the offer, as VM A's exchange does releasing its copy once the Mac lets it go.
+        /// Ends the offer, as VM A's exchange does releasing its copy once its write on the Mac is replaced.
         func end() {
             let handlers = state.withLock { state -> [@Sendable () -> Void] in
                 state.ended = true
@@ -1399,9 +1399,12 @@ struct HubClipboardServiceTests {
         #expect(await pull(copy, from: instance) == .success(.inline(Data("from VM A".utf8))))
     }
 
-    /// VM A's Copy Guest Clipboard to Mac of text and `file`, written to `pasteboard` and pulled through
-    /// `puller`, which ends once the Mac lets the write's file go, as A's exchange releases its copy then.
-    private func writeAnotherVMsCopy(of file: URL, on pasteboard: FakePasteboard) -> OtherVMPuller {
+    /// VM A's Copy Guest Clipboard to Mac of text and `file`, written to `pasteboard` by VM A's publisher, which
+    /// the caller holds as VM A does, and pulled through the puller, which ends once something replaces the
+    /// write, as A's exchange releases its copy then.
+    private func writeAnotherVMsCopy(
+        of file: URL, on pasteboard: FakePasteboard
+    ) -> (puller: OtherVMPuller, publisher: ClipboardPasteboardPublisher) {
         let otherVM = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         let puller = OtherVMPuller(bytes: Data(), file: file)
@@ -1412,7 +1415,7 @@ struct HubClipboardServiceTests {
             serving: .init(token: Data(repeating: 0xA2, count: 16), connection: ClipboardConnectionID()),
             onReleased: { puller.end() })
         #expect(written && promised)
-        return puller
+        return (puller, otherVM)
     }
 
     private func anotherVMsFile() throws -> URL {
@@ -1456,6 +1459,33 @@ struct HubClipboardServiceTests {
             Issue.record("the copy's file was served after its upstream ended")
             return
         }
+    }
+
+    @Test(
+        "The Mac pasting all of another VM's copy leaves this VM's copy of it served, until the Mac's clipboard moves on"
+    )
+    func anotherVMsCopyOutlivesAFullPaste() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try hostPasteboard(instance)
+        let file = try anotherVMsFile()
+        let otherVM = writeAnotherVMsCopy(of: file, on: pasteboard)
+        let copy = try await copyToGuest(instance, probe)
+        try await acceptLastOffer(probe)
+
+        // The Mac pastes VM A's copy: AppKit finishes with its one provider, the write standing.
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        #expect(await paste.value == Data(file.absoluteString.utf8))
+        pasteboard.finishProvider(itemIndex: 0)
+        await probe.settle()
+        #expect(!withdrawn(copy.token, probe))
+        // The guest's paste of the file still gets VM A's.
+        #expect(await pull(copy, representation: 1, from: instance) == .success(.tree(path: file.path)))
+
+        // A new copy on the Mac replaces VM A's write: VM A's copy ends, and this VM's with it.
+        #expect(pasteboard.setString("copied since", forType: .string))
+        try await probe.changed.wait { withdrawn(copy.token, probe) }
+        withExtendedLifetime(otherVM) {}
     }
 
     @Test("A clear of the guest's clipboard retracts the Mac's write of it, after a paste had every promised type too")

@@ -151,8 +151,8 @@ package final class HostClipboardPublisher {
     }
 
     /// Writes the guest's copy `contents`: every representation but a file or folder as data, the files
-    /// promised, and withheld when `servingFileURLs` is false. The copy is released once the pasteboard lets its
-    /// files go, or at once when it promised none or the write failed. Returns whether the write was taken.
+    /// promised, and withheld when `servingFileURLs` is false. The copy is released once something replaces its
+    /// write, or at once when it promised none or the write failed. Returns whether the write was taken.
     func writeCopy(_ contents: GuestCopyContents, servingFileURLs: Bool) -> Bool {
         let (written, promised) = publisher.publishCopy(
             contents.items, concealed: contents.concealed, servingFileURLs: servingFileURLs,

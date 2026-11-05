@@ -80,37 +80,67 @@ public struct ClipboardWriteSource: Sendable {
 }
 
 /// A write of this process standing on a pasteboard that promised something: what it serves and holds as data,
-/// for as long as the write stands, and what it was made from, only while a provider of it can still be asked.
-/// The publisher that made it owns it until something replaces the write
-/// (``ClipboardPasteboardPublisher/write(_:source:onReleased:)``); everything else holds it weakly. AppKit finishes
-/// with a provider when anything replaces the write, and also once a reader has had every type that provider
-/// promised while the write still stands (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md):
-/// once every provider is finished with the write standing, nothing of it is promised any more, so its source goes
-/// and a snapshot reads the pasteboard's data, while a retraction still finds the record.
+/// and what it was made from, for as long as the write stands. The publisher that made it owns it while the write
+/// stands (``ClipboardPasteboardPublisher/write(_:source:onReleased:)``); everything else holds it weakly.
+///
+/// The write ends once it no longer stands and the pasteboard has finished with every provider it promised
+/// through: its source goes, and its end runs. AppKit finishes with a provider when anything replaces the write,
+/// and also once a reader has had every type that provider promised while the write still stands
+/// (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md), so a paste of every type ends nothing:
+/// only the write's being replaced does.
 @MainActor
 final class ClipboardStandingWrite {
     /// The far side's offer or copy the write serves, which a retraction names.
     let servingOffer: Data?
     let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
-    /// What the write was made from; nil once no provider of it can be asked.
+    /// What the write was made from; nil once the write ended.
     private(set) var source: ClipboardWriteSource?
+    /// The providers the pasteboard has yet to finish with.
+    private var unfinished: Int
+    /// Whether the write still stands on its pasteboard.
+    private var stands = true
+    /// Runs once, when the write ends.
+    private var onEnded: (@MainActor () -> Void)?
 
-    init(source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]) {
+    init(
+        source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]], promising: Int,
+        onEnded: (@MainActor () -> Void)?
+    ) {
         servingOffer = source.serving?.token
         self.source = source
         self.data = data
+        unfinished = promising
+        self.onEnded = onEnded
     }
 
-    /// Lets the source go: nothing can ask the write's providers for more.
-    func dropSource() {
+    /// Whether the pasteboard has finished with every provider of the write: nothing tells of its replacement
+    /// but its pasteboard's change count.
+    var isFullyProvided: Bool { unfinished == 0 }
+
+    /// The pasteboard finished with one of the write's providers.
+    func providerFinished() {
+        unfinished -= 1
+        endIfDone()
+    }
+
+    /// The write no longer stands: something replaced it.
+    func replaced() {
+        stands = false
+        endIfDone()
+    }
+
+    private func endIfDone() {
+        guard !stands, unfinished <= 0 else { return }
         source = nil
+        let ended = onEnded
+        onEnded = nil
+        ended?()
     }
 }
 
 /// The latest write this process made to each pasteboard that promised something, and what it was made from
-/// while a provider of it can be asked, whichever publisher made it: every publisher of one process records here,
-/// so a snapshot of one VM's pasteboard never reads another VM's promise either. A write with nothing left to
-/// promise has no promise to read, so a snapshot reads its data from the pasteboard.
+/// while it stands, whichever publisher made it: every publisher of one process records here, so a snapshot of
+/// one VM's pasteboard never reads another VM's promise either.
 @MainActor
 public final class ClipboardWriteLedger {
     /// The process's ledger, matching the one `NSPasteboard.general` every write targets.
@@ -140,7 +170,7 @@ public final class ClipboardWriteLedger {
     }
 
     /// What the write `pasteboard` holds was made from, while it holds a write of this process that nothing has
-    /// replaced since and one of whose providers can still be asked.
+    /// replaced since.
     public func standingWrite(on pasteboard: any ClipboardReadPasteboard) -> ClipboardWriteSource? {
         guard let entry = entries[ObjectIdentifier(pasteboard)], entry.pasteboard === pasteboard,
             entry.changeCount == pasteboard.changeCount

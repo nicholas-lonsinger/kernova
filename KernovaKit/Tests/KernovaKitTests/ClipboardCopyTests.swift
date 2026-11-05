@@ -477,7 +477,7 @@ struct ClipboardCopyTests {
     }
 
     @Test(
-        "A write a reader had every promised type of keeps its record, for a retraction, and lets its source go"
+        "A write a reader had every promised type of stands: its record and source stay, for a retraction and a snapshot"
     )
     func fullyReadWriteKeepsItsRecord() async throws {
         let pasteboard = FakePasteboard()
@@ -489,16 +489,52 @@ struct ClipboardCopyTests {
         let paste = Task.detached { pasteboard.invokeProvider(forType: .init(ClipboardContent.utf8TextUTI)) }
         #expect(await paste.value == Data("a password".utf8))
 
-        // AppKit finishes with the provider, the write standing: nothing of it is promised any more.
+        // AppKit finishes with the provider, the write standing: a paste is no replacement.
         pasteboard.finishProvider(itemIndex: 0)
         await drainMainQueue()
-        #expect(ledger.standingWrite(on: pasteboard) == nil)
-        #expect(watched() == nil)
+        #expect(ledger.standingWrite(on: pasteboard) != nil)
+        #expect(watched() != nil)
         #expect(publisher.holdsLastWrite)
 
         // The offer's end still retracts it.
         #expect(publisher.retractWrite(servingOffer: Self.writeOffer) == .cleared)
         #expect(pasteboard.items.isEmpty)
+        #expect(watched() == nil)
+    }
+
+    @Test("A copy's write a reader had every type of is released only once something replaces it")
+    func fullyReadCopyReleasesWhenReplaced() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation("public.data", .file, name: "a.bin")]
+        let released = AsyncGate()
+        var wasReleased = false
+        let (written, promised) = publisher.publishCopy(
+            [item], concealed: false, servingFileURLs: true, held: { _, _ in nil },
+            puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+            serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
+            onReleased: {
+                wasReleased = true
+                released.notify()
+            })
+        #expect(written && promised)
+
+        // A paste has the file URL, and AppKit finishes with the provider, the write standing.
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        #expect(await paste.value != nil)
+        pasteboard.finishProvider(itemIndex: 0)
+        await drainMainQueue()
+        #expect(!wasReleased)
+        #expect(ledger.standingWrite(on: pasteboard) != nil)
+
+        // Another app's copy replaces it: no provider is left to say so, and the write is released all the same.
+        pasteboard.setString("copied since", forType: .string)
+        try await released.wait { wasReleased }
+        #expect(ledger.standingWrite(on: pasteboard) == nil)
     }
 
     @Test("A write that promises nothing holds no source: a snapshot of it reads its data from the pasteboard")
