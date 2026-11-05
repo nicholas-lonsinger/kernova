@@ -64,7 +64,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     private(set) var confirmationRequests: [ConfirmationRequest] = []
     /// What this mock answers a confirmation with, answered on the spot for the
     /// reason ``guestAccountPasswordAnswer`` is.
-    var confirmationAnswer: PresenterAnswer<Bool> = .answered(false)
+    var confirmationAnswer: PresenterAnswer<ConfirmationAnswer> = .answered(.decline)
     /// Route questions a verb asked, in order.
     private(set) var stepRouteRequests: [StepRouteRequest] = []
     /// What this mock answers a route question with, answered on the spot for

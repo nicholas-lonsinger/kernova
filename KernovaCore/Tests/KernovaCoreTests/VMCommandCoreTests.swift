@@ -1110,6 +1110,49 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 1)
     }
 
+    @Test("With the question dismissed, a start and a restart beside a shared machine ID go ahead without consent")
+    func dismissedQuestionStartsWithoutConsent() async throws {
+        let harness = makeHarness()
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (_, twin) = machineIdentityTwins(in: harness)
+
+        // What `kernova start` sends without --yes.
+        try await harness.core.start(.id(twin.id), recovery: false, consent: .none)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(twin.status == .running)
+
+        // And `kernova restart`, whose boot runs with nobody to ask.
+        try await harness.core.restart(.id(twin.id), disposition: .graceful, timeout: nil, consent: .none)
+        #expect(harness.virtualization.startCallCount == 2)
+        #expect(twin.status == .running)
+    }
+
+    @Test("With the question dismissed, a start nobody can be asked about goes ahead beside a shared machine ID")
+    func dismissedQuestionStartsAnUnaskableStart() async throws {
+        let harness = makeHarness()
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (_, twin) = machineIdentityTwins(in: harness)
+
+        try await harness.core.startNow(twin, policy: .command(.unavailable)).value()
+
+        #expect(harness.virtualization.startCallCount == 1)
+    }
+
+    @Test("With the question dismissed but the setting off, a start beside a shared machine ID is still refused")
+    func dismissedQuestionNeedsTheSetting() async throws {
+        let harness = makeHarness()
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (_, twin) = machineIdentityTwins(in: harness)
+
+        let error = try await #require(throws: CommandError.self) {
+            try await harness.core.start(.id(twin.id), recovery: false, consent: .all)
+        }
+        #expect(error.isConflict)
+        #expect(harness.virtualization.startCallCount == 0)
+    }
+
     @Test("A start nobody can confirm is refused beside a shared machine ID")
     func duplicateMachineIDRefusesAnUnaskableStart() async throws {
         let harness = makeHarness()

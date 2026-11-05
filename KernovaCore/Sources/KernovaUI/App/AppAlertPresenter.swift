@@ -770,7 +770,8 @@ final class AppAlertPresenter {
         enqueue(.linuxAgentInstallChoice(instance, initial))
     }
 
-    /// Asks the user to confirm what a verb they started refused without.
+    /// Asks the user to confirm what a verb they started refused without,
+    /// with a Don't ask again checkbox where the request offers one.
     ///
     /// Answered ``PresenterAnswer/unasked`` rather than queued when its window
     /// is taken or there is none: the verb is suspended on the answer, and a
@@ -786,12 +787,22 @@ final class AppAlertPresenter {
             confirmation(.unasked)
             return
         }
+        // Learned as the sheet ends, before the button's action reads it.
+        var dontAskAgain = false
         showAlert(
-            AlertConfiguration(
-                confirming: request.prompt, confirm: { confirmation(.answered(true)) },
-                dismiss: { confirmation(.answered(false)) }),
+            SheetAlert(
+                AlertConfiguration(
+                    confirming: request.prompt,
+                    confirm: { confirmation(.answered(.confirm(dontAskAgain: dontAskAgain))) },
+                    dismiss: { confirmation(.answered(.decline)) }),
+                suppression: request.offersDontAskAgain
+                    ? SheetAlert.Suppression(title: Self.dontAskAgainTitle, ended: { dontAskAgain = $0 })
+                    : nil),
             on: window, onWindowClose: .unask { confirmation(.unasked) })
     }
+
+    /// The title of a question's Don't ask again checkbox.
+    static let dontAskAgainTitle = "Don\u{2019}t ask again"
 
     /// Asks which route through a step refusal to take, answered unasked
     /// rather than queued for the reason ``presentConfirmationRequest(_:)`` is.

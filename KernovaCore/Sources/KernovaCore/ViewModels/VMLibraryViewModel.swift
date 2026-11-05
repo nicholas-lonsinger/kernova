@@ -468,6 +468,26 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Whether the user chose Don't ask again on the duplicate machine ID
+    /// question, so a bring-up beside a VM sharing its machine identity starts
+    /// without asking while ``AppPreferences/allowsDuplicateMachineIDOverride``
+    /// is on.
+    ///
+    /// The single write path for
+    /// `AppPreferences.duplicateMachineIDQuestionDismissed`, mirrored here
+    /// because the Reminders pane refreshes from `withObservationTracking`,
+    /// which a bare `UserDefaults` read never wakes.
+    package var duplicateMachineIDQuestionDismissed: Bool {
+        didSet {
+            guard duplicateMachineIDQuestionDismissed != oldValue else { return }
+            Self.logger.log(
+                .notice,
+                "Setting duplicate machine ID question dismissed=\(self.duplicateMachineIDQuestionDismissed, privacy: .public)"
+            )
+            preferences.duplicateMachineIDQuestionDismissed = duplicateMachineIDQuestionDismissed
+        }
+    }
+
     /// Where the alerts and sheets this view model raises are shown.
     ///
     /// Set by the composition root before the library's first read starts, so
@@ -688,6 +708,7 @@ package final class VMLibraryViewModel {
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
+        self.duplicateMachineIDQuestionDismissed = preferences.duplicateMachineIDQuestionDismissed
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
@@ -1013,15 +1034,19 @@ package final class VMLibraryViewModel {
     ///   refusal itself when it could not be asked.
     private func askToConfirm(_ prompt: ConfirmationPrompt, about instance: VMInstance) async throws {
         guard let presenter else { throw CommandError.confirmationRequired(prompt) }
+        let offersDontAskAgain = prompt.kind == .startBesideSharedMachineIdentity
         let answer = await withCheckedContinuation { continuation in
             presenter.presentConfirmationRequest(
                 ConfirmationRequest(
-                    instance: instance, prompt: prompt,
+                    instance: instance, prompt: prompt, offersDontAskAgain: offersDontAskAgain,
                     answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
-        case .answered(true): return
-        case .answered(false): throw ConfirmationDeclined()
+        case .answered(.confirm(let dontAskAgain)):
+            if dontAskAgain, offersDontAskAgain {
+                duplicateMachineIDQuestionDismissed = true
+            }
+        case .answered(.decline): throw ConfirmationDeclined()
         case .unasked: throw CommandError.confirmationRequired(prompt)
         }
     }
@@ -1619,13 +1644,16 @@ package final class VMLibraryViewModel {
             [VMConfigurationKeyRegistry.agentInstallReminder.assigning(!dismissed)], on: instance)
     }
 
-    /// Re-arms the agent-install nudge everywhere: clears the app-wide
-    /// suppression *and* every VM's dismissed flag, so each VM's `.waiting`
-    /// nudge can surface again.
+    /// Re-arms every reminder the Reminders pane lists, so each shows again
+    /// the next time its condition is met: the menu bar quit reminder, the
+    /// duplicate machine ID question, and the agent-install nudge — its
+    /// app-wide suppression and every VM's dismissed flag.
     ///
     /// Each VM's flag lives in its own bundle and is persisted individually;
     /// VMs already armed make no edit.
-    package func resetAllAgentInstallNudges() {
+    package func resetAllReminders() {
+        preferences.menuBarQuitReminderDismissed = false
+        duplicateMachineIDQuestionDismissed = false
         agentInstallPromptDisabled = false
         let key = VMConfigurationKeyRegistry.agentInstallReminder
         for instance in instances where key.applies(instance.configuration) {

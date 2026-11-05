@@ -39,10 +39,12 @@ struct VMLiveIdentitiesTests {
         withExtendedLifetime(library) {}
     }
 
-    /// One row of the decision: the setting, what the request brings, and
-    /// whether the twin also shares the MAC address on one network.
+    /// One row of the decision: the setting, the standing choice not to be
+    /// asked, what the request brings, and whether the twin also shares the
+    /// MAC address on one network.
     struct Row: Sendable, CustomTestStringConvertible {
         let allowsOverride: Bool
+        var questionDismissed = false
         let override: VMIdentityOverride
         let sharesMAC: Bool
         /// `nil` admits; otherwise the reason refused and whether it asks to
@@ -50,7 +52,8 @@ struct VMLiveIdentitiesTests {
         let expected: (reason: ConflictReason, asks: Bool)?
 
         var testDescription: String {
-            "setting \(allowsOverride ? "on" : "off"), \(override), MAC \(sharesMAC ? "shared" : "own")"
+            "setting \(allowsOverride ? "on" : "off"), question \(questionDismissed ? "dismissed" : "asked"), "
+                + "\(override), MAC \(sharesMAC ? "shared" : "own")"
         }
     }
 
@@ -74,14 +77,33 @@ struct VMLiveIdentitiesTests {
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: false, expected: nil),
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: true, expected: (.macAddress, false)),
         Row(allowsOverride: true, override: .askable.unattended, sharesMAC: false, expected: (identityOn, false)),
+        // The standing choice not to be asked waives it for every request, the
+        // unaskable ones included — but only while the setting is on, and
+        // never a MAC address.
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .unavailable, sharesMAC: false,
+            expected: nil),
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .askable, sharesMAC: false,
+            expected: nil),
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .askable.unattended, sharesMAC: false,
+            expected: nil),
+        Row(
+            allowsOverride: true, questionDismissed: true, override: .unavailable, sharesMAC: true,
+            expected: (.macAddress, false)),
+        Row(
+            allowsOverride: false, questionDismissed: true, override: .askable, sharesMAC: false,
+            expected: (identityOff, false)),
     ]
 
     @Test(
-        "A shared machine ID is answered first and waived only by a confirmed override the setting allows; a MAC address after it, never waived",
+        "A shared machine ID is answered first and waived only, while the setting is on, by a confirmed override or the standing choice not to be asked; a MAC address after it, never waived",
         arguments: rows)
     func decisionTable(row: Row) {
         let preferences = makeTestPreferences()
         preferences.allowsDuplicateMachineIDOverride = row.allowsOverride
+        preferences.duplicateMachineIDQuestionDismissed = row.questionDismissed
         let identity = Data([2, 7, 1, 8])
         let library = makeWiredLibrary(preferences: preferences)
         let live = library.registerFixture(

@@ -326,8 +326,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     @objc private func resetAllReminders() {
         Self.logger.log(.notice, "User reset all host reminders")
-        preferences.resetHostReminders()
-        viewModel.resetAllAgentInstallNudges()
+        viewModel.resetAllReminders()
         refreshSwitches()
     }
 }

@@ -35,6 +35,7 @@ package struct AppPreferences {
         static let agentInstallPromptDisabled = "agentInstallPromptDisabled"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
+        static let duplicateMachineIDQuestionDismissed = "duplicateMachineIDQuestionDismissed"
         static let cloneKeepsMachineID = "cloneKeepsMachineID"
         static let clipboardMaxPasteBytes = "clipboardMaxPasteBytes"
     }
@@ -175,6 +176,19 @@ package struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
     }
 
+    /// Whether the user chose Don't ask again on the question
+    /// ``allowsDuplicateMachineIDOverride`` asks, so that every bring-up beside
+    /// a VM sharing its machine identity starts without asking while that
+    /// setting is on.
+    ///
+    /// Read and written through
+    /// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, whose
+    /// `@Observable` mirror is what wakes the Reminders pane.
+    var duplicateMachineIDQuestionDismissed: Bool {
+        get { defaults.bool(forKey: Keys.duplicateMachineIDQuestionDismissed) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.duplicateMachineIDQuestionDismissed) }
+    }
+
     /// What Clone makes of a VM that offers both outcomes, defaulting to New
     /// Machine.
     package var cloneOutcome: CloneOutcome {
@@ -213,16 +227,6 @@ package struct AppPreferences {
         let other: CloneOutcome = primary == .newMachine ? .exactCopy : .newMachine
         let offersOther = other == .exactCopy || configuration?.offersNewMachineClone != false
         return (CloneMenuItem(outcome: primary), offersOther ? CloneMenuItem(outcome: other) : nil)
-    }
-
-    /// Re-arms every host-side reminder by clearing its dismissed flag, so each
-    /// nag shows again the next time its condition is met.
-    ///
-    /// Covers only the menu-bar quit reminder. The guest-agent install nudge —
-    /// app-wide here, per-VM in each bundle configuration — is re-armed as one
-    /// by `VMLibraryViewModel.resetAllAgentInstallNudges()`.
-    package func resetHostReminders() {
-        menuBarQuitReminderDismissed = false
     }
 }
 

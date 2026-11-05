@@ -146,8 +146,20 @@ package struct ConfirmationRequest {
     package let instance: VMInstance
     /// What the core is asking, in its own words.
     package let prompt: ConfirmationPrompt
-    /// Answers the prompt: `true` to go ahead, `false` to walk away.
-    package let answer: @MainActor (PresenterAnswer<Bool>) -> Void
+    /// Whether the question carries a Don't ask again checkbox, whose state
+    /// comes back with ``ConfirmationAnswer/confirm(dontAskAgain:)``.
+    package var offersDontAskAgain = false
+    /// Answers the prompt.
+    package let answer: @MainActor (PresenterAnswer<ConfirmationAnswer>) -> Void
+}
+
+/// What the user answered a ``ConfirmationRequest`` with.
+package enum ConfirmationAnswer: Equatable, Sendable {
+    /// Go ahead — with the Don't ask again checkbox ticked, where the question
+    /// offered one.
+    case confirm(dontAskAgain: Bool = false)
+    /// Walk away. Nothing is saved, whatever the checkbox read.
+    case decline
 }
 
 /// The routes a refusal a verb the user started raised names, put to the
