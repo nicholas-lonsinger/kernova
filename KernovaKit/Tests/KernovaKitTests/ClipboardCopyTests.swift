@@ -468,6 +468,55 @@ struct ClipboardCopyTests {
         else { throw TestFailure("not unreadable") }
     }
 
+    /// Guest Photos' ⌘C, its file URL naming a derivative in the Photos library that the agent cannot open.
+    private func photosCopy(naming file: URL) -> [(type: NSPasteboard.PasteboardType, data: Data)] {
+        let url = Data(file.absoluteString.utf8)
+        let names: [(String, Data)] = [
+            ("com.apple.photos.object-reference.asset", Data("asset".utf8)),
+            ("public.jpeg", Data("jpeg".utf8)),
+            ("CorePasteboardFlavorType 0x4A504547", Data("jpeg".utf8)),
+            ("public.file-url", url),
+            ("CorePasteboardFlavorType 0x6675726C", url),
+            ("dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn", url),
+            ("NSFilenamesPboardType", url),
+            ("dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu", url),
+            ("Apple URL pasteboard type", url),
+            ("dyn.ah62d4rv4gu8za0cuqf31k3pcr7u1e3cmsvw04vdbsvuyq4pqqznzexcdr71004pfnv61a3k", Data("cookie".utf8)),
+            ("PXPasteboardItemDataFileURLCookieType", Data("cookie".utf8)),
+            ("public.tiff", Data("tiff".utf8)),
+            ("NeXT TIFF v4.0 pasteboard type", Data("tiff".utf8)),
+        ]
+        return names.map { (NSPasteboard.PasteboardType($0.0), $0.1) }
+    }
+
+    @Test("An item whose file cannot be opened, with no promise, crosses as its other types, the file and its aliases left out and counted")
+    func unreadableFileItemCrossesAsItsData() async throws {
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setItem(photosCopy(naming: try unreadableFile("derivative.jpeg"))))
+        let crossing = [
+            "com.apple.photos.object-reference.asset", "public.jpeg", "CorePasteboardFlavorType 0x4A504547",
+            "dyn.ah62d4rv4gu8za0cuqf31k3pcr7u1e3cmsvw04vdbsvuyq4pqqznzexcdr71004pfnv61a3k",
+            "PXPasteboardItemDataFileURLCookieType", "public.tiff", "NeXT TIFF v4.0 pasteboard type",
+        ]
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 1)
+        let item = try #require(source.items.first)
+        #expect(source.items.count == 1)
+        #expect(item.representations.compactMap(\.type.appleUTI) == crossing)
+        #expect(item.representations.allSatisfy { $0.storage == .inline })
+        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("jpeg".utf8)))
+
+        // Passthrough's offer reads the item by the same rule.
+        guard case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(from: pasteboard)
+        else { throw TestFailure("no offer") }
+        #expect(offerLost == 1)
+        #expect(offer.items.map { $0.representations.compactMap(\.type.appleUTI) } == [crossing])
+    }
+
     @Test("A file URL this process cannot open, beside a file promise, is copied by calling the promise in")
     func unreadableFileFallsBackToItsPromise() async throws {
         let pasteboard = FakePasteboard()

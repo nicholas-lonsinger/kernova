@@ -749,7 +749,8 @@ message ItemSetHeader {
   // CLIPBOARD only: what the offer is besides its opener's clipboard offer.
   ClipboardCopy copy = 6;
   // CLIPBOARD_COPY_SNAPSHOT only: how many items of its opener's clipboard
-  // the snapshot leaves out, their files ones the opener cannot read.
+  // the snapshot does not carry whole: a file or another part of one left
+  // out, or the item dropped.
   uint32 left_out = 7;
 }
 

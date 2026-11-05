@@ -26,7 +26,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     public let items: [OfferedItem]
     /// The connection the offer arrived on.
     public let connection: ClipboardConnectionID
-    /// A copy's: how many items of the far side's clipboard it leaves out, their files unreadable there.
+    /// A copy's: how many items of the far side's clipboard it does not carry whole.
     public let leftOut: Int
     /// The offer as a write of it serves it.
     public var serving: ClipboardWriteSource.Serving { .init(token: token, connection: connection) }

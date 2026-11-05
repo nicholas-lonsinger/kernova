@@ -83,12 +83,15 @@ public final class ClipboardOfferSource {
     private var upstreamEnded = false
     /// Hears the first upstream end.
     private var onUpstreamEnded: (@MainActor () -> Void)?
+    /// The items, by index, the read left a file out of.
+    let incompleteItems: Set<Int>
 
     init(
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
         promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL,
-        leases: [ClipboardStagingLease] = [], readFrom: (any ClipboardReadPasteboard, Int)? = nil
+        leases: [ClipboardStagingLease] = [], readFrom: (any ClipboardReadPasteboard, Int)? = nil,
+        incompleteItems: Set<Int> = []
     ) {
         self.items = items
         self.origins = origins
@@ -99,6 +102,7 @@ public final class ClipboardOfferSource {
         self.promiseDestination = promiseDestination
         self.leases = leases
         self.readFrom = readFrom ?? pasteboard.map { ($0, changeCount) }
+        self.incompleteItems = incompleteItems
     }
 
     /// Whether the pasteboard this offer was read from still holds what it was read from: nothing has changed
@@ -136,17 +140,21 @@ public final class ClipboardOfferSource {
     ///
     /// A representation whose bytes can no longer be read, or whose promise lands nothing, is left out, and an
     /// item left with none is dropped: an image file's INLINE bytes are read downloading nothing
-    /// (``DatalessMaterialization/off``), so a dataless one crosses as its file alone. Nil when the pasteboard
-    /// moved on from what was offered, or nothing remains.
+    /// (``DatalessMaterialization/off``), so a dataless one crosses as its file alone, which leaves nothing out.
+    /// Nil when the pasteboard moved on from what was offered, or nothing remains.
+    ///
+    /// - Returns: the snapshot, and how many of the offer's items it does not carry whole: those the read left a
+    ///   file out of, and those it left a representation of out, or dropped.
     ///
     /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`,
     ///   reading nothing more.
     public func snapshot(inlineCeiling: Int, holding lease: ClipboardStagingLease? = nil)
-        async throws(ClipboardSnapshotTooLarge) -> ClipboardOfferSource?
+        async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, leftOut: Int)?
     {
         var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
         var frozenItems: [OfferedItem] = []
         var frozenOrigins: [[Origin]] = []
+        var incomplete = incompleteItems
         for (index, item) in items.enumerated() {
             var frozen = OfferedItem()
             var itemOrigins: [Origin] = []
@@ -175,7 +183,10 @@ public final class ClipboardOfferSource {
                 case .bytes, .file, .folder, .spent, .reference, .upstream:
                     held = origins[index][position]
                 }
-                guard let held else { continue }
+                guard let held else {
+                    if case .fileContents = origins[index][position] {} else { incomplete.insert(index) }
+                    continue
+                }
                 if case .bytes(let data) = held {
                     if case .pasteboard = origins[index][position] { try tally.add(UInt64(data.count)) }
                     kept.sizeEstimate = UInt64(data.count)
@@ -189,10 +200,11 @@ public final class ClipboardOfferSource {
         }
         if let pasteboard, pasteboard.changeCount != changeCount { return nil }
         guard !frozenItems.isEmpty else { return nil }
-        return ClipboardOfferSource(
+        let snapshot = ClipboardOfferSource(
             items: frozenItems, origins: frozenOrigins, concealed: concealed, pasteboard: nil, changeCount: 0,
             promises: [], promiseDestination: { throw ClipboardServeError.unavailable },
             leases: leases + (lease.map { [$0] } ?? []), readFrom: readFrom)
+        return (snapshot, incomplete.count)
     }
 
     /// The file or folder `landing` lands, once it has, `kept` taking what landed: its storage, its size, and
@@ -233,7 +245,8 @@ public final class ClipboardOfferSource {
     /// representations the write placed are kept; one that cannot be pulled is left out, and an item left with
     /// none is dropped. Nil when nothing remains. `pasteboard` holds the write now.
     ///
-    /// - Returns: the snapshot, and how many of the write's items it left out.
+    /// - Returns: the snapshot, and how many of the write's items it does not carry whole: those it left a
+    ///   representation of out, or dropped.
     static func snapshot(
         of source: ClipboardWriteSource, on pasteboard: any ClipboardReadPasteboard,
         copyingTo destination: ClipboardConnectionID?, inlineCeiling: Int
@@ -250,6 +263,7 @@ public final class ClipboardOfferSource {
             for (index, item) in part.items.enumerated() {
                 var frozen = OfferedItem()
                 var itemOrigins: [Origin] = []
+                var whole = true
                 for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: part.servingFileURLs) {
                     var kept = item.representations[promised.representation]
                     kept.promised = false
@@ -272,7 +286,10 @@ public final class ClipboardOfferSource {
                             origin = .reference
                             break
                         }
-                        guard let puller = part.puller else { continue }
+                        guard let puller = part.puller else {
+                            whole = false
+                            continue
+                        }
                         guard kept.storage == .inline else {
                             kept.promised = true
                             servesUpstream = true
@@ -284,7 +301,10 @@ public final class ClipboardOfferSource {
                                 continuation.resume(returning: $0)
                             }
                         }
-                        guard let bytes else { continue }
+                        guard let bytes else {
+                            whole = false
+                            continue
+                        }
                         try tally.add(UInt64(bytes.count))
                         kept.sizeEstimate = UInt64(bytes.count)
                         origin = .bytes(bytes)
@@ -292,10 +312,8 @@ public final class ClipboardOfferSource {
                     frozen.representations.append(kept)
                     itemOrigins.append(origin)
                 }
-                guard !frozen.representations.isEmpty else {
-                    lost += 1
-                    continue
-                }
+                if !whole { lost += 1 }
+                guard !frozen.representations.isEmpty else { continue }
                 frozenItems.append(frozen)
                 frozenOrigins.append(itemOrigins)
             }

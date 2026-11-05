@@ -36,7 +36,7 @@ public struct ItemOffer: Sendable, Equatable {
     /// What a CLIPBOARD offer is besides its opener's clipboard offer (`ItemSetHeader.copy`): a copy is not
     /// this side's clipboard offer, so a later one does not withdraw it.
     public var copy: ClipboardCopyRole
-    /// A copy's: how many items of its opener's clipboard it leaves out, their files unreadable
+    /// A copy's: how many items of its opener's clipboard it does not carry whole
     /// (`ItemSetHeader.left_out`); 0 on every other offer.
     public var leftOut: Int
 

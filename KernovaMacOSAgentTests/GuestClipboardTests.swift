@@ -942,6 +942,32 @@ struct GuestClipboardTests {
         #expect(rig.clipboard.activity == .copyCarriedNothing)
     }
 
+    @Test("The host's ask of an item whose file the agent cannot open crosses as its image data, its file left out")
+    func askOfAnUnreadableFileItemSendsItsData() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let locked = scratch.url.appendingPathComponent("derivative.jpeg")
+        try Data("locked".utf8).write(to: locked)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+
+        // A Photos copy's shape: image data beside a file URL into a library the agent cannot read.
+        #expect(
+            rig.pasteboard.setItem([
+                (type: NSPasteboard.PasteboardType("public.jpeg"), data: Data("jpeg".utf8)),
+                (type: .fileURL, data: Data(locked.absoluteString.utf8)),
+                (type: NSPasteboard.PasteboardType("NSFilenamesPboardType"), data: Data(locked.path.utf8)),
+            ]))
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { link.releases == [Self.askToken] }
+        let copy = try #require(link.offers.last { $0.copy == .snapshot })
+        #expect(copy.leftOut == 1)
+        #expect(copy.items.map { $0.representations.compactMap(\.type.appleUTI) } == [["public.jpeg"]])
+        #expect(rig.clipboard.activity == .copyPartlyCarried(skipped: 1))
+    }
+
     @Test("A guest pasteboard that changed before the host's copy landed is left alone, and the copy refused so")
     func hostCopyLeavesAChangedPasteboard() async throws {
         let rig = rig()

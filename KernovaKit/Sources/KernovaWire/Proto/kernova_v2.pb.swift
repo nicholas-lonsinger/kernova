@@ -2209,7 +2209,8 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   public var copy: Kernova_V2_ClipboardCopy = .unspecified
 
   /// CLIPBOARD_COPY_SNAPSHOT only: how many items of its opener's clipboard
-  /// the snapshot leaves out, their files ones the opener cannot read.
+  /// the snapshot does not carry whole: a file or another part of one left
+  /// out, or the item dropped.
   public var leftOut: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

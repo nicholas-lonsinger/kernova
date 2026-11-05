@@ -49,7 +49,7 @@ enum ClipboardActivity: Equatable, Sendable {
     ///
     /// The copy was made in this guest, so the outcome is reported here.
     case copyCarriedNothing
-    /// A copy crossed, with `skipped` of its items left out of the offer.
+    /// A copy crossed, with `skipped` of its items not carried whole.
     ///
     /// The host's readout covers only what the offer carried, so the count the
     /// copy lost is named here or nowhere.

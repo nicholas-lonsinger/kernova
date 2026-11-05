@@ -357,35 +357,41 @@ package struct ClipboardTransferWording: Equatable {
         case (.itemsSkipped(let count), .drop):
             return ClipboardTransferWording(
                 headline: "Some files not copied to \(vm).",
-                message: skippedMessage(count: count, item: "item"),
+                message: count == 1
+                    ? "One item couldn't be read, so it wasn't sent to the VM. The rest were."
+                    : "\(count) items couldn't be read, so they weren't sent to the VM. The rest were.",
                 menuLine: "Drop: some files weren't sent",
                 mentionsMacClipboardKept: false)
 
-        // A snapshot leaves an item out for a file it cannot open or that is gone, or for a pull of what it holds
-        // as another offer's promise that failed; the count alone crosses, so neither command names a cause.
+        // A snapshot leaves a file out of an item when it cannot open it or it is gone, and a representation
+        // when it cannot read or pull it, the item dropped once nothing of it is left; the count alone crosses,
+        // so neither command names what of an item was left out.
         case (.itemsSkipped(let count), .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard partly copied from \(vm).",
                 message: count == 1
-                    ? "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac. The rest were."
-                    : "\(count) items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac. The rest were.",
-                menuLine: "Clipboard: some items weren't copied from the guest",
+                    ? "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac in full. The rest were."
+                    : "\(count) items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were.",
+                menuLine: "Clipboard: some items weren't copied in full from the guest",
                 mentionsMacClipboardKept: false)
 
         case (.itemsSkipped(let count), .send):
             return ClipboardTransferWording(
                 headline: "Clipboard partly copied to \(vm).",
                 message: count == 1
-                    ? "One item on the Mac clipboard wasn\u{2019}t copied to the guest. The rest were."
-                    : "\(count) items on the Mac clipboard weren\u{2019}t copied to the guest. The rest were.",
-                menuLine: "Clipboard: some items weren't copied to the guest",
+                    ? "One item on the Mac clipboard wasn\u{2019}t copied to the guest in full. The rest were."
+                    : "\(count) items on the Mac clipboard weren\u{2019}t copied to the guest in full. The rest were.",
+                menuLine: "Clipboard: some items weren't copied in full to the guest",
                 mentionsMacClipboardKept: false)
 
+        // Passthrough's offer leaves out only a file it cannot open or that is gone, the rest of its item offered.
         case (.itemsSkipped(let count), _):
             return ClipboardTransferWording(
                 headline: "Clipboard partly copied to \(vm).",
-                message: skippedMessage(count: count, item: "copied item"),
-                menuLine: "Clipboard: some items weren't forwarded",
+                message: count == 1
+                    ? "One copied file couldn't be read, so it wasn't sent to the VM. Everything else was."
+                    : "\(count) copied files couldn't be read, so they weren't sent to the VM. Everything else was.",
+                menuLine: "Clipboard: some files weren't forwarded",
                 mentionsMacClipboardKept: false)
 
         case (.itemsUnreadable, .drop):
@@ -611,12 +617,6 @@ package struct ClipboardTransferWording: Equatable {
 
     /// The sentence for `count` unreadable items left out of a send whose rest
     /// crossed; `item` names one of them.
-    private static func skippedMessage(count: Int, item: String) -> String {
-        count == 1
-            ? "One \(item) couldn't be read, so it wasn't sent to the VM. The rest were."
-            : "\(count) \(item)s couldn't be read, so they weren't sent to the VM. The rest were."
-    }
-
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
 }
 

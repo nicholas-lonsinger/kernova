@@ -94,16 +94,16 @@ struct AgentMenuTextTests {
                 == "Clipboard: nothing in that copy could be shared")
     }
 
-    @Test("a copy that partly crossed names how many items it left out")
+    @Test("a copy that partly crossed names how many items it did not carry whole")
     func clipboardCopyPartlyCarriedLine() {
         // The host's readout covers what the offer carried, so the count is
         // named here or nowhere.
         #expect(
             AgentMenuText.clipboardLine(.copyPartlyCarried(skipped: 1))
-                == "Clipboard: shared with host — 1 item couldn't be")
+                == "Clipboard: shared with host — 1 item not in full")
         #expect(
             AgentMenuText.clipboardLine(.copyPartlyCarried(skipped: 3))
-                == "Clipboard: shared with host — 3 items couldn't be")
+                == "Clipboard: shared with host — 3 items not in full")
     }
 
     // MARK: - isNotice

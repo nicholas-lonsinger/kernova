@@ -338,10 +338,10 @@ public enum ClipboardPasteboardReader {
         return item.types.contains { readable.contains($0.rawValue) }
     }
 
-    /// `true` for text/URL types that, in a file/promise snapshot, merely
-    /// describe the file's path or name rather than being real content.
+    /// `true` for a type that, on an item naming a file, describes the file
+    /// rather than being content: one AppKit reads a URL from, in any
+    /// spelling, or UTF-8 text, its path.
     static func isPathFallbackType(_ uti: String) -> Bool {
-        uti == "public.url" || uti == "public.utf8-plain-text"
-            || uti == "Apple URL pasteboard type"
+        uti == "public.utf8-plain-text" || PasteboardTypeIdentity(uti).carriesURL
     }
 }

@@ -335,7 +335,7 @@ struct ClipboardTransferWordingTests {
     }
 
     @Test(
-        "a send that left unreadable items out counts them and says the rest crossed",
+        "a drop or a forward that left unreadable files out counts them and says the rest crossed",
         arguments: [
             (
                 ClipboardTransferGesture.drop, 1,
@@ -344,29 +344,30 @@ struct ClipboardTransferWordingTests {
             (.drop, 3, "3 items couldn't be read, so they weren't sent to the VM. The rest were."),
             (
                 .forward, 1,
-                "One copied item couldn't be read, so it wasn't sent to the VM. The rest were."
+                "One copied file couldn't be read, so it wasn't sent to the VM. Everything else was."
             ),
             (
                 .forward, 3,
-                "3 copied items couldn't be read, so they weren't sent to the VM. The rest were."
+                "3 copied files couldn't be read, so they weren't sent to the VM. Everything else was."
             ),
         ])
     func skippedItemsMessage(gesture: ClipboardTransferGesture, count: Int, message: String) throws {
         #expect(try #require(wording(.itemsSkipped(count: count), gesture)).message == message)
     }
 
-    /// A command's snapshot leaves an item out for a file it cannot open or that is gone, or for a pull of another
-    /// offer's promise that failed, and only the count reaches the Mac, so every cause reads the same.
+    /// A command's snapshot leaves out an item's file it cannot open or that is gone, the rest of the item
+    /// crossing, or a representation it could not read or pull, and only the count reaches the Mac, so every cause
+    /// reads the same.
     @Test(
-        "a clipboard command that left items out says how many, and names no cause: each cause reaches it alike",
+        "a clipboard command that did not copy items whole says how many, and names no cause: each reaches it alike",
         arguments: [
             (
                 ClipboardTransferGesture.copy, 1,
-                "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac. The rest were."
+                "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac in full. The rest were."
             ),
-            (.copy, 3, "3 items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac. The rest were."),
-            (.send, 1, "One item on the Mac clipboard wasn\u{2019}t copied to the guest. The rest were."),
-            (.send, 3, "3 items on the Mac clipboard weren\u{2019}t copied to the guest. The rest were."),
+            (.copy, 3, "3 items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were."),
+            (.send, 1, "One item on the Mac clipboard wasn\u{2019}t copied to the guest in full. The rest were."),
+            (.send, 3, "3 items on the Mac clipboard weren\u{2019}t copied to the guest in full. The rest were."),
         ])
     func commandLeftOutMessage(gesture: ClipboardTransferGesture, count: Int, message: String) throws {
         let wording = try #require(wording(.itemsSkipped(count: count), gesture))
@@ -488,10 +489,10 @@ struct ClipboardTransferWordingTests {
             (.incompleteFileSet, .paste, "Clipboard: paste from the guest failed"),
             (.diskFull(needed: 1, available: 0), .paste, "Clipboard: paste from the guest failed"),
             (.transferFailed, .preview, "Clipboard: preview from the guest failed"),
-            (.itemsSkipped(count: 1), .forward, "Clipboard: some items weren't forwarded"),
+            (.itemsSkipped(count: 1), .forward, "Clipboard: some files weren't forwarded"),
             (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
-            (.itemsSkipped(count: 1), .copy, "Clipboard: some items weren't copied from the guest"),
-            (.itemsSkipped(count: 1), .send, "Clipboard: some items weren't copied to the guest"),
+            (.itemsSkipped(count: 1), .copy, "Clipboard: some items weren't copied in full from the guest"),
+            (.itemsSkipped(count: 1), .send, "Clipboard: some items weren't copied in full to the guest"),
             (.itemsUnreadable, .copy, "Clipboard: the guest's copy couldn't be read"),
             (.peerReported(.dropDiskFull), .drop, "Drop: the VM ran out of disk space"),
             (

@@ -103,7 +103,7 @@ package struct GuestCopyContents {
     let puller: any ClipboardItemPulling
     /// How many of its references to this side's own offers could not be filled, and are left out.
     let referencesLeftOut: Int
-    /// How many items of the guest's clipboard its snapshot left out, their files unreadable there.
+    /// How many items of the guest's clipboard its snapshot does not carry whole.
     var itemsLeftOut = 0
     /// Lets the copy go, the Mac's clipboard holding nothing more of it.
     let release: @MainActor () -> Void
