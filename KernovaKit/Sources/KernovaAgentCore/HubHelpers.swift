@@ -321,7 +321,9 @@ public struct PowerRouting: Sendable {
     }
 
     /// The candidates for `action`, performed without waiting for apps when `ignoringApps`, in order, excluding
-    /// `asked`: `ConsoleAuthority`'s console peers, then the system peer.
+    /// `asked`: `ConsoleAuthority`'s console peers, then the system peer. A session in the background is never
+    /// asked: in macOS guests its `kAEShutDown` logged that user out without asking its apps, and the guest stayed
+    /// on (`docs/research/2026-11-04-macos-shutdown-request-by-session-state.md`).
     public static func candidates(
         for action: PowerAction, ignoringApps: Bool = false, peers: [RoutingPeer], excluding asked: [PeerHandle]
     ) -> [PeerHandle] {
