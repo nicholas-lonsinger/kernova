@@ -168,10 +168,11 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     }
 
     private func deliverOwedFinishes() {
-        finish(state.withLock { state in
+        let owed = state.withLock { state in
             defer { state.owedFinishes = [] }
             return state.owedFinishes
-        })
+        }
+        finish(owed)
     }
 
     /// Tells each displaced provider the pasteboard is done with it, as a real

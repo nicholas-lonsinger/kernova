@@ -365,7 +365,10 @@ struct ClipboardTransferWordingTests {
                 ClipboardTransferGesture.copy, 1,
                 "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac in full. The rest were."
             ),
-            (.copy, 3, "3 items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were."),
+            (
+                .copy, 3,
+                "3 items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were."
+            ),
             (.send, 1, "One item on the Mac clipboard wasn\u{2019}t copied to the guest in full. The rest were."),
             (.send, 3, "3 items on the Mac clipboard weren\u{2019}t copied to the guest in full. The rest were."),
         ])

@@ -529,7 +529,9 @@ struct ClipboardCopyTests {
         return names.map { (NSPasteboard.PasteboardType($0.0), $0.1) }
     }
 
-    @Test("An item whose file cannot be opened, with no promise, crosses as its other types, the file and its aliases left out and counted")
+    @Test(
+        "An item whose file cannot be opened, with no promise, crosses as its other types, its file and aliases left out"
+    )
     func unreadableFileItemCrossesAsItsData() async throws {
         let pasteboard = FakePasteboard()
         #expect(pasteboard.setItem(photosCopy(naming: try unreadableFile("derivative.jpeg"))))

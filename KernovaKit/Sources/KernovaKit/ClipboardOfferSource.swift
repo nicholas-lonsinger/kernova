@@ -140,13 +140,12 @@ public final class ClipboardOfferSource {
     ///
     /// A representation whose bytes can no longer be read, or whose promise lands nothing, is left out, and an
     /// item left with none is dropped: an image file's INLINE bytes are read downloading nothing
-    /// (``DatalessMaterialization/off``), so a dataless one crosses as its file alone, which leaves nothing out.
-    /// Nil when the pasteboard moved on from what was offered, or nothing remains.
+    /// (``DatalessMaterialization/off``, or `contentsOf`), so a dataless one crosses as its file alone, which
+    /// leaves nothing out. Nil when the pasteboard moved on from what was offered, or nothing remains.
     ///
     /// - Returns: the snapshot, and how many of the offer's items it does not carry whole: those the read left a
     ///   file out of, and those it left a representation of out, or dropped.
     ///
-    /// - Parameter contentsOf: reads an image file's INLINE bytes, nil when it reads none.
     /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`, or an
     ///   image file's size would take them there, reading nothing more.
     public func snapshot(

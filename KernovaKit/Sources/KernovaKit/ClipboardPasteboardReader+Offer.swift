@@ -291,8 +291,8 @@ extension ClipboardPasteboardReader {
             let name = url.lastPathComponent
             if values.isDirectory == true {
                 let type = TypeDescriptor(appleUTI: values.contentType?.identifier ?? UTType.folder.identifier)
-                return Resolved(
-                    item: .with(.make(type, .folder, size: sizeOf?(source) ?? 0, name: name)), origins: [.folder(source)])
+                let folder = Representation.make(type, .folder, size: sizeOf?(source) ?? 0, name: name)
+                return Resolved(item: .with(folder), origins: [.folder(source)])
             }
             guard let contentType = values.contentType, let size = values.fileSize else { return nil }
             let type = TypeDescriptor(appleUTI: contentType.identifier)
