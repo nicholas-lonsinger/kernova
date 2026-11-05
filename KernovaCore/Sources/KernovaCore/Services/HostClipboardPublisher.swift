@@ -182,9 +182,7 @@ package final class HostClipboardPublisher {
     /// whose promises it can no longer serve
     /// (``ClipboardPasteboardPublisher/retractWrite(servingOffer:withdrawing:)``).
     func retractWrite(servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal) -> ClipboardRetraction? {
-        guard let retraction = publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) else { return nil }
-        Self.logger.log(.notice, "Retracted stale promised clipboard write from the host pasteboard")
-        return retraction
+        publisher.retractWrite(servingOffer: token, withdrawing: withdrawal)
     }
 
     /// Builds the per-item provider specs to promise on the host pasteboard for

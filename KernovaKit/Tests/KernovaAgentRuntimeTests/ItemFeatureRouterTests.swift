@@ -11,6 +11,7 @@ import KernovaAgentRuntime
 import KernovaAgentSimulation
 import KernovaFileTree
 import KernovaItemTransfer
+import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
 import Testing
@@ -28,7 +29,8 @@ private enum Heard: Sendable, Equatable {
 /// A router whose owners — of `features` — record into `heard`, each serving `content` when pulled.
 private func router<Peer: Sendable>(
     _ features: Set<FeatureID> = ItemFeatureAvailability.offering, heard: Recorder<Heard>,
-    content: ItemContent = .inline(Data("routed".utf8)), takes: @escaping @Sendable (DragTakeEvent) -> Void = { _ in }
+    content: ItemContent = .inline(Data("routed".utf8)), takes: @escaping @Sendable (DragTakeEvent) -> Void = { _ in },
+    logger: KernovaLogger = Fixture.logger
 ) -> ItemFeatureRouter<Peer> {
     func owner(_ feature: FeatureID) -> ItemFeatureOwner<Peer>? {
         guard features.contains(feature) else { return nil }
@@ -48,7 +50,7 @@ private func router<Peer: Sendable>(
                 heard.record(.take(event))
                 takes(event)
             }
-        })
+        }, logger: logger)
 }
 
 @Suite("Item feature router")
@@ -70,6 +72,40 @@ struct ItemFeatureRouterTests {
         ]
         for event in events { router.deliver(event, from: PeerHandle(rawValue: 1)) }
         #expect(heard.elements == events.map { .items($0.feature, $0) })
+    }
+
+    @Test(
+        "Every feature's serve that did not land is logged once, at its level, before its owner hears it; a landed serve or one this side reset is not"
+    )
+    func serveEndsAreLogged() {
+        let heard = Recorder<Heard>()
+        // Each record notes how many ends the owners had heard when it was made.
+        let records = Recorder<(level: KernovaLogLevel, text: String, heard: Int)>()
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") { level, _, _, segments in
+            records.record((level, segments.map(\.text).joined(), heard.elements.count))
+        }
+        let router: ItemFeatureRouter<PeerHandle> = router(heard: heard, logger: logger)
+        let unread = WireError(.readFailed, posixErrno: 5, debugDetail: "the file is not local")
+        let ends: [(FeatureID, ItemServeResult)] = [
+            (.clipboard, .landed),
+            (.clipboard, .closed(.resetLocally(unread))),
+            (.clipboard, .failed(unread)),
+            (.drop, .closed(.resetByPeer(unread))),
+            (.drag, .closed(.resetByPeer(WireError(.cancelled)))),
+            (.clipboard, .closed(.connectionLost)),
+        ]
+        for (feature, result) in ends {
+            router.deliver(.serveEnded(feature, Self.pull, result), from: PeerHandle(rawValue: 1))
+        }
+
+        #expect(records.elements.map(\.level) == [.error, .error, .notice, .warning])
+        let logged: [FeatureID] = [.clipboard, .drop, .drag, .clipboard]
+        for (record, feature) in zip(records.elements, logged) {
+            #expect(record.text.contains("\(feature) pull this side served"), "\(record.text)")
+        }
+        #expect(records.elements[0].text.contains("errno 5"))
+        #expect(records.elements.map(\.heard) == [2, 3, 4, 5])
+        #expect(heard.elements == ends.map { .items($0.0, .serveEnded($0.0, Self.pull, $0.1)) })
     }
 
     @Test("A drag take reaches DRAG's owner, interleaved in order with item events")
@@ -111,7 +147,7 @@ struct ItemFeatureRouterTests {
         let heard = Recorder<Heard>()
         let router: ItemFeatureRouter<PeerHandle> = router([.clipboard, .drag], heard: heard)
         #expect(router.features == [.clipboard, .drag])
-        #expect(ItemFeatureRouter<PeerHandle>().features.isEmpty)
+        #expect(ItemFeatureRouter<PeerHandle>(logger: Fixture.logger).features.isEmpty)
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
         let content = router.content(.drop, pull, SimItems.request(1), SimItems.representation(.inline, size: 1))
         guard case .failure(let error) = content else { Issue.record("content of an unowned feature"); return }

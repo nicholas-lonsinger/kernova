@@ -100,7 +100,14 @@ public protocol ClipboardPromiseServing: AnyObject, Sendable {
     func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data?
 }
 
-/// Which promises of a write a retraction withdraws. What the write holds as data always stays.
+/// Which promises of a write a retraction withdraws. Two rules hold for either, item by item:
+///
+/// - An item marked concealed loses every promise, read or not: once the source can no longer clear it, nothing
+///   else will.
+/// - An item that loses a file-reference type (`public.file-url`) goes whole, what it holds as data with it: its
+///   other types name or picture the file, and alone they paste as a stand-in for it — a name clipping in Finder.
+///
+/// Everything else the write holds as data stays.
 public enum ClipboardWithdrawal: Equatable, Sendable {
     /// Each promised type no reader has had, while what a paste had stays as data: the offer's carriage ended —
     /// passthrough stopped, the link ended, what a copy's files came from ended — and the far side may hold it
@@ -112,13 +119,11 @@ public enum ClipboardWithdrawal: Equatable, Sendable {
 
 /// What withdrawing a write's promises left on the pasteboard.
 public enum ClipboardRetraction: Equatable, Sendable {
-    /// Nothing: the write held nothing but promises it withdrew.
+    /// Nothing: no item kept anything but its concealed marker.
     case cleared
-    /// What the write held as data, and what a paste had of what it promised, written again alone; the rest of
-    /// its promises withdrawn.
-    case keptData
-    /// Everything: a paste had every type the write promised, so all of it is written again as data, and
-    /// nothing was withdrawn.
+    /// Part of the write, written again alone as data: the items and types the withdrawal left.
+    case keptPart
+    /// Everything: the withdrawal left every item and type, all of it written again as data.
     case keptEverything
 }
 
@@ -292,9 +297,8 @@ public final class ClipboardPasteboardPublisher {
     }
 
     /// Withdraws `withdrawal`'s promises of this publisher's most recent write when the pasteboard still holds
-    /// it and it serves the offer `token`: what it wrote as data, and with ``ClipboardWithdrawal/unread`` what a
-    /// paste had of what it promised, is written again alone, and the pasteboard is cleared when nothing of that
-    /// remains. Nil when the write no longer stands there.
+    /// it and it serves the offer `token`, as ``ClipboardWithdrawal`` lays out: what is left is written again
+    /// alone, as data, and the pasteboard is cleared when nothing is. Nil when the write no longer stands there.
     ///
     /// A pasteboard the user has written over since is theirs and is left untouched, as is a write serving
     /// another offer, or none. What a paste had is read back from the pasteboard, which holds each provided type
@@ -305,15 +309,11 @@ public final class ClipboardPasteboardPublisher {
     ) -> ClipboardRetraction? {
         guard let held = standing, held.servingOffer == token, heldChangeCount == pasteboard.changeCount
         else { return nil }
-        let read =
-            withdrawal == .unread ? held.read.data(on: pasteboard, items: held.data.count) : held.data.map { _ in [] }
-        let concealed = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
-        let kept = zip(held.data, read).map { $0 + $1 }.filter { $0.contains { $0.type != concealed } }
+        let (kept, whole) = held.remains(after: withdrawal, on: pasteboard)
         guard !kept.isEmpty else {
             clear()
             return .cleared
         }
-        let withdrewNothing = zip(held.promised, read).allSatisfy { $0.count == $1.count }
         pasteboard.prepareForNewContents(with: .currentHostOnly)
         // What is written again is data alone, which the pasteboard serves itself: nothing holds a record of it.
         endStanding()
@@ -325,7 +325,7 @@ public final class ClipboardPasteboardPublisher {
             return .cleared
         }
         heldChangeCount = pasteboard.changeCount
-        return withdrewNothing ? .keptEverything : .keptData
+        return whole ? .keptEverything : .keptPart
     }
 
     /// Empties the pasteboard, whatever it holds, as this publisher's own write.

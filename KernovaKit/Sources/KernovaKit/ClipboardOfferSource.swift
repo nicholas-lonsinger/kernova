@@ -132,6 +132,11 @@ public final class ClipboardOfferSource {
         leases.contains { $0.holds(url) }
     }
 
+    /// The bytes of the file at `url`, read downloading nothing: nil for a file a File Provider evicted.
+    public static let contentsDownloadingNothing: @Sendable (URL) -> Data? = { url in
+        DatalessMaterialization.off.during { try? Data(contentsOf: url) }
+    }
+
     /// This offer as a snapshot of the pasteboard now, independent of what it holds later: every INLINE
     /// representation's bytes read now and held in memory, each sized by what was read, every FILE and FOLDER
     /// kept as the reference it is, read when pulled, and every file promise called in now, where the source's
@@ -150,9 +155,7 @@ public final class ClipboardOfferSource {
     ///   image file's size would take them there, reading nothing more.
     public func snapshot(
         inlineCeiling: Int, holding lease: ClipboardStagingLease? = nil,
-        contentsOf: @escaping @Sendable (URL) -> Data? = { url in
-            DatalessMaterialization.off.during { try? Data(contentsOf: url) }
-        }
+        contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
     ) async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, leftOut: Int)? {
         var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
         var frozenItems: [OfferedItem] = []

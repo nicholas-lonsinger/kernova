@@ -448,12 +448,25 @@ struct ClipboardCopyTests {
         return source
     }
 
-    @Test("Image files whose bytes read as nothing, their sizes together over the ceiling, cross as their files")
+    @Test(
+        "Copied image files whose bytes read as nothing, their sizes together over the ceiling, cross as their files, nothing left out"
+    )
     func unreadImageBytesCountNothing() async throws {
-        let source = try await imageFilesOffer(["a.png", "b.png"], size: 8)
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let files = try ["a.png", "b.png"].map { name in
+            let file = scratch.url.appendingPathComponent(name)
+            try Data(repeating: 0x50, count: 8).write(to: file)
+            return file
+        }
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setFiles(files))
 
-        let (snapshot, leftOut) = try #require(try await source.snapshot(inlineCeiling: 10, contentsOf: { _ in nil }))
-        #expect(leftOut == 0)
+        // As iCloud Drive's evicted files read downloading nothing: each fits the ceiling alone, the two do not.
+        let outcome = await ClipboardPasteboardReader.readSnapshot(
+            from: pasteboard, ceiling: 10, ledger: ClipboardWriteLedger(), copyingTo: Self.connection, sizeOf: nil,
+            contentsOf: { _ in nil })
+        guard case .snapshot(let snapshot, let lost) = outcome else { throw TestFailure("not a snapshot: \(outcome)") }
+        #expect(lost == 0)
         #expect(snapshot.items.map { $0.representations.map(\.storage) } == [[.file], [.file]])
     }
 
@@ -732,9 +745,10 @@ struct ClipboardCopyTests {
         #expect(later.count == 4)
     }
 
-    /// A concealed passthrough write of one text item through a puller only it holds, on `pasteboard`.
+    /// A passthrough write of one text item, concealed unless `concealed` is false, through a puller only it
+    /// holds, on `pasteboard`.
     private func writeWatched(
-        on pasteboard: FakePasteboard, _ publisher: ClipboardPasteboardPublisher
+        on pasteboard: FakePasteboard, _ publisher: ClipboardPasteboardPublisher, concealed: Bool = true
     ) -> () -> CountingPuller? {
         var item = OfferedItem()
         item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
@@ -744,7 +758,7 @@ struct ClipboardCopyTests {
             watched = puller
             #expect(
                 publisher.publish(
-                    [item], concealed: true, puller: puller,
+                    [item], concealed: concealed, puller: puller,
                     serving: .init(token: Self.writeOffer, connection: Self.connection)))
         }
         return { watched }
@@ -799,18 +813,15 @@ struct ClipboardCopyTests {
         #expect(watched() == nil)
     }
 
-    @Test(
-        "A write's carriage ending keeps what a paste had of it as data, its concealed marker with it, reading it back"
-    )
+    @Test("A write's carriage ending keeps what a paste had of it as data, reading it back")
     func unreadWithdrawalKeepsWhatWasRead() async throws {
         let pasteboard = FakePasteboard()
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        let watched = writeWatched(on: pasteboard, publisher)
+        let watched = writeWatched(on: pasteboard, publisher, concealed: false)
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
         #expect(pasteboard.promisedTypesByItem == [[text]])
         let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
         #expect(await paste.value == Data("a password".utf8))
@@ -818,9 +829,26 @@ struct ClipboardCopyTests {
 
         #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .keptEverything)
         #expect(pasteboard.promisedTypes.isEmpty)
-        #expect(pasteboard.dataByItem == [[text: Data("a password".utf8), marker: Data()]])
+        #expect(pasteboard.dataByItem == [[text: Data("a password".utf8)]])
         // Read back from what the pasteboard holds: no provider fired again.
         #expect(pasteboard.providerInvocations == fires)
+        #expect(watched() == nil)
+    }
+
+    @Test("A concealed write's carriage ending withdraws what a paste had of it too, its marker with it")
+    func unreadWithdrawalOfAConcealedWriteClears() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
+        let watched = writeWatched(on: pasteboard, publisher)
+        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        #expect(await paste.value == Data("a password".utf8))
+
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .cleared)
+        #expect(pasteboard.items.isEmpty)
         #expect(watched() == nil)
     }
 

@@ -60,7 +60,7 @@ struct DropReceiverTests {
                         if held.withLock({ $0 }) { released.wait() }
                         return .success(
                             .tree(path: source + "/" + String(decoding: representation.name, as: UTF8.self)))
-                    }))
+                    }), logger: Fixture.logger)
             harness = HubHarness(
                 policy: SimItems.policy(PolicySnapshot()),
                 items: ItemAdapters(
@@ -74,7 +74,7 @@ struct DropReceiverTests {
             let receiver = DropReceiver(
                 directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger
             ) { names in landed.record(names.map { String(decoding: $0, as: UTF8.self) }) }
-            let peerRouter = ItemFeatureRouter<Void>(drop: receiver.owner)
+            let peerRouter = ItemFeatureRouter<Void>(drop: receiver.owner, logger: Fixture.logger)
             runtime = PeerAgentRuntime(
                 claim: Fixture.peerClaim, state: Fixture.peerState,
                 registry: PeerFeatureRegistry(

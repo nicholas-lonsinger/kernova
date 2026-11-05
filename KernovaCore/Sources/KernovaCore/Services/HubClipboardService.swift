@@ -159,19 +159,15 @@ final class HubClipboardService: ClipboardServicing {
 
     /// Passthrough stopped, and both ends' passthrough offers end with it: the host's offer, which only
     /// passthrough makes, is withdrawn `DISABLED_BY_POLICY`, so the guest retracts its write of it as at a
-    /// link's end; the guest's offer is let go, and the Mac's write of it retracted so, what a paste had of it
-    /// kept as data and the promises no paste had withdrawn. Nothing crosses after that but a command: the guest
+    /// link's end; the guest's offer is let go, and the Mac's write of it retracted so, its promises no paste
+    /// had withdrawn (``ClipboardWithdrawal/unread``). Nothing crosses after that but a command: the guest
     /// offers nothing while passthrough is off.
     func passthroughStopped() {
         exchange.withdrawLocal(.disabledByPolicy)
         guard let remote else { return }
         self.remote = nil
         exchange.release(remote)
-        guard retractHostWrite(remote.token, .unread) != nil else { return }
-        Self.logger.log(
-            .notice,
-            "Retracted the guest's clipboard from the host pasteboard for '\(self.label(), privacy: .public)': passthrough stopped"
-        )
+        logRetraction(retractHostWrite(remote.token, .unread), of: .clipboard, "passthrough stopped")
     }
 
     /// Makes the Mac's copy the host's clipboard and offers it: a new connection is offered only a copy made
@@ -230,15 +226,48 @@ final class HubClipboardService: ClipboardServicing {
     }
 
     /// A copy the guest sent ended with the connection: what the Mac's clipboard holds of it that no paste had
-    /// is retracted, its files being on the guest's disk.
+    /// is retracted, its files being on the guest's disk, and the user told what went.
     private func copyEnded(_ copy: ClipboardRemoteOffer) {
-        guard let retraction = retractHostWrite(copy.token, .unread), retraction != .keptEverything else { return }
-        Self.logger.log(
-            .notice,
-            "Retracted the guest's copied files from the host pasteboard for '\(self.label(), privacy: .public)': the guest's connection ended"
-        )
-        reportRefusal(
-            gesture: .copy, retraction == .keptData ? .disconnectedFilesRetracted : .disconnectedCopyRetracted)
+        switch logRetraction(retractHostWrite(copy.token, .unread), of: .copy, "the guest's connection ended") {
+        case .cleared: reportRefusal(gesture: .copy, .disconnectedCopyRetracted)
+        case .keptPart: reportRefusal(gesture: .copy, .disconnectedFilesRetracted)
+        case .keptEverything, nil: break
+        }
+    }
+
+    /// Which write of the guest's a retraction of the host pasteboard took back.
+    enum Retracted {
+        /// Passthrough's write of the guest's clipboard.
+        case clipboard
+        /// A Copy Guest Clipboard to Mac's write.
+        case copy
+    }
+
+    /// Logs what `retraction` of the write of `what` took back, and why; nothing when it took nothing back.
+    @discardableResult
+    private func logRetraction(
+        _ retraction: ClipboardRetraction?, of what: Retracted, _ why: String
+    ) -> ClipboardRetraction? {
+        if let line = Self.retractionLine(retraction, of: what, vm: label(), why: why) {
+            Self.logger.log(.notice, "\(line, privacy: .public)")
+        }
+        return retraction
+    }
+
+    /// The line saying what `retraction` of the write of `what` for the VM named `vm` took back, and why; nil
+    /// when it took nothing back.
+    static func retractionLine(
+        _ retraction: ClipboardRetraction?, of what: Retracted, vm: String, why: String
+    ) -> String? {
+        let (taken, kept): (String, String)
+        switch (retraction, what) {
+        case (.keptEverything, _), (nil, _): return nil
+        case (.cleared, .clipboard): (taken, kept) = ("the guest's clipboard", "")
+        case (.keptPart, .clipboard): (taken, kept) = ("part of the guest's clipboard", ", the rest kept")
+        case (.cleared, .copy): (taken, kept) = ("the guest's copy", "")
+        case (.keptPart, .copy): (taken, kept) = ("the guest's copied files", ", the rest of the copy kept")
+        }
+        return "Retracted \(taken) from the host pasteboard for '\(vm)'\(kept): \(why)"
     }
 
     /// The guest refused `copy` of the Mac's clipboard, or wrote it without some of it. A copy only naming what
@@ -340,7 +369,7 @@ final class HubClipboardService: ClipboardServicing {
     /// - The guest ended it, its clipboard moving on: every promise is withdrawn, pasted or not.
     /// - A Mac copy replaced it: the guest's clipboard is that copy now.
     /// - The guest stopped passthrough, or the connection left: the guest may hold it still, so what a paste
-    ///   had stays; the next connection carries only its next copy.
+    ///   had stays (``ClipboardWithdrawal/unread``); the next connection carries only its next copy.
     private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         guard self.remote === remote else { return }
         self.remote = nil
@@ -352,11 +381,7 @@ final class HubClipboardService: ClipboardServicing {
         case .passthroughStopped: (why, withdrawal) = ("the guest stopped passthrough", .unread)
         case .byFarSide: (why, withdrawal) = ("the guest's clipboard moved on", .everyPromise)
         }
-        guard retractHostWrite(remote.token, withdrawal) != nil else { return }
-        Self.logger.log(
-            .notice,
-            "Retracted the guest's clipboard from the host pasteboard for '\(self.label(), privacy: .public)': \(why, privacy: .public)"
-        )
+        logRetraction(retractHostWrite(remote.token, withdrawal), of: .clipboard, why)
     }
 
     private func reportRefusal(gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure) {

@@ -69,11 +69,11 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The peer reported a failure of its own; `nil` for a code this build does
     /// not define.
     case peerReported(ClipboardErrorCode?)
-    /// A Copy to Mac still on the host pasteboard was retracted because the guest's connection ended, so nothing
-    /// more of it could be pasted.
+    /// A Copy to Mac still on the host pasteboard was retracted whole because the guest's connection ended, so
+    /// nothing more of it could be pasted.
     case disconnectedCopyRetracted
-    /// The files of a copy still on the host pasteboard were retracted because the guest's connection ended;
-    /// the rest of the copy stays.
+    /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
+    /// the guest's connection ended; the rest of the copy stays.
     case disconnectedFilesRetracted
     /// A paste fired after the session ended with only part of the copied file
     /// set staged, so nothing was served rather than a silent subset.
@@ -139,10 +139,11 @@ public enum ClipboardDropStop: Equatable, Sendable {
 }
 
 extension ClipboardTransferFailure {
-    /// Whether the gesture delivered the rest of what it carried, leaving only this part out.
+    /// Whether the rest of what the gesture carried reached its destination and stays there: only this part is
+    /// missing.
     public var deliveredTheRest: Bool {
         switch self {
-        case .itemsSkipped, .filesLeftOut, .partsGone: true
+        case .itemsSkipped, .filesLeftOut, .partsGone, .disconnectedFilesRetracted: true
         default: false
         }
     }

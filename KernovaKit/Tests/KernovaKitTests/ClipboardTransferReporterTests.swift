@@ -649,5 +649,9 @@ struct ClipboardTransferReporterTests {
         #expect(line(.itemsSkipped(count: 1)) == "copy from 'macOS TEST' was partial: itemsSkipped(count: 1)")
         #expect(line(.partsGone) == "copy from 'macOS TEST' was partial: partsGone")
         #expect(line(.itemsUnreadable) == "copy from 'macOS TEST' failed: itemsUnreadable")
+        // A link's end that took back only part of a copy, and one that took back all of it.
+        #expect(
+            line(.disconnectedFilesRetracted) == "copy from 'macOS TEST' was partial: disconnectedFilesRetracted")
+        #expect(line(.disconnectedCopyRetracted) == "copy from 'macOS TEST' failed: disconnectedCopyRetracted")
     }
 }

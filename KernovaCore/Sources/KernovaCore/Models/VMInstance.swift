@@ -486,12 +486,13 @@ package final class VMInstance {
         self.clipboardTransfers = clipboardTransfers
         let dropService = HubDropService(stagingRoot: ClipboardFileStaging.processRoot, reporter: clipboardTransfers)
         self.dropService = dropService
-        let itemRouter = ItemFeatureRouter<PeerHandle>(clipboard: hubClipboard.owner(), drop: dropService.owner)
+        let itemLogger = KernovaLogger(subsystem: "app.kernova", category: "ItemSource")
+        let itemRouter = ItemFeatureRouter<PeerHandle>(
+            clipboard: hubClipboard.owner(), drop: dropService.owner, logger: itemLogger)
         let items = ItemAdapters(
-            source: ItemSourceAdapter(
-                fileSystem: POSIXTreeFileSystem(),
-                logger: KernovaLogger(subsystem: "app.kernova", category: "ItemSource")
-            ) { itemRouter.content($0, $1, $2, $3) },
+            source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: itemLogger) {
+                itemRouter.content($0, $1, $2, $3)
+            },
             sink: itemSink, features: itemRouter.features)
         agentHub = AgentHub(
             connector: agentConnector

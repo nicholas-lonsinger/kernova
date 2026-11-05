@@ -175,8 +175,10 @@ struct ClipboardPasteboardPublisherTests {
         #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
     }
 
-    @Test("a retraction withdraws a write's promises and keeps its data, clearing only when nothing else remains")
-    func retractionKeepsData() {
+    @Test(
+        "a retraction keeps a write's data, but an item losing its file goes whole, and a concealed one keeps no promise"
+    )
+    func retractionKeepsDataButNotAFilesStandIns() {
         let pasteboard = FakeWritePasteboard()
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
@@ -186,17 +188,20 @@ struct ClipboardPasteboardPublisherTests {
 
         publisher.write(
             [
-                ClipboardPasteboardPublisher.ItemSpec(
-                    data: [(textUTI, Data("text".utf8)), (marker, Data())], types: [fileURL]
-                ) { _ in nil },
-                ClipboardPasteboardPublisher.ItemSpec(data: [(marker, Data())], types: [fileURL]) { _ in nil },
+                // A file's item: its name as data, the file promised.
+                ClipboardPasteboardPublisher.ItemSpec(data: [(textUTI, Data("name".utf8))], types: [fileURL]) { _ in
+                    nil
+                },
+                // Text as data, a richer type promised.
+                ClipboardPasteboardPublisher.ItemSpec(data: [(textUTI, Data("text".utf8))], types: ["public.rtf"]) {
+                    _ in nil
+                },
+                // A concealed item: its marker as data, the text promised.
+                ClipboardPasteboardPublisher.ItemSpec(data: [(marker, Data())], types: [textUTI]) { _ in nil },
             ], source: servingOffer)
-        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == .keptData)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == .keptPart)
         #expect(pasteboard.promisedTypes.isEmpty)
-        #expect(
-            pasteboard.dataByItem == [
-                [NSPasteboard.PasteboardType(textUTI): Data("text".utf8), NSPasteboard.PasteboardType(marker): Data()]
-            ])
+        #expect(pasteboard.dataByItem == [[NSPasteboard.PasteboardType(textUTI): Data("text".utf8)]])
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
         #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
         #expect(registry.countForTesting == 0)

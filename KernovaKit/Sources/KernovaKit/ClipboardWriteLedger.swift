@@ -124,6 +124,29 @@ final class ClipboardStandingWrite {
         }
     }
 
+    /// What of the write stays on `pasteboard`, which holds it, once `withdrawal` withdraws its promises
+    /// (``ClipboardWithdrawal``): each item's types to write again as data, an item that keeps nothing but its
+    /// concealed marker left out; and whether that is all of it, nothing withdrawn.
+    func remains(
+        after withdrawal: ClipboardWithdrawal, on pasteboard: any ClipboardWritePasteboard
+    ) -> (items: [[(type: NSPasteboard.PasteboardType, bytes: Data)]], whole: Bool) {
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
+        let read = read.data(on: pasteboard, items: data.count)
+        var whole = true
+        let items = data.indices.compactMap { item -> [(type: NSPasteboard.PasteboardType, bytes: Data)]? in
+            let concealed = data[item].contains { $0.type == marker }
+            let kept = withdrawal == .unread && !concealed ? read[item] : []
+            let withdrawn = promised[item].filter { type in !kept.contains { $0.type == type } }
+            whole = whole && withdrawn.isEmpty
+            guard !withdrawn.contains(where: { PasteboardTypeIdentity($0.rawValue).isFileReference }) else {
+                return nil
+            }
+            let remaining = data[item] + kept
+            return remaining.contains { $0.type != marker } ? remaining : nil
+        }
+        return (items, whole)
+    }
+
     /// The write no longer stands.
     func end() {
         observation?.cancel()

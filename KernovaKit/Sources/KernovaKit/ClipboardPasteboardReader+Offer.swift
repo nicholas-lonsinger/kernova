@@ -110,14 +110,16 @@ extension ClipboardPasteboardReader {
     /// pulled through it when pulled, while that offer lasts. Any other pasteboard is read as
     /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises called in now into a
     /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does; with no
-    /// `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read.
+    /// `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read; an image
+    /// file's bytes are read through `contentsOf`, and count only when it reads them.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard,
         ceiling: Int = ClipboardPasteLimit.defaultBytes,
         ledger: ClipboardWriteLedger = .shared,
         staging: ClipboardFileStaging? = nil,
         copyingTo destination: ClipboardConnectionID?,
-        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
+        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) },
+        contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
     ) async -> SnapshotOutcome {
         do throws(ClipboardSnapshotTooLarge) {
             for _ in 0..<2 {
@@ -137,7 +139,9 @@ extension ClipboardPasteboardReader {
                     }, sizeOf: sizeOf)
                 if case .nothingOfferable(let lost) = read, lost > 0 { return .unreadable }
                 guard case .offer(let source, let lost) = read else { return .nothing }
-                if let (snapshot, leftOut) = try await source.snapshot(inlineCeiling: ceiling, holding: lease) {
+                if let (snapshot, leftOut) = try await source.snapshot(
+                    inlineCeiling: ceiling, holding: lease, contentsOf: contentsOf)
+                {
                     // `lost` counts the items the read left a file out of, which `leftOut` counts too.
                     return .snapshot(snapshot, lost: lost - source.incompleteItems.count + leftOut)
                 }

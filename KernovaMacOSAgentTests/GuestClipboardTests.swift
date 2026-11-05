@@ -29,6 +29,7 @@ struct GuestClipboardTests {
             var ceilings: [UInt64] = []
             var orders: [ItemPullOrder] = []
             var opened: [ItemPullID] = []
+            var pulls: [(order: ItemPullOrder, id: ItemPullID)] = []
         }
 
         private let calls = Locked(Calls())
@@ -51,6 +52,8 @@ struct GuestClipboardTests {
         var orders: [ItemPullOrder] { calls.withLock(\.orders) }
         /// The id of each pull opened, in order.
         var opened: [ItemPullID] { calls.withLock(\.opened) }
+        /// Each pull opened, with its order.
+        var pulls: [(order: ItemPullOrder, id: ItemPullID)] { calls.withLock(\.pulls) }
 
         func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
             calls.withLock { $0.offers.append(offer) }
@@ -85,6 +88,7 @@ struct GuestClipboardTests {
                     generation: ConnectionGeneration(rawValue: 1),
                     stream: StreamID(rawValue: UInt32(3 + 2 * calls.opened.count)))
                 calls.opened.append(id)
+                calls.pulls.append((order, id))
                 return id
             }
             completion(.success(id))
@@ -418,11 +422,13 @@ struct GuestClipboardTests {
 
     /// Publishes the host's passthrough offer of `item` on `pasteboard` through `clipboard`, over `link`.
     private func receiveOffer(
-        _ item: OfferedItem, _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink
+        _ item: OfferedItem, concealed: Bool = false, _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard,
+        _ link: RecordingLink
     ) async throws {
         clipboard.setLink(link)
         clipboard.exchange.handle(
-            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 1)),
+            .offerReceived(
+                ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: concealed, count: 1)),
             on: link)
         try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
     }
@@ -467,8 +473,10 @@ struct GuestClipboardTests {
         #expect(pasteboard.dataByItem == [[text: pasted]])
     }
 
-    @Test("Turning passthrough off withdraws what no paste in the guest had of the host's offer, keeping the rest")
-    func passthroughOffWithdrawsWhatWasNotPasted() async throws {
+    @Test(
+        "Turning passthrough off withdraws the host's file item whose file no paste in the guest had, its pasted name too"
+    )
+    func passthroughOffWithdrawsAnUnpastedFilesItem() async throws {
         let pasteboard = FakePasteboard()
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let link = RecordingLink(
@@ -484,8 +492,27 @@ struct GuestClipboardTests {
         await drainMainQueue()
 
         passthroughStops(clipboard, link)
-        #expect(pasteboard.promisedTypes.isEmpty)
-        #expect(pasteboard.dataByItem == [[text: pasted]])
+        #expect(pasteboard.items.isEmpty)
+    }
+
+    @Test(
+        "A concealed host copy pasted in the guest goes when passthrough stops, and when the connection leaves",
+        arguments: [true, false])
+    func pastedConcealedCopyGoes(passthroughStopped: Bool) async throws {
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        try await receiveOffer(Self.textItem(), concealed: true, clipboard, pasteboard, link)
+        let password = Data("hunter2".utf8)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .init(ClipboardContent.utf8TextUTI)) }
+        try await landPull(password, clipboard, link)
+        #expect(await paste.value == password)
+        await drainMainQueue()
+        let standing = pasteboard.changeCount
+
+        if passthroughStopped { passthroughStops(clipboard, link) } else { clipboard.setLink(nil) }
+        #expect(pasteboard.changeCount != standing)
+        #expect(pasteboard.items.isEmpty)
     }
 
     @Test("Turning passthrough off with nothing pasted leaves the guest's clipboard empty")
@@ -898,21 +925,28 @@ struct GuestClipboardTests {
         return item
     }
 
-    /// Has the host send `item` as a copy, and lands the text pull it opens with `text`.
+    /// Has the host send `items` as a copy, `concealed` or not, and lands each text pull it opens with `text`.
     private func receiveCopy(
-        _ item: OfferedItem, text: Data, on rig: Rig, _ link: RecordingLink, before landing: () -> Void = {}
+        _ items: OfferedItem..., text: Data, concealed: Bool = false, on rig: Rig, _ link: RecordingLink,
+        before landing: () -> Void = {}
     ) async throws {
-        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
-        try await link.changed.wait { link.opened.count == 1 }
+        let inline = items.flatMap(\.representations).filter { $0.storage == .inline }.count
+        rig.clipboard.exchange.handle(
+            .offerReceived(Self.copyHeader(token: Self.copyToken, count: items.count, concealed: concealed)), on: link)
+        try await link.changed.wait { link.pulls.count == inline }
         landing()
-        let order = try #require(link.orders.first)
-        guard case .staged(let directory, .exactly(let name)) = order.landing else {
-            Issue.record("landing \(order.landing)")
-            return
+        for (order, id) in link.pulls {
+            switch order.landing {
+            case .memory:
+                rig.clipboard.exchange.pullEnded(id, .landed(.inline(text)))
+            case .staged(let directory, .exactly(let name)):
+                try text.write(
+                    to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
+                rig.clipboard.exchange.pullEnded(id, .landed(.named(name)))
+            case .staged:
+                Issue.record("landing \(order.landing)")
+            }
         }
-        try text.write(
-            to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
-        rig.clipboard.exchange.pullEnded(link.opened[0], .landed(.named(name)))
     }
 
     @Test(
@@ -1068,20 +1102,21 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("copied meanwhile".utf8))
     }
 
-    @Test("The connection leaving retracts a host copy's pending files, its text kept")
+    @Test("The connection leaving retracts a host copy's item of an unpasted file whole, its name too; its text kept")
     func hostCopyRetractedWithTheLink() async throws {
         let rig = rig()
         let link = RecordingLink(
-            items: [Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+            items: [Self.textItem(), Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         rig.clipboard.setLink(link)
-        try await receiveCopy(Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
+        try await receiveCopy(Self.textItem(), Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
         try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes == [.fileURL] }
 
         rig.clipboard.setLink(nil)
         try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes.isEmpty }
         #expect(
-            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
-                == Data("from the host".utf8))
+            rig.pasteboard.dataByItem == [
+                [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("from the host".utf8)]
+            ])
         // The rewrite is the agent's own: the poll offers nothing of it.
         rig.clipboard.setOnConsole(true)
         rig.clipboard.checkPasteboard()
@@ -1090,22 +1125,23 @@ struct GuestClipboardTests {
     }
 
     @Test(
-        "The host withdrawing its copy, what its files came from having ended, retracts the copy's files, its text kept"
+        "The host withdrawing its copy, what its files came from having ended, retracts the copy's file items whole, its text kept"
     )
     func hostCopyWithdrawnIsRetracted() async throws {
         let rig = rig()
         let link = RecordingLink(
-            items: [Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+            items: [Self.textItem(), Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         rig.clipboard.setLink(link)
-        try await receiveCopy(Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
+        try await receiveCopy(Self.textItem(), Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
         try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes == [.fileURL] }
 
         rig.clipboard.exchange.handle(
             .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)
         #expect(rig.pasteboard.promisedTypes.isEmpty)
         #expect(
-            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
-                == Data("from the host".utf8))
+            rig.pasteboard.dataByItem == [
+                [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("from the host".utf8)]
+            ])
     }
 
     /// Another connection's offer of a file, which ends when asked to.

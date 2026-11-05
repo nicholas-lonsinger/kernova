@@ -778,7 +778,8 @@ struct HubClipboardServiceTests {
     /// them answered; returns the ask.
     private func copyToMac(
         _ items: OfferedItem..., on probe: AgentHubProbe, into instance: VMInstance, leftOut: Int = 0,
-        declining code: ErrorCode = .clipboardNothingToCopy, before answering: () throws -> Void = {}
+        concealed: Bool = false, declining code: ErrorCode = .clipboardNothingToCopy,
+        before answering: () throws -> Void = {}
     ) async throws -> ItemOffer {
         let offersBefore = offers(probe).count
         instance.copyGuestClipboardToMac()
@@ -798,7 +799,7 @@ struct HubClipboardServiceTests {
             .items(
                 .offerReceived(
                     ItemSetHeaderValue(
-                        feature: .clipboard, token: Self.copyToken, concealed: false, count: items.count,
+                        feature: .clipboard, token: Self.copyToken, concealed: concealed, count: items.count,
                         after: ask.token, copy: .snapshot, leftOut: leftOut))),
             fromConnection: 0)
         try await probe.changed.wait { reads(probe).count == readsBefore + items.count }
@@ -880,31 +881,42 @@ struct HubClipboardServiceTests {
         #expect(try hostPasteboard(instance).promisedTypes.isEmpty)
     }
 
-    @Test("Copy to Mac's pending files are retracted when the guest's connection ends, its text kept, and that is said")
+    /// Has the guest land each of the `count` pulls the hub asked for, each as `content` gives for its order.
+    private func landPulls(
+        _ count: Int, on probe: AgentHubProbe, _ content: (ItemPullOrder) -> Data
+    ) async throws {
+        try await probe.changed.wait { pulls(probe).count == count }
+        for (index, (request, order)) in pulls(probe).enumerated() {
+            try land(content(order), for: order, request: request, stream: UInt32(3 + 2 * index), on: probe)
+        }
+    }
+
+    private static let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+
+    @Test(
+        "Copy to Mac's item of an unpasted file goes whole with the connection, its name too; the rest stays, and that is said"
+    )
     func copyToMacRetractedWithTheLink() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        _ = try await copyToMac(Self.textAndFile, on: probe, into: instance)
-        try await probe.changed.wait { pulls(probe).count == 1 }
-        let (requestID, order) = pulls(probe)[0]
-        try land(Data("the guest's".utf8), for: order, request: requestID, stream: 3, on: probe)
+        _ = try await copyToMac(Self.text, Self.textAndFile, on: probe, into: instance)
+        try await landPulls(2, on: probe) { Data($0.request.item == 0 ? "the guest's".utf8 : "a.bin".utf8) }
         let pasteboard = try hostPasteboard(instance)
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+        #expect(pasteboard.dataByItem.map { $0[Self.textType] } == [Data("the guest's".utf8), Data("a.bin".utf8)])
 
         probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
         try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
-        #expect(
-            pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
-                == Data("the guest's".utf8))
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("the guest's".utf8)]])
         #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
     }
 
-    @Test("Copy to Mac of files alone, its connection ending, clears what it wrote")
+    @Test("Copy to Mac of an unpasted file and its name, its connection ending, clears what it wrote (T2)")
     func copyToMacOfFilesRetractedWithTheLink() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        _ = try await copyToMac(
-            Self.item(Self.representation("public.data", .file, name: "a.bin")), on: probe, into: instance)
+        _ = try await copyToMac(Self.textAndFile, on: probe, into: instance)
+        try await landPulls(1, on: probe) { _ in Data("hosts".utf8) }
         let pasteboard = try hostPasteboard(instance)
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
 
@@ -912,6 +924,76 @@ struct HubClipboardServiceTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
         #expect(pasteboard.dataByItem.isEmpty)
         #expect(try await reported(instance, .copy) == .disconnectedCopyRetracted)
+    }
+
+    @Test("Copy to Mac's item that crossed without its file keeps its data at the connection's end (Photos' ⌘C)")
+    func copyToMacKeepsAnItemThatCarriedNoFile() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        // What a Photos ⌘C crosses as when its file cannot be read: its image types, no file.
+        let photo = Self.item(Self.representation("public.jpeg", .inline), Self.representation("public.tiff", .inline))
+        _ = try await copyToMac(photo, Self.textAndFile, on: probe, into: instance)
+        try await landPulls(3, on: probe) { order in
+            Data((order.request.item == 0 ? "image \(order.request.representation)" : "a.bin").utf8)
+        }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(
+            pasteboard.dataByItem == [
+                [
+                    NSPasteboard.PasteboardType("public.jpeg"): Data("image 0".utf8),
+                    NSPasteboard.PasteboardType("public.tiff"): Data("image 1".utf8),
+                ]
+            ])
+        #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
+    }
+
+    @Test("Copy to Mac's concealed text, written as data, stays at the connection's end; its unpasted file goes")
+    func concealedCopyToMacKeepsItsText() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try await copyToMac(Self.text, Self.textAndFile, on: probe, into: instance, concealed: true)
+        try await landPulls(2, on: probe) { Data($0.request.item == 0 ? "s3cret".utf8 : "a.bin".utf8) }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(
+            pasteboard.dataByItem == [
+                [
+                    Self.textType: Data("s3cret".utf8),
+                    NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI): Data(),
+                ]
+            ])
+        #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
+    }
+
+    @Test("What a retraction of the guest's write took back is logged: all of it, part of it, or nothing, no line")
+    func retractionLines() {
+        func line(_ retraction: ClipboardRetraction?, _ what: HubClipboardService.Retracted) -> String? {
+            HubClipboardService.retractionLine(retraction, of: what, vm: "macOS TEST", why: "passthrough stopped")
+        }
+        #expect(
+            line(.cleared, .clipboard)
+                == "Retracted the guest's clipboard from the host pasteboard for 'macOS TEST': passthrough stopped")
+        #expect(
+            line(.keptPart, .clipboard)
+                == "Retracted part of the guest's clipboard from the host pasteboard for 'macOS TEST', the rest kept: passthrough stopped"
+        )
+        #expect(
+            line(.cleared, .copy)
+                == "Retracted the guest's copy from the host pasteboard for 'macOS TEST': passthrough stopped")
+        #expect(
+            line(.keptPart, .copy)
+                == "Retracted the guest's copied files from the host pasteboard for 'macOS TEST', the rest of the copy kept: passthrough stopped"
+        )
+        #expect(line(.keptEverything, .clipboard) == nil)
+        #expect(line(.keptEverything, .copy) == nil)
+        #expect(line(nil, .clipboard) == nil)
     }
 
     @Test("Copy to Mac from a guest clipboard holding nothing writes nothing and says so")
@@ -1164,6 +1246,120 @@ struct HubClipboardServiceTests {
         // Nothing passthrough wrote remains promised, so nothing of the guest's can be pulled from the Mac.
         #expect(
             instance.hostClipboardPublisher.retractWrite(servingOffer: Self.guestToken, withdrawing: .unread) == nil)
+    }
+
+    /// Records what each retraction of the Mac's write that `instance`'s service asks for left.
+    private func recordingRetractions(_ instance: VMInstance) -> RetractionLog {
+        let log = RetractionLog()
+        let retract = instance.hubClipboard.retractHostWrite
+        instance.hubClipboard.retractHostWrite = { token, withdrawal in
+            let outcome = retract(token, withdrawal)
+            log.outcomes.append(outcome)
+            return outcome
+        }
+        return log
+    }
+
+    /// Has the Mac paste `type` of item `item` of the guest's offer, the guest landing `content` as pull `stream`.
+    private func paste(
+        _ type: NSPasteboard.PasteboardType, item: Int, landing content: Data, stream: UInt32,
+        _ instance: VMInstance, _ probe: AgentHubProbe
+    ) async throws -> Data? {
+        let pasteboard = try hostPasteboard(instance)
+        let before = pulls(probe).count
+        let paste = Task.detached { pasteboard.invokeProvider(forType: type, itemIndex: item) }
+        try await probe.changed.wait { pulls(probe).count == before + 1 }
+        let (request, order) = pulls(probe)[before]
+        try land(content, for: order, request: request, stream: stream, on: probe)
+        return await paste.value
+    }
+
+    /// Has passthrough write the guest's offer of `items` to the Mac, `concealed` or not.
+    private func passthroughWrites(
+        _ items: OfferedItem..., concealed: Bool = false, into instance: VMInstance, on probe: AgentHubProbe
+    ) async throws {
+        let shown = instance.hubClipboard.inboundOfferSeq
+        let readsBefore = reads(probe).count
+        deliverOffer(on: probe, token: Self.guestToken, concealed: concealed, count: items.count)
+        try await probe.changed.wait { reads(probe).count == readsBefore + items.count }
+        for (id, item) in reads(probe).dropFirst(readsBefore) {
+            probe.deliver(.itemReply(id, .read(items[Int(item)])), fromConnection: 0)
+        }
+        try await waitForChange { instance.hubClipboard.inboundOfferSeq == shown + 1 }
+        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
+    }
+
+    @Test(
+        "Turning passthrough off takes back the guest's file item whose file no paste had, its pasted name too; the rest stays"
+    )
+    func passthroughOffTakesBackAnUnpastedFilesItem() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try startPassthrough(instance)
+        let retractions = recordingRetractions(instance)
+        let pasteboard = try hostPasteboard(instance)
+        try await passthroughWrites(Self.text, Self.textAndFile, into: instance, on: probe)
+        #expect(
+            try await paste(Self.textType, item: 0, landing: Data("text".utf8), stream: 3, instance, probe)
+                == Data("text".utf8))
+        #expect(
+            try await paste(Self.textType, item: 1, landing: Data("a.bin".utf8), stream: 5, instance, probe)
+                == Data("a.bin".utf8))
+
+        await stopPassthrough(instance, probe)
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("text".utf8)]])
+        #expect(retractions.outcomes == [.keptPart])
+        // Passthrough made the write: nothing is reported.
+        #expect(instance.clipboardTransferReport == .idle)
+    }
+
+    @Test(
+        "A concealed guest copy pasted on the Mac goes from it when passthrough stops, and when the connection ends",
+        arguments: [true, false])
+    func pastedConcealedCopyGoes(passthroughStops: Bool) async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let coordinator = try startPassthrough(instance)
+        defer { coordinator.stop() }
+        let retractions = recordingRetractions(instance)
+        let pasteboard = try hostPasteboard(instance)
+        try await passthroughWrites(Self.text, concealed: true, into: instance, on: probe)
+        #expect(
+            try await paste(Self.textType, item: 0, landing: Data("hunter2".utf8), stream: 3, instance, probe)
+                == Data("hunter2".utf8))
+
+        if passthroughStops {
+            await stopPassthrough(instance, probe)
+        } else {
+            probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+            try await waitForChange { !instance.hubClipboard.isConnected }
+            await probe.settle()
+        }
+        #expect(pasteboard.items.isEmpty)
+        #expect(retractions.outcomes == [.cleared])
+    }
+
+    @Test("A guest file pasted on the Mac stays when the connection ends: its URL kept, and the file it names")
+    func pastedFileOutlivesTheLink() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let coordinator = try startPassthrough(instance)
+        defer { coordinator.stop() }
+        let retractions = recordingRetractions(instance)
+        let pasteboard = try hostPasteboard(instance)
+        try await passthroughWrites(
+            Self.item(Self.representation("public.data", .file, name: "notes.bin")), into: instance, on: probe)
+        let served = try #require(
+            try await paste(.fileURL, item: 0, landing: Data("notes".utf8), stream: 3, instance, probe))
+        let file = try #require(URL(string: String(decoding: served, as: UTF8.self)))
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await waitForChange { !instance.hubClipboard.isConnected }
+        await probe.settle()
+        #expect(pasteboard.dataByItem == [[.fileURL: served]])
+        #expect(try Data(contentsOf: file) == Data("notes".utf8))
+        #expect(retractions.outcomes == [.keptEverything])
     }
 
     @Test(
@@ -1593,6 +1789,7 @@ struct HubClipboardServiceTests {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         _ = try startPassthrough(instance)
+        let retractions = recordingRetractions(instance)
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         try await receive(Self.text, on: probe, into: instance)
         try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
@@ -1610,5 +1807,14 @@ struct HubClipboardServiceTests {
         #expect(released(Self.guestToken, probe))
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(pasteboard.dataByItem == [[text: pasted]])
+        // Nothing was taken back, so no retraction is logged.
+        #expect(retractions.outcomes == [.keptEverything])
+        #expect(instance.clipboardTransferReport == .idle)
     }
+}
+
+/// What each retraction a test watched left.
+@MainActor
+private final class RetractionLog {
+    var outcomes: [ClipboardRetraction?] = []
 }

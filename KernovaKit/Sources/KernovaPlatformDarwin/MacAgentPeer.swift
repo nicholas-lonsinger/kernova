@@ -63,14 +63,15 @@ public final class MacAgentPeer: Sendable {
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
         let built = role == .sessionPeer ? owners(calls) : ItemFeatureOwners()
         let drop = role == .sessionPeer ? Self.dropReceiver(sink: sink, reveal: revealDrop) : nil
-        let itemRouter = ItemFeatureRouter<Void>(clipboard: built.clipboard, drop: drop?.owner, drag: built.drag)
+        let itemLogger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "ItemSource")
+        let itemRouter = ItemFeatureRouter<Void>(
+            clipboard: built.clipboard, drop: drop?.owner, drag: built.drag, logger: itemLogger)
         let items =
             role == .sessionPeer
             ? ItemAdapters(
-                source: ItemSourceAdapter(
-                    fileSystem: POSIXTreeFileSystem(),
-                    logger: KernovaLogger(subsystem: "app.kernova.macosagent", category: "ItemSource")
-                ) { itemRouter.content($0, $1, $2, $3) },
+                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: itemLogger) {
+                    itemRouter.content($0, $1, $2, $3)
+                },
                 sink: sink, features: itemRouter.features)
             : nil
         runtime = PeerAgentRuntime(
