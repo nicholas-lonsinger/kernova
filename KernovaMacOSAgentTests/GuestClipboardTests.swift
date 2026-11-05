@@ -846,6 +846,86 @@ struct GuestClipboardTests {
         #expect(link.offers.allSatisfy { $0.items.isEmpty })
     }
 
+    @Test(
+        "The host withdrawing its copy, what its files came from having ended, retracts the copy's files, its text kept"
+    )
+    func hostCopyWithdrawnIsRetracted() async throws {
+        let rig = rig()
+        let link = RecordingLink(
+            items: [Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveCopy(Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
+        try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes == [.fileURL] }
+
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)
+        #expect(rig.pasteboard.promisedTypes.isEmpty)
+        #expect(
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("from the host".utf8))
+    }
+
+    /// Another connection's offer of a file, which ends when asked to.
+    private final class EndingPuller: ClipboardItemPulling {
+        let file: URL
+        private let state = Locked<(ended: Bool, handlers: [@Sendable () -> Void])>((false, []))
+        init(file: URL) { self.file = file }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completion(nil)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completion(state.withLock { $0.ended } ? nil : file)
+        }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {
+            let ended = state.withLock { state -> Bool in
+                if !state.ended { state.handlers.append(handler) }
+                return state.ended
+            }
+            if ended { handler() }
+        }
+        func end() {
+            let handlers = state.withLock { state -> [@Sendable () -> Void] in
+                state.ended = true
+                defer { state.handlers = [] }
+                return state.handlers
+            }
+            for handler in handlers { handler() }
+        }
+    }
+
+    @Test(
+        "The host's ask of another connection's write serves its file from that write, and withdraws the copy once it ends"
+    )
+    func askOfAnotherConnectionsWrite() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        let file = try guestFile()
+        var item = OfferedItem()
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: "public.data")
+        representation.storage = .file
+        representation.name = Data("a.bin".utf8)
+        item.representations = [representation]
+        let upstream = EndingPuller(file: file)
+        let other = ClipboardPasteboardPublisher(
+            pasteboard: rig.pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        #expect(
+            other.publish(
+                [item], concealed: false, puller: upstream,
+                serving: .init(token: Data(repeating: 0xB1, count: 16), connection: ClipboardConnectionID())))
+
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { link.releases == [Self.askToken] }
+        let copy = try #require(link.offers.last { $0.copy == .snapshot })
+        #expect(copy.items.first?.representations.map(\.hasReference) == [false])
+        #expect(!link.withdrawals.contains(copy.token))
+
+        upstream.end()
+        try await link.changed.wait { link.withdrawals.contains(copy.token) }
+    }
+
     /// A text item beside a file of `size` bytes.
     private static func textAndFileItem(fileSize size: UInt64) -> OfferedItem {
         var item = textAndFileItem()

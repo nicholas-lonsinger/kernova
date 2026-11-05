@@ -87,24 +87,27 @@ extension ClipboardPasteboardReader {
     /// changed while it was read is read once more.
     ///
     /// A pasteboard holding a write of this process (`ledger`) is never read: it is snapshotted from what the
-    /// write was made from (``ClipboardWriteSource``), what it holds only as the far side's promise named by
-    /// reference. Any other pasteboard is read as
+    /// write was made from (``ClipboardWriteSource``). What it holds only as the far side's promise is named by
+    /// reference when the write serves an offer that arrived on `destination`, the connection the snapshot's copy
+    /// goes over; otherwise it is the write's own source's, what is not a file pulled through it now and each file
+    /// pulled through it when pulled, while that offer lasts. Any other pasteboard is read as
     /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises called in now into a
-    /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does; with
-    /// no `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read.
+    /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does; with no
+    /// `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard,
         ceiling: Int = ClipboardPasteLimit.defaultBytes,
         ledger: ClipboardWriteLedger = .shared,
         staging: ClipboardFileStaging? = nil,
+        copyingTo destination: ClipboardConnectionID?,
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
     ) async -> SnapshotOutcome {
         do throws(ClipboardSnapshotTooLarge) {
             for _ in 0..<2 {
                 if let written = ledger.standingWrite(on: pasteboard) {
                     guard
-                        let (snapshot, lost) = try ClipboardOfferSource.snapshot(
-                            of: written, on: pasteboard, inlineCeiling: ceiling)
+                        let (snapshot, lost) = try await ClipboardOfferSource.snapshot(
+                            of: written, on: pasteboard, copyingTo: destination, inlineCeiling: ceiling)
                     else { return .nothing }
                     return .snapshot(snapshot, lost: lost)
                 }

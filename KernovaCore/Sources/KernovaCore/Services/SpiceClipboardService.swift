@@ -124,7 +124,9 @@ final class SpiceClipboardService: ClipboardServicing {
         var generator = SystemRandomNumberGenerator()
         write(
             GuestCopyContents(
-                token: Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }), items: [item],
+                serving: .init(
+                    token: Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) }),
+                    connection: ClipboardConnectionID()), items: [item],
                 concealed: false, plan: .whole, held: { _, _ in .bytes(bytes) }, puller: NoFilesPuller(),
                 referencesLeftOut: 0, release: {}))
         return .landed
@@ -359,6 +361,8 @@ final class SpiceClipboardService: ClipboardServicing {
 
 /// The puller of a copy with no files, which nothing asks.
 private struct NoFilesPuller: ClipboardItemPulling {
+    func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+
     func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
         completion(nil)
     }

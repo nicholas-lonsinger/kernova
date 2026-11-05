@@ -71,6 +71,10 @@ package protocol ClipboardServicing: AnyObject {
     /// its own; nil when the transport carries no file. Default nil.
     var snapshotStaging: ClipboardFileStaging? { get }
 
+    /// The connection a copy of the Mac's clipboard goes over now, so a snapshot names by reference only what
+    /// the guest at its end can fill; nil for a transport that fills no reference. Default nil.
+    var clipboardConnection: ClipboardConnectionID? { get }
+
     /// Reserves a directory to call a file promise copied on the Mac in to when the guest pulls it, or `nil`
     /// when the transport can't stage one. Default `nil`: a text-only transport never takes a file.
     func reservePromiseDestination() -> URL?
@@ -98,8 +102,8 @@ package enum GuestClipboardCopy {
 /// A copy of the guest's clipboard: its items, every non-file representation landed, and the files still on
 /// the guest's disk, pulled when pasted.
 package struct GuestCopyContents {
-    /// The copy's token, which a retraction of its write names.
-    let token: Data
+    /// The copy, which a retraction of its write names by its token.
+    let serving: ClipboardWriteSource.Serving
     let items: [OfferedItem]
     let concealed: Bool
     /// How the copy is written within the paste ceiling, decided once its INLINE representations landed.
@@ -127,8 +131,8 @@ package enum ClipboardGrabOutcome: Equatable, Sendable {
 /// A guest's live offer as passthrough places it on the host pasteboard: every item promised, its bytes pulled
 /// through `puller` only when a paste asks for them.
 package struct CopyToMacOffer: Sendable {
-    /// The offer's token, which a retraction of its write names.
-    let token: Data
+    /// The offer, which a retraction of its write names by its token.
+    let serving: ClipboardWriteSource.Serving
     let items: [OfferedItem]
     let concealed: Bool
     /// `false` leaves `public.file-url` off every item — the over-cap refusal,
@@ -161,6 +165,7 @@ package enum CopyToMacDropReason: Sendable, Equatable {
 extension ClipboardServicing {
     func reservePromiseDestination() -> URL? { nil }
     var snapshotStaging: ClipboardFileStaging? { nil }
+    var clipboardConnection: ClipboardConnectionID? { nil }
     func hostCopyOffersNothing() {}
     var resolvesCrossings: Bool { false }
     var connectionEpoch: UInt64 { 0 }

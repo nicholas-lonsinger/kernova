@@ -13,6 +13,7 @@ import Testing
 @Suite("Clipboard item bridge", .caseScoped)
 @MainActor
 struct ClipboardItemBridgeTests {
+    private static let connection = ClipboardConnectionID()
     private let scratch = TestScratchDirectory(prefix: "item-bridge")
     private let concealedType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
     private let rtfType = NSPasteboard.PasteboardType("public.rtf")
@@ -21,6 +22,7 @@ struct ClipboardItemBridgeTests {
     /// Serves a destination's pulls from the source's offer, landing a file or
     /// folder as a receiver does: under the offer's name, in a landing folder.
     private final class OfferPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let source: ClipboardOfferSource
         let items: [OfferedItem]
         let landing: URL
@@ -69,6 +71,7 @@ struct ClipboardItemBridgeTests {
     /// Completes every pull with `bytes`, counting the pulls it was asked to
     /// start.
     private final class FixedPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let bytes: Data
         let starts = Locked(0)
 
@@ -87,6 +90,7 @@ struct ClipboardItemBridgeTests {
 
     /// Starts every pull and never completes one, keeping each completion for the test.
     private final class StalledPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let completions = Locked<[@Sendable (Data?) -> Void]>([])
 
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
@@ -152,7 +156,8 @@ struct ClipboardItemBridgeTests {
         #expect(
             publisher.publish(
                 source.items, concealed: source.concealed, servingFileURLs: servingFileURLs,
-                puller: OfferPuller(source: source, landing: landing), servingOffer: Data(repeating: 1, count: 16)))
+                puller: OfferPuller(source: source, landing: landing),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)))
         return Published(destination: destination, registry: registry, landing: landing)
     }
 
@@ -657,7 +662,8 @@ struct ClipboardItemBridgeTests {
         defer { registry.releaseAllForTesting() }
         ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
             .publish(
-                [item], concealed: false, puller: FixedPuller(bytes: bytes), servingOffer: Data(repeating: 1, count: 16)
+                [item], concealed: false, puller: FixedPuller(bytes: bytes),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)
             )
         return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
     }

@@ -2,11 +2,33 @@ import AppKit
 import Foundation
 import KernovaWire
 
+/// One connection of one clipboard exchange, from the exchange's link being set until it is set again: what a
+/// write serving the far side's offer arrived on, so a snapshot names by reference only what the destination of
+/// its copy can fill.
+public struct ClipboardConnectionID: Hashable, Sendable {
+    private let raw = UUID()
+
+    /// A connection no other names.
+    public init() {}
+}
+
 /// What one pasteboard write of this process was made from. A snapshot of the pasteboard holding the write is
 /// built from it, never read back through the write's own promises: a promise fired in-process holds the reading
 /// thread for as long as its pull takes. What the write holds only as the far side's promise is named by
-/// reference to the far side's offer (``servingOffer``), never pulled.
+/// reference to the far side's offer when the snapshot's copy goes over the connection that offer arrived on
+/// (``serving``), and otherwise pulled through the part's puller.
 public struct ClipboardWriteSource: Sendable {
+    /// The far side's offer or copy a write serves, and the connection it arrived on.
+    public struct Serving: Sendable, Equatable {
+        public let token: Data
+        public let connection: ClipboardConnectionID
+
+        public init(token: Data, connection: ClipboardConnectionID) {
+            self.token = token
+            self.connection = connection
+        }
+    }
+
     /// What this side holds already of one representation a write placed.
     public enum Held: Sendable, Equatable {
         case bytes(Data)
@@ -24,28 +46,32 @@ public struct ClipboardWriteSource: Sendable {
         /// What this side holds already of representation `representation` of item `item`; nil for one the write
         /// holds only as the far side's promise.
         public let held: @Sendable (_ item: Int, _ representation: Int) -> Held?
+        /// Pulls what the write holds only as the far side's promise; nil for a part holding everything.
+        public let puller: (any ClipboardItemPulling)?
 
-        /// A part of `items`, its representations held as `held` says and the rest the far side's promise.
+        /// A part of `items`, its representations held as `held` says and the rest the far side's promise,
+        /// pulled through `puller`.
         public init(
-            items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
+            items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, puller: (any ClipboardItemPulling)?,
             held: @escaping @Sendable (_ item: Int, _ representation: Int) -> Held? = { _, _ in nil }
         ) {
             self.items = items
             self.concealed = concealed
             self.servingFileURLs = servingFileURLs
+            self.puller = puller
             self.held = held
         }
     }
 
-    /// The far side's offer or copy the write serves, whose promises back what no part holds; nil for one
-    /// serving nothing of the far side's.
-    public let servingOffer: Data?
+    /// The far side's offer or copy the write serves, whose promises back what no part holds, and the
+    /// connection that made it; nil for one serving nothing of the far side's.
+    public let serving: Serving?
     /// What the write placed, offer by offer.
     public let parts: [Part]
 
-    /// A write of `parts`, serving `servingOffer`.
-    public init(servingOffer: Data?, parts: [Part]) {
-        self.servingOffer = servingOffer
+    /// A write of `parts`, serving `serving`.
+    public init(serving: Serving?, parts: [Part]) {
+        self.serving = serving
         self.parts = parts
     }
 }
@@ -67,7 +93,7 @@ final class ClipboardStandingWrite {
     private(set) var source: ClipboardWriteSource?
 
     init(source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]) {
-        servingOffer = source.servingOffer
+        servingOffer = source.serving?.token
         self.source = source
         self.data = data
     }
@@ -144,7 +170,7 @@ extension ClipboardWriteSource.Part {
         }
         let table = held
         self.init(
-            items: items, concealed: false, servingFileURLs: true,
+            items: items, concealed: false, servingFileURLs: true, puller: nil,
             held: { item, representation in
                 table.indices.contains(item) && table[item].indices.contains(representation)
                     ? table[item][representation] : nil

@@ -187,12 +187,16 @@ struct HubClipboardServiceTests {
         return (offer, pasteboard, coordinator)
     }
 
-    /// The guest's pull of `offer`'s first representation, as the hub's source asks the exchange for it.
-    private func pull(_ offer: ItemOffer, from instance: VMInstance) async -> Result<ItemContent, WireError> {
+    /// The guest's pull of representation `index` of `offer`'s first item, as the hub's source asks the exchange
+    /// for it.
+    private func pull(_ offer: ItemOffer, representation index: Int = 0, from instance: VMInstance) async
+        -> Result<ItemContent, WireError>
+    {
         var request = PullRequest()
         request.token = offer.token
+        request.representation = UInt32(index)
         let exchange = instance.hubClipboard.exchange
-        let representation = offer.items[0].representations[0]
+        let representation = offer.items[0].representations[index]
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
         return await Task.detached { exchange.content(pull, request, representation) }.value
     }
@@ -1425,73 +1429,121 @@ struct HubClipboardServiceTests {
         #expect(await second.value == nil)
     }
 
-    // MARK: - PROBES (review 1819e): each passes while asserting the defect
+    // MARK: - Another VM's write on the Mac
 
-    /// Another VM's puller: answers every pull with `bytes`.
+    /// Another VM's offer: answers every INLINE pull with `bytes` and every file pull with `file`, until it ends.
     private final class OtherVMPuller: ClipboardItemPulling {
         let bytes: Data
-        init(bytes: Data) { self.bytes = bytes }
+        let file: URL?
+        private let state = Locked<(ended: Bool, handlers: [@Sendable () -> Void])>((false, []))
+        init(bytes: Data, file: URL? = nil) {
+            self.bytes = bytes
+            self.file = file
+        }
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
-            completion(bytes)
+            completion(state.withLock { $0.ended } ? nil : bytes)
         }
         func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
-            completion(nil)
+            completion(state.withLock { $0.ended } ? nil : file)
+        }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {
+            let ended = state.withLock { state -> Bool in
+                if !state.ended { state.handlers.append(handler) }
+                return state.ended
+            }
+            if ended { handler() }
+        }
+        /// Ends the offer, as VM A's exchange does releasing its copy once the Mac lets it go.
+        func end() {
+            let handlers = state.withLock { state -> [@Sendable () -> Void] in
+                state.ended = true
+                defer { state.handlers = [] }
+                return state.handlers
+            }
+            for handler in handlers { handler() }
         }
     }
 
-    @Test("PROBE: Copy to Guest of a Mac clipboard holding another VM's passthrough write names that VM's offer")
-    func probeCopyToGuestOfAnotherVMsPassthroughWrite() async throws {
+    @Test("Copy to Guest of another VM's passthrough text sends that text as data, read at the command")
+    func copyToGuestOfAnotherVMsPassthroughWrite() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         let pasteboard = try hostPasteboard(instance)
-        // VM A's host publisher (every publisher of the process records in the shared ledger) writes its guest's
-        // passthrough offer of text to the Mac pasteboard this VM's commands read.
-        let otherVM = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
-        let otherGuestOffer = Data(repeating: 0xA1, count: 16)
+        // VM A's host publisher writes its guest's passthrough offer of text to the Mac pasteboard this VM's
+        // commands read.
+        let otherVM = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         #expect(
             otherVM.publish(
                 [Self.text], concealed: false, puller: OtherVMPuller(bytes: Data("from VM A".utf8)),
-                servingOffer: otherGuestOffer))
+                serving: .init(token: Data(repeating: 0xA1, count: 16), connection: ClipboardConnectionID())))
 
         let copy = try await copyToGuest(instance, probe)
-        // DEFECT: the text crosses to this VM's guest as a reference to VM A's guest's offer, which this VM's
-        // guest never had: it can fill nothing (GuestClipboardTests.hostCopyOfGoneReferencesIsPartsGone), so it
-        // writes nothing and refuses PARTS_GONE.
         let representation = try #require(copy.items.first?.representations.first)
-        #expect(representation.hasReference)
-        #expect(representation.reference.offer == otherGuestOffer)
-        #expect(representation.sizeEstimate == 0)
-        guard case .failure = await pull(copy, from: instance) else {
-            Issue.record("the copy served VM A's text")
-            return
-        }
-        // ...and the host then tells the user the guest no longer has it.
+        #expect(!representation.hasReference)
+        #expect(representation.sizeEstimate == UInt64("from VM A".utf8.count))
+        #expect(pasteboard.providerInvocations == 0)
         try await acceptLastOffer(probe)
-        probe.deliver(
-            .items(.offerEnded(.clipboard, .local, token: copy.token, .resetByPeer(WireError(.clipboardPartsGone)))),
-            fromConnection: 0)
-        #expect(try await reported(instance, .send) == .partsGone)
+        #expect(await pull(copy, from: instance) == .success(.inline(Data("from VM A".utf8))))
     }
 
-    @Test("PROBE: Copy to Guest of another VM's Copy to Mac write names that VM's copy for its file")
-    func probeCopyToGuestOfAnotherVMsCopyWrite() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        let pasteboard = try hostPasteboard(instance)
-        let otherVM = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
-        let otherGuestCopy = Data(repeating: 0xA2, count: 16)
+    /// VM A's Copy Guest Clipboard to Mac of text and `file`, written to `pasteboard` and pulled through
+    /// `puller`, which ends once the Mac lets the write's file go, as A's exchange releases its copy then.
+    private func writeAnotherVMsCopy(of file: URL, on pasteboard: FakePasteboard) -> OtherVMPuller {
+        let otherVM = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        let puller = OtherVMPuller(bytes: Data(), file: file)
         let (written, promised) = otherVM.publishCopy(
             [Self.textAndFile], concealed: false, servingFileURLs: true,
             held: { _, representation in representation == 0 ? .bytes(Data("VM A's text".utf8)) : nil },
-            puller: OtherVMPuller(bytes: Data()), servingOffer: otherGuestCopy, onReleased: {})
+            puller: puller,
+            serving: .init(token: Data(repeating: 0xA2, count: 16), connection: ClipboardConnectionID()),
+            onReleased: { puller.end() })
         #expect(written && promised)
+        return puller
+    }
+
+    private func anotherVMsFile() throws -> URL {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("a.bin")
+        try Data("VM A's file".utf8).write(to: file)
+        return file
+    }
+
+    @Test("Copy to Guest of another VM's copy sends its text as data and serves its file from that VM's copy")
+    func copyToGuestOfAnotherVMsCopyWrite() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let file = try anotherVMsFile()
+        _ = writeAnotherVMsCopy(of: file, on: try hostPasteboard(instance))
 
         let copy = try await copyToGuest(instance, probe)
         let representations = try #require(copy.items.first?.representations)
-        #expect(!representations[0].hasReference)
-        // DEFECT: the file is named by reference to VM A's guest's copy; this VM's guest leaves it out.
-        #expect(representations[1].storage == .file)
-        #expect(representations[1].reference.offer == otherGuestCopy)
+        #expect(representations.map(\.hasReference) == [false, false])
+        #expect(representations.map(\.storage) == [.inline, .file])
+        try await acceptLastOffer(probe)
+        #expect(await pull(copy, from: instance) == .success(.inline(Data("VM A's text".utf8))))
+        // The guest's paste of the file gets VM A's.
+        #expect(await pull(copy, representation: 1, from: instance) == .success(.tree(path: file.path)))
+    }
+
+    @Test("Another VM's copy ending, the Mac having moved on, withdraws this VM's copy of it, so the guest retracts it")
+    func anotherVMsCopyEndingWithdrawsTheCopy() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try hostPasteboard(instance)
+        _ = writeAnotherVMsCopy(of: try anotherVMsFile(), on: pasteboard)
+        let copy = try await copyToGuest(instance, probe)
+        try await acceptLastOffer(probe)
+        #expect(!withdrawn(copy.token, probe))
+
+        // A new copy on the Mac replaces VM A's write, and VM A's copy ends.
+        #expect(pasteboard.setString("copied since", forType: .string))
+        try await probe.changed.wait { withdrawn(copy.token, probe) }
+        guard case .failure = await pull(copy, representation: 1, from: instance) else {
+            Issue.record("the copy's file was served after its upstream ended")
+            return
+        }
     }
 
     @Test("A clear of the guest's clipboard retracts the Mac's write of it, after a paste had every promised type too")

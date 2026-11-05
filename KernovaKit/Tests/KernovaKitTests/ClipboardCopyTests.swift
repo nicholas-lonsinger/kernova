@@ -12,13 +12,14 @@ import Testing
 @Suite("Clipboard copies", .caseScoped)
 @MainActor
 struct ClipboardCopyTests {
+    private static let connection = ClipboardConnectionID()
     private let scratch = TestScratchDirectory(prefix: "clipboard-copy")
     private let stagingRoot = TestStagingRoot()
 
     private func snapshot(_ pasteboard: FakePasteboard) async throws -> ClipboardOfferSource {
         guard
             case .snapshot(let snapshot, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         return snapshot
     }
@@ -60,7 +61,10 @@ struct ClipboardCopyTests {
     @Test("An empty or transient pasteboard has nothing to snapshot")
     func nothingToSnapshot() async {
         let pasteboard = FakePasteboard()
-        guard case .nothing = await ClipboardPasteboardReader.readSnapshot(from: pasteboard, sizeOf: nil) else {
+        guard
+            case .nothing = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+        else {
             Issue.record("an empty pasteboard gave a snapshot")
             return
         }
@@ -68,7 +72,10 @@ struct ClipboardCopyTests {
             (.string, Data("a password".utf8)),
             (NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI), Data()),
         ])
-        guard case .nothing = await ClipboardPasteboardReader.readSnapshot(from: pasteboard, sizeOf: nil) else {
+        guard
+            case .nothing = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+        else {
             Issue.record("a transient copy gave a snapshot")
             return
         }
@@ -78,6 +85,7 @@ struct ClipboardCopyTests {
 
     /// Answers every file pull with `url`.
     private final class FilePuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let url: URL?
         init(url: URL?) { self.url = url }
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
@@ -115,7 +123,8 @@ struct ClipboardCopyTests {
         let (written, promised) = publisher.publishCopy(
             [item], concealed: false, servingFileURLs: true,
             held: { _, representation in representation == 0 ? .bytes(Data("text".utf8)) : nil },
-            puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")), servingOffer: Data(repeating: 1, count: 16),
+            puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+            serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
             onReleased: {
                 wasReleased = true
                 released.notify()
@@ -141,7 +150,8 @@ struct ClipboardCopyTests {
 
         let (written, promised) = publisher.publishCopy(
             [item], concealed: true, servingFileURLs: true, held: { _, _ in .bytes(Data("hunter2".utf8)) },
-            puller: FilePuller(url: nil), servingOffer: Data(repeating: 1, count: 16), onReleased: {})
+            puller: FilePuller(url: nil),
+            serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection), onReleased: {})
         #expect(written && !promised)
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(
@@ -154,6 +164,7 @@ struct ClipboardCopyTests {
 
     /// Answers each INLINE pull with `bytes` and each file pull with `url`, counting the pulls.
     private final class CountingPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let bytes: Data
         let url: URL?
         private let pulled = Locked<[Int]>([])
@@ -186,11 +197,13 @@ struct ClipboardCopyTests {
         item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
         let puller = CountingPuller(bytes: Data("the far side's".utf8))
         let offer = Data(repeating: 1, count: 16)
-        #expect(publisher.publish([item], concealed: false, puller: puller, servingOffer: offer))
+        #expect(
+            publisher.publish(
+                [item], concealed: false, puller: puller, serving: .init(token: offer, connection: Self.connection)))
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, sizeOf: nil)
+                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
         #expect(puller.pulls.isEmpty)
@@ -223,11 +236,11 @@ struct ClipboardCopyTests {
         _ = publisher.publishCopy(
             [item], concealed: false, servingFileURLs: true,
             held: { _, representation in representation == 0 ? .bytes(Data("text".utf8)) : nil }, puller: puller,
-            servingOffer: copy, onReleased: {})
+            serving: .init(token: copy, connection: Self.connection), onReleased: {})
 
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, sizeOf: nil)
+                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(puller.pulls.isEmpty)
         #expect(pasteboard.providerInvocations == 0)
@@ -240,6 +253,98 @@ struct ClipboardCopyTests {
         #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("text".utf8)))
     }
 
+    /// Another connection's offer: answers each INLINE pull with `bytes` and each file pull with `url` until it
+    /// ends, then nothing.
+    private final class UpstreamPuller: ClipboardItemPulling {
+        let bytes: Data
+        let url: URL
+        private let state = Locked<(ended: Bool, handlers: [@Sendable () -> Void], filePulls: Int)>((false, [], 0))
+        init(bytes: Data, url: URL) {
+            self.bytes = bytes
+            self.url = url
+        }
+        var filePulls: Int { state.withLock { $0.filePulls } }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completion(state.withLock { $0.ended } ? nil : bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            let ended = state.withLock { state -> Bool in
+                state.filePulls += 1
+                return state.ended
+            }
+            completion(ended ? nil : url)
+        }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {
+            let ended = state.withLock { state -> Bool in
+                if !state.ended { state.handlers.append(handler) }
+                return state.ended
+            }
+            if ended { handler() }
+        }
+        func end() {
+            let handlers = state.withLock { state -> [@Sendable () -> Void] in
+                state.ended = true
+                defer { state.handlers = [] }
+                return state.handlers
+            }
+            for handler in handlers { handler() }
+        }
+    }
+
+    @Test(
+        "A snapshot of another connection's write pulls its text now and serves its file from that write's source, while it lasts"
+    )
+    func snapshotOfAnotherConnectionsWrite() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("a.bin")
+        try Data("upstream file".utf8).write(to: file)
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [
+            Self.representation(ClipboardContent.utf8TextUTI, .inline),
+            Self.representation("public.data", .file, name: "a.bin"),
+        ]
+        let upstream = UpstreamPuller(bytes: Data("upstream text".utf8), url: file)
+        #expect(
+            publisher.publish(
+                [item], concealed: false, puller: upstream,
+                serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID())))
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 0)
+        #expect(pasteboard.providerInvocations == 0)
+        let representations = try #require(source.items.first?.representations)
+        #expect(representations.map(\.hasReference) == [false, false])
+        #expect(representations.map(\.storage) == [.inline, .file])
+        #expect(representations[0].sizeEstimate == UInt64("upstream text".utf8.count))
+        #expect(upstream.filePulls == 0)
+
+        // The text is the snapshot's; the file is pulled from upstream only when pulled.
+        pasteboard.setString("copied since", forType: .string)
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+        #expect(try await source.serve(item: 0, representation: 1) == .file(file))
+        #expect(upstream.filePulls == 1)
+
+        // The upstream offer ends: the snapshot says so, and its file is served no more.
+        let ended = AsyncGate()
+        let heard = Locked(false)
+        source.whenUpstreamEnds {
+            heard.withLock { $0 = true }
+            ended.notify()
+        }
+        upstream.end()
+        try await ended.wait { heard.withLock { $0 } }
+        await #expect(throws: ClipboardServeError.unavailable) { try await source.serve(item: 0, representation: 1) }
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+    }
+
     // MARK: - Bounds and independence
 
     @Test("A snapshot whose INLINE bytes come to more than the ceiling is too large, read no further")
@@ -248,7 +353,7 @@ struct ClipboardCopyTests {
         pasteboard.setItem([(.string, Data("text".utf8)), (.rtf, Data("{\\rtf1 rich}".utf8))])
         guard
             case .tooLarge(let limitBytes) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ceiling: 3, sizeOf: nil)
+                from: pasteboard, ceiling: 3, copyingTo: Self.connection, sizeOf: nil)
         else {
             Issue.record("a snapshot over the ceiling was taken")
             return
@@ -268,10 +373,11 @@ struct ClipboardCopyTests {
         item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
         _ = publisher.publishCopy(
             [item], concealed: false, servingFileURLs: true, held: { _, _ in .bytes(Data("text".utf8)) },
-            puller: CountingPuller(bytes: Data()), servingOffer: Data(repeating: 1, count: 16), onReleased: {})
+            puller: CountingPuller(bytes: Data()),
+            serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection), onReleased: {})
         guard
             case .tooLarge = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ceiling: 3, ledger: ledger, sizeOf: nil)
+                from: pasteboard, ceiling: 3, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
         else {
             Issue.record("a snapshot over the ceiling was taken")
             return
@@ -287,7 +393,8 @@ struct ClipboardCopyTests {
         pasteboard.setFilePromise(receiver)
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root), sizeOf: nil)
+                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root), copyingTo: Self.connection,
+                sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(receiver.callIns == 1)
         let kept = try #require(source.items.first?.representations.first)
@@ -313,7 +420,7 @@ struct ClipboardCopyTests {
                 FakeFilePromiseReceiver(name: name, fileType: "public.png", contents: .file(Data(name.utf8))))
             guard
                 case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                    from: pasteboard, staging: staging, sizeOf: nil),
+                    from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil),
                 case .file(let url) = try await source.serve(item: 0, representation: 0)
             else { throw TestFailure("no snapshot of \(name)") }
             return (source, url)
@@ -339,7 +446,10 @@ struct ClipboardCopyTests {
         do {
             let puller = CountingPuller(bytes: Data("a password".utf8))
             watched = puller
-            #expect(publisher.publish([item], concealed: true, puller: puller, servingOffer: Self.writeOffer))
+            #expect(
+                publisher.publish(
+                    [item], concealed: true, puller: puller,
+                    serving: .init(token: Self.writeOffer, connection: Self.connection)))
         }
         return { watched }
     }
@@ -406,7 +516,8 @@ struct ClipboardCopyTests {
             watched = puller
             let (written, promised) = publisher.publishCopy(
                 [item], concealed: true, servingFileURLs: true, held: { _, _ in .bytes(Data("hunter2".utf8)) },
-                puller: puller, servingOffer: Data(repeating: 1, count: 16), onReleased: {})
+                puller: puller, serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
+                onReleased: {})
             #expect(written && !promised)
         }
         #expect(watched == nil)
@@ -414,7 +525,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, sizeOf: nil)
+                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(source.concealed)
         #expect(source.items.map { $0.representations.compactMap(\.type.appleUTI) } == [[ClipboardContent.utf8TextUTI]])

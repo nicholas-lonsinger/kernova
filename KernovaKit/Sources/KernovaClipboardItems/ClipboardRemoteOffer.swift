@@ -24,6 +24,10 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     public let concealed: Bool
     /// The items, in the order the offer sent them.
     public let items: [OfferedItem]
+    /// The connection the offer arrived on.
+    public let connection: ClipboardConnectionID
+    /// The offer as a write of it serves it.
+    public var serving: ClipboardWriteSource.Serving { .init(token: token, connection: connection) }
 
     private let link: any ClipboardItemLink
     private let staging: ClipboardFileStaging
@@ -111,11 +115,14 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var nextAttempt: UInt64 = 0
         /// No more pulls: released, or the far side ended the offer.
         var closed = false
+        /// Hear the offer close.
+        var endHandlers: [@Sendable () -> Void] = []
     }
 
     init(
         header: ItemSetHeaderValue, items: [OfferedItem], link: any ClipboardItemLink,
-        staging: ClipboardFileStaging, generation: UInt64, ceiling: @escaping @Sendable () -> UInt64,
+        connection: ClipboardConnectionID, staging: ClipboardFileStaging, generation: UInt64,
+        ceiling: @escaping @Sendable () -> UInt64,
         registry: ClipboardPullRegistry, logger: KernovaLogger, landed: @escaping @Sendable () -> Void,
         failed: @escaping @Sendable (WireError) -> Void
     ) {
@@ -123,6 +130,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         concealed = header.concealed
         self.items = items
         self.link = link
+        self.connection = connection
         self.staging = staging
         self.generation = generation
         self.ceiling = ceiling
@@ -143,6 +151,16 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// charged to the offer's budget.
     public func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
         ask(Key(item: item, representation: representation), ceiling: nil) { completion($0?.url) }
+    }
+
+    /// Runs `handler` once the offer closes — released, ended by the far side, or its connection gone — at once
+    /// when it has.
+    public func whenEnded(_ handler: @escaping @Sendable () -> Void) {
+        let closed = state.withLock { state -> Bool in
+            if !state.closed { state.endHandlers.append(handler) }
+            return state.closed
+        }
+        if closed { handler() }
     }
 
     /// Pulls every kept INLINE representation now, all at once, and waits for each: nil once all landed, or
@@ -241,14 +259,16 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// Ends the offer here: what landed stays servable, nothing more is pulled, every pull in flight is
     /// cancelled, and everyone waiting on one hears nil now.
     func close() {
-        let (ids, asks) = state.withLock { state -> ([ItemPullID], [Ask]) in
+        let (ids, asks, ended) = state.withLock { state -> ([ItemPullID], [Ask], [@Sendable () -> Void]) in
             state.closed = true
             let pulling = state.pulling.values
             state.pulling = [:]
-            return (pulling.compactMap(\.id), pulling.flatMap(\.asks))
+            defer { state.endHandlers = [] }
+            return (pulling.compactMap(\.id), pulling.flatMap(\.asks), state.endHandlers)
         }
         for id in ids { link.cancelPull(id) }
         for ask in asks { ask.completion(nil) }
+        for handler in ended { handler() }
     }
 
     /// Ends the offer here and tells the far side, over the connection it arrived on, that this side pulls

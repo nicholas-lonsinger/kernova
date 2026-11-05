@@ -7,8 +7,8 @@ import KernovaKit
 /// connection ends. A destination that changed after the command is left as it is. Every outcome short of
 /// that goes to the VM's transfer report, which the status item shows.
 extension VMInstance {
-    /// Copies the Mac's clipboard as it stands now to the guest's. What the Mac holds only as the guest's
-    /// promise goes by reference, which the guest fills from its own offer.
+    /// Copies the Mac's clipboard as it stands now to the guest's. What the Mac holds only as this guest's
+    /// promise goes by reference, which the guest fills from its own offer; another VM's is pulled now.
     package func copyMacClipboardToGuest() {
         guard let service = clipboardService, service.isConnected, begin(.copyMacClipboardToGuest) else { return }
         let pasteboard = hostClipboardPublisher.pasteboard
@@ -18,7 +18,7 @@ extension VMInstance {
             let outcome = await ClipboardPasteboardReader.readSnapshot(
                 from: pasteboard,
                 ceiling: self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes,
-                staging: service?.snapshotStaging)
+                staging: service?.snapshotStaging, copyingTo: service?.clipboardConnection)
             guard let self, let service else { return }
             switch outcome {
             case .nothing:

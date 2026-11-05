@@ -132,10 +132,11 @@ package final class HostClipboardPublisher {
         }
 
         var parts = offers.map {
-            ClipboardWriteSource.Part(items: $0.items, concealed: $0.concealed, servingFileURLs: $0.servingFileURLs)
+            ClipboardWriteSource.Part(
+                items: $0.items, concealed: $0.concealed, servingFileURLs: $0.servingFileURLs, puller: $0.puller)
         }
         if !resolvedReps.isEmpty { parts.insert(.init(holding: resolvedReps), at: 0) }
-        guard publisher.write(specs, source: ClipboardWriteSource(servingOffer: offers.first?.token, parts: parts))
+        guard publisher.write(specs, source: ClipboardWriteSource(serving: offers.first?.serving, parts: parts))
         else {
             Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
@@ -155,7 +156,7 @@ package final class HostClipboardPublisher {
     func writeCopy(_ contents: GuestCopyContents, servingFileURLs: Bool) -> Bool {
         let (written, promised) = publisher.publishCopy(
             contents.items, concealed: contents.concealed, servingFileURLs: servingFileURLs,
-            held: contents.held, puller: contents.puller, servingOffer: contents.token,
+            held: contents.held, puller: contents.puller, serving: contents.serving,
             onReleased: contents.release)
         if !written || !promised { contents.release() }
         Self.logger.log(

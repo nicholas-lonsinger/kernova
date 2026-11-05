@@ -22,7 +22,8 @@ import KernovaWire
 ///   receiver holds each copy it received until its end releases it. A copy that arrives while an earlier one is
 ///   still landing supersedes it: the earlier one is refused there and then, and never written
 ///   (``land(_:then:)``). What a copy names of the receiver's own offers by reference
-///   (`Representation.reference`) is filled from those offers as they stood when it arrived, never pulled.
+///   (`Representation.reference`) is filled from those offers as they stood when it arrived, never pulled. A copy
+///   this side sent whose files are served from another connection's offer is withdrawn once that offer ends.
 /// - A connection's leaving ends every offer and copy it carried: what an end wrote of the far side's is the
 ///   end's to retract, since nothing more of it can be pulled.
 ///
@@ -174,6 +175,10 @@ public final class ClipboardItemExchange {
     /// Whether a connection can carry the clipboard now.
     public var isLinked: Bool { link != nil }
 
+    /// The connection this exchange runs over now, renewed each time its link is set: what the far side's offers
+    /// arriving now arrived on, and what a snapshot sent as a copy now goes over.
+    public private(set) var connection = ClipboardConnectionID()
+
     // MARK: The connection
 
     /// Runs over `link` from now on, or over nothing; this sends nothing. Every offer and copy the connection
@@ -182,6 +187,7 @@ public final class ClipboardItemExchange {
     /// connection is offered is the end's to read from its pasteboard then.
     public func setLink(_ link: (any ClipboardItemLink)?) {
         self.link = link
+        connection = ClipboardConnectionID()
         opening = nil
         localToken = nil
         localSource = nil
@@ -337,7 +343,16 @@ public final class ClipboardItemExchange {
             guard !wasOpened, let self, let source = self.sentCopies.removeValue(forKey: token) else { return }
             self.onCopyRefused?(source, WireError(.cancelled, debugDetail: "the copy was not opened"))
         }
+        source.whenUpstreamEnds { [weak self] in self?.withdrawCopy(token) }
         return true
+    }
+
+    /// Ends this side's copy `token`, if the far side still holds it: an offer a file of it is served from
+    /// ended, so the far side's write of it is owed a retraction, as at a link's end.
+    private func withdrawCopy(_ token: Data) {
+        guard sentCopies.removeValue(forKey: token) != nil else { return }
+        logger.log(.notice, "What a clipboard copy's files were served from ended: the copy is withdrawn")
+        link?.withdrawOffer(token)
     }
 
     /// The host: asks the guest for a snapshot of its clipboard as it stands now; `answer` hears the guest's
@@ -739,7 +754,8 @@ public final class ClipboardItemExchange {
         nextGeneration += 1
         let ceiling = pasteCeiling
         return ClipboardRemoteOffer(
-            header: header, items: items, link: link, staging: staging, generation: generation,
+            header: header, items: items, link: link, connection: connection, staging: staging,
+            generation: generation,
             ceiling: { UInt64(clamping: max(ceiling(), 0)) }, registry: pulls, logger: logger,
             landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } },
             failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } })

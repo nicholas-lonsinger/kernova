@@ -787,7 +787,8 @@ struct ClipboardPassthroughCoordinatorTests {
             [
                 .offer(
                     CopyToMacOffer(
-                        token: Data(repeating: 9, count: 16), items: items, concealed: false, servingFileURLs: true,
+                        serving: .init(token: Data(repeating: 9, count: 16), connection: ClipboardConnectionID()),
+                        items: items, concealed: false, servingFileURLs: true,
                         puller: puller))
             ]
         }
@@ -800,6 +801,8 @@ struct ClipboardPassthroughCoordinatorTests {
 
     /// Answers every inline pull with the same bytes, and counts every pull.
     final class CountingPuller: ClipboardItemPulling, Sendable {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+
         private let pulls = Mutex(0)
         var pullCount: Int { pulls.withLock { $0 } }
 

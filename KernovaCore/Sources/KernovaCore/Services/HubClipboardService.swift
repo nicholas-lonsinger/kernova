@@ -199,6 +199,8 @@ final class HubClipboardService: ClipboardServicing {
 
     var resolvesCrossings: Bool { true }
 
+    var clipboardConnection: ClipboardConnectionID? { exchange.connection }
+
     /// The mark the connection now up returned to, once: what any later read gets is nil.
     func takeLinkLossMark() -> Int? {
         defer { linkLossMark = nil }
@@ -241,7 +243,7 @@ final class HubClipboardService: ClipboardServicing {
             let landing = await exchange.land(copy) { leftOut in
                 write(
                     GuestCopyContents(
-                        token: copy.token, items: copy.items, concealed: copy.concealed,
+                        serving: copy.serving, items: copy.items, concealed: copy.concealed,
                         plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
                         held: { copy.held(item: $0, representation: $1) }, puller: copy,
                         referencesLeftOut: leftOut, release: { exchange.releaseCopy(copy) }))
@@ -336,7 +338,7 @@ final class HubClipboardService: ClipboardServicing {
             items.append(
                 .offer(
                     CopyToMacOffer(
-                        token: remote.token, items: remote.items, concealed: remote.concealed,
+                        serving: remote.serving, items: remote.items, concealed: remote.concealed,
                         servingFileURLs: servingFileURLs, puller: remote)))
         }
         return items

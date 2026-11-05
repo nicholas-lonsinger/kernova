@@ -339,7 +339,7 @@ struct SpiceClipboardServiceTests {
     private func macSnapshot(_ pasteboard: FakePasteboard) async throws -> ClipboardOfferSource {
         guard
             case .snapshot(let snapshot, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, copyingTo: nil, sizeOf: nil)
         else {
             Issue.record("the Mac's clipboard gave no snapshot")
             throw CancellationError()
@@ -376,7 +376,7 @@ struct SpiceClipboardServiceTests {
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
-    /// Another VM's puller: answers every pull with `bytes`.
+    /// Another VM's offer: answers every pull with `bytes`, and never ends.
     private final class OtherVMPuller: ClipboardItemPulling {
         let bytes: Data
         init(bytes: Data) { self.bytes = bytes }
@@ -386,16 +386,18 @@ struct SpiceClipboardServiceTests {
         func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
             completion(nil)
         }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
     }
 
-    @Test("PROBE (review 1819e): Copy to Guest of another VM's passthrough text grabs the guest's clipboard and answers it empty")
-    func probeCopyToGuestOfAnotherVMsPassthroughText() async throws {
+    @Test("Copy to Guest of another VM's passthrough text grabs for that text, read at the command")
+    func copyToGuestOfAnotherVMsPassthroughText() async throws {
         let (service, inputPipe, _) = makeService()
         await connect(service, byDemand: true)
         drainPipe(inputPipe)
         let pasteboard = FakePasteboard()
         // A macOS VM's host publisher writes its guest's passthrough text, promised, to the Mac pasteboard.
-        let otherVM = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        let otherVM = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         var text = Representation()
         text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
         text.storage = .inline
@@ -404,15 +406,14 @@ struct SpiceClipboardServiceTests {
         #expect(
             otherVM.publish(
                 [item], concealed: false, puller: OtherVMPuller(bytes: Data("from VM A".utf8)),
-                servingOffer: Data(repeating: 0xA1, count: 16)))
+                serving: .init(token: Data(repeating: 0xA1, count: 16), connection: ClipboardConnectionID())))
 
         let snapshot = try await macSnapshot(pasteboard)
-        // DEFECT: the grab is made, replacing the Linux guest's clipboard, and the guest's request is answered
-        // with nothing: the snapshot holds the text only as a reference to VM A's guest's offer.
+        #expect(pasteboard.providerInvocations == 0)
         #expect(service.copyMacClipboardToGuest(snapshot) == nil)
         #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
         await service.handleIncomingData(textRequest)
-        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data()])
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("from VM A".utf8)])
     }
 
     @Test("Copy to Mac takes the text the guest's agent last sent, as data; nothing before it sends any")

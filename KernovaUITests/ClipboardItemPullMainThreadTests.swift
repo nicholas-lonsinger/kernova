@@ -15,6 +15,8 @@ struct ClipboardItemPullMainThreadTests {
     /// Completes each pull from a block performed on the main run loop, which
     /// only a turning loop runs.
     private final class RunLoopPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
             RunLoop.main.perform { completion(Data("live".utf8)) }
         }

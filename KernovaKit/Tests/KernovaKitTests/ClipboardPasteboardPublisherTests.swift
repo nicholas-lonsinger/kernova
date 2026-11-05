@@ -12,9 +12,14 @@ import Testing
 @Suite("ClipboardPasteboardPublisher", .caseScoped)
 @MainActor
 struct ClipboardPasteboardPublisherTests {
+    private static let connection = ClipboardConnectionID()
     private let textUTI = ClipboardContent.utf8TextUTI
     private let offer = Data(repeating: 1, count: 16)
     private let otherOffer = Data(repeating: 2, count: 16)
+    /// A write serving `offer`.
+    private var servingOffer: ClipboardWriteSource {
+        ClipboardWriteSource(serving: .init(token: offer, connection: Self.connection), parts: [])
+    }
 
     private func makeSpec(_ uti: String, bytes: Data) -> ClipboardPasteboardPublisher.ItemSpec {
         ClipboardPasteboardPublisher.ItemSpec(types: [uti]) { _ in bytes }
@@ -30,8 +35,8 @@ struct ClipboardPasteboardPublisherTests {
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry)
 
-        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: .init(servingOffer: offer, parts: []))
-        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(servingOffer: nil, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer)
+        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(serving: nil, parts: []))
 
         #expect(pasteboard.prepareCount == 2)
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
@@ -50,7 +55,7 @@ struct ClipboardPasteboardPublisherTests {
                 [
                     makeSpec(textUTI, bytes: Data("one".utf8)),
                     makeSpec("public.rtf", bytes: Data("two".utf8)),
-                ], source: .init(servingOffer: offer, parts: [])))
+                ], source: servingOffer))
 
         #expect(registry.countForTesting == 2)
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
@@ -67,7 +72,7 @@ struct ClipboardPasteboardPublisherTests {
 
         #expect(
             !publisher.write(
-                [makeSpec(textUTI, bytes: Data("one".utf8))], source: .init(servingOffer: offer, parts: [])))
+                [makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer))
 
         // The prepare cleared the pasteboard and bumped its count, and that
         // change must never read as the user's own copy.
@@ -86,7 +91,7 @@ struct ClipboardPasteboardPublisherTests {
 
         #expect(
             !publisher.write(
-                [makeSpec(textUTI, bytes: Data("one".utf8))], source: .init(servingOffer: offer, parts: [])))
+                [makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer))
 
         // The prepare left an empty pasteboard, which is nobody's write…
         #expect(!publisher.holdsLastWrite)
@@ -107,13 +112,13 @@ struct ClipboardPasteboardPublisherTests {
             [
                 makeSpec(textUTI, bytes: Data("one".utf8)),
                 makeSpec("public.rtf", bytes: Data("two".utf8)),
-            ], source: .init(servingOffer: offer, parts: []))
+            ], source: servingOffer)
         #expect(registry.countForTesting == 2)
 
         // The pasteboard finishes with the displaced providers, which is what
         // lets the registry drop them — otherwise every publication of a
         // session's life is retained for the process's.
-        publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], source: .init(servingOffer: offer, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], source: servingOffer)
         #expect(registry.countForTesting == 1)
 
         #expect(publisher.retractWrite(servingOffer: offer) == .cleared)
@@ -131,7 +136,7 @@ struct ClipboardPasteboardPublisherTests {
             pasteboard: pasteboard, providerRegistry: registry)
 
         #expect(!publisher.holdsLastWrite)
-        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: .init(servingOffer: offer, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer)
         #expect(publisher.holdsLastWrite)
 
         // Somebody else wrote to the pasteboard.
@@ -147,7 +152,7 @@ struct ClipboardPasteboardPublisherTests {
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry)
 
-        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: .init(servingOffer: offer, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer)
         #expect(publisher.retractWrite(servingOffer: offer) == .cleared)
         // The clear is the publisher's own write, which no poll may read as a copy.
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
@@ -155,17 +160,17 @@ struct ClipboardPasteboardPublisherTests {
         #expect(publisher.retractWrite(servingOffer: offer) == nil)
 
         // A write serving no offer survives any offer's end.
-        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(servingOffer: nil, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(serving: nil, parts: []))
         #expect(publisher.retractWrite(servingOffer: offer) == nil)
         #expect(publisher.holdsLastWrite)
 
         // Another offer's end never reaches a write serving this one.
-        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(servingOffer: offer, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: servingOffer)
         #expect(publisher.retractWrite(servingOffer: otherOffer) == nil)
         #expect(publisher.holdsLastWrite)
 
         // A pasteboard the user has written over since is theirs.
-        publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], source: .init(servingOffer: offer, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], source: servingOffer)
         pasteboard.clearContents()
         #expect(publisher.retractWrite(servingOffer: offer) == nil)
     }
@@ -185,7 +190,7 @@ struct ClipboardPasteboardPublisherTests {
                     data: [(textUTI, Data("text".utf8)), (marker, Data())], types: [fileURL]
                 ) { _ in nil },
                 ClipboardPasteboardPublisher.ItemSpec(data: [(marker, Data())], types: [fileURL]) { _ in nil },
-            ], source: .init(servingOffer: offer, parts: []))
+            ], source: servingOffer)
         #expect(publisher.retractWrite(servingOffer: offer) == .keptData)
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(

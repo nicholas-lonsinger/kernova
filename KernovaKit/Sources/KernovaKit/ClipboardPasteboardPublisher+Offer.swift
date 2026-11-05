@@ -23,6 +23,10 @@ public protocol ClipboardItemPulling: Sendable {
     /// item `item`; `completion` gets the URL it landed at, under the name the
     /// receiver chose, or nil when the pull failed.
     func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void)
+
+    /// Runs `handler` once, on any thread, when the offer ends and can be pulled no more: at once when it has
+    /// already. A puller whose offer never ends never runs it.
+    func whenEnded(_ handler: @escaping @Sendable () -> Void)
 }
 
 extension ClipboardPasteboardPublisher {
@@ -41,18 +45,18 @@ extension ClipboardPasteboardPublisher {
     ///
     /// `servingFileURLs` false withholds `public.file-url`, as a paste over
     /// the cap requires. A concealed offer marks each item with
-    /// `org.nspasteboard.ConcealedType`. The write serves the offer `token`, so
+    /// `org.nspasteboard.ConcealedType`. The write serves `offer`, so
     /// ``retractWrite(servingOffer:)`` withdraws it once that offer ends.
     @discardableResult
     public func publish(
         _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool = true, puller: any ClipboardItemPulling,
-        servingOffer token: Data
+        serving offer: ClipboardWriteSource.Serving
     ) -> Bool {
         write(
             Self.itemSpecs(for: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller),
             source: ClipboardWriteSource(
-                servingOffer: token,
-                parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs)]))
+                serving: offer,
+                parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller)]))
     }
 
     /// Writes a peer's copy: each kept INLINE representation as the data
@@ -62,16 +66,16 @@ extension ClipboardPasteboardPublisher {
     /// side's own offer (`Representation.reference`) and that `held` does not
     /// hold is left out: nothing of it can be pulled.
     ///
-    /// The write serves the copy `token`, and `onReleased` runs once the
+    /// The write serves the copy `copy`, and `onReleased` runs once the
     /// pasteboard is done with every file it promised. Returns whether the
     /// pasteboard took the write, and whether it promised anything.
     public func publishCopy(
         _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
         held: @escaping @Sendable (_ item: Int, _ rep: Int) -> ClipboardWriteSource.Held?,
-        puller: any ClipboardItemPulling, servingOffer token: Data,
+        puller: any ClipboardItemPulling, serving copy: ClipboardWriteSource.Serving,
         onReleased: @escaping @MainActor @Sendable () -> Void
     ) -> (written: Bool, promised: Bool) {
-        // What is held now, read once: the write's record must not hold the copy, nor what pulls it.
+        // What is held now, read once: the write's source holds what landed, never a closure over the copy.
         var table: [[ClipboardWriteSource.Held?]] = []
         for (index, item) in items.enumerated() {
             table.append(item.representations.indices.map { held(index, $0) })
@@ -87,12 +91,15 @@ extension ClipboardPasteboardPublisher {
         guard !specs.isEmpty else { return (false, false) }
         let promised = specs.contains { !$0.types.isEmpty }
         let source = ClipboardWriteSource(
-            servingOffer: token,
-            parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs, held: lookup)])
+            serving: copy,
+            parts: [
+                .init(
+                    items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller, held: lookup)
+            ])
         return (write(specs, source: source, onReleased: onReleased), promised)
     }
 
-    /// The item specs ``publishCopy(_:concealed:servingFileURLs:held:puller:servingOffer:onReleased:)``
+    /// The item specs ``publishCopy(_:concealed:servingFileURLs:held:puller:serving:onReleased:)``
     /// writes. A type whose held content is missing is left off its item, and an item left with nothing is
     /// dropped.
     nonisolated static func copySpecs(

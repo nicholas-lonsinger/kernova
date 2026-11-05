@@ -256,7 +256,8 @@ final class GuestClipboard {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ceiling: pasteCeilingBytes, staging: snapshotStaging)
+                from: pasteboard, ceiling: pasteCeilingBytes, staging: snapshotStaging,
+                copyingTo: exchange.connection)
             switch outcome {
             case .snapshot(let snapshot, let lost):
                 exchange.answer(ask, with: snapshot)
@@ -311,7 +312,7 @@ final class GuestClipboard {
         }
         let (written, promised) = publisher.publishCopy(
             copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
-            held: { copy.held(item: $0, representation: $1) }, puller: copy, servingOffer: copy.token,
+            held: { copy.held(item: $0, representation: $1) }, puller: copy, serving: copy.serving,
             onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
         if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
@@ -353,7 +354,7 @@ final class GuestClipboard {
         let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
         let written = publisher.publish(
             remote.items, concealed: remote.concealed, servingFileURLs: !budget.exceeds, puller: remote,
-            servingOffer: remote.token)
+            serving: remote.serving)
         if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
             Self.logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
