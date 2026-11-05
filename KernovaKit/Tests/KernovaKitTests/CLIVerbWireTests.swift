@@ -254,7 +254,7 @@ struct CLIVerbWireTests {
             heldByAnotherCopy: false)
         let refusal = StepRequirement(
             message:
-                "\u{201C}My VM\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+                "\u{201C}My VM\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses anything in the guest that isn\u{2019}t saved to disk.",
             routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm)], ending: .refusedVerb)])
         let exchanged = try CLIWire.exchange(
             ["stop", "My VM", "--yes"],
@@ -331,7 +331,7 @@ struct CLIVerbWireTests {
                     kind: .forceRestart, title: "Force Restart \u{201C}Alpha\u{201D}?",
                     message:
                         "\u{201C}Alpha\u{201D} will be immediately terminated, then Kernova starts it again. "
-                        + "Any unsaved data inside the guest will be lost.",
+                        + "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
                     confirmTitle: "Force Restart", dismissTitle: "Cancel")
             ),
             (

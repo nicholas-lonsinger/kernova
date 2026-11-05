@@ -725,7 +725,7 @@ extension VMCommandCore {
     ///
     /// A live-paused guest cannot receive an ACPI shutdown, so `.graceful`
     /// there refuses with ``CommandError/stepRequired(_:)``, naming the resume.
-    /// `.force` always asks: it discards unsaved guest state. `.anyway` asks
+    /// `.force` always asks: it loses what the guest hasn’t saved to disk. `.anyway` asks
     /// too, and refuses as a step a guest whose agents do not offer it.
     ///
     /// `timeout` seconds bounds a wait for the guest to actually power off,
@@ -877,7 +877,7 @@ extension VMCommandCore {
             title: "Force Restart \u{201C}\(instance.name)\u{201D}?",
             message:
                 "\u{201C}\(instance.name)\u{201D} will be immediately terminated, then Kernova starts it again. "
-                + "Any unsaved data inside the guest will be lost." + restartKeepsEphemeralSession(instance),
+                + StopDisposition.forceLossSentence + restartKeepsEphemeralSession(instance),
             confirmTitle: "Force Restart",
             dismissTitle: "Cancel")
     }
@@ -934,7 +934,7 @@ extension VMCommandCore {
     func pausedStopRefusal(_ instance: VMInstance) -> StepRequirement {
         StepRequirement(
             message:
-                "\u{201C}\(instance.name)\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+                "\u{201C}\(instance.name)\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses \(StopDisposition.forceLoss).",
             routes: [StepRoute(title: "Resume", steps: [.resume(vm: summary(instance))], ending: .refusedVerb)])
     }
 
@@ -975,7 +975,6 @@ extension VMCommandCore {
         // the button names that outcome rather than the deletion it isn't.
         let discardsSavedState = instance.holdsSuspendedSession
         let revertsInsteadOfTerminating = discardsSavedState && ephemeralBaseline != nil
-        let guestDataLost = "Any unsaved data inside the guest will be lost."
         let terminated = "\u{201C}\(instance.name)\u{201D} will be immediately terminated."
 
         let message: String
@@ -988,9 +987,9 @@ extension VMCommandCore {
         case (false, let baseline?):
             message =
                 "\(terminated) It is ephemeral, so it returns to "
-                + "\u{201C}\(baseline.name)\u{201D}. " + guestDataLost
+                + "\u{201C}\(baseline.name)\u{201D}. " + StopDisposition.forceLossSentence
         case (false, nil):
-            message = "\(terminated) \(guestDataLost)"
+            message = "\(terminated) \(StopDisposition.forceLossSentence)"
         }
 
         let confirmTitle: String

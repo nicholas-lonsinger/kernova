@@ -1350,7 +1350,10 @@ struct VMCommandCoreTests {
         #expect(prompt.title == "Force Stop \u{201C}Runner\u{201D}?")
         #expect(prompt.confirmTitle == "Force Stop")
         #expect(prompt.confirmIsDestructive)
-        #expect(prompt.message.contains("immediately terminated"))
+        #expect(
+            prompt.message
+                == "\u{201C}Runner\u{201D} will be immediately terminated. "
+                + "Anything in the guest that isn\u{2019}t saved to disk will be lost.")
         #expect(prompt.alternatives.map(\.disposition) == [.graceful])
         // The gentler route is the one Return can safely fire.
         #expect(prompt.alternatives.map(\.isDestructive) == [false])
@@ -1400,7 +1403,7 @@ struct VMCommandCoreTests {
             error.stepRequirement
                 == StepRequirement(
                     message:
-                        "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+                        "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses anything in the guest that isn\u{2019}t saved to disk.",
                     routes: [
                         StepRoute(
                             title: "Resume", steps: [.resume(vm: harness.core.summary(instance))], ending: .refusedVerb)

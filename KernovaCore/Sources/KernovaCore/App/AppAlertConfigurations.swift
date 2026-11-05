@@ -146,7 +146,7 @@ package struct AppAlertConfigurations {
         return AlertConfiguration(
             title: "Stop \u{201C}\(vm.name)\u{201D}?",
             message:
-                "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately (any unsaved data inside the guest will be lost).\(ephemeralReturn)",
+                "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a graceful shutdown, or force stop to terminate it immediately, which loses \(StopDisposition.forceLoss).\(ephemeralReturn)",
             buttons: [
                 AlertButton("Resume and Shut Down", role: .default) { [weak viewModel] in
                     guard let viewModel else { return }

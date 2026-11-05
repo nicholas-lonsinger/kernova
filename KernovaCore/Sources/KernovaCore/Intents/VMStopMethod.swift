@@ -17,7 +17,8 @@ enum VMStopMethod: String, AppEnum {
     case graceful
     /// Shut a macOS guest down without waiting for apps.
     case anyway
-    /// Terminate the virtual machine immediately, losing unsaved guest state.
+    /// Terminate the virtual machine immediately, losing anything in the guest
+    /// that isn’t saved to disk.
     case force
 
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Stop Method")

@@ -43,7 +43,7 @@ struct AlertConfigurationTests {
     private func destructiveConfirmPrompt() -> ConfirmationPrompt {
         ConfirmationPrompt(
             kind: .forceStop, title: "Force Stop \u{201C}VM\u{201D}?",
-            message: "Unsaved guest state is lost.",
+            message: "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
             confirmTitle: "Force Stop", dismissTitle: "Cancel",
             alternatives: [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
     }

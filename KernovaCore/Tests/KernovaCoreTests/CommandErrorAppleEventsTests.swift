@@ -15,7 +15,7 @@ struct CommandErrorAppleEventsTests {
 
     private func makePrompt(kind: ConfirmationKind = .forceStop) -> ConfirmationPrompt {
         ConfirmationPrompt(
-            kind: kind, title: "Force stop?", message: "Unsaved guest state is lost.",
+            kind: kind, title: "Force stop?", message: "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
             confirmTitle: "Force Stop", dismissTitle: "Keep Running")
     }
 

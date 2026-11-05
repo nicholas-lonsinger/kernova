@@ -7,7 +7,7 @@ extension KernovaCommand {
     enum StopMethod: String, EnumerableFlag {
         /// Ask the guest to shut itself down.
         case graceful
-        /// Terminate the guest immediately, losing unsaved state.
+        /// Terminate the guest immediately, losing anything in it that isn’t saved to disk.
         case force
         /// Shut a macOS guest down without waiting for apps.
         case anyway
@@ -34,7 +34,7 @@ extension KernovaCommand {
         static func help(for value: StopMethod) -> ArgumentHelp? {
             switch value {
             case .graceful: "Ask the guest to shut down (the default)."
-            case .force: "Terminate the guest immediately, losing unsaved state."
+            case .force: "Terminate the guest immediately, losing \(StopDisposition.forceLoss)."
             case .anyway:
                 "Shut a macOS guest down without waiting for apps. Apps still open quit without asking to save."
             }

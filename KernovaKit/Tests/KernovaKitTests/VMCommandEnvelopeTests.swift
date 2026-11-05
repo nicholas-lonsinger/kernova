@@ -342,7 +342,7 @@ struct VMCommandEnvelopeTests {
         let prompt = ConfirmationPrompt(
             kind: .forceStop,
             title: "Force Stop Virtual Machine",
-            message: "Any unsaved data inside the guest will be lost.",
+            message: "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel",
             alternatives: [
@@ -416,6 +416,10 @@ struct VMCommandEnvelopeTests {
         let restart = CommandErrorDTO.timedOut(vm: summary, verb: .restart, seconds: 60)
 
         #expect(stop.message.contains("did not power off within 60 seconds"))
+        #expect(
+            stop.message.hasSuffix(
+                "A force stop terminates a guest that will not shut down, losing anything in the guest that "
+                    + "isn\u{2019}t saved to disk."))
         #expect(restart.message.contains("was not started again"))
         // The VM's state at the expiry is its own read: a suspended VM whose
         // saved state the stop already discarded is not "running unchanged",

@@ -406,7 +406,11 @@ struct AppAlertConfigurationsTests {
         #expect(alert.title == "Stop \u{201C}\(vm.name)\u{201D}?")
         #expect(alert.buttons.map(\.title) == ["Resume and Shut Down", "Cancel", "Force Stop"])
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
-        #expect(!alert.message.contains("ephemeral"))
+        #expect(
+            alert.message
+                == "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a "
+                + "graceful shutdown, or force stop to terminate it immediately, which loses anything in the guest "
+                + "that isn\u{2019}t saved to disk.")
     }
 
     @Test("A paused Ephemeral VM's Stop names the baseline both its actions end at")

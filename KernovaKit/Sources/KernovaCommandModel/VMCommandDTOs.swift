@@ -979,8 +979,8 @@ extension CommandErrorDTO {
             "\u{201C}\(vm.name)\u{201D} did not power off within "
                 + "\(Self.deadlineText(seconds)) seconds"
                 + (verb == .restart ? ", so it was not started again. " : ". ")
-                + "A force stop terminates a guest that will not shut down, losing anything "
-                + "unsaved inside it."
+                + "A force stop terminates a guest that will not shut down, losing "
+                + "\(StopDisposition.forceLoss)."
         case .operationFailed(_, _, let message, _):
             message
         case .filesKept(let kept):

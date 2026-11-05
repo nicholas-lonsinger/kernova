@@ -25,7 +25,7 @@
 
 		<enumeration name="VM stop method" code="KvSM" description="How a stop, or a restart, takes the guest down.">
 			<enumerator name="shut down" code="KmSd" description="Ask the guest to power itself off."/>
-			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing unsaved guest state."/>
+			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing anything in the guest that isn’t saved to disk."/>
 			<enumerator name="anyway" code="KmSa" description="Shut a macOS guest down without waiting for apps, which quit without asking to save. Takes the Kernova agent installed “For everyone”, connected."/>
 		</enumeration>
 

@@ -40,7 +40,7 @@ struct StartVMIntent: AppIntent {
 struct StopVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Stops a virtual machine, asking before anything that discards unsaved guest state.",
+        "Stops a virtual machine, asking before a method that loses anything in the guest that isn’t saved to disk.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -137,7 +137,7 @@ struct SuspendVMIntent: AppIntent {
 struct RestartVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Takes the guest down and starts it again once it has powered off, asking before anything that discards unsaved guest state.",
+        "Takes the guest down and starts it again once it has powered off, asking before a method that loses anything in the guest that isn’t saved to disk.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")

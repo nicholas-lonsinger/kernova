@@ -38,7 +38,7 @@ struct ForceRestartTests {
         #expect(
             prompt.message
                 == "\u{201C}Forced\u{201D} will be immediately terminated, then Kernova starts it again. "
-                + "Any unsaved data inside the guest will be lost.")
+                + "Anything in the guest that isn\u{2019}t saved to disk will be lost.")
         #expect(prompt.confirmTitle == "Force Restart")
         #expect(prompt.confirmIsDestructive)
         #expect(prompt.dismissTitle == "Cancel")
