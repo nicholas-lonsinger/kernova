@@ -376,6 +376,45 @@ struct SpiceClipboardServiceTests {
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
+    /// Another VM's puller: answers every pull with `bytes`.
+    private final class OtherVMPuller: ClipboardItemPulling {
+        let bytes: Data
+        init(bytes: Data) { self.bytes = bytes }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completion(nil)
+        }
+    }
+
+    @Test("PROBE (review 1819e): Copy to Guest of another VM's passthrough text grabs the guest's clipboard and answers it empty")
+    func probeCopyToGuestOfAnotherVMsPassthroughText() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        // A macOS VM's host publisher writes its guest's passthrough text, promised, to the Mac pasteboard.
+        let otherVM = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        var text = Representation()
+        text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        text.storage = .inline
+        var item = OfferedItem()
+        item.representations = [text]
+        #expect(
+            otherVM.publish(
+                [item], concealed: false, puller: OtherVMPuller(bytes: Data("from VM A".utf8)),
+                servingOffer: Data(repeating: 0xA1, count: 16)))
+
+        let snapshot = try await macSnapshot(pasteboard)
+        // DEFECT: the grab is made, replacing the Linux guest's clipboard, and the guest's request is answered
+        // with nothing: the snapshot holds the text only as a reference to VM A's guest's offer.
+        #expect(service.copyMacClipboardToGuest(snapshot) == nil)
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+        await service.handleIncomingData(textRequest)
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data()])
+    }
+
     @Test("Copy to Mac takes the text the guest's agent last sent, as data; nothing before it sends any")
     func copyToMacTakesTheGuestsText() async throws {
         let (service, _, _) = makeService()

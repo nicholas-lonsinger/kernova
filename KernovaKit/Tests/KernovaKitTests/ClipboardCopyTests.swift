@@ -329,33 +329,66 @@ struct ClipboardCopyTests {
         #expect(later.count == 4)
     }
 
-    @Test("A write's source, a concealed puller with it, lives only as long as the pasteboard needs the write")
-    func writeSourceLivesAsLongAsItsWrite() async throws {
-        let pasteboard = FakePasteboard()
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let ledger = ClipboardWriteLedger()
-        var publisher: ClipboardPasteboardPublisher? = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+    /// A concealed passthrough write of one text item through a puller only it holds, on `pasteboard`.
+    private func writeWatched(
+        on pasteboard: FakePasteboard, _ publisher: ClipboardPasteboardPublisher
+    ) -> () -> CountingPuller? {
         var item = OfferedItem()
         item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
         weak var watched: CountingPuller?
         do {
             let puller = CountingPuller(bytes: Data("a password".utf8))
             watched = puller
-            #expect(
-                publisher?.publish(
-                    [item], concealed: true, puller: puller, servingOffer: Data(repeating: 1, count: 16)) == true)
+            #expect(publisher.publish([item], concealed: true, puller: puller, servingOffer: Self.writeOffer))
         }
-        #expect(watched != nil)
+        return { watched }
+    }
+
+    private static let writeOffer = Data(repeating: 1, count: 16)
+
+    @Test("A replaced write's record goes, its source and puller with it: nothing is left to retract")
+    func replacedWriteHoldsNothing() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        let watched = writeWatched(on: pasteboard, publisher)
+        #expect(watched() != nil)
         #expect(ledger.standingWrite(on: pasteboard) != nil)
 
         // Another app's copy replaces the write, and the pasteboard lets go of its provider.
         pasteboard.setString("copied since", forType: .string)
+        await drainMainQueue()
         #expect(ledger.standingWrite(on: pasteboard) == nil)
-        #expect(watched == nil)
-        #expect(publisher?.retractWrite(servingOffer: Data(repeating: 1, count: 16)) == nil)
-        publisher = nil
+        #expect(watched() == nil)
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer) == nil)
+        #expect(pasteboard.items.first?.data(forType: .string) == Data("copied since".utf8))
+    }
+
+    @Test(
+        "A write a reader had every promised type of keeps its record, for a retraction, and lets its source go"
+    )
+    func fullyReadWriteKeepsItsRecord() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        let watched = writeWatched(on: pasteboard, publisher)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .init(ClipboardContent.utf8TextUTI)) }
+        #expect(await paste.value == Data("a password".utf8))
+
+        // AppKit finishes with the provider, the write standing: nothing of it is promised any more.
+        pasteboard.finishProvider(itemIndex: 0)
+        await drainMainQueue()
+        #expect(ledger.standingWrite(on: pasteboard) == nil)
+        #expect(watched() == nil)
+        #expect(publisher.holdsLastWrite)
+
+        // The offer's end still retracts it.
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer) == .cleared)
+        #expect(pasteboard.items.isEmpty)
     }
 
     @Test("A write that promises nothing holds no source: a snapshot of it reads its data from the pasteboard")

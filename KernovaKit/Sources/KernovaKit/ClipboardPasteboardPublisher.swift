@@ -152,11 +152,11 @@ public final class ClipboardPasteboardPublisher {
     /// before one, or after a write that failed, which left the prepare's empty pasteboard behind.
     private var heldChangeCount: Int?
 
-    /// The most recent write the pasteboard took while that write still promises something: held by the
-    /// write's providers alone, so it, its source and its data go once the pasteboard has finished with every
-    /// one of them. Only a write serving an offer can be stranded by that offer's end, and
-    /// ``retractWrite(servingOffer:)`` retracts it by naming that offer, so no other offer's end reaches it.
-    private weak var standing: ClipboardStandingWrite?
+    /// The most recent write the pasteboard took that promised something, while it stands: a write, a clear or
+    /// a retraction of this publisher's ends it, and so does a finished provider reporting the write replaced.
+    /// Only a write serving an offer can be stranded by that offer's end, and ``retractWrite(servingOffer:)``
+    /// retracts it by naming that offer, so no other offer's end reaches it.
+    private var standing: ClipboardStandingWrite?
 
     /// Creates a publisher over `pasteboard`, recording each write in `ledger`. `marksWrites` marks every item
     /// it writes (``ClipboardSnapshotPolicy/writeMarkerUTI``), for ``holdsMarkedWrite(_:)``.
@@ -183,10 +183,10 @@ public final class ClipboardPasteboardPublisher {
     /// promised types served lazily.
     ///
     /// The write serves `source`'s offer, the one ``retractWrite(servingOffer:)`` withdraws it for; nil for a
-    /// write that serves from what this side holds. `source` and what the write holds as data live exactly as
-    /// long as the pasteboard needs the write's providers: they hold them, and nothing else does. `onReleased`
-    /// runs once the pasteboard has finished with every provider the write promised through, which is when
-    /// nothing can ask the offer for more; a write that promises nothing, or fails, never runs it.
+    /// write that serves from what this side holds. Its record (``ClipboardStandingWrite``) lives as long as the
+    /// write stands, and `source` only while a provider of it can still be asked. `onReleased` runs once the
+    /// pasteboard has finished with every provider the write promised through, which is when nothing can ask the
+    /// offer for more; a write that promises nothing, or fails, never runs it.
     @discardableResult
     public func write(
         _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
@@ -209,16 +209,16 @@ public final class ClipboardPasteboardPublisher {
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
                 provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
-                onFinished: { provider in
-                    // The providers are the record's only owners.
-                    withExtendedLifetime(record) {}
+                onFinished: { [weak self] provider in
                     registry.release(provider)
                     let last = unfinished.withLock { left -> Bool in
                         left -= 1
                         return left == 0
                     }
-                    guard last, let onReleased else { return }
-                    MainActorBridge.async { onReleased() }
+                    MainActorBridge.async {
+                        self?.finished(with: record, last: last)
+                        if last, let onReleased { onReleased() }
+                    }
                 })
             providers.append(provider)
             return ClipboardWriteItem(
@@ -246,10 +246,23 @@ public final class ClipboardPasteboardPublisher {
             return false
         }
         heldChangeCount = pasteboard.changeCount
-        standing = record
-        ledger.record(record, on: pasteboard)
+        let promises = promising > 0 ? record : nil
+        standing = promises
+        ledger.record(promises, on: pasteboard)
         providerRegistry.retain(providers)
         return true
+    }
+
+    /// The pasteboard finished with one of `record`'s providers, the last of them when `last`. With the write
+    /// replaced, the record goes, source and all; with it standing, the reader had every type that provider
+    /// promised, so once none is left to ask the source goes and the record stays, for a retraction to find.
+    private func finished(with record: ClipboardStandingWrite, last: Bool) {
+        guard standing === record, heldChangeCount == pasteboard.changeCount else {
+            record.dropSource()
+            if standing === record { standing = nil }
+            return
+        }
+        if last { record.dropSource() }
     }
 
     /// `data` when the pasteboard may serve it as `type`, else nil.
@@ -275,10 +288,11 @@ public final class ClipboardPasteboardPublisher {
     /// when nothing of that remains. Nil when nothing was withdrawn.
     ///
     /// A pasteboard the user has written over since is theirs and is left untouched, as is a write serving
-    /// another offer, or none, and one whose every promise the pasteboard has finished with.
+    /// another offer, or none. A write a reader has had every promised type of is retracted all the same: what
+    /// it promised is the offer's, which has ended.
     @discardableResult
     public func retractWrite(servingOffer token: Data) -> ClipboardRetraction? {
-        guard let held = standing, held.source.servingOffer == token, heldChangeCount == pasteboard.changeCount
+        guard let held = standing, held.servingOffer == token, heldChangeCount == pasteboard.changeCount
         else { return nil }
         let markers: Set<NSPasteboard.PasteboardType> = [
             .init(ClipboardSnapshotPolicy.concealedMarkerUTI), .init(ClipboardSnapshotPolicy.writeMarkerUTI),

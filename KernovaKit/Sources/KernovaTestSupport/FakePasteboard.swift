@@ -118,6 +118,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return bytes
     }
 
+    /// AppKit finishing with item `itemIndex`'s provider once a reader had every type it promised, the write
+    /// still standing (``FakeWritePasteboard/finishProvider(itemIndex:)``).
+    public func finishProvider(itemIndex: Int) { writer.finishProvider(itemIndex: itemIndex) }
+
     /// Drops the resident copy and clears the write half.
     @discardableResult
     public func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {

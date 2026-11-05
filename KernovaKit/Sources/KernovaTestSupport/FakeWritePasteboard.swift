@@ -163,6 +163,19 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         }
     }
 
+    /// Models AppKit once a reader has had every type item `itemIndex`'s provider promised, the write still
+    /// standing: it tells the provider it is finished and lets go of it, the item keeping what was provided
+    /// (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md). The change count does not move.
+    public func finishProvider(itemIndex: Int) {
+        let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
+            guard state.items.indices.contains(itemIndex) else { return nil }
+            let item = state.items[itemIndex]
+            state.items[itemIndex] = PromisedItem(data: item.data, types: item.types, provider: nil)
+            return item.provider
+        }
+        provider?.pasteboardFinishedWithDataProvider?(NSPasteboard(name: .init("app.kernova.fake-write")))
+    }
+
     // MARK: - Firing a promise
 
     /// Fires a promised item's provider the way the OS does, synchronously.
