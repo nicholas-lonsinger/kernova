@@ -1059,10 +1059,11 @@ struct HubClipboardServiceTests {
 
     // MARK: - A clipboard this process wrote
 
-    /// Turns passthrough off the way the setting does.
-    private func stopPassthrough(_ instance: VMInstance) {
+    /// Turns passthrough off the way the setting does, once the hub sent what that asks of it.
+    private func stopPassthrough(_ instance: VMInstance, _ probe: AgentHubProbe) async {
         instance.refreshClipboardPassthrough()
         #expect(instance.sessionContext?.clipboardPassthroughCoordinator == nil)
+        await probe.settle()
     }
 
     @Test(
@@ -1079,7 +1080,7 @@ struct HubClipboardServiceTests {
         try await probe.changed.wait { offers(probe).count == 1 }
         let hostOffer = try await acceptLastOffer(probe)
 
-        stopPassthrough(instance)
+        await stopPassthrough(instance, probe)
         // The guest hears its clipboard's offer end, and retracts its promised write of it.
         #expect(withdrawn(hostOffer.token, probe))
         guard case .failure = await pull(hostOffer, from: instance) else {
@@ -1105,7 +1106,7 @@ struct HubClipboardServiceTests {
         try await receive(Self.textAndFile, on: probe, into: instance)
         try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
 
-        stopPassthrough(instance)
+        await stopPassthrough(instance, probe)
         #expect(released(Self.guestToken, probe))
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(!instance.hubClipboard.hasStandingGuestOffer)
@@ -1183,6 +1184,7 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.dataByItem.first?[.fileURL] == Data(file.absoluteString.utf8))
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(pulls(probe).isEmpty)
+        await probe.settle()
         #expect(released(Self.copyToken, probe))
     }
 
@@ -1205,6 +1207,7 @@ struct HubClipboardServiceTests {
         try await waitForChange { instance.runningClipboardCommands.isEmpty }
         #expect(pasteboard.changeCount == before)
         #expect(instance.clipboardTransferReport == report)
+        await probe.settle()
         #expect(
             probe.commands.contains(.items(.refuse(token: Self.copyToken, WireError(.clipboardAlreadyHeld)))))
     }
