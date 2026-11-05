@@ -377,10 +377,18 @@ final class ClipboardPassthroughCoordinator {
                 outcome.droppedReasons.contains(.overPasteBudget)
                 ? (seq, ceiling, self.pasteboard.changeCount)
                 : nil
+            if case .writeFailed = outcome { self.reportUnwritten() }
             #if DEBUG
             self.onInboundPublishedForTesting?()
             #endif
         }
+    }
+
+    /// Raises the guest's offer the pasteboard refused to take: the Mac's clipboard holds nothing of it.
+    private func reportUnwritten() {
+        let name = instance?.name ?? "?"
+        reporter.gestureBegan()
+        reporter.finish(ClipboardTransferFinish(gesture: .copy, outcome: .failed(.transferFailed), peerName: name))
     }
 
     /// Re-publishes the current offer when a raised paste ceiling would now serve

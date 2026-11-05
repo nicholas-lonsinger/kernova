@@ -835,8 +835,9 @@ public nonisolated enum Kernova_V2_ClipboardCopy: SwiftProtobuf.Enum, Swift.Case
 
   /// Host only, of no items: asks the peer for a snapshot of its clipboard. The
   /// peer answers with a CLIPBOARD_COPY_SNAPSHOT naming it, then releases it,
-  /// or RESETs it: CLIPBOARD_NOTHING_TO_COPY, or TOO_LARGE when what is not a
-  /// file is over the paste ceiling.
+  /// or RESETs it: CLIPBOARD_NOTHING_TO_COPY, READ_FAILED when every item names
+  /// a file it cannot read, or TOO_LARGE when what is not a file is over the
+  /// paste ceiling.
   case ask // = 2
   case UNRECOGNIZED(Int)
 
@@ -2206,6 +2207,10 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
 
   /// CLIPBOARD only: what the offer is besides its opener's clipboard offer.
   public var copy: Kernova_V2_ClipboardCopy = .unspecified
+
+  /// CLIPBOARD_COPY_SNAPSHOT only: how many items of its opener's clipboard
+  /// the snapshot leaves out, their files ones the opener cannot read.
+  public var leftOut: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -4293,7 +4298,7 @@ nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{1}copy\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{1}copy\0\u{3}left_out\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4306,6 +4311,7 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
       case 4: try { try decoder.decodeSingularBytesField(value: &self.token) }()
       case 5: try { try decoder.decodeSingularBytesField(value: &self.after) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.copy) }()
+      case 7: try { try decoder.decodeSingularUInt32Field(value: &self.leftOut) }()
       default: break
       }
     }
@@ -4327,6 +4333,9 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if self.copy != .unspecified {
       try visitor.visitSingularEnumField(value: self.copy, fieldNumber: 6)
     }
+    if self.leftOut != 0 {
+      try visitor.visitSingularUInt32Field(value: self.leftOut, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4336,6 +4345,7 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if lhs.token != rhs.token {return false}
     if lhs.after != rhs.after {return false}
     if lhs.copy != rhs.copy {return false}
+    if lhs.leftOut != rhs.leftOut {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

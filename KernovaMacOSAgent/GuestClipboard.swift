@@ -85,6 +85,7 @@ final class GuestClipboard {
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
         exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
+        publisher.onPasteRefused = { [weak self] in self?.writeRefused() }
     }
 
     /// The general pasteboard's clipboard.
@@ -231,12 +232,17 @@ final class GuestClipboard {
                 copyingTo: exchange.connection)
             switch outcome {
             case .snapshot(let snapshot, let lost):
-                exchange.answer(ask, with: snapshot)
+                exchange.answer(ask, with: snapshot, leftOut: lost)
                 activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .sentToHost
                 if lost > 0 { onNotice() }
             case .nothing:
                 Self.logger.log(.notice, "The host asked for the clipboard, which holds nothing to copy")
                 exchange.decline(ask, WireError(.clipboardNothingToCopy))
+            case .unreadable:
+                Self.logger.log(.notice, "The host asked for the clipboard, whose files this agent cannot read")
+                exchange.decline(ask, WireError(.readFailed))
+                activity = .copyCarriedNothing
+                onNotice()
             case .changed:
                 exchange.decline(ask, WireError(.cancelled, debugDetail: "the clipboard kept changing as it was read"))
             case .tooLarge(let limitBytes):
@@ -294,7 +300,7 @@ final class GuestClipboard {
             }
             Self.logger.log(.error, "The host's clipboard copy could not be written to the pasteboard")
             exchange.refuseCopy(copy, WireError(.writeFailed))
-            return
+            return writeRefused()
         }
         // The pasteboard holds the host's copy now, so neither current offer is this clipboard's.
         if let published {
@@ -330,7 +336,7 @@ final class GuestClipboard {
         guard written else {
             Self.logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
             exchange.release(remote)
-            return
+            return writeRefused()
         }
         published = remote
         if budget.exceeds {
@@ -343,6 +349,13 @@ final class GuestClipboard {
         } else {
             activity = .offeredFromHost
         }
+    }
+
+    /// The pasteboard refused a write of the host's clipboard, or a paste's bytes of it: shown as a paste that
+    /// failed.
+    private func writeRefused() {
+        activity = .pasteRefused(.pasteFailed, pasteLimitBytes: nil)
+        onNotice()
     }
 
     /// A pull of the host's offer failed a paste: one over the paste ceiling — the representation, or the offer's

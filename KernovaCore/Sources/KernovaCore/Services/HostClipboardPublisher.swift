@@ -37,6 +37,12 @@ package final class HostClipboardPublisher {
     /// so each supersedes older staged artifacts within the recency window.
     private var stagingGeneration: UInt64 = 1
 
+    /// Hears each paste of a write of this publisher's whose promised bytes the pasteboard refused.
+    var onPasteRefused: (@MainActor () -> Void)? {
+        get { publisher.onPasteRefused }
+        set { publisher.onPasteRefused = newValue }
+    }
+
     /// The change a passthrough coordinator polling the same pasteboard skips,
     /// so guest content is never re-forwarded back to the guest.
     var lastWriteChangeCount: Int? { publisher.lastWriteChangeCount }

@@ -409,6 +409,60 @@ struct ClipboardCopyTests {
         #expect(receiver.callIns == 1)
     }
 
+    /// A file in the scratch directory this process cannot open.
+    private func unreadableFile(_ name: String) throws -> URL {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent(name)
+        try Data("locked".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        return file
+    }
+
+    @Test("A snapshot leaves out a file it cannot open, counting it, and offers the files it can")
+    func snapshotLeavesOutAnUnreadableFile() async throws {
+        let readable = scratch.url.appendingPathComponent("open.txt")
+        let locked = try unreadableFile("locked.txt")
+        try Data("open".utf8).write(to: readable)
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setFiles([readable, locked]))
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 1)
+        #expect(
+            source.items.flatMap(\.representations).map { String(decoding: $0.name, as: UTF8.self) } == ["open.txt"])
+    }
+
+    @Test("A snapshot of only files it cannot open is unreadable: nothing is copied")
+    func snapshotOfOnlyUnreadableFiles() async throws {
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setFiles([try unreadableFile("locked.txt")]))
+        guard
+            case .unreadable = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("not unreadable") }
+    }
+
+    @Test("A file URL this process cannot open, beside a file promise, is copied by calling the promise in")
+    func unreadableFileFallsBackToItsPromise() async throws {
+        let pasteboard = FakePasteboard()
+        let receiver = FakeFilePromiseReceiver(
+            name: "photo.jpeg", fileType: "public.jpeg", contents: .file(Data("jpeg".utf8)))
+        #expect(pasteboard.setFile(try unreadableFile("derivative.jpeg"), promising: receiver))
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root),
+                copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 0)
+        #expect(receiver.callIns == 1)
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+            throw TestFailure("the called-in file was not served")
+        }
+        #expect(served.lastPathComponent == "photo.jpeg")
+    }
+
     // MARK: - Lifetimes
 
     @Test("A snapshot's called-in files outlive four later call-ins, and go once the snapshot does")

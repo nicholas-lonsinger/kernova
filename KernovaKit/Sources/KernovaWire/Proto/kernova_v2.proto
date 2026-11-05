@@ -748,6 +748,9 @@ message ItemSetHeader {
   bytes after = 5;
   // CLIPBOARD only: what the offer is besides its opener's clipboard offer.
   ClipboardCopy copy = 6;
+  // CLIPBOARD_COPY_SNAPSHOT only: how many items of its opener's clipboard
+  // the snapshot leaves out, their files ones the opener cannot read.
+  uint32 left_out = 7;
 }
 
 // CLIPBOARD only: an offer the user's command sent, which is not its opener's
@@ -773,8 +776,9 @@ enum ClipboardCopy {
   CLIPBOARD_COPY_SNAPSHOT = 1;
   // Host only, of no items: asks the peer for a snapshot of its clipboard. The
   // peer answers with a CLIPBOARD_COPY_SNAPSHOT naming it, then releases it,
-  // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, or TOO_LARGE when what is not a
-  // file is over the paste ceiling.
+  // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, READ_FAILED when every item names
+  // a file it cannot read, or TOO_LARGE when what is not a file is over the
+  // paste ceiling.
   CLIPBOARD_COPY_ASK = 2;
 }
 

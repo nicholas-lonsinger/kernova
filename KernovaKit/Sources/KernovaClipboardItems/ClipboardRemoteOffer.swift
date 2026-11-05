@@ -26,6 +26,8 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     public let items: [OfferedItem]
     /// The connection the offer arrived on.
     public let connection: ClipboardConnectionID
+    /// A copy's: how many items of the far side's clipboard it leaves out, their files unreadable there.
+    public let leftOut: Int
     /// The offer as a write of it serves it.
     public var serving: ClipboardWriteSource.Serving { .init(token: token, connection: connection) }
 
@@ -128,6 +130,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     ) {
         token = header.token
         concealed = header.concealed
+        leftOut = header.leftOut
         self.items = items
         self.link = link
         self.connection = connection
@@ -194,6 +197,23 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         }
         if landed.byteCount != nil { return landed.content.bytes.map(ClipboardWriteSource.Held.bytes) }
         return landed.content.url.map(ClipboardWriteSource.Held.file)
+    }
+
+    /// Deletes every INLINE representation that landed in staging: a copy's end wrote it as data, or chose not
+    /// to write it, so nothing reads it from staging again. A write holding its bytes mapped keeps them readable
+    /// until it lets them go; the disk they take is freed then.
+    public func discardStagedInline() {
+        let staged = state.withLock { state -> [URL] in
+            var staged: [URL] = []
+            for (key, landed) in state.landed where landed.byteCount != nil {
+                guard case .staged(let url) = landed.content else { continue }
+                staged.append(url)
+                state.landed[key] = nil
+            }
+            return staged
+        }
+        // Each INLINE pull lands alone in a directory reserved for it.
+        for url in staged { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
     }
 
     /// Every representation that names this side's own offer by reference, which nothing pulls.

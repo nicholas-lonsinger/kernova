@@ -36,17 +36,21 @@ public struct ItemOffer: Sendable, Equatable {
     /// What a CLIPBOARD offer is besides its opener's clipboard offer (`ItemSetHeader.copy`): a copy is not
     /// this side's clipboard offer, so a later one does not withdraw it.
     public var copy: ClipboardCopyRole
+    /// A copy's: how many items of its opener's clipboard it leaves out, their files unreadable
+    /// (`ItemSetHeader.left_out`); 0 on every other offer.
+    public var leftOut: Int
 
     /// Creates an offer.
     public init(
         token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy
+        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
     ) {
         self.token = token
         self.concealed = concealed
         self.items = items
         self.after = after
         self.copy = copy
+        self.leftOut = leftOut
     }
 }
 
@@ -64,11 +68,13 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var after: Data
     /// ``ItemOffer/copy``, as the OPEN carried it.
     public var copy: ClipboardCopyRole
+    /// ``ItemOffer/leftOut``, as the OPEN carried it.
+    public var leftOut: Int
 
     /// A header announcing `count` items of `feature`'s offer `token`.
     public init(
         feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy
+        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
     ) {
         self.feature = feature
         self.token = token
@@ -76,12 +82,13 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
         self.count = count
         self.after = after
         self.copy = copy
+        self.leftOut = leftOut
     }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after, copy: ClipboardCopyRole(header.copy))
+            after: header.after, copy: ClipboardCopyRole(header.copy), leftOut: Int(header.leftOut))
     }
 }
 

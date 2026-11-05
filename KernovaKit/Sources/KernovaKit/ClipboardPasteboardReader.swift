@@ -235,15 +235,19 @@ public enum ClipboardPasteboardReader {
     /// read: a link with nothing at the end of it, an item this process cannot
     /// open, one deleted since the gesture began.
     ///
-    /// `stat(2)` alone answers none of this — a mode-`000` file stats exactly
-    /// like a readable one — so the open permission is asked for separately.
+    /// The item is opened for reading, as a pull of it opens it: neither
+    /// `stat(2)` nor `access(2)` answers whether that open succeeds. A file in
+    /// a guest's Photos library, mode `0644`, passed `isReadableFile(atPath:)`
+    /// at a copy and failed the agent's open `EPERM` at its paste (macOS 27.2
+    /// guest, 2026-11-04), the privacy system refusing a process with no grant.
     nonisolated static func readableSource(for url: URL) -> URL? {
         let isSymbolicLink =
             (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
         let source = isSymbolicLink ? url.resolvingSymlinksInPath() : url
-        guard (try? source.checkResourceIsReachable()) == true,
-            FileManager.default.isReadableFile(atPath: source.path)
-        else { return nil }
+        guard (try? source.checkResourceIsReachable()) == true else { return nil }
+        let descriptor = open(source.path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return nil }
+        close(descriptor)
         return source
     }
 

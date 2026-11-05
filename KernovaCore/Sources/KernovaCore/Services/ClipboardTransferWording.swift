@@ -361,6 +361,15 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Drop: some files weren't sent",
                 mentionsMacClipboardKept: false)
 
+        case (.itemsSkipped(let count), .copy):
+            return ClipboardTransferWording(
+                headline: "Clipboard partly copied from \(vm).",
+                message: count == 1
+                    ? "The guest couldn\u{2019}t read one copied file, so it wasn\u{2019}t copied to the Mac. The rest were."
+                    : "The guest couldn\u{2019}t read \(count) copied files, so they weren\u{2019}t copied to the Mac. The rest were.",
+                menuLine: "Clipboard: some items weren't copied from the guest",
+                mentionsMacClipboardKept: false)
+
         case (.itemsSkipped(let count), _):
             return ClipboardTransferWording(
                 headline: "Clipboard partly copied to \(vm).",
@@ -373,6 +382,13 @@ package struct ClipboardTransferWording: Equatable {
                 headline: "Files not copied to \(vm).",
                 message: "Those items couldn't be read, so nothing was sent to the VM.",
                 menuLine: "Drop: the files didn't reach the VM",
+                mentionsMacClipboardKept: false)
+
+        case (.itemsUnreadable, .copy):
+            return ClipboardTransferWording(
+                headline: "Clipboard not copied from \(vm).",
+                message: "The guest couldn\u{2019}t read the copied files, so nothing was copied to the Mac.",
+                menuLine: "Clipboard: the guest's copy couldn't be read",
                 mentionsMacClipboardKept: false)
 
         case (.itemsUnreadable, _):

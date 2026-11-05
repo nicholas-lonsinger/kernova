@@ -857,6 +857,91 @@ struct GuestClipboardTests {
         try await link.changed.wait { link.releases.contains(Self.copyToken) }
     }
 
+    @Test("A host copy's text, written as data, leaves no staged file behind")
+    func writtenInlineLandingLeavesNoStagedFile() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveCopy(Self.textItem(), text: Data("from the host".utf8), on: rig, link)
+        let order = try #require(link.orders.first)
+        guard case .staged(let directory, _) = order.landing else {
+            Issue.record("landing \(order.landing)")
+            return
+        }
+
+        try await link.changed.wait { link.releases.contains(Self.copyToken) }
+        #expect(
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+                == Data("from the host".utf8))
+        #expect(!FileManager.default.fileExists(atPath: directory))
+    }
+
+    @Test("A host copy the pasteboard refuses to take is refused WRITE_FAILED, and the paste shown failed")
+    func refusedCopyWriteIsShown() async throws {
+        let noticed = AsyncGate()
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, onNotice: { noticed.notify() })
+        let rig = Rig(pasteboard: pasteboard, clipboard: clipboard)
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        clipboard.setLink(link)
+        pasteboard.failNextWrite()
+        try await receiveCopy(Self.textItem(), text: Data("too large for the pasteboard".utf8), on: rig, link)
+
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.code) == [.writeFailed])
+        try await noticed.wait { clipboard.activity == .pasteRefused(.pasteFailed, pasteLimitBytes: nil) }
+        #expect(AgentMenuText.clipboardLine(clipboard.activity) == "Clipboard: paste failed")
+    }
+
+    @Test("A host offer the pasteboard refuses to take is let go, and the paste shown failed")
+    func refusedOfferWriteIsShown() async throws {
+        let noticed = AsyncGate()
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, onNotice: { noticed.notify() })
+        let link = RecordingLink(items: [Self.textItem()])
+        clipboard.setLink(link)
+        pasteboard.failNextWrite()
+        clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 1)),
+            on: link)
+
+        try await link.changed.wait { link.releases == [Self.hostToken] }
+        try await noticed.wait { clipboard.activity == .pasteRefused(.pasteFailed, pasteLimitBytes: nil) }
+    }
+
+    @Test(
+        "The host's ask leaves out a file the agent cannot open, and says how many; of only such files, it is refused READ_FAILED"
+    )
+    func askLeavesOutUnreadableFiles() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        let readable = try guestFile()
+        let locked = scratch.url.appendingPathComponent("locked.jpeg")
+        try Data("locked".utf8).write(to: locked)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+
+        #expect(rig.pasteboard.setFiles([readable, locked]))
+        rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
+        try await link.changed.wait { link.releases == [Self.askToken] }
+        let copy = try #require(link.offers.last { $0.copy == .snapshot })
+        #expect(copy.items.count == 1)
+        #expect(copy.leftOut == 1)
+
+        #expect(rig.pasteboard.setFiles([locked]))
+        let only = Data(repeating: 5, count: 16)
+        rig.clipboard.exchange.handle(
+            .offerReceived(
+                ItemSetHeaderValue(feature: .clipboard, token: only, concealed: false, count: 0, copy: .ask)),
+            on: link)
+        try await link.changed.wait { link.refusals.contains { $0.token == only } }
+        #expect(link.refusals.first { $0.token == only }?.code == .readFailed)
+        #expect(rig.clipboard.activity == .copyCarriedNothing)
+    }
+
     @Test("A guest pasteboard that changed before the host's copy landed is left alone, and the copy refused so")
     func hostCopyLeavesAChangedPasteboard() async throws {
         let rig = rig()

@@ -516,6 +516,14 @@ package final class VMInstance {
         let publisher = hostClipboardPublisher
         hubClipboard.hub = agentHub
         hubClipboard.reporter = clipboardTransfers
+        publisher.onPasteRefused = { [weak self] in
+            guard let self else { return }
+            Self.logger.log(
+                .error, "The host pasteboard refused a paste of '\(self.name, privacy: .public)''s clipboard")
+            clipboardTransfers.gestureBegan()
+            clipboardTransfers.finish(
+                ClipboardTransferFinish(gesture: .paste, outcome: .failed(.transferFailed), peerName: name))
+        }
         hubClipboard.label = { [weak self] in self?.name ?? "VM" }
         hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0) }
         hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }

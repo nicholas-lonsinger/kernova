@@ -28,8 +28,9 @@ extension ClipboardPasteboardReader {
         /// Inline types of pasteboard item `item`, none of them read.
         case inline(item: Int, types: [String])
         /// A file or folder on disk, not yet looked at; an image file also offers its bytes INLINE when
-        /// `inliningImage`.
-        case file(URL, inliningImage: Bool)
+        /// `inliningImage`. `promise` is the item's file promise, offered in its place when the file cannot be
+        /// opened.
+        case file(URL, inliningImage: Bool, promise: (index: Int, representation: Representation)?)
         /// A file promise: the index of its receiver, and its representation.
         case promise(Int, Representation)
         /// A file a called-in promise lands, and its representation.
@@ -76,6 +77,8 @@ extension ClipboardPasteboardReader {
         case nothing
         /// The snapshot (``ClipboardOfferSource/snapshot()``), with `lost` counting the items it leaves out.
         case snapshot(ClipboardOfferSource, lost: Int)
+        /// The pasteboard held items naming files, and none of them could be read: nothing to copy.
+        case unreadable
         /// The pasteboard changed while it was read, twice.
         case changed
         /// What is not a file or folder came to more than the ceiling: nothing is copied.
@@ -118,6 +121,7 @@ extension ClipboardPasteboardReader {
                         guard let lease else { throw ClipboardServeError.unavailable }
                         return try lease.reserveScratchDirectory()
                     }, sizeOf: sizeOf)
+                if case .nothingOfferable(let lost) = read, lost > 0 { return .unreadable }
                 guard case .offer(let source, let lost) = read else { return .nothing }
                 if let snapshot = try await source.snapshot(inlineCeiling: ceiling, holding: lease) {
                     return .snapshot(snapshot, lost: lost)
@@ -188,7 +192,8 @@ extension ClipboardPasteboardReader {
             }
             let resolution = fileURLResolution(in: item)
             if case .resolved(let url) = resolution {
-                pending.append(.file(url, inliningImage: rule == .clipboard))
+                let promise = receiver.map { ($0, promisedRepresentation(promises[$0])) }
+                pending.append(.file(url, inliningImage: rule == .clipboard, promise: promise))
                 continue
             }
             if case .notAFile = resolution, let receiver {
@@ -245,11 +250,14 @@ extension ClipboardPasteboardReader {
             return (.with(representation), [.promise(index)])
         case .landing(let file, let representation):
             return (.with(representation), [.landing(file)])
-        case .file(let url, let inliningImage):
+        case .file(let url, let inliningImage, let promise):
             // Named as the user copied it, its bytes read from what it resolves to.
             guard let source = readableSource(for: url),
                 let values = try? source.resourceValues(forKeys: [.contentTypeKey, .isDirectoryKey, .fileSizeKey])
-            else { return nil }
+            else {
+                // A file this process cannot open is never offered; the item's promise, called in, writes one it can.
+                return promise.map { (.with($0.representation), [.promise($0.index)]) }
+            }
             let name = url.lastPathComponent
             if values.isDirectory == true {
                 let type = TypeDescriptor(appleUTI: values.contentType?.identifier ?? UTType.folder.identifier)

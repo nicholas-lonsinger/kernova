@@ -23,6 +23,8 @@ extension VMInstance {
             switch outcome {
             case .nothing:
                 reportClipboardCommand(.send, .nothingToCopy)
+            case .unreadable:
+                reportClipboardCommand(.send, .itemsUnreadable)
             case .changed:
                 reportClipboardCommand(.send, .transferFailed)
             case .tooLarge(let limitBytes):
@@ -84,6 +86,8 @@ extension VMInstance {
             reportClipboardCommand(.copy, .filesLeftOut(count: count, limitBytes: ceiling))
         } else if contents.referencesLeftOut > 0 {
             reportClipboardCommand(.copy, .partsGone)
+        } else if contents.itemsLeftOut > 0 {
+            reportClipboardCommand(.copy, .itemsSkipped(count: contents.itemsLeftOut))
         }
     }
 

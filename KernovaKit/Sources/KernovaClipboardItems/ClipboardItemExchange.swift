@@ -303,16 +303,19 @@ public final class ClipboardItemExchange {
         sendCopy(source, answering: nil)
     }
 
-    /// Sends `source` as a copy, naming the ask it answers, and hears on the main actor whether it opened.
+    /// Sends `source` as a copy, naming the ask it answers and how many items of this side's clipboard it leaves
+    /// out, and hears on the main actor whether it opened.
     @discardableResult
     private func sendCopy(
-        _ source: ClipboardOfferSource, answering ask: Data?, opened: @escaping @MainActor (Bool) -> Void = { _ in }
+        _ source: ClipboardOfferSource, answering ask: Data?, leftOut: Int = 0,
+        opened: @escaping @MainActor (Bool) -> Void = { _ in }
     ) -> Bool {
         guard let link else { return false }
         let token = Self.freshToken()
         sentCopies[token] = source
         let offer = ItemOffer(
-            token: token, concealed: source.concealed, items: source.items, after: ask ?? Data(), copy: .snapshot)
+            token: token, concealed: source.concealed, items: source.items, after: ask ?? Data(), copy: .snapshot,
+            leftOut: leftOut)
         send(offer, on: link) { [weak self] wasOpened in
             opened(wasOpened)
             guard !wasOpened, let self, let source = self.sentCopies.removeValue(forKey: token) else { return }
@@ -352,11 +355,12 @@ public final class ClipboardItemExchange {
         for waiting in ask.answers { waiting(answer) }
     }
 
-    /// A guest: answers the host's `ask` with a copy of `source`, served as ``sendCopy(_:)`` serves one. The ask
-    /// is released once the copy opens, or refused when it does not.
-    public func answer(_ ask: CopyAsk, with source: ClipboardOfferSource) {
+    /// A guest: answers the host's `ask` with a copy of `source`, served as ``sendCopy(_:)`` serves one, saying
+    /// how many items of this side's clipboard it leaves out (`leftOut`). The ask is released once the copy opens,
+    /// or refused when it does not.
+    public func answer(_ ask: CopyAsk, with source: ClipboardOfferSource, leftOut: Int = 0) {
         guard asks.remove(ask.token) != nil, let link else { return }
-        sendCopy(source, answering: ask.token) { opened in
+        sendCopy(source, answering: ask.token, leftOut: leftOut) { opened in
             if opened {
                 link.releaseOffer(ask.token)
             } else {
@@ -366,7 +370,7 @@ public final class ClipboardItemExchange {
     }
 
     /// A guest: answers the host's `ask` with no copy, saying why with `error`: ``ErrorCode/clipboardNothingToCopy``,
-    /// or ``ErrorCode/tooLarge`` with the ceiling.
+    /// ``ErrorCode/readFailed`` when no file it names can be read, or ``ErrorCode/tooLarge`` with the ceiling.
     public func decline(_ ask: CopyAsk, _ error: WireError) {
         guard asks.remove(ask.token) != nil else { return }
         link?.refuseOffer(ask.token, error)
@@ -439,7 +443,8 @@ public final class ClipboardItemExchange {
     /// newer copy arrived meanwhile, so an older copy never writes over a newer one. `write` hears how many
     /// references it could not fill, which it leaves out. A copy of only references to one offer this end's
     /// pasteboard still holds changes nothing, so it is refused `CLIPBOARD_ALREADY_HELD`; a failed pull refuses
-    /// it too. `write` decides everything after: whether to write, and whether to release or refuse it.
+    /// it too. `write` decides everything after: whether to write, and whether to release or refuse it. Once it
+    /// has, what landed INLINE in staging is deleted (``ClipboardRemoteOffer/discardStagedInline()``).
     @discardableResult
     public func land(_ copy: ClipboardRemoteOffer, then write: @MainActor (_ referencesLeftOut: Int) -> Void) async
         -> CopyLanding
@@ -480,6 +485,7 @@ public final class ClipboardItemExchange {
             logger.log(.notice, "\(leftOut, privacy: .public) reference(s) of a clipboard copy could not be filled")
         }
         write(leftOut)
+        copy.discardStagedInline()
         return .written(referencesLeftOut: leftOut)
     }
 

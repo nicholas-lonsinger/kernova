@@ -215,7 +215,8 @@ final class HubClipboardService: ClipboardServicing {
                         serving: copy.serving, items: copy.items, concealed: copy.concealed,
                         plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
                         held: { copy.held(item: $0, representation: $1) }, puller: copy,
-                        referencesLeftOut: leftOut, release: { exchange.releaseCopy(copy) }))
+                        referencesLeftOut: leftOut, itemsLeftOut: copy.leftOut,
+                        release: { exchange.releaseCopy(copy) }))
             }
             switch landing {
             case .written: return .landed
@@ -262,6 +263,7 @@ final class HubClipboardService: ClipboardServicing {
         switch error.code {
         case .clipboardChanged: .clipboardChanged
         case .clipboardPartsGone: .partsGone
+        case .readFailed: .itemsUnreadable
         case .tooLarge: .tooLarge(limitBytes: Int(clamping: error.limit))
         default: .transferFailed
         }

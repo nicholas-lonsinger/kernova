@@ -153,6 +153,7 @@ package struct ItemOfferRegistry: Sendable {
         header.token = offer.token
         header.after = offer.after
         header.copy = offer.copy.wire
+        header.leftOut = UInt32(clamping: offer.leftOut)
         let body = header.encoded
         if let oversize = (encoded + [body]).first(where: { $0.count > WireConstants.maxControlPayload }) {
             return WireError(

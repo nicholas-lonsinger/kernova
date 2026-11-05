@@ -52,17 +52,23 @@ public struct ClipboardWriteItem: Sendable {
 
 extension NSPasteboard: ClipboardWritePasteboard {
     /// Writes one `NSPasteboardItem` per entry, its data set now and its
-    /// promised types served by the entry's own data provider.
+    /// promised types served by the entry's own data provider. False when the
+    /// pasteboard refused any of it: an item's data or provider, or the write.
+    /// On macOS 27.2 a write of 300 MB of one type returned false and left the
+    /// pasteboard empty, where 260 MB was taken (2026-11-04, a named pasteboard).
     public func writeItems(_ items: [ClipboardWriteItem]) -> Bool {
-        writeObjects(
-            items.map { entry in
-                let item = NSPasteboardItem()
-                for (type, bytes) in entry.data { item.setData(bytes, forType: type) }
-                if let provider = entry.provider, !entry.promised.isEmpty {
-                    item.setDataProvider(provider, forTypes: entry.promised)
-                }
-                return item
-            })
+        var refused = false
+        let objects = items.map { entry in
+            let item = NSPasteboardItem()
+            for (type, bytes) in entry.data where !item.setData(bytes, forType: type) { refused = true }
+            if let provider = entry.provider, !entry.promised.isEmpty,
+                !item.setDataProvider(provider, forTypes: entry.promised)
+            {
+                refused = true
+            }
+            return item
+        }
+        return !refused && writeObjects(objects)
     }
 }
 
@@ -160,6 +166,9 @@ public final class ClipboardPasteboardPublisher {
     /// tells of its replacement then, and NSPasteboard posts no change notification.
     private var standingWatch: Timer?
 
+    /// Hears each paste whose promised bytes the pasteboard refused to take, so the paste got nothing.
+    public var onPasteRefused: (@MainActor () -> Void)?
+
     /// How often ``standingWatch`` polls: the passthrough poll's cadence.
     private static let standingWatchInterval: TimeInterval = 0.5
 
@@ -203,6 +212,7 @@ public final class ClipboardPasteboardPublisher {
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
                 provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
+                onRefused: { [weak self] _ in MainActorBridge.async { self?.onPasteRefused?() } },
                 onFinished: { [weak self] provider in
                     registry.release(provider)
                     MainActorBridge.async {

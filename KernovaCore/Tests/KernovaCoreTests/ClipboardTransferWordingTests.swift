@@ -57,6 +57,9 @@ struct ClipboardTransferWordingTests {
             (.itemsSkipped(count: 1), .drop),
             (.itemsUnreadable, .forward),
             (.itemsUnreadable, .drop),
+            (.itemsSkipped(count: 1), .copy),
+            (.itemsSkipped(count: 3), .copy),
+            (.itemsUnreadable, .copy),
             (.sendFailed, .drop),
             (.dropStopped(.turnedOff), .drop),
             (.dropStopped(.noAgent), .drop),
@@ -467,6 +470,8 @@ struct ClipboardTransferWordingTests {
             (.transferFailed, .preview, "Clipboard: preview from the guest failed"),
             (.itemsSkipped(count: 1), .forward, "Clipboard: some items weren't forwarded"),
             (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
+            (.itemsSkipped(count: 1), .copy, "Clipboard: some items weren't copied from the guest"),
+            (.itemsUnreadable, .copy, "Clipboard: the guest's copy couldn't be read"),
             (.peerReported(.dropDiskFull), .drop, "Drop: the VM ran out of disk space"),
             (
                 .peerReported(.dropDownloadsDenied), .drop,
