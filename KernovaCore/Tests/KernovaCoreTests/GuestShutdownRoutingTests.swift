@@ -336,7 +336,8 @@ struct GuestShutdownRoutingTests {
 
     @Test("Apps blocking the shutdown are named, and Force Stop is how to shut it down anyway")
     func blockedCopy() {
-        let forceStop = " To shut it down anyway, use Force Stop, which loses anything in the guest that isn\u{2019}t saved to disk."
+        let forceStop =
+            " To shut it down anyway, use Force Stop, which loses anything in the guest that isn\u{2019}t saved to disk."
         let one = Self.copy(.blocked([AppValue(displayName: "Text Editor")]))
         #expect(one.title == "\u{201C}Fedora\u{201D} Didn\u{2019}t Shut Down")
         #expect(one.message == "Text Editor is blocking it." + forceStop)

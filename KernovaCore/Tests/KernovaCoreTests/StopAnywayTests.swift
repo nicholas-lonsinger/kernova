@@ -124,7 +124,7 @@ struct StopAnywayTests {
         let harness = WiredCommandCore(virtualization: MockVirtualizationService(), preferences: preferences)
         let instance = harness.register(name: "Stopped", phase: .stopped, guestOS: .macOS)
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         #expect(!harness.library.capabilities.isApplicable(.stopAnyway, to: instance))
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(.id(instance.id), disposition: .anyway, consent: .all)

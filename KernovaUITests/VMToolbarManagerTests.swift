@@ -271,7 +271,9 @@ struct VMToolbarManagerTests {
     func anywayEnablement(offered: Bool) {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
+            AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]),
+                powerIgnoringApps: offered ? .agent(.systemPeer) : .absent(.noAgent)))
         let manager = makeManager(instance: instance)
         let (toolbar, _, _) = makeToolbar(
             manager: manager,

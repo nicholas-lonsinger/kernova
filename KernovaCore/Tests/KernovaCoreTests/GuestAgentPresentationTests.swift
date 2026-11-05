@@ -40,9 +40,10 @@ struct GuestAgentPresentationTests {
                 .init(title: "Status", isAvailable: false, detail: "No Kernova agent is connected."),
                 .init(title: "Guest logs in Console", isAvailable: false, detail: "No Kernova agent is connected."),
                 .init(title: "Automatic agent updates", isAvailable: false, detail: "No Kernova agent is connected."),
+                .init(title: "Stop and Restart", isAvailable: false, detail: "No Kernova agent is connected."),
                 .init(
-                    title: "Shut down and restart from Kernova", isAvailable: false,
-                    detail: "No Kernova agent is connected."),
+                    title: "Stop Anyway and Restart Anyway", isAvailable: false,
+                    detail: "No system service is connected."),
             ])
     }
 
@@ -56,9 +57,10 @@ struct GuestAgentPresentationTests {
                 .init(title: "Status", isAvailable: true, detail: "Connected"),
                 .init(title: "Guest logs in Console", isAvailable: true, detail: "On"),
                 .init(title: "Automatic agent updates", isAvailable: false, detail: "This agent doesn't offer it."),
+                .init(title: "Stop and Restart", isAvailable: false, detail: "No Kernova agent is connected."),
                 .init(
-                    title: "Shut down and restart from Kernova", isAvailable: false,
-                    detail: "No Kernova agent is connected."),
+                    title: "Stop Anyway and Restart Anyway", isAvailable: false,
+                    detail: "No system service is connected."),
             ])
     }
 
@@ -263,57 +265,79 @@ struct GuestAgentPresentationTests {
         #expect(presentation.agents.first?.title == "Session agent")
     }
 
-    private static func powerRow(
-        _ power: PowerProvision, routing: PowerRoutingProgress? = nil
-    ) -> GuestAgentPresentation.CapabilityRow? {
+    private static let powerTitles = ["Stop and Restart", "Stop Anyway and Restart Anyway"]
+
+    /// The Stop and Restart row, then the Stop Anyway and Restart Anyway row,
+    /// of a snapshot whose provisions are `power` and `ignoringApps`.
+    private static func powerRows(
+        _ power: PowerProvision, ignoringApps: PowerProvision, routing: PowerRoutingProgress? = nil
+    ) -> [GuestAgentPresentation.CapabilityRow] {
         let snapshot = AgentHubSnapshot(
-            peers: [Self.peer(1)], features: FeatureStatus.merge([]), power: power, routing: routing)
-        return GuestAgentPresentation(hub: snapshot).capabilities.first {
-            $0.title == "Shut down and restart from Kernova"
-        }
+            peers: [Self.peer(1)], features: FeatureStatus.merge([]), power: power, powerIgnoringApps: ignoringApps,
+            routing: routing)
+        return GuestAgentPresentation(hub: snapshot).capabilities.filter { powerTitles.contains($0.title) }
     }
 
     @Test(
-        "The shutdown row names the agent a Stop or Restart would ask",
+        "Each power row names the agent its provision would ask",
         arguments: [(PeerRole.sessionPeer, "Through the session agent"), (.systemPeer, "Through the system service")])
-    func powerRowAgent(role: PeerRole, detail: String) {
+    func powerRowsAgent(role: PeerRole, detail: String) {
         #expect(
-            Self.powerRow(.agent(role))
-                == .init(title: "Shut down and restart from Kernova", isAvailable: true, detail: detail))
+            Self.powerRows(.agent(role), ignoringApps: .agent(role))
+                == Self.powerTitles.map { .init(title: $0, isAvailable: true, detail: detail) })
     }
 
     @Test(
-        "The shutdown row says why no agent would take a shutdown",
+        "Each power row says why no agent would take its shutdown, naming the system service for the one ignoring apps",
         arguments: [
-            (AbsenceReason.notOnConsole, "Available to the session at the guest\u{2019}s screen."),
-            (.noAgent, "No Kernova agent is connected."),
-            (.disabledByPolicy, "Turned off in Settings."),
-            (.versionMismatch, "The agent is out of date."),
-            (.notImplemented, "This agent doesn't offer it."),
-        ])
-    func powerRowAbsent(reason: AbsenceReason, detail: String) {
-        #expect(
-            Self.powerRow(.absent(reason))
-                == .init(title: "Shut down and restart from Kernova", isAvailable: false, detail: detail))
-    }
-
-    @Test(
-        "While a shutdown is routed, the shutdown row shows its stage, whatever agent the next one would ask",
-        arguments: [
-            (PowerRoutingProgress.Stage.asking, "Shutting down\u{2026}"),
-            (.accepted, "Shutting down\u{2026}"),
-            (.askingApps, "Asking apps to quit\u{2026}"),
-            (.waitingOnApps([AppValue(displayName: "Text Editor")]), "Waiting on Text Editor"),
             (
-                .waitingOnApps([AppValue(displayName: "Text Editor"), AppValue(displayName: "Terminal")]),
-                "Waiting on Text Editor and Terminal"
+                AbsenceReason.notOnConsole, "Available to the session at the guest\u{2019}s screen.",
+                "Available to the session at the guest\u{2019}s screen."
             ),
+            (.noAgent, "No Kernova agent is connected.", "No system service is connected."),
+            (.disabledByPolicy, "Turned off in Settings.", "Turned off in Settings."),
+            (.versionMismatch, "The agent is out of date.", "The agent is out of date."),
+            (.notImplemented, "This agent doesn't offer it.", "This agent doesn't offer it."),
+            (.unspecified, "Unavailable.", "Unavailable."),
         ])
-    func powerRowRouting(stage: PowerRoutingProgress.Stage, detail: String) {
-        let routing = PowerRoutingProgress(action: .shutdown, role: .sessionPeer, stage: stage)
+    func powerRowsAbsent(reason: AbsenceReason, stop: String, anyway: String) {
         #expect(
-            Self.powerRow(.absent(.notOnConsole), routing: routing)
-                == .init(title: "Shut down and restart from Kernova", isAvailable: true, detail: detail))
+            Self.powerRows(.absent(reason), ignoringApps: .absent(reason)) == [
+                .init(title: "Stop and Restart", isAvailable: false, detail: stop),
+                .init(title: "Stop Anyway and Restart Anyway", isAvailable: false, detail: anyway),
+            ])
+    }
+
+    /// Each stage a routing reaches, and how its row reads it.
+    static let stages: [(PowerRoutingProgress.Stage, String)] = [
+        (.asking, "Shutting down\u{2026}"),
+        (.accepted, "Shutting down\u{2026}"),
+        (.askingApps, "Asking apps to quit\u{2026}"),
+        (.waitingOnApps([AppValue(displayName: "Text Editor")]), "Waiting on Text Editor"),
+        (
+            .waitingOnApps([AppValue(displayName: "Text Editor"), AppValue(displayName: "Terminal")]),
+            "Waiting on Text Editor and Terminal"
+        ),
+    ]
+
+    @Test(
+        "While a shutdown is routed, its own row shows its stage whatever its provision, and the other row its provision",
+        arguments: stages, [false, true])
+    func powerRowsRouting(stage: (PowerRoutingProgress.Stage, String), ignoringApps: Bool) {
+        let routing = PowerRoutingProgress(
+            action: .shutdown, ignoringApps: ignoringApps, role: ignoringApps ? .systemPeer : .sessionPeer,
+            stage: stage.0)
+        let rows = Self.powerRows(.absent(.notOnConsole), ignoringApps: .absent(.noAgent), routing: routing)
+        let running = GuestAgentPresentation.CapabilityRow(
+            title: Self.powerTitles[ignoringApps ? 1 : 0], isAvailable: true, detail: stage.1)
+        let idle =
+            ignoringApps
+            ? GuestAgentPresentation.CapabilityRow(
+                title: "Stop and Restart", isAvailable: false,
+                detail: "Available to the session at the guest\u{2019}s screen.")
+            : GuestAgentPresentation.CapabilityRow(
+                title: "Stop Anyway and Restart Anyway", isAvailable: false, detail: "No system service is connected.")
+        #expect(rows == (ignoringApps ? [idle, running] : [running, idle]))
     }
 
     @Test("Each absence reason reads as what it means")

@@ -168,15 +168,17 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
             Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
             Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
-            Self.powerRow(snapshot),
+            Self.powerRow(ignoringApps: false, snapshot),
+            Self.powerRow(ignoringApps: true, snapshot),
         ]
     }
 
-    /// The shutdown row: the routing running now, else the agent a Stop or
-    /// Restart would ask, else why none would.
-    private static func powerRow(_ snapshot: AgentHubSnapshot) -> CapabilityRow {
-        let title = "Shut down and restart from Kernova"
-        if let routing = snapshot.routing {
+    /// The row of Stop and Restart, or of Stop Anyway and Restart Anyway when
+    /// `ignoringApps`: the routing of its kind running now, else the agent
+    /// the hub's provision of that kind would ask, else why none would.
+    private static func powerRow(ignoringApps: Bool, _ snapshot: AgentHubSnapshot) -> CapabilityRow {
+        let title = ignoringApps ? "Stop Anyway and Restart Anyway" : "Stop and Restart"
+        if let routing = snapshot.routing, routing.ignoringApps == ignoringApps {
             let detail =
                 switch routing.stage {
                 case .askingApps: "Asking apps to quit\u{2026}"
@@ -186,7 +188,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 }
             return CapabilityRow(title: title, isAvailable: true, detail: detail)
         }
-        switch snapshot.power {
+        switch ignoringApps ? snapshot.powerIgnoringApps : snapshot.power {
         case .agent(.systemPeer):
             return CapabilityRow(title: title, isAvailable: true, detail: "Through the system service")
         case .agent:
@@ -194,6 +196,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         case .absent(.notOnConsole):
             return CapabilityRow(
                 title: title, isAvailable: false, detail: "Available to the session at the guest\u{2019}s screen.")
+        case .absent(.noAgent) where ignoringApps:
+            return CapabilityRow(title: title, isAvailable: false, detail: "No system service is connected.")
         case .absent(let reason):
             return CapabilityRow(title: title, isAvailable: false, detail: Self.reason(reason))
         }

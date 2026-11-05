@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentCore
+import KernovaCommandModel
 
 /// A graceful stop the guest's agents took that did not take the guest down,
 /// or one Kernova can't tell the fate of: a fact about the session it was

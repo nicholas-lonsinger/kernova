@@ -28,11 +28,13 @@ public enum PowerRoutingOutcome: Sendable, Equatable {
     case busy
 }
 
-/// Which agent the hub would ask for a shutdown now, as the merged POWER entry the UI reads.
+/// Which agent the hub would ask for a shutdown now, by `PowerRouting.candidates`, as the merged POWER entry
+/// the UI reads.
 public enum PowerProvision: Sendable, Equatable {
     /// The first candidate is the peer in this role.
     case agent(PeerRole)
-    /// No peer is a candidate, for this reason: Stop presses the ACPI button.
+    /// No peer is a candidate, for this reason, `NO_AGENT` when no peer offers the shutdown at all: for the graceful
+    /// shutdown Stop presses the ACPI button, and for the one ignoring apps Stop Anyway is not offered.
     case absent(AbsenceReason)
 }
 
@@ -52,14 +54,18 @@ public struct PowerRoutingProgress: Sendable, Equatable {
 
     /// The action routed.
     public var action: PowerAction
+    /// Whether it is performed without waiting for apps.
+    public var ignoringApps: Bool
     /// The role of the peer asked now.
     public var role: PeerRole
     /// How far that peer's request has come.
     public var stage: Stage
 
-    /// A routing of `action` whose request to the peer in `role` is at `stage`.
-    public init(action: PowerAction, role: PeerRole, stage: Stage) {
+    /// A routing of `action`, without waiting for apps when `ignoringApps`, whose request to the peer in `role`
+    /// is at `stage`.
+    public init(action: PowerAction, ignoringApps: Bool, role: PeerRole, stage: Stage) {
         self.action = action
+        self.ignoringApps = ignoringApps
         self.role = role
         self.stage = stage
     }

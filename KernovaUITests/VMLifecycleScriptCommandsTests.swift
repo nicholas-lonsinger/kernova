@@ -141,7 +141,7 @@ struct VMLifecycleScriptCommandsTests {
         #expect(unoffered.stepRequirement?.message.contains("\u{201C}For everyone\u{201D}") == true)
 
         alpha.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         let unconsented = try await #require(throws: CommandError.self) {
             try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
         }
@@ -251,7 +251,7 @@ struct VMLifecycleScriptCommandsTests {
         #expect(unoffered.stepRequirement?.title == "Can\u{2019}t Restart Anyway")
 
         alpha.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         let unconsented = try await #require(throws: CommandError.self) {
             try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
         }

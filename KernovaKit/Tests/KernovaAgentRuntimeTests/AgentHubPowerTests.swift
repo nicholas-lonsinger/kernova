@@ -112,7 +112,9 @@ struct AgentHubPowerTests {
 
         async let outcome = harness.hub.requestPower(.shutdown)
         let accepted = await harness.snapshot { $0.routing?.stage == .accepted }
-        #expect(accepted.routing == PowerRoutingProgress(action: .shutdown, role: .sessionPeer, stage: .accepted))
+        #expect(
+            accepted.routing
+                == PowerRoutingProgress(action: .shutdown, ignoringApps: false, role: .sessionPeer, stage: .accepted))
         // A second request while the first runs is refused at once.
         #expect(await harness.hub.requestPower(.shutdown) == .busy)
 

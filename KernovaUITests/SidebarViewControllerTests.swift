@@ -1058,7 +1058,9 @@ struct SidebarViewControllerTests {
     ) -> VMInstance {
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
+            AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]),
+                powerIgnoringApps: offered ? .agent(.systemPeer) : .absent(.noAgent)))
         return instance
     }
 
@@ -1123,7 +1125,7 @@ struct SidebarViewControllerTests {
         let viewModel = makeViewModel()
         let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .livePaused(sessionID: UUID()))
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         let controller = SidebarViewController(viewModel: viewModel)
 
         let menu = controller.buildContextMenu(for: instance)

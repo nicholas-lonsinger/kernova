@@ -19,9 +19,8 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// Which agent a shutdown would ask first. POWER's own merged entry: `features[.power]` says only
     /// whether some peer offers it, and routing asks only the peers serving the console session.
     public var power: PowerProvision
-    /// Whether a peer would shut the guest down without waiting for apps: the first candidate such a shutdown
-    /// would ask exists.
-    public var shutsDownIgnoringApps: Bool
+    /// Which agent a shutdown without waiting for apps would ask first.
+    public var powerIgnoringApps: PowerProvision
     /// The power routing running now, if any.
     public var routing: PowerRoutingProgress?
     /// For CLIPBOARD, DROP and DRAG, the feature's console peer: the newest peer of the console's session whose
@@ -32,16 +31,21 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// A snapshot of these peers and merged features.
     public init(
         peers: [PeerSummary], features: FeatureStatusTable, away: [AwayPeer] = [],
-        power: PowerProvision = .absent(.noAgent), shutsDownIgnoringApps: Bool = false,
+        power: PowerProvision = .absent(.noAgent), powerIgnoringApps: PowerProvision = .absent(.noAgent),
         routing: PowerRoutingProgress? = nil, consolePeers: [FeatureID: PeerHandle] = [:]
     ) {
         self.peers = peers
         self.features = features
         self.away = away
         self.power = power
-        self.shutsDownIgnoringApps = shutsDownIgnoringApps
+        self.powerIgnoringApps = powerIgnoringApps
         self.routing = routing
         self.consolePeers = consolePeers
+    }
+
+    /// Whether a peer would shut the guest down without waiting for apps.
+    public var shutsDownIgnoringApps: Bool {
+        if case .agent = powerIgnoringApps { true } else { false }
     }
 
     /// No peer: every feature `NO_AGENT`.

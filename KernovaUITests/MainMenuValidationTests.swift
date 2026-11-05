@@ -183,7 +183,9 @@ struct MainMenuValidationTests {
         let fixture = makeFixture()
         let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
+            AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]),
+                powerIgnoringApps: offered ? .agent(.systemPeer) : .absent(.noAgent)))
         for action in [#selector(AppDelegate.stopAnywayVM(_:)), #selector(AppDelegate.restartAnywayVM(_:))] {
             let item = makeMenuItem(action)
             #expect(fixture.validate(item) == isEnabled, "\(action), \(phase), offered \(offered)")

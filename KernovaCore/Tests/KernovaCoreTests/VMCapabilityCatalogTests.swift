@@ -115,7 +115,7 @@ struct VMCapabilityCatalogTests {
         // Stop Anyway names a request only where the guest's agents offer it.
         #expect(VMCapability.stopAnyway.request(on: instance) == nil)
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         for capability in VMCapability.allCases {
             let request = capability.request(on: instance)
             switch capability {
