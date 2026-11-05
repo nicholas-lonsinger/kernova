@@ -735,9 +735,8 @@ message ItemSetHeader {
   // The content is sensitive (a password): the receiver keeps it out of
   // history and logs.
   bool concealed = 1;
-  // The Item messages that follow. Only an ask (`copy`), or a peer's first
-  // CLIPBOARD_OFFER_BY_PEER on a connection, holds none; any other CLIPBOARD
-  // offer of none is refused.
+  // The Item messages that follow. Only an ask (`copy`) holds none; any other
+  // CLIPBOARD offer of none is refused.
   uint32 count = 3;
   // 16 random bytes naming this offer; a pull quotes it.
   bytes token = 4;
@@ -749,13 +748,6 @@ message ItemSetHeader {
   bytes after = 5;
   // CLIPBOARD only: what the offer is besides its opener's clipboard offer.
   ClipboardCopy copy = 6;
-  // CLIPBOARD_OFFER_BY_PEER only, on the peer's first offer on a connection:
-  // whether its clipboard changed while no connection carried CLIPBOARD. That
-  // first offer holds no items when the peer's clipboard offers nothing of its
-  // own, and the host releases it; unless it also says the clipboard changed,
-  // the host offers the peer again its own clipboard offer the last connection
-  // carried, which the peer lost with it.
-  ClipboardUnlinkedChange unlinked_change = 7;
 }
 
 // CLIPBOARD only: an offer the user's command sent, which is not its opener's
@@ -784,19 +776,6 @@ enum ClipboardCopy {
   // or RESETs it: CLIPBOARD_NOTHING_TO_COPY, or TOO_LARGE when what is not a
   // file is over the paste ceiling.
   CLIPBOARD_COPY_ASK = 2;
-}
-
-// Whether a peer's clipboard changed while no connection carried CLIPBOARD, as
-// its first CLIPBOARD_OFFER_BY_PEER on a connection reports it. Fallback for an
-// unrecognized value: CLIPBOARD_UNLINKED_CHANGE_UNKNOWN.
-enum ClipboardUnlinkedChange {
-  // Not the peer's first offer on the connection.
-  CLIPBOARD_UNLINKED_CHANGE_UNSPECIFIED = 0;
-  CLIPBOARD_UNLINKED_CHANGE_UNCHANGED = 1;
-  CLIPBOARD_UNLINKED_CHANGE_CHANGED = 2;
-  // The peer cannot tell: it started since the last connection, or its
-  // clipboard holds a write of an earlier run of it.
-  CLIPBOARD_UNLINKED_CHANGE_UNKNOWN = 3;
 }
 
 // The container codecs a destination decodes.
@@ -950,6 +929,12 @@ message ClipboardPolicy {
   // and FOLDER representations, and every pull's `byte_ceiling`. 0: the
   // peer's own default.
   uint64 max_paste_bytes = 1;
+  // Whether the peer offers each copy made on its clipboard while a
+  // connection carries CLIPBOARD (CLIPBOARD_OFFER_BY_PEER). Off, it offers
+  // nothing and answers only the host's asks. Neither turning it on nor a
+  // connection's start offers what the clipboard already holds: only a copy
+  // made after.
+  bool passthrough = 2;
 }
 
 // FeatureAdvert.params for DROP, both sides.

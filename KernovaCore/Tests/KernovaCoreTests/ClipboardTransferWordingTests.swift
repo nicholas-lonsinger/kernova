@@ -37,8 +37,6 @@ struct ClipboardTransferWordingTests {
             (.peerReported(.dropDiskFull), .drop),
             (.peerReported(.dropDownloadsDenied), .drop),
             (.peerReported(.dropFailed), .drop),
-            (.supersededCopyRetracted(hasSuccessor: true), .copy),
-            (.supersededCopyRetracted(hasSuccessor: false), .copy),
             (.disconnectedCopyRetracted, .copy),
             (.disconnectedFilesRetracted, .copy),
             (.filesLeftOut(count: 1, limitBytes: limit), .copy),
@@ -138,9 +136,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.transferFailed, .preview)).headline
                 == "Clipboard preview from \(quotedVM) failed.")
-        #expect(
-            try #require(wording(.supersededCopyRetracted(hasSuccessor: true), .copy)).headline
-                == "Clipboard changed in \(quotedVM).")
     }
 
     @Test("every arm names the VM in its headline")
@@ -193,17 +188,6 @@ struct ClipboardTransferWordingTests {
             try #require(wording(.diskFull(needed: 4096, available: 1024), .paste)).message
                 == "Not enough disk space to receive the clipboard payload (\(DataFormatters.formatBytes(4096)) needed, \(DataFormatters.formatBytes(1024)) free)"
         )
-    }
-
-    @Test("a retraction points at Copy Guest Clipboard to Mac only when an offer replaced what it removed")
-    func retractionNamesCopyToMacOnlyWithASuccessor() throws {
-        let replaced = try #require(wording(.supersededCopyRetracted(hasSuccessor: true), .copy))
-        let unreplaced = try #require(wording(.supersededCopyRetracted(hasSuccessor: false), .copy))
-        #expect(replaced.message.contains("use Copy Guest Clipboard to Mac"))
-        // Without a successor the click has nothing to fetch, so the sentence
-        // stops at what happened.
-        #expect(!unreplaced.message.contains("use Copy Guest Clipboard to Mac"))
-        #expect(unreplaced.message.hasSuffix("removed from the Mac clipboard."))
     }
 
     @Test("a paste-fire refusal says the paste did not finish, not that nothing landed")
@@ -481,10 +465,6 @@ struct ClipboardTransferWordingTests {
             (.incompleteFileSet, .paste, "Clipboard: paste from the guest failed"),
             (.diskFull(needed: 1, available: 0), .paste, "Clipboard: paste from the guest failed"),
             (.transferFailed, .preview, "Clipboard: preview from the guest failed"),
-            (
-                .supersededCopyRetracted(hasSuccessor: true), .copy,
-                "Clipboard: earlier copy was removed"
-            ),
             (.itemsSkipped(count: 1), .forward, "Clipboard: some items weren't forwarded"),
             (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
             (.peerReported(.dropDiskFull), .drop, "Drop: the VM ran out of disk space"),

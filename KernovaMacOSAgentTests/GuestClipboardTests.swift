@@ -119,6 +119,26 @@ struct GuestClipboardTests {
             clipboard: GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root))
     }
 
+    /// The host's policy, passthrough `on` or off.
+    private static func policy(passthrough on: Bool) -> PolicySnapshot {
+        PolicySnapshot([
+            ClipboardPolicyValue(maxPasteBytes: 0, passthrough: on).policy(enabled: true)
+        ])
+    }
+
+    /// Opens the gate on `link`: on the console, passthrough on, the connection usable.
+    private func openGate(_ rig: Rig, _ link: RecordingLink) {
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.apply(Self.policy(passthrough: true))
+        rig.clipboard.setLink(link)
+    }
+
+    /// Copies `text` in the guest and polls the pasteboard.
+    private func copy(_ text: String, _ rig: Rig) {
+        #expect(rig.pasteboard.setString(text, forType: .string))
+        rig.clipboard.checkPasteboard()
+    }
+
     /// The types each of `link`'s offers carries, in order.
     private func offeredUTIs(_ link: RecordingLink) -> [[String?]] {
         link.offers.map { $0.items.flatMap { $0.representations.map(\.type.appleUTI) } }
@@ -126,69 +146,115 @@ struct GuestClipboardTests {
 
     // MARK: - Gating
 
-    @Test("A copy is offered only once the session is on the console and its connection can use CLIPBOARD")
-    func offeredOnlyOnConsoleAndUsable() async throws {
+    @Test("A copy is offered only while passthrough runs, on the console, over a connection that can use CLIPBOARD")
+    func offeredOnlyWhilePassthroughRuns() async throws {
         let rig = rig()
         let link = RecordingLink()
-        #expect(rig.pasteboard.setString("first", forType: .string))
-
-        rig.clipboard.setLink(link)
-        rig.clipboard.checkPasteboard()
-        #expect(!rig.clipboard.isOffering)
-
         rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        copy("passthrough off", rig)
+        await drainMainQueue()
+        #expect(!rig.clipboard.isOffering)
+        #expect(link.offers.isEmpty)
+
+        rig.clipboard.apply(Self.policy(passthrough: true))
+        #expect(rig.clipboard.isOffering)
+        copy("passthrough on", rig)
         try await link.changed.wait { link.offers.count == 1 }
         #expect(offeredUTIs(link) == [[ClipboardContent.utf8TextUTI]])
     }
 
-    @Test("A copy the gate opening offered is not offered again by the next poll")
-    func gateOfferIsSeen() async throws {
+    @Test("Turning passthrough on offers nothing the pasteboard holds; the next copy crosses")
+    func passthroughOnOffersNothing() async throws {
         let rig = rig()
         let link = RecordingLink()
         rig.clipboard.setOnConsole(true)
-        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
         rig.clipboard.setLink(link)
+        #expect(rig.pasteboard.setString("copied before", forType: .string))
+
+        rig.clipboard.apply(Self.policy(passthrough: true))
+        rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
+
+        copy("copied after", rig)
+        try await link.changed.wait { link.offers.count == 1 }
+    }
+
+    @Test("Turning passthrough off withdraws the guest's offer, and later copies are not offered")
+    func passthroughOffWithdraws() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        openGate(rig, link)
+        copy("offered", rig)
         try await link.changed.wait { link.offers.count == 1 }
 
-        rig.clipboard.checkPasteboard()
+        rig.clipboard.apply(Self.policy(passthrough: false))
+        try await link.changed.wait { link.withdrawals == [link.offers[0].token] }
+        copy("not offered", rig)
         await drainMainQueue()
         #expect(link.offers.count == 1)
     }
 
-    @Test("Usability returning re-offers the clipboard as it stands")
-    func usabilityReturningReoffers() async throws {
+    @Test("A connection's start offers nothing the pasteboard holds, first or returning; the next copy crosses")
+    func connectionStartOffersNothing() async throws {
         let rig = rig()
         let link = RecordingLink()
-        rig.clipboard.setOnConsole(true)
-        #expect(rig.pasteboard.setString("first", forType: .string))
-        rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 1 }
+        #expect(rig.pasteboard.setString("copied before the first connection", forType: .string))
+        openGate(rig, link)
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
 
         rig.clipboard.setLink(nil)
         #expect(!rig.clipboard.isOffering)
+        #expect(rig.pasteboard.setString("copied while unlinked", forType: .string))
         rig.clipboard.setLink(link)
+        rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
 
-        try await link.changed.wait { link.offers.count == 2 }
-        #expect(link.offers[0].token != link.offers[1].token)
-        #expect(link.offers[0].items == link.offers[1].items)
+        copy("copied after the return", rig)
+        try await link.changed.wait { link.offers.count == 1 }
     }
 
-    @Test("Off the console a copy is not offered; the console returning offers the copy that stands")
-    func offConsoleCopyWaitsForTheConsole() async throws {
+    @Test(
+        "Passthrough off, a guest copy, a sharing bounce, then passthrough on: nothing is offered and the pasteboard stays"
+    )
+    func passthroughOnAfterBounceOffersNothing() async throws {
         let rig = rig()
         let link = RecordingLink()
         rig.clipboard.setOnConsole(true)
         rig.clipboard.setLink(link)
-        #expect(rig.pasteboard.setString("on", forType: .string))
+        copy("the guest's copy", rig)
+        rig.clipboard.setLink(nil)
+        rig.clipboard.setLink(link)
+        let changeCount = rig.pasteboard.changeCount
+
+        rig.clipboard.apply(Self.policy(passthrough: true))
         rig.clipboard.checkPasteboard()
+        await drainMainQueue()
+        #expect(link.offers.isEmpty)
+        #expect(rig.pasteboard.changeCount == changeCount)
+        #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("the guest's copy".utf8))
+    }
+
+    @Test("Off the console a copy is not offered; the console returning offers nothing until the next copy")
+    func offConsoleCopyIsNotOffered() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        openGate(rig, link)
+        copy("on", rig)
         try await link.changed.wait { link.offers.count == 1 }
 
         rig.clipboard.setOnConsole(false)
         #expect(rig.pasteboard.setItem([(.string, Data("off".utf8)), (.html, Data("<b>off</b>".utf8))]))
         rig.clipboard.checkPasteboard()
+        rig.clipboard.setOnConsole(true)
+        await drainMainQueue()
         #expect(link.offers.count == 1)
 
-        rig.clipboard.setOnConsole(true)
+        #expect(rig.pasteboard.setItem([(.string, Data("back".utf8)), (.html, Data("<b>back</b>".utf8))]))
+        rig.clipboard.checkPasteboard()
         try await link.changed.wait { link.offers.count == 2 }
         #expect(offeredUTIs(link).last == [ClipboardContent.utf8TextUTI, NSPasteboard.PasteboardType.html.rawValue])
     }
@@ -233,7 +299,9 @@ struct GuestClipboardTests {
         let link = RecordingLink(items: [text])
         rig.clipboard.setLink(link)
         func policy(_ bytes: Int) -> PolicySnapshot {
-            PolicySnapshot([ClipboardPolicyValue(maxPasteBytes: UInt64(bytes)).policy(enabled: true)])
+            PolicySnapshot([
+                ClipboardPolicyValue(maxPasteBytes: UInt64(bytes), passthrough: false).policy(enabled: true)
+            ])
         }
         let first = ClipboardPasteLimit.choices[0]
         rig.clipboard.apply(policy(first))
@@ -444,18 +512,17 @@ struct GuestClipboardTests {
     func offerNamesTheLastHostOffer() async throws {
         let rig = rig()
         let link = RecordingLink(items: [Self.textItem()])
-        rig.clipboard.setOnConsole(true)
-        rig.clipboard.setLink(link)
+        openGate(rig, link)
         try await receiveHostOffer(rig, link)
 
-        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
-        rig.clipboard.checkPasteboard()
+        copy("copied in the guest", rig)
         try await link.changed.wait { link.offers.count == 1 }
         #expect(link.offers[0].after == Self.hostToken)
 
         // A new connection has received nothing yet.
         rig.clipboard.setLink(nil)
         rig.clipboard.setLink(link)
+        copy("copied on the new connection", rig)
         try await link.changed.wait { link.offers.count == 2 }
         #expect(link.offers[1].after.isEmpty)
     }
@@ -464,9 +531,8 @@ struct GuestClipboardTests {
     func publishingWithdrawsTheGuestsOffer() async throws {
         let rig = rig()
         let link = RecordingLink(items: [Self.textItem()])
-        rig.clipboard.setOnConsole(true)
-        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
-        rig.clipboard.setLink(link)
+        openGate(rig, link)
+        copy("copied in the guest", rig)
         try await link.changed.wait { link.offers.count == 1 }
 
         try await receiveHostOffer(rig, link)
@@ -490,20 +556,19 @@ struct GuestClipboardTests {
 
         rig.clipboard.exchange.handle(.offerEnded(.clipboard, .remote, token: Self.hostToken, closure), on: link)
         #expect(rig.pasteboard.promisedTypes.isEmpty == retracted)
-        // The retraction's clear is the agent's own write: the poll reads no copy from it, and the gate opening
-        // reports it empty, unchanged.
+        // The retraction's clear is the agent's own write: the poll reads no copy from it.
         rig.clipboard.setOnConsole(true)
+        rig.clipboard.apply(Self.policy(passthrough: true))
         rig.clipboard.checkPasteboard()
         await drainMainQueue()
-        #expect(link.offers.allSatisfy { $0.items.isEmpty })
+        #expect(link.offers.isEmpty)
     }
 
-    @Test("The connection leaving retracts the host's offer at once, and its return reports the clear unchanged")
+    @Test("The connection leaving retracts the host's offer at once, and its return offers nothing")
     func linkDropRetracts() async throws {
         let rig = rig()
         let link = RecordingLink(items: [Self.textItem()])
-        rig.clipboard.setOnConsole(true)
-        rig.clipboard.setLink(link)
+        openGate(rig, link)
         try await receiveHostOffer(rig, link)
         #expect(!rig.pasteboard.promisedTypes.isEmpty)
 
@@ -511,17 +576,17 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.promisedTypes.isEmpty)
         #expect(rig.clipboard.exchange.remote == nil)
         rig.clipboard.setLink(link)
+        rig.clipboard.checkPasteboard()
         await drainMainQueue()
-        #expect(link.offers.last.map { $0.items.isEmpty && $0.unlinkedChange == .unchanged } == true)
+        #expect(link.offers.isEmpty)
     }
 
     @Test("A host clipboard offer of no items is refused: released, and the guest's clipboard left as it is")
     func hostOfferOfNoItemsIsRefused() async throws {
         let rig = rig()
         let link = RecordingLink()
-        rig.clipboard.setOnConsole(true)
-        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
-        rig.clipboard.setLink(link)
+        openGate(rig, link)
+        copy("copied in the guest", rig)
         try await link.changed.wait { link.offers.count == 1 }
 
         rig.clipboard.exchange.handle(
@@ -536,9 +601,8 @@ struct GuestClipboardTests {
     func emptyCopyWithdraws() async throws {
         let rig = rig()
         let link = RecordingLink()
-        rig.clipboard.setOnConsole(true)
-        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
-        rig.clipboard.setLink(link)
+        openGate(rig, link)
+        copy("copied in the guest", rig)
         try await link.changed.wait { link.offers.count == 1 }
 
         // A password manager clears the clipboard.
@@ -546,22 +610,6 @@ struct GuestClipboardTests {
         rig.clipboard.checkPasteboard()
         try await link.changed.wait { link.withdrawals == [link.offers[0].token] }
         #expect(link.offers.count == 1)
-    }
-
-    @Test("The connection returning re-offers a copy of the guest's own, never the host's write it holds, reporting it")
-    func returnReoffersOnlyLocalCopies() async throws {
-        let rig = rig()
-        let link = RecordingLink(items: [Self.textItem()])
-        rig.clipboard.setOnConsole(true)
-        rig.clipboard.setLink(link)
-        try await receiveHostOffer(rig, link)
-
-        rig.clipboard.setLink(nil)
-        rig.clipboard.setLink(link)
-        rig.clipboard.setOnConsole(false)
-        rig.clipboard.setOnConsole(true)
-        await drainMainQueue()
-        #expect(link.offers.allSatisfy { $0.items.isEmpty })
     }
 
     // MARK: - Copies
@@ -585,10 +633,10 @@ struct GuestClipboardTests {
         rig.clipboard.setOnConsole(true)
         #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
         rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 1 }
 
+        // Passthrough is off: the ask is answered all the same.
         rig.clipboard.exchange.handle(.offerReceived(Self.askHeader), on: link)
-        try await link.changed.wait { link.offers.count == 2 && link.releases == [Self.askToken] }
+        try await link.changed.wait { link.offers.count == 1 && link.releases == [Self.askToken] }
         let copy = try #require(link.offers.last)
         #expect(copy.copy == .snapshot && copy.after == Self.askToken)
         #expect(copy.items[0].representations[0].sizeEstimate == UInt64("copied in the guest".utf8.count))
@@ -789,8 +837,7 @@ struct GuestClipboardTests {
         let rig = rig()
         let link = RecordingLink(
             items: [Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
-        rig.clipboard.setOnConsole(true)
-        rig.clipboard.setLink(link)
+        openGate(rig, link)
         try await receiveCopy(Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
 
         try await rig.pasteboard.changed.wait { !rig.pasteboard.dataByItem.isEmpty }
@@ -804,7 +851,7 @@ struct GuestClipboardTests {
         // The written copy is the agent's own write: the poll offers nothing of it.
         rig.clipboard.checkPasteboard()
         await drainMainQueue()
-        #expect(link.offers.allSatisfy { $0.items.isEmpty })
+        #expect(!link.offers.contains { $0.copy == .notACopy })
 
         #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
         try await link.changed.wait { link.releases.contains(Self.copyToken) }
@@ -1022,58 +1069,5 @@ struct GuestClipboardTests {
         #expect(
             rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
                 == Data("second".utf8))
-    }
-
-    @Test("A connection's first offer says whether the clipboard changed while unlinked, reporting an empty one")
-    func firstOfferReportsChangeWhileUnlinked() async throws {
-        let rig = rig()
-        let link = RecordingLink()
-        rig.clipboard.setOnConsole(true)
-        rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 1 }
-        // Never linked before: it cannot say, and is empty.
-        #expect(link.offers[0].items.isEmpty && link.offers[0].unlinkedChange == .unknown)
-
-        rig.clipboard.setLink(nil)
-        rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 2 }
-        #expect(link.offers[1].items.isEmpty && link.offers[1].unlinkedChange == .unchanged)
-
-        rig.clipboard.setLink(nil)
-        #expect(rig.pasteboard.setString("copied while unlinked", forType: .string))
-        rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 3 }
-        #expect(!link.offers[2].items.isEmpty && link.offers[2].unlinkedChange == .changed)
-    }
-
-    @Test(
-        "A pasteboard holding an earlier agent run's write is no copy of the user's: the first offer is empty, unknown")
-    func earlierRunsWriteIsUnknown() async throws {
-        let rig = rig()
-        let link = RecordingLink()
-        #expect(
-            rig.pasteboard.setItem([
-                (.string, Data("the host's, as an earlier agent wrote it".utf8)),
-                (NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.writeMarkerUTI), Data()),
-            ]))
-        rig.clipboard.setOnConsole(true)
-        rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 1 }
-        #expect(link.offers[0].items.isEmpty && link.offers[0].unlinkedChange == .unknown)
-
-        // It stays no copy of the user's on a later connection too, though this run saw it unchanged.
-        rig.clipboard.setLink(nil)
-        rig.clipboard.setLink(link)
-        try await link.changed.wait { link.offers.count == 2 }
-        #expect(link.offers[1].items.isEmpty && link.offers[1].unlinkedChange == .unknown)
-    }
-
-    @Test("Every write the agent makes carries its write marker")
-    func writesCarryTheMarker() async throws {
-        let rig = rig()
-        let link = RecordingLink(items: [Self.textItem()])
-        rig.clipboard.setLink(link)
-        try await receiveHostOffer(rig, link)
-        #expect(ClipboardPasteboardPublisher.holdsMarkedWrite(rig.pasteboard))
     }
 }

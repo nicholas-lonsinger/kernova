@@ -38,26 +38,14 @@ package protocol ClipboardServicing: AnyObject {
     /// readable: the host's offer of the copy before it is withdrawn. Default: nothing to withdraw.
     func hostCopyOffersNothing()
 
-    /// Whether the transport resolves offers that cross, the host's winning: passthrough then offers each new
-    /// connection the Mac's copy as it stands, and turning it on leaves both sides the newer copy. A transport
-    /// that does not would swap two clipboards that crossed, so it is offered only copies made while connected.
-    var resolvesCrossings: Bool { get }
-
     /// Bumped once per connection to the guest, so passthrough tells a new connection from the last however
     /// fast one replaced the other. Default 0: a transport whose service is per connection.
     var connectionEpoch: UInt64 { get }
 
-    /// The host pasteboard's change count when this clipboard last changed, so turning passthrough on can tell
-    /// whether the Mac's copy or the guest's is newer; nil when the transport keeps no record.
-    var clipboardChangeMark: Int? { get }
-
-    /// Whether the guest's offer is this clipboard's now, for passthrough to publish.
-    var hasStandingGuestOffer: Bool { get }
-
-    /// The host pasteboard's change count when the connection before the one now up ended, after what its end
-    /// retracted, given once to whatever asks first on this connection: a Mac copy made since it is one the
-    /// guest has not seen. Nil after that, before any connection ended, or when the transport keeps no record.
-    func takeLinkLossMark() -> Int?
+    /// The host pasteboard's change count when the connection now up started, so passthrough sends the guest
+    /// only a Mac copy made since; nil when the transport keeps no record, and passthrough starts the
+    /// connection where the pasteboard stands when it first sees it. Default nil.
+    var connectionStartChangeCount: Int? { get }
 
     /// Copies `snapshot`, the Mac's clipboard as it stood at the command, to the guest's: what does not reach it
     /// at once, or nil. A refusal the guest answers later goes to the VM's transfer report.
@@ -167,10 +155,7 @@ extension ClipboardServicing {
     var snapshotStaging: ClipboardFileStaging? { nil }
     var clipboardConnection: ClipboardConnectionID? { nil }
     func hostCopyOffersNothing() {}
-    var resolvesCrossings: Bool { false }
     var connectionEpoch: UInt64 { 0 }
-    var clipboardChangeMark: Int? { nil }
-    var hasStandingGuestOffer: Bool { false }
-    func takeLinkLossMark() -> Int? { nil }
+    var connectionStartChangeCount: Int? { nil }
     func passthroughStopped() {}
 }

@@ -69,15 +69,22 @@ struct ClipboardRouteTests {
         #expect(instance.clipboardService === instance.hubClipboard)
     }
 
-    @Test("CLIPBOARD's policy follows the clipboard-sharing setting and carries the paste ceiling")
+    @Test("CLIPBOARD's policy follows the clipboard-sharing setting and carries the paste ceiling and passthrough")
     func policyFollowsSharing() {
         var configuration = VMInstanceFixture.makeConfiguration(name: "Policy VM", guestOS: .macOS)
         let ceiling = ClipboardPasteLimit.choices[0]
         configuration.clipboardSharingEnabled = true
         let shared = VMInstance.agentHubPolicy(for: configuration, maxPasteBytes: ceiling)
         #expect(shared.isEnabled(.clipboard))
-        #expect(ClipboardPolicyValue(shared) == ClipboardPolicyValue(maxPasteBytes: UInt64(ceiling)))
+        #expect(
+            ClipboardPolicyValue(shared) == ClipboardPolicyValue(maxPasteBytes: UInt64(ceiling), passthrough: false))
+        configuration.clipboardPassthroughEnabled = true
+        #expect(
+            ClipboardPolicyValue(VMInstance.agentHubPolicy(for: configuration, maxPasteBytes: ceiling))?.passthrough
+                == true)
         configuration.clipboardSharingEnabled = false
-        #expect(!VMInstance.agentHubPolicy(for: configuration, maxPasteBytes: ceiling).isEnabled(.clipboard))
+        let unshared = VMInstance.agentHubPolicy(for: configuration, maxPasteBytes: ceiling)
+        #expect(!unshared.isEnabled(.clipboard))
+        #expect(ClipboardPolicyValue(unshared)?.passthrough == false)
     }
 }

@@ -69,10 +69,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The peer reported a failure of its own; `nil` for a code this build does
     /// not define.
     case peerReported(ClipboardErrorCode?)
-    /// A Copy to Mac still on the host pasteboard was retracted because the guest
-    /// clipboard moved on. `hasSuccessor` is whether a guest offer took its
-    /// place, so the message can point at Copy to Mac.
-    case supersededCopyRetracted(hasSuccessor: Bool)
     /// A Copy to Mac still on the host pasteboard was retracted because the guest's connection ended, so nothing
     /// more of it could be pasted.
     case disconnectedCopyRetracted

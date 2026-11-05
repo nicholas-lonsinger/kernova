@@ -164,16 +164,6 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste into the guest failed",
                 mentionsMacClipboardKept: false)
 
-        case (.supersededCopyRetracted(let hasSuccessor), _):
-            let removal =
-                "The guest clipboard changed, so the earlier copy was removed from the Mac clipboard"
-            return ClipboardTransferWording(
-                headline: "Clipboard changed in \(vm).",
-                message: hasSuccessor
-                    ? "\(removal) — use Copy Guest Clipboard to Mac to bring over the new copy." : "\(removal).",
-                menuLine: "Clipboard: earlier copy was removed",
-                mentionsMacClipboardKept: false)
-
         case (.disconnectedCopyRetracted, _):
             return ClipboardTransferWording(
                 headline: "Clipboard sharing stopped in \(vm).",
@@ -471,7 +461,7 @@ package struct ClipboardTransferWording: Equatable {
         case .sourceUnreadable(let readFailure):
             message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
             menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
-        case .tooLarge, .supersededCopyRetracted, .disconnectedCopyRetracted, .disconnectedFilesRetracted,
+        case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted,
             .incompleteFileSet, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed,
             .dropStopped, .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
             message = "The transfer from the VM failed, so the drag didn't finish."

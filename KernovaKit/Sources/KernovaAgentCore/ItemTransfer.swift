@@ -36,21 +36,17 @@ public struct ItemOffer: Sendable, Equatable {
     /// What a CLIPBOARD offer is besides its opener's clipboard offer (`ItemSetHeader.copy`): a copy is not
     /// this side's clipboard offer, so a later one does not withdraw it.
     public var copy: ClipboardCopyRole
-    /// A peer's first CLIPBOARD offer on a connection: whether its clipboard changed while no connection
-    /// carried the feature (`ItemSetHeader.unlinked_change`); nil on every other offer.
-    public var unlinkedChange: ClipboardUnlinkedChange?
 
     /// Creates an offer.
     public init(
         token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy, unlinkedChange: ClipboardUnlinkedChange? = nil
+        copy: ClipboardCopyRole = .notACopy
     ) {
         self.token = token
         self.concealed = concealed
         self.items = items
         self.after = after
         self.copy = copy
-        self.unlinkedChange = unlinkedChange
     }
 }
 
@@ -68,13 +64,11 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var after: Data
     /// ``ItemOffer/copy``, as the OPEN carried it.
     public var copy: ClipboardCopyRole
-    /// ``ItemOffer/unlinkedChange``, as the OPEN carried it.
-    public var unlinkedChange: ClipboardUnlinkedChange?
 
     /// A header announcing `count` items of `feature`'s offer `token`.
     public init(
         feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy, unlinkedChange: ClipboardUnlinkedChange? = nil
+        copy: ClipboardCopyRole = .notACopy
     ) {
         self.feature = feature
         self.token = token
@@ -82,45 +76,12 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
         self.count = count
         self.after = after
         self.copy = copy
-        self.unlinkedChange = unlinkedChange
     }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after, copy: ClipboardCopyRole(header.copy),
-            unlinkedChange: ClipboardUnlinkedChange(header.unlinkedChange)
-        )
-    }
-}
-
-/// Whether a peer's clipboard changed while no connection carried CLIPBOARD, as its first offer on a connection
-/// says.
-public enum ClipboardUnlinkedChange: Sendable, Equatable {
-    case unchanged
-    case changed
-    /// The peer cannot tell: it started since the last connection, or its clipboard holds a write of an
-    /// earlier run of it.
-    case unknown
-
-    /// The report `wire` names; nil on an offer that is not the first.
-    init?(_ wire: Kernova_V2_ClipboardUnlinkedChange) {
-        switch wire {
-        case .unspecified: return nil
-        case .unchanged: self = .unchanged
-        case .changed: self = .changed
-        case .unknown, .UNRECOGNIZED: self = .unknown
-        }
-    }
-
-    /// The wire's spelling of `change`.
-    static func wire(_ change: ClipboardUnlinkedChange?) -> Kernova_V2_ClipboardUnlinkedChange {
-        switch change {
-        case nil: .unspecified
-        case .unchanged: .unchanged
-        case .changed: .changed
-        case .unknown: .unknown
-        }
+            after: header.after, copy: ClipboardCopyRole(header.copy))
     }
 }
 

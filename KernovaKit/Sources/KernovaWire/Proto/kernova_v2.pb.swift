@@ -871,56 +871,6 @@ public nonisolated enum Kernova_V2_ClipboardCopy: SwiftProtobuf.Enum, Swift.Case
 
 }
 
-/// Whether a peer's clipboard changed while no connection carried CLIPBOARD, as
-/// its first CLIPBOARD_OFFER_BY_PEER on a connection reports it. Fallback for an
-/// unrecognized value: CLIPBOARD_UNLINKED_CHANGE_UNKNOWN.
-public nonisolated enum Kernova_V2_ClipboardUnlinkedChange: SwiftProtobuf.Enum, Swift.CaseIterable {
-  public typealias RawValue = Int
-
-  /// Not the peer's first offer on the connection.
-  case unspecified // = 0
-  case unchanged // = 1
-  case changed // = 2
-
-  /// The peer cannot tell: it started since the last connection, or its
-  /// clipboard holds a write of an earlier run of it.
-  case unknown // = 3
-  case UNRECOGNIZED(Int)
-
-  public init() {
-    self = .unspecified
-  }
-
-  public init?(rawValue: Int) {
-    switch rawValue {
-    case 0: self = .unspecified
-    case 1: self = .unchanged
-    case 2: self = .changed
-    case 3: self = .unknown
-    default: self = .UNRECOGNIZED(rawValue)
-    }
-  }
-
-  public var rawValue: Int {
-    switch self {
-    case .unspecified: return 0
-    case .unchanged: return 1
-    case .changed: return 2
-    case .unknown: return 3
-    case .UNRECOGNIZED(let i): return i
-    }
-  }
-
-  // The compiler won't synthesize support with the UNRECOGNIZED case.
-  public static let allCases: [Kernova_V2_ClipboardUnlinkedChange] = [
-    .unspecified,
-    .unchanged,
-    .changed,
-    .unknown,
-  ]
-
-}
-
 /// The container codecs a destination decodes.
 public nonisolated enum Kernova_V2_Codec: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
@@ -2240,9 +2190,8 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// history and logs.
   public var concealed: Bool = false
 
-  /// The Item messages that follow. Only an ask (`copy`), or a peer's first
-  /// CLIPBOARD_OFFER_BY_PEER on a connection, holds none; any other CLIPBOARD
-  /// offer of none is refused.
+  /// The Item messages that follow. Only an ask (`copy`) holds none; any other
+  /// CLIPBOARD offer of none is refused.
   public var count: UInt32 = 0
 
   /// 16 random bytes naming this offer; a pull quotes it.
@@ -2257,14 +2206,6 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
 
   /// CLIPBOARD only: what the offer is besides its opener's clipboard offer.
   public var copy: Kernova_V2_ClipboardCopy = .unspecified
-
-  /// CLIPBOARD_OFFER_BY_PEER only, on the peer's first offer on a connection:
-  /// whether its clipboard changed while no connection carried CLIPBOARD. That
-  /// first offer holds no items when the peer's clipboard offers nothing of its
-  /// own, and the host releases it; unless it also says the clipboard changed,
-  /// the host offers the peer again its own clipboard offer the last connection
-  /// carried, which the peer lost with it.
-  public var unlinkedChange: Kernova_V2_ClipboardUnlinkedChange = .unspecified
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2654,6 +2595,13 @@ public nonisolated struct Kernova_V2_ClipboardPolicy: Sendable {
   /// peer's own default.
   public var maxPasteBytes: UInt64 = 0
 
+  /// Whether the peer offers each copy made on its clipboard while a
+  /// connection carries CLIPBOARD (CLIPBOARD_OFFER_BY_PEER). Off, it offers
+  /// nothing and answers only the host's asks. Neither turning it on nor a
+  /// connection's start offers what the clipboard already holds: only a copy
+  /// made after.
+  public var passthrough: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2836,10 +2784,6 @@ nonisolated extension Kernova_V2_LogLevel: SwiftProtobuf._ProtoNameProviding {
 
 nonisolated extension Kernova_V2_ClipboardCopy: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CLIPBOARD_COPY_UNSPECIFIED\0\u{1}CLIPBOARD_COPY_SNAPSHOT\0\u{1}CLIPBOARD_COPY_ASK\0")
-}
-
-nonisolated extension Kernova_V2_ClipboardUnlinkedChange: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0CLIPBOARD_UNLINKED_CHANGE_UNSPECIFIED\0\u{1}CLIPBOARD_UNLINKED_CHANGE_UNCHANGED\0\u{1}CLIPBOARD_UNLINKED_CHANGE_CHANGED\0\u{1}CLIPBOARD_UNLINKED_CHANGE_UNKNOWN\0")
 }
 
 nonisolated extension Kernova_V2_Codec: SwiftProtobuf._ProtoNameProviding {
@@ -4349,7 +4293,7 @@ nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{1}copy\0\u{3}unlinked_change\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{1}copy\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4362,7 +4306,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
       case 4: try { try decoder.decodeSingularBytesField(value: &self.token) }()
       case 5: try { try decoder.decodeSingularBytesField(value: &self.after) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.copy) }()
-      case 7: try { try decoder.decodeSingularEnumField(value: &self.unlinkedChange) }()
       default: break
       }
     }
@@ -4384,9 +4327,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if self.copy != .unspecified {
       try visitor.visitSingularEnumField(value: self.copy, fieldNumber: 6)
     }
-    if self.unlinkedChange != .unspecified {
-      try visitor.visitSingularEnumField(value: self.unlinkedChange, fieldNumber: 7)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4396,7 +4336,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if lhs.token != rhs.token {return false}
     if lhs.after != rhs.after {return false}
     if lhs.copy != rhs.copy {return false}
-    if lhs.unlinkedChange != rhs.unlinkedChange {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -4854,7 +4793,7 @@ nonisolated extension Kernova_V2_ClipboardCapability: SwiftProtobuf.Message, Swi
 
 nonisolated extension Kernova_V2_ClipboardPolicy: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ClipboardPolicy"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}max_paste_bytes\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}max_paste_bytes\0\u{1}passthrough\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4863,6 +4802,7 @@ nonisolated extension Kernova_V2_ClipboardPolicy: SwiftProtobuf.Message, SwiftPr
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.maxPasteBytes) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.passthrough) }()
       default: break
       }
     }
@@ -4872,11 +4812,15 @@ nonisolated extension Kernova_V2_ClipboardPolicy: SwiftProtobuf.Message, SwiftPr
     if self.maxPasteBytes != 0 {
       try visitor.visitSingularUInt64Field(value: self.maxPasteBytes, fieldNumber: 1)
     }
+    if self.passthrough != false {
+      try visitor.visitSingularBoolField(value: self.passthrough, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_ClipboardPolicy, rhs: Kernova_V2_ClipboardPolicy) -> Bool {
     if lhs.maxPasteBytes != rhs.maxPasteBytes {return false}
+    if lhs.passthrough != rhs.passthrough {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

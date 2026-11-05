@@ -546,10 +546,10 @@ struct ClipboardPassthroughCoordinatorTests {
 
         let file = scratch.url.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: file)
+        h.coordinator.start()
         writeFileURLs([file], to: h.pasteboard)
 
-        // Passthrough switched off and back on while the walk runs.
-        h.coordinator.start()
+        // Passthrough switched off and back on while the walk runs; turning it on sends nothing standing.
         h.coordinator.pollHostClipboard()
         h.coordinator.stop()
         h.coordinator.start()

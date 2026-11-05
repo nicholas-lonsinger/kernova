@@ -391,13 +391,16 @@ package final class VMInstance {
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
     /// forwards guest logs, CLIPBOARD exactly when it shares the clipboard, its
-    /// paste ceiling `maxPasteBytes`, and DROP when files dragged onto the
-    /// display go to the guest.
+    /// paste ceiling `maxPasteBytes` and whether passthrough runs, and DROP when
+    /// files dragged onto the display go to the guest.
     static func agentHubPolicy(for configuration: VMConfiguration, maxPasteBytes: Int) -> PolicySnapshot {
         PolicySnapshot([
             FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
-            ClipboardPolicyValue(maxPasteBytes: UInt64(clamping: maxPasteBytes))
-                .policy(enabled: configuration.clipboardSharingEnabled),
+            ClipboardPolicyValue(
+                maxPasteBytes: UInt64(clamping: maxPasteBytes),
+                passthrough: configuration.clipboardPassthroughIsEffective
+            )
+            .policy(enabled: configuration.clipboardSharingEnabled),
             FeaturePolicyValue(feature: .drop, enabled: configuration.dropFilesEnabled),
         ])
     }
@@ -521,9 +524,6 @@ package final class VMInstance {
         }
         hubClipboard.passthroughHoldsUnsentCopy = { [weak self] in
             self?.sessionContext?.clipboardPassthroughCoordinator?.holdsUnsentCopy ?? false
-        }
-        hubClipboard.passthroughReofferAfterReturn = { [weak self] in
-            self?.sessionContext?.clipboardPassthroughCoordinator?.reofferAfterReturn()
         }
         hubClipboard.passthroughForwardNow = { [weak self] in
             self?.sessionContext?.clipboardPassthroughCoordinator?.forwardNow()
@@ -1123,10 +1123,9 @@ package final class VMInstance {
 
     /// Starts or stops automatic clipboard passthrough to match the current
     /// configuration and session state. Stopping it ends what it carried
-    /// across (``ClipboardServicing/passthroughStopped()``).
-    ///
-    /// Host-side only — no guest cooperation and no wire change — so it drives
-    /// both transports.
+    /// across (``ClipboardServicing/passthroughStopped()``). Starting it sends
+    /// nothing: only a copy made after crosses. The guest agent hears the
+    /// setting in CLIPBOARD's policy (``agentHubPolicy(for:maxPasteBytes:)``).
     func refreshClipboardPassthrough() {
         guard let context = sessionContext else { return }
         let shouldRun = configuration.clipboardPassthroughIsEffective && hasLiveVirtualMachine

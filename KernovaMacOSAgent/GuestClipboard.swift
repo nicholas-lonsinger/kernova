@@ -10,8 +10,9 @@ import KernovaSynchronization
 import KernovaWire
 
 /// The guest's clipboard over the session peer's CLIPBOARD items: each copy in this session offered to the host
-/// while the session owns the console and its connection can use the feature, and each host offer published on
-/// the guest pasteboard, its bytes pulled only when a paste asks for them. The host's clipboard commands cross
+/// while passthrough runs, the session owns the console and its connection can use the feature, and each host
+/// offer published on the guest pasteboard, its bytes pulled only when a paste asks for them. Neither that gate
+/// opening nor a new connection offers what the pasteboard already holds: only a copy made after. The host's clipboard commands cross
 /// as copies: a snapshot of this pasteboard sent when the host asks, and a host copy written here as data, its
 /// files promised.
 @MainActor
@@ -37,6 +38,8 @@ final class GuestClipboard {
     private let pasteCeiling: Locked<Int>
 
     private var onConsole = false
+    /// Whether the host's policy runs passthrough.
+    private var passthrough = false
     private var link: (any ClipboardItemLink)?
     /// The pasteboard change last seen by the poll, moved past every write this agent makes so its own
     /// promise is never read as a copy.
@@ -45,10 +48,6 @@ final class GuestClipboard {
     private var readingChangeCount: Int?
     /// The host offer the guest pasteboard was last written with.
     private var published: ClipboardRemoteOffer?
-    /// The pasteboard change when copies last stopped being offered, moved past every write this agent makes
-    /// meanwhile: what the next connection's first offer reports a change against. Nil before the first, when
-    /// the first offer cannot tell.
-    private var unlinkedChangeCount: Int?
     private var pollingTimer: Timer?
 
     /// The latest clipboard activity, for the menu-bar status line.
@@ -71,7 +70,7 @@ final class GuestClipboard {
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         snapshotStaging = .leased(label: "agent-copies", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(), marksWrites: true)
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         seenChangeCount = pasteboard.changeCount
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
         exchange.onRemoteOfferEnded = { [weak self] remote, ending in
@@ -110,15 +109,18 @@ final class GuestClipboard {
     }
 
     /// Takes the paste ceiling the host's policy sets, the default when it sets none, for every later publish
-    /// and pull.
+    /// and pull, and whether passthrough runs.
     func apply(_ policy: PolicySnapshot) {
-        let ceiling = ClipboardPasteLimit.fromPolicy(ClipboardPolicyValue(policy)?.maxPasteBytes ?? 0)
+        let value = ClipboardPolicyValue(policy)
+        let ceiling = ClipboardPasteLimit.fromPolicy(value?.maxPasteBytes ?? 0)
         let changed = pasteCeiling.withLock { held in
             defer { held = ceiling }
             return held != ceiling
         }
-        guard changed else { return }
-        Self.logger.log(.notice, "The host sets the paste ceiling to \(ceiling, privacy: .public) bytes")
+        if changed { Self.logger.log(.notice, "The host sets the paste ceiling to \(ceiling, privacy: .public) bytes") }
+        let was = isOffering
+        passthrough = value?.passthrough ?? false
+        gateChanged(from: was)
     }
 
     /// The paste ceiling in force.
@@ -150,39 +152,15 @@ final class GuestClipboard {
     }
 
     /// Copies are offered while this is true.
-    var isOffering: Bool { onConsole && link != nil }
+    var isOffering: Bool { passthrough && onConsole && link != nil }
 
-    /// The gate opening offers the pasteboard as it stands, saying whether it changed while the gate was
-    /// closed, and that change is seen: the poll offers only a later one. Closing it marks where that change is
-    /// told from. A pasteboard holding a write of an earlier run of the agent cannot tell, and neither can a
-    /// first gate.
+    /// The gate opening sees the pasteboard as it stands, offering nothing: the poll offers only a later copy.
+    /// Closing it withdraws this side's offer, so nothing of it stands while passthrough is off.
     private func gateChanged(from was: Bool) {
         guard isOffering != was else { return }
-        let changeCount = pasteboard.changeCount
-        guard isOffering else {
-            unlinkedChangeCount = changeCount
-            return
-        }
-        Self.logger.log(.notice, "The clipboard is offered to the host again")
-        seenChangeCount = changeCount
-        let change: ClipboardUnlinkedChange
-        if let unlinked = unlinkedChangeCount, !holdsEarlierRunsWrite(changeCount) {
-            change = unlinked == changeCount ? .unchanged : .changed
-        } else {
-            change = .unknown
-        }
-        readAndOffer(changeCount, unlinkedChange: change)
-    }
-
-    /// Whether the pasteboard, at `changeCount`, holds a write of an agent's: this run's own, or an earlier
-    /// run's, its marker read from its types alone. Neither is a copy of the user's.
-    private func holdsAgentWrite(_ changeCount: Int) -> Bool {
-        changeCount == publisher.lastWriteChangeCount || ClipboardPasteboardPublisher.holdsMarkedWrite(pasteboard)
-    }
-
-    /// Whether the pasteboard, at `changeCount`, holds a write of an earlier run of the agent.
-    private func holdsEarlierRunsWrite(_ changeCount: Int) -> Bool {
-        changeCount != publisher.lastWriteChangeCount && ClipboardPasteboardPublisher.holdsMarkedWrite(pasteboard)
+        guard isOffering else { return exchange.withdrawLocal() }
+        Self.logger.log(.notice, "Copies on the clipboard are offered to the host from now on")
+        seenChangeCount = pasteboard.changeCount
     }
 
     // MARK: Guest → host
@@ -210,12 +188,10 @@ final class GuestClipboard {
         readAndOffer(changeCount)
     }
 
-    /// Reads the pasteboard as it stands at `changeCount` and offers it, unless it is an agent's write or has
-    /// moved on by the time the read lands. The connection's first offer, `unlinkedChange` set, is made whatever
-    /// the pasteboard holds: a report of no items when it offers nothing of the user's.
-    private func readAndOffer(_ changeCount: Int, unlinkedChange: ClipboardUnlinkedChange? = nil) {
-        if let unlinkedChange, holdsAgentWrite(changeCount) { return exchange.reportEmpty(unlinkedChange) }
-        guard !holdsAgentWrite(changeCount), readingChangeCount != changeCount else { return }
+    /// Reads the pasteboard as it stands at `changeCount` and offers it, unless it is this agent's write or has
+    /// moved on by the time the read lands.
+    private func readAndOffer(_ changeCount: Int) {
+        guard changeCount != publisher.lastWriteChangeCount, readingChangeCount != changeCount else { return }
         readingChangeCount = changeCount
         let promiseStaging = promiseStaging
         let generation = nextPromiseGeneration
@@ -230,29 +206,24 @@ final class GuestClipboard {
             guard pasteboard.changeCount == changeCount, isOffering else { return }
             switch outcome {
             case .offer(let source, let lost):
-                exchange.offer(source, unlinkedChange: unlinkedChange)
+                exchange.offer(source)
                 activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .offeredToHost
                 if lost > 0 { onNotice() }
             case .nothingOfferable:
-                reportNothing(unlinkedChange)
+                exchange.withdrawLocal()
                 activity = .copyCarriedNothing
                 onNotice()
             case .empty, .suppressed:
-                reportNothing(unlinkedChange)
+                exchange.withdrawLocal()
             }
         }
     }
 
-    /// This side's clipboard offers nothing: its offer is withdrawn, and a connection's first offer reports it.
-    private func reportNothing(_ unlinkedChange: ClipboardUnlinkedChange?) {
-        guard let unlinkedChange else { return exchange.withdrawLocal() }
-        exchange.reportEmpty(unlinkedChange)
-    }
-
-    /// Answers the host's ask with a snapshot of the pasteboard now, or declines it: off the console or with
-    /// nothing to copy. What the pasteboard holds only as the host's promise goes by reference.
+    /// Answers the host's ask with a snapshot of the pasteboard now, whether or not passthrough runs, or declines
+    /// it: off the console or with nothing to copy. What the pasteboard holds only as the host's promise goes by
+    /// reference.
     private func sendSnapshot(answering ask: ClipboardItemExchange.CopyAsk) {
-        guard isOffering else { return exchange.decline(ask, WireError(.clipboardNothingToCopy)) }
+        guard onConsole, link != nil else { return exchange.decline(ask, WireError(.clipboardNothingToCopy)) }
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
@@ -387,7 +358,7 @@ final class GuestClipboard {
 
     /// The host's offer ended — its clipboard moved on, or the connection carrying it left: a promise still
     /// standing for it could serve only what already landed, so it is withdrawn, unless a copy has replaced it
-    /// since. The host's next connection offers what it holds then.
+    /// since. The host's next connection offers only its next copy.
     private func retract(_ remote: ClipboardRemoteOffer) {
         guard published === remote else { return }
         published = nil
@@ -395,12 +366,10 @@ final class GuestClipboard {
     }
 
     /// Withdraws the promises of this agent's write serving the offer `token`, if the pasteboard still holds
-    /// it, keeping what it wrote as data, as this agent's own change: the poll must not read it as a copy, nor
-    /// the next connection's first offer as a change.
+    /// it, keeping what it wrote as data, as this agent's own change: the poll must not read it as a copy.
     private func retractWrite(servingOffer token: Data) {
         guard publisher.retractWrite(servingOffer: token) != nil else { return }
         seenChangeCount = pasteboard.changeCount
-        if !isOffering { unlinkedChangeCount = pasteboard.changeCount }
     }
 
     /// Stops polling; the pasteboard's promises keep serving what already landed.

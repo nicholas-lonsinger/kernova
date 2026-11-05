@@ -13,7 +13,7 @@ import KernovaWire
 ///
 /// - This side's offer is one ``ClipboardOfferSource``, each pull of it served from it. Making one ends the
 ///   far side's (``onRemoteOfferEnded`` hears `.superseded`), and the source lives only while its offer does: a
-///   new connection is offered what the end's pasteboard holds then, never a source held from before.
+///   new connection carries only a copy made after it came up, never a source held from before.
 /// - The far side's offer arrives as ``ClipboardRemoteOffer``, its items read whole, for the end to publish.
 ///   Taking it withdraws this side's offer.
 /// - Offers made before either side saw the other's cross; the host's wins (``side``).
@@ -47,7 +47,7 @@ public final class ClipboardItemExchange {
         /// This side made a copy of its own.
         case superseded
         /// The connection left or no longer carries the feature, so nothing more of it can be pulled; the far
-        /// side's clipboard may hold it still, and offers it again on the next connection.
+        /// side's clipboard may hold it still, and the next connection carries only its next copy.
         case linkLost
     }
 
@@ -92,9 +92,6 @@ public final class ClipboardItemExchange {
     public var holdsUnsentCopy: () -> Bool = { false }
     /// The host: a guest offer was refused for crossing a copy of this side's; offer that copy now.
     public var onCrossingRefused: (() -> Void)?
-    /// The host: the guest's first offer on a connection reported an empty clipboard it did not change while
-    /// unlinked, or cannot say whether it did, so the copy of this side's it held went with the last connection.
-    public var onEmptyReturn: (() -> Void)?
     /// A guest: the host asks for a snapshot of this side's clipboard, to be answered once.
     public var onCopyAsked: ((CopyAsk) -> Void)?
     /// A guest: the host sent a copy of its clipboard, its items read; this end holds it until it releases it.
@@ -120,10 +117,6 @@ public final class ClipboardItemExchange {
     public private(set) var localSource: ClipboardOfferSource?
     /// The far side's copies this end holds, by token.
     public private(set) var copies: [Data: ClipboardRemoteOffer] = [:]
-    /// Whether this side's offer was the far side's clipboard when last heard of: set once one opens, and
-    /// cleared only by the far side letting it go, a far-side offer taken, or this end withdrawing it — not by a
-    /// connection ending, which a far side whose clipboard lost the offer with it reports on the next.
-    public private(set) var localOfferStood = false
 
     /// Which end this is.
     public let side: Side
@@ -134,8 +127,6 @@ public final class ClipboardItemExchange {
     private var localToken: Data?
     /// The host: the last offer the connection opened on `link`. A guest: the last host offer received on it.
     private var lastLinkToken: Data?
-    /// The host: whether the guest's first offer on `link` has arrived.
-    private var heardOnLink = false
     /// The tokens of the far side's offers whose items are still being read.
     private var reading: Set<Data> = []
     /// The tokens of the far side's copies whose items are still being read.
@@ -183,8 +174,8 @@ public final class ClipboardItemExchange {
 
     /// Runs over `link` from now on, or over nothing; this sends nothing. Every offer and copy the connection
     /// before carried ends here: the far side's offer as `.linkLost`, each copy held through ``onCopyEnded``,
-    /// their pulls cancelled; this side's, whose ends follow as events; and an ask unanswered. What a new
-    /// connection is offered is the end's to read from its pasteboard then.
+    /// their pulls cancelled; this side's, whose ends follow as events; and an ask unanswered. A new connection
+    /// is offered only the end's next copy.
     public func setLink(_ link: (any ClipboardItemLink)?) {
         self.link = link
         connection = ClipboardConnectionID()
@@ -192,7 +183,6 @@ public final class ClipboardItemExchange {
         localToken = nil
         localSource = nil
         lastLinkToken = nil
-        heardOnLink = false
         reading.removeAll()
         readingCopies.removeAll()
         sentCopies.removeAll()
@@ -217,9 +207,8 @@ public final class ClipboardItemExchange {
 
     /// Makes `source` this end's clipboard and offers it on the connection, replacing this side's offer before
     /// it (`ITEM_OFFER_REPLACED`) and ending the far side's. A source with no items offers nothing, so it
-    /// withdraws this side's offer instead. With no connection, nothing is held. A guest's first offer on a
-    /// connection says whether its clipboard changed while unlinked (`unlinkedChange`).
-    public func offer(_ source: ClipboardOfferSource, unlinkedChange: ClipboardUnlinkedChange? = nil) {
+    /// withdraws this side's offer instead. With no connection, nothing is held.
+    public func offer(_ source: ClipboardOfferSource) {
         guard !source.items.isEmpty else { return withdrawLocal() }
         endRemote(.superseded)
         guard let link else { return }
@@ -229,22 +218,10 @@ public final class ClipboardItemExchange {
         withdrawLocal()
         let token = Self.freshToken()
         opening = (token, source)
-        let offer = ItemOffer(
-            token: token, concealed: source.concealed, items: source.items, after: after,
-            unlinkedChange: side == .guest ? unlinkedChange : nil)
+        let offer = ItemOffer(token: token, concealed: source.concealed, items: source.items, after: after)
         send(offer, on: link) {
             [weak self] opened in self?.answered(token, opened: opened)
         }
-    }
-
-    /// A guest: this side's first offer on a connection, when its clipboard offers nothing of its own: a report
-    /// of no items saying whether its clipboard changed while unlinked, which the host releases.
-    public func reportEmpty(_ unlinkedChange: ClipboardUnlinkedChange) {
-        withdrawLocal()
-        guard side == .guest, let link else { return }
-        send(
-            ItemOffer(token: Self.freshToken(), items: [], after: after, unlinkedChange: unlinkedChange), on: link
-        ) { _ in }
     }
 
     /// The `after` this side's next offer carries: a guest's names the last host offer it received.
@@ -261,7 +238,6 @@ public final class ClipboardItemExchange {
         guard opened else { return }
         localToken = token
         localSource = opening.source
-        localOfferStood = true
         if side == .host { lastLinkToken = token }
     }
 
@@ -296,7 +272,6 @@ public final class ClipboardItemExchange {
         opening = nil
         localToken = nil
         localSource = nil
-        localOfferStood = false
     }
 
     /// Ends the far side's offer as this end's clipboard, releasing it: this side pulls nothing more of it.
@@ -614,10 +589,6 @@ public final class ClipboardItemExchange {
             guard token == localToken else { return }
             localToken = nil
             localSource = nil
-            switch closure {
-            case .completed, .resetByPeer: localOfferStood = false
-            case .resetLocally, .connectionClosedLocally, .connectionClosedByPeer, .connectionLost: break
-            }
         case .offerEnded(_, .remote, let token, let closure):
             reading.remove(token)
             readingCopies.remove(token)
@@ -670,20 +641,12 @@ public final class ClipboardItemExchange {
     }
 
     /// Reads every item of the far side's offer `header`, then hands the offer over, unless it ended meanwhile.
-    /// The host first refuses, unread, a guest offer that crosses a copy of its own, and takes a guest's first
-    /// offer of no items as its report of an empty clipboard.
+    /// The host first refuses, unread, a guest offer that crosses a copy of its own.
     private func received(_ header: ItemSetHeaderValue, on link: any ClipboardItemLink) {
         switch side {
         case .guest:
             lastLinkToken = header.token
         case .host:
-            let first = !heardOnLink
-            heardOnLink = true
-            if header.count == 0 {
-                link.releaseOffer(header.token)
-                if first, header.unlinkedChange != .changed { onEmptyReturn?() }
-                return
-            }
             guard !crosses(header) else {
                 logger.log(.notice, "Refused a guest clipboard offer that crossed the host's newer copy")
                 link.releaseOffer(header.token)

@@ -137,9 +137,6 @@ public final class ClipboardPasteboardPublisher {
     /// Where each write records what it was made from, for a snapshot of the pasteboard holding it.
     private let ledger: ClipboardWriteLedger
 
-    /// Whether every item a write places carries ``ClipboardSnapshotPolicy/writeMarkerUTI``.
-    private let marksWrites: Bool
-
     /// The pasteboard's `changeCount` right after the most recent write — a
     /// retraction's clear included — or `nil` before any write.
     ///
@@ -158,25 +155,15 @@ public final class ClipboardPasteboardPublisher {
     /// retracts it by naming that offer, so no other offer's end reaches it.
     private var standing: ClipboardStandingWrite?
 
-    /// Creates a publisher over `pasteboard`, recording each write in `ledger`. `marksWrites` marks every item
-    /// it writes (``ClipboardSnapshotPolicy/writeMarkerUTI``), for ``holdsMarkedWrite(_:)``.
+    /// Creates a publisher over `pasteboard`, recording each write in `ledger`.
     public init(
         pasteboard: any ClipboardWritePasteboard,
         providerRegistry: LazyClipboardProviderRegistry = .shared,
-        ledger: ClipboardWriteLedger = .shared,
-        marksWrites: Bool = false
+        ledger: ClipboardWriteLedger = .shared
     ) {
         self.pasteboard = pasteboard
         self.providerRegistry = providerRegistry
         self.ledger = ledger
-        self.marksWrites = marksWrites
-    }
-
-    /// Whether `pasteboard` holds a write of a publisher that marks its writes — this run's, or an earlier
-    /// one's — read from its types alone.
-    public static func holdsMarkedWrite(_ pasteboard: any ClipboardReadPasteboard) -> Bool {
-        let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.writeMarkerUTI)
-        return pasteboard.items.contains { $0.types.contains(marker) }
     }
 
     /// Writes `specs`, made from `source`, reporting whether the pasteboard took them: each item's data now, its
@@ -197,9 +184,8 @@ public final class ClipboardPasteboardPublisher {
         let promising = specs.filter { !$0.types.isEmpty }.count
         let unfinished = Locked(promising)
         var providers: [LazyClipboardDataProvider] = []
-        let marker = marksWrites ? [(type: ClipboardSnapshotPolicy.writeMarkerUTI, bytes: Data())] : []
         let data = specs.map { spec in
-            (spec.data + marker).compactMap { type, bytes -> (type: NSPasteboard.PasteboardType, bytes: Data)? in
+            spec.data.compactMap { type, bytes -> (type: NSPasteboard.PasteboardType, bytes: Data)? in
                 Self.screened(bytes, servedAs: type).map { (NSPasteboard.PasteboardType(type), $0) }
             }
         }
@@ -294,10 +280,8 @@ public final class ClipboardPasteboardPublisher {
     public func retractWrite(servingOffer token: Data) -> ClipboardRetraction? {
         guard let held = standing, held.servingOffer == token, heldChangeCount == pasteboard.changeCount
         else { return nil }
-        let markers: Set<NSPasteboard.PasteboardType> = [
-            .init(ClipboardSnapshotPolicy.concealedMarkerUTI), .init(ClipboardSnapshotPolicy.writeMarkerUTI),
-        ]
-        let kept = held.data.filter { $0.contains { !markers.contains($0.type) } }
+        let concealed = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
+        let kept = held.data.filter { $0.contains { $0.type != concealed } }
         guard !kept.isEmpty else {
             clear()
             return .cleared

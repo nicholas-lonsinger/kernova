@@ -156,6 +156,17 @@ struct HubClipboardServiceTests {
         return coordinator
     }
 
+    /// Has passthrough run on `instance` without its poll or its publish of the guest's offers, which the test
+    /// drives itself: the host takes a guest offer only while passthrough runs.
+    @discardableResult
+    private func runPassthroughByHand(_ instance: VMInstance) throws -> ClipboardPassthroughCoordinator {
+        let context = try #require(instance.sessionContext)
+        let coordinator = ClipboardPassthroughCoordinator(
+            instance: instance, publisher: instance.hostClipboardPublisher, reporter: instance.clipboardTransfers)
+        context.clipboardPassthroughCoordinator = coordinator
+        return coordinator
+    }
+
     private func hostPasteboard(_ instance: VMInstance) throws -> FakePasteboard {
         try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
     }
@@ -175,9 +186,7 @@ struct HubClipboardServiceTests {
         _ text: String, _ instance: VMInstance, _ probe: AgentHubProbe
     ) async throws -> (offer: ItemOffer, pasteboard: FakePasteboard, coordinator: ClipboardPassthroughCoordinator) {
         let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
-        let coordinator = ClipboardPassthroughCoordinator(
-            instance: instance, publisher: instance.hostClipboardPublisher, reporter: instance.clipboardTransfers)
-        // The first poll marks where this connection's copies begin.
+        let coordinator = try runPassthroughByHand(instance)
         coordinator.pollHostClipboard()
         #expect(pasteboard.setString(text, forType: .string))
         coordinator.pollHostClipboard()
@@ -286,6 +295,7 @@ struct HubClipboardServiceTests {
     func concealedPasteStagesNothing() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(Self.text, on: probe, into: instance, concealed: true)
         _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try hostPasteboard(instance)
@@ -303,26 +313,6 @@ struct HubClipboardServiceTests {
         let exchangeStaging = ClipboardFileStaging.processRoot.url
             .appendingPathComponent("host-\(instance.configuration.id.uuidString)")
         #expect(!FileManager.default.fileExists(atPath: exchangeStaging.path))
-    }
-
-    @Test(
-        "With passthrough off, a guest offer's end retracts the write passthrough made of it, saying whether a newer one follows",
-        arguments: [(ErrorCode.cancelled, false), (ErrorCode.itemOfferReplaced, true)])
-    func copyToMacRetracted(code: ErrorCode, hasSuccessor: Bool) async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        try await receive(Self.text, on: probe, into: instance)
-        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
-
-        probe.deliver(
-            .items(.offerEnded(.clipboard, .remote, token: Self.guestToken, .resetByPeer(WireError(code)))),
-            fromConnection: 0)
-        try await hostPasteboard(instance).changed.wait { !instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
-        guard case .finished(let finish) = instance.clipboardTransferReport else {
-            Issue.record("nothing reported: \(instance.clipboardTransferReport)")
-            return
-        }
-        #expect(finish.outcome == .failed(.supersededCopyRetracted(hasSuccessor: hasSuccessor)))
     }
 
     @Test("A guest offer made before it received the host's latest is refused unread; one naming it is taken")
@@ -359,8 +349,9 @@ struct HubClipboardServiceTests {
         #expect(await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac".utf8))))
     }
 
-    @Test("A lost connection retracts the guest's copy from the Mac; its return offers a newer Mac copy")
-    func linkLossRetractsThenReoffers() async throws {
+    @Test(
+        "A lost connection retracts the guest's copy from the Mac; its return sends nothing, and the next copy crosses")
+    func linkLossRetractsThenSendsNothing() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         let coordinator = try startPassthrough(instance)
@@ -380,14 +371,19 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.setString("copied during the outage", forType: .string))
         probe.deliver(.peerStateChanged(Self.onConsole), fromConnection: 0)
         try await waitForChange { instance.hubClipboard.isConnected }
+        coordinator.pollHostClipboard()
+        await probe.settle()
+        #expect(offers(probe).isEmpty)
+
+        #expect(pasteboard.setString("copied after the return", forType: .string))
         try await probe.changed.wait { !offers(probe).isEmpty }
         let offered = try await acceptLastOffer(probe)
         await probe.settle()
-        #expect(await pull(offered, from: instance) == .success(.inline(Data("copied during the outage".utf8))))
+        #expect(await pull(offered, from: instance) == .success(.inline(Data("copied after the return".utf8))))
     }
 
-    @Test("A connection's return with no Mac copy since offers nothing, and the guest's re-offer is written again")
-    func linkReturnTakesGuestReoffer() async throws {
+    @Test("A connection's return with no Mac copy since offers nothing, and the guest's next copy is written")
+    func linkReturnTakesTheGuestsNextCopy() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         let coordinator = try startPassthrough(instance)
@@ -403,44 +399,8 @@ struct HubClipboardServiceTests {
         await probe.settle()
         #expect(offers(probe).isEmpty)
 
-        // The restarted agent re-offers its copy, having received nothing on its new connection.
         try await receive(Self.text, on: probe, into: instance, token: Data(repeating: 8, count: 16))
         try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
-    }
-
-    @Test(
-        "With passthrough off, a lost connection retracts the write passthrough made of the guest's copy, and says so")
-    func copyToMacRetractedOnLinkLoss() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        try await receive(Self.text, on: probe, into: instance)
-        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
-        #expect(instance.hostClipboardPublisher.pasteboardHoldsLastWrite)
-
-        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
-        try await hostPasteboard(instance).changed.wait { !instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
-        guard case .finished(let finish) = instance.clipboardTransferReport else {
-            Issue.record("nothing reported: \(instance.clipboardTransferReport)")
-            return
-        }
-        #expect(finish.outcome == .failed(.disconnectedCopyRetracted))
-    }
-
-    @Test("Stopping the VM's agent services retracts the guest's copy from the Mac")
-    func vmStopRetracts() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        let coordinator = try startPassthrough(instance)
-        defer { coordinator.stop() }
-        try await receive(Self.text, on: probe, into: instance)
-        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
-
-        try #require(instance.sessionContext).stopVsockServices()
-        // The acceptor's shutdown ends the connection; the probe's connections run no driver to report it.
-        probe.deliver(.closed(.transportLost), fromConnection: 0)
-        try await waitForChange { !instance.hubClipboard.isConnected }
-        await probe.settle()
-        #expect(try hostPasteboard(instance).promisedTypes.isEmpty)
     }
 
     @Test("A Mac copy that offers nothing withdraws the host's offer")
@@ -476,38 +436,50 @@ struct HubClipboardServiceTests {
         let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
         #expect(pasteboard.setString("copied on the Mac", forType: .string))
         try await probe.changed.wait { released(Self.guestToken, probe) && !offers(probe).isEmpty }
-        #expect(!instance.hubClipboard.hasStandingGuestOffer)
+        #expect(instance.hubClipboard.exchange.remote == nil)
     }
 
-    @Test("Turning passthrough on publishes a guest copy newer than the Mac's")
-    func passthroughOnPublishesNewerGuestCopy() async throws {
+    @Test(
+        "A guest offer arriving while passthrough is off is let go unwritten, and turning passthrough on writes nothing"
+    )
+    func guestOfferWhilePassthroughOffIsLetGo() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        try await receive(Self.text, on: probe, into: instance)
-        #expect(!instance.hostClipboardPublisher.pasteboardHoldsLastWrite)
+        let seq = instance.hubClipboard.inboundOfferSeq
+        deliverOffer(on: probe, token: Self.guestToken)
+        try await probe.changed.wait { reads(probe).count == 1 }
+        probe.deliver(.itemReply(reads(probe)[0].id, .read(Self.text)), fromConnection: 0)
+        try await probe.changed.wait { released(Self.guestToken, probe) }
+        #expect(instance.hubClipboard.inboundOfferSeq == seq)
+        #expect(instance.hubClipboard.exchange.remote == nil)
 
+        let changeCount = try hostPasteboard(instance).changeCount
         let coordinator = try startPassthrough(instance)
         defer { coordinator.stop() }
-        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
+        coordinator.pollHostClipboard()
+        await probe.settle()
+        #expect(try hostPasteboard(instance).changeCount == changeCount)
         #expect(offers(probe).isEmpty)
     }
 
-    @Test("Turning passthrough on offers a Mac copy newer than the guest's")
-    func passthroughOnOffersNewerMacCopy() async throws {
+    @Test("Turning passthrough on sends nothing of the Mac's copy standing; the next Mac copy crosses")
+    func passthroughOnSendsNothing() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        try await receive(Self.text, on: probe, into: instance)
         let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
-        #expect(pasteboard.setString("copied on the Mac since", forType: .string))
+        #expect(pasteboard.setString("copied on the Mac before", forType: .string))
 
         let coordinator = try startPassthrough(instance)
         defer { coordinator.stop() }
+        coordinator.pollHostClipboard()
+        await probe.settle()
+        #expect(offers(probe).isEmpty)
+
+        #expect(pasteboard.setString("copied on the Mac after", forType: .string))
         try await probe.changed.wait { !offers(probe).isEmpty }
-        #expect(!instance.hostClipboardPublisher.pasteboardHoldsLastWrite)
         let offered = try await acceptLastOffer(probe)
         await probe.settle()
-        #expect(await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac since".utf8))))
-        #expect(released(Self.guestToken, probe))
+        #expect(await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac after".utf8))))
     }
 
     // MARK: - Guest → host
@@ -516,6 +488,7 @@ struct HubClipboardServiceTests {
     func guestOfferIsPublished() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         let text = ClipboardContent.utf8TextUTI
         try await receive(Self.item(Self.representation(text, .inline)), on: probe, into: instance)
 
@@ -533,6 +506,7 @@ struct HubClipboardServiceTests {
     func pasteLandsInStaging() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(
             Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
         _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
@@ -564,6 +538,7 @@ struct HubClipboardServiceTests {
     func stalledPullEndsWithItsOffer() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(
             Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
         _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
@@ -583,6 +558,7 @@ struct HubClipboardServiceTests {
     func pullOpeningAfterItsOfferEndedIsCancelled() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(
             Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
         _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
@@ -600,6 +576,7 @@ struct HubClipboardServiceTests {
     func filePullsShareOneBudget() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(
             Self.item(Self.representation("public.data", .file, name: "a.bin")),
             Self.item(Self.representation("public.data", .file, name: "b.bin")), on: probe, into: instance)
@@ -625,6 +602,7 @@ struct HubClipboardServiceTests {
     func pullReadsTheCeilingInForce() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         let text = ClipboardContent.utf8TextUTI
         try await receive(Self.item(Self.representation(text, .inline)), on: probe, into: instance)
         _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
@@ -1113,7 +1091,7 @@ struct HubClipboardServiceTests {
         await stopPassthrough(instance, probe)
         #expect(released(Self.guestToken, probe))
         #expect(pasteboard.promisedTypes.isEmpty)
-        #expect(!instance.hubClipboard.hasStandingGuestOffer)
+        #expect(instance.hubClipboard.exchange.remote == nil)
         // Nothing passthrough wrote remains promised, so nothing of the guest's can be pulled from the Mac.
         #expect(instance.hostClipboardPublisher.retractWrite(servingOffer: Self.guestToken) == nil)
     }
@@ -1124,6 +1102,7 @@ struct HubClipboardServiceTests {
     func copyToGuestNamesTheGuestsOffer() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(Self.text, on: probe, into: instance)
         _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
 
@@ -1230,7 +1209,7 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.changeCount == before)
     }
 
-    // MARK: - A connection's return (review finding 2, inverted)
+    // MARK: - Passthrough starts with nothing
 
     /// Ends the console peer's connection and brings it back.
     private func bounceLink(_ instance: VMInstance, _ probe: AgentHubProbe) async throws {
@@ -1240,41 +1219,33 @@ struct HubClipboardServiceTests {
         try await waitForChange { instance.hubClipboard.isConnected }
     }
 
-    @Test("Turning passthrough on after a link bounce offers the Mac copy made before it")
-    func passthroughOnAfterBounceOffersTheMacCopy() async throws {
+    @Test(
+        "Passthrough off, a guest copy, a newer Mac copy, a sharing bounce, then passthrough on: each clipboard stays as it was"
+    )
+    func passthroughOnAfterBounceSendsNothing() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        #expect(try hostPasteboard(instance).setString("the Mac's copy, made before the bounce", forType: .string))
+        let pasteboard = try hostPasteboard(instance)
+        // A guest offer crossing passthrough's being off is let go: the guest's own agent offers nothing.
+        deliverOffer(on: probe, token: Self.guestToken)
+        try await probe.changed.wait { reads(probe).count == 1 }
+        probe.deliver(.itemReply(reads(probe)[0].id, .read(Self.text)), fromConnection: 0)
+        try await probe.changed.wait { released(Self.guestToken, probe) }
+        #expect(pasteboard.setString("the Mac's newer copy", forType: .string))
+        let macHolds = pasteboard.changeCount
         try await bounceLink(instance, probe)
+
         let coordinator = try startPassthrough(instance)
         defer { coordinator.stop() }
         coordinator.pollHostClipboard()
-        try await probe.changed.wait { offers(probe).count == 1 }
-        let offered = try await acceptLastOffer(probe)
         await probe.settle()
-        #expect(
-            await pull(offered, from: instance)
-                == .success(.inline(Data("the Mac's copy, made before the bounce".utf8))))
+        #expect(offers(probe).isEmpty)
+        #expect(pasteboard.changeCount == macHolds)
+        #expect(pasteboard.items.first?.data(forType: .string) == Data("the Mac's newer copy".utf8))
     }
 
-    @Test("A connection's link-loss mark is the returning connection's alone, read once")
-    func linkLossMarkIsReadOnce() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        #expect(instance.hubClipboard.takeLinkLossMark() == nil)
-        try await bounceLink(instance, probe)
-        #expect(instance.hubClipboard.takeLinkLossMark() == (try hostPasteboard(instance)).changeCount)
-        #expect(instance.hubClipboard.takeLinkLossMark() == nil)
-
-        // A connection after one that never took it has only its own.
-        try await bounceLink(instance, probe)
-        try await bounceLink(instance, probe)
-        #expect(instance.hubClipboard.takeLinkLossMark() != nil)
-        #expect(instance.hubClipboard.takeLinkLossMark() == nil)
-    }
-
-    @Test("With passthrough on, a guest restarted with an empty clipboard gets the Mac's copy, each time")
-    func restartedGuestGetsTheMacCopyEachTime() async throws {
+    @Test("With passthrough on, a returning guest is sent nothing, and the next Mac copy crosses, each time")
+    func restartedGuestGetsTheNextCopyEachTime() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         let coordinator = try startPassthrough(instance)
@@ -1287,100 +1258,41 @@ struct HubClipboardServiceTests {
         for round in 1...2 {
             try await bounceLink(instance, probe)
             coordinator.pollHostClipboard()
-            let report = Data(repeating: UInt8(10 + round), count: 16)
-            probe.deliver(
-                .items(
-                    .offerReceived(
-                        ItemSetHeaderValue(
-                            feature: .clipboard, token: report, concealed: false, count: 0, unlinkedChange: .unknown))),
-                fromConnection: 0)
+            await probe.settle()
+            #expect(offers(probe).count == round)
+
+            let text = "the Mac's copy after return \(round)"
+            #expect(try hostPasteboard(instance).setString(text, forType: .string))
             try await probe.changed.wait { offers(probe).count == 1 + round }
             let offered = try await acceptLastOffer(probe)
             await probe.settle()
-            #expect(await pull(offered, from: instance) == .success(.inline(Data("the Mac's copy".utf8))))
+            #expect(await pull(offered, from: instance) == .success(.inline(Data(text.utf8))))
         }
     }
 
-    @Test("A guest copy made while unlinked wins over a settled Mac copy the host held: nothing stale is re-offered")
-    func returnTakesTheNewerGuestCopy() async throws {
+    @Test("A Kernova launch's first connection sends nothing of the Mac's copy standing; the next copy crosses")
+    func firstConnectionSendsNothing() async throws {
         let probe = AgentHubProbe()
-        let instance = try await connected(probe)
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, phase: .running(sessionID: UUID()), agentConnector: probe)
+        instance.beginSessionContextForTesting()
+        let pasteboard = try hostPasteboard(instance)
+        #expect(pasteboard.setString("copied before the launch's connection", forType: .string))
         let coordinator = try startPassthrough(instance)
         defer { coordinator.stop() }
-        #expect(try hostPasteboard(instance).setString("the Mac's settled copy", forType: .string))
-        try await probe.changed.wait { offers(probe).count == 1 }
-        probe.deliver(.itemReply(offers(probe)[0].id, .offered(nil)), fromConnection: 0)
 
-        try await bounceLink(instance, probe)
+        instance.attachAgentTransport(probe)
+        try await probe.changed.wait { probe.isStarted }
+        #expect(probe.connect())
+        probe.deliver(.helloReceived(Self.claim, Self.onConsole), fromConnection: 0)
+        probe.deliver(.featuresChanged(Self.clipboard), fromConnection: 0)
+        try await waitForChange { instance.hubClipboard.isConnected && instance.clipboardRoute != .none }
         coordinator.pollHostClipboard()
         await probe.settle()
-        #expect(offers(probe).count == 1)
+        #expect(offers(probe).isEmpty)
 
-        // The guest copied Y while unlinked: its first offer says so, and is taken and written to the Mac.
-        let readsBefore = reads(probe).count
-        probe.deliver(
-            .items(
-                .offerReceived(
-                    ItemSetHeaderValue(
-                        feature: .clipboard, token: Data(repeating: 8, count: 16), concealed: false, count: 1,
-                        unlinkedChange: .changed))),
-            fromConnection: 0)
-        try await probe.changed.wait { reads(probe).count == readsBefore + 1 }
-        #expect(!released(Data(repeating: 8, count: 16), probe))
-        probe.deliver(.itemReply(reads(probe)[readsBefore].id, .read(Self.text)), fromConnection: 0)
-        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
-        #expect(offers(probe).count == 1)
-    }
-
-    @Test(
-        "A guest whose first offer reports its clipboard empty and unchanged, or cannot say, gets back the host's copy it lost",
-        arguments: [ClipboardUnlinkedChange.unchanged, .unknown])
-    func emptyUnchangedReturnRestoresTheHostsCopy(change: ClipboardUnlinkedChange) async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        let coordinator = try startPassthrough(instance)
-        defer { coordinator.stop() }
-        #expect(try hostPasteboard(instance).setString("the Mac's copy", forType: .string))
-        try await probe.changed.wait { offers(probe).count == 1 }
-        probe.deliver(.itemReply(offers(probe)[0].id, .offered(nil)), fromConnection: 0)
-
-        try await bounceLink(instance, probe)
-        let report = Data(repeating: 8, count: 16)
-        probe.deliver(
-            .items(
-                .offerReceived(
-                    ItemSetHeaderValue(
-                        feature: .clipboard, token: report, concealed: false, count: 0, unlinkedChange: change))),
-            fromConnection: 0)
-        try await probe.changed.wait { released(report, probe) }
-        try await probe.changed.wait { offers(probe).count == 2 }
-        let offered = try await acceptLastOffer(probe)
-        await probe.settle()
-        #expect(await pull(offered, from: instance) == .success(.inline(Data("the Mac's copy".utf8))))
-    }
-
-    @Test("A guest whose first offer reports its clipboard emptied while unlinked is offered nothing")
-    func changedEmptyReturnOffersNothing() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await connected(probe)
-        let coordinator = try startPassthrough(instance)
-        defer { coordinator.stop() }
-        #expect(try hostPasteboard(instance).setString("the Mac's copy", forType: .string))
-        try await probe.changed.wait { offers(probe).count == 1 }
-        probe.deliver(.itemReply(offers(probe)[0].id, .offered(nil)), fromConnection: 0)
-
-        try await bounceLink(instance, probe)
-        let report = Data(repeating: 8, count: 16)
-        probe.deliver(
-            .items(
-                .offerReceived(
-                    ItemSetHeaderValue(
-                        feature: .clipboard, token: report, concealed: false, count: 0, unlinkedChange: .changed))),
-            fromConnection: 0)
-        try await probe.changed.wait { released(report, probe) }
-        coordinator.pollHostClipboard()
-        await probe.settle()
-        #expect(offers(probe).count == 1)
+        #expect(pasteboard.setString("copied after", forType: .string))
+        try await probe.changed.wait { !offers(probe).isEmpty }
     }
 
     // MARK: - Lower findings
@@ -1389,8 +1301,7 @@ struct HubClipboardServiceTests {
     func refusedHostOfferIsNotTheLatest() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        let coordinator = ClipboardPassthroughCoordinator(
-            instance: instance, publisher: instance.hostClipboardPublisher, reporter: instance.clipboardTransfers)
+        let coordinator = try runPassthroughByHand(instance)
         coordinator.pollHostClipboard()
         #expect(try hostPasteboard(instance).setString("from the Mac", forType: .string))
         coordinator.pollHostClipboard()
@@ -1406,6 +1317,7 @@ struct HubClipboardServiceTests {
     func memoryPullsShareTheBudget() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
+        try runPassthroughByHand(instance)
         try await receive(
             Self.item(
                 Self.representation(ClipboardContent.utf8TextUTI, .inline), Self.representation("public.rtf", .inline)),
