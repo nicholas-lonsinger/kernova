@@ -20,9 +20,12 @@ public struct ClipboardConnectionID: Hashable, Sendable {
 public struct ClipboardWriteSource: Sendable {
     /// The far side's offer or copy a write serves, and the connection it arrived on.
     public struct Serving: Sendable, Equatable {
+        /// The offer's 16-byte token.
         public let token: Data
+        /// The connection the offer arrived on.
         public let connection: ClipboardConnectionID
 
+        /// The offer `token`, which arrived on `connection`.
         public init(token: Data, connection: ClipboardConnectionID) {
             self.token = token
             self.connection = connection
