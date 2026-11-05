@@ -6,7 +6,7 @@ import Testing
 @testable import KernovaKit
 
 /// The one poll of a pasteboard in a process, which every observer of its change count shares.
-@Suite("Clipboard pasteboard watch")
+@Suite("Clipboard pasteboard watch", .caseScoped)
 @MainActor
 struct ClipboardPasteboardWatchTests {
     @Test("One watch serves every observer of a pasteboard, standing writes first, then readers in the order they came")
