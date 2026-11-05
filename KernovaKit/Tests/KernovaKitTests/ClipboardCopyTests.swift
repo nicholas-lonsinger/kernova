@@ -433,6 +433,46 @@ struct ClipboardCopyTests {
         #expect(receiver.callIns == 1)
     }
 
+    /// Image files in the scratch directory, each `size` bytes, offered from a pasteboard naming them.
+    private func imageFilesOffer(_ names: [String], size: Int) async throws -> ClipboardOfferSource {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let files = try names.map { name in
+            let file = scratch.url.appendingPathComponent(name)
+            try Data(repeating: 0x50, count: size).write(to: file)
+            return file
+        }
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setFiles(files))
+        guard case .offer(let source, _) = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        else { throw TestFailure("no offer") }
+        return source
+    }
+
+    @Test("Image files whose bytes read as nothing, their sizes together over the ceiling, cross as their files")
+    func unreadImageBytesCountNothing() async throws {
+        let source = try await imageFilesOffer(["a.png", "b.png"], size: 8)
+
+        let (snapshot, leftOut) = try #require(try await source.snapshot(inlineCeiling: 10, contentsOf: { _ in nil }))
+        #expect(leftOut == 0)
+        #expect(snapshot.items.map { $0.representations.map(\.storage) } == [[.file], [.file]])
+    }
+
+    @Test("An image file whose size alone is over what is left of the ceiling is too large, its bytes never read")
+    func overCeilingImageIsNeverRead() async throws {
+        let source = try await imageFilesOffer(["big.png"], size: 12)
+        let reads = Locked(0)
+
+        await #expect(throws: ClipboardSnapshotTooLarge(limitBytes: 10)) {
+            _ = try await source.snapshot(
+                inlineCeiling: 10,
+                contentsOf: { _ in
+                    reads.withLock { $0 += 1 }
+                    return Data(repeating: 0x50, count: 12)
+                })
+        }
+        #expect(reads.withLock { $0 } == 0)
+    }
+
     /// A file in the scratch directory this process cannot open.
     private func unreadableFile(_ name: String) throws -> URL {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)

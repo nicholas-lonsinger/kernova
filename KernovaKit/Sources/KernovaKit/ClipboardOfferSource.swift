@@ -146,11 +146,15 @@ public final class ClipboardOfferSource {
     /// - Returns: the snapshot, and how many of the offer's items it does not carry whole: those the read left a
     ///   file out of, and those it left a representation of out, or dropped.
     ///
-    /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`,
-    ///   reading nothing more.
-    public func snapshot(inlineCeiling: Int, holding lease: ClipboardStagingLease? = nil)
-        async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, leftOut: Int)?
-    {
+    /// - Parameter contentsOf: reads an image file's INLINE bytes, nil when it reads none.
+    /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`, or an
+    ///   image file's size would take them there, reading nothing more.
+    public func snapshot(
+        inlineCeiling: Int, holding lease: ClipboardStagingLease? = nil,
+        contentsOf: @escaping @Sendable (URL) -> Data? = { url in
+            DatalessMaterialization.off.during { try? Data(contentsOf: url) }
+        }
+    ) async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, leftOut: Int)? {
         var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
         var frozenItems: [OfferedItem] = []
         var frozenOrigins: [[Origin]] = []
@@ -172,10 +176,8 @@ public final class ClipboardOfferSource {
                         : nil
                 case .fileContents(let url):
                     let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                    try tally.add(UInt64(max(size, 0)))
-                    held = await Task.detached {
-                        DatalessMaterialization.off.during { try? Data(contentsOf: url) }
-                    }.value.map(Origin.bytes)
+                    try tally.check(fits: UInt64(max(size, 0)))
+                    held = await Task.detached { contentsOf(url) }.value.map(Origin.bytes)
                 case .promise(let promise):
                     held = await Self.landed(callIn(promise), as: &kept)
                 case .landing(let file):
@@ -188,7 +190,10 @@ public final class ClipboardOfferSource {
                     continue
                 }
                 if case .bytes(let data) = held {
-                    if case .pasteboard = origins[index][position] { try tally.add(UInt64(data.count)) }
+                    switch origins[index][position] {
+                    case .pasteboard, .fileContents: try tally.add(UInt64(data.count))
+                    default: break
+                    }
                     kept.sizeEstimate = UInt64(data.count)
                 }
                 frozen.representations.append(kept)
@@ -472,8 +477,15 @@ public struct ClipboardSnapshotTooLarge: Error, Equatable, Sendable {
 
         /// Counts `bytes` more, throwing once the total is over the ceiling.
         mutating func add(_ bytes: UInt64) throws(ClipboardSnapshotTooLarge) {
+            try check(fits: bytes)
             total = total.saturatingAdding(bytes)
-            guard total <= UInt64(max(ceiling, 0)) else { throw ClipboardSnapshotTooLarge(limitBytes: ceiling) }
+        }
+
+        /// Throws when `bytes` more would take the total over the ceiling, counting nothing.
+        func check(fits bytes: UInt64) throws(ClipboardSnapshotTooLarge) {
+            guard total.saturatingAdding(bytes) <= UInt64(max(ceiling, 0)) else {
+                throw ClipboardSnapshotTooLarge(limitBytes: ceiling)
+            }
         }
     }
 }
