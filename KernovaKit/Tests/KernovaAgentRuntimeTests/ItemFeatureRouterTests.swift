@@ -160,7 +160,9 @@ struct ItemFeatureRouterTests {
             claim: Fixture.peerClaim, state: Fixture.peerState,
             registry: PeerFeatureRegistry(
                 items: ItemAdapters(
-                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { peerRouter.content($0, $1, $2, $3) },
+                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: Fixture.logger) {
+                        peerRouter.content($0, $1, $2, $3)
+                    },
                     sink: MemoryItems(), features: peerRouter.features)),
             dialer: HubDialer(harness: harness), scheduler: SystemScheduler(), logger: Fixture.logger,
             handlers: PeerAgentRuntime.Handlers(event: { peerRouter.deliver($0) }, stop: { _ in }))

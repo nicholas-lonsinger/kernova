@@ -488,7 +488,10 @@ package final class VMInstance {
         self.dropService = dropService
         let itemRouter = ItemFeatureRouter<PeerHandle>(clipboard: hubClipboard.owner(), drop: dropService.owner)
         let items = ItemAdapters(
-            source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2, $3) },
+            source: ItemSourceAdapter(
+                fileSystem: POSIXTreeFileSystem(),
+                logger: KernovaLogger(subsystem: "app.kernova", category: "ItemSource")
+            ) { itemRouter.content($0, $1, $2, $3) },
             sink: itemSink, features: itemRouter.features)
         agentHub = AgentHub(
             connector: agentConnector

@@ -64,7 +64,7 @@ struct DropReceiverTests {
             harness = HubHarness(
                 policy: SimItems.policy(PolicySnapshot()),
                 items: ItemAdapters(
-                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) {
+                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: Fixture.logger) {
                         hostRouter.content($0, $1, $2, $3)
                     },
                     sink: MemoryItems(), features: hostRouter.features),
@@ -79,7 +79,7 @@ struct DropReceiverTests {
                 claim: Fixture.peerClaim, state: Fixture.peerState,
                 registry: PeerFeatureRegistry(
                     items: ItemAdapters(
-                        source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) {
+                        source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: Fixture.logger) {
                             peerRouter.content($0, $1, $2, $3)
                         },
                         sink: sink, features: peerRouter.features)),

@@ -20,7 +20,7 @@ struct ItemSourceMaterializationTests {
         try bench.write(Data(repeating: 7, count: 300_000), to: "source/Folder/a.bin")
         try bench.write(Data("b".utf8), to: "source/Folder/sub/b.txt")
         let fileSystem = PolicyRecordingFileSystem()
-        let source = ItemSourceAdapter(fileSystem: fileSystem) { _, _, _, _ in
+        let source = ItemSourceAdapter(fileSystem: fileSystem, logger: Bench.logger) { _, _, _, _ in
             .success(.tree(path: bench.path("source/Folder")))
         }
         var request = PullRequest()

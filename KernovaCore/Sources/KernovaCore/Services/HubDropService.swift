@@ -152,14 +152,13 @@ package final class HubDropService: Sendable {
         }
     }
 
-    /// Logs a pull of a drop's item that this side did not serve whole: the code, and the errno and entry a
-    /// read failure names.
+    /// Logs a pull of a drop's item that the guest ended without landing: the code, and the errno and entry its
+    /// failure names. A pull this side ended is the item source's to log.
     private static func log(served result: ItemServeResult) {
         let error: WireError
         switch result {
-        case .landed: return
-        case .failed(let failure): error = failure
-        case .closed(.resetLocally(let failure)), .closed(.resetByPeer(let failure)): error = failure
+        case .landed, .closed(.resetLocally): return
+        case .failed(let failure), .closed(.resetByPeer(let failure)): error = failure
         case .closed(let closure):
             return logger.log(
                 .warning, "A dropped item's serve ended: \(String(describing: closure), privacy: .public)")

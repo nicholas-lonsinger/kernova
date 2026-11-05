@@ -67,7 +67,10 @@ public final class MacAgentPeer: Sendable {
         let items =
             role == .sessionPeer
             ? ItemAdapters(
-                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2, $3) },
+                source: ItemSourceAdapter(
+                    fileSystem: POSIXTreeFileSystem(),
+                    logger: KernovaLogger(subsystem: "app.kernova.macosagent", category: "ItemSource")
+                ) { itemRouter.content($0, $1, $2, $3) },
                 sink: sink, features: itemRouter.features)
             : nil
         runtime = PeerAgentRuntime(

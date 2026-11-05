@@ -16,6 +16,7 @@ import KernovaAgentRuntime
 import KernovaContainerPipeline
 import KernovaFileTree
 import KernovaItemTransfer
+import KernovaLogging
 import KernovaPortableTestSupport
 import KernovaSynchronization
 import KernovaTreeTransfer
@@ -244,6 +245,37 @@ struct ItemAdapterTests {
                 .code == .readFailed)
     }
 
+    @Test("a tree that cannot be read is logged as an error naming its entry, whether it fails opening or midway")
+    func readFailureLogged() async throws {
+        let bench = try Bench()
+        try bench.makeDirectory("source/Folder")
+        try #require(mkfifo(bench.path("source/Folder/pipe"), 0o644) == 0)
+        typealias Case = (
+            content: String, storage: Representation.Storage, path: String, reason: TreeReadFailure.Reason
+        )
+        let cases: [Case] = [
+            ("missing/x", .file, "x", .system(TreeFileSystemError(code: ENOENT))),
+            ("source/Folder", .folder, "Folder/pipe", .notCarried(.type(.fifo))),
+        ]
+        for (content, storage, path, reason) in cases {
+            let records = Locked<[(KernovaLogLevel, [LogSegment])]>([])
+            let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") {
+                level, _, _, segments in
+                records.withLock { $0.append((level, segments)) }
+            }
+            let error = try await bench.serveFailure(
+                .success(.tree(path: bench.path(content))), storage, logger: logger)
+            #expect(error?.code == .readFailed, "\(content)")
+            #expect(error?.debugDetail == reason.description, "\(content)")
+            let logged = records.withLock { $0 }
+            #expect(logged.count == 1, "\(content)")
+            #expect(logged.first?.0 == .error, "\(content)")
+            let segments = logged.first?.1 ?? []
+            #expect(segments.contains(LogSegment(text: path, isPrivate: true)), "\(content): \(segments)")
+            #expect(segments.contains(LogSegment(text: reason.description, isPrivate: false)), "\(content)")
+        }
+    }
+
     @Test(
         "an item is served by its own path, though the folder it lies in cannot be opened",
         .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
@@ -310,6 +342,8 @@ struct ItemAdapterTests {
 /// A scratch directory, and a source and a sink moving one pull through it.
 final class Bench: Sendable {
     static let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+    /// A logger that records nothing.
+    static let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") { _, _, _, _ in }
 
     let scratch: PortableScratchDirectory
 
@@ -348,7 +382,9 @@ final class Bench: Sendable {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         }
         let fileSystem = POSIXTreeFileSystem()
-        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _, _ in .success(content) }
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8, logger: Self.logger) { _, _, _, _ in
+            .success(content)
+        }
         let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
         let order = try sink.order(
             token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30, landing: landing,
@@ -385,9 +421,9 @@ final class Bench: Sendable {
 
     /// The container a side of role `server` serves of INLINE `content` for a pull that takes LZ4, read by read.
     static func container(_ content: ItemContent, servedBy server: PeerRole) async throws -> [Data] {
-        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), sendingCores: 8) { _, _, _, _ in
-            .success(content)
-        }
+        let source = ItemSourceAdapter(
+            fileSystem: POSIXTreeFileSystem(), sendingCores: 8, logger: logger
+        ) { _, _, _, _ in .success(content) }
         var request = PullRequest()
         request.byteCeiling = 1 << 30
         request.codecs = [.lz4]
@@ -409,9 +445,10 @@ final class Bench: Sendable {
 
     /// The error a serve of `content` as a representation of `storage` fails with, or nil when it does not.
     func serveFailure(
-        _ content: Result<ItemContent, WireError>, _ storage: Representation.Storage, ceiling: UInt64 = 1 << 30
+        _ content: Result<ItemContent, WireError>, _ storage: Representation.Storage, ceiling: UInt64 = 1 << 30,
+        logger: KernovaLogger = Bench.logger
     ) async throws -> WireError? {
-        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { _, _, _, _ in content }
+        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: logger) { _, _, _, _ in content }
         var request = PullRequest()
         request.byteCeiling = ceiling
         var representation = Representation()
