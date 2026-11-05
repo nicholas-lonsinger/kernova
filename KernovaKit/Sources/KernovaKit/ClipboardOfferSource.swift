@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaFileTree
 import KernovaSynchronization
 import KernovaWire
 import UniformTypeIdentifiers
@@ -134,8 +135,9 @@ public final class ClipboardOfferSource {
     /// those files land in, for as long as it lives.
     ///
     /// A representation whose bytes can no longer be read, or whose promise lands nothing, is left out, and an
-    /// item left with none is dropped. Nil when the pasteboard moved on from what was offered, or nothing
-    /// remains.
+    /// item left with none is dropped: an image file's INLINE bytes are read downloading nothing
+    /// (``DatalessMaterialization/off``), so a dataless one crosses as its file alone. Nil when the pasteboard
+    /// moved on from what was offered, or nothing remains.
     ///
     /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`,
     ///   reading nothing more.
@@ -163,7 +165,9 @@ public final class ClipboardOfferSource {
                 case .fileContents(let url):
                     let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
                     try tally.add(UInt64(max(size, 0)))
-                    held = await Task.detached { try? Data(contentsOf: url) }.value.map(Origin.bytes)
+                    held = await Task.detached {
+                        DatalessMaterialization.off.during { try? Data(contentsOf: url) }
+                    }.value.map(Origin.bytes)
                 case .promise(let promise):
                     held = await Self.landed(callIn(promise), as: &kept)
                 case .landing(let file):
@@ -315,7 +319,10 @@ public final class ClipboardOfferSource {
     /// offer was read, and a clipboard's is called in on its first pull, into
     /// a fresh directory from the reader's `promiseDestination`; every pull of
     /// a promised file serves what its call-in wrote, waiting for it as long as
-    /// its source takes, or until the task serving the pull is cancelled.
+    /// its source takes, or until the task serving the pull is cancelled. An
+    /// image file's INLINE bytes are read off the main actor, downloading the
+    /// file when it is dataless (``DatalessMaterialization/on``); a FILE or
+    /// FOLDER is read by the item source serving the pull.
     public func serve(item: Int, representation: Int) async throws(ClipboardServeError)
         -> ClipboardServedRepresentation
     {
@@ -335,7 +342,10 @@ public final class ClipboardOfferSource {
             return .bytes(data)
         case .fileContents(let url):
             guard (try? url.checkResourceIsReachable()) == true else { throw .unavailable }
-            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { throw .readFailed }
+            let data = await Task.detached {
+                DatalessMaterialization.on.during { try? Data(contentsOf: url, options: .mappedIfSafe) }
+            }.value
+            guard let data else { throw .readFailed }
             return .bytes(data)
         case .file(let url):
             return try Self.served(url, as: .file)

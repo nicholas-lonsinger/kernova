@@ -23,7 +23,8 @@ import KernovaWire
 
 /// Serves this side's offers as `ItemSourceEffect` asks: each pull's container encoded from its content — a tree
 /// read by `TreeReader`, or INLINE bytes as one DATA entry — compressed as `TransferCompression` chooses for the
-/// direction this side's role on the pull's connection sends it. Each pull's work runs on a queue of its own.
+/// direction this side's role on the pull's connection sends it. Each pull's work runs on a queue of its own,
+/// downloading what it reads when it is dataless (`DatalessMaterialization.on`): a pull is when its bytes move.
 public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: ItemSource {
     /// Produces the content of the offered representation pull `ItemPullID` names, of an offer of the feature
     /// it names, or why it cannot: called on the pull's own queue, so it may wait, as a promise called in does,
@@ -76,48 +77,55 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
                 sendingCores: sendingCores)
             let acceptance = compression.sending(ContainerAcceptance(request, storage: representation.storage))
             serves.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, content] in
-                switch Self.events(content(feature, id, request, representation), acceptance, fileSystem) {
-                case .success(let events):
-                    return Serve(
-                        events: events,
-                        encoder: ContainerEncodePipeline(
-                            accepting: acceptance, policy: compression.chunkPolicy,
-                            workers: compression.encodingWorkers),
-                        acceptance: acceptance)
-                case .failure(let error):
-                    reporter.report(.failed(id, error))
-                    return nil
+                DatalessMaterialization.on.during {
+                    switch Self.events(content(feature, id, request, representation), acceptance, fileSystem) {
+                    case .success(let events):
+                        return Serve(
+                            events: events,
+                            encoder: ContainerEncodePipeline(
+                                accepting: acceptance, policy: compression.chunkPolicy,
+                                workers: compression.encodingWorkers),
+                            acceptance: acceptance)
+                    case .failure(let error):
+                        reporter.report(.failed(id, error))
+                        return nil
+                    }
                 }
             }
         case .read(let id, let maxBytes):
             serves.run(PullKey(connection: reporter.connection, id: id)) { serve in
-                guard !serve.failed else { return }
-                do throws(WireError) {
-                    while serve.pending.count < maxBytes, !serve.ended {
-                        guard let event = try serve.events.nextEvent() else {
-                            serve.ended = true
-                            break
-                        }
-                        do throws(ContainerError) {
-                            serve.pending.append(try serve.encoder.encode(event))
-                        } catch {
-                            throw error.wireError(serve.acceptance)
-                        }
-                    }
-                } catch {
-                    serve.failed = true
-                    serve.pending = Data()
-                    return reporter.report(.failed(id, error))
-                }
-                guard !serve.pending.isEmpty else { return reporter.report(.finished(id)) }
-                let count = min(maxBytes, serve.pending.count)
-                let bytes = Data(serve.pending.prefix(count))
-                serve.pending = Data(serve.pending.dropFirst(count))
-                reporter.report(.bytes(id, bytes))
+                DatalessMaterialization.on.during { Self.read(serve, maxBytes: maxBytes, id: id, reporter: reporter) }
             }
         case .release(let id):
             serves.close(PullKey(connection: reporter.connection, id: id))
         }
+    }
+
+    /// Reads up to `maxBytes` more of `serve`'s container, reporting them, the pull's end, or its failure.
+    private static func read(_ serve: Serve, maxBytes: Int, id: ItemPullID, reporter: ItemSourceReporter) {
+        guard !serve.failed else { return }
+        do throws(WireError) {
+            while serve.pending.count < maxBytes, !serve.ended {
+                guard let event = try serve.events.nextEvent() else {
+                    serve.ended = true
+                    break
+                }
+                do throws(ContainerError) {
+                    serve.pending.append(try serve.encoder.encode(event))
+                } catch {
+                    throw error.wireError(serve.acceptance)
+                }
+            }
+        } catch {
+            serve.failed = true
+            serve.pending = Data()
+            return reporter.report(.failed(id, error))
+        }
+        guard !serve.pending.isEmpty else { return reporter.report(.finished(id)) }
+        let count = min(maxBytes, serve.pending.count)
+        let bytes = Data(serve.pending.prefix(count))
+        serve.pending = Data(serve.pending.dropFirst(count))
+        reporter.report(.bytes(id, bytes))
     }
 
     /// The events of `content`'s container, held to `acceptance`.

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaFileTree
 import KernovaTestSupport
 import Testing
 import UniformTypeIdentifiers
@@ -349,6 +350,45 @@ struct ClipboardPasteboardReaderTests {
         #expect(rep.isDirectory)
         #expect(rep.directorySourceURL == folder)
         #expect(rep.byteCount == 0)
+    }
+
+    // MARK: - The readability check
+
+    @Test(
+        "the check offers what opens and what is not on this Mac yet, and leaves out what the system refuses or is gone",
+        arguments: [
+            (Int32(0), true), (EDEADLK, true), (EPERM, false), (EACCES, false), (ENOENT, false),
+        ])
+    func readabilityFollowsTheOpen(errno: Int32, offered: Bool) throws {
+        let file = scratch.url.appendingPathComponent("checked.txt")
+        try Data("checked".utf8).write(to: file)
+        let source = ClipboardPasteboardReader.readableSource(for: file, opening: { _ in errno })
+        #expect((source == file) == offered)
+    }
+
+    @Test("the check opens with materialization off, downloading nothing, and leaves the thread as it found it")
+    func checkOpensWithoutMaterializing() throws {
+        let file = scratch.url.appendingPathComponent("checked.txt")
+        try Data("checked".utf8).write(to: file)
+        let before = DatalessMaterialization.ofThisThread
+        var during: DatalessMaterialization?
+        let source = ClipboardPasteboardReader.readableSource(
+            for: file,
+            opening: {
+                during = DatalessMaterialization.ofThisThread
+                return ClipboardPasteboardReader.openForReading($0)
+            })
+        #expect(source == file)
+        #expect(during == .off)
+        #expect(DatalessMaterialization.ofThisThread == before)
+    }
+
+    @Test("the check's own open answers success, or the errno it failed with")
+    func openForReadingAnswersErrno() throws {
+        let file = scratch.url.appendingPathComponent("opened.txt")
+        try Data("opened".utf8).write(to: file)
+        #expect(ClipboardPasteboardReader.openForReading(file.path) == 0)
+        #expect(ClipboardPasteboardReader.openForReading(scratch.url.appendingPathComponent("gone").path) == ENOENT)
     }
 
     // MARK: - Helpers

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaFileTree
 import KernovaLogging
 import KernovaSynchronization
 
@@ -139,10 +140,13 @@ final class ClipboardTransferSender: Sendable {
         onComplete: (@Sendable (_ success: Bool) -> Void)? = nil
     ) {
         queue.async { [self] in
-            run(
-                representation: representation, maxAcceptByteCount: maxAcceptByteCount,
-                isInline: isInline, isCurrent: isCurrent, onProgress: onProgress,
-                onSourceUnreadable: onSourceUnreadable, onComplete: onComplete)
+            // A transfer is when the bytes move, so a dataless source is downloaded now.
+            DatalessMaterialization.on.during {
+                run(
+                    representation: representation, maxAcceptByteCount: maxAcceptByteCount,
+                    isInline: isInline, isCurrent: isCurrent, onProgress: onProgress,
+                    onSourceUnreadable: onSourceUnreadable, onComplete: onComplete)
+            }
         }
     }
 
