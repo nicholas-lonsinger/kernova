@@ -207,7 +207,8 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     @MainActor
     @discardableResult
     public func setItem(
-        _ representations: [(type: NSPasteboard.PasteboardType, data: Data)], promising receiver: any FilePromiseReceiving
+        _ representations: [(type: NSPasteboard.PasteboardType, data: Data)],
+        promising receiver: any FilePromiseReceiving
     ) -> Bool {
         setItem(representations + NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
         promiseReceivers = [receiver]

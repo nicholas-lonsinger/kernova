@@ -305,7 +305,8 @@ public final class ClipboardPasteboardPublisher {
     ) -> ClipboardRetraction? {
         guard let held = standing, held.servingOffer == token, heldChangeCount == pasteboard.changeCount
         else { return nil }
-        let read = withdrawal == .unread ? held.read.data(on: pasteboard, items: held.data.count) : held.data.map { _ in [] }
+        let read =
+            withdrawal == .unread ? held.read.data(on: pasteboard, items: held.data.count) : held.data.map { _ in [] }
         let concealed = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
         let kept = zip(held.data, read).map { $0 + $1 }.filter { $0.contains { $0.type != concealed } }
         guard !kept.isEmpty else {

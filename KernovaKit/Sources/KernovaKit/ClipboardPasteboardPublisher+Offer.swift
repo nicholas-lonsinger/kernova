@@ -158,7 +158,8 @@ extension ClipboardPasteboardPublisher {
         eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
     ) -> [ItemSpec] {
         // The marker is written as data, so it stays with whatever of the item a retraction keeps.
-        let markers: [(type: String, bytes: Data)] = concealed ? [(ClipboardSnapshotPolicy.concealedMarkerUTI, Data())] : []
+        let markers: [(type: String, bytes: Data)] =
+            concealed ? [(ClipboardSnapshotPolicy.concealedMarkerUTI, Data())] : []
         return items.enumerated().compactMap { index, item -> ItemSpec? in
             let promised = ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: servingFileURLs)
             guard !promised.isEmpty else { return nil }

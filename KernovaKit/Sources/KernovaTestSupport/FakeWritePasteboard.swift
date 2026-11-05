@@ -219,7 +219,8 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         forType type: NSPasteboard.PasteboardType, itemIndex: Int?
     ) -> Data? {
         deliverOwedFinishes()
-        let fired = state.withLock { state -> (index: Int, provider: any NSPasteboardItemDataProvider & Sendable, changeCount: Int)? in
+        let fired = state.withLock {
+            state -> (index: Int, provider: any NSPasteboardItemDataProvider & Sendable, changeCount: Int)? in
             let index =
                 itemIndex.flatMap { state.items.indices.contains($0) ? $0 : nil }
                 ?? state.items.firstIndex { $0.types.contains(type) && $0.provider != nil }

@@ -1162,7 +1162,8 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(instance.hubClipboard.exchange.remote == nil)
         // Nothing passthrough wrote remains promised, so nothing of the guest's can be pulled from the Mac.
-        #expect(instance.hostClipboardPublisher.retractWrite(servingOffer: Self.guestToken, withdrawing: .unread) == nil)
+        #expect(
+            instance.hostClipboardPublisher.retractWrite(servingOffer: Self.guestToken, withdrawing: .unread) == nil)
     }
 
     @Test(

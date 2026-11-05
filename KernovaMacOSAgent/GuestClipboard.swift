@@ -82,7 +82,8 @@ final class GuestClipboard {
         }
         exchange.onCopyAsked = { [weak self] in self?.sendSnapshot(answering: $0) }
         exchange.onCopyReceived = { [weak self] in self?.write($0) }
-        exchange.onCopyEnded = { [weak self] copy in self?.retractWrite(servingOffer: copy.token, withdrawing: .unread) }
+        exchange.onCopyEnded = { [weak self] copy in self?.retractWrite(servingOffer: copy.token, withdrawing: .unread)
+        }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
         exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
