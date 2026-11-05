@@ -60,7 +60,9 @@ extension NSPasteboard: ClipboardWritePasteboard {
         var refused = false
         let objects = items.map { entry in
             let item = NSPasteboardItem()
-            for (type, bytes) in entry.data where !item.setData(bytes, forType: type) { refused = true }
+            for (type, bytes) in entry.data where !item.setData(bytes, forType: type) {
+                refused = true
+            }
             if let provider = entry.provider, !entry.promised.isEmpty,
                 !item.setDataProvider(provider, forTypes: entry.promised)
             {
@@ -263,8 +265,10 @@ public final class ClipboardPasteboardPublisher {
         guard heldChangeCount == pasteboard.changeCount else { return endStanding() }
         guard record.isFullyProvided, standingWatch == nil else { return }
         standingWatch = Timer.scheduledTimer(withTimeInterval: Self.standingWatchInterval, repeats: true) {
-            [weak self] _ in
-            MainActor.assumeIsolated { self?.watchStanding() }
+            [weak self] timer in
+            guard let self else { return timer.invalidate() }
+            // The main run loop fires this on the main thread.
+            MainActor.assumeIsolated { self.watchStanding() }
         }
     }
 

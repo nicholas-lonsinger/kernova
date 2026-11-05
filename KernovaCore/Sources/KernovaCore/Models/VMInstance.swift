@@ -519,7 +519,8 @@ package final class VMInstance {
         publisher.onPasteRefused = { [weak self] in
             guard let self else { return }
             Self.logger.log(
-                .error, "The host pasteboard refused a paste of '\(self.name, privacy: .public)''s clipboard")
+                .error,
+                "The host pasteboard refused a paste of the guest's clipboard for '\(self.name, privacy: .public)'")
             clipboardTransfers.gestureBegan()
             clipboardTransfers.finish(
                 ClipboardTransferFinish(gesture: .paste, outcome: .failed(.transferFailed), peerName: name))
