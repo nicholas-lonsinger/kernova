@@ -229,13 +229,13 @@ struct ClipboardItemBridgeTests {
 
     // MARK: - Files and folders
 
-    @Test("a file offers its name and size, never its path text, and lands under its name")
+    @Test("a file offers its name and size, its URL left out, and lands under its name")
     func fileRoundTrips() async throws {
         let file = try directory("copied").appendingPathComponent("notes.txt")
         try Data("file body".utf8).write(to: file)
         let pasteboard = FakePasteboard()
         pasteboard.setItem([
-            (type: .fileURL, data: Data(file.absoluteString.utf8)), (type: .string, data: Data(file.path.utf8)),
+            (type: .fileURL, data: Data(file.absoluteString.utf8)), (type: .URL, data: Data(file.absoluteString.utf8)),
         ])
 
         let source = try await readOffer(pasteboard)

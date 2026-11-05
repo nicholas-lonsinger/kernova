@@ -105,15 +105,12 @@ struct ClipboardPasteboardReaderTests {
         #expect(unresolved == 0)
     }
 
-    @Test("a copied file deleted since is a loss, never its path as text")
-    func vanishedFileIsALossNotItsPath() {
+    @Test("a copied file deleted since is a loss, never its URL as content")
+    func vanishedFileIsALossNotItsURL() {
         let gone = URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString)/notes.txt")
         let pasteboard = FakeReadPasteboard()
         pasteboard.setItem([
             (type: .fileURL, data: Data(gone.absoluteString.utf8)),
-            // Finder pairs the URL with the path as text; it is the file's
-            // descriptor, not content the copy meant to carry.
-            (type: .string, data: Data(gone.path.utf8)),
             (type: .URL, data: Data(gone.absoluteString.utf8)),
         ])
 

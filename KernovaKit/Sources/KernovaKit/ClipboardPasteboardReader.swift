@@ -80,12 +80,11 @@ public enum ClipboardPasteboardReader {
     /// the resolve stage; the inline snapshot reads item 0 and is taken only
     /// when no item resolved to a file on disk.
     ///
-    /// When a file URL or promise is present but no file survives, the URL/path
-    /// text representations are only the file's descriptor and are never
-    /// returned as content.
+    /// When a file URL or promise is present but no file survives, the types
+    /// carrying its URL name only the file and are never returned as content.
     ///
     /// `allowsBinary` is `false` for a transport that carries plain text alone,
-    /// which refuses a file copy by policy rather than sending its path.
+    /// which refuses a file copy by policy.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard, allowsBinary: Bool
     ) -> Outcome {
@@ -122,8 +121,7 @@ public enum ClipboardPasteboardReader {
         // *through* the inline read below rather than short-circuiting it.
 
         guard allowsBinary else {
-            // A file copy's path text is the file's descriptor, not content, and
-            // a text-only transport refuses file copies by policy either way.
+            // A text-only transport refuses file copies by policy.
             guard unresolvedFiles == 0, let text = item.string(forType: .string), !text.isEmpty
             else { return .textOnlyRefusal }
             return .content(ClipboardContent(text: text, isConcealed: isConcealed), skipped: 0)
@@ -132,13 +130,12 @@ public enum ClipboardPasteboardReader {
         let isFileOrPromiseDrag = item.types.contains { ClipboardSnapshotPolicy.isFileReference(uti: $0.rawValue) }
 
         // Identity-based skips run before any data is read. A file/promise copy
-        // additionally drops the URL/path text fallbacks, so one can never
-        // surface its path as text content.
+        // additionally drops the types carrying a URL, which name the file.
         let qualified = item.types.filter { type in
             guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
                 return false
             }
-            return !(isFileOrPromiseDrag && isPathFallbackType(type.rawValue))
+            return !(isFileOrPromiseDrag && PasteboardTypeIdentity(type.rawValue).carriesURL)
         }
         let raw: [(uti: String, data: Data)] = qualified.compactMap { type in
             guard let data = item.data(forType: type) else { return nil }
@@ -336,12 +333,5 @@ public enum ClipboardPasteboardReader {
     static func carriesPromiseReceiver(_ item: any ClipboardPasteboardItemReading) -> Bool {
         let readable = Set(NSFilePromiseReceiver.readableDraggedTypes)
         return item.types.contains { readable.contains($0.rawValue) }
-    }
-
-    /// `true` for a type that, on an item naming a file, describes the file
-    /// rather than being content: one AppKit reads a URL from, in any
-    /// spelling, or UTF-8 text, its path.
-    static func isPathFallbackType(_ uti: String) -> Bool {
-        uti == "public.utf8-plain-text" || PasteboardTypeIdentity(uti).carriesURL
     }
 }
