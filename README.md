@@ -129,7 +129,7 @@ Pure AppKit in the **Liquid Glass** design language — a source-list sidebar wi
 | Settings pane (⌘,) | Holds |
 |---|---|
 | **General** | Open at Login · continue running in the menu bar |
-| **Reminders** | Menu bar quit reminder · guest agent install reminder, app-wide and per VM · reset all reminders |
+| **Reminders** | Menu bar quit reminder · duplicate machine ID question · guest agent install reminder, app-wide and per VM · reset all reminders |
 | **Clipboard** | Maximum paste size |
 | **Networks** | Named NAT and Host Only networks — create, rename, and delete them, and see which VMs are on each |
 | **Tags** | Create, rename, recolor, and delete tags |

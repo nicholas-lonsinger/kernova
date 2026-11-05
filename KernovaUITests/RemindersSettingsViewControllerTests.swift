@@ -146,16 +146,18 @@ struct RemindersSettingsViewControllerTests {
         #expect(documentView.frame.height > scrollView.frame.height)
     }
 
-    /// Each section's governing switch heads its own card.
-    @Test("Each reminder switch is its own single-row card")
+    /// The app reminders share a card; the Virtual Machine section's governing
+    /// switch heads its own.
+    @Test("The app reminders share a card apart from the install reminder's")
     func remindersAreSeparateCards() throws {
         let controller = makeLaidOutController(vmCount: 2)
         defer { controller.viewDidDisappear() }
 
         #expect(findLabel(withText: "Menu bar quit reminder", in: controller.view) != nil)
+        #expect(findLabel(withText: "Duplicate machine ID question", in: controller.view) != nil)
         #expect(findLabel(withText: "Guest agent install reminder", in: controller.view) != nil)
-        // Two app-wide switches plus one per VM.
-        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 4)
+        // Three app-wide switches plus one per VM.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 5)
 
         let menuBarToggle = try #require(
             switches(action: "menuBarQuitToggled", in: controller).first)
@@ -163,9 +165,111 @@ struct RemindersSettingsViewControllerTests {
             switches(action: "agentInstallToggled", in: controller).first)
         let menuBarCard = try #require(enclosingGroupedFormCard(of: menuBarToggle))
         let agentCard = try #require(enclosingGroupedFormCard(of: agentToggle))
+        let questionToggle = try #require(
+            switches(action: "duplicateIDQuestionToggled", in: controller).first)
         #expect(menuBarCard !== agentCard)
-        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 1)
+        #expect(enclosingGroupedFormCard(of: questionToggle) === menuBarCard)
+        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 2)
         #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
+    }
+
+    // MARK: - The duplicate machine ID question
+
+    private func questionSwitch(in controller: RemindersSettingsViewController) throws -> NSSwitch {
+        try #require(switches(action: "duplicateIDQuestionToggled", in: controller).first)
+    }
+
+    @Test("While the duplicate machine ID setting is off, the question's row is disabled and says why")
+    func questionRowDisabledWhileTheSettingIsOff() throws {
+        preferences.allowsDuplicateMachineIDOverride = false
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+
+        let toggle = try questionSwitch(in: controller)
+        #expect(toggle.state == .on)
+        #expect(!toggle.isEnabled)
+        #expect(
+            findLabel(
+                withText: "No effect while Offer to start duplicate machine IDs anyway is off.",
+                in: controller.view)?.isHidden == false)
+
+        // Still disabled, still showing the choice, once one is saved.
+        viewModel.duplicateMachineIDQuestionDismissed = true
+        controller.viewWillAppear()
+        #expect(toggle.state == .off)
+        #expect(!toggle.isEnabled)
+    }
+
+    @Test("While the question is asked, its switch is on and turned off only on the question")
+    func questionRowOnWhileAsked() throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let (controller, _) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+
+        let toggle = try questionSwitch(in: controller)
+        #expect(toggle.state == .on)
+        #expect(!toggle.isEnabled)
+        #expect(
+            findLabel(
+                withText: "Turned off with Don\u{2019}t ask again on the question itself.",
+                in: controller.view)?.isHidden == false)
+    }
+
+    @Test("Turning the question's switch on clears the choice not to be asked")
+    func turningTheQuestionOnClearsTheChoice() throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        viewModel.duplicateMachineIDQuestionDismissed = true
+        controller.viewWillAppear()
+
+        let toggle = try questionSwitch(in: controller)
+        #expect(toggle.state == .off)
+        #expect(toggle.isEnabled)
+        // A state note keeps its last text while hidden.
+        #expect(
+            findLabel(containing: "Don\u{2019}t ask again on the question itself", in: controller.view)?.isHidden
+                != false)
+
+        toggle.state = .on
+        #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
+
+        #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
+        #expect(preferences.duplicateMachineIDQuestionDismissed == false)
+        #expect(toggle.state == .on)
+        #expect(!toggle.isEnabled)
+    }
+
+    @Test("The question's switch follows a choice made while the pane is on screen")
+    func questionRowFollowsTheChoiceLive() async throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        let toggle = try questionSwitch(in: controller)
+
+        viewModel.duplicateMachineIDQuestionDismissed = true
+
+        // The pane's observation loop applies on a later turn; the switch
+        // itself is not observable.
+        try await waitUntil { toggle.state == .off }
+        #expect(toggle.isEnabled)
+    }
+
+    @Test("Reset All Reminders clears the choice not to be asked")
+    func resetAllRemindersClearsTheChoice() throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        viewModel.duplicateMachineIDQuestionDismissed = true
+        controller.viewWillAppear()
+
+        let reset = try #require(
+            allSubviews(NSButton.self, in: controller.view) { $0.title == "Reset All Reminders" }.first)
+        #expect(NSApp.sendAction(try #require(reset.action), to: reset.target, from: reset))
+
+        #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
+        #expect(preferences.duplicateMachineIDQuestionDismissed == false)
+        #expect(try questionSwitch(in: controller).state == .on)
     }
 
     /// Apple's guidance for showing that one control governs others is to indent
@@ -300,7 +404,7 @@ struct RemindersSettingsViewControllerTests {
         #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
         // The override caption is a note of the per-VM card, which the empty
         // state does not build.
-        #expect(findLabel(containing: "No effect", in: controller.view) == nil)
+        #expect(findLabel(containing: "No effect while the reminder above is off", in: controller.view) == nil)
     }
 
     /// The disabled rows keep showing each VM's own setting, so turning the
