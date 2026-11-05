@@ -23,10 +23,10 @@
 			<enumerator name="preparing" code="KsPr" description="A create, clone or import is still writing the bundle."/>
 		</enumeration>
 
-		<enumeration name="VM stop method" code="KvSM" description="How a stop reaches a powered-off guest.">
+		<enumeration name="VM stop method" code="KvSM" description="How a stop, or a restart, takes the guest down.">
 			<enumerator name="shut down" code="KmSd" description="Ask the guest to power itself off."/>
 			<enumerator name="force" code="KmFo" description="Terminate the virtual machine at once, losing unsaved guest state."/>
-			<enumerator name="shut down anyway" code="KmSa" description="Shut a macOS guest down without waiting for apps, which quit without asking to save. Takes the Kernova agent installed “For everyone”, connected."/>
+			<enumerator name="anyway" code="KmSa" description="Shut a macOS guest down without waiting for apps, which quit without asking to save. Takes the Kernova agent installed “For everyone”, connected."/>
 		</enumeration>
 
 		<enumeration name="network kind" code="KvNK" description="The mode every virtual machine on a named network runs in.">
@@ -200,7 +200,10 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+			<parameter name="by" code="by  " type="VM stop method" optional="yes" description="How to take the guest down before starting it again. Shut down by default.">
+				<cocoa key="StopMethod"/>
+			</parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a destructive restart refuses without, and start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">

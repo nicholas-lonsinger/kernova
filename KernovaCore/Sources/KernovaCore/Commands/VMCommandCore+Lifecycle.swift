@@ -812,48 +812,91 @@ extension VMCommandCore {
             }
             try await discardSavedState(instance, discard)
         case .anyway:
-            // The catalog's refusal, explained in order — Stop's admission, the
-            // paused guest, the agents' offer — before the consent is asked, so
-            // nobody agrees to what is then refused.
-            if !capabilities.accepts(.shutDownAnyway, on: instance) {
-                try require(anyOf: [.stop], on: instance)
-                if instance.isLivePaused {
-                    throw CommandError.stepRequired(pausedStopRefusal(instance))
-                }
-                throw CommandError.stepRequired(Self.shutDownAnywayUnavailable(instance))
-            }
-            guard consent.covers(.shutDownAnyway) else {
-                throw CommandError.confirmationRequired(Self.shutDownAnywayPrompt(instance))
+            try requireStopAnyway(instance, for: .stop)
+            guard consent.covers(.stopAnyway) else {
+                throw CommandError.confirmationRequired(Self.stopAnywayPrompt(instance))
             }
             do {
                 try await lifecycle.requestStopIgnoringApps(instance)
             } catch is ShutdownIgnoringAppsUntaken {
-                throw CommandError.stepRequired(Self.shutDownAnywayUnavailable(instance))
+                throw CommandError.stepRequired(Self.stopAnywayUnavailable(instance, verb: .stop))
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
         }
     }
 
-    /// The confirmation Shut Down Anyway asks on every use. It states what
-    /// macOS does, and no more: a guest shut down this way was seen to quit an
-    /// app holding an unsaved document without asking, and to bring that
-    /// document back through autosave at the next start
+    /// Stop Anyway's gate, and Restart Anyway's: the catalog's refusal,
+    /// explained in order — `verb`'s own admission, the paused guest, the
+    /// agents' offer — before the consent is asked, so nobody agrees to what
+    /// is then refused.
+    private func requireStopAnyway(_ instance: VMInstance, for verb: VMVerb) throws {
+        guard !capabilities.accepts(.stopAnyway, on: instance) else { return }
+        try require(anyOf: [verb == .restart ? .restart : .stop], on: instance)
+        if instance.isLivePaused {
+            throw CommandError.stepRequired(pausedStopRefusal(instance))
+        }
+        throw CommandError.stepRequired(Self.stopAnywayUnavailable(instance, verb: verb))
+    }
+
+    /// What macOS does at a shutdown that does not wait for apps, and no
+    /// more: a guest shut down this way was seen to quit an app holding an
+    /// unsaved document without asking, and to bring that document back
+    /// through autosave at the next start
     /// (`docs/research/2026-11-03-macos-shutdown-without-waiting-for-apps.md`).
-    package static func shutDownAnywayPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+    private static let stopAnywayConsequence =
+        "macOS shuts down without waiting for apps. Apps still open quit without asking to save."
+
+    /// The confirmation Stop Anyway asks on every use.
+    package static func stopAnywayPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         ConfirmationPrompt(
-            kind: .shutDownAnyway,
-            title: "Shut Down \u{201C}\(instance.name)\u{201D} Anyway?",
-            message: "macOS shuts down without waiting for apps. Apps still open quit without asking to save.",
-            confirmTitle: "Shut Down Anyway",
+            kind: .stopAnyway,
+            title: "Stop \u{201C}\(instance.name)\u{201D} Anyway?",
+            message: stopAnywayConsequence,
+            confirmTitle: "Stop Anyway",
             dismissTitle: "Cancel")
     }
 
-    /// The refusal of a Shut Down Anyway no agent of the guest offers: only a
-    /// macOS guest's agent installed "For everyone", connected, runs it.
-    static func shutDownAnywayUnavailable(_ instance: VMInstance) -> StepRequirement {
+    /// The confirmation Restart Anyway asks on every use: Stop Anyway's, and
+    /// the start that follows.
+    package static func restartAnywayPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+        ConfirmationPrompt(
+            kind: .restartAnyway,
+            title: "Restart \u{201C}\(instance.name)\u{201D} Anyway?",
+            message: "\(stopAnywayConsequence) Kernova then starts \u{201C}\(instance.name)\u{201D} again."
+                + restartKeepsEphemeralSession(instance),
+            confirmTitle: "Restart Anyway",
+            dismissTitle: "Cancel")
+    }
+
+    /// The confirmation Force Restart asks on every use: Force Stop's
+    /// termination, and the start that follows.
+    package static func forceRestartPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
+        ConfirmationPrompt(
+            kind: .forceRestart,
+            title: "Force Restart \u{201C}\(instance.name)\u{201D}?",
+            message:
+                "\u{201C}\(instance.name)\u{201D} will be immediately terminated, then Kernova starts it again. "
+                + "Any unsaved data inside the guest will be lost." + restartKeepsEphemeralSession(instance),
+            confirmTitle: "Force Restart",
+            dismissTitle: "Cancel")
+    }
+
+    /// What a restart's prompt says of an Ephemeral Mode VM, where the
+    /// matching stop's says it returns to its baseline: the session the boot
+    /// continues keeps its changes (``VMActivity/follow(_:continuing:)``).
+    private static func restartKeepsEphemeralSession(_ instance: VMInstance) -> String {
+        guard let baseline = instance.ephemeralBaselineSnapshot else { return "" }
+        return " It is ephemeral, and a restart keeps its session rather than returning it to "
+            + "\u{201C}\(baseline.name)\u{201D}."
+    }
+
+    /// The refusal of a Stop Anyway or Restart Anyway, `verb`, no agent of the
+    /// guest offers: only a macOS guest's agent installed "For everyone",
+    /// connected, runs it.
+    static func stopAnywayUnavailable(_ instance: VMInstance, verb: VMVerb) -> StepRequirement {
         StepRequirement(
-            title: "Can\u{2019}t Shut Down Anyway",
+            title: verb == .restart ? "Can\u{2019}t Restart Anyway" : "Can\u{2019}t Stop Anyway",
             message:
                 "\u{201C}\(instance.name)\u{201D} can\u{2019}t shut down without waiting for apps. That takes a "
                 + "macOS guest with the Kernova agent installed \u{201C}For everyone\u{201D} and connected.")
@@ -902,16 +945,6 @@ extension VMCommandCore {
         guard instance.isLivePaused else { return }
         do {
             try await lifecycle.launchResume(instance).value()
-        } catch {
-            throw failure(error, verb: .stop, on: instance)
-        }
-    }
-
-    /// Requests restart's graceful shutdown, owing `boot` to the end of the
-    /// session it asks to go down.
-    private func shutDown(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
-        do {
-            try await lifecycle.requestRestartStop(instance, continuingWith: boot)
         } catch {
             throw failure(error, verb: .stop, on: instance)
         }
@@ -1103,13 +1136,17 @@ extension VMCommandCore {
 
     // MARK: - Restart
 
-    /// Shuts the guest down and starts it again once its session has ended,
-    /// bringing it back up the way ``start(_:recovery:consent:)`` would.
+    /// Takes the guest down the way `disposition` names and starts it again
+    /// once its session has ended, bringing it back up the way
+    /// ``start(_:recovery:consent:)`` would.
     ///
     /// Composed rather than a VZ operation of its own, so it inherits every
-    /// gate and refusal the two verbs already state.
+    /// gate and refusal the stop it takes and the start already state:
+    /// `.graceful` is offered where Stop is and resumes a paused guest first,
+    /// `.anyway` where Stop Anyway is, and `.force` where Force Stop is. The
+    /// two that are not graceful ask on every use, as their stops do.
     ///
-    /// The boot is the continuation of the session being shut down
+    /// The boot is the continuation of the session being ended
     /// (``VMActivity/follow(_:continuing:)``): the step that rests the VM
     /// admits it before anything else, so nothing can be decided against the
     /// VM in between and nothing here waits for the VM to come free. The
@@ -1117,9 +1154,10 @@ extension VMCommandCore {
     /// is one action that keeps the guest as it was, as a reboot inside the
     /// guest does — an Ephemeral Mode VM's end owes no baseline revert,
     /// however the session ends once the boot is owed: the guest honouring
-    /// the shutdown this asked for, or stopping or failing on its own. A boot
-    /// refused there, or one that fails before the guest executes, leaves the
-    /// VM at rest, and the session settles as any other end does.
+    /// the shutdown this asked for, the termination, or the guest stopping or
+    /// failing on its own. A boot refused there, or one that fails before the
+    /// guest executes, leaves the VM at rest, and the session settles as any
+    /// other end does.
     ///
     /// A Stop or Force Stop of the session from any door cancels the restart:
     /// its admission withdraws the boot (``VMActivity/requestStop(_:)``,
@@ -1145,11 +1183,12 @@ extension VMCommandCore {
     /// carries that answer. A MAC address another active VM uses on the
     /// network is refused there too.
     package func restart(
-        _ selector: VMSelector, timeout: TimeInterval?, consent: Consent
+        _ selector: VMSelector, disposition: StopDisposition, timeout: TimeInterval?,
+        consent: Consent
     ) async throws {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
-        try require(.restart, on: instance)
+        try requireRestart(instance, disposition: disposition)
         // Before the stop, not at the boot half: a VM still owing its account
         // has a question outstanding, and discovering that after the guest is
         // down leaves it powered off mid-restart. Refused here it keeps
@@ -1161,7 +1200,18 @@ extension VMCommandCore {
         if let conflict {
             throw admissionRefusal(.identityConflict(conflict), on: instance, verb: .restart)
         }
-        try await resumeForShutdown(instance)
+        switch disposition {
+        case .graceful:
+            try await resumeForShutdown(instance)
+        case .anyway:
+            guard consent.covers(.restartAnyway) else {
+                throw CommandError.confirmationRequired(Self.restartAnywayPrompt(instance))
+            }
+        case .force:
+            guard consent.covers(.forceRestart) else {
+                throw CommandError.confirmationRequired(Self.forceRestartPrompt(instance))
+            }
+        }
         guard let sessionID = instance.activity.liveSessionID else {
             throw admissionRefusal(.invalidState, on: instance, verb: .restart)
         }
@@ -1175,7 +1225,7 @@ extension VMCommandCore {
             try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
         do {
-            try await shutDown(instance, continuingWith: boot)
+            try await endSession(instance, disposition: disposition, continuingWith: boot)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has
@@ -1195,6 +1245,48 @@ extension VMCommandCore {
             )
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
+        }
+    }
+
+    /// Refuses a restart `disposition` the VM does not take now, in the words
+    /// of the stop it would take — before anything else is asked, so nobody
+    /// answers a question for a restart that is then refused.
+    private func requireRestart(_ instance: VMInstance, disposition: StopDisposition) throws {
+        switch disposition {
+        case .graceful:
+            try require(.restart, on: instance)
+        case .anyway:
+            try requireStopAnyway(instance, for: .restart)
+        case .force:
+            guard !capabilities.accepts(.forceStop, on: instance) else { return }
+            let reason: VMAdmission.Refusal =
+                if case .refuse(let reason) = capabilities.decision(.forceStop, on: instance, posture: .commit) {
+                    reason
+                } else {
+                    .invalidState
+                }
+            throw admissionRefusal(reason, on: instance, verb: .restart)
+        }
+    }
+
+    /// Ends the session the way a restart's `disposition` names, owing `boot`
+    /// to its end.
+    private func endSession(
+        _ instance: VMInstance, disposition: StopDisposition, continuingWith boot: VMFollowUp
+    ) async throws {
+        do {
+            switch disposition {
+            case .graceful:
+                try await lifecycle.requestRestartStop(instance, ignoringApps: false, continuingWith: boot)
+            case .anyway:
+                try await lifecycle.requestRestartStop(instance, ignoringApps: true, continuingWith: boot)
+            case .force:
+                try await lifecycle.forceStop(instance, continuingWith: boot)
+            }
+        } catch is ShutdownIgnoringAppsUntaken {
+            throw CommandError.stepRequired(Self.stopAnywayUnavailable(instance, verb: .restart))
+        } catch {
+            throw failure(error, verb: .stop, on: instance)
         }
     }
 

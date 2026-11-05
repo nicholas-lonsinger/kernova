@@ -1106,8 +1106,25 @@ package final class VMLibraryViewModel {
     /// refuses without — the account a guest is still owed, a shared machine
     /// identity. A live-paused guest is resumed by the verb itself.
     package func restart(_ instance: VMInstance) async {
+        await restart(instance, disposition: .graceful)
+    }
+
+    /// Restarts the guest through a shutdown that does not wait for apps,
+    /// putting the confirmation the verb asks on every use on screen first.
+    package func restartAnyway(_ instance: VMInstance) async {
+        await restart(instance, disposition: .anyway)
+    }
+
+    /// Terminates the guest and starts it again, putting the confirmation the
+    /// verb asks on every use on screen first.
+    package func forceRestart(_ instance: VMInstance) async {
+        await restart(instance, disposition: .force)
+    }
+
+    private func restart(_ instance: VMInstance, disposition: StopDisposition) async {
         await runAsking(on: instance, then: "Restart") { consent in
-            try await self.commands.restart(.id(instance.id), timeout: nil, consent: consent)
+            try await self.commands.restart(
+                .id(instance.id), disposition: disposition, timeout: nil, consent: consent)
         }
     }
 
@@ -1120,7 +1137,7 @@ package final class VMLibraryViewModel {
 
     /// Shuts the guest down without waiting for apps, putting the confirmation
     /// the verb asks on every use on screen first.
-    package func shutDownAnyway(_ instance: VMInstance) async {
+    package func stopAnyway(_ instance: VMInstance) async {
         await runAsking(on: instance, then: nil) { consent in
             try await self.commands.stop(.id(instance.id), disposition: .anyway, consent: consent)
         }

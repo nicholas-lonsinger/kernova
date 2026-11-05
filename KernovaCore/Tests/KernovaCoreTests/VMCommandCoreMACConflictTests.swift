@@ -431,7 +431,7 @@ struct VMCommandCoreMACConflictTests {
 
         let refused = try #require(
             try await #require(throws: CommandError.self) {
-                try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+                try await harness.core.restart(.id(vm.id), disposition: .graceful, timeout: nil, consent: .none)
             }.stepRequirement)
         #expect(
             refused.routes == [
@@ -448,7 +448,7 @@ struct VMCommandCoreMACConflictTests {
         #expect(harness.virtualization.stopCallCount == 0)
 
         for step in refused.routes[0].steps { try await harness.core.take(step) }
-        try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(vm.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(vm.configuration.networkMembership == .isolated)
@@ -468,7 +468,7 @@ struct VMCommandCoreMACConflictTests {
 
         let refused = try #require(
             try await #require(throws: CommandError.self) {
-                try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+                try await harness.core.restart(.id(vm.id), disposition: .graceful, timeout: nil, consent: .none)
             }.stepRequirement)
         #expect(
             refused.routes == [
@@ -479,7 +479,7 @@ struct VMCommandCoreMACConflictTests {
             ])
 
         for step in refused.routes[0].steps { try await harness.core.take(step) }
-        try await harness.core.restart(.id(vm.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(vm.id), disposition: .graceful, timeout: nil, consent: .none)
 
         // The restart's power-off returned nothing to the baseline, so the
         // move is the network the boot came up on.

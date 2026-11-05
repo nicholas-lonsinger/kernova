@@ -21,11 +21,14 @@ package enum VMCapability: CaseIterable, Hashable {
     case cancelGuestSetup
     case stop
     case restart
+    /// Terminate the guest — Force Stop, and the stop half of Force Restart,
+    /// which is offered wherever Force Stop is.
     case forceStop
-    /// Shut the guest down without waiting for apps: named only where the
-    /// guest's agents offer it, admitted as Stop is, and refused
-    /// ``VMAdmission/Refusal/guestPaused`` while the guest is paused.
-    case shutDownAnyway
+    /// Shut the guest down without waiting for apps — Stop Anyway, and the
+    /// stop half of Restart Anyway, which is offered wherever Stop Anyway is:
+    /// named only where the guest's agents offer it, admitted as Stop is, and
+    /// refused ``VMAdmission/Refusal/guestPaused`` while the guest is paused.
+    case stopAnyway
     case discardSavedState
     case pause
     case resume
@@ -89,7 +92,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .snapshots: .snapshots
         case .start: .start
         case .cancelGuestSetup: .cancelGuestSetup
-        case .stop, .forceStop, .shutDownAnyway, .discardSavedState: .stop
+        case .stop, .forceStop, .stopAnyway, .discardSavedState: .stop
         case .restart: .restart
         case .pause: .pause
         case .resume: .resume
@@ -140,7 +143,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .rename: .rename
         case .editTags: .hostPresentation
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .shutDownAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
+            .restart, .forceStop, .stopAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
             .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
             .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
@@ -169,7 +172,7 @@ package enum VMCapability: CaseIterable, Hashable {
             // restart resumes it first, and the stop verb refuses as a step,
             // which the app's Stop takes as a resume and then a stop.
             return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
-        case .shutDownAnyway:
+        case .stopAnyway:
             // Only an agent runs it: a macOS guest's agent installed "For
             // everyone", connected.
             return instance.agentHubSnapshot.shutsDownIgnoringApps ? .sessionAction(.requestStop) : nil
@@ -280,14 +283,14 @@ package struct VMCapabilityCatalog {
     /// ``VMActivity`` commits — so what a surface offers and what a verb takes
     /// agree by construction.
     ///
-    /// Shut Down Anyway layers one rule over admission's: the agent that runs
+    /// Stop Anyway layers one rule over admission's: the agent that runs
     /// it runs nothing while the guest is paused.
     func decision(
         _ capability: VMCapability, on instance: VMInstance, posture: VMAdmission.Posture
     ) -> VMAdmission.Decision? {
         guard let request = capability.request(on: instance) else { return nil }
         let decision = instance.activity.decide(request, posture: posture)
-        if capability == .shutDownAnyway, decision == .admit, instance.isLivePaused {
+        if capability == .stopAnyway, decision == .admit, instance.isLivePaused {
             return .refuse(.guestPaused)
         }
         return decision

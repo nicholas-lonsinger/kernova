@@ -89,6 +89,8 @@ struct CLIGroupActionTests {
             ["suspend", "--folder", "Lab", "--yes"],
             ["restart", "--folder", "Lab", "--timeout", "5"],
             ["restart", "--folder", "Lab", "--yes"],
+            ["restart", "--folder", "Lab", "--force"],
+            ["restart", "--smart-group", "Running", "--anyway"],
         ]
         for line in refused {
             #expect(throws: (any Error).self, "\(line)") { try parse(line) }

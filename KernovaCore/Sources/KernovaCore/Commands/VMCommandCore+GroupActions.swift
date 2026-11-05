@@ -246,7 +246,8 @@ extension VMCommandCore {
             // The single-VM verb, asking nothing: a question it raises is
             // reported.
             outcome = await settle(.restart, on: instance, in: set) {
-                try await self.restart(.id(instance.id), timeout: nil, consent: .none)
+                try await self.restart(
+                    .id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
             }
         }
         return VMGroupActionResult(vm: summary(instance), outcome: outcome)

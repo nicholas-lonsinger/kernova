@@ -258,7 +258,7 @@ struct VMCommandCoreTests {
         }
 
         try await harness.core.resume(.id(suspended.id), consent: .none)
-        try await harness.core.restart(.id(running.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(running.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(readied == [suspended.id, running.id])
         #expect(presences == [.attended, .attended])
@@ -1163,7 +1163,7 @@ struct VMCommandCoreTests {
         ) { $0.genericMachineIdentifierData = identity }
 
         let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(restarting.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(restarting.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
@@ -1174,7 +1174,7 @@ struct VMCommandCoreTests {
         #expect(restarting.status == .running)
 
         try await harness.core.restart(
-            .id(restarting.id), timeout: nil, consent: Consent([.startBesideSharedMachineIdentity]))
+            .id(restarting.id), disposition: .graceful, timeout: nil, consent: Consent([.startBesideSharedMachineIdentity]))
         #expect(harness.virtualization.startCallCount == 1)
         #expect(restarting.status == .running)
     }
@@ -1191,7 +1191,7 @@ struct VMCommandCoreTests {
         ) { $0.genericMachineIdentifierData = identity }
 
         let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(restarting.id), timeout: nil, consent: .all)
+            try await harness.core.restart(.id(restarting.id), disposition: .graceful, timeout: nil, consent: .all)
         }
         #expect(error.isConflict)
         #expect(harness.virtualization.stopCallCount == 0)
@@ -1434,7 +1434,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.resumeCallCount == 1)
         #expect(harness.virtualization.stopCallCount == 1)
@@ -3270,7 +3270,7 @@ struct VMCommandCoreTests {
         ) { $0.pendingGuestAccount = makeAccountIntent() }
 
         let refusal = await #expect(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
 
         #expect(refusal?.guestAccountPrompt?.username == "ada")
@@ -3291,7 +3291,7 @@ struct VMCommandCoreTests {
         try harness.core.provideGuestAccountPassword(
             .id(instance.id), password: "analytical-engine")
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.lastStartProvisioning?.password == "analytical-engine")
         #expect(instance.status == .running)
@@ -3573,7 +3573,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
@@ -3592,7 +3592,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Rebooting", phase: .running(sessionID: session))
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // The parked sleep is the power-off deadline: the restart is waiting.
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
@@ -3627,13 +3627,13 @@ struct VMCommandCoreTests {
             in: harness, name: "Twice", phase: .running(sessionID: session))
 
         let first = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // The second asks once the first's shutdown request is sent, which a
         // stop request in flight would refuse.
         try await clock.sleepRequested.wait { clock.parked.count == 1 }
         let second = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // Both power-off deadlines parked: both restarts owe a boot to the
         // session's end.
@@ -3711,7 +3711,7 @@ struct VMCommandCoreTests {
             }
         }
         let restart = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), timeout: 0, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 0, consent: .none)
         }
         guard case .invalidArgument = restart else {
             Issue.record("Expected an argument refusal, got \(restart)")
@@ -3732,7 +3732,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: session))
 
         let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), timeout: 30, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 30, consent: .none)
         }
 
         guard case .timedOut(_, let verb, let seconds) = error else {
@@ -3826,7 +3826,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: session))
 
         let restart = Task {
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
 
@@ -3861,7 +3861,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
         let restart = Task {
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // The boot parks before the guest executes, holding the VM.
         await harness.virtualization.waitUntilSuspended()
@@ -3880,7 +3880,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)

@@ -441,7 +441,11 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case forceStop
     /// Shutting a guest down without waiting for apps, which quit without
     /// being asked to save.
-    case shutDownAnyway
+    case stopAnyway
+    /// Terminating a VM immediately and starting it again.
+    case forceRestart
+    /// Shutting a guest down without waiting for apps, then starting it again.
+    case restartAnyway
     /// Deleting a VM's bundle.
     case deleteVM
     /// Trashing one snapshot's captured files.

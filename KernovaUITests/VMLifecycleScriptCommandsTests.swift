@@ -120,9 +120,9 @@ struct VMLifecycleScriptCommandsTests {
     }
 
     @Test(
-        "stop by shut down anyway asks for its consent where offered, and is refused naming the For everyone install where not"
+        "stop by anyway asks for its consent where offered, and is refused naming the For everyone install where not"
     )
-    func stopShutDownAnywayRoutes() async throws {
+    func stopStopAnywayRoutes() async throws {
         let virtualization = MockVirtualizationService()
         let wired = WiredCommandCore(virtualization: virtualization)
         let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()), guestOS: .macOS)
@@ -130,7 +130,7 @@ struct VMLifecycleScriptCommandsTests {
             try makeCommand(
                 VMStopScriptCommand.init(commandDescription:), code: "Stop",
                 arguments: [
-                    "StopMethod": NSNumber(value: VMScriptStopMethod.shutDownAnyway.code),
+                    "StopMethod": NSNumber(value: VMScriptStopMethod.anyway.code),
                     "Confirmation": confirmation,
                 ])
         }
@@ -145,7 +145,7 @@ struct VMLifecycleScriptCommandsTests {
         let unconsented = try await #require(throws: CommandError.self) {
             try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
         }
-        #expect(unconsented.confirmationPrompt?.kind == .shutDownAnyway)
+        #expect(unconsented.confirmationPrompt?.kind == .stopAnyway)
 
         #expect(virtualization.stopCallCount == 0)
         #expect(virtualization.forceStopCallCount == 0)
@@ -199,6 +199,66 @@ struct VMLifecycleScriptCommandsTests {
         #expect(refusal?.appleEventErrorNumber == Int(errAETypeError))
         #expect(virtualization.stopCallCount == 0)
         #expect(virtualization.forceStopCallCount == 0)
+        #expect(alpha.status == .running)
+    }
+
+    @Test("restart by force asks for Force Restart's consent, and with confirmation terminates and boots")
+    func restartByForceRoutes() async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
+        func command(confirmation: Bool) throws -> VMRestartScriptCommand {
+            try makeCommand(
+                VMRestartScriptCommand.init(commandDescription:), code: "Rstr",
+                arguments: [
+                    "StopMethod": NSNumber(value: VMScriptStopMethod.force.code),
+                    "Confirmation": confirmation,
+                ])
+        }
+
+        let unconsented = try await #require(throws: CommandError.self) {
+            try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(unconsented.confirmationPrompt?.kind == .forceRestart)
+        #expect(virtualization.forceStopCallCount == 0)
+
+        try await command(confirmation: true).run(makeGateway(wired), on: [.name("Alpha")])
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(virtualization.stopCallCount == 0)
+        #expect(virtualization.startCallCount == 1)
+        #expect(alpha.status == .running)
+    }
+
+    @Test(
+        "restart by anyway asks for Restart Anyway's consent where offered, and is refused naming the For everyone install where not"
+    )
+    func restartByAnywayRoutes() async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        func command(confirmation: Bool) throws -> VMRestartScriptCommand {
+            try makeCommand(
+                VMRestartScriptCommand.init(commandDescription:), code: "Rstr",
+                arguments: [
+                    "StopMethod": NSNumber(value: VMScriptStopMethod.anyway.code),
+                    "Confirmation": confirmation,
+                ])
+        }
+
+        let unoffered = try await #require(throws: CommandError.self) {
+            try await command(confirmation: true).run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(unoffered.stepRequirement?.title == "Can\u{2019}t Restart Anyway")
+
+        alpha.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+        let unconsented = try await #require(throws: CommandError.self) {
+            try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
+        }
+        #expect(unconsented.confirmationPrompt?.kind == .restartAnyway)
+
+        #expect(virtualization.stopCallCount == 0)
+        #expect(virtualization.startCallCount == 0)
         #expect(alpha.status == .running)
     }
 

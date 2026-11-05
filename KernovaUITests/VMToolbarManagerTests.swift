@@ -42,7 +42,8 @@ struct VMToolbarManagerTests {
         VMToolbarManager(
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("testLifecycle"),
-                shutDownAnywayID: NSToolbarItem.Identifier("testShutDownAnyway"),
+                stopAnywayID: NSToolbarItem.Identifier("testStopAnyway"),
+                restartAnywayID: NSToolbarItem.Identifier("testRestartAnyway"),
                 saveStateID: NSToolbarItem.Identifier("testSaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("testTakeSnapshot"),
                 clipboardID: NSToolbarItem.Identifier("testClipboard"),
@@ -207,9 +208,10 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers contains all configured identifiers")
     func sharedIdentifiers() {
         let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 8)
+        #expect(manager.sharedItemIdentifiers.count == 9)
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testShutDownAnyway")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testStopAnyway")))
+        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testRestartAnyway")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testTakeSnapshot")))
         #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testClipboard")))
@@ -221,7 +223,7 @@ struct VMToolbarManagerTests {
     @Test("sharedItemIdentifiers omits settings toggle when not configured")
     func sharedIdentifiersWithoutSettingsToggle() {
         let manager = makeManager(includeSettingsToggle: false)
-        #expect(manager.sharedItemIdentifiers.count == 7)
+        #expect(manager.sharedItemIdentifiers.count == 8)
         #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
     }
 
@@ -243,35 +245,51 @@ struct VMToolbarManagerTests {
             ])
     }
 
-    @Test("Shut Down Anyway is offered in the palette and left out of the default set")
-    func shutDownAnywayIsPaletteOnly() {
+    @Test(
+        "Stop Anyway and Restart Anyway are offered in the palette and left out of the default set",
+        arguments: [
+            ("testStopAnyway", "Stop Anyway", NSStringFromSelector(#selector(AppDelegate.stopAnywayVM(_:)))),
+            (
+                "testRestartAnyway", "Restart Anyway",
+                NSStringFromSelector(#selector(AppDelegate.restartAnywayVM(_:)))
+            ),
+        ])
+    func anywayItemsArePaletteOnly(identifier: String, label: String, action: String) {
         let manager = makeManager()
-        let anyway = NSToolbarItem.Identifier("testShutDownAnyway")
+        let anyway = NSToolbarItem.Identifier(identifier)
         #expect(manager.sharedItemIdentifiers.contains(anyway))
         #expect(!manager.defaultItemIdentifiers.contains(anyway))
         let item = manager.makeToolbarItem(for: anyway)
-        #expect(item?.label == "Shut Down Anyway")
-        #expect(item?.action == #selector(AppDelegate.shutDownAnywayVM(_:)))
+        #expect(item?.label == label)
+        #expect(item?.action.map(NSStringFromSelector) == action)
         #expect(item?.isBordered == true)
     }
 
     @Test(
-        "Shut Down Anyway is greyed out unless the guest's agents offer it, and plain Stop is unchanged",
+        "Stop Anyway and Restart Anyway are greyed out unless the guest's agents offer them, and the lifecycle group is unchanged",
         arguments: [true, false])
-    func shutDownAnywayEnablement(offered: Bool) {
+    func anywayEnablement(offered: Bool) {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
         let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
+        let (toolbar, _, _) = makeToolbar(
+            manager: manager,
+            defaultItems: ["testLifecycle", "testStopAnyway", "testRestartAnyway"].map {
+                NSToolbarItem.Identifier($0)
+            })
 
         manager.updateToolbarItems(in: toolbar)
 
-        let anyway = toolbar.items.first { $0.itemIdentifier.rawValue == "testShutDownAnyway" }
-        #expect(anyway?.isEnabled == offered)
+        for identifier in ["testStopAnyway", "testRestartAnyway"] {
+            let anyway = toolbar.items.first { $0.itemIdentifier.rawValue == identifier }
+            #expect(anyway != nil, "\(identifier)")
+            #expect(anyway?.isEnabled == offered, "\(identifier)")
+        }
         let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[2].label == "Stop")
+        #expect(lifecycle?.subitems.map { $0.label } == ["Start", "Pause", "Stop", "Restart"])
         #expect(lifecycle?.subitems[2].isEnabled == true)
+        #expect(lifecycle?.subitems[3].isEnabled == true)
     }
 
     @Test("defaultItemIdentifiers omits the trailing space without a settings toggle")

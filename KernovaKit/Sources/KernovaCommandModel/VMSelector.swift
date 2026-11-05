@@ -163,7 +163,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     }
 }
 
-/// How a stop should reach a powered-off guest.
+/// How a stop, or the stop half of a restart, takes the guest down.
 public enum StopDisposition: String, Codable, Sendable, Hashable, CaseIterable {
     /// Request an ACPI shutdown and let the guest power itself off.
     case graceful

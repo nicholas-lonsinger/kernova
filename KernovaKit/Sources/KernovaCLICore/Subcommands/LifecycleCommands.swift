@@ -3,7 +3,7 @@ import Foundation
 import KernovaCommandModel
 
 extension KernovaCommand {
-    /// How `kernova stop` reaches a powered-off guest.
+    /// How `kernova stop` and `kernova restart` take the guest down.
     enum StopMethod: String, EnumerableFlag {
         /// Ask the guest to shut itself down.
         case graceful
@@ -18,6 +18,15 @@ extension KernovaCommand {
             case .graceful: .graceful
             case .force: .force
             case .anyway: .anyway
+            }
+        }
+
+        /// The flag a group action refuses, `nil` for the default.
+        var singleVMFlag: String? {
+            switch self {
+            case .graceful: nil
+            case .force: "--force"
+            case .anyway: "--anyway"
             }
         }
 
@@ -145,8 +154,7 @@ extension KernovaCommand {
             try groups.validateTarget(
                 vm: vm,
                 singleVMFlags: [
-                    method == .force ? "--force" : nil, method == .anyway ? "--anyway" : nil,
-                    timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
+                    method.singleVMFlag, timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
                 ].compactMap(\.self))
         }
 
@@ -272,6 +280,10 @@ extension KernovaCommand {
                 + "One whose MAC address another active one uses on the same network is refused "
                 + "there too, printing the command that moves it to a network of its own where it "
                 + "can take it."
+                + "\n\n--force terminates the guest instead of asking it to shut down, and "
+                + "--anyway shuts a macOS guest down without waiting for apps; each asks for --yes, "
+                + "as `kernova stop` does. --anyway takes a macOS guest whose Kernova agent is "
+                + "installed \u{201C}For everyone\u{201D} and connected; any other guest refuses it."
                 + "\n\nWith --smart-group or --folder, restarts every running guest in the group "
                 + "at once and, once each is back up or has failed, prints a line for each; a guest "
                 + "that never shuts down holds the report, not the others' restarts. A paused or suspended virtual machine is skipped, as a group stop skips "
@@ -286,6 +298,10 @@ extension KernovaCommand {
 
         /// The group whose virtual machines the verb acts on instead.
         @OptionGroup var groups: GroupTargetOptions
+
+        /// How the guest goes down before it starts again.
+        @Flag(exclusivity: .exclusive)
+        var method: StopMethod = .graceful
 
         /// How long to wait for the guest to power off, or `nil` to wait as
         /// long as it takes.
@@ -302,16 +318,17 @@ extension KernovaCommand {
             try TimeoutOption.validate(timeout)
             try groups.validateTarget(
                 vm: vm,
-                singleVMFlags: [timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil]
-                    .compactMap(\.self))
+                singleVMFlags: [
+                    method.singleVMFlag, timeout != nil ? "--timeout" : nil, options.yes ? "--yes" : nil,
+                ].compactMap(\.self))
         }
 
         /// The request this command line stands for.
         func verb() throws -> VMCommandRequest.Verb {
             if let group = groups.target { return .groupAction(.restart, group: group) }
             return .restart(
-                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id), timeout: timeout,
-                consent: options.consent)
+                try SelectorParsing.selector(from: vm ?? "", forcingID: options.id),
+                disposition: method.disposition, timeout: timeout, consent: options.consent)
         }
 
         /// Restarts the VM, or every running one in the group.

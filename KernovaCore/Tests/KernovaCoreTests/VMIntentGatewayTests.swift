@@ -347,7 +347,7 @@ struct VMIntentGatewayTests {
         let vm = harness.register(name: "Rebooting", phase: .running(sessionID: session))
         let gateway = makeGateway(over: harness)
 
-        let restart = Task { try await gateway.restart(vm.id, consent: .none) }
+        let restart = Task { try await gateway.restart(vm.id, disposition: .graceful, consent: .none) }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         // The turn that sent the request is the one that arms any deadline, and
         // a deadline's sleep is queued behind it.

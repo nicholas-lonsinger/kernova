@@ -9,11 +9,12 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// Shut Down Anyway: offered where the guest's agents shut it down without
-/// waiting for apps, asked on every use, and sent to the agent that offers it.
-@Suite("Shut Down Anyway", .serialized, .caseScoped)
+/// Stop Anyway and Restart Anyway: offered where the guest's agents shut it
+/// down without waiting for apps, asked on every use, and sent to the agent
+/// that offers it — Restart Anyway then booting the guest once it is off.
+@Suite("Stop Anyway and Restart Anyway", .serialized, .caseScoped)
 @MainActor
-struct ShutDownAnywayTests {
+struct StopAnywayTests {
     private let preferences = makeTestPreferences()
 
     /// The guest agents a running VM's hub sees.
@@ -31,7 +32,7 @@ struct ShutDownAnywayTests {
         var testDescription: String { "\(self)" }
 
         var guestOS: VMGuestOS { self == .linux ? .linux : .macOS }
-        var canShutDownAnyway: Bool { self == .forEveryone }
+        var canStopAnyway: Bool { self == .forEveryone }
     }
 
     private struct Fixture {
@@ -86,7 +87,7 @@ struct ShutDownAnywayTests {
         return Fixture(harness: harness, instance: instance, probe: probe, system: system)
     }
 
-    private func shutDownAnyway(_ fixture: Fixture, consent: Consent) async throws {
+    private func stopAnyway(_ fixture: Fixture, consent: Consent) async throws {
         try await fixture.harness.core.stop(.id(fixture.instance.id), disposition: .anyway, consent: consent)
     }
 
@@ -98,33 +99,33 @@ struct ShutDownAnywayTests {
     func offeredByAgents(agents: Agents) async throws {
         let fixture = try await makeFixture(agents)
         let capabilities = fixture.harness.library.capabilities
-        #expect(fixture.instance.agentHubSnapshot.shutsDownIgnoringApps == agents.canShutDownAnyway)
+        #expect(fixture.instance.agentHubSnapshot.shutsDownIgnoringApps == agents.canStopAnyway)
         // One predicate answers every surface and the verb.
-        #expect(capabilities.isApplicable(.shutDownAnyway, to: fixture.instance) == agents.canShutDownAnyway)
-        #expect(capabilities.isAvailable(.shutDownAnyway, on: fixture.instance) == agents.canShutDownAnyway)
-        #expect(capabilities.accepts(.shutDownAnyway, on: fixture.instance) == agents.canShutDownAnyway)
+        #expect(capabilities.isApplicable(.stopAnyway, to: fixture.instance) == agents.canStopAnyway)
+        #expect(capabilities.isAvailable(.stopAnyway, on: fixture.instance) == agents.canStopAnyway)
+        #expect(capabilities.accepts(.stopAnyway, on: fixture.instance) == agents.canStopAnyway)
         #expect(
-            capabilities.decision(.shutDownAnyway, on: fixture.instance, posture: .offer)
-                == (agents.canShutDownAnyway ? .admit : nil))
+            capabilities.decision(.stopAnyway, on: fixture.instance, posture: .offer)
+                == (agents.canStopAnyway ? .admit : nil))
     }
 
-    @Test("A paused guest runs no agent: Shut Down Anyway is offered but not enabled")
+    @Test("A paused guest runs no agent: Stop Anyway is offered but not enabled")
     func pausedIsNotAvailable() async throws {
         let fixture = try await makeFixture(.forEveryone, phase: .livePaused(sessionID: UUID()))
         let capabilities = fixture.harness.library.capabilities
-        #expect(capabilities.decision(.shutDownAnyway, on: fixture.instance, posture: .offer) == .refuse(.guestPaused))
-        #expect(capabilities.isApplicable(.shutDownAnyway, to: fixture.instance))
-        #expect(!capabilities.isAvailable(.shutDownAnyway, on: fixture.instance))
-        #expect(!capabilities.accepts(.shutDownAnyway, on: fixture.instance))
+        #expect(capabilities.decision(.stopAnyway, on: fixture.instance, posture: .offer) == .refuse(.guestPaused))
+        #expect(capabilities.isApplicable(.stopAnyway, to: fixture.instance))
+        #expect(!capabilities.isAvailable(.stopAnyway, on: fixture.instance))
+        #expect(!capabilities.accepts(.stopAnyway, on: fixture.instance))
     }
 
-    @Test("A stopped VM offers no Shut Down Anyway, and its verb is refused by state")
+    @Test("A stopped VM offers no Stop Anyway, and its verb is refused by state")
     func stoppedIsNotApplicable() async throws {
         let harness = WiredCommandCore(virtualization: MockVirtualizationService(), preferences: preferences)
         let instance = harness.register(name: "Stopped", phase: .stopped, guestOS: .macOS)
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
-        #expect(!harness.library.capabilities.isApplicable(.shutDownAnyway, to: instance))
+        #expect(!harness.library.capabilities.isApplicable(.stopAnyway, to: instance))
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(.id(instance.id), disposition: .anyway, consent: .all)
         }
@@ -140,29 +141,29 @@ struct ShutDownAnywayTests {
     func asksEveryTime() async throws {
         let fixture = try await makeFixture(.forEveryone)
         let error = try await #require(throws: CommandError.self) {
-            try await shutDownAnyway(fixture, consent: .none)
+            try await stopAnyway(fixture, consent: .none)
         }
         let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt == VMCommandCore.shutDownAnywayPrompt(fixture.instance))
-        #expect(prompt.kind == .shutDownAnyway)
-        #expect(prompt.title == "Shut Down \u{201C}Anyway\u{201D} Anyway?")
+        #expect(prompt == VMCommandCore.stopAnywayPrompt(fixture.instance))
+        #expect(prompt.kind == .stopAnyway)
+        #expect(prompt.title == "Stop \u{201C}Anyway\u{201D} Anyway?")
         #expect(
             prompt.message
                 == "macOS shuts down without waiting for apps. Apps still open quit without asking to save.")
-        #expect(prompt.confirmTitle == "Shut Down Anyway")
+        #expect(prompt.confirmTitle == "Stop Anyway")
         #expect(prompt.confirmIsDestructive)
         #expect(prompt.dismissTitle == "Cancel")
         #expect(prompt.alternatives.isEmpty)
         #expect(fixture.probe.powerRequests.isEmpty)
     }
 
-    @Test("Its sheet offers Shut Down Anyway and Cancel, and neither takes Return")
+    @Test("Its sheet offers Stop Anyway and Cancel, and neither takes Return")
     func sheetTakesNoReturn() {
         let harness = WiredCommandCore(virtualization: MockVirtualizationService(), preferences: preferences)
         let instance = harness.register(name: "Sheet", phase: .running(sessionID: UUID()), guestOS: .macOS)
-        let config = AlertConfiguration(confirming: VMCommandCore.shutDownAnywayPrompt(instance), confirm: {})
-        #expect(config.title == "Shut Down \u{201C}Sheet\u{201D} Anyway?")
-        #expect(config.buttons.map(\.title) == ["Shut Down Anyway", "Cancel"])
+        let config = AlertConfiguration(confirming: VMCommandCore.stopAnywayPrompt(instance), confirm: {})
+        #expect(config.title == "Stop \u{201C}Sheet\u{201D} Anyway?")
+        #expect(config.buttons.map(\.title) == ["Stop Anyway", "Cancel"])
         #expect(config.buttons.map(\.role) == [.destructive, .cancel])
         #expect(!config.buttons.contains { $0.role == .default })
     }
@@ -170,7 +171,7 @@ struct ShutDownAnywayTests {
     @Test("With consent it asks the system service to shut down without waiting for apps, and presses no button")
     func sendsToTheSystemService() async throws {
         let fixture = try await makeFixture(.forEveryone)
-        try await shutDownAnyway(fixture, consent: Consent([.shutDownAnyway]))
+        try await stopAnyway(fixture, consent: Consent([.stopAnyway]))
         #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
         #expect(fixture.probe.powerRequests.count == 1)
         #expect(fixture.harness.virtualization.stopCallCount == 0)
@@ -178,12 +179,12 @@ struct ShutDownAnywayTests {
 
     @Test(
         "Where no agent offers it, it is refused naming the For everyone install, before any question and with nothing sent",
-        arguments: Agents.allCases.filter { !$0.canShutDownAnyway })
+        arguments: Agents.allCases.filter { !$0.canStopAnyway })
     func refusedWithoutTheSystemService(agents: Agents) async throws {
         let fixture = try await makeFixture(agents)
         for consent in [Consent.none, .all] {
             let error = try await #require(throws: CommandError.self) {
-                try await shutDownAnyway(fixture, consent: consent)
+                try await stopAnyway(fixture, consent: consent)
             }
             let requirement = try #require(error.stepRequirement, "\(error)")
             #expect(requirement.routes.isEmpty)
@@ -197,18 +198,117 @@ struct ShutDownAnywayTests {
     func untakenPressesNoButton() async throws {
         let fixture = try await makeFixture(.forEveryone) { _ in [.refused(WireError(.powerActionUnsupported))] }
         let error = try await #require(throws: CommandError.self) {
-            try await shutDownAnyway(fixture, consent: .all)
+            try await stopAnyway(fixture, consent: .all)
         }
         #expect(error.stepRequirement?.message.contains("\u{201C}For everyone\u{201D}") == true)
         #expect(fixture.harness.virtualization.stopCallCount == 0)
         #expect(fixture.instance.status == .running)
     }
 
-    @Test("A paused guest's Shut Down Anyway names the resume, as its Stop does")
+    @Test("A paused guest's Stop Anyway names the resume, as its Stop does")
     func pausedNamesTheResume() async throws {
         let fixture = try await makeFixture(.forEveryone, phase: .livePaused(sessionID: UUID()))
         let error = try await #require(throws: CommandError.self) {
-            try await shutDownAnyway(fixture, consent: .all)
+            try await stopAnyway(fixture, consent: .all)
+        }
+        #expect(error.stepRequirement?.routes.map(\.title) == ["Resume"])
+        #expect(fixture.probe.powerRequests.isEmpty)
+    }
+
+    // MARK: - Restart Anyway
+
+    private func restartAnyway(_ fixture: Fixture, consent: Consent) async throws {
+        try await fixture.harness.core.restart(
+            .id(fixture.instance.id), disposition: .anyway, timeout: nil, consent: consent)
+    }
+
+    @Test("Restart Anyway asks every time, in Stop Anyway's terms reworded for a restart, and sends nothing")
+    func restartAnywayAsksEveryTime() async throws {
+        let fixture = try await makeFixture(.forEveryone)
+        for consent in [Consent.none, Consent([.stopAnyway])] {
+            let error = try await #require(throws: CommandError.self) {
+                try await restartAnyway(fixture, consent: consent)
+            }
+            let prompt = try #require(error.confirmationPrompt)
+            #expect(prompt == VMCommandCore.restartAnywayPrompt(fixture.instance))
+            #expect(prompt.kind == .restartAnyway)
+            #expect(prompt.title == "Restart \u{201C}Anyway\u{201D} Anyway?")
+            #expect(
+                prompt.message
+                    == "macOS shuts down without waiting for apps. Apps still open quit without asking to save. "
+                    + "Kernova then starts \u{201C}Anyway\u{201D} again.")
+            #expect(prompt.confirmTitle == "Restart Anyway")
+            #expect(prompt.confirmIsDestructive)
+            #expect(prompt.dismissTitle == "Cancel")
+        }
+        #expect(fixture.probe.powerRequests.isEmpty)
+        #expect(fixture.harness.virtualization.startCallCount == 0)
+    }
+
+    @Test("With consent Restart Anyway asks the system service to shut down without waiting for apps, then boots")
+    func restartAnywayStopsThenBoots() async throws {
+        let fixture = try await makeFixture(.forEveryone)
+        let session = try #require(fixture.instance.activity.liveSessionID)
+        let restart = Task { @MainActor in
+            try await restartAnyway(fixture, consent: Consent([.restartAnyway]))
+        }
+        try await fixture.probe.changed.wait { fixture.probe.powerRequestsIgnoringApps.count == 1 }
+        try await waitForChange {
+            !fixture.instance.activity.isRequestingStop && fixture.instance.activity.liveSessionContinues
+        }
+
+        fixture.instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await restart.value
+
+        #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
+        #expect(fixture.probe.powerRequests.count == 1)
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
+        #expect(fixture.harness.virtualization.startCallCount == 1)
+        #expect(fixture.instance.status == .running)
+    }
+
+    @Test(
+        "Where no agent offers it, Restart Anyway is refused as Stop Anyway is, before any question and with nothing sent",
+        arguments: Agents.allCases.filter { !$0.canStopAnyway })
+    func restartAnywayRefusedWithoutTheSystemService(agents: Agents) async throws {
+        let fixture = try await makeFixture(agents)
+        for consent in [Consent.none, .all] {
+            let error = try await #require(throws: CommandError.self) {
+                try await restartAnyway(fixture, consent: consent)
+            }
+            let requirement = try #require(error.stepRequirement, "\(error)")
+            #expect(
+                requirement
+                    == VMCommandCore.stopAnywayUnavailable(fixture.instance, verb: .restart))
+            #expect(requirement.title == "Can\u{2019}t Restart Anyway")
+            #expect(
+                requirement.message
+                    == VMCommandCore.stopAnywayUnavailable(fixture.instance, verb: .stop).message)
+        }
+        #expect(fixture.probe.powerRequests.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
+        #expect(fixture.harness.virtualization.startCallCount == 0)
+        #expect(fixture.instance.status == .running)
+    }
+
+    @Test("A system service that refuses Restart Anyway leaves the guest running, its boot withdrawn")
+    func restartAnywayUntakenWithdrawsItsBoot() async throws {
+        let fixture = try await makeFixture(.forEveryone) { _ in [.refused(WireError(.powerActionUnsupported))] }
+        let error = try await #require(throws: CommandError.self) {
+            try await restartAnyway(fixture, consent: .all)
+        }
+        #expect(error.stepRequirement?.title == "Can\u{2019}t Restart Anyway")
+        #expect(!fixture.instance.activity.liveSessionContinues)
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
+        #expect(fixture.harness.virtualization.startCallCount == 0)
+        #expect(fixture.instance.status == .running)
+    }
+
+    @Test("A paused guest's Restart Anyway names the resume, as its Stop Anyway does")
+    func restartAnywayPausedNamesTheResume() async throws {
+        let fixture = try await makeFixture(.forEveryone, phase: .livePaused(sessionID: UUID()))
+        let error = try await #require(throws: CommandError.self) {
+            try await restartAnyway(fixture, consent: .all)
         }
         #expect(error.stepRequirement?.routes.map(\.title) == ["Resume"])
         #expect(fixture.probe.powerRequests.isEmpty)
@@ -218,10 +318,23 @@ struct ShutDownAnywayTests {
 
     @Test("Shortcuts' and AppleScript's stop methods each name the anyway disposition")
     func doorsNameTheDisposition() {
-        #expect(VMStopMethod.shutDownAnyway.disposition == .anyway)
-        #expect(VMStopMethod(.anyway) == .shutDownAnyway)
+        #expect(VMStopMethod.anyway.disposition == .anyway)
+        #expect(VMStopMethod(.anyway) == .anyway)
         #expect(Set(VMStopMethod.allCases.map(\.disposition)) == Set(StopDisposition.allCases))
-        #expect(VMStopMethod.caseDisplayRepresentations[.shutDownAnyway] != nil)
+        #expect(VMStopMethod.caseDisplayRepresentations[.anyway] != nil)
+    }
+
+    @Test("Shortcuts' restart is refused for Restart Anyway's consent without one, and sends it with one")
+    func intentGatewayRestartRoute() async throws {
+        let fixture = try await makeFixture(.forEveryone)
+        let gateway = VMIntentGateway(
+            commands: fixture.harness.core, readiness: LibraryReadiness(awaitReady: {}), index: MockVMEntityIndex(),
+            record: makeTestIndexRecord())
+        let declined = try await #require(throws: CommandError.self) {
+            try await gateway.restart(fixture.instance.id, disposition: .anyway, consent: .none)
+        }
+        #expect(declined.confirmationPrompt?.kind == .restartAnyway)
+        #expect(fixture.probe.powerRequests.isEmpty)
     }
 
     @Test("Shortcuts' stop is refused for its consent without one, and sends it with one")
@@ -233,9 +346,9 @@ struct ShutDownAnywayTests {
         let declined = try await #require(throws: CommandError.self) {
             try await gateway.stop(fixture.instance.id, disposition: .anyway, consent: .none)
         }
-        #expect(declined.confirmationPrompt?.kind == .shutDownAnyway)
+        #expect(declined.confirmationPrompt?.kind == .stopAnyway)
         #expect(fixture.probe.powerRequests.isEmpty)
-        try await gateway.stop(fixture.instance.id, disposition: .anyway, consent: Consent([.shutDownAnyway]))
+        try await gateway.stop(fixture.instance.id, disposition: .anyway, consent: Consent([.stopAnyway]))
         #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
     }
 }

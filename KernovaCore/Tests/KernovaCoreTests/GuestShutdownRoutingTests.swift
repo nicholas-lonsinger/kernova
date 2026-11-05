@@ -135,7 +135,7 @@ struct GuestShutdownRoutingTests {
     func restartThroughAgent() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
         let restart = Task { @MainActor in
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(.id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 1 }
         try await waitForChange {
@@ -154,7 +154,7 @@ struct GuestShutdownRoutingTests {
     @Test("A Restart with no agent to take it takes the same request through the ACPI button")
     func restartThroughACPI() async throws {
         let fixture = try await makeFixture(peer: false)
-        try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+        try await fixture.harness.core.restart(.id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         #expect(fixture.probe.powerRequests.isEmpty)
         #expect(fixture.harness.virtualization.stopCallCount == 1)
         #expect(fixture.harness.virtualization.startCallCount == 1)
@@ -165,7 +165,7 @@ struct GuestShutdownRoutingTests {
     func blockedRestartWithdrawsItsBoot() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.blocked(Self.blocking))] }
         let error = try await #require(throws: CommandError.self) {
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(.id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         #expect(error.alertTitle == "\u{201C}Routed\u{201D} Didn\u{2019}t Shut Down")
         #expect(!fixture.instance.activity.liveSessionContinues)
@@ -178,7 +178,7 @@ struct GuestShutdownRoutingTests {
     func stopWithdrawsAWaitingRestart() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
         let restart = Task { @MainActor in
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(.id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 1 }
         try await waitForChange {

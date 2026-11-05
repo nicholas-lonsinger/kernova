@@ -230,9 +230,9 @@ struct CLIVerbWireTests {
             consented.sent == [.stop(.idOrName("Alpha"), disposition: .anyway, consent: .all, timeout: nil)])
 
         let prompt = ConfirmationPrompt(
-            kind: .shutDownAnyway, title: "Shut Down \u{201C}Alpha\u{201D} Anyway?",
+            kind: .stopAnyway, title: "Stop \u{201C}Alpha\u{201D} Anyway?",
             message: "macOS shuts down without waiting for apps. Apps still open quit without asking to save.",
-            confirmTitle: "Shut Down Anyway", dismissTitle: "Cancel")
+            confirmTitle: "Stop Anyway", dismissTitle: "Cancel")
         let unconsented = try CLIWire.exchange(
             ["stop", "Alpha", "--anyway"],
             answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
@@ -305,21 +305,70 @@ struct CLIVerbWireTests {
         let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted)
         #expect(
             bare.sent == [
-                .restart(.idOrName("Alpha"), timeout: nil, consent: .none)
+                .restart(.idOrName("Alpha"), disposition: .graceful, timeout: nil, consent: .none)
             ])
 
         let bounded = try CLIWire.exchange(
             ["restart", "Alpha", "--timeout", "45"], answering: accepted)
         #expect(
             bounded.sent == [
-                .restart(.idOrName("Alpha"), timeout: 45, consent: .none)
+                .restart(.idOrName("Alpha"), disposition: .graceful, timeout: 45, consent: .none)
             ])
 
         let anyway = try CLIWire.exchange(["restart", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
-                .restart(.idOrName("Alpha"), timeout: nil, consent: .all)
+                .restart(.idOrName("Alpha"), disposition: .graceful, timeout: nil, consent: .all)
             ])
+    }
+
+    /// The refusal each restart method's consent raises, as the app words it.
+    nonisolated static let restartPrompts: [(flag: String, disposition: StopDisposition, prompt: ConfirmationPrompt)] = [
+        (
+            "--force", .force,
+            ConfirmationPrompt(
+                kind: .forceRestart, title: "Force Restart \u{201C}Alpha\u{201D}?",
+                message:
+                    "\u{201C}Alpha\u{201D} will be immediately terminated, then Kernova starts it again. "
+                    + "Any unsaved data inside the guest will be lost.",
+                confirmTitle: "Force Restart", dismissTitle: "Cancel")
+        ),
+        (
+            "--anyway", .anyway,
+            ConfirmationPrompt(
+                kind: .restartAnyway, title: "Restart \u{201C}Alpha\u{201D} Anyway?",
+                message:
+                    "macOS shuts down without waiting for apps. Apps still open quit without asking to save. "
+                    + "Kernova then starts \u{201C}Alpha\u{201D} again.",
+                confirmTitle: "Restart Anyway", dismissTitle: "Cancel")
+        ),
+    ]
+
+    @Test(
+        "restart --force and --anyway cross as their dispositions; without --yes the consent refusal names --yes, as stop's do",
+        arguments: restartPrompts.indices)
+    func restartMethodCrossesAndAsksForYes(row: Int) throws {
+        let (flag, disposition, prompt) = Self.restartPrompts[row]
+        let consented = try CLIWire.exchange(["restart", "Alpha", flag, "--yes"], answering: accepted)
+        #expect(
+            consented.sent == [
+                .restart(.idOrName("Alpha"), disposition: disposition, timeout: nil, consent: .all)
+            ])
+
+        let unconsented = try CLIWire.exchange(
+            ["restart", "Alpha", flag],
+            answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
+        #expect(
+            unconsented.sent == [
+                .restart(.idOrName("Alpha"), disposition: disposition, timeout: nil, consent: .none)
+            ])
+        do {
+            _ = try unconsented.answer.payload()
+            Issue.record("expected a consent refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .refusedByState)
+            #expect(failure.message == prompt.message + "\n\nPass --yes to do it anyway.")
+        }
     }
 
     @Test("open is the one verb that crosses asking for something to come forward")

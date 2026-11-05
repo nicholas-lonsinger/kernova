@@ -1260,10 +1260,37 @@ package final class VMActivity {
     /// session has ended; an operation that tolerated the stop keeps holding
     /// the VM until its body ends.
     func forceStop(_ terminate: () async throws -> Void) async throws {
+        try await forceStop(continuingWith: nil, terminate)
+    }
+
+    /// Force Restart's own Force Stop: admitted as ``forceStop(_:)`` is, but
+    /// owing `boot` to the end of the session it terminates as its
+    /// continuation (``follow(_:continuing:)``) rather than withdrawing any —
+    /// so a Restart already waiting on that session restarts with it, as a
+    /// second Restart's graceful stop joins the first's
+    /// (``requestStop(continuingWith:_:)``).
+    func forceStop(
+        continuingWith boot: VMFollowUp, _ terminate: () async throws -> Void
+    ) async throws {
+        try await forceStop(continuingWith: Optional(boot), terminate)
+    }
+
+    private func forceStop(
+        continuingWith boot: VMFollowUp?, _ terminate: () async throws -> Void
+    ) async throws {
         let stop = VMOutcome()
         let sessionID: UUID
         switch decide(.sessionAction(.forceStop), posture: .commit) {
         case .join(let outcome):
+            // The Force Stop already under way ends the session this one
+            // would have: the boot is owed to that end.
+            if let boot {
+                if let live = liveSessionID {
+                    follow(boot, continuing: live)
+                } else {
+                    boot.outcome.resolve(.failure(followUpRefusal(.invalidState, for: boot)))
+                }
+            }
             return try await outcome.value()
         case .refuse(let reason):
             throw VMAdmissionRefusal(refusal: reason)
@@ -1288,7 +1315,11 @@ package final class VMActivity {
             case .stopped, .initialBoot, .failed, .suspended, .removed:
                 throw VMAdmissionRefusal(refusal: .invalidState)
             }
-            withdrawContinuations(of: sessionID)
+            if let boot {
+                follow(boot, continuing: sessionID)
+            } else {
+                withdrawContinuations(of: sessionID)
+            }
         }
         do {
             try await terminate()

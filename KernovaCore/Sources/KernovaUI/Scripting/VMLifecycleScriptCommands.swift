@@ -4,14 +4,15 @@ import KernovaCommandModel
 import KernovaCore
 import KernovaLogging
 
-/// The dictionary's `VM stop method` enumeration, in Swift.
+/// The dictionary's `VM stop method` enumeration, in Swift: how `stop` and
+/// `restart` take the guest down.
 ///
 /// The terms and codes here and the enumerators in `Kernova.sdef` are two
 /// halves of one thing, which is what `KernovaScriptingDefinitionTests` checks.
 enum VMScriptStopMethod: CaseIterable {
     case shutDown
     case force
-    case shutDownAnyway
+    case anyway
 
     /// The way of stopping `disposition` names. Exhaustive, so a new
     /// disposition has to be given a term before it compiles.
@@ -19,7 +20,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch disposition {
         case .graceful: self = .shutDown
         case .force: self = .force
-        case .anyway: self = .shutDownAnyway
+        case .anyway: self = .anyway
         }
     }
 
@@ -35,7 +36,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch self {
         case .shutDown: "shut down"
         case .force: "force"
-        case .shutDownAnyway: "shut down anyway"
+        case .anyway: "anyway"
         }
     }
 
@@ -44,7 +45,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch self {
         case .shutDown: FourCharCode(scriptingCode: "KmSd")
         case .force: FourCharCode(scriptingCode: "KmFo")
-        case .shutDownAnyway: FourCharCode(scriptingCode: "KmSa")
+        case .anyway: FourCharCode(scriptingCode: "KmSa")
         }
     }
 
@@ -53,7 +54,7 @@ enum VMScriptStopMethod: CaseIterable {
         switch self {
         case .shutDown: .graceful
         case .force: .force
-        case .shutDownAnyway: .anyway
+        case .anyway: .anyway
         }
     }
 }
@@ -154,28 +155,34 @@ final class VMStartScriptCommand: VMScriptCommand {
 @objc(VMStopScriptCommand)
 final class VMStopScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        guard let method = stopMethod() else {
-            throw CommandError.invalidArgument("That is not a way Kernova can stop a guest.")
-        }
         try await gateway.stop(
-            selectors, method: method, confirmation: flag("Confirmation"),
+            selectors, method: try stopMethod(), confirmation: flag("Confirmation"),
             givingUpAfter: seconds("GivingUpAfter"))
-    }
-
-    /// The stop the `by` parameter asked for, shutting down when the script
-    /// named none and `nil` for a code from no vocabulary this app writes.
-    private func stopMethod() -> StopDisposition? {
-        guard let named = arguments?["StopMethod"] as? NSNumber else { return .graceful }
-        return VMScriptStopMethod(code: named.uint32Value)?.disposition
     }
 }
 
-/// `restart virtual machine … [with confirmation] [giving up after <seconds>]`
+/// `restart virtual machine … [by <method>] [with confirmation] [giving up after <seconds>]`
 @objc(VMRestartScriptCommand)
 final class VMRestartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.restart(
-            selectors, confirmation: flag("Confirmation"), givingUpAfter: seconds("GivingUpAfter"))
+            selectors, method: try stopMethod(), confirmation: flag("Confirmation"),
+            givingUpAfter: seconds("GivingUpAfter"))
+    }
+}
+
+extension VMScriptCommand {
+    /// The way down the `by` parameter asked for, shutting down when the
+    /// script named none.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for a code from no
+    ///   vocabulary this app writes.
+    func stopMethod() throws -> StopDisposition {
+        guard let named = arguments?["StopMethod"] as? NSNumber else { return .graceful }
+        guard let method = VMScriptStopMethod(code: named.uint32Value) else {
+            throw CommandError.invalidArgument("That is not a way Kernova can stop a guest.")
+        }
+        return method.disposition
     }
 }
 
