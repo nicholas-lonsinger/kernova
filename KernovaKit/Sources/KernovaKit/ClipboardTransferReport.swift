@@ -95,8 +95,10 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case unpackFailed(ClipboardItemFailure?)
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
-    /// Items this side could not read were left out of what it sent, and the
-    /// rest crossed; `count` is how many.
+    /// Items the sending side left out of what it sent, and the rest crossed;
+    /// `count` is how many. A gesture that reads a pasteboard leaves out a file
+    /// it cannot read or that is gone; a snapshot also leaves out what it could
+    /// not pull from another offer.
     case itemsSkipped(count: Int)
     /// None of the gesture's items could be read, so nothing was sent.
     case itemsUnreadable

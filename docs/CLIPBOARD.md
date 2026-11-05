@@ -25,7 +25,10 @@ or a clipboard command, which the user asks for a snapshot of one side's
 clipboard. The command reads every representation but a file or folder
 at the click, so a later copy on that side never reaches the snapshot;
 files cross only when pasted. A copy, its offer and a passthrough
-publish move metadata alone. Given an optimization that reads, hashes,
+publish move metadata alone. The source's own disk is paid the same way:
+a file iCloud Drive or another File Provider evicted is downloaded by the
+pull that reads it, never by a check at the click
+(`DatalessMaterialization`). Given an optimization that reads, hashes,
 archives or sends a payload earlier for some subset — a small payload
 inlined in the offer, a file pre-staged so the paste is instant — reject
 it: both ends' promise tables are built on an offer carrying no bytes,

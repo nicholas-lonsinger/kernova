@@ -361,13 +361,24 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Drop: some files weren't sent",
                 mentionsMacClipboardKept: false)
 
+        // A snapshot leaves an item out for a file it cannot open or that is gone, or for a pull of what it holds
+        // as another offer's promise that failed; the count alone crosses, so neither command names a cause.
         case (.itemsSkipped(let count), .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard partly copied from \(vm).",
                 message: count == 1
-                    ? "The guest couldn\u{2019}t read one copied file, so it wasn\u{2019}t copied to the Mac. The rest were."
-                    : "The guest couldn\u{2019}t read \(count) copied files, so they weren\u{2019}t copied to the Mac. The rest were.",
+                    ? "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac. The rest were."
+                    : "\(count) items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac. The rest were.",
                 menuLine: "Clipboard: some items weren't copied from the guest",
+                mentionsMacClipboardKept: false)
+
+        case (.itemsSkipped(let count), .send):
+            return ClipboardTransferWording(
+                headline: "Clipboard partly copied to \(vm).",
+                message: count == 1
+                    ? "One item on the Mac clipboard wasn\u{2019}t copied to the guest. The rest were."
+                    : "\(count) items on the Mac clipboard weren\u{2019}t copied to the guest. The rest were.",
+                menuLine: "Clipboard: some items weren't copied to the guest",
                 mentionsMacClipboardKept: false)
 
         case (.itemsSkipped(let count), _):
