@@ -19,7 +19,6 @@ import KernovaWire
 final class GuestClipboard {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "GuestClipboard")
-    private static let pollingInterval: TimeInterval = 0.5
 
     /// The exchange both directions run through.
     let exchange: ClipboardItemExchange
@@ -48,7 +47,8 @@ final class GuestClipboard {
     private var readingChangeCount: Int?
     /// The host offer the guest pasteboard was last written with.
     private var published: ClipboardRemoteOffer?
-    private var pollingTimer: Timer?
+    /// This clipboard's place in the pasteboard's watch while a connection can use CLIPBOARD.
+    private var pasteboardWatch: ClipboardPasteboardWatch.Observation?
 
     /// The latest clipboard activity, for the menu-bar status line.
     private(set) var activity: ClipboardActivity = .disabled
@@ -143,8 +143,8 @@ final class GuestClipboard {
         exchange.setLink(link)
         if link == nil {
             activity = .disabled
-            pollingTimer?.invalidate()
-            pollingTimer = nil
+            pasteboardWatch?.cancel()
+            pasteboardWatch = nil
         } else {
             if case .disabled = activity { activity = .enabled }
             startPolling()
@@ -167,11 +167,9 @@ final class GuestClipboard {
     // MARK: Guest → host
 
     private func startPolling() {
-        guard pollingTimer == nil else { return }
-        // A run-loop timer, in the default mode only: a poll reading this agent's own promise fires its provider,
-        // whose wait drains the main queue only from the run loop's base (`NestedEventLoopWait`).
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: Self.pollingInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.checkPasteboard() }
+        guard pasteboardWatch == nil else { return }
+        pasteboardWatch = ClipboardPasteboardWatch.observe(pasteboard, in: .newCopies) { [weak self] in
+            self?.checkPasteboard()
         }
     }
 
@@ -387,8 +385,8 @@ final class GuestClipboard {
 
     /// Stops polling; the pasteboard's promises keep serving what already landed.
     func stop() {
-        pollingTimer?.invalidate()
-        pollingTimer = nil
+        pasteboardWatch?.cancel()
+        pasteboardWatch = nil
     }
 }
 

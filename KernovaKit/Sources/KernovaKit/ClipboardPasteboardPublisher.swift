@@ -159,20 +159,17 @@ public final class ClipboardPasteboardPublisher {
 
     /// The most recent write the pasteboard took that promised something, while it stands: a write, a clear or
     /// a retraction of this publisher's ends it, and so does anything else replacing it, which a finished
-    /// provider reports, or — once every provider is finished — ``standingWatch`` sees. Only a write serving an
+    /// provider reports, or — once every provider is finished — ``standingWatch`` hears. Only a write serving an
     /// offer can be stranded by that offer's end, and ``retractWrite(servingOffer:)`` retracts it by naming that
     /// offer, so no other offer's end reaches it.
     private var standing: ClipboardStandingWrite?
 
-    /// Polls the pasteboard's change count while ``standing`` stands with every provider finished: no callback
-    /// tells of its replacement then, and NSPasteboard posts no change notification.
-    private var standingWatch: Timer?
+    /// This publisher's place in the pasteboard's watch while ``standing`` stands with every provider finished:
+    /// no callback tells of its replacement then.
+    private var standingWatch: ClipboardPasteboardWatch.Observation?
 
     /// Hears each paste whose promised bytes the pasteboard refused to take, so the paste got nothing.
     public var onPasteRefused: (@MainActor () -> Void)?
-
-    /// How often ``standingWatch`` polls: the passthrough poll's cadence.
-    private static let standingWatchInterval: TimeInterval = 0.5
 
     /// Creates a publisher over `pasteboard`, recording each write in `ledger`.
     public init(
@@ -264,11 +261,8 @@ public final class ClipboardPasteboardPublisher {
         guard standing === record else { return }
         guard heldChangeCount == pasteboard.changeCount else { return endStanding() }
         guard record.isFullyProvided, standingWatch == nil else { return }
-        standingWatch = Timer.scheduledTimer(withTimeInterval: Self.standingWatchInterval, repeats: true) {
-            [weak self] timer in
-            guard let self else { return timer.invalidate() }
-            // The main run loop fires this on the main thread.
-            MainActor.assumeIsolated { self.watchStanding() }
+        standingWatch = ClipboardPasteboardWatch.observe(pasteboard, in: .standingWrites) { [weak self] in
+            self?.watchStanding()
         }
     }
 
@@ -280,7 +274,7 @@ public final class ClipboardPasteboardPublisher {
     /// The standing write no longer stands: replaced by this publisher's next write, clear or retraction, or by
     /// anything else.
     private func endStanding() {
-        standingWatch?.invalidate()
+        standingWatch?.cancel()
         standingWatch = nil
         guard let ended = standing else { return }
         standing = nil

@@ -28,15 +28,8 @@ final class ClipboardPassthroughCoordinator {
     /// This VM's transfer report, where a forward's lost items are recorded.
     private let reporter: ClipboardTransferReporter
 
-    /// Poll cadence — matches `GuestClipboard.pollingInterval` so both
-    /// ends of the boundary sample their pasteboards at the same rate.
-    private static let pollInterval: TimeInterval = 0.5
-
-    /// A run-loop timer, not a dispatch timer on `.main`: the poll reads promised
-    /// flavors, which fire another VM's provider synchronously, and that fire's
-    /// serviced wait can drain the main queue only when it is not itself inside
-    /// a main-queue callout (`NestedEventLoopWait`).
-    private var pollTimer: Timer?
+    /// This coordinator's place in the host pasteboard's watch while passthrough runs.
+    private var pasteboardWatch: ClipboardPasteboardWatch.Observation?
 
     /// The outbound side of one guest connection, which forwards only Mac
     /// copies made after it came up
@@ -169,8 +162,8 @@ final class ClipboardPassthroughCoordinator {
         guard isRunning else { return }
         isRunning = false
         outbound = nil
-        pollTimer?.invalidate()
-        pollTimer = nil
+        pasteboardWatch?.cancel()
+        pasteboardWatch = nil
         inboundObservation?.cancel()
         inboundObservation = nil
         inboundPublishTask?.cancel()
@@ -183,18 +176,14 @@ final class ClipboardPassthroughCoordinator {
     // MARK: - Host → guest (poll)
 
     private func startPolling() {
-        // Default mode only: a tick that would land inside a tracking or modal
-        // loop waits for the loop to end — the forward is late by that much —
-        // rather than parking the main thread on the fire it reaches.
-        pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) {
-            [weak self] _ in
-            // The main run loop fires this on the main thread.
-            MainActor.assumeIsolated { self?.pollHostClipboard() }
+        pasteboardWatch = ClipboardPasteboardWatch.observe(pasteboard, in: .newCopies) { [weak self] in
+            self?.pollHostClipboard()
         }
     }
 
     /// Forwards a host copy made while the current guest connection is up,
-    /// skipping our own inbound writes.
+    /// skipping our own inbound writes. Each poll of the host pasteboard
+    /// calls it, so an undelivered forward is retried at the next.
     func pollHostClipboard() {
         guard let service = instance?.clipboardService, service.isConnected else {
             outbound = nil

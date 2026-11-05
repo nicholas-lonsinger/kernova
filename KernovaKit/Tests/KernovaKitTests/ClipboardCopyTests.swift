@@ -291,6 +291,30 @@ struct ClipboardCopyTests {
         }
     }
 
+    @Test("A snapshot of another connection's write leaves out an item it could not pull, counted with the unreadable")
+    func snapshotCountsAFailedPullAsLeftOut() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var text = OfferedItem()
+        text.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        var file = OfferedItem()
+        file.representations = [Self.representation("public.data", .file, name: "a.bin")]
+        #expect(
+            publisher.publish(
+                [text, file], concealed: false, puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID())))
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 1)
+        #expect(source.items.map { $0.representations.map(\.storage) } == [[.file]])
+    }
+
     @Test(
         "A snapshot of another connection's write pulls its text now and serves its file from that write's source, while it lasts"
     )
@@ -589,6 +613,38 @@ struct ClipboardCopyTests {
         pasteboard.setString("copied since", forType: .string)
         try await released.wait { wasReleased }
         #expect(ledger.standingWrite(on: pasteboard) == nil)
+    }
+
+    @Test("A poll ends a replaced copy's write before any reader of the pasteboard hears it, and then stops watching")
+    func replacedCopyEndsBeforeTheNewCopyIsRead() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
+        var heard: [String] = []
+        // A reader observing before the write's watch begins still hears each poll after it.
+        let reader = ClipboardPasteboardWatch.observe(pasteboard, in: .newCopies) { heard.append("reader") }
+        var item = OfferedItem()
+        item.representations = [Self.representation("public.data", .file, name: "a.bin")]
+        let (written, promised) = publisher.publishCopy(
+            [item], concealed: false, servingFileURLs: true, held: { _, _ in nil },
+            puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+            serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
+            onReleased: { heard.append("released") })
+        #expect(written && promised)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        #expect(await paste.value != nil)
+        pasteboard.finishProvider(itemIndex: 0)
+        await drainMainQueue()
+        heard = []
+
+        pasteboard.setString("copied since", forType: .string)
+        ClipboardPasteboardWatch.pollForTesting(pasteboard)
+        #expect(heard == ["released", "reader"])
+
+        reader.cancel()
+        #expect(!ClipboardPasteboardWatch.isPollingForTesting(pasteboard))
     }
 
     @Test("A write that promises nothing holds no source: a snapshot of it reads its data from the pasteboard")
