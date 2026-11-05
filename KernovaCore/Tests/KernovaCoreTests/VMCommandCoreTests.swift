@@ -1174,7 +1174,8 @@ struct VMCommandCoreTests {
         #expect(restarting.status == .running)
 
         try await harness.core.restart(
-            .id(restarting.id), disposition: .graceful, timeout: nil, consent: Consent([.startBesideSharedMachineIdentity]))
+            .id(restarting.id), disposition: .graceful, timeout: nil,
+            consent: Consent([.startBesideSharedMachineIdentity]))
         #expect(harness.virtualization.startCallCount == 1)
         #expect(restarting.status == .running)
     }

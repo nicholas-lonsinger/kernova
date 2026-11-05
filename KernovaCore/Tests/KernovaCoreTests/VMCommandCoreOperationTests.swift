@@ -261,7 +261,9 @@ struct VMCommandCoreOperationTests {
         // And every selector verb, which no longer finds it.
         let selector = VMSelector.id(instance.id)
         await #expect(throws: notFound) { try await harness.core.resume(selector, consent: .none) }
-        await #expect(throws: notFound) { try await harness.core.restart(selector, disposition: .graceful, timeout: nil, consent: .none) }
+        await #expect(throws: notFound) {
+            try await harness.core.restart(selector, disposition: .graceful, timeout: nil, consent: .none)
+        }
         #expect(throws: notFound) { try harness.core.rename(selector, to: "Late") }
         await #expect(throws: notFound) {
             try await harness.core.delete(selector, permanently: false, alsoRemoving: [], consent: .all)

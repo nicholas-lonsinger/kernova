@@ -323,26 +323,27 @@ struct CLIVerbWireTests {
     }
 
     /// The refusal each restart method's consent raises, as the app words it.
-    nonisolated static let restartPrompts: [(flag: String, disposition: StopDisposition, prompt: ConfirmationPrompt)] = [
-        (
-            "--force", .force,
-            ConfirmationPrompt(
-                kind: .forceRestart, title: "Force Restart \u{201C}Alpha\u{201D}?",
-                message:
-                    "\u{201C}Alpha\u{201D} will be immediately terminated, then Kernova starts it again. "
-                    + "Any unsaved data inside the guest will be lost.",
-                confirmTitle: "Force Restart", dismissTitle: "Cancel")
-        ),
-        (
-            "--anyway", .anyway,
-            ConfirmationPrompt(
-                kind: .restartAnyway, title: "Restart \u{201C}Alpha\u{201D} Anyway?",
-                message:
-                    "macOS shuts down without waiting for apps. Apps still open quit without asking to save. "
-                    + "Kernova then starts \u{201C}Alpha\u{201D} again.",
-                confirmTitle: "Restart Anyway", dismissTitle: "Cancel")
-        ),
-    ]
+    nonisolated static let restartPrompts: [(flag: String, disposition: StopDisposition, prompt: ConfirmationPrompt)] =
+        [
+            (
+                "--force", .force,
+                ConfirmationPrompt(
+                    kind: .forceRestart, title: "Force Restart \u{201C}Alpha\u{201D}?",
+                    message:
+                        "\u{201C}Alpha\u{201D} will be immediately terminated, then Kernova starts it again. "
+                        + "Any unsaved data inside the guest will be lost.",
+                    confirmTitle: "Force Restart", dismissTitle: "Cancel")
+            ),
+            (
+                "--anyway", .anyway,
+                ConfirmationPrompt(
+                    kind: .restartAnyway, title: "Restart \u{201C}Alpha\u{201D} Anyway?",
+                    message:
+                        "macOS shuts down without waiting for apps. Apps still open quit without asking to save. "
+                        + "Kernova then starts \u{201C}Alpha\u{201D} again.",
+                    confirmTitle: "Restart Anyway", dismissTitle: "Cancel")
+            ),
+        ]
 
     @Test(
         "restart --force and --anyway cross as their dispositions; without --yes the consent refusal names --yes, as stop's do",

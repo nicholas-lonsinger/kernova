@@ -542,7 +542,9 @@ struct CLIArgumentParsingTests {
     func restartMethodsMapToDispositions() throws {
         let byDefault = try #require(try parse(["restart", "Alpha"]) as? KernovaCommand.Restart)
         #expect(byDefault.method == .graceful)
-        for (flag, disposition) in [("--graceful", StopDisposition.graceful), ("--force", .force), ("--anyway", .anyway)] {
+        for (flag, disposition) in [
+            ("--graceful", StopDisposition.graceful), ("--force", .force), ("--anyway", .anyway),
+        ] {
             let restart = try #require(
                 try parse(["restart", "Alpha", flag, "--timeout", "5"]) as? KernovaCommand.Restart)
             #expect(restart.method.disposition == disposition, "\(flag)")
