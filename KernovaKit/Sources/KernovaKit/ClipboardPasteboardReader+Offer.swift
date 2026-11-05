@@ -30,12 +30,13 @@ extension ClipboardPasteboardReader {
         /// Inline types of pasteboard item `item`, none of them read; `fileLeftOut` when the item named a file
         /// that is gone.
         case inline(item: Int, types: [String], fileLeftOut: Bool)
-        /// A file or folder on disk, not yet looked at; an image file also offers its bytes INLINE when
-        /// `inliningImage`. `promise` is the item's file promise, offered in its place when the file cannot be
-        /// opened; with none, the item's `fallback` types are offered INLINE, the file left out.
+        /// A file or folder on disk, not yet looked at, offered with the item's `others` types INLINE beside it;
+        /// an image file also offers its bytes INLINE when `inliningImage`. `promise` is the item's file promise,
+        /// offered in its place when the file cannot be opened; with none, the `others` alone are offered, the
+        /// file left out.
         case file(
             URL, inliningImage: Bool, promise: (index: Int, representation: Representation)?,
-            fallback: (item: Int, types: [String]))
+            others: (item: Int, types: [String]))
         /// A file promise: the index of its receiver, and its representation.
         case promise(Int, Representation)
         /// A file a called-in promise lands, and its representation.
@@ -46,11 +47,11 @@ extension ClipboardPasteboardReader {
     /// reading no content.
     ///
     /// - An item naming a file on disk offers it as FILE or FOLDER under the
-    ///   name it was copied by, an image file also offering its bytes INLINE.
-    ///   The URL is the one thing read from the pasteboard: an item's name and
-    ///   storage are in the offer. An item whose file is gone, or this process
-    ///   cannot open, with no promise beside it, offers its other types as any
-    ///   other item does, the file and every type naming it left out.
+    ///   name it was copied by, an image file also offering its bytes INLINE,
+    ///   and every other type of the item INLINE beside it but those naming
+    ///   the file, which the far side rebuilds from the file it lands. An item
+    ///   whose file is gone, or this process cannot open, with no promise
+    ///   beside it, offers those other types alone, the file left out.
     /// - `promises` are the receivers `readObjects(forClasses:
     ///   [NSFilePromiseReceiver.self])` yields: one per item that carries one
     ///   (``carriesPromiseReceiver(_:)``), in order. Every such item takes the
@@ -207,7 +208,7 @@ extension ClipboardPasteboardReader {
             if case .resolved(let url) = resolution {
                 let promise = receiver.map { ($0, promisedRepresentation(promises[$0])) }
                 pending.append(
-                    .file(url, inliningImage: rule == .clipboard, promise: promise, fallback: (index, offerable)))
+                    .file(url, inliningImage: rule == .clipboard, promise: promise, others: (index, offerable)))
                 continue
             }
             if case .notAFile = resolution, let receiver {
@@ -261,8 +262,8 @@ extension ClipboardPasteboardReader {
 
     /// One pending item, resolved: what it offers, and whether a file it named is left out.
     private struct Resolved: Sendable {
-        let item: OfferedItem
-        let origins: [ClipboardOfferSource.Origin]
+        var item: OfferedItem
+        var origins: [ClipboardOfferSource.Origin]
         var fileLeftOut = false
     }
 
@@ -275,7 +276,7 @@ extension ClipboardPasteboardReader {
             return Resolved(item: .with(representation), origins: [.promise(index)])
         case .landing(let file, let representation):
             return Resolved(item: .with(representation), origins: [.landing(file)])
-        case .file(let url, let inliningImage, let promise, let fallback):
+        case .file(let url, let inliningImage, let promise, let others):
             // Named as the user copied it, its bytes read from what it resolves to.
             guard let source = readableSource(for: url),
                 let values = try? source.resourceValues(forKeys: [.contentTypeKey, .isDirectoryKey, .fileSizeKey])
@@ -283,26 +284,33 @@ extension ClipboardPasteboardReader {
                 // A file this process cannot open is never offered; the item's promise, called in, writes one it
                 // can, and with none the rest of the item crosses without it.
                 guard let promise else {
-                    return fallback.types.isEmpty
-                        ? nil : inline(item: fallback.item, types: fallback.types, fileLeftOut: true)
+                    return others.types.isEmpty
+                        ? nil : inline(item: others.item, types: others.types, fileLeftOut: true)
                 }
                 return Resolved(item: .with(promise.representation), origins: [.promise(promise.index)])
             }
             let name = url.lastPathComponent
+            var resolved: Resolved
+            var imageType: String?
             if values.isDirectory == true {
                 let type = TypeDescriptor(appleUTI: values.contentType?.identifier ?? UTType.folder.identifier)
                 let folder = Representation.make(type, .folder, size: sizeOf?(source) ?? 0, name: name)
-                return Resolved(item: .with(folder), origins: [.folder(source)])
+                resolved = Resolved(item: .with(folder), origins: [.folder(source)])
+            } else {
+                guard let contentType = values.contentType, let size = values.fileSize else { return nil }
+                let type = TypeDescriptor(appleUTI: contentType.identifier)
+                resolved = Resolved(item: .with(.make(type, .file, size: size, name: name)), origins: [.file(source)])
+                if inliningImage, contentType.conforms(to: .image) {
+                    resolved.item.representations.append(.make(type, .inline, size: size))
+                    resolved.origins.append(.fileContents(source))
+                    imageType = contentType.identifier
+                }
             }
-            guard let contentType = values.contentType, let size = values.fileSize else { return nil }
-            let type = TypeDescriptor(appleUTI: contentType.identifier)
-            var item = OfferedItem.with(.make(type, .file, size: size, name: name))
-            var origins: [ClipboardOfferSource.Origin] = [.file(source)]
-            if inliningImage, contentType.conforms(to: .image) {
-                item.representations.append(.make(type, .inline, size: size))
-                origins.append(.fileContents(source))
-            }
-            return Resolved(item: item, origins: origins)
+            // The image's own bytes serve its type; the item's copy of that type would only repeat them.
+            let rest = inline(item: others.item, types: others.types.filter { $0 != imageType }, fileLeftOut: false)
+            resolved.item.representations += rest.item.representations
+            resolved.origins += rest.origins
+            return resolved
         }
     }
 

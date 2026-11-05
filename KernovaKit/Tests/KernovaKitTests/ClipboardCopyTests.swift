@@ -559,6 +559,47 @@ struct ClipboardCopyTests {
         #expect(offer.items.map { $0.representations.compactMap(\.type.appleUTI) } == [crossing])
     }
 
+    @Test("A readable file item crosses as its file and every type not naming it, as data")
+    func readableFileItemCrossesItsOtherTypes() async throws {
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        let url = Data(file.absoluteString.utf8)
+        // Finder's ⌘C of a file, with a private type beside its icon.
+        let finderCopy: [(type: NSPasteboard.PasteboardType, data: Data)] = [
+            (.fileURL, url),
+            (NSPasteboard.PasteboardType("NSFilenamesPboardType"), Data("<plist/>".utf8)),
+            (NSPasteboard.PasteboardType("public.utf8-plain-text"), Data(file.path.utf8)),
+            (NSPasteboard.PasteboardType("com.apple.icns"), Data("icns".utf8)),
+            (NSPasteboard.PasteboardType("com.example.private-state"), Data("private".utf8)),
+        ]
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setItem(finderCopy))
+        let crossing: [String?] = ["public.plain-text", "com.apple.icns", "com.example.private-state"]
+
+        guard
+            case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+        else { throw TestFailure("no snapshot") }
+        #expect(lost == 0)
+        let item = try #require(source.items.first)
+        #expect(source.items.count == 1)
+        #expect(item.representations.map(\.type.appleUTI) == crossing)
+        #expect(item.representations.map(\.storage) == [.file, .inline, .inline])
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+            throw TestFailure("the file was not served")
+        }
+        #expect(served.lastPathComponent == "notes.txt")
+        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("icns".utf8)))
+        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("private".utf8)))
+
+        // Passthrough's offer reads the item by the same rule.
+        guard case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(from: pasteboard)
+        else { throw TestFailure("no offer") }
+        #expect(offerLost == 0)
+        #expect(offer.items.map { $0.representations.map(\.type.appleUTI) } == [crossing])
+    }
+
     @Test("A file URL this process cannot open, beside a file promise, is copied by calling the promise in")
     func unreadableFileFallsBackToItsPromise() async throws {
         let pasteboard = FakePasteboard()
