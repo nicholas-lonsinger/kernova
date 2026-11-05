@@ -206,7 +206,9 @@ struct SpiceClipboardServiceTests {
 
     // MARK: - Another route carrying the clipboard
 
-    @Test("While the guest agent carries the clipboard, SPICE asks for no grab, answers no request and takes no data")
+    @Test(
+        "The guest agent taking the clipboard over releases the host's grab; SPICE then asks for no grab, answers no request and takes no data"
+    )
     func notCarryingSendsNothing() async throws {
         let (service, inputPipe, _) = makeService()
         await connect(service, byDemand: true)
@@ -215,6 +217,7 @@ struct SpiceClipboardServiceTests {
         drainPipe(inputPipe)
 
         service.carriesClipboard = false
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardRelease])
         var text = Data()
         text.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
         await service.handleIncomingData(buildGuestMessage(type: .clipboardGrab, payload: text))
@@ -333,6 +336,20 @@ struct SpiceClipboardServiceTests {
         #expect(drainPipe(inputPipe).isEmpty)
     }
 
+    @Test("Passthrough stopping releases its grab in the guest: the guest's request after gets no data")
+    func passthroughOffReleasesTheGrab() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        let (copy, _) = try await macCopy("from the Mac")
+        #expect(await service.offerHostCopy(copy) == .settled)
+        drainPipe(inputPipe)
+
+        service.passthroughStopped()
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardRelease])
+        await service.handleIncomingData(textRequest)
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
     // MARK: - The clipboard commands
 
     /// The Mac's clipboard as a copy command snapshots it.
@@ -362,6 +379,21 @@ struct SpiceClipboardServiceTests {
         pasteboard.setText("copied since")
         await service.handleIncomingData(textRequest)
         #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("from the Mac".utf8)])
+    }
+
+    @Test("Passthrough stopping leaves a command's grab: it crossed by the user's command")
+    func passthroughOffKeepsACommandsGrab() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        let pasteboard = FakePasteboard()
+        pasteboard.setText("by command")
+        #expect(service.copyMacClipboardToGuest(try await macSnapshot(pasteboard)) == nil)
+        drainPipe(inputPipe)
+
+        service.passthroughStopped()
+        #expect(drainPipe(inputPipe).isEmpty)
+        await service.handleIncomingData(textRequest)
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("by command".utf8)])
     }
 
     @Test("Copy to Guest of a Mac clipboard with no text grabs nothing and says text is all SPICE carries")

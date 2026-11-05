@@ -30,11 +30,11 @@ final class SpiceClipboardService: ClipboardServicing {
     /// Whether this service carries the VM's clipboard, as `ClipboardRoute`
     /// chooses: false while the guest agent's hub carries it, when the guest's
     /// grabs are not asked for and nothing the host grabbed is sent. Turning it
-    /// off forgets the host's grab.
+    /// off releases the host's grab in the guest.
     var carriesClipboard = true {
         didSet {
             guard !carriesClipboard else { return }
-            outbound = nil
+            releaseGrab()
         }
     }
 
@@ -50,7 +50,15 @@ final class SpiceClipboardService: ClipboardServicing {
     /// The source of the host's grab.
     private enum Outbound {
         /// A copy on the Mac passthrough offered, its text read only when the guest requests it.
-        case copy(ClipboardOfferSource)
+        case passthrough(ClipboardOfferSource)
+        /// A Copy Mac Clipboard to Guest snapshot, its text read at the command.
+        case command(ClipboardOfferSource)
+
+        var source: ClipboardOfferSource {
+            switch self {
+            case .passthrough(let source), .command(let source): source
+            }
+        }
     }
 
     /// Whether the guest advertised `VD_AGENT_CAP_CLIPBOARD_BY_DEMAND`.
@@ -88,6 +96,21 @@ final class SpiceClipboardService: ClipboardServicing {
 
     // MARK: - ClipboardServicing
 
+    /// Passthrough stopped: a grab it made is released in the guest, so the guest's paste gets nothing from the
+    /// Mac. A command's grab is the user's copy, and stays.
+    func passthroughStopped() {
+        guard case .passthrough = outbound else { return }
+        releaseGrab()
+    }
+
+    /// Ends the host's grab, telling the guest's agent so: its clipboard holds nothing of the Mac's after.
+    private func releaseGrab() {
+        guard outbound != nil else { return }
+        outbound = nil
+        guard isConnected, writeToGuest(SpiceMessageBuilder.buildClipboardRelease()) else { return }
+        Self.logger.log(.notice, "Released the host's grab of the guest's clipboard")
+    }
+
     /// The guest's text, as the one representation it is.
     func guestClipboardItems() -> [CopyToMacItem] {
         guard let guestText else { return [] }
@@ -101,10 +124,10 @@ final class SpiceClipboardService: ClipboardServicing {
         guard isConnected, carriesClipboard,
             writeToGuest(SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text]))
         else { return .transferFailed }
-        outbound = .copy(snapshot)
+        outbound = .command(snapshot)
         guestText = nil
         if !guestSupportsByDemand {
-            Task { [weak self] in await self?.reply(from: .copy(snapshot)) }
+            Task { [weak self] in await self?.reply(from: .command(snapshot)) }
         }
         Self.logger.log(.notice, "Grabbed the guest's clipboard for the Mac's copy")
         return nil
@@ -139,10 +162,10 @@ final class SpiceClipboardService: ClipboardServicing {
         guard copy.offersUTF8Text else { return .settled }
         guard isConnected, carriesClipboard else { return .undelivered }
         guard writeToGuest(SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])) else { return .undelivered }
-        outbound = .copy(copy)
+        outbound = .passthrough(copy)
         guestText = nil
         if !guestSupportsByDemand {
-            guard await reply(from: .copy(copy)) else { return .undelivered }
+            guard await reply(from: .passthrough(copy)) else { return .undelivered }
         }
         Self.logger.log(
             .notice, "Grabbed the Mac's copy (byDemand: \(self.guestSupportsByDemand, privacy: .public))")
@@ -289,12 +312,9 @@ final class SpiceClipboardService: ClipboardServicing {
     /// SPICE's answer that no data is available.
     @discardableResult
     private func reply(from outbound: Outbound) async -> Bool {
-        switch outbound {
-        case .copy(let copy):
-            if let text = await copy.utf8Text() { return sendClipboardText(text) }
-            Self.logger.log(.notice, "The Mac's copy moved on before the guest requested it")
-            return writeToGuest(SpiceMessageBuilder.buildClipboardData(type: .none, data: Data()))
-        }
+        if let text = await outbound.source.utf8Text() { return sendClipboardText(text) }
+        Self.logger.log(.notice, "The Mac's copy moved on before the guest requested it")
+        return writeToGuest(SpiceMessageBuilder.buildClipboardData(type: .none, data: Data()))
     }
 
     /// Guest delivered clipboard data: the guest's clipboard text now.
