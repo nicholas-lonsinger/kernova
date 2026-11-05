@@ -34,7 +34,7 @@ struct VMLiveIdentitiesTests {
             return
         }
         #expect(conflict.other === first)
-        #expect(conflict.reason == .machineIdentity)
+        #expect(conflict.reason == .machineIdentity(overrideSettingOn: false))
         #expect(second.phase == .stopped)
         withExtendedLifetime(library) {}
     }
@@ -54,21 +54,26 @@ struct VMLiveIdentitiesTests {
         }
     }
 
+    /// A shared machine ID's refusal, with the setting that offers starting
+    /// anyway off and on.
+    nonisolated static let identityOff = ConflictReason.machineIdentity(overrideSettingOn: false)
+    nonisolated static let identityOn = ConflictReason.machineIdentity(overrideSettingOn: true)
+
     nonisolated static let rows: [Row] = [
-        Row(allowsOverride: false, override: .unavailable, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: false, override: .askable, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: false, override: .confirmed, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: true, override: .unavailable, sharesMAC: false, expected: (.machineIdentity, false)),
-        Row(allowsOverride: true, override: .askable, sharesMAC: false, expected: (.machineIdentity, true)),
+        Row(allowsOverride: false, override: .unavailable, sharesMAC: false, expected: (identityOff, false)),
+        Row(allowsOverride: false, override: .askable, sharesMAC: false, expected: (identityOff, false)),
+        Row(allowsOverride: false, override: .confirmed, sharesMAC: false, expected: (identityOff, false)),
+        Row(allowsOverride: true, override: .unavailable, sharesMAC: false, expected: (identityOn, false)),
+        Row(allowsOverride: true, override: .askable, sharesMAC: false, expected: (identityOn, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: false, expected: nil),
-        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (.machineIdentity, false)),
-        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (.machineIdentity, false)),
-        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (.machineIdentity, true)),
+        Row(allowsOverride: false, override: .unavailable, sharesMAC: true, expected: (identityOff, false)),
+        Row(allowsOverride: false, override: .confirmed, sharesMAC: true, expected: (identityOff, false)),
+        Row(allowsOverride: true, override: .askable, sharesMAC: true, expected: (identityOn, true)),
         Row(allowsOverride: true, override: .confirmed, sharesMAC: true, expected: (.macAddress, false)),
         // A boot chained after the call that asked keeps the confirmation and asks nothing.
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: false, expected: nil),
         Row(allowsOverride: true, override: .confirmed.unattended, sharesMAC: true, expected: (.macAddress, false)),
-        Row(allowsOverride: true, override: .askable.unattended, sharesMAC: false, expected: (.machineIdentity, false)),
+        Row(allowsOverride: true, override: .askable.unattended, sharesMAC: false, expected: (identityOn, false)),
     ]
 
     @Test(

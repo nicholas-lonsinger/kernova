@@ -1073,7 +1073,7 @@ package final class VMLibraryViewModel {
     }
 
     /// A graceful stop, or — for a live-paused guest, which cannot take one —
-    /// the sheet offering Resume and Shut Down or Force Stop.
+    /// the sheet offering Resume and Stop or Force Stop.
     ///
     /// The pause is read in the same main-actor turn the core reads it in
     /// before refusing, so the two cannot disagree.
@@ -1749,7 +1749,9 @@ package final class VMLibraryViewModel {
     ///
     /// A consent refusal opens the sheet that gathers it; a failure carrying a
     /// recovery opens the alert that offers it; a shutdown the guest didn't
-    /// carry out is about the session it was asked of; everything else is an
+    /// carry out is about the session it was asked of; a shared machine ID
+    /// refused while the setting that would ask is off offers that setting;
+    /// everything else is an
     /// error alert headed by the refusal's own title — a ``TitledError``'s, or
     /// "Error".
     func present(_ error: Error, about subject: AlertSubject) {
@@ -1775,6 +1777,10 @@ package final class VMLibraryViewModel {
             surfaceError(command.message, title: command.alertTitle, about: .session(instance, failure.session))
         case (.operationFailed(_, _, let message, _), _):
             surfaceError(message, title: command.alertTitle, about: subject)
+        case (.conflict(_, _, .machineIdentity(overrideSettingOn: false)), _):
+            presenter?.presentError(
+                command.message, title: command.alertTitle, about: subject,
+                openingSettingsAt: .pane(.advanced))
         default:
             surfaceError(command.message, title: command.alertTitle, about: subject)
         }
@@ -1795,7 +1801,9 @@ package final class VMLibraryViewModel {
             presenter?.presentForceStop(for: instance)
         case .startBesideSharedMachineIdentity:
             // Raised where it could not be asked: the refusal it stands for.
-            surfaceError(prompt.message, title: ConflictReason.machineIdentity.title, about: .vm(instance))
+            surfaceError(
+                prompt.message, title: ConflictReason.machineIdentity(overrideSettingOn: true).title,
+                about: .vm(instance))
         default:
             Self.logger.log(
                 .debug,

@@ -346,7 +346,7 @@ struct VMCommandEnvelopeTests {
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel",
             alternatives: [
-                ConfirmationAlternative(title: "Shut Down", disposition: .graceful),
+                ConfirmationAlternative(title: "Stop", disposition: .graceful),
                 ConfirmationAlternative(title: "Keep File", keepsFile: true),
             ])
         let failures: [CommandErrorDTO] = [
@@ -373,7 +373,7 @@ struct VMCommandEnvelopeTests {
                     ])),
             .stepRequired(requirement: StepRequirement(message: "Take a snapshot first.")),
             .unsupported(capability: "starting in macOS Recovery"),
-            .conflict(vm: summary, with: summary, reason: .machineIdentity),
+            .conflict(vm: summary, with: summary, reason: .machineIdentity(overrideSettingOn: false)),
             .conflict(vm: summary, with: summary, reason: .macAddress),
             .conflict(
                 vm: summary, with: summary,
@@ -519,19 +519,27 @@ struct VMCommandEnvelopeTests {
         return .conflict(vm: summary, with: other, reason: reason)
     }
 
-    @Test("A shared machine ID is refused naming the active VM, with stopping it the only way out")
-    func machineIdentityCopyOffersNoSetting() {
-        let active = sharing(.machineIdentity, otherHeldByAnotherCopy: false)
+    @Test("A shared machine ID is refused naming the active VM, and the setting while it is off")
+    func machineIdentityCopyNamesTheSettingWhileOff() {
+        let active = sharing(.machineIdentity(overrideSettingOn: false), otherHeldByAnotherCopy: false)
         #expect(active.title == "Duplicate Machine ID")
         #expect(
             active.message
                 == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which is active. "
                 + "Two virtual machines with the same machine ID must not run at once. "
-                + "Stop \u{201C}Alpha Copy\u{201D} first.")
+                + "Stop \u{201C}Alpha Copy\u{201D} first. "
+                + "You can change this in Settings \u{25B8} Advanced.")
         #expect(
-            sharing(.machineIdentity, otherHeldByAnotherCopy: true).message
+            sharing(.machineIdentity(overrideSettingOn: false), otherHeldByAnotherCopy: true).message
                 == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
-                + "Two virtual machines with the same machine ID must not run at once.")
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "You can change this in Settings \u{25B8} Advanced.")
+        // With the setting on, the refusal is one nobody could be asked about.
+        #expect(
+            sharing(.machineIdentity(overrideSettingOn: true), otherHeldByAnotherCopy: false).message
+                == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which is active. "
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "Stop \u{201C}Alpha Copy\u{201D} first.")
     }
 
     @Test("A shared MAC address is refused on its own terms, whatever the machine IDs")

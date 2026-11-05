@@ -19,6 +19,9 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     private(set) var errorTitles: [String] = []
     /// Parallel to `errors`: what each alert was about.
     private(set) var errorSubjects: [AlertSubject] = []
+    /// Parallel to `errors`: where each alert's Open Settings button leads,
+    /// `nil` for an alert offering none.
+    private(set) var errorSettingsDestinations: [SettingsDestination?] = []
     private(set) var startFailedAttachments: [StartFailedAttachment] = []
     private(set) var startFailedAttachmentInstances: [VMInstance] = []
     /// The VMs each start report named — an attachment failure, a message
@@ -73,9 +76,22 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     var choosesRouteTitled: String?
 
     func presentError(_ message: String, title: String, about subject: AlertSubject) {
+        record(message, title: title, about: subject, openingSettingsAt: nil)
+    }
+    func presentError(
+        _ message: String, title: String, about subject: AlertSubject,
+        openingSettingsAt destination: SettingsDestination
+    ) {
+        record(message, title: title, about: subject, openingSettingsAt: destination)
+    }
+    private func record(
+        _ message: String, title: String, about subject: AlertSubject,
+        openingSettingsAt destination: SettingsDestination?
+    ) {
         errors.append(message)
         errorTitles.append(title)
         errorSubjects.append(subject)
+        errorSettingsDestinations.append(destination)
     }
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
         startFailedAttachments.append(failure)
@@ -153,6 +169,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     var errorMessage: String? { errors.last }
     var errorTitle: String? { errorTitles.last }
     var errorSubject: AlertSubject? { errorSubjects.last }
+    var errorSettingsDestination: SettingsDestination? { errorSettingsDestinations.last ?? nil }
     var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
     var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     /// Whether the most recent delete-sheet request asked for immediate delete.

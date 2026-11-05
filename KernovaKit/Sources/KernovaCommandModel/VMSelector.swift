@@ -199,8 +199,10 @@ public enum CloneOutcome: String, Codable, Sendable, Hashable, CaseIterable {
 
 /// What two VMs collide on.
 public enum ConflictReason: Codable, Sendable, Hashable {
-    /// The two share a machine identity.
-    case machineIdentity
+    /// The two share a machine identity. `overrideSettingOn` is whether
+    /// Settings ▸ Advanced offers starting anyway; the refusal names that
+    /// setting only while it is off.
+    case machineIdentity(overrideSettingOn: Bool)
     /// Two VMs would run at once on one network with one address, which both
     /// of them already carry.
     case macAddress

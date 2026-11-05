@@ -1475,6 +1475,8 @@ struct VMLibraryViewModelTests {
         // Refused at admission, before the service was reached.
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(presenter.errorMessage?.hasSuffix(" You can change this in Settings \u{25B8} Advanced.") == true)
+        #expect(presenter.errorSettingsDestination == .pane(.advanced))
         #expect(starting.status == .stopped)
     }
 
@@ -1509,7 +1511,7 @@ struct VMLibraryViewModelTests {
 
         #expect(
             presenter.confirmationRequests.map(\.prompt.title)
-                == ["Start \u{201C}Starting\u{201D} Anyway?"])
+                == ["Start \u{201C}Starting\u{201D} with a Duplicate Machine ID?"])
         #expect(presenter.confirmationRequests.first?.instance === starting)
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
@@ -1530,6 +1532,8 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(presenter.errorSubject?.vm === starting)
+        // The setting is on, so the refusal offers no way to it.
+        #expect(presenter.errorSettingsDestination == nil)
         #expect(
             presenter.errorMessage?.hasPrefix(
                 "\u{201C}Starting\u{201D} has the same machine ID as \u{201C}Twin\u{201D}, which is active.")
@@ -1659,7 +1663,7 @@ struct VMLibraryViewModelTests {
 
         #expect(
             presenter.confirmationRequests.map(\.prompt.title)
-                == ["Resume \u{201C}Starting\u{201D} Anyway?"])
+                == ["Resume \u{201C}Starting\u{201D} with a Duplicate Machine ID?"])
         #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(presenter.showError == false)
     }
@@ -1816,7 +1820,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    @Test("Resume and Shut Down beside a MAC address twin takes the route, restores, then stops")
+    @Test("Resume and Stop beside a MAC address twin takes the route, restores, then stops")
     func resumeAndStopTakesARouteThenStops() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -3137,7 +3141,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    @Test("Resume and Shut Down on a paused VM resumes it, then stops it")
+    @Test("Resume and Stop on a paused VM resumes it, then stops it")
     func resumeAndStopOfAPausedVMTakesBothSteps() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()

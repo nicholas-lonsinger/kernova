@@ -328,7 +328,7 @@ struct VMCommandCoreMACConflictTests {
         let refused = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(vm.id), recovery: false, consent: .all)
         }
-        guard case .conflict(_, _, .machineIdentity) = refused else {
+        guard case .conflict(_, _, .machineIdentity(overrideSettingOn: false)) = refused else {
             Issue.record("refused as \(refused)")
             return
         }

@@ -58,12 +58,12 @@ final class VMLiveIdentities {
         if let identityTwin {
             guard preferences.allowsDuplicateMachineIDOverride else {
                 return VMIdentityConflict(
-                    vm: instance, other: identityTwin, reason: .machineIdentity,
+                    vm: instance, other: identityTwin, reason: .machineIdentity(overrideSettingOn: false),
                     configuration: configuration)
             }
             guard override.confirmed else {
                 return VMIdentityConflict(
-                    vm: instance, other: identityTwin, reason: .machineIdentity,
+                    vm: instance, other: identityTwin, reason: .machineIdentity(overrideSettingOn: true),
                     configuration: configuration, asks: override.canAsk)
             }
         }

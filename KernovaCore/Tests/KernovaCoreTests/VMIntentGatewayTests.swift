@@ -500,7 +500,7 @@ struct VMIntentGatewayTests {
         #expect(vm.status == .stopped)
     }
 
-    /// A running VM's force stop carries the gentler "Shut Down" alternative
+    /// A running VM's force stop carries the gentler "Stop" alternative
     /// (`VMCommandCore.forceStopPrompt`), so it is the shape that proves the
     /// retry is not gated on a prompt having no alternatives — keying on that
     /// would leave Force Stop permanently unreachable for a hung guest.
@@ -517,7 +517,7 @@ struct VMIntentGatewayTests {
         }
 
         #expect(asked.map(\.kind) == [.forceStop])
-        #expect(asked.first?.alternatives == [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
+        #expect(asked.first?.alternatives == [ConfirmationAlternative(title: "Stop", disposition: .graceful)])
         // Forced both times: the alternative is never taken in its place.
         #expect(virtualization.forceStopCallCount == 1)
         #expect(virtualization.stopCallCount == 0)

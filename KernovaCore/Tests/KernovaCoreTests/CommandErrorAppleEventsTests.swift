@@ -50,7 +50,7 @@ struct CommandErrorAppleEventsTests {
         let refusals: [CommandError] = [
             .invalidState(vm: vm, current: .running, allowed: [.stop]),
             .unsupported(capability: "Recovery"),
-            .conflict(vm: vm, with: vm, reason: .machineIdentity),
+            .conflict(vm: vm, with: vm, reason: .machineIdentity(overrideSettingOn: false)),
             .confirmationRequired(makePrompt()),
             .busy(vm: vm, operation: "starting"),
             .operationFailed(verb: .stop, message: "The guest did not go down."),

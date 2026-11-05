@@ -82,7 +82,9 @@ final class AppAlertPresenter {
     /// What a queued alert shows, held as what it is so it can be routed and
     /// re-checked when it comes up rather than when it was raised.
     private enum Request {
-        case error(title: String, message: String, subject: AlertSubject)
+        /// `settings` is where an Open Settings button beside OK leads, `nil`
+        /// for none.
+        case error(title: String, message: String, subject: AlertSubject, settings: SettingsDestination?)
         case startFailedAttachment(StartFailedAttachment, VMInstance)
         case startFailure(title: String, message: String, VMInstance)
         case startSummary(title: String, undone: [VMGroupActionResult])
@@ -285,8 +287,8 @@ final class AppAlertPresenter {
     /// The VM `request` is about, or `nil` for one about no VM.
     private func vm(of request: Request) -> VMInstance? {
         switch request {
-        case .error(_, _, .vm(let instance)), .error(_, _, .session(let instance, _)): instance
-        case .error(_, _, .library), .startSummary, .cancelPreparing: nil
+        case .error(_, _, .vm(let instance), _), .error(_, _, .session(let instance, _), _): instance
+        case .error(_, _, .library, _), .startSummary, .cancelPreparing: nil
         case .deleteSheet(let delete): delete.instance
         case .startFailedAttachment(_, let instance), .startFailure(_, _, let instance),
             .takeSnapshot(let instance, _), .revertSnapshot(_, let instance),
@@ -318,9 +320,10 @@ final class AppAlertPresenter {
     /// acts on its VM keeps it, and ``stillHolds(_:)`` drops it.
     private func settled(_ request: Request) -> Request {
         switch request {
-        case .error(let title, let message, .vm(let instance)) where !lists(instance),
-            .startFailure(let title, let message, let instance) where !lists(instance):
-            .error(title: title, message: message, subject: .library)
+        case .error(let title, let message, .vm(let instance), let settings) where !lists(instance):
+            .error(title: title, message: message, subject: .library, settings: settings)
+        case .startFailure(let title, let message, let instance) where !lists(instance):
+            .error(title: title, message: message, subject: .library, settings: nil)
         default:
             request
         }
@@ -362,7 +365,7 @@ final class AppAlertPresenter {
             return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm)
         case .linuxAgentInstallChoice(let vm, _):
             return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm) && !vm.hasGuestAgentInstallerMounted
-        case .error(_, _, .session(let vm, let session)):
+        case .error(_, _, .session(let vm, let session), _):
             return vm.liveSessionID == session
         case .error, .startFailedAttachment, .startFailure, .startSummary, .deleteSheet,
             .cancelPreparing:
@@ -447,12 +450,16 @@ final class AppAlertPresenter {
 
     private func show(_ entry: AlertQueue<Request, NSWindow>.Entry, on window: NSWindow) {
         switch entry.request {
-        case .error(let title, let message, .session(let instance, let session)):
+        case .error(let title, let message, let subject, let settings):
             let shown = showAlert(
-                .acknowledgement(title: title, message: message), on: window,
-                onWindowClose: .requeue(entry))
-            watch(shown, on: window, until: session, of: instance)
-        case .error(let title, let message, _), .startFailure(let title, let message, _):
+                settings.map {
+                    configurations.errorConfig(title: title, message: message, openingSettingsAt: $0)
+                } ?? .acknowledgement(title: title, message: message),
+                on: window, onWindowClose: .requeue(entry))
+            if case .session(let instance, let session) = subject {
+                watch(shown, on: window, until: session, of: instance)
+            }
+        case .startFailure(let title, let message, _):
             showAlert(
                 .acknowledgement(title: title, message: message), on: window,
                 onWindowClose: .requeue(entry))
@@ -598,7 +605,14 @@ final class AppAlertPresenter {
     // MARK: - Imperative presentation
 
     func presentError(_ message: String, title: String, about subject: AlertSubject) {
-        enqueue(.error(title: title, message: message, subject: subject))
+        enqueue(.error(title: title, message: message, subject: subject, settings: nil))
+    }
+
+    func presentError(
+        _ message: String, title: String, about subject: AlertSubject,
+        openingSettingsAt destination: SettingsDestination
+    ) {
+        enqueue(.error(title: title, message: message, subject: subject, settings: destination))
     }
 
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {

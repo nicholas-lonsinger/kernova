@@ -1030,7 +1030,7 @@ struct VMCommandCoreTests {
         }
         #expect(vm.id == twin.id)
         #expect(other.id == live.id)
-        #expect(reason == .machineIdentity)
+        #expect(reason == .machineIdentity(overrideSettingOn: false))
         // Refused at admission, before the service was reached.
         #expect(harness.virtualization.startCallCount == 0)
         #expect(twin.phase == .stopped)
@@ -1094,13 +1094,13 @@ struct VMCommandCoreTests {
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Start \u{201C}Twin\u{201D} Anyway?")
+        #expect(prompt.title == "Start \u{201C}Twin\u{201D} with a Duplicate Machine ID?")
         #expect(
             prompt.message
                 == "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active. "
                 + "Apple: \u{201C}Running two virtual machines concurrently with the same identifier "
                 + "results in undefined behavior in the guest operating system.\u{201D}")
-        #expect(prompt.confirmTitle == "Start Anyway")
+        #expect(prompt.confirmTitle == "Start")
         #expect(prompt.confirmIsDestructive)
         #expect(prompt.dismissTitle == "Cancel")
         #expect(harness.virtualization.startCallCount == 0)
@@ -1126,6 +1126,9 @@ struct VMCommandCoreTests {
             }
             #expect(conflict.other === live)
             #expect(!conflict.asks)
+            // The setting is already on, so the refusal names no setting.
+            #expect(conflict.reason == .machineIdentity(overrideSettingOn: true))
+            #expect(conflict.errorDescription?.contains("Settings") == false)
         }
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -1141,8 +1144,8 @@ struct VMCommandCoreTests {
             try await harness.core.resume(.id(twin.id), consent: .none)
         }
         let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.title == "Resume \u{201C}Twin\u{201D} Anyway?")
-        #expect(prompt.confirmTitle == "Resume Anyway")
+        #expect(prompt.title == "Resume \u{201C}Twin\u{201D} with a Duplicate Machine ID?")
+        #expect(prompt.confirmTitle == "Resume")
         #expect(twin.phase == .suspended)
 
         try await harness.core.resume(
@@ -1167,8 +1170,8 @@ struct VMCommandCoreTests {
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Restart \u{201C}Restarting\u{201D} Anyway?")
-        #expect(prompt.confirmTitle == "Restart Anyway")
+        #expect(prompt.title == "Restart \u{201C}Restarting\u{201D} with a Duplicate Machine ID?")
+        #expect(prompt.confirmTitle == "Restart")
         // Asked while the guest is still up.
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(restarting.status == .running)
@@ -1292,7 +1295,7 @@ struct VMCommandCoreTests {
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Resume \u{201C}Reverting\u{201D} Anyway?")
+        #expect(prompt.title == "Resume \u{201C}Reverting\u{201D} with a Duplicate Machine ID?")
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
         try await harness.core.revertToSnapshot(

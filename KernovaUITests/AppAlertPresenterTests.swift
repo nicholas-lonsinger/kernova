@@ -389,9 +389,10 @@ struct AppAlertPresenterTests {
         ConfirmationRequest(
             instance: VMInstanceFixture.make(name: "Twin"),
             prompt: ConfirmationPrompt(
-                kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
+                kind: .startBesideSharedMachineIdentity,
+                title: "Start \u{201C}Twin\u{201D} with a Duplicate Machine ID?",
                 message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
-                confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
+                confirmTitle: "Start", dismissTitle: "Cancel"),
             answer: { answers.value.append($0) })
     }
 
@@ -837,8 +838,9 @@ struct AppAlertPresenterTests {
             ConfirmationRequest(
                 instance: vm,
                 prompt: ConfirmationPrompt(
-                    kind: .startBesideSharedMachineIdentity, title: "Start Anyway?", message: "Twin.",
-                    confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
+                    kind: .startBesideSharedMachineIdentity, title: "Start with a Duplicate Machine ID?",
+                    message: "Twin.",
+                    confirmTitle: "Start", dismissTitle: "Cancel"),
                 answer: { answers.value.append($0) }))
         #expect(display.attachedSheet != nil)
 

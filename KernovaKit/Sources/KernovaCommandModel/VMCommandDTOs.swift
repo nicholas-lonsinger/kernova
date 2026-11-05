@@ -1001,11 +1001,12 @@ extension CommandErrorDTO {
         case .macAddressInUse(let address, let holding, let otherHolders):
             macAddressInUseMessage(
                 address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
-        case .machineIdentity:
+        case .machineIdentity(let overrideSettingOn):
             sharedMachineIdentitySentence(
                 vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy)
                 + " Two virtual machines with the same machine ID must not run at once."
                 + (otherHeldByAnotherCopy ? "" : " Stop \u{201C}\(other)\u{201D} first.")
+                + (overrideSettingOn ? "" : " You can change this in Settings \u{25B8} Advanced.")
         case .macAddress:
             sharedMACAddressSentences(
                 vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy) + " "

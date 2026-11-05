@@ -176,6 +176,11 @@ package protocol VMLibraryPresenting: AnyObject {
     /// as one about no VM when `subject` names a VM the library no longer
     /// lists, such as the one a delete just removed.
     func presentError(_ message: String, title: String, about subject: AlertSubject)
+    /// ``presentError(_:title:about:)``'s alert, with an Open Settings button
+    /// beside OK that shows Kernova's Settings window on `destination`.
+    func presentError(
+        _ message: String, title: String, about subject: AlertSubject,
+        openingSettingsAt destination: SettingsDestination)
     /// Show the start-failed alert for an attachment that couldn't be opened,
     /// offering to remove it from the configuration and start again.
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance)

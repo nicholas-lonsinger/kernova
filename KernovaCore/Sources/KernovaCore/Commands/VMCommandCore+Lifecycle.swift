@@ -964,7 +964,7 @@ extension VMCommandCore {
     package static func forceStopPrompt(_ instance: VMInstance) -> ConfirmationPrompt {
         // Read without reference to what the VM is resting on: every route out
         // of here — the termination, the discard of a suspended session, and
-        // the Shut Down alternative — ends the session with the baseline
+        // the Stop alternative — ends the session with the baseline
         // revert, as a guest that shut itself down does
         // (``ephemeralBaselineRevert(for:)``). The termination and the
         // shutdown each cancel a Restart waiting on the session at their
@@ -1005,7 +1005,7 @@ extension VMCommandCore {
         let alternatives =
             instance.activity.decide(.sessionAction(.requestStop), posture: .commit) == .admit
                 && !instance.isLivePaused
-            ? [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)]
+            ? [ConfirmationAlternative(title: "Stop", disposition: .graceful)]
             : []
         let title: String
         if revertsInsteadOfTerminating, let baseline = ephemeralBaseline {

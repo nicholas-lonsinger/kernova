@@ -54,9 +54,26 @@ struct AppAlertConfigurationsTests {
         let alert = configurations.forceStopConfig(vm)
 
         // Added trailing-edge first, so this reads right-to-left on screen:
-        // Force Stop on the leading edge, Shut Down on Return.
-        #expect(alert.buttons.map(\.title) == ["Shut Down", "Cancel", "Force Stop"])
+        // Force Stop on the leading edge, Stop on Return.
+        #expect(alert.buttons.map(\.title) == ["Stop", "Cancel", "Force Stop"])
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
+    }
+
+    @Test("A refusal a setting lifts offers Open Settings beside OK, which asks for that pane")
+    func errorAlertOpensSettings() throws {
+        let (configurations, viewModel) = makeConfigurations()
+        var shown: [SettingsDestination] = []
+        viewModel.onShowSettings = { shown.append($0) }
+
+        let alert = configurations.errorConfig(
+            title: "Duplicate Machine ID", message: "Refused.", openingSettingsAt: .pane(.advanced))
+
+        #expect(alert.title == "Duplicate Machine ID")
+        #expect(alert.message == "Refused.")
+        #expect(alert.buttons.map(\.title) == ["OK", "Open Settings"])
+        #expect(alert.buttons.map(\.role) == [.default, .standard])
+        try #require(alert.buttons.last).action()
+        #expect(shown == [.pane(.advanced)])
     }
 
     // MARK: - The start-failed removal offer
@@ -395,7 +412,7 @@ struct AppAlertConfigurationsTests {
         #expect(alert.buttons.map(\.title) == ["Revert", "Cancel"])
     }
 
-    @Test("A paused VM's Stop offers Resume and Shut Down on Return and Force Stop off it")
+    @Test("A paused VM's Stop offers Resume and Stop on Return and Force Stop off it")
     func pausedStopAlertLaysOutBothSteps() {
         let (configurations, viewModel) = makeConfigurations()
         let vm = makeInstance(in: viewModel)
@@ -404,7 +421,7 @@ struct AppAlertConfigurationsTests {
         let alert = configurations.pausedStopConfig(vm)
 
         #expect(alert.title == "Stop \u{201C}\(vm.name)\u{201D}?")
-        #expect(alert.buttons.map(\.title) == ["Resume and Shut Down", "Cancel", "Force Stop"])
+        #expect(alert.buttons.map(\.title) == ["Resume and Stop", "Cancel", "Force Stop"])
         #expect(alert.buttons.map(\.role) == [.default, .cancel, .destructive])
         #expect(
             alert.message
