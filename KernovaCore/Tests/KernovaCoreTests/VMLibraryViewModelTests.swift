@@ -4308,7 +4308,7 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveHostStateCallCount == 1)
     }
 
-    @Test("resetAllReminders re-arms every VM, the app-wide install reminder, the quit reminder and the machine ID question")
+    @Test("resetAllReminders re-arms the install reminder everywhere, the quit reminder and the machine ID question")
     func resetAllRemindersReArmsEveryReminder() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let first = viewModel.library.admitFixture(
