@@ -267,6 +267,28 @@ struct StopAnywayTests {
         #expect(fixture.instance.status == .running)
     }
 
+    @Test("A Stop while a Restart Anyway waits cancels it: the guest powers off and nothing boots")
+    func stopCancelsAWaitingRestartAnyway() async throws {
+        let fixture = try await makeFixture(.forEveryone)
+        let session = try #require(fixture.instance.activity.liveSessionID)
+        let restart = Task { @MainActor in
+            try await restartAnyway(fixture, consent: Consent([.restartAnyway]))
+        }
+        try await fixture.probe.changed.wait { fixture.probe.powerRequestsIgnoringApps.count == 1 }
+        try await waitForChange {
+            !fixture.instance.activity.isRequestingStop && fixture.instance.activity.liveSessionContinues
+        }
+
+        try await stopAnyway(fixture, consent: Consent([.stopAnyway]))
+        #expect(!fixture.instance.activity.liveSessionContinues)
+        fixture.instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+
+        let error = try await #require(throws: CommandError.self) { try await restart.value }
+        #expect(error == .restartCancelledByStop(vm: fixture.harness.core.summary(fixture.instance)))
+        #expect(fixture.harness.virtualization.startCallCount == 0)
+        #expect(fixture.instance.status == .stopped)
+    }
+
     @Test(
         "Where no agent offers it, Restart Anyway is refused as Stop Anyway is, before any question and with nothing sent",
         arguments: Agents.allCases.filter { !$0.canStopAnyway })

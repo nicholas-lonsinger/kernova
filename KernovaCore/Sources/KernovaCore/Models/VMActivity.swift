@@ -1252,7 +1252,8 @@ package final class VMActivity {
     /// delivers `terminate`'s completion as the session's end, to whichever
     /// phase holds the session by then. A second Force Stop joins the first.
     ///
-    /// The admission withdraws the continuations owed to the session
+    /// The admission — or the join of a Force Stop already under way —
+    /// withdraws the continuations owed to the session
     /// (``follow(_:continuing:)``), so the session's end settles as an end no
     /// Restart is owed does.
     ///
@@ -1283,13 +1284,12 @@ package final class VMActivity {
         switch decide(.sessionAction(.forceStop), posture: .commit) {
         case .join(let outcome):
             // The Force Stop already under way ends the session this one
-            // would have: the boot is owed to that end.
-            if let boot {
-                if let live = liveSessionID {
-                    follow(boot, continuing: live)
-                } else {
-                    boot.outcome.resolve(.failure(followUpRefusal(.invalidState, for: boot)))
-                }
+            // would have: a Force Restart's boot is owed to that end, and a
+            // Force Stop someone asks for cancels a Force Restart's.
+            if let live = liveSessionID {
+                if let boot { follow(boot, continuing: live) } else { withdrawContinuations(of: live) }
+            } else if let boot {
+                boot.outcome.resolve(.failure(followUpRefusal(.invalidState, for: boot)))
             }
             return try await outcome.value()
         case .refuse(let reason):

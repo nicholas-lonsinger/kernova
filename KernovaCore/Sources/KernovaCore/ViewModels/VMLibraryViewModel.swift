@@ -1121,10 +1121,17 @@ package final class VMLibraryViewModel {
         await restart(instance, disposition: .force)
     }
 
+    /// A restart a later stop cancelled ends quietly: the user asked for that
+    /// stop after this restart, so the VM is where they last asked it to be,
+    /// and the cancellation is in the log (``VMActivity``'s withdrawal).
     private func restart(_ instance: VMInstance, disposition: StopDisposition) async {
         await runAsking(on: instance, then: "Restart") { consent in
-            try await self.commands.restart(
-                .id(instance.id), disposition: disposition, timeout: nil, consent: consent)
+            do {
+                try await self.commands.restart(
+                    .id(instance.id), disposition: disposition, timeout: nil, consent: consent)
+            } catch CommandError.restartCancelledByStop {
+                return
+            }
         }
     }
 

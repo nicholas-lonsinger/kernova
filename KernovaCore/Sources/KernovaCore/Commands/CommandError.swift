@@ -90,6 +90,13 @@ package enum CommandError: Error, Sendable, Equatable {
     /// asked of, so a surface stops showing it once that session ends. It
     /// crosses a wire as the stop that ran and did not complete.
     case shutdownNotCarriedOut(GuestShutdownNotCarriedOut)
+    /// A stop someone asked for — Stop, Stop Anyway or Force Stop, from any
+    /// door — ended the session a restart was waiting on, which cancelled its
+    /// boot (``VMActivity/requestStop(_:)``, ``VMActivity/forceStop(_:)``).
+    /// It crosses a wire as the restart that ran and did not complete, so a
+    /// caller waiting on the restart is told; the app's own Restart, whose
+    /// user asked for the stop since, is not.
+    case restartCancelledByStop(vm: VMSummary)
 }
 
 /// An error that names the heading a surface shows it under — carried onto
@@ -130,7 +137,7 @@ extension CommandError {
     /// before it started.
     var isOperationFailure: Bool {
         switch self {
-        case .operationFailed, .shutdownNotCarriedOut: true
+        case .operationFailed, .shutdownNotCarriedOut, .restartCancelledByStop: true
         default: false
         }
     }
@@ -202,6 +209,11 @@ extension CommandError {
         case .shutdownNotCarriedOut(let failure):
             .operationFailed(
                 verb: .stop, title: failure.alertTitle, message: failure.errorDescription ?? "", recovery: nil)
+        case .restartCancelledByStop(let vm):
+            .operationFailed(
+                verb: .restart, title: nil,
+                message: "\u{201C}\(vm.name)\u{201D} was stopped while it restarted, which cancelled the restart.",
+                recovery: nil)
         }
     }
 }

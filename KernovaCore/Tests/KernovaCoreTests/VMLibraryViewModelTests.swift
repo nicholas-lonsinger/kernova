@@ -1057,6 +1057,49 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
+    /// A restart the user starts, and the stop they choose while it waits.
+    enum CancelledRestart: CaseIterable, Sendable {
+        /// A Restart waiting on a guest that holds its shutdown, as one at a
+        /// login window does, then a Stop.
+        case restartThenStop
+        /// The same Restart, then a Force Stop.
+        case restartThenForceStop
+    }
+
+    @Test(
+        "A Restart the user's own stop cancels ends quietly once the guest powers off: no error, and no boot",
+        arguments: CancelledRestart.allCases)
+    func restartCancelledByAStopPresentsNothing(_ scenario: CancelledRestart) async throws {
+        let virtService = MockVirtualizationService()
+        virtService.guestIgnoresShutdownRequest = true
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = viewModel.library.admitFixture()
+        let session = UUID()
+        instance.activity.placeForTesting(.running(sessionID: session))
+        presenter.confirmationAnswer = .answered(true)
+
+        let restart = Task { @MainActor in await viewModel.restart(instance) }
+        try await virtService.stopRequested.wait { virtService.stopCallCount == 1 }
+        try await waitForChange {
+            !instance.activity.isRequestingStop && instance.activity.liveSessionContinues
+        }
+
+        switch scenario {
+        case .restartThenStop:
+            await viewModel.stop(instance)
+            #expect(!instance.activity.liveSessionContinues)
+            // The guest finally powers off.
+            instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        case .restartThenForceStop:
+            await viewModel.forceStop(instance)
+        }
+        await restart.value
+
+        #expect(presenter.errors.isEmpty)
+        #expect(virtService.startCallCount == 0)
+        #expect(instance.status == .stopped)
+    }
+
     @Test("restart whose shutdown fails presents the error and boots nothing")
     func restartPresentsAFailedShutdown() async {
         let virtService = MockVirtualizationService()

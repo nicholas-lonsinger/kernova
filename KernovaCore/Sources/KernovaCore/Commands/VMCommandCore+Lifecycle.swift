@@ -1162,7 +1162,7 @@ extension VMCommandCore {
     /// A Stop or Force Stop of the session from any door cancels the restart:
     /// its admission withdraws the boot (``VMActivity/requestStop(_:)``,
     /// ``VMActivity/forceStop(_:)``), the session's end settles as a stop's
-    /// does, and this refuses, saying so.
+    /// does, and this refuses with ``CommandError/restartCancelledByStop(vm:)``.
     ///
     /// The power-off is the one wait, and what a `timeout` bounds; without
     /// one it is unbounded, matching what a graceful shutdown means. A guest
@@ -1238,11 +1238,7 @@ extension VMCommandCore {
         do {
             try await boot.outcome.value()
         } catch is VMContinuationStopped {
-            throw CommandError.operationFailed(
-                verb: .restart,
-                message:
-                    "\u{201C}\(instance.name)\u{201D} was stopped while it restarted, which cancelled the restart."
-            )
+            throw CommandError.restartCancelledByStop(vm: summary(instance))
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }

@@ -386,8 +386,10 @@ struct EphemeralSessionSettlementTests {
         }
 
         let error = try await #require(throws: CommandError.self) { try await restart.value }
-        guard case .operationFailed(.restart, _, let message, _) = error else {
-            Issue.record("Expected the restart to report its cancellation, got \(error)")
+        #expect(error == .restartCancelledByStop(vm: harness.core.summary(instance)))
+        // A waiting caller reads it as the restart that ran and did not complete.
+        guard case .operationFailed(.restart, _, let message, _) = error.dto else {
+            Issue.record("Expected the restart to cross as a failed restart, got \(error.dto)")
             return
         }
         #expect(message.contains("was stopped while it restarted"))
