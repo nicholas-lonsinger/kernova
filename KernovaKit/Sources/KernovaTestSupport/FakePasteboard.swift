@@ -137,6 +137,11 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return written
     }
 
+    /// The bytes item `index` of a write holds as `type` (``FakeWritePasteboard/data(forType:itemAt:)``).
+    public func data(forType type: NSPasteboard.PasteboardType, itemAt index: Int) -> Data? {
+        writer.data(forType: type, itemAt: index)
+    }
+
     /// Empties the pasteboard, resident copy and promise alike.
     @discardableResult
     public func clearContents() -> Int {

@@ -252,9 +252,9 @@ public final class PeerItemCalls: Sendable {
         runtime.offerItems(offer, feature: feature, completion)
     }
 
-    /// ``PeerAgentRuntime/withdrawOffer(_:)``.
-    public func withdrawOffer(_ token: Data) {
-        bound?.withdrawOffer(token)
+    /// ``PeerAgentRuntime/withdrawOffer(_:code:)``.
+    public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled) {
+        bound?.withdrawOffer(token, code: code)
     }
 
     /// ``PeerAgentRuntime/releaseOffer(_:)``.

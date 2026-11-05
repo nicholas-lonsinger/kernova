@@ -46,6 +46,8 @@ public final class ClipboardItemExchange {
         case byFarSide(hasSuccessor: Bool)
         /// This side made a copy of its own.
         case superseded
+        /// The far side stopped passthrough, withdrawing it `DISABLED_BY_POLICY`: its clipboard may hold it still.
+        case passthroughStopped
         /// The connection left or no longer carries the feature, so nothing more of it can be pulled; the far
         /// side's clipboard may hold it still, and the next connection carries only its next copy.
         case linkLost
@@ -231,7 +233,7 @@ public final class ClipboardItemExchange {
     /// replaced it while it opened, when it is withdrawn at once.
     private func answered(_ token: Data, opened: Bool) {
         guard let opening, opening.token == token else {
-            if opened { link?.withdrawOffer(token) }
+            if opened { link?.withdrawOffer(token, code: .cancelled) }
             return
         }
         self.opening = nil
@@ -265,10 +267,11 @@ public final class ClipboardItemExchange {
         }
     }
 
-    /// Withdraws this side's offer, `CANCELLED`: no newer one follows. The far side's offer, if it is this
-    /// end's clipboard, stays so.
-    public func withdrawLocal() {
-        if let localToken { link?.withdrawOffer(localToken) }
+    /// Withdraws this side's offer, RESET with `code`: `CANCELLED` when this end's clipboard moved on to
+    /// nothing it offers, `DISABLED_BY_POLICY` when passthrough stopped; no newer one follows. The far side's
+    /// offer, if it is this end's clipboard, stays so.
+    public func withdrawLocal(_ code: ErrorCode = .cancelled) {
+        if let localToken { link?.withdrawOffer(localToken, code: code) }
         opening = nil
         localToken = nil
         localSource = nil
@@ -330,7 +333,7 @@ public final class ClipboardItemExchange {
     private func withdrawCopy(_ token: Data) {
         guard sentCopies.removeValue(forKey: token) != nil else { return }
         logger.log(.notice, "What a clipboard copy's files were served from ended: the copy is withdrawn")
-        link?.withdrawOffer(token)
+        link?.withdrawOffer(token, code: .cancelled)
     }
 
     /// The host: asks the guest for a snapshot of its clipboard as it stands now; `answer` hears the guest's
@@ -625,10 +628,12 @@ public final class ClipboardItemExchange {
         }
     }
 
-    /// How a far-side offer that ended with `closure` stopped being this end's clipboard. Only the far side's
-    /// RESET is its clipboard moving on; `ITEM_OFFER_REPLACED` says its next offer follows.
+    /// How a far-side offer that ended with `closure` stopped being this end's clipboard. The far side's RESET
+    /// is its clipboard moving on, `ITEM_OFFER_REPLACED` saying its next offer follows, unless it is
+    /// `DISABLED_BY_POLICY`, passthrough stopping.
     static func ending(_ closure: StreamClosure) -> RemoteEnding {
         switch closure {
+        case .resetByPeer(let error) where error.code == .disabledByPolicy: .passthroughStopped
         case .resetByPeer(let error): .byFarSide(hasSuccessor: error.code == .itemOfferReplaced)
         case .completed, .resetLocally, .connectionClosedLocally, .connectionClosedByPeer, .connectionLost: .linkLost
         }

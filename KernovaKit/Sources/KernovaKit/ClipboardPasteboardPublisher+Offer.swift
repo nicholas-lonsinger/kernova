@@ -46,7 +46,7 @@ extension ClipboardPasteboardPublisher {
     /// `servingFileURLs` false withholds `public.file-url`, as a paste over
     /// the cap requires. A concealed offer marks each item with
     /// `org.nspasteboard.ConcealedType`. The write serves `offer`, so
-    /// ``retractWrite(servingOffer:)`` withdraws it once that offer ends.
+    /// ``retractWrite(servingOffer:withdrawing:)`` withdraws it once that offer ends.
     @discardableResult
     public func publish(
         _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool = true, puller: any ClipboardItemPulling,
@@ -157,14 +157,13 @@ extension ClipboardPasteboardPublisher {
         holdLimit: TimeInterval = pasteRequesterDeadline,
         eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
     ) -> [ItemSpec] {
-        let markers = concealed ? [ClipboardSnapshotPolicy.concealedMarkerUTI] : []
+        // The marker is written as data, so it stays with whatever of the item a retraction keeps.
+        let markers: [(type: String, bytes: Data)] = concealed ? [(ClipboardSnapshotPolicy.concealedMarkerUTI, Data())] : []
         return items.enumerated().compactMap { index, item -> ItemSpec? in
             let promised = ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: servingFileURLs)
             guard !promised.isEmpty else { return nil }
             let routes = Dictionary(uniqueKeysWithValues: promised.map { ($0.pasteboardType, $0) })
-            let markerSet = Set(markers)
-            return ItemSpec(types: promised.map(\.pasteboardType) + markers) { type in
-                if markerSet.contains(type) { return Data() }
+            return ItemSpec(data: markers, types: promised.map(\.pasteboardType)) { type in
                 guard let route = routes[type] else { return nil }
                 guard route.isFileURL else {
                     return held(eventLoopWait, for: holdLimit) {

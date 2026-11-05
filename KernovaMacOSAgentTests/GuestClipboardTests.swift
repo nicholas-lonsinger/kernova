@@ -58,7 +58,7 @@ struct GuestClipboardTests {
             completion(nil)
         }
 
-        func withdrawOffer(_ token: Data) {
+        func withdrawOffer(_ token: Data, code: ErrorCode) {
             calls.withLock { $0.withdrawals.append(token) }
             changed.notify()
         }
@@ -412,6 +412,91 @@ struct GuestClipboardTests {
         // The Mac's password manager clears the Mac's clipboard: the host withdraws its offer, no successor.
         clipboard.exchange.handle(
             .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(.cancelled))), on: link)
+        #expect(pasteboard.changeCount != standing)
+        #expect(pasteboard.items.isEmpty)
+    }
+
+    /// Publishes the host's passthrough offer of `item` on `pasteboard` through `clipboard`, over `link`.
+    private func receiveOffer(
+        _ item: OfferedItem, _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink
+    ) async throws {
+        clipboard.setLink(link)
+        clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 1)),
+            on: link)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
+    }
+
+    /// Lands the one pull `link` opened with `bytes`, where its order says.
+    private func landPull(_ bytes: Data, _ clipboard: GuestClipboard, _ link: RecordingLink) async throws {
+        try await link.changed.wait { link.opened.count == 1 }
+        let order = try #require(link.orders.first)
+        guard case .staged(let directory, .exactly(let name)) = order.landing else {
+            return clipboard.exchange.pullEnded(link.opened[0], .landed(.inline(bytes)))
+        }
+        try bytes.write(
+            to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
+        clipboard.exchange.pullEnded(link.opened[0], .landed(.named(name)))
+    }
+
+    /// The host turning passthrough off: it withdraws its offer as the policy disabling it.
+    private func passthroughStops(_ clipboard: GuestClipboard, _ link: RecordingLink) {
+        clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(.disabledByPolicy))),
+            on: link)
+    }
+
+    @Test("Turning passthrough off keeps what a paste in the guest had of the host's offer, as data (step 35c)")
+    func passthroughOffKeepsWhatWasPasted() async throws {
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        try await receiveOffer(Self.textItem(), clipboard, pasteboard, link)
+
+        // `pbpaste` in the guest lands the Mac's text; AppKit finishes with the provider, the write standing.
+        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let pasted = Data("pasted before off".utf8)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        try await landPull(pasted, clipboard, link)
+        #expect(await paste.value == pasted)
+        pasteboard.finishProvider(itemIndex: 0)
+        await drainMainQueue()
+
+        passthroughStops(clipboard, link)
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[text: pasted]])
+    }
+
+    @Test("Turning passthrough off withdraws what no paste in the guest had of the host's offer, keeping the rest")
+    func passthroughOffWithdrawsWhatWasNotPasted() async throws {
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
+        let link = RecordingLink(
+            items: [Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        try await receiveOffer(Self.textAndFileItem(), clipboard, pasteboard, link)
+
+        // A paste had the text, never the file.
+        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let pasted = Data("text of the item".utf8)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        try await landPull(pasted, clipboard, link)
+        #expect(await paste.value == pasted)
+        await drainMainQueue()
+
+        passthroughStops(clipboard, link)
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[text: pasted]])
+    }
+
+    @Test("Turning passthrough off with nothing pasted leaves the guest's clipboard empty")
+    func passthroughOffWithNothingPastedClears() async throws {
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        try await receiveOffer(Self.textItem(), clipboard, pasteboard, link)
+        let standing = pasteboard.changeCount
+
+        passthroughStops(clipboard, link)
         #expect(pasteboard.changeCount != standing)
         #expect(pasteboard.items.isEmpty)
     }

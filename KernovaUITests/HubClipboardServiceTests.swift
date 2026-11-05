@@ -176,7 +176,14 @@ struct HubClipboardServiceTests {
     }
 
     private func withdrawn(_ token: Data, _ probe: AgentHubProbe) -> Bool {
-        probe.commands.contains(.items(.withdraw(token: token)))
+        withdrawal(of: token, probe) != nil
+    }
+
+    /// The code the offer `token` was withdrawn with, or nil when it was not.
+    private func withdrawal(of token: Data, _ probe: AgentHubProbe) -> ErrorCode? {
+        probe.commands.lazy.compactMap {
+            if case .items(.withdraw(token, let code)) = $0 { code } else { nil }
+        }.first
     }
 
     // MARK: - Host → guest
@@ -1125,8 +1132,8 @@ struct HubClipboardServiceTests {
         let hostOffer = try await acceptLastOffer(probe)
 
         await stopPassthrough(instance, probe)
-        // The guest hears its clipboard's offer end, and retracts its promised write of it.
-        #expect(withdrawn(hostOffer.token, probe))
+        // The guest hears its clipboard's offer end as passthrough stopping, and retracts what no paste had of it.
+        #expect(withdrawal(of: hostOffer.token, probe) == .disabledByPolicy)
         guard case .failure = await pull(hostOffer, from: instance) else {
             Issue.record("the withdrawn offer still served A")
             return
@@ -1155,7 +1162,7 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(instance.hubClipboard.exchange.remote == nil)
         // Nothing passthrough wrote remains promised, so nothing of the guest's can be pulled from the Mac.
-        #expect(instance.hostClipboardPublisher.retractWrite(servingOffer: Self.guestToken) == nil)
+        #expect(instance.hostClipboardPublisher.retractWrite(servingOffer: Self.guestToken, withdrawing: .unread) == nil)
     }
 
     @Test(
@@ -1578,5 +1585,29 @@ struct HubClipboardServiceTests {
         await probe.settle()
         #expect(pasteboard.changeCount != standing)
         #expect(pasteboard.items.isEmpty)
+    }
+
+    @Test("Turning passthrough off keeps what a paste on the Mac had of the guest's offer, as data (step 35c)")
+    func passthroughOffKeepsWhatWasPasted() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try startPassthrough(instance)
+        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        try await receive(Self.text, on: probe, into: instance)
+        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
+        let pasteboard = try hostPasteboard(instance)
+
+        let pasted = Data("pasted before off".utf8)
+        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        try await probe.changed.wait { !pulls(probe).isEmpty }
+        let (requestID, order) = try #require(pulls(probe).first)
+        try land(pasted, for: order, request: requestID, stream: 3, on: probe)
+        #expect(await paste.value == pasted)
+        pasteboard.finishProvider(itemIndex: 0)
+
+        await stopPassthrough(instance, probe)
+        #expect(released(Self.guestToken, probe))
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[text: pasted]])
     }
 }

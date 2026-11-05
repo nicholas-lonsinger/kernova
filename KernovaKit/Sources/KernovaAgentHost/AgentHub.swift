@@ -319,9 +319,9 @@ public final class AgentHub: Sendable {
         }
     }
 
-    /// Withdraws the offer of `token` made to `peer`; its `.offerEnded` follows.
-    public func withdrawOffer(_ token: Data, from peer: PeerHandle) {
-        queue.async { [self] in send(.withdraw(token: token), to: peer) }
+    /// Withdraws the offer of `token` made to `peer`, RESET with `code`; its `.offerEnded` follows.
+    public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled, from peer: PeerHandle) {
+        queue.async { [self] in send(.withdraw(token: token, code: code), to: peer) }
     }
 
     /// Releases `peer`'s offer of `token`: the host pulls nothing more of it. Releasing a taken drag offer

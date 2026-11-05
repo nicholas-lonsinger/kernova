@@ -10,8 +10,8 @@ public protocol ClipboardItemLink: Sendable {
     /// Offers `offer` on CLIPBOARD, withdrawing this side's previous clipboard offer unless it is a copy; nil
     /// once it opened, or why it did not.
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void)
-    /// Withdraws this side's offer of `token`.
-    func withdrawOffer(_ token: Data)
+    /// Withdraws this side's offer of `token`, RESET with `code`.
+    func withdrawOffer(_ token: Data, code: ErrorCode)
     /// Releases the far side's offer of `token`: this side pulls nothing more of it.
     func releaseOffer(_ token: Data)
     /// Refuses the far side's offer of `token` with `error`, so its opener hears why this side pulls nothing

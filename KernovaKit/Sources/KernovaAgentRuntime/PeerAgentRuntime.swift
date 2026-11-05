@@ -156,9 +156,9 @@ public final class PeerAgentRuntime: Sendable {
             unanswered: Self.connectionEnded, completion)
     }
 
-    /// Withdraws this side's offer of `token`; its `.offerEnded` follows.
-    public func withdrawOffer(_ token: Data) {
-        send(.withdraw(token: token))
+    /// Withdraws this side's offer of `token`, RESET with `code`; its `.offerEnded` follows.
+    public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled) {
+        send(.withdraw(token: token, code: code))
     }
 
     /// Releases the host's offer of `token`: this side pulls nothing more of it. Once the offer is whole the

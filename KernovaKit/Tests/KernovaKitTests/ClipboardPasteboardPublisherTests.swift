@@ -95,7 +95,7 @@ struct ClipboardPasteboardPublisherTests {
 
         // The prepare left an empty pasteboard, which is nobody's write…
         #expect(!publisher.holdsLastWrite)
-        #expect(publisher.retractWrite(servingOffer: offer) == nil)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
         // …but the change it made still must not read as the user's own copy.
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
     }
@@ -121,7 +121,7 @@ struct ClipboardPasteboardPublisherTests {
         publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], source: servingOffer)
         #expect(registry.countForTesting == 1)
 
-        #expect(publisher.retractWrite(servingOffer: offer) == .cleared)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == .cleared)
         #expect(registry.countForTesting == 0)
     }
 
@@ -153,26 +153,26 @@ struct ClipboardPasteboardPublisherTests {
             pasteboard: pasteboard, providerRegistry: registry)
 
         publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer)
-        #expect(publisher.retractWrite(servingOffer: offer) == .cleared)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == .cleared)
         // The clear is the publisher's own write, which no poll may read as a copy.
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
         // Idempotent: the retracted write is forgotten.
-        #expect(publisher.retractWrite(servingOffer: offer) == nil)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
 
         // A write serving no offer survives any offer's end.
         publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(serving: nil, parts: []))
-        #expect(publisher.retractWrite(servingOffer: offer) == nil)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
         #expect(publisher.holdsLastWrite)
 
         // Another offer's end never reaches a write serving this one.
         publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: servingOffer)
-        #expect(publisher.retractWrite(servingOffer: otherOffer) == nil)
+        #expect(publisher.retractWrite(servingOffer: otherOffer, withdrawing: .everyPromise) == nil)
         #expect(publisher.holdsLastWrite)
 
         // A pasteboard the user has written over since is theirs.
         publisher.write([makeSpec(textUTI, bytes: Data("three".utf8))], source: servingOffer)
         pasteboard.clearContents()
-        #expect(publisher.retractWrite(servingOffer: offer) == nil)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
     }
 
     @Test("a retraction withdraws a write's promises and keeps its data, clearing only when nothing else remains")
@@ -191,14 +191,14 @@ struct ClipboardPasteboardPublisherTests {
                 ) { _ in nil },
                 ClipboardPasteboardPublisher.ItemSpec(data: [(marker, Data())], types: [fileURL]) { _ in nil },
             ], source: servingOffer)
-        #expect(publisher.retractWrite(servingOffer: offer) == .keptData)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == .keptData)
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(
             pasteboard.dataByItem == [
                 [NSPasteboard.PasteboardType(textUTI): Data("text".utf8), NSPasteboard.PasteboardType(marker): Data()]
             ])
         #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
-        #expect(publisher.retractWrite(servingOffer: offer) == nil)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
         #expect(registry.countForTesting == 0)
     }
 

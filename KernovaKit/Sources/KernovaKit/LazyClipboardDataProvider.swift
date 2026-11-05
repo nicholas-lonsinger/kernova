@@ -30,6 +30,7 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
 
     private let provide: @Sendable (NSPasteboard.PasteboardType) -> Data?
     private let onRefused: @Sendable (NSPasteboard.PasteboardType) -> Void
+    private let onProvided: @Sendable (NSPasteboard.PasteboardType) -> Void
     private let onFinished: @Sendable (LazyClipboardDataProvider) -> Void
     private let state = Locked(State())
 
@@ -43,15 +44,20 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
     ///     it empty. Invoked synchronously on the owner's main thread/run loop.
     ///   - onRefused: called, on the thread the fire runs on, when the pasteboard
     ///     refuses the bytes `provide` produced, so the paste gets nothing.
+    ///   - onProvided: called, on the thread the fire runs on, once the
+    ///     pasteboard took the bytes `provide` produced: it holds them as data
+    ///     from then on.
     ///   - onFinished: called when the pasteboard no longer needs this provider,
     ///     so the owner can drop its strong reference.
     public init(
         provide: @escaping @Sendable (NSPasteboard.PasteboardType) -> Data?,
         onRefused: @escaping @Sendable (NSPasteboard.PasteboardType) -> Void = { _ in },
+        onProvided: @escaping @Sendable (NSPasteboard.PasteboardType) -> Void = { _ in },
         onFinished: @escaping @Sendable (LazyClipboardDataProvider) -> Void
     ) {
         self.provide = provide
         self.onRefused = onRefused
+        self.onProvided = onProvided
         self.onFinished = onFinished
     }
 
@@ -68,12 +74,16 @@ public final class LazyClipboardDataProvider: NSObject, NSPasteboardItemDataProv
             .debug,
             "Provided \(data?.count ?? 0, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
         )
-        if let data, !item.setData(data, forType: type) {
-            Self.logger.log(
-                .error,
-                "The pasteboard refused \(data.count, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
-            )
-            onRefused(type)
+        if let data {
+            if item.setData(data, forType: type) {
+                onProvided(type)
+            } else {
+                Self.logger.log(
+                    .error,
+                    "The pasteboard refused \(data.count, privacy: .public) bytes for promised type '\(type.rawValue, privacy: .public)'"
+                )
+                onRefused(type)
+            }
         }
         let owesFinish = state.withLock { state -> Bool in
             state.fireDepth -= 1

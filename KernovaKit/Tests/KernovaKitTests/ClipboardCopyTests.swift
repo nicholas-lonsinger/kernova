@@ -683,7 +683,7 @@ struct ClipboardCopyTests {
         await drainMainQueue()
         #expect(ledger.standingWrite(on: pasteboard) == nil)
         #expect(watched() == nil)
-        #expect(publisher.retractWrite(servingOffer: Self.writeOffer) == nil)
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .everyPromise) == nil)
         #expect(pasteboard.items.first?.data(forType: .string) == Data("copied since".utf8))
     }
 
@@ -708,9 +708,47 @@ struct ClipboardCopyTests {
         #expect(publisher.holdsLastWrite)
 
         // The offer's end still retracts it.
-        #expect(publisher.retractWrite(servingOffer: Self.writeOffer) == .cleared)
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .everyPromise) == .cleared)
         #expect(pasteboard.items.isEmpty)
         #expect(watched() == nil)
+    }
+
+    @Test(
+        "A write's carriage ending keeps what a paste had of it as data, its concealed marker with it, reading it back"
+    )
+    func unreadWithdrawalKeepsWhatWasRead() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
+        let watched = writeWatched(on: pasteboard, publisher)
+        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
+        #expect(pasteboard.promisedTypesByItem == [[text]])
+        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        #expect(await paste.value == Data("a password".utf8))
+        let fires = pasteboard.providerInvocations
+
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .keptEverything)
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[text: Data("a password".utf8), marker: Data()]])
+        // Read back from what the pasteboard holds: no provider fired again.
+        #expect(pasteboard.providerInvocations == fires)
+        #expect(watched() == nil)
+    }
+
+    @Test("A write's carriage ending with nothing of it pasted clears it, its concealed marker too")
+    func unreadWithdrawalOfAnUnreadWriteClears() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
+        _ = writeWatched(on: pasteboard, publisher)
+
+        #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .cleared)
+        #expect(pasteboard.items.isEmpty)
     }
 
     @Test("A copy's write a reader had every type of is released only once something replaces it")

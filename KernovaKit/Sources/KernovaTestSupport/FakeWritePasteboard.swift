@@ -19,7 +19,9 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     private struct PromisedItem: Sendable {
         let data: [NSPasteboard.PasteboardType: Data]
         let types: [NSPasteboard.PasteboardType]
-        let provider: (any NSPasteboardItemDataProvider & Sendable)?
+        var provider: (any NSPasteboardItemDataProvider & Sendable)?
+        /// What a fired provider set, which the item holds as data from then on.
+        var provided: [NSPasteboard.PasteboardType: Data] = [:]
     }
 
     private struct State: Sendable {
@@ -196,9 +198,8 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     public func finishProvider(itemIndex: Int) {
         let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
             guard state.items.indices.contains(itemIndex) else { return nil }
-            let item = state.items[itemIndex]
-            state.items[itemIndex] = PromisedItem(data: item.data, types: item.types, provider: nil)
-            return item.provider
+            defer { state.items[itemIndex].provider = nil }
+            return state.items[itemIndex].provider
         }
         provider?.pasteboardFinishedWithDataProvider?(NSPasteboard(name: .init("app.kernova.fake-write")))
     }
@@ -209,7 +210,8 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     ///
     /// Builds a fresh `NSPasteboardItem`, runs the recorded provider's
     /// `pasteboard(_:item:provideDataForType:)`, and returns what it set — or
-    /// `nil` when it declined. `itemIndex` targets one item, needed when several
+    /// `nil` when it declined. What it set the item holds as data from then on,
+    /// while the write stands. `itemIndex` targets one item, needed when several
     /// promise the same type (`.fileURL` across a multi-file offer); `nil` takes
     /// the first offering it. **This blocks until the pull behind the promise
     /// resolves**, so call it off the test's main actor.
@@ -217,22 +219,32 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         forType type: NSPasteboard.PasteboardType, itemIndex: Int?
     ) -> Data? {
         deliverOwedFinishes()
-        let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
-            let provider: (any NSPasteboardItemDataProvider & Sendable)?
-            if let itemIndex {
-                let item = state.items.indices.contains(itemIndex) ? state.items[itemIndex] : nil
-                provider = item.flatMap { $0.types.contains(type) ? $0.provider : nil }
-            } else {
-                provider = state.items.first { $0.types.contains(type) && $0.provider != nil }?.provider
-            }
-            if provider != nil { state.providerInvocations += 1 }
-            return provider
+        let fired = state.withLock { state -> (index: Int, provider: any NSPasteboardItemDataProvider & Sendable, changeCount: Int)? in
+            let index =
+                itemIndex.flatMap { state.items.indices.contains($0) ? $0 : nil }
+                ?? state.items.firstIndex { $0.types.contains(type) && $0.provider != nil }
+            guard let index, state.items[index].types.contains(type), let provider = state.items[index].provider
+            else { return nil }
+            state.providerInvocations += 1
+            return (index, provider, state.changeCount)
         }
-        guard let provider else { return nil }
+        guard let fired else { return nil }
         let item = NSPasteboardItem()
-        provider.pasteboard(nil, item: item, provideDataForType: type)
+        fired.provider.pasteboard(nil, item: item, provideDataForType: type)
         guard let bytes = item.data(forType: type) else { return nil }
+        state.withLock { state in
+            guard state.changeCount == fired.changeCount, state.items.indices.contains(fired.index) else { return }
+            state.items[fired.index].provided[type] = bytes
+        }
         changed.notify()
         return bytes
+    }
+
+    /// The bytes item `index` holds as `type`: written as data, or set by a fired provider.
+    public func data(forType type: NSPasteboard.PasteboardType, itemAt index: Int) -> Data? {
+        state.withLock { state in
+            guard state.items.indices.contains(index) else { return nil }
+            return state.items[index].data[type] ?? state.items[index].provided[type]
+        }
     }
 }

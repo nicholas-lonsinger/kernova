@@ -536,7 +536,8 @@ struct ClipboardItemBridgeTests {
 
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.string, concealedType]])
+        #expect(published.destination.promisedTypesByItem == [[.string]])
+        #expect(published.destination.dataByItem == [[concealedType: Data()]])
         let reread = try await readOffer(published.destination)
         #expect(reread.concealed)
         #expect(published.destination.providerInvocations == 0)

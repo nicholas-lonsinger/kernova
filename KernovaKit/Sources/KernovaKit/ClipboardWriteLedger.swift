@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaSynchronization
 import KernovaWire
 
 /// One connection of one clipboard exchange, from the exchange's link being set until it is set again: what a
@@ -94,6 +95,10 @@ final class ClipboardStandingWrite {
     /// The far side's offer or copy the write serves, which a retraction names.
     let servingOffer: Data?
     let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
+    /// The types each item promises.
+    let promised: [[NSPasteboard.PasteboardType]]
+    /// Which promised types a reader has had.
+    let read = ClipboardReadPromises()
     /// What the write was made from; nil once the write ended.
     private(set) var source: ClipboardWriteSource?
     /// Runs once, when the write ends.
@@ -102,11 +107,12 @@ final class ClipboardStandingWrite {
 
     init(
         source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]],
-        onEnded: (@MainActor () -> Void)?
+        promised: [[NSPasteboard.PasteboardType]], onEnded: (@MainActor () -> Void)?
     ) {
         servingOffer = source.serving?.token
         self.source = source
         self.data = data
+        self.promised = promised
         self.onEnded = onEnded
     }
 
@@ -126,6 +132,32 @@ final class ClipboardStandingWrite {
         let ended = onEnded
         onEnded = nil
         ended?()
+    }
+}
+
+/// The promised types of one write a reader has had, item by item: once a provider's bytes are taken, the
+/// pasteboard holds them as data while the write stands, so a reader has them whatever becomes of the offer.
+/// Providers record here on whatever thread they fire.
+final class ClipboardReadPromises: Sendable {
+    private let types = Locked<[Int: [NSPasteboard.PasteboardType]]>([:])
+
+    /// The pasteboard took a provider's bytes of `type` for item `item`.
+    func provided(_ type: NSPasteboard.PasteboardType, item: Int) {
+        types.withLock { types in
+            if types[item]?.contains(type) != true { types[item, default: []].append(type) }
+        }
+    }
+
+    /// What `pasteboard` holds of each read type, item by item for `count` items, in the order they were read.
+    func data(
+        on pasteboard: any ClipboardWritePasteboard, items count: Int
+    ) -> [[(type: NSPasteboard.PasteboardType, bytes: Data)]] {
+        let read = types.withLock { $0 }
+        return (0..<count).map { item in
+            (read[item] ?? []).compactMap { type in
+                pasteboard.data(forType: type, itemAt: item).map { (type, $0) }
+            }
+        }
     }
 }
 

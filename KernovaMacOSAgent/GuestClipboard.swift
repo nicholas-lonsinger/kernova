@@ -75,13 +75,14 @@ final class GuestClipboard {
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
         exchange.onRemoteOfferEnded = { [weak self] remote, ending in
             switch ending {
-            case .byFarSide, .linkLost: self?.retract(remote)
+            case .byFarSide: self?.retract(remote, withdrawing: .everyPromise)
+            case .passthroughStopped, .linkLost: self?.retract(remote, withdrawing: .unread)
             case .superseded: if self?.published === remote { self?.published = nil }
             }
         }
         exchange.onCopyAsked = { [weak self] in self?.sendSnapshot(answering: $0) }
         exchange.onCopyReceived = { [weak self] in self?.write($0) }
-        exchange.onCopyEnded = { [weak self] copy in self?.retractWrite(servingOffer: copy.token) }
+        exchange.onCopyEnded = { [weak self] copy in self?.retractWrite(servingOffer: copy.token, withdrawing: .unread) }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
         exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
@@ -159,7 +160,7 @@ final class GuestClipboard {
     /// Closing it withdraws this side's offer, so nothing of it stands while passthrough is off.
     private func gateChanged(from was: Bool) {
         guard isOffering != was else { return }
-        guard isOffering else { return exchange.withdrawLocal() }
+        guard isOffering else { return exchange.withdrawLocal(passthrough ? .cancelled : .disabledByPolicy) }
         Self.logger.log(.notice, "Copies on the clipboard are offered to the host from now on")
         seenChangeCount = pasteboard.changeCount
     }
@@ -367,19 +368,19 @@ final class GuestClipboard {
         onNotice()
     }
 
-    /// The host's offer ended — its clipboard moved on, or the connection carrying it left: a promise still
-    /// standing for it could serve only what already landed, so it is withdrawn, unless a copy has replaced it
-    /// since. The host's next connection offers only its next copy.
-    private func retract(_ remote: ClipboardRemoteOffer) {
+    /// The host's offer ended — its clipboard moved on, passthrough stopped, or the connection carrying it
+    /// left: a promise still standing for it could serve only what already landed, so `withdrawal`'s promises
+    /// are withdrawn, unless a copy has replaced it since. The host's next connection offers only its next copy.
+    private func retract(_ remote: ClipboardRemoteOffer, withdrawing withdrawal: ClipboardWithdrawal) {
         guard published === remote else { return }
         published = nil
-        retractWrite(servingOffer: remote.token)
+        retractWrite(servingOffer: remote.token, withdrawing: withdrawal)
     }
 
-    /// Withdraws the promises of this agent's write serving the offer `token`, if the pasteboard still holds
-    /// it, keeping what it wrote as data, as this agent's own change: the poll must not read it as a copy.
-    private func retractWrite(servingOffer token: Data) {
-        guard publisher.retractWrite(servingOffer: token) != nil else { return }
+    /// Withdraws `withdrawal`'s promises of this agent's write serving the offer `token`, if the pasteboard
+    /// still holds it, as this agent's own change: the poll must not read it as a copy.
+    private func retractWrite(servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal) {
+        guard publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) != nil else { return }
         seenChangeCount = pasteboard.changeCount
     }
 
@@ -398,7 +399,7 @@ struct AgentClipboardLink: ClipboardItemLink {
         calls.offerItems(offer, feature: .clipboard, completion)
     }
 
-    func withdrawOffer(_ token: Data) { calls.withdrawOffer(token) }
+    func withdrawOffer(_ token: Data, code: ErrorCode) { calls.withdrawOffer(token, code: code) }
     func releaseOffer(_ token: Data) { calls.releaseOffer(token) }
     func refuseOffer(_ token: Data, _ error: WireError) { calls.refuseOffer(token, error) }
 

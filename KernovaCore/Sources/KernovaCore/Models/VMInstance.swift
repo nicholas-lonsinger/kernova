@@ -526,7 +526,7 @@ package final class VMInstance {
                 ClipboardTransferFinish(gesture: .paste, outcome: .failed(.transferFailed), peerName: name))
         }
         hubClipboard.label = { [weak self] in self?.name ?? "VM" }
-        hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0) }
+        hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0, withdrawing: $1) }
         hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
         hubClipboard.passthroughRuns = { [weak self] in
             self?.sessionContext?.clipboardPassthroughCoordinator != nil
