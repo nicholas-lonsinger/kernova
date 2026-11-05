@@ -545,8 +545,9 @@ struct ClipboardCopyTests {
         #expect(watched() != nil)
         #expect(ledger.standingWrite(on: pasteboard) != nil)
 
-        // Another app's copy replaces the write, and the pasteboard lets go of its provider.
+        // Another app's copy replaces the write, and the next poll ends it.
         pasteboard.setString("copied since", forType: .string)
+        ClipboardPasteboardWatch.pollForTesting(pasteboard)
         await drainMainQueue()
         #expect(ledger.standingWrite(on: pasteboard) == nil)
         #expect(watched() == nil)
@@ -613,6 +614,38 @@ struct ClipboardCopyTests {
         pasteboard.setString("copied since", forType: .string)
         try await released.wait { wasReleased }
         #expect(ledger.standingWrite(on: pasteboard) == nil)
+    }
+
+    @Test("A copy's write replaced before any provider of it finished ends at the next poll, its publisher gone")
+    func unfinishedCopyEndsAtTheNextPoll() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        var item = OfferedItem()
+        item.representations = [Self.representation("public.data", .file, name: "a.bin")]
+        var released = false
+        do {
+            let publisher = ClipboardPasteboardPublisher(
+                pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+            let (written, promised) = publisher.publishCopy(
+                [item], concealed: false, servingFileURLs: true, held: { _, _ in nil },
+                puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
+                onReleased: { released = true })
+            #expect(written && promised)
+        }
+
+        // Another app's copy replaces the write, nothing having pasted it: AppKit finishes no provider until this
+        // process next uses the pasteboard. No suspension follows, so the watch's own timer cannot poll first.
+        pasteboard.setString("copied since", forType: .string)
+        #expect(registry.countForTesting == 1)
+        #expect(!released)
+
+        ClipboardPasteboardWatch.pollForTesting(pasteboard)
+        #expect(released)
+        #expect(ledger.standingWrite(on: pasteboard) == nil)
+        #expect(!ClipboardPasteboardWatch.isPollingForTesting(pasteboard))
     }
 
     @Test("A poll ends a replaced copy's write before any reader of the pasteboard hears it, and then stops watching")

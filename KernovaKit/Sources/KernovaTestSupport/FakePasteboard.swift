@@ -8,8 +8,8 @@ import KernovaSynchronization
 /// The write half — promise registration, the OS-fires-a-provider seam, the
 /// write-failure seam — is the shared double both ends of the wire use. Added
 /// here: the read half, and the resident setup
-/// (`setItem`/`setItems`/`setString`) that models a *user* copying, which an
-/// outbound poll reads. A promise
+/// (`setItem`/`setItems`/`setString`) that models a *user* copying, another
+/// process's write, which an outbound poll reads. A promise
 /// write leaves no resident bytes; a fired provider's bytes are what its item
 /// serves from afterwards, as a real `NSPasteboardItem` retains them.
 ///
@@ -161,8 +161,7 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
             state.residents = items
             state.resolved.removeAll()
         }
-        // Drops any promise and bumps the change count, as a real write does.
-        writer.clearContents()
+        writer.replaceFromAnotherProcess()
         return true
     }
 

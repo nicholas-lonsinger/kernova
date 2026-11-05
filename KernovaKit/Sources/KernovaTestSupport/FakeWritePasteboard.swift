@@ -30,6 +30,8 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         var items: [PromisedItem] = []
         var writeFailuresRemaining = 0
         var providerInvocations = 0
+        /// Providers another process's write displaced, whose finish waits for this process's next use.
+        var owedFinishes: [any NSPasteboardItemDataProvider & Sendable] = []
 
         /// Drops what is on the pasteboard, handing back the providers that
         /// were serving it.
@@ -53,7 +55,10 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Monotonic change count, bumped by every prepare and every clear exactly
     /// as `NSPasteboard`'s is — and by no write, since `writeObjects` moves it
     /// no further than the `prepareForNewContents` before it already did.
-    public var changeCount: Int { state.withLock { $0.changeCount } }
+    public var changeCount: Int {
+        deliverOwedFinishes()
+        return state.withLock { $0.changeCount }
+    }
 
     /// How many times `prepareForNewContents(with:)` has run.
     public var prepareCount: Int { state.withLock { $0.prepareCount } }
@@ -100,6 +105,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Clears the recorded state, noting the options this write was marked with.
     @discardableResult
     public func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
+        deliverOwedFinishes()
         let (count, displaced) = state.withLock { state in
             let displaced = state.takeItems()
             state.prepareCount += 1
@@ -115,6 +121,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Records one promise per entry, unless a failure was armed.
     @discardableResult
     public func writeItems(_ entries: [ClipboardWriteItem]) -> Bool {
+        deliverOwedFinishes()
         let (written, displaced) = state.withLock {
             state -> (Bool, [any NSPasteboardItemDataProvider & Sendable]) in
             state.writeAttempts += 1
@@ -138,6 +145,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Empties the pasteboard, bumping the change count as a real one does.
     @discardableResult
     public func clearContents() -> Int {
+        deliverOwedFinishes()
         let (count, displaced) = state.withLock { state in
             let displaced = state.takeItems()
             state.changeCount += 1
@@ -146,6 +154,24 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         finish(displaced)
         changed.notify()
         return count
+    }
+
+    /// Another process writes: the change count moves and what stood is gone, but the providers it displaced
+    /// are told they are finished only at this process's next use of the pasteboard — any call here but this
+    /// one — as AppKit does (docs/research/2026-11-04-pasteboard-replacement-finish-waits-for-next-use.md).
+    public func replaceFromAnotherProcess() {
+        state.withLock { state in
+            state.owedFinishes += state.takeItems()
+            state.changeCount += 1
+        }
+        changed.notify()
+    }
+
+    private func deliverOwedFinishes() {
+        finish(state.withLock { state in
+            defer { state.owedFinishes = [] }
+            return state.owedFinishes
+        })
     }
 
     /// Tells each displaced provider the pasteboard is done with it, as a real
@@ -189,6 +215,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     public func invokeProvider(
         forType type: NSPasteboard.PasteboardType, itemIndex: Int?
     ) -> Data? {
+        deliverOwedFinishes()
         let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
             let provider: (any NSPasteboardItemDataProvider & Sendable)?
             if let itemIndex {

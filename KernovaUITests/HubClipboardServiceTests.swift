@@ -1504,7 +1504,9 @@ struct HubClipboardServiceTests {
         #expect(await pull(copy, representation: 1, from: instance) == .success(.tree(path: file.path)))
     }
 
-    @Test("Another VM's copy ending, the Mac having moved on, withdraws this VM's copy of it, so the guest retracts it")
+    @Test(
+        "Another VM's copy ending, the Mac having moved on with nothing pasted, withdraws this VM's copy of it, so the guest retracts it"
+    )
     func anotherVMsCopyEndingWithdrawsTheCopy() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
@@ -1514,7 +1516,7 @@ struct HubClipboardServiceTests {
         try await acceptLastOffer(probe)
         #expect(!withdrawn(copy.token, probe))
 
-        // A new copy on the Mac replaces VM A's write, and VM A's copy ends.
+        // A new copy on the Mac replaces VM A's write, none of its providers finished, and VM A's copy ends.
         #expect(pasteboard.setString("copied since", forType: .string))
         try await probe.changed.wait { withdrawn(copy.token, probe) }
         guard case .failure = await pull(copy, representation: 1, from: instance) else {

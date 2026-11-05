@@ -158,15 +158,10 @@ public final class ClipboardPasteboardPublisher {
     private var heldChangeCount: Int?
 
     /// The most recent write the pasteboard took that promised something, while it stands: a write, a clear or
-    /// a retraction of this publisher's ends it, and so does anything else replacing it, which a finished
-    /// provider reports, or — once every provider is finished — ``standingWatch`` hears. Only a write serving an
-    /// offer can be stranded by that offer's end, and ``retractWrite(servingOffer:)`` retracts it by naming that
-    /// offer, so no other offer's end reaches it.
-    private var standing: ClipboardStandingWrite?
-
-    /// This publisher's place in the pasteboard's watch while ``standing`` stands with every provider finished:
-    /// no callback tells of its replacement then.
-    private var standingWatch: ClipboardPasteboardWatch.Observation?
+    /// a retraction of this publisher's ends it, and so does anything else replacing it, which the write hears
+    /// through the pasteboard's watch. Only a write serving an offer can be stranded by that offer's end, and
+    /// ``retractWrite(servingOffer:)`` retracts it by naming that offer, so no other offer's end reaches it.
+    private weak var standing: ClipboardStandingWrite?
 
     /// Hears each paste whose promised bytes the pasteboard refused to take, so the paste got nothing.
     public var onPasteRefused: (@MainActor () -> Void)?
@@ -187,10 +182,9 @@ public final class ClipboardPasteboardPublisher {
     ///
     /// The write serves `source`'s offer, the one ``retractWrite(servingOffer:)`` withdraws it for; nil for a
     /// write that serves from what this side holds. Its record (``ClipboardStandingWrite``), `source` with it,
-    /// lives as long as the write stands. `onReleased` runs once the write no longer stands and the pasteboard has
-    /// finished with every provider it promised through, which is when nothing can ask the offer for more; a
-    /// paste of every promised type leaves the write standing, so it runs nothing. A write that promises nothing,
-    /// or fails, never runs it.
+    /// lives as long as the write stands. `onReleased` runs once the write no longer stands, which is when no
+    /// paste can be served from the offer any more; a paste of every promised type leaves the write standing, so
+    /// it runs nothing. A write that promises nothing, or fails, never runs it.
     @discardableResult
     public func write(
         _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
@@ -198,29 +192,20 @@ public final class ClipboardPasteboardPublisher {
         // Captures the registry, not `self`, so a provider's lifetime is
         // decoupled from this object.
         let registry = providerRegistry
-        let promising = specs.filter { !$0.types.isEmpty }.count
         var providers: [LazyClipboardDataProvider] = []
         let data = specs.map { spec in
             spec.data.compactMap { type, bytes -> (type: NSPasteboard.PasteboardType, bytes: Data)? in
                 Self.screened(bytes, servedAs: type).map { (NSPasteboard.PasteboardType(type), $0) }
             }
         }
-        let record = ClipboardStandingWrite(source: source, data: data, promising: promising, onEnded: onReleased)
+        let record = ClipboardStandingWrite(source: source, data: data, onEnded: onReleased)
         let items = zip(specs, data).map { spec, data -> ClipboardWriteItem in
             guard !spec.types.isEmpty else { return ClipboardWriteItem(data: data, promised: [], provider: nil) }
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
                 provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
                 onRefused: { [weak self] _ in MainActorBridge.async { self?.onPasteRefused?() } },
-                onFinished: { [weak self] provider in
-                    registry.release(provider)
-                    MainActorBridge.async {
-                        record.providerFinished()
-                        // With no publisher left to watch the write, nothing will say it was replaced.
-                        guard let self else { return record.replaced() }
-                        self.finished(with: record)
-                    }
-                })
+                onFinished: { registry.release($0) })
             providers.append(provider)
             return ClipboardWriteItem(
                 data: data, promised: spec.types.map(NSPasteboard.PasteboardType.init(rawValue:)), provider: provider)
@@ -247,38 +232,18 @@ public final class ClipboardPasteboardPublisher {
             return false
         }
         heldChangeCount = pasteboard.changeCount
-        let promises = promising > 0 ? record : nil
+        let promises = providers.isEmpty ? nil : record
+        promises?.stand(on: pasteboard)
         standing = promises
         ledger.record(promises, on: pasteboard)
         providerRegistry.retain(providers)
         return true
     }
 
-    /// The pasteboard finished with one of `record`'s providers. With the write replaced, it no longer stands;
-    /// with it standing and every provider finished, only the change count can tell of its replacement, so the
-    /// watch starts.
-    private func finished(with record: ClipboardStandingWrite) {
-        guard standing === record else { return }
-        guard heldChangeCount == pasteboard.changeCount else { return endStanding() }
-        guard record.isFullyProvided, standingWatch == nil else { return }
-        standingWatch = ClipboardPasteboardWatch.observe(pasteboard, in: .standingWrites) { [weak self] in
-            self?.watchStanding()
-        }
-    }
-
-    /// The watch's poll: a write something replaced no longer stands.
-    private func watchStanding() {
-        guard standing != nil, heldChangeCount == pasteboard.changeCount else { return endStanding() }
-    }
-
-    /// The standing write no longer stands: replaced by this publisher's next write, clear or retraction, or by
-    /// anything else.
+    /// The standing write no longer stands: this publisher's next write, clear or retraction replaced it.
     private func endStanding() {
-        standingWatch?.cancel()
-        standingWatch = nil
-        guard let ended = standing else { return }
+        standing?.end()
         standing = nil
-        ended.replaced()
     }
 
     /// `data` when the pasteboard may serve it as `type`, else nil.

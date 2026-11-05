@@ -80,14 +80,15 @@ public struct ClipboardWriteSource: Sendable {
 }
 
 /// A write of this process standing on a pasteboard that promised something: what it serves and holds as data,
-/// and what it was made from, for as long as the write stands. The publisher that made it owns it while the write
-/// stands (``ClipboardPasteboardPublisher/write(_:source:onReleased:)``); everything else holds it weakly.
+/// and what it was made from, for as long as the write stands. It ends at the first poll of its pasteboard's watch
+/// to find the change count moved, or when ``end()`` comes first: its source goes, and its end runs. While it
+/// stands, its observation of the watch holds it; everything else holds it weakly.
 ///
-/// The write ends once it no longer stands and the pasteboard has finished with every provider it promised
-/// through: its source goes, and its end runs. AppKit finishes with a provider when anything replaces the write,
-/// and also once a reader has had every type that provider promised while the write still stands
-/// (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md), so a paste of every type ends nothing:
-/// only the write's being replaced does.
+/// No provider callback gates the end. AppKit finishes with a provider once a reader has had every type it
+/// promised, the write still standing (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md), and
+/// tells of another process's replacement only at this process's next use of the pasteboard, however late; a
+/// provider fire still running when the write is replaced serves nothing, its bytes refused and the reader given
+/// none (docs/research/2026-11-04-pasteboard-replacement-finish-waits-for-next-use.md).
 @MainActor
 final class ClipboardStandingWrite {
     /// The far side's offer or copy the write serves, which a retraction names.
@@ -95,42 +96,32 @@ final class ClipboardStandingWrite {
     let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
     /// What the write was made from; nil once the write ended.
     private(set) var source: ClipboardWriteSource?
-    /// The providers the pasteboard has yet to finish with.
-    private var unfinished: Int
-    /// Whether the write still stands on its pasteboard.
-    private var stands = true
     /// Runs once, when the write ends.
     private var onEnded: (@MainActor () -> Void)?
+    private var observation: ClipboardPasteboardWatch.Observation?
 
     init(
-        source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]], promising: Int,
+        source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]],
         onEnded: (@MainActor () -> Void)?
     ) {
         servingOffer = source.serving?.token
         self.source = source
         self.data = data
-        unfinished = promising
         self.onEnded = onEnded
     }
 
-    /// Whether the pasteboard has finished with every provider of the write: nothing tells of its replacement
-    /// but its pasteboard's change count.
-    var isFullyProvided: Bool { unfinished == 0 }
-
-    /// The pasteboard finished with one of the write's providers.
-    func providerFinished() {
-        unfinished -= 1
-        endIfDone()
+    /// Stands on `pasteboard`, which holds the write at its change count now, until that count moves.
+    func stand(on pasteboard: any ClipboardWritePasteboard) {
+        let changeCount = pasteboard.changeCount
+        observation = ClipboardPasteboardWatch.observe(pasteboard, in: .standingWrites) { [self] in
+            if pasteboard.changeCount != changeCount { end() }
+        }
     }
 
-    /// The write no longer stands: something replaced it.
-    func replaced() {
-        stands = false
-        endIfDone()
-    }
-
-    private func endIfDone() {
-        guard !stands, unfinished <= 0 else { return }
+    /// The write no longer stands.
+    func end() {
+        observation?.cancel()
+        observation = nil
         source = nil
         let ended = onEnded
         onEnded = nil
