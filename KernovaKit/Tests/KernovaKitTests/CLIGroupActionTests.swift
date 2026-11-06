@@ -21,9 +21,9 @@ struct CLIGroupActionTests {
     /// One VM of each outcome a group start can report, in that order.
     private var mixedReport: VMGroupActionReport {
         let prompt = ConfirmationPrompt(
-            kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
+            kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} with a Duplicate Machine ID?",
             message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
-            confirmTitle: "Start Anyway", dismissTitle: "Cancel")
+            confirmTitle: "Start", dismissTitle: "Cancel")
         return VMGroupActionReport(
             action: .start, groupKind: .folder, groupID: UUID(), groupName: "Lab",
             results: [
@@ -89,6 +89,8 @@ struct CLIGroupActionTests {
             ["suspend", "--folder", "Lab", "--yes"],
             ["restart", "--folder", "Lab", "--timeout", "5"],
             ["restart", "--folder", "Lab", "--yes"],
+            ["restart", "--folder", "Lab", "--force"],
+            ["restart", "--smart-group", "Running", "--anyway"],
         ]
         for line in refused {
             #expect(throws: (any Error).self, "\(line)") { try parse(line) }
@@ -201,8 +203,8 @@ struct CLIGroupActionTests {
     func questionAndCancelLines() {
         let vm = summary("Twin", status: "suspended")
         let prompt = ConfirmationPrompt(
-            kind: .startBesideSharedMachineIdentity, title: "Resume \u{201C}Twin\u{201D} Anyway?",
-            message: "Shared.", confirmTitle: "Resume Anyway", dismissTitle: "Cancel")
+            kind: .startBesideSharedMachineIdentity, title: "Resume \u{201C}Twin\u{201D} with a Duplicate Machine ID?",
+            message: "Shared.", confirmTitle: "Resume", dismissTitle: "Cancel")
         let resumed = VMGroupActionResult(
             vm: vm, outcome: .needsAnswer(verb: .resume, question: .confirmationRequired(prompt: prompt)))
         #expect(resumed.line(for: .start) == "Skipped Twin: Shared. Resume it on its own to answer.")

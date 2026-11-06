@@ -16,6 +16,7 @@ import KernovaAgentRuntime
 import KernovaContainerPipeline
 import KernovaFileTree
 import KernovaItemTransfer
+import KernovaLogging
 import KernovaPortableTestSupport
 import KernovaSynchronization
 import KernovaTreeTransfer
@@ -30,7 +31,7 @@ struct ItemAdapterTests {
         let bench = try Bench()
         let content = Data((0..<700_000).map { UInt8(truncatingIfNeeded: $0 / 7) })
         try bench.write(content, to: "source/report.bin")
-        let landing = ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("chosen.bin".utf8)))
+        let landing = ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("chosen.bin".utf8)))
         let result = try await bench.transfer(
             .tree(path: bench.path("source/report.bin")), .file, landing,
             servedBy: server)
@@ -45,7 +46,7 @@ struct ItemAdapterTests {
         try bench.write(Data("a".utf8), to: "source/Folder/a.txt")
         try bench.write(Data(repeating: 9, count: 300_000), to: "source/Folder/sub/b.bin")
         try bench.makeDirectory("landed/Folder")
-        let landing = ItemLanding.tree(directory: bench.path("landed"), name: .keepingBoth(Data("Folder".utf8)))
+        let landing = ItemLanding.staged(directory: bench.path("landed"), name: .keepingBoth(Data("Folder".utf8)))
         let result = try await bench.transfer(
             .tree(path: bench.path("source/Folder")), .folder, landing)
         #expect(result == .published(Bench.id, .named(Data("Folder 2".utf8))))
@@ -115,7 +116,7 @@ struct ItemAdapterTests {
         try bench.write(Data(repeating: 3, count: 2_000_000), to: "source/big.bin")
         try bench.makeDirectory("landed")
         let fileSystem = POSIXTreeFileSystem()
-        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _ in
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8, logger: Bench.logger) { _, _, _, _ in
             .success(.tree(path: bench.path("source/big.bin")))
         }
         let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
@@ -154,7 +155,7 @@ struct ItemAdapterTests {
         try bench.write(generator.bytes(40_000_000), to: "source/big.bin")
         try bench.makeDirectory("landed")
         let fileSystem = POSIXTreeFileSystem()
-        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _ in
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8, logger: Bench.logger) { _, _, _, _ in
             .success(.tree(path: bench.path("source/big.bin")))
         }
         let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
@@ -207,7 +208,7 @@ struct ItemAdapterTests {
         representation.storage = .file
         // A directory that does not exist: a pull that begins reports it refused.
         let order = ItemPullOrder(
-            PullRequest(), landing: .tree(directory: bench.path("missing"), name: .exactly(Data("item".utf8))))
+            PullRequest(), landing: .staged(directory: bench.path("missing"), name: .exactly(Data("item".utf8))))
         sink.discardForTermination()
 
         sink.handle(.begin(Bench.id, order, representation), reporter: reporter)
@@ -218,12 +219,46 @@ struct ItemAdapterTests {
     }
 
     @Test(
-        "INLINE bytes are served from the provider and published as bytes", arguments: [PeerRole.host, .sessionPeer])
+        "INLINE bytes are served from the provider and land as a file under the landing's name",
+        arguments: [PeerRole.host, .sessionPeer])
     func inlineLands(_ server: PeerRole) async throws {
         let bench = try Bench()
         let bytes = Data((0..<600_000).map { UInt8(truncatingIfNeeded: $0 % 251) })
-        let result = try await bench.transfer(.inline(bytes), .inline, .inline, servedBy: server)
+        let landing = ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("content".utf8)))
+        let result = try await bench.transfer(.inline(bytes), .inline, landing, servedBy: server)
+        #expect(result == .published(Bench.id, .named(Data("content".utf8))))
+        #expect(try bench.read("landed/content") == bytes)
+        #expect(try bench.names("landed") == ["content"])
+    }
+
+    @Test("INLINE bytes landing in memory are published as their bytes, and nothing is written")
+    func inlineLandsInMemory() async throws {
+        let bench = try Bench()
+        let bytes = Data((0..<600_000).map { UInt8(truncatingIfNeeded: $0 % 251) })
+        let result = try await bench.transfer(.inline(bytes), .inline, .memory)
         #expect(result == .published(Bench.id, .inline(bytes)))
+        #expect(try bench.names("").isEmpty)
+    }
+
+    @Test("INLINE bytes landing in memory are charged to the order's budget, and kept once published")
+    func inlineInMemoryChargesTheBudget() async throws {
+        let bench = try Bench()
+        let bytes = Data((0..<600_000).map { UInt8(truncatingIfNeeded: $0 % 251) })
+        let budget = ByteBudget(limit: 1_000_000)
+        let result = try await bench.transfer(.inline(bytes), .inline, .memory, budget: budget)
+        #expect(result == .published(Bench.id, .inline(bytes)))
+        #expect(budget.remaining == 1_000_000 - UInt64(bytes.count))
+
+        // The next landing sharing the budget finds less than it needs left.
+        let refused = try await bench.transfer(.inline(bytes), .inline, .memory, budget: budget)
+        guard case .refused(_, let error)? = refused else {
+            Issue.record("landed over the budget: \(String(describing: refused))")
+            return
+        }
+        #expect(error.code == .tooLarge)
+        #expect(error.limit == 1_000_000)
+        // A refused landing gives back what it charged.
+        #expect(budget.remaining == 1_000_000 - UInt64(bytes.count))
     }
 
     @Test(
@@ -240,6 +275,8 @@ struct ItemAdapterTests {
 
     @Test("two connections' pulls of one id land apart through one sink")
     func connectionsLandApart() async throws {
+        let bench = try Bench()
+        try bench.makeDirectory("landed")
         let first = Data(repeating: 1, count: 300_000)
         let second = Data(repeating: 2, count: 200_000)
         let connections = (ItemConnection(role: .host), ItemConnection(role: .host))
@@ -250,7 +287,8 @@ struct ItemAdapterTests {
         )
         let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem(), decodingWorkers: 2)
         let order = try sink.order(
-            token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30, landing: .inline)
+            token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30,
+            landing: ItemLanding.staged(directory: bench.path("landed"), name: .keepingBoth(Data("content".utf8))))
         var representation = Representation()
         representation.storage = .inline
         let (firstReports, firstReporter) = Inbox<ItemSinkInput>.make { ItemSinkReporter(connections.0, $0) }
@@ -272,8 +310,69 @@ struct ItemAdapterTests {
             #expect(await reports.next() == .verified(Bench.id))
             sink.handle(.commit(Bench.id), reporter: reporter)
         }
-        #expect(await firstReports.next() == .published(Bench.id, .inline(first)))
-        #expect(await secondReports.next() == .published(Bench.id, .inline(second)))
+        // The two publishes race for the name, so either may keep it.
+        let names = [await firstReports.next(), await secondReports.next()].map { report -> String? in
+            guard case .published(_, .named(let name))? = report else { return nil }
+            return String(decoding: name, as: UTF8.self)
+        }
+        #expect(Set(names) == ["content", "content 2"])
+        let landed = try names.compactMap { $0 }.map { try bench.read("landed/" + $0) }
+        #expect(landed == [first, second])
+    }
+
+    @Test("pulls sharing a budget land no more than it holds together: the one past it is refused TOO_LARGE")
+    func budgetBoundsPullsTogether() async throws {
+        let bench = try Bench()
+        try bench.write(Data(repeating: 1, count: 600), to: "source/a.bin")
+        try bench.write(Data(repeating: 2, count: 600), to: "source/b.bin")
+        let budget = ByteBudget(limit: 1_000)
+        let first = try await bench.transfer(
+            .tree(path: bench.path("source/a.bin")), .file,
+            ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("a.bin".utf8))), budget: budget)
+        #expect(first == .published(Bench.id, .named(Data("a.bin".utf8))))
+        #expect(budget.remaining == 400)
+
+        let second = try await bench.transfer(
+            .tree(path: bench.path("source/b.bin")), .file,
+            ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("b.bin".utf8))), budget: budget)
+        guard case .refused(_, let error)? = second else {
+            Issue.record("\(String(describing: second))")
+            return
+        }
+        #expect(error.code == .tooLarge)
+        #expect(error.limit == 1_000)
+        #expect(budget.remaining == 400)
+        #expect(try bench.names("landed") == ["a.bin"])
+    }
+
+    @Test("a pull refused or failing after it charged the budget gives back what it charged")
+    func failedPullGivesBack() async throws {
+        let bench = try Bench()
+        try bench.write(Data(repeating: 1, count: 300), to: "source/Folder/a.bin")
+        try bench.write(Data(repeating: 2, count: 800), to: "source/Folder/b.bin")
+        try bench.write(Data("new".utf8), to: "source/doc.txt")
+        try bench.write(Data("old".utf8), to: "landed/doc.txt")
+        let budget = ByteBudget(limit: 1_000)
+
+        let folder = try await bench.transfer(
+            .tree(path: bench.path("source/Folder")), .folder,
+            ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("Folder".utf8))), budget: budget)
+        guard case .refused(_, let error)? = folder else {
+            Issue.record("\(String(describing: folder))")
+            return
+        }
+        #expect(error.code == .tooLarge)
+        #expect(budget.remaining == 1_000)
+
+        let file = try await bench.transfer(
+            .tree(path: bench.path("source/doc.txt")), .file,
+            ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("doc.txt".utf8))), budget: budget)
+        guard case .publishFailed? = file else {
+            Issue.record("\(String(describing: file))")
+            return
+        }
+        #expect(budget.remaining == 1_000)
+        #expect(try bench.names("landed") == ["doc.txt"])
     }
 
     @Test("a publish onto a taken exact name fails EEXIST and leaves only what was there")
@@ -281,7 +380,7 @@ struct ItemAdapterTests {
         let bench = try Bench()
         try bench.write(Data("new".utf8), to: "source/doc.txt")
         try bench.write(Data("old".utf8), to: "landed/doc.txt")
-        let landing = ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("doc.txt".utf8)))
+        let landing = ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("doc.txt".utf8)))
         let result = try await bench.transfer(
             .tree(path: bench.path("source/doc.txt")), .file, landing)
         guard case .publishFailed(_, let error)? = result else {
@@ -308,6 +407,37 @@ struct ItemAdapterTests {
                 .code == .readFailed)
     }
 
+    @Test("a tree that cannot be read is logged as an error naming its entry, whether it fails opening or midway")
+    func readFailureLogged() async throws {
+        let bench = try Bench()
+        try bench.makeDirectory("source/Folder")
+        try #require(mkfifo(bench.path("source/Folder/pipe"), 0o644) == 0)
+        typealias Case = (
+            content: String, storage: Representation.Storage, path: String, reason: TreeReadFailure.Reason
+        )
+        let cases: [Case] = [
+            ("missing/x", .file, "x", .system(TreeFileSystemError(code: ENOENT))),
+            ("source/Folder", .folder, "Folder/pipe", .notCarried(.type(.fifo))),
+        ]
+        for (content, storage, path, reason) in cases {
+            let records = Locked<[(KernovaLogLevel, [LogSegment])]>([])
+            let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") {
+                level, _, _, segments in
+                records.withLock { $0.append((level, segments)) }
+            }
+            let error = try await bench.serveFailure(
+                .success(.tree(path: bench.path(content))), storage, logger: logger)
+            #expect(error?.code == .readFailed, "\(content)")
+            #expect(error?.debugDetail == reason.description, "\(content)")
+            let logged = records.withLock { $0 }
+            #expect(logged.count == 1, "\(content)")
+            #expect(logged.first?.0 == .error, "\(content)")
+            let segments = logged.first?.1 ?? []
+            #expect(segments.contains(LogSegment(text: path, isPrivate: true)), "\(content): \(segments)")
+            #expect(segments.contains(LogSegment(text: reason.description, isPrivate: false)), "\(content)")
+        }
+    }
+
     @Test(
         "an item is served by its own path, though the folder it lies in cannot be opened",
         .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
@@ -323,12 +453,12 @@ struct ItemAdapterTests {
         try #require(open(bench.path("source/locked"), O_RDONLY | O_DIRECTORY) == -1)
         let file = try await bench.transfer(
             .tree(path: bench.path("source/locked/report.bin")), .file,
-            ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("report.bin".utf8))))
+            ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("report.bin".utf8))))
         #expect(file == .published(Bench.id, .named(Data("report.bin".utf8))))
         #expect(try bench.read("landed/report.bin") == content)
         let folder = try await bench.transfer(
             .tree(path: bench.path("source/locked/Folder")), .folder,
-            ItemLanding.tree(directory: bench.path("landed"), name: .exactly(Data("Folder".utf8))))
+            ItemLanding.staged(directory: bench.path("landed"), name: .exactly(Data("Folder".utf8))))
         #expect(folder == .published(Bench.id, .named(Data("Folder".utf8))))
         #expect(try bench.read("landed/Folder/b.txt") == Data("b".utf8))
     }
@@ -347,7 +477,7 @@ struct ItemAdapterTests {
         try bench.makeDirectory("landed")
         let fileSystem = POSIXTreeFileSystem()
         let sink = ItemSinkAdapter(fileSystem: fileSystem)
-        let landing = ItemLanding.tree(directory: bench.path("landed"), name: .keepingBoth(Data("x".utf8)))
+        let landing = ItemLanding.staged(directory: bench.path("landed"), name: .keepingBoth(Data("x".utf8)))
         let tree = try sink.order(token: Data(count: 16), item: 1, representation: 2, byteCeiling: 9, landing: landing)
         let directory = try fileSystem.openDirectory(Array(bench.path("landed").utf8), in: AT_FDCWD)
         defer { fileSystem.close(directory) }
@@ -357,14 +487,16 @@ struct ItemAdapterTests {
                 == (try DecmpfsMatrix.acceptedTypes(landingIn: directory, on: fileSystem)).sorted())
         #expect(tree.request.codecs == [.lz4])
         #expect((tree.request.item, tree.request.representation, tree.request.byteCeiling) == (1, 2, 9))
-        let inline = try sink.order(
-            token: Data(count: 16), item: 0, representation: 0, byteCeiling: 9, landing: .inline)
-        #expect(inline.landing == .inline)
-        #expect(inline.request.decmpfsTypes.isEmpty)
+        let budget = ByteBudget(limit: 9)
+        #expect(
+            try sink.order(
+                token: Data(count: 16), item: 0, representation: 0, byteCeiling: 9, landing: landing, budget: budget
+            ).budget === budget)
+        #expect(tree.budget == nil)
         #expect(throws: WireError.self) {
             try sink.order(
                 token: Data(), item: 0, representation: 0, byteCeiling: 9,
-                landing: .tree(directory: bench.path("missing"), name: .exactly(Data("x".utf8))))
+                landing: ItemLanding.staged(directory: bench.path("missing"), name: .exactly(Data("x".utf8))))
         }
     }
 
@@ -403,6 +535,8 @@ struct ItemAdapterTests {
 /// A scratch directory, and a source and a sink moving one pull through it.
 final class Bench: Sendable {
     static let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+    /// A logger that records nothing.
+    static let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") { _, _, _, _ in }
 
     let scratch: PortableScratchDirectory
 
@@ -437,18 +571,21 @@ final class Bench: Sendable {
     /// The sink accepts `sinkByteCeiling` bytes, by default what the source is asked for.
     func transfer(
         _ content: ItemContent, _ storage: Representation.Storage, _ landing: ItemLanding,
-        servedBy server: PeerRole = .sessionPeer, sinkByteCeiling: UInt64 = 1 << 30
+        servedBy server: PeerRole = .sessionPeer, sinkByteCeiling: UInt64 = 1 << 30, budget: ByteBudget? = nil
     ) async throws -> ItemSinkInput? {
-        if case .tree(let directory, _) = landing {
+        if case .staged(let directory, _) = landing {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         }
         let fileSystem = POSIXTreeFileSystem()
-        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8) { _, _, _ in .success(content) }
+        let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8, logger: Self.logger) { _, _, _, _ in
+            .success(content)
+        }
         let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
         let order = try sink.order(
             token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30, landing: landing)
         let sinkOrder = try sink.order(
-            token: Data(count: 16), item: 0, representation: 0, byteCeiling: sinkByteCeiling, landing: landing)
+            token: Data(count: 16), item: 0, representation: 0, byteCeiling: sinkByteCeiling, landing: landing,
+            budget: budget)
         var representation = Representation()
         representation.storage = storage
         let puller: PeerRole = server == .host ? .sessionPeer : .host
@@ -481,9 +618,9 @@ final class Bench: Sendable {
 
     /// The container a side of role `server` serves of INLINE `content` for a pull that takes LZ4, read by read.
     static func container(_ content: ItemContent, servedBy server: PeerRole) async throws -> [Data] {
-        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), sendingCores: 8) { _, _, _ in
-            .success(content)
-        }
+        let source = ItemSourceAdapter(
+            fileSystem: POSIXTreeFileSystem(), sendingCores: 8, logger: logger
+        ) { _, _, _, _ in .success(content) }
         var request = PullRequest()
         request.byteCeiling = 1 << 30
         request.codecs = [.lz4]
@@ -505,9 +642,10 @@ final class Bench: Sendable {
 
     /// The error a serve of `content` as a representation of `storage` fails with, or nil when it does not.
     func serveFailure(
-        _ content: Result<ItemContent, WireError>, _ storage: Representation.Storage, ceiling: UInt64 = 1 << 30
+        _ content: Result<ItemContent, WireError>, _ storage: Representation.Storage, ceiling: UInt64 = 1 << 30,
+        logger: KernovaLogger = Bench.logger
     ) async throws -> WireError? {
-        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { _, _, _ in content }
+        let source = ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: logger) { _, _, _, _ in content }
         var request = PullRequest()
         request.byteCeiling = ceiling
         var representation = Representation()

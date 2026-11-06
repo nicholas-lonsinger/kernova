@@ -14,7 +14,7 @@ import KernovaSynchronization
 public final class LazyClipboardProviderRegistry: Sendable {
     /// Shared registry used by the host in production, one per process.
     ///
-    /// Matches the single `NSPasteboard.general` every "Copy to Mac" targets. The
+    /// Matches the single `NSPasteboard.general` every host write targets. The
     /// guest agent and tests construct their own instances.
     public static let shared = LazyClipboardProviderRegistry()
 

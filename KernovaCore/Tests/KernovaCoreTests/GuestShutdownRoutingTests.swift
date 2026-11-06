@@ -2,6 +2,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
+import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -135,7 +136,8 @@ struct GuestShutdownRoutingTests {
     func restartThroughAgent() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
         let restart = Task { @MainActor in
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(
+                .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 1 }
         try await waitForChange {
@@ -154,7 +156,8 @@ struct GuestShutdownRoutingTests {
     @Test("A Restart with no agent to take it takes the same request through the ACPI button")
     func restartThroughACPI() async throws {
         let fixture = try await makeFixture(peer: false)
-        try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+        try await fixture.harness.core.restart(
+            .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         #expect(fixture.probe.powerRequests.isEmpty)
         #expect(fixture.harness.virtualization.stopCallCount == 1)
         #expect(fixture.harness.virtualization.startCallCount == 1)
@@ -165,7 +168,8 @@ struct GuestShutdownRoutingTests {
     func blockedRestartWithdrawsItsBoot() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.blocked(Self.blocking))] }
         let error = try await #require(throws: CommandError.self) {
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(
+                .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         #expect(error.alertTitle == "\u{201C}Routed\u{201D} Didn\u{2019}t Shut Down")
         #expect(!fixture.instance.activity.liveSessionContinues)
@@ -178,7 +182,8 @@ struct GuestShutdownRoutingTests {
     func stopWithdrawsAWaitingRestart() async throws {
         let fixture = try await makeFixture { _ in [.accepted, .finished(.handedOff)] }
         let restart = Task { @MainActor in
-            try await fixture.harness.core.restart(.id(fixture.instance.id), timeout: nil, consent: .none)
+            try await fixture.harness.core.restart(
+                .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         try await fixture.probe.changed.wait { fixture.probe.powerRequests.count == 1 }
         try await waitForChange {
@@ -194,6 +199,101 @@ struct GuestShutdownRoutingTests {
         #expect(error.message.contains("was stopped while it restarted"))
         #expect(fixture.harness.virtualization.startCallCount == 0)
         #expect(fixture.instance.status == .stopped)
+    }
+
+    // MARK: - A macOS guest's sessions
+
+    /// A running macOS VM: pbear's session in the background, recording each
+    /// power request it is sent into `background`; alice's session on screen
+    /// when `consoleSession`, and the login window otherwise; and the system
+    /// service, offering only Stop Anyway.
+    private func makeMacFixture(
+        consoleSession: Bool, background: Locked<[PowerAction]> = Locked([])
+    ) async throws -> Fixture {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore.Scripted<MockVirtualizationService>(
+            WiredCommandCore(virtualization: virtualization, preferences: preferences))
+        let probe = AgentHubProbe()
+        let session = UUID()
+        let instance = harness.wired.register(
+            name: "Routed", phase: .running(sessionID: session), guestOS: .macOS, agentConnector: probe)
+        instance.agentHub.attach(
+            probe, policy: PolicySnapshot(), republisher: GuestLogRepublisher(vmLabel: instance.name))
+        try await probe.changed.wait { probe.isStarted }
+        let handsOff: @Sendable (PowerAction) -> [PowerRequestResult] = { _ in [.accepted, .finished(.handedOff)] }
+        let sessionClaim = PeerClaim(role: .sessionPeer, scope: .system, os: .macOS, architecture: .arm64)
+        let graceful = PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)
+        #expect(
+            probe.connectPowerPeer(
+                claim: sessionClaim, state: PeerSessionState(console: .off, sessionID: "2", userName: "pbear"),
+                offer: graceful,
+                answering: { action in
+                    background.withLock { $0.append(action) }
+                    return [.accepted, .finished(.handedOff)]
+                }) != nil)
+        if consoleSession {
+            #expect(
+                probe.connectPowerPeer(
+                    claim: sessionClaim, state: PeerSessionState(console: .on, sessionID: "3", userName: "alice"),
+                    offer: graceful, answering: handsOff) != nil)
+        }
+        #expect(
+            probe.connectPowerPeer(
+                claim: PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64),
+                state: PeerSessionState(
+                    console: consoleSession ? .on : .off, consoleSessionID: consoleSession ? "3" : ""),
+                offer: PowerOffer(actions: [], ignoringApps: [.shutdown]), answering: handsOff) != nil)
+        let peers = consoleSession ? 3 : 2
+        try await waitForChange {
+            instance.agentHubSnapshot.peers.count == peers && instance.agentHubSnapshot.shutsDownIgnoringApps
+                && instance.agentHubSnapshot.power == (consoleSession ? .agent(.sessionPeer) : .absent(.notOnConsole))
+        }
+        return Fixture(harness: harness, instance: instance, session: session, probe: probe)
+    }
+
+    @Test("At the login window, Stop asks no agent and presses the ACPI button")
+    func stopAtLoginWindow() async throws {
+        let background = Locked<[PowerAction]>([])
+        let fixture = try await makeMacFixture(consoleSession: false, background: background)
+        try await stop(fixture)
+        #expect(fixture.probe.powerRequests.isEmpty)
+        #expect(background.withLock { $0 }.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 1)
+    }
+
+    @Test("At the login window, Restart asks no agent and takes the ACPI button")
+    func restartAtLoginWindow() async throws {
+        let fixture = try await makeMacFixture(consoleSession: false)
+        try await fixture.harness.core.restart(
+            .id(fixture.instance.id), disposition: .graceful, timeout: nil, consent: .none)
+        #expect(fixture.probe.powerRequests.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 1)
+        #expect(fixture.harness.virtualization.startCallCount == 1)
+    }
+
+    @Test("With a session on screen, Stop goes to that session's agent alone and presses no button")
+    func stopWithConsoleSession() async throws {
+        let background = Locked<[PowerAction]>([])
+        let fixture = try await makeMacFixture(consoleSession: true, background: background)
+        try await stop(fixture)
+        #expect(fixture.probe.powerRequests.map(\.action) == [.shutdown])
+        #expect(fixture.probe.powerRequestsIgnoringApps.isEmpty)
+        #expect(background.withLock { $0 }.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
+    }
+
+    @Test(
+        "Stop Anyway goes to the system service, at the login window and with a session on screen",
+        arguments: [false, true])
+    func stopAnywayReachesSystemService(consoleSession: Bool) async throws {
+        let background = Locked<[PowerAction]>([])
+        let fixture = try await makeMacFixture(consoleSession: consoleSession, background: background)
+        try await fixture.harness.core.stop(
+            .id(fixture.instance.id), disposition: .anyway, consent: Consent([.stopAnyway]))
+        #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
+        #expect(fixture.probe.powerRequests.count == 1)
+        #expect(background.withLock { $0 }.isEmpty)
+        #expect(fixture.harness.virtualization.stopCallCount == 0)
     }
 
     // MARK: - While the request is in flight
@@ -236,7 +336,8 @@ struct GuestShutdownRoutingTests {
 
     @Test("Apps blocking the shutdown are named, and Force Stop is how to shut it down anyway")
     func blockedCopy() {
-        let forceStop = " To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."
+        let forceStop =
+            " To shut it down anyway, use Force Stop, which loses anything in the guest that isn\u{2019}t saved to disk."
         let one = Self.copy(.blocked([AppValue(displayName: "Text Editor")]))
         #expect(one.title == "\u{201C}Fedora\u{201D} Didn\u{2019}t Shut Down")
         #expect(one.message == "Text Editor is blocking it." + forceStop)

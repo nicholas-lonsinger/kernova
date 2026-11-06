@@ -157,14 +157,14 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Clipboard Sharing
 
-    /// When `true`, a SPICE agent console port is configured to enable clipboard
-    /// exchange between host and guest via the clipboard panel window.
+    /// When `true`, the guest's clipboard can be shared with the Mac's: the
+    /// clipboard commands, and passthrough when that is on too.
     package var clipboardSharingEnabled: Bool
 
     /// When `true`, the host clipboard is polled and forwarded to the guest
     /// automatically, and inbound guest clipboard content is written straight to
-    /// the host clipboard — removing the clipboard window's manual gate in both
-    /// directions.
+    /// the host clipboard — one clipboard, where the clipboard commands copy
+    /// one side's to the other.
     ///
     /// Gated on `clipboardSharingEnabled`; because the guest gains continuous
     /// read of whatever is copied on the host, enabling it requires explicit

@@ -56,12 +56,10 @@ package final class VMSessionContext {
     var clipboardInputPipe: Pipe?
     var clipboardOutputPipe: Pipe?
 
-    /// The clipboard service this session owns outside the vsock stack: a
-    /// `SpiceClipboardService` for a Linux guest.
-    ///
-    /// A macOS guest's transport is the vsock one, which lives in
-    /// ``VsockFeatureCoordinator/clipboard``; `VMInstance.clipboardService`
-    /// projects over both, so no window controller branches on transport.
+    /// The SPICE clipboard service of a Linux guest's session. The guest
+    /// agent's clipboard is the VM's own (`VMInstance.hubClipboard`), and
+    /// `VMInstance.clipboardService` projects whichever its route names, so no
+    /// window controller branches on transport.
     var clipboardService: (any ClipboardServicing)?
 
     /// Automatic clipboard passthrough driver, created and torn down by

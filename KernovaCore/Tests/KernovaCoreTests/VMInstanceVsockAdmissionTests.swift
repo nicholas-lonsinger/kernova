@@ -18,12 +18,6 @@ import Testing
 struct VMInstanceVsockAdmissionTests {
     // MARK: - Helpers
 
-    private final class RecordingAcceptor: VsockDataConnectionAccepting {
-        nonisolated func acceptDataConnection(fd: Int32) {
-            // Keep the descriptor open: a forwarded fd is the probe's signal.
-        }
-    }
-
     private func makeInstance(
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
@@ -204,32 +198,27 @@ struct VMInstanceVsockAdmissionTests {
         #expect(Set(ports).count == ports.count)
     }
 
-    @Test("Tearing the vsock services down clears the gate and the data sink")
-    func stopClearsGateAndSinks() throws {
+    @Test("Tearing the vsock services down clears the gate")
+    func stopClearsGate() throws {
         let instance = makeInstance()
         instance.vsockAdmissionGate.publish(
             VsockAdmissionGate.State(
                 handshakeComplete: true,
                 capabilities: Set(KernovaCapability.controlChannelDefaults)))
-        // A probe that would keep a forwarded descriptor open, so EOF below
-        // proves the sink was cleared rather than never set.
-        instance.clipboardDataSink.set(RecordingAcceptor())
 
         instance.stopVsockServices()
 
         #expect(isNotReady(instance.vsockAdmissionGate.admission(for: .none)))
-        try expectSinkCleared(instance.clipboardDataSink)
     }
 
     // MARK: - Stale-session hand-offs
 
-    /// The framed listener production builds for `descriptor`, off the live
-    /// session's coordinator — the channel port's host, ahead of any data one.
+    /// The listener production builds for `descriptor`, off the live session's
+    /// coordinator.
     private func framedHost(
         for descriptor: VsockFeatureDescriptor, on instance: VMInstance, sessionID: UUID
     ) throws -> VsockListener {
-        let vsock = try #require(instance.sessionContext?.vsock)
-        return try #require(vsock.makeListeners(for: descriptor, sessionID: sessionID).first)
+        try #require(instance.sessionContext?.vsock).makeListener(for: descriptor, sessionID: sessionID)
     }
 
     /// An instance standing in for one with a live session, its handshake

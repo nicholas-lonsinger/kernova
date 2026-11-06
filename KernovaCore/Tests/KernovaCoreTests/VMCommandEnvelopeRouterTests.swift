@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 17)
+        #expect(VMCommandRequest.currentProtocolVersion == 18)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -389,7 +389,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test(
         "stop --anyway crosses the wire; a guest whose agents don't offer it is refused naming the For everyone install"
     )
-    func shutDownAnywayCrossesTheWire() async throws {
+    func stopAnywayCrossesTheWire() async throws {
         let virtualization = MockVirtualizationService()
         let harness = makeHarness(virtualization: virtualization)
         let instance = makeInstance(in: harness, name: "Anyway", phase: .running(sessionID: UUID()))
@@ -404,6 +404,21 @@ struct VMCommandEnvelopeRouterTests {
         #expect(requirement.routes.isEmpty)
         #expect(requirement.message.contains("\u{201C}For everyone\u{201D}"))
         #expect(virtualization.stopCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
+    @Test("restart --force crosses the wire: the guest is terminated and booted again")
+    func forceRestartCrossesTheWire() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = makeHarness(virtualization: virtualization)
+        let instance = makeInstance(in: harness, name: "Forced", phase: .running(sessionID: UUID()))
+
+        let response = try await harness.transport.send(
+            .restart(.id(instance.id), disposition: .force, timeout: nil, consent: .all))
+
+        #expect(response.failure == nil, "\(response.result)")
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(virtualization.startCallCount == 1)
         #expect(instance.status == .running)
     }
 

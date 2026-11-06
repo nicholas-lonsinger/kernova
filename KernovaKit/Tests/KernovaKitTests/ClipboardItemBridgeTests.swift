@@ -13,6 +13,7 @@ import Testing
 @Suite("Clipboard item bridge", .caseScoped)
 @MainActor
 struct ClipboardItemBridgeTests {
+    private static let connection = ClipboardConnectionID()
     private let scratch = TestScratchDirectory(prefix: "item-bridge")
     private let concealedType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
     private let rtfType = NSPasteboard.PasteboardType("public.rtf")
@@ -21,6 +22,7 @@ struct ClipboardItemBridgeTests {
     /// Serves a destination's pulls from the source's offer, landing a file or
     /// folder as a receiver does: under the offer's name, in a landing folder.
     private final class OfferPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let source: ClipboardOfferSource
         let items: [OfferedItem]
         let landing: URL
@@ -69,6 +71,7 @@ struct ClipboardItemBridgeTests {
     /// Completes every pull with `bytes`, counting the pulls it was asked to
     /// start.
     private final class FixedPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let bytes: Data
         let starts = Locked(0)
 
@@ -82,6 +85,20 @@ struct ClipboardItemBridgeTests {
         func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
             starts.withLock { $0 += 1 }
             completion(nil)
+        }
+    }
+
+    /// Starts every pull and never completes one, keeping each completion for the test.
+    private final class StalledPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        let completions = Locked<[@Sendable (Data?) -> Void]>([])
+
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completions.withLock { $0.append(completion) }
+        }
+
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completions.withLock { $0.append { _ in completion(nil) } }
         }
     }
 
@@ -139,7 +156,8 @@ struct ClipboardItemBridgeTests {
         #expect(
             publisher.publish(
                 source.items, concealed: source.concealed, servingFileURLs: servingFileURLs,
-                puller: OfferPuller(source: source, landing: landing)))
+                puller: OfferPuller(source: source, landing: landing),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)))
         return Published(destination: destination, registry: registry, landing: landing)
     }
 
@@ -211,13 +229,13 @@ struct ClipboardItemBridgeTests {
 
     // MARK: - Files and folders
 
-    @Test("a file offers its name and size, never its path text, and lands under its name")
+    @Test("a file offers its name and size, its URL left out, and lands under its name")
     func fileRoundTrips() async throws {
         let file = try directory("copied").appendingPathComponent("notes.txt")
         try Data("file body".utf8).write(to: file)
         let pasteboard = FakePasteboard()
         pasteboard.setItem([
-            (type: .fileURL, data: Data(file.absoluteString.utf8)), (type: .string, data: Data(file.path.utf8)),
+            (type: .fileURL, data: Data(file.absoluteString.utf8)), (type: .URL, data: Data(file.absoluteString.utf8)),
         ])
 
         let source = try await readOffer(pasteboard)
@@ -518,7 +536,8 @@ struct ClipboardItemBridgeTests {
 
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.string, concealedType]])
+        #expect(published.destination.promisedTypesByItem == [[.string]])
+        #expect(published.destination.dataByItem == [[concealedType: Data()]])
         let reread = try await readOffer(published.destination)
         #expect(reread.concealed)
         #expect(published.destination.providerInvocations == 0)
@@ -545,6 +564,25 @@ struct ClipboardItemBridgeTests {
             return
         }
         #expect(suppressed == reason)
+    }
+
+    @Test("a paste holds its thread for a stalled pull only until its limit, gets nothing, and leaves the pull running")
+    func pasteHoldEndsAtItsLimit() async throws {
+        #expect(ClipboardPasteboardPublisher.pasteRequesterDeadline == 120)
+        var item = OfferedItem()
+        item.representations = [.make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0)]
+        let puller = StalledPuller()
+        let specs = ClipboardPasteboardPublisher.itemSpecs(
+            for: [item], concealed: false, puller: puller, holdLimit: 0.05, eventLoopWait: { nil })
+        let spec = try #require(specs.first)
+
+        let served = await offCooperativePool { spec.provide(ClipboardContent.utf8TextUTI) }
+
+        #expect(served == nil)
+        let started = puller.completions.withLock { $0 }
+        #expect(started.count == 1)
+        // The pull ends after the paste gave up: nothing is left waiting for it.
+        started.first?(Data("late".utf8))
     }
 
     @Test("a peer's transient marker is never published")
@@ -624,7 +662,10 @@ struct ClipboardItemBridgeTests {
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
         ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
-            .publish([item], concealed: false, puller: FixedPuller(bytes: bytes))
+            .publish(
+                [item], concealed: false, puller: FixedPuller(bytes: bytes),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)
+            )
         return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
     }
 
@@ -733,30 +774,5 @@ struct ClipboardItemBridgeTests {
 
         #expect(specs.first?.provide(ClipboardContent.utf8TextUTI) == nil)
         #expect(puller.starts.withLock { $0 } == 0)
-    }
-
-    // MARK: - Content
-
-    @Test("held content offers its text inline and its files by name, and previews as pending metadata")
-    func contentOffersAndPreviews() async throws {
-        let file = try directory("held").appendingPathComponent("photo.png")
-        try pngBytes.write(to: file)
-        let content = ClipboardContent(
-            representations: [
-                .init(uti: ClipboardContent.utf8TextUTI, data: Data("caption".utf8)),
-                .init(uti: "public.png", fileURL: file, byteCount: pngBytes.count, filename: "photo.png"),
-            ], isConcealed: true)
-
-        let source = ClipboardOfferSource(content: content)
-        #expect(source.concealed)
-        #expect(source.items.map { $0.representations.map(\.storage) } == [[.inline], [.file, .inline]])
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("caption".utf8)))
-        #expect(try await source.serve(item: 1, representation: 1) == .bytes(pngBytes))
-
-        let preview = ClipboardContent(previewOf: source.items, concealed: source.concealed)
-        #expect(preview.isConcealed)
-        #expect(preview.representations.map(\.filename) == ["", "photo.png"])
-        #expect(preview.representations.allSatisfy { $0.isPendingRemote })
-        #expect(preview.representations.last?.byteCount == pngBytes.count)
     }
 }

@@ -51,7 +51,7 @@ struct VMInstanceAgentHubTests {
         #expect(probe.policies.last?.isEnabled(.drag) == instance.configuration.dropFilesEnabled)
         var toggled = instance.configuration
         toggled.dropFilesEnabled.toggle()
-        let policy = VMInstance.agentHubPolicy(for: toggled)
+        let policy = instance.agentHubPolicy(for: toggled)
         #expect(policy.isEnabled(.drag) == toggled.dropFilesEnabled)
         #expect(policy.isEnabled(.logs) == toggled.agentLogForwardingEnabled)
 
@@ -63,10 +63,10 @@ struct VMInstanceAgentHubTests {
     func logForwardingToggle() async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
-        #expect(probe.policies == [VMInstance.agentHubPolicy(for: instance.configuration)])
+        #expect(probe.policies == [instance.agentHubPolicy(for: instance.configuration)])
         var toggled = instance.configuration
         toggled.agentLogForwardingEnabled.toggle()
-        let policy = VMInstance.agentHubPolicy(for: toggled)
+        let policy = instance.agentHubPolicy(for: toggled)
         #expect(policy.isEnabled(.logs) == toggled.agentLogForwardingEnabled)
 
         instance.applyLivePolicy(oldConfig: instance.configuration, newConfig: toggled)
@@ -74,6 +74,23 @@ struct VMInstanceAgentHubTests {
         #expect(probe.connect())
         try await probe.changed.wait { probe.policies.count == 2 }
         #expect(probe.policies.last == policy)
+    }
+
+    @Test("CLIPBOARD's policy carries the paste ceiling, and a change to it reaches every connection")
+    func pasteCeilingChange() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let initial = try #require(probe.policies.first)
+        #expect(
+            ClipboardPolicyValue(initial)?.maxPasteBytes == UInt64(instance.preferences.clipboardMaxPasteBytes))
+
+        // The setting is app-wide, so no configuration changes: the Settings pane's re-push carries it.
+        let raised = 16 * 1024 * 1024 * 1024
+        instance.preferences.clipboardMaxPasteBytes = raised
+        instance.resendAgentPolicy()
+        let policy = instance.agentHubPolicy(for: instance.configuration)
+        #expect(ClipboardPolicyValue(policy)?.maxPasteBytes == UInt64(raised))
+        try await probe.changed.wait { probe.commands.contains(.setPolicy(policy)) }
     }
 
     @Test("A session's end detaches the hub: its streams shut down and later connections are refused")

@@ -31,7 +31,8 @@ enum ItemFeatureScenarios {
     static let file = SimItems.representation(.file, size: 300_000)
 
     static let clipboardReplaces = Scenario(
-        name: "clipboard: each side's new clipboard offer withdraws its previous one", seeds: 30, end: .sec(3),
+        name: "clipboard: each side's new clipboard offer withdraws its previous one ITEM_OFFER_REPLACED", seeds: 30,
+        end: .sec(3),
         options: options,
         script: { world in
             world.addPeer(.session())
@@ -53,7 +54,7 @@ enum ItemFeatureScenarios {
                 let local = items(world, side)?.offersEnded.filter { $0.origin == .local } ?? []
                 failures += expectThat(
                     local.map(\.token) == [SimItems.token(first)]
-                        && local.map(\.closure) == [.resetLocally(WireError(.cancelled))]
+                        && local.map(\.closure) == [.resetLocally(WireError(.itemOfferReplaced))]
                         && local.allSatisfy { $0.feature == .clipboard },
                     "\(side) withdrew its first clipboard offer: \(local)")
                 let received = items(world, far)?.offersReceived.map(\.header) ?? []
@@ -65,7 +66,7 @@ enum ItemFeatureScenarios {
                 let remote = items(world, far)?.offersEnded.filter { $0.origin == .remote } ?? []
                 failures += expectThat(
                     remote.map(\.token) == [SimItems.token(first)]
-                        && remote.map(\.closure) == [.resetByPeer(WireError(.cancelled))],
+                        && remote.map(\.closure) == [.resetByPeer(WireError(.itemOfferReplaced))],
                     "\(far) saw the first withdrawn: \(remote)")
             }
             return failures

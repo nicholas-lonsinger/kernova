@@ -298,6 +298,11 @@ public struct FileStatus: Hashable, Sendable {
     /// Darwin's `UF_COMPRESSED` (`sys/stat.h`), which marks a file stored
     /// through decmpfs.
     public static let compressedFlag: UInt32 = 0x20
+    /// Whether the entry's data is not on the volume: Darwin's `SF_DATALESS`, which iCloud Drive's Optimize
+    /// Mac Storage, or another File Provider, sets on what it evicts (``DatalessMaterialization``).
+    public var isDataless: Bool { flags & FileStatus.datalessFlag != 0 }
+    /// Darwin's `SF_DATALESS` (`sys/stat.h`).
+    public static let datalessFlag: UInt32 = 0x4000_0000
     /// When the contents last changed.
     public var modificationTime: FileTime
     /// When the entry was created; `nil` where the volume or the call keeps

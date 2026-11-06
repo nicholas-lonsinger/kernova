@@ -57,3 +57,32 @@ struct ItemFeatureUnitTests {
         }
     }
 }
+
+@Suite("Item features: CLIPBOARD's policy params")
+struct ClipboardPolicyUnitTests {
+    @Test("The paste ceiling and passthrough cross in CLIPBOARD's entry, enabled or not")
+    func roundTrips() {
+        for enabled in [true, false] {
+            for passthrough in [true, false] {
+                let value = ClipboardPolicyValue(maxPasteBytes: 1 << 33, passthrough: passthrough)
+                let policy = PolicySnapshot([
+                    FeaturePolicyValue(feature: .logs, enabled: true), value.policy(enabled: enabled),
+                ])
+                #expect(policy.isEnabled(.clipboard) == enabled)
+                #expect(ClipboardPolicyValue(policy) == value)
+            }
+        }
+    }
+
+    @Test("No CLIPBOARD entry, another version's, or params that do not decode carry no params")
+    func absentOrUnreadable() {
+        let entry = ClipboardPolicyValue(maxPasteBytes: 7, passthrough: false).policy(enabled: true)
+        var otherVersion = entry
+        otherVersion.version += 1
+        var garbled = entry
+        garbled.params = Data([0xFF])
+        #expect(ClipboardPolicyValue(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])) == nil)
+        #expect(ClipboardPolicyValue(PolicySnapshot([otherVersion])) == nil)
+        #expect(ClipboardPolicyValue(PolicySnapshot([garbled])) == nil)
+    }
+}

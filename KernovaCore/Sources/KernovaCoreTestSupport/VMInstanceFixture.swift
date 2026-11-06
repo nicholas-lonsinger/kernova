@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentHost
 import KernovaCommandModel
+import KernovaKit
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -33,6 +34,7 @@ enum VMInstanceFixture {
         bundleFactory: VMBundle.Factory? = nil,
         bundleProducts: AppBundleProducts = .testing,
         agentConnector: (any HostConnectionMaking)? = nil,
+        stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let read = seed(
@@ -43,7 +45,7 @@ enum VMInstanceFixture {
                 .make(read),
             phase: phase, preferences: preferences,
             hostPasteboard: FakePasteboard(), bundleProducts: bundleProducts, logSink: nil,
-            agentConnector: agentConnector)
+            agentConnector: agentConnector, stagingRoot: stagingRoot)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
         return instance
@@ -69,7 +71,7 @@ enum VMInstanceFixture {
     }
 
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
-    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:bundleProducts:agentConnector:mutate:)``
+    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:bundleProducts:agentConnector:stagingRoot:mutate:)``
     /// and a library's fixture admission build their bundle from.
     static func seed(
         name: String, guestOS: VMGuestOS, hostState: VMHostState, snapshots: VMSnapshotManifest,

@@ -57,13 +57,14 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         self.toolbarManager = VMToolbarManager(
             configuration: .init(
                 lifecycleID: NSToolbarItem.Identifier("displayLifecycle"),
-                shutDownAnywayID: NSToolbarItem.Identifier("displayShutDownAnyway"),
+                stopAnywayID: NSToolbarItem.Identifier("displayStopAnyway"),
+                restartAnywayID: NSToolbarItem.Identifier("displayRestartAnyway"),
                 saveStateID: NSToolbarItem.Identifier("displaySaveState"),
                 takeSnapshotID: NSToolbarItem.Identifier("displayTakeSnapshot"),
-                // Targets this window's VM: the nil-target showClipboard action
-                // resolves through `MainMenuController.activeInstance`, which
-                // answers the key display window's VM.
-                clipboardID: NSToolbarItem.Identifier("displayClipboard"),
+                // Target this window's VM: the nil-target actions resolve through
+                // `MainMenuController.activeInstance`, which answers the key display window's VM.
+                copyToMacID: NSToolbarItem.Identifier("displayCopyToMac"),
+                copyToGuestID: NSToolbarItem.Identifier("displayCopyToGuest"),
                 popOutID: NSToolbarItem.Identifier("displayPopOut"),
                 fullscreenID: NSToolbarItem.Identifier("displayFullscreen"),
                 settingsToggleID: nil,

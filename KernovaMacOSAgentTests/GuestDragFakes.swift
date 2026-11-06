@@ -21,6 +21,9 @@ final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
 
     var changeCount: Int { state.withLock { $0.changeCount } }
     var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
+    /// The watcher reads no promise off the drag pasteboard; the catcher's drop
+    /// reads them.
+    @MainActor var filePromiseReceivers: [any FilePromiseReceiving] { [] }
 
     /// A source writes a drag of `items`, moving the change count.
     func write(_ items: [FakePasteboardItem]) {

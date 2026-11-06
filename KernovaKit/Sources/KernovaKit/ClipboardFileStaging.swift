@@ -1,7 +1,5 @@
 import Foundation
-import KernovaLogging
 import KernovaSynchronization
-import System
 
 /// Materializes streamed file representations to real local temp files so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
@@ -11,9 +9,10 @@ import System
 /// pastes nothing, and neither calls the provider's delegate; a `public.file-url`
 /// on the same pasteboard pastes in both.
 ///
-/// One directory per offer generation, the newest ``maxGenerations`` kept so a
-/// pasteboard URL a newer offer replaced survives while Finder copies it out;
-/// `sweep()` clears everything.
+/// One directory per offer generation, kept for as long as its ``Retention``
+/// says; `sweep()` clears everything. Every removal goes through the process
+/// root (``ProcessStagingRoot/remove(_:)``), so a pasteboard item naming a file
+/// in it goes first.
 ///
 /// Each instance owns a private root (the label plus a per-instance component)
 /// under its process's ``ProcessStagingRoot``, so no instance's `sweep()` can
@@ -23,16 +22,25 @@ import System
 /// from them; an exited process's whole root, by the next launch's
 /// ``ProcessStagingRoot/reclaimAbandonedRoots()``.
 public final class ClipboardFileStaging: Sendable {
-    private static let logger = KernovaLogger(
-        subsystem: "app.kernova", category: "ClipboardFileStaging")
-
     /// Queries free capacity (in bytes) for important, user-initiated writes at
     /// the given directory.
     public typealias FreeSpaceProvider = @Sendable (URL) -> Int64?
 
-    /// Number of recent generation directories kept alive; the generation
-    /// past it deletes the oldest.
+    /// Number of recent generation directories ``Retention/newest(_:)`` keeps
+    /// alive for staging that replaces what it last vended.
     public static let maxGenerations = 3
+
+    /// How long a generation's directory lives.
+    enum Retention: Equatable, Sendable {
+        /// The newest `count` generations are kept, so a pasteboard URL a newer
+        /// offer replaced survives while Finder copies it out; the generation
+        /// past `count` deletes the oldest.
+        case newest(Int)
+        /// A generation's directory lives until ``discardGeneration(_:)``,
+        /// which its owner calls once nothing can read it, and nothing else
+        /// deletes it. A discarded generation is never created again.
+        case untilDiscarded
+    }
 
     /// An open append-only sink for one streamed file representation.
     ///
@@ -81,7 +89,7 @@ public final class ClipboardFileStaging: Sendable {
                 do {
                     try state.handle.close()
                 } catch {
-                    ClipboardFileStaging.discard(url)
+                    ProcessStagingRoot.discard(url)
                     throw error
                 }
                 return url
@@ -96,13 +104,14 @@ public final class ClipboardFileStaging: Sendable {
                 guard !state.finished else { return }
                 state.finished = true
                 try? state.handle.close()
-                ClipboardFileStaging.discard(url)
+                ProcessStagingRoot.discard(url)
             }
         }
     }
 
     private let processRoot: ProcessStagingRoot
     private let root: URL
+    private let retention: Retention
     private let freeSpaceProvider: FreeSpaceProvider
 
     /// The lock also serializes every filesystem change under ``root``, so the
@@ -111,22 +120,32 @@ public final class ClipboardFileStaging: Sendable {
         /// Generation directories in arrival order (oldest first).
         var generationDirs: [GenerationDir] = []
 
+        /// The generations ``Retention/untilDiscarded`` has discarded.
+        var discarded: Set<UInt64> = []
+
+        /// The generation the next ``ClipboardFileStaging/lease()`` holds.
+        var nextLease: UInt64 = 1
+
         /// Returns the directory for `generation` under `root`, creating it on
-        /// first use and evicting the oldest past ``maxGenerations``.
+        /// first use and evicting whatever `retention` no longer keeps.
         ///
-        /// - Throws: a filesystem error if the directory can't be created.
+        /// - Throws: `CocoaError(.fileNoSuchFile)` for a generation already
+        ///   discarded, or a filesystem error if the directory can't be created.
         mutating func directory(
-            for generation: UInt64, root: URL, processRoot: ProcessStagingRoot
+            for generation: UInt64, root: URL, processRoot: ProcessStagingRoot,
+            retention: Retention
         ) throws -> URL {
             if let existing = generationDirs.first(where: { $0.generation == generation }) {
                 return existing.dir
             }
+            guard !discarded.contains(generation) else { throw CocoaError(.fileNoSuchFile) }
             let dir = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try processRoot.createDirectory(at: dir)
             generationDirs.append(GenerationDir(generation: generation, dir: dir))
-            while generationDirs.count > ClipboardFileStaging.maxGenerations {
-                let oldest = generationDirs.removeFirst()
-                ClipboardFileStaging.discard(oldest.dir)
+            if case .newest(let count) = retention {
+                while generationDirs.count > count {
+                    processRoot.remove(generationDirs.removeFirst().dir)
+                }
             }
             return dir
         }
@@ -140,12 +159,14 @@ public final class ClipboardFileStaging: Sendable {
     private let state = Locked(State())
 
     /// This process's root for clipboard staging, the host's and the guest
-    /// agent's alike.
+    /// agent's alike, whose removals first withdraw every item of the general
+    /// pasteboard naming a file in what goes (``ClipboardStagingRetirement``).
     public static let processRoot = ProcessStagingRoot(
         parent: FileManager.default.temporaryDirectory.appendingPathComponent(
-            "KernovaClipboardStaging", isDirectory: true))
+            "KernovaClipboardStaging", isDirectory: true),
+        retirement: ClipboardStagingRetirement())
 
-    /// Creates staging under its own root.
+    /// Staging that keeps the newest ``maxGenerations`` generations.
     ///
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
@@ -155,12 +176,30 @@ public final class ClipboardFileStaging: Sendable {
     ///     production.
     ///   - freeSpaceProvider: queries available capacity; defaults to
     ///     `volumeAvailableCapacityForImportantUsageKey`.
-    public init(
+    public convenience init(
         label: String,
         root: ProcessStagingRoot,
         freeSpaceProvider: FreeSpaceProvider? = nil
     ) {
+        self.init(
+            label: label, root: root, retention: .newest(Self.maxGenerations),
+            freeSpaceProvider: freeSpaceProvider)
+    }
+
+    /// Staging whose every generation is a ``lease()``'s, deleted once its last holder lets it go and by
+    /// nothing else. Parameters as ``init(label:root:freeSpaceProvider:)``.
+    public static func leased(label: String, root: ProcessStagingRoot) -> ClipboardFileStaging {
+        ClipboardFileStaging(label: label, root: root, retention: .untilDiscarded, freeSpaceProvider: nil)
+    }
+
+    init(
+        label: String,
+        root: ProcessStagingRoot,
+        retention: Retention,
+        freeSpaceProvider: FreeSpaceProvider?
+    ) {
         processRoot = root
+        self.retention = retention
         self.root =
             root.url
             .appendingPathComponent(label, isDirectory: true)
@@ -180,6 +219,13 @@ public final class ClipboardFileStaging: Sendable {
     /// is never offered back to it.
     public func isInStagingRoot(_ url: URL) -> Bool {
         Self.isURL(url, inside: root)
+    }
+
+    /// Whether `url` lies in `generation`'s directory.
+    func isURL(_ url: URL, inGeneration generation: UInt64) -> Bool {
+        state.withLock { state in
+            state.generationDirs.first { $0.generation == generation }.map { Self.isURL(url, inside: $0.dir) } ?? false
+        }
     }
 
     /// Whether `url` is `directory` itself or something under it.
@@ -210,14 +256,15 @@ public final class ClipboardFileStaging: Sendable {
     }
 
     /// Opens an append-only sink for a streamed file representation, creating
-    /// (or reusing) the directory for `generation` and evicting the oldest past
-    /// ``maxGenerations``.
+    /// (or reusing) the directory for `generation` and evicting what the
+    /// retention no longer keeps.
     ///
-    /// - Throws: a filesystem error if the directory or file can't be created.
+    /// - Throws: a filesystem error if the directory or file can't be created,
+    ///   or `generation` was discarded.
     public func makeSink(generation: UInt64, filename: String) throws -> Sink {
         try state.withLock { state in
             let dir = try state.directory(
-                for: generation, root: root, processRoot: processRoot)
+                for: generation, root: root, processRoot: processRoot, retention: retention)
             // One multi-file copy can carry two payloads that share a name;
             // reusing the first's path would collapse the two files into one.
             let url = NameUniquing.uniqueDestination(in: dir, filename: filename)
@@ -237,11 +284,12 @@ public final class ClipboardFileStaging: Sendable {
     /// ` 2` suffix onto it. `name` is sanitized to one path component so a
     /// crafted offer can't escape the generation directory.
     ///
-    /// - Throws: a filesystem error if the directory can't be created.
+    /// - Throws: a filesystem error if the directory can't be created, or
+    ///   `generation` was discarded.
     public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
         try state.withLock { state in
             let dir = try state.directory(
-                for: generation, root: root, processRoot: processRoot)
+                for: generation, root: root, processRoot: processRoot, retention: retention)
             let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
             let url = parent.appendingPathComponent(
                 NameUniquing.sanitizedComponent(name), isDirectory: true)
@@ -254,25 +302,36 @@ public final class ClipboardFileStaging: Sendable {
     /// caller that materializes files it does not name — a window drop whose
     /// promised files arrive with the source app's own names.
     ///
-    /// - Throws: a filesystem error if the directory can't be created.
+    /// - Throws: a filesystem error if the directory can't be created, or
+    ///   `generation` was discarded.
     public func reserveScratchDirectory(generation: UInt64) throws -> URL {
         try state.withLock { state in
             let directory = try state.directory(
-                for: generation, root: root, processRoot: processRoot)
+                for: generation, root: root, processRoot: processRoot, retention: retention)
             let url = directory.appendingPathComponent(UUID().uuidString, isDirectory: true)
             try processRoot.createDirectory(at: url)
             return url
         }
     }
 
-    /// Removes this instance's entire staging root — every live generation at
-    /// once.
+    /// A generation of its own, deleted once the lease is let go: staging owned by whatever holds the lease.
+    /// Only ``leased(label:root:)`` staging gives one.
+    public func lease() -> ClipboardStagingLease {
+        assert(retention == .untilDiscarded, "a lease of staging that deletes generations by retention")
+        let generation = state.withLock { state in
+            defer { state.nextLease += 1 }
+            return state.nextLease
+        }
+        return ClipboardStagingLease(staging: self, generation: generation)
+    }
+
+    /// Removes every live generation of this instance's staging at once.
     ///
     /// A previous instance's root is out of reach by construction;
     /// `reclaimSiblingRoots` reclaims those.
     public func sweep() {
         state.withLock { state in
-            Self.discard(root)
+            for generation in state.generationDirs { processRoot.remove(generation.dir) }
             state.generationDirs.removeAll()
         }
     }
@@ -280,13 +339,15 @@ public final class ClipboardFileStaging: Sendable {
     /// Removes the directory for `generation`, once the caller knows nothing
     /// can still read from it.
     ///
-    /// This retires a generation early; one already evicted is a no-op.
+    /// Under ``Retention/newest(_:)`` this retires a generation early, and one
+    /// already evicted is a no-op; under ``Retention/untilDiscarded`` it is the
+    /// only deletion, and the generation is never created again.
     public func discardGeneration(_ generation: UInt64) {
         state.withLock { state in
+            if retention == .untilDiscarded { state.discarded.insert(generation) }
             guard let index = state.generationDirs.firstIndex(where: { $0.generation == generation })
             else { return }
-            let dir = state.generationDirs.remove(at: index).dir
-            Self.discard(dir)
+            processRoot.remove(state.generationDirs.remove(at: index).dir)
         }
     }
 
@@ -306,28 +367,12 @@ public final class ClipboardFileStaging: Sendable {
                     at: labelDir, includingPropertiesForKeys: nil)
             else { return }
             for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
-                Self.discard(sibling)
+                processRoot.remove(sibling)
             }
         }
     }
 
     // MARK: - Private
-
-    /// Removes staged content outright, whatever its depth or modes.
-    ///
-    /// Nothing is left to notice the failure but the log: every caller is
-    /// already giving the content up. What is already gone is not a failure.
-    fileprivate static func discard(_ url: URL) {
-        do {
-            try StagedItemRemoval.remove(at: url)
-        } catch Errno.noSuchFileOrDirectory {
-            // Already gone.
-        } catch {
-            logger.log(
-                .error,
-                "Could not remove staged clipboard content: \(String(describing: error), privacy: .public)")
-        }
-    }
 
     /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`
     /// (Apple's documented key for user-initiated/important writes, vs. the
@@ -346,5 +391,32 @@ public final class ClipboardFileStaging: Sendable {
             let capacity = values.volumeAvailableCapacityForImportantUsage
         else { return nil }
         return capacity
+    }
+}
+
+/// One generation of ``ClipboardFileStaging/leased(label:root:)`` staging, which lives as long as this lease:
+/// its directory is deleted when the last holder lets the lease go.
+public final class ClipboardStagingLease: Sendable {
+    private let staging: ClipboardFileStaging
+    private let generation: UInt64
+
+    init(staging: ClipboardFileStaging, generation: UInt64) {
+        self.staging = staging
+        self.generation = generation
+    }
+
+    /// A fresh empty directory in the lease's generation, for a caller that materializes files it does not
+    /// name.
+    public func reserveScratchDirectory() throws -> URL {
+        try staging.reserveScratchDirectory(generation: generation)
+    }
+
+    /// Whether `url` lies in this lease's generation.
+    public func holds(_ url: URL) -> Bool {
+        staging.isURL(url, inGeneration: generation)
+    }
+
+    deinit {
+        staging.discardGeneration(generation)
     }
 }

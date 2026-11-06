@@ -885,29 +885,20 @@ extension SidebarViewController {
         if canStop {
             let stop = item(stopAction.menuTitle, #selector(menuStop(_:)), instance)
             stop.isEnabled = capabilities.isAvailable(.stop, on: instance)
-            menu.addItem(stop)
-            // An Option-alternate of "Stop". No zero-height anchor is needed: when
-            // a graceful stop is offered, a Pause or Resume item always precedes
-            // "Stop", so the pair is never at index 0 and the menu can't shift on
-            // ⌥-press.
-            let forceStop = item("Force Stop…", #selector(menuForceStop(_:)), instance)
-            forceStop.isEnabled = capabilities.isAvailable(.forceStop, on: instance)
-            if !preferences.alwaysShowAdvancedOptions {
-                stop.keyEquivalentModifierMask = []
-                forceStop.keyEquivalentModifierMask = [.option]
-                forceStop.isAlternate = true
-            }
-            menu.addItem(forceStop)
-        }
-        if capabilities.isApplicable(.shutDownAnyway, to: instance) {
-            let anyway = item("Shut Down Anyway…", #selector(menuShutDownAnyway(_:)), instance)
-            anyway.isEnabled = capabilities.isAvailable(.shutDownAnyway, on: instance)
-            menu.addItem(anyway)
+            // No zero-height anchor is needed for the Force Stop… pair: when a
+            // graceful stop is offered, a Pause or Resume item always precedes
+            // "Stop", so the pair is never at index 0 and the menu can't shift
+            // on ⌥-press.
+            addPowerRow(
+                stop, anyway: ("Stop Anyway…", #selector(menuStopAnyway(_:))),
+                force: ("Force Stop…", #selector(menuForceStop(_:))), for: instance, to: menu)
         }
         if capabilities.isApplicable(.restart, to: instance) {
             let restart = item("Restart", #selector(menuRestart(_:)), instance)
             restart.isEnabled = capabilities.isAvailable(.restart, on: instance)
-            menu.addItem(restart)
+            addPowerRow(
+                restart, anyway: ("Restart Anyway…", #selector(menuRestartAnyway(_:))),
+                force: ("Force Restart…", #selector(menuForceRestart(_:))), for: instance, to: menu)
         }
         if discardsSavedState {
             // Listed whatever its state, disabled when there is nothing behind
@@ -1035,6 +1026,39 @@ extension SidebarViewController {
         return menuItem
     }
 
+    /// Adds one power verb's row: `primary`, its Anyway form where the guest's
+    /// agents offer it (``VMCapability/stopAnyway``), and its Force form
+    /// (``VMCapability/forceStop``).
+    ///
+    /// The Force form is `primary`'s Option alternate, so it follows `primary`
+    /// directly, as AppKit pairs an alternate only with the item before it;
+    /// with "Always show advanced options" on, the three are plain items in
+    /// the menu bar's order.
+    private func addPowerRow(
+        _ primary: NSMenuItem, anyway: (title: String, action: Selector),
+        force: (title: String, action: Selector), for instance: VMInstance, to menu: NSMenu
+    ) {
+        let capabilities = viewModel.capabilities
+        menu.addItem(primary)
+        let forceItem = item(force.title, force.action, instance)
+        forceItem.isEnabled = capabilities.isAvailable(.forceStop, on: instance)
+        let advanced = preferences.alwaysShowAdvancedOptions
+        if !advanced {
+            // Keyless Option-reveal: the primary's mask is cleared to [] (its
+            // default is [.command]) so AppKit collapses the pair into one row.
+            primary.keyEquivalentModifierMask = []
+            forceItem.keyEquivalentModifierMask = [.option]
+            forceItem.isAlternate = true
+            menu.addItem(forceItem)
+        }
+        if capabilities.isApplicable(.stopAnyway, to: instance) {
+            let anywayItem = item(anyway.title, anyway.action, instance)
+            anywayItem.isEnabled = capabilities.isAvailable(.stopAnyway, on: instance)
+            menu.addItem(anywayItem)
+        }
+        if advanced { menu.addItem(forceItem) }
+    }
+
     /// A menu item dispatched down the responder chain (target `nil`) so the
     /// app delegate handles it — used for the display pop-out/fullscreen toggles.
     ///
@@ -1088,9 +1112,19 @@ extension SidebarViewController {
         viewModel.requestForceStop(instance)
     }
 
-    @objc private func menuShutDownAnyway(_ sender: NSMenuItem) {
+    @objc private func menuStopAnyway(_ sender: NSMenuItem) {
         guard let instance = sender.representedObject as? VMInstance else { return }
-        Task { await viewModel.shutDownAnyway(instance) }
+        Task { await viewModel.stopAnyway(instance) }
+    }
+
+    @objc private func menuRestartAnyway(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        Task { await viewModel.restartAnyway(instance) }
+    }
+
+    @objc private func menuForceRestart(_ sender: NSMenuItem) {
+        guard let instance = sender.representedObject as? VMInstance else { return }
+        Task { await viewModel.forceRestart(instance) }
     }
 
     @objc private func menuSuspend(_ sender: NSMenuItem) {

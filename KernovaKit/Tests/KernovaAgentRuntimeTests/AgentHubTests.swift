@@ -440,14 +440,14 @@ struct AgentHubTests {
         system.start()
         var sessionPolicies = sessionEvents.waiter()
         var systemPolicies = systemEvents.waiter()
-        _ = await sessionPolicies.next { $0 == .policyReceived }
-        _ = await systemPolicies.next { $0 == .policyReceived }
+        _ = await sessionPolicies.next { $0.isPolicyReceived }
+        _ = await systemPolicies.next { $0.isPolicyReceived }
         let before = await harness.snapshot { $0.peers.count == 2 }
         #expect(before.features[.logs] == .absent(.disabledByPolicy, debugDetail: ""))
 
         harness.hub.setPolicy(Fixture.logsEnabled)
-        _ = await sessionPolicies.next { $0 == .policyReceived }
-        _ = await systemPolicies.next { $0 == .policyReceived }
+        _ = await sessionPolicies.next { $0 == .policyReceived(Fixture.logsEnabled) }
+        _ = await systemPolicies.next { $0 == .policyReceived(Fixture.logsEnabled) }
         _ = await harness.snapshot { $0.peers.count == 2 && $0.features[.logs].isAvailable }
         for connection in [1, 2] {
             #expect(
@@ -625,20 +625,20 @@ struct AgentHubTests {
         append("buffered before any policy")
         let session = harness.runtime(registry: PeerFeatureRegistry(logs: logs), events: events)
         session.start()
-        _ = await policies.next { $0 == .policyReceived }
+        _ = await policies.next { $0.isPolicyReceived }
         append("appended while off")
 
         harness.hub.setPolicy(Fixture.logsEnabled)
-        _ = await policies.next { $0 == .policyReceived }
+        _ = await policies.next { $0 == .policyReceived(Fixture.logsEnabled) }
         append("appended while on")
         var guestLogs = harness.guestLogs.waiter()
         _ = await guestLogs.next { $0.segments.contains { $0.text == "appended while on" } }
 
         harness.hub.setPolicy(PolicySnapshot())
-        _ = await policies.next { $0 == .policyReceived }
+        _ = await policies.next { $0 == .policyReceived(PolicySnapshot()) }
         append("appended while off again")
         harness.hub.setPolicy(Fixture.logsEnabled)
-        _ = await policies.next { $0 == .policyReceived }
+        _ = await policies.next { $0 == .policyReceived(Fixture.logsEnabled) }
         append("appended while on again")
         _ = await guestLogs.next { $0.segments.contains { $0.text == "appended while on again" } }
 

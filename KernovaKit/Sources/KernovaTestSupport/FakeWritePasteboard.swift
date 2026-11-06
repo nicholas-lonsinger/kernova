@@ -14,11 +14,14 @@ import KernovaSynchronization
 /// until the lazy pull behind the promise resolves, so it runs off the test's
 /// main actor while the setup and assertions run on it.
 public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
-    /// One promised pasteboard item: the types it offers and the provider
-    /// serving them.
+    /// One written pasteboard item: the data written now, the types it
+    /// promises and the provider serving them.
     private struct PromisedItem: Sendable {
+        let data: [NSPasteboard.PasteboardType: Data]
         let types: [NSPasteboard.PasteboardType]
-        let provider: any NSPasteboardItemDataProvider & Sendable
+        var provider: (any NSPasteboardItemDataProvider & Sendable)?
+        /// What a fired provider set, which the item holds as data from then on.
+        var provided: [NSPasteboard.PasteboardType: Data] = [:]
     }
 
     private struct State: Sendable {
@@ -29,12 +32,14 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         var items: [PromisedItem] = []
         var writeFailuresRemaining = 0
         var providerInvocations = 0
+        /// Providers another process's write displaced, whose finish waits for this process's next use.
+        var owedFinishes: [any NSPasteboardItemDataProvider & Sendable] = []
 
         /// Drops what is on the pasteboard, handing back the providers that
         /// were serving it.
         mutating func takeItems() -> [any NSPasteboardItemDataProvider & Sendable] {
             defer { items.removeAll() }
-            return items.map(\.provider)
+            return items.compactMap(\.provider)
         }
     }
 
@@ -52,7 +57,10 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Monotonic change count, bumped by every prepare and every clear exactly
     /// as `NSPasteboard`'s is — and by no write, since `writeObjects` moves it
     /// no further than the `prepareForNewContents` before it already did.
-    public var changeCount: Int { state.withLock { $0.changeCount } }
+    public var changeCount: Int {
+        deliverOwedFinishes()
+        return state.withLock { $0.changeCount }
+    }
 
     /// How many times `prepareForNewContents(with:)` has run.
     public var prepareCount: Int { state.withLock { $0.prepareCount } }
@@ -80,6 +88,11 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         state.withLock { $0.items.map(\.types) }
     }
 
+    /// The data each item was written with, in item order.
+    public var dataByItem: [[NSPasteboard.PasteboardType: Data]] {
+        state.withLock { $0.items.map(\.data) }
+    }
+
     /// How many promised items the last successful write registered.
     public var promisedItemCount: Int { state.withLock { $0.items.count } }
 
@@ -94,6 +107,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Clears the recorded state, noting the options this write was marked with.
     @discardableResult
     public func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
+        deliverOwedFinishes()
         let (count, displaced) = state.withLock { state in
             let displaced = state.takeItems()
             state.prepareCount += 1
@@ -108,11 +122,8 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
 
     /// Records one promise per entry, unless a failure was armed.
     @discardableResult
-    public func writeItems(
-        _ entries: [(
-            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-        )]
-    ) -> Bool {
+    public func writeItems(_ entries: [ClipboardWriteItem]) -> Bool {
+        deliverOwedFinishes()
         let (written, displaced) = state.withLock {
             state -> (Bool, [any NSPasteboardItemDataProvider & Sendable]) in
             state.writeAttempts += 1
@@ -121,7 +132,11 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
                 return (false, [])
             }
             let displaced = state.takeItems()
-            state.items = entries.map { PromisedItem(types: $0.types, provider: $0.provider) }
+            state.items = entries.map { entry in
+                PromisedItem(
+                    data: Dictionary(entry.data.map { ($0.type, $0.bytes) }, uniquingKeysWith: { first, _ in first }),
+                    types: entry.promised, provider: entry.provider)
+            }
             return (true, displaced)
         }
         finish(displaced)
@@ -132,6 +147,7 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// Empties the pasteboard, bumping the change count as a real one does.
     @discardableResult
     public func clearContents() -> Int {
+        deliverOwedFinishes()
         let (count, displaced) = state.withLock { state in
             let displaced = state.takeItems()
             state.changeCount += 1
@@ -140,6 +156,25 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         finish(displaced)
         changed.notify()
         return count
+    }
+
+    /// Another process writes: the change count moves and what stood is gone, but the providers it displaced
+    /// are told they are finished only at this process's next use of the pasteboard — any call here but this
+    /// one — as AppKit does (docs/research/2026-11-04-pasteboard-replacement-finish-waits-for-next-use.md).
+    public func replaceFromAnotherProcess() {
+        state.withLock { state in
+            state.owedFinishes += state.takeItems()
+            state.changeCount += 1
+        }
+        changed.notify()
+    }
+
+    private func deliverOwedFinishes() {
+        let owed = state.withLock { state in
+            defer { state.owedFinishes = [] }
+            return state.owedFinishes
+        }
+        finish(owed)
     }
 
     /// Tells each displaced provider the pasteboard is done with it, as a real
@@ -157,35 +192,60 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         }
     }
 
+    /// Models AppKit once a reader has had every type item `itemIndex`'s provider promised, the write still
+    /// standing: it tells the provider it is finished and lets go of it, the item keeping what was provided
+    /// (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md). The change count does not move.
+    public func finishProvider(itemIndex: Int) {
+        let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
+            guard state.items.indices.contains(itemIndex) else { return nil }
+            defer { state.items[itemIndex].provider = nil }
+            return state.items[itemIndex].provider
+        }
+        provider?.pasteboardFinishedWithDataProvider?(NSPasteboard(name: .init("app.kernova.fake-write")))
+    }
+
     // MARK: - Firing a promise
 
     /// Fires a promised item's provider the way the OS does, synchronously.
     ///
     /// Builds a fresh `NSPasteboardItem`, runs the recorded provider's
     /// `pasteboard(_:item:provideDataForType:)`, and returns what it set — or
-    /// `nil` when it declined. `itemIndex` targets one item, needed when several
+    /// `nil` when it declined. What it set the item holds as data from then on,
+    /// while the write stands. `itemIndex` targets one item, needed when several
     /// promise the same type (`.fileURL` across a multi-file offer); `nil` takes
     /// the first offering it. **This blocks until the pull behind the promise
     /// resolves**, so call it off the test's main actor.
     public func invokeProvider(
         forType type: NSPasteboard.PasteboardType, itemIndex: Int?
     ) -> Data? {
-        let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
-            let provider: (any NSPasteboardItemDataProvider & Sendable)?
-            if let itemIndex {
-                let item = state.items.indices.contains(itemIndex) ? state.items[itemIndex] : nil
-                provider = item.flatMap { $0.types.contains(type) ? $0.provider : nil }
-            } else {
-                provider = state.items.first { $0.types.contains(type) }?.provider
-            }
-            if provider != nil { state.providerInvocations += 1 }
-            return provider
+        deliverOwedFinishes()
+        let fired = state.withLock {
+            state -> (index: Int, provider: any NSPasteboardItemDataProvider & Sendable, changeCount: Int)? in
+            let index =
+                itemIndex.flatMap { state.items.indices.contains($0) ? $0 : nil }
+                ?? state.items.firstIndex { $0.types.contains(type) && $0.provider != nil }
+            guard let index, state.items[index].types.contains(type), let provider = state.items[index].provider
+            else { return nil }
+            state.providerInvocations += 1
+            return (index, provider, state.changeCount)
         }
-        guard let provider else { return nil }
+        guard let fired else { return nil }
         let item = NSPasteboardItem()
-        provider.pasteboard(nil, item: item, provideDataForType: type)
+        fired.provider.pasteboard(nil, item: item, provideDataForType: type)
         guard let bytes = item.data(forType: type) else { return nil }
+        state.withLock { state in
+            guard state.changeCount == fired.changeCount, state.items.indices.contains(fired.index) else { return }
+            state.items[fired.index].provided[type] = bytes
+        }
         changed.notify()
         return bytes
+    }
+
+    /// The bytes item `index` holds as `type`: written as data, or set by a fired provider.
+    public func data(forType type: NSPasteboard.PasteboardType, itemAt index: Int) -> Data? {
+        state.withLock { state in
+            guard state.items.indices.contains(index) else { return nil }
+            return state.items[index].data[type] ?? state.items[index].provided[type]
+        }
     }
 }

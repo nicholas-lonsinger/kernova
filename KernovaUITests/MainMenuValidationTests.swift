@@ -145,51 +145,71 @@ struct MainMenuValidationTests {
         #expect(fixture.validate(restart) == isEnabled, "\(phase)")
     }
 
-    @Test("The Virtual Machine menu lists Shut Down Anyway… just before Force Stop…, always")
-    func shutDownAnywayIsListedBeforeForceStop() throws {
+    @Test("The Virtual Machine menu lists the six power commands in grid order, none of them an Option alternate")
+    func powerCommandsAreSixPlainItems() throws {
         let fixture = makeFixture()
         let vmMenu = try #require(
             submenu(titled: "Virtual Machine", in: fixture.controller.makeMainMenu()))
-        let actions = vmMenu.items.map(\.action)
-        let anyway = try #require(actions.firstIndex(of: #selector(AppDelegate.shutDownAnywayVM(_:))))
-        let forceStop = try #require(actions.firstIndex(of: #selector(AppDelegate.forceStopVM(_:))))
+        let stop = try #require(vmMenu.items.firstIndex { $0.action == #selector(AppDelegate.stopVM(_:)) })
+        let power = Array(vmMenu.items[stop...].prefix(6))
 
-        #expect(anyway == forceStop - 1)
-        #expect(vmMenu.items[anyway].title == "Shut Down Anyway…")
-        #expect(!vmMenu.items[anyway].isHidden)
+        #expect(
+            power.map(\.title) == [
+                "Stop", "Stop Anyway…", "Force Stop…", "Restart", "Restart Anyway…", "Force Restart…",
+            ])
+        #expect(
+            power.map(\.action) == [
+                #selector(AppDelegate.stopVM(_:)), #selector(AppDelegate.stopAnywayVM(_:)),
+                #selector(AppDelegate.forceStopVM(_:)), #selector(AppDelegate.restartVM(_:)),
+                #selector(AppDelegate.restartAnywayVM(_:)), #selector(AppDelegate.forceRestartVM(_:)),
+            ])
+        for item in power {
+            #expect(!item.isAlternate, "\(item.title)")
+            #expect(!item.isHidden, "\(item.title)")
+            #expect(item.keyEquivalent.isEmpty, "\(item.title)")
+        }
+        #expect(vmMenu.items.filter(\.isAlternate).allSatisfy { item in !power.contains(item) })
     }
 
     @Test(
-        "Shut Down Anyway… is enabled only on a running VM whose agents offer it",
+        "Stop Anyway… and Restart Anyway… are enabled only on a running VM whose agents offer it",
         arguments: [
             (PhaseFixture.settled(.running(sessionID: UUID())), true, true),
             (.settled(.running(sessionID: UUID())), false, false),
             (.settled(.livePaused(sessionID: UUID())), true, false),
             (.settled(.stopped), true, false),
         ])
-    func shutDownAnywayValidation(phase: PhaseFixture, offered: Bool, isEnabled: Bool) {
+    func anywayValidation(phase: PhaseFixture, offered: Bool, isEnabled: Bool) {
         let fixture = makeFixture()
         let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
         instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: offered))
-        let item = makeMenuItem(#selector(AppDelegate.shutDownAnywayVM(_:)))
-
-        #expect(fixture.validate(item) == isEnabled, "\(phase), offered \(offered)")
-        #expect(!item.isHidden)
+            AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]),
+                powerIgnoringApps: offered ? .agent(.systemPeer) : .absent(.noAgent)))
+        for action in [#selector(AppDelegate.stopAnywayVM(_:)), #selector(AppDelegate.restartAnywayVM(_:))] {
+            let item = makeMenuItem(action)
+            #expect(fixture.validate(item) == isEnabled, "\(action), \(phase), offered \(offered)")
+            #expect(!item.isHidden)
+        }
     }
 
-    @Test("The Virtual Machine menu lists Restart after Force Stop")
-    func restartIsListedInTheVirtualMachineMenu() throws {
+    @Test(
+        "Force Restart… is enabled exactly where Force Stop… is",
+        arguments: [
+            PhaseFixture.settled(.running(sessionID: UUID())),
+            .settled(.livePaused(sessionID: UUID())),
+            .settled(.stopped),
+            .settled(.suspended),
+            .operating(.forceStopping, from: .running(sessionID: UUID())),
+        ])
+    func forceRestartValidationFollowsForceStop(phase: PhaseFixture) throws {
         let fixture = makeFixture()
-        let vmMenu = try #require(
-            submenu(titled: "Virtual Machine", in: fixture.controller.makeMainMenu()))
-        let actions = vmMenu.items.map(\.action)
-        let forceStop = try #require(actions.firstIndex(of: #selector(AppDelegate.forceStopVM(_:))))
-        let restart = try #require(actions.firstIndex(of: #selector(AppDelegate.restartVM(_:))))
+        let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
+        if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: instance) }
+        let forceStop = makeMenuItem(#selector(AppDelegate.forceStopVM(_:)))
+        let forceRestart = makeMenuItem(#selector(AppDelegate.forceRestartVM(_:)))
 
-        #expect(restart == forceStop + 1)
-        #expect(vmMenu.items[restart].title == "Restart")
-        #expect(vmMenu.items[restart].keyEquivalent.isEmpty)
+        #expect(fixture.validate(forceRestart) == fixture.validate(forceStop), "\(phase)")
     }
 
     @Test("A build with no bundled guest-agent disk withholds the command")
@@ -420,5 +440,66 @@ struct MainMenuValidationTests {
             .filter { $0.action != nil && $0.submenu == nil }
             .filter { MainMenuController.capability(for: $0.action) == nil }
         #expect(ungated.isEmpty, "Ungated: \(ungated.map(\.title))")
+    }
+
+    // MARK: - The clipboard commands
+
+    /// Has a console peer carry `instance`'s clipboard through its hub.
+    private func carryClipboard(on instance: VMInstance) {
+        let peer = PeerHandle(rawValue: 1)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), consolePeers: [.clipboard: peer]))
+        instance.hubClipboard.setConsolePeer(peer)
+    }
+
+    @Test(
+        "A clipboard command is enabled only while an agent carries the clipboard and passthrough is off",
+        arguments: [
+            #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)),
+        ])
+    func clipboardCommandEnablement(action: Selector) {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
+        let item = makeMenuItem(action)
+        #expect(!fixture.validate(item))
+
+        carryClipboard(on: instance)
+        #expect(fixture.validate(item))
+
+        fixture.viewModel.library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
+        #expect(!fixture.validate(item))
+    }
+
+    @Test("The passthrough item is checked while passthrough is on, and enabled while sharing is")
+    func passthroughItemFollowsTheSetting() {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
+        let item = makeMenuItem(#selector(AppDelegate.toggleClipboardPassthrough(_:)))
+        #expect(fixture.validate(item))
+        #expect(item.state == .off)
+
+        fixture.viewModel.library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
+        #expect(fixture.validate(item))
+        #expect(item.state == .on)
+
+        // Turning it on rides on sharing, so with sharing off only turning it off is left.
+        fixture.viewModel.library.editConfiguration(of: instance) {
+            $0.clipboardSharingEnabled = false
+            $0.clipboardPassthroughEnabled = false
+        }
+        #expect(!fixture.validate(item))
+    }
+
+    @Test("The passthrough item is unchecked and disabled with no VM to act on")
+    func passthroughItemWithoutSelection() {
+        let fixture = makeFixture()
+        let item = makeMenuItem(#selector(AppDelegate.toggleClipboardPassthrough(_:)))
+        item.state = .on
+        #expect(!fixture.validate(item))
+        #expect(item.state == .off)
     }
 }

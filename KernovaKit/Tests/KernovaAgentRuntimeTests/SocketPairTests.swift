@@ -254,7 +254,7 @@ extension SocketTests {
         func supersededAfterWriteErrorStops() async throws {
             let pair = try SocketPair(peerSendBuffer: 4_096, offersUpdate: false)
             var peer = pair.peerEvents.waiter()
-            _ = await peer.next { $0 == .policyReceived }
+            _ = await peer.next { $0.isPolicyReceived }
 
             pair.hostStream.gate()
             var writes = pair.peerStream.writes.waiterFromNow()

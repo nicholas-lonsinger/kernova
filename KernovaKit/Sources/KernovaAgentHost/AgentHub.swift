@@ -249,7 +249,8 @@ public final class AgentHub: Sendable {
             }
             let id = state.power.drawID(entry.connection.generation)
             state.power.requests[id] = handle
-            state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
+            state.power.progress = PowerRoutingProgress(
+                action: action, ignoringApps: ignoringApps, role: record.claim.role, stage: .asking)
             return (entry.connection, id, record)
         }
         logger.log(
@@ -319,15 +320,21 @@ public final class AgentHub: Sendable {
         }
     }
 
-    /// Withdraws the offer of `token` made to `peer`; its `.offerEnded` follows.
-    public func withdrawOffer(_ token: Data, from peer: PeerHandle) {
-        queue.async { [self] in send(.withdraw(token: token), to: peer) }
+    /// Withdraws the offer of `token` made to `peer`, RESET with `code`; its `.offerEnded` follows.
+    public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled, from peer: PeerHandle) {
+        queue.async { [self] in send(.withdraw(token: token, code: code), to: peer) }
     }
 
     /// Releases `peer`'s offer of `token`: the host pulls nothing more of it. Releasing a taken drag offer
     /// completes the drag.
     public func releaseOffer(_ token: Data, of peer: PeerHandle) {
         queue.async { [self] in send(.release(token: token), to: peer) }
+    }
+
+    /// Refuses `peer`'s offer of `token` with `error`: the host pulls nothing of it, and the peer's
+    /// `.offerEnded` closes `.resetByPeer(error)`.
+    public func refuseOffer(_ token: Data, _ error: WireError, of peer: PeerHandle) {
+        queue.async { [self] in send(.refuse(token: token, error), to: peer) }
     }
 
     /// Pulls one representation of `peer`'s open offer as `order` says, and calls `completion` once with the

@@ -434,3 +434,10 @@ final class PeerDriverHarness: Sendable {
         await settle()
     }
 }
+
+extension PeerEvent {
+    /// Whether this is a `PolicyUpdate`'s arrival, whatever it carries.
+    var isPolicyReceived: Bool {
+        if case .policyReceived = self { true } else { false }
+    }
+}

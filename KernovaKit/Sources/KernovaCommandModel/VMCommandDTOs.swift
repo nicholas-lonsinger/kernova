@@ -441,7 +441,11 @@ public enum ConfirmationKind: String, Codable, Sendable, Hashable, CaseIterable 
     case forceStop
     /// Shutting a guest down without waiting for apps, which quit without
     /// being asked to save.
-    case shutDownAnyway
+    case stopAnyway
+    /// Terminating a VM immediately and starting it again.
+    case forceRestart
+    /// Shutting a guest down without waiting for apps, then starting it again.
+    case restartAnyway
     /// Deleting a VM's bundle.
     case deleteVM
     /// Trashing one snapshot's captured files.
@@ -975,8 +979,8 @@ extension CommandErrorDTO {
             "\u{201C}\(vm.name)\u{201D} did not power off within "
                 + "\(Self.deadlineText(seconds)) seconds"
                 + (verb == .restart ? ", so it was not started again. " : ". ")
-                + "A force stop terminates a guest that will not shut down, losing anything "
-                + "unsaved inside it."
+                + "A force stop terminates a guest that will not shut down, losing "
+                + "\(StopDisposition.forceLoss)."
         case .operationFailed(_, _, let message, _):
             message
         case .filesKept(let kept):
@@ -997,11 +1001,12 @@ extension CommandErrorDTO {
         case .macAddressInUse(let address, let holding, let otherHolders):
             macAddressInUseMessage(
                 address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
-        case .machineIdentity:
+        case .machineIdentity(let overrideSettingOn):
             sharedMachineIdentitySentence(
                 vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy)
                 + " Two virtual machines with the same machine ID must not run at once."
                 + (otherHeldByAnotherCopy ? "" : " Stop \u{201C}\(other)\u{201D} first.")
+                + (overrideSettingOn ? "" : " You can change this in Settings \u{25B8} Advanced.")
         case .macAddress:
             sharedMACAddressSentences(
                 vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy) + " "

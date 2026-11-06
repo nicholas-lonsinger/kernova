@@ -10,7 +10,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 17
+    public static let currentProtocolVersion = 18
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -68,9 +68,11 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         case pause(VMSelector)
         case resume(VMSelector, consent: Consent)
         case suspend(VMSelector)
+        /// `disposition` is how the guest goes down before it starts again.
         /// `timeout` bounds the shutdown half, in seconds; a guest still up
         /// when it expires is not started again.
-        case restart(VMSelector, timeout: TimeInterval?, consent: Consent)
+        case restart(
+            VMSelector, disposition: StopDisposition, timeout: TimeInterval?, consent: Consent)
         /// `action` on every VM in `group`, one after another, asking nothing:
         /// a VM whose own verb would ask a question is passed by and reported.
         case groupAction(VMGroupAction, group: VMGroupReference)

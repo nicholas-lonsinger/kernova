@@ -104,11 +104,11 @@ final class VMDisplayPlacementController {
         case .popInFromHeadless:
             // There is no window to close — just return the display slot to the
             // main window.
-            persist(.inline, for: instance)
+            viewModel.recordDisplayPreference(.inline, for: instance)
             instance.displayMode = .inline
             viewModel.libraryWindowPresenter?.focusGuestDisplay(for: instance)
         case .popOut:
-            persist(.popOut, for: instance)
+            viewModel.recordDisplayPreference(.popOut, for: instance)
             openDisplayWindow(for: instance, show: .front(fullscreen: false))
         }
     }
@@ -118,7 +118,7 @@ final class VMDisplayPlacementController {
             existing.window?.toggleFullScreen(nil)
             return
         }
-        persist(.fullscreen, for: instance)
+        viewModel.recordDisplayPreference(.fullscreen, for: instance)
         openDisplayWindow(for: instance, show: .front(fullscreen: true))
     }
 
@@ -239,18 +239,10 @@ final class VMDisplayPlacementController {
 
     // MARK: - Transition Handling
 
-    /// Persists where `instance`'s display opens, through the
-    /// `display.preference` key.
-    private func persist(_ preference: VMDisplayPreference, for instance: VMInstance) {
-        viewModel.setConfiguration(
-            [VMConfigurationKeyRegistry.displayPreference.assigning(preference.rawValue)],
-            on: instance)
-    }
-
     private func apply(_ placement: VMDisplayPlacement.Placement, to instance: VMInstance) {
         instance.displayMode = placement.mode
         if let preference = placement.persistPreference {
-            persist(preference, for: instance)
+            viewModel.recordDisplayPreference(preference, for: instance)
         }
     }
 
@@ -282,7 +274,7 @@ final class VMDisplayPlacementController {
                 self.viewModel.recordLastFullscreenDisplay(displayID, for: instance)
             }
             if let preference = placement.persistPreference {
-                self.persist(preference, for: instance)
+                self.viewModel.recordDisplayPreference(preference, for: instance)
             }
             let policy = self.host.map { String($0.presence.activationPolicy.rawValue) } ?? "-"
             Self.logger.log(

@@ -243,10 +243,19 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             try fileSystem.openDirectory(name, in: directory)
         }
         do throws(TreeReadFailure) {
-            let status = try opened(descriptor, listed: listed, path: path)
-            let names = try Self.system(path) { () throws(TreeFileSystemError) in
-                try fileSystem.names(in: descriptor)
+            let fileSystem = fileSystem
+            func list() throws(TreeReadFailure) -> [[UInt8]] {
+                try Self.system(path) { () throws(TreeFileSystemError) in try fileSystem.names(in: descriptor) }
             }
+            // Listing is the access that materializes a dataless directory, and that listing is the one kept: a
+            // second `names(in:)` of one descriptor lists nothing, the duplicate it reads through sharing the
+            // offset where the first stopped.
+            var listing: [[UInt8]]?
+            let status = try local(descriptor, listed: listed, path: path) { () throws(TreeReadFailure) in
+                listing = try list()
+            }
+            let names: [[UInt8]]
+            if let listing { names = listing } else { names = try list() }
             let header = try header(
                 name, depth: depth, type: .directory, status: status, attributesOf: .descriptor(descriptor),
                 path: path)
@@ -268,7 +277,15 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             try fileSystem.openFile(name, in: directory)
         }
         do throws(TreeReadFailure) {
-            let status = try opened(descriptor, listed: listed, path: path)
+            let status = try local(descriptor, listed: listed, path: path) { () throws(TreeReadFailure) in
+                // A read materializes a dataless file in place, its inode and size unchanged (observed with
+                // `read(2)` on an iCloud Drive file, macOS 27.2); `open(2)` does not.
+                let byte = UnsafeMutableRawBufferPointer.allocate(byteCount: 1, alignment: 1)
+                defer { byte.deallocate() }
+                _ = try Self.system(path) { () throws(TreeFileSystemError) in
+                    try fileSystem.read(descriptor, into: byte, at: 0)
+                }
+            }
             var header = try header(
                 name, depth: depth, type: .file, status: status, attributesOf: .descriptor(descriptor), path: path)
             let compressedStorage = try compressedStorage(of: descriptor, status: status, path: path)
@@ -323,6 +340,23 @@ public final class TreeReader<FileSystem: TreeFileSystem> {
             try fileSystem.resourceForkSize(of: descriptor, showingCompression: true)
         }
         return forkSize <= ValidatedEntry.maxResourceForkByteCount ? attribute : nil
+    }
+
+    /// The status of `descriptor`, just opened by the name its directory listed as `listed`, confirmed to be
+    /// that entry and to hold its data on the volume: the status its header describes and its read is checked
+    /// against. A dataless entry is first made local by `materialize`, an access the thread's
+    /// `DatalessMaterialization` downloads it for; no vendor documents which access does, so the entry
+    /// counts as local only once a fresh status says it is.
+    private func local(
+        _ descriptor: Int32, listed: FileStatus, path: [[UInt8]],
+        materializing materialize: () throws(TreeReadFailure) -> Void
+    ) throws(TreeReadFailure) -> FileStatus {
+        let status = try opened(descriptor, listed: listed, path: path)
+        guard status.isDataless else { return status }
+        try materialize()
+        let local = try opened(descriptor, listed: listed, path: path)
+        guard !local.isDataless else { throw TreeReadFailure(path: path, reason: .notLocal) }
+        return local
     }
 
     /// The status of `descriptor`, just opened by the name its directory listed as `listed`, confirmed to be

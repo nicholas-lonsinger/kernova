@@ -142,6 +142,17 @@ struct VMIntentGatewayTests {
         }
     }
 
+    @Test("Shortcuts names each stop method with the term the scripting dictionary and the CLI use")
+    func stopMethodsAreNamedAsEverywhereElse() throws {
+        var named: [String: StopDisposition] = [:]
+        for method in VMStopMethod.allCases {
+            let representation = try #require(VMStopMethod.caseDisplayRepresentations[method])
+            named[String(localized: representation.title)] = method.disposition
+        }
+
+        #expect(named == ["Normal": .graceful, "Anyway": .anyway, "Force": .force])
+    }
+
     // MARK: - Lookup
 
     @Test("Resolving by identifier answers only the VMs asked for")
@@ -347,7 +358,7 @@ struct VMIntentGatewayTests {
         let vm = harness.register(name: "Rebooting", phase: .running(sessionID: session))
         let gateway = makeGateway(over: harness)
 
-        let restart = Task { try await gateway.restart(vm.id, consent: .none) }
+        let restart = Task { try await gateway.restart(vm.id, disposition: .graceful, consent: .none) }
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         // The turn that sent the request is the one that arms any deadline, and
         // a deadline's sleep is queued behind it.
@@ -500,7 +511,7 @@ struct VMIntentGatewayTests {
         #expect(vm.status == .stopped)
     }
 
-    /// A running VM's force stop carries the gentler "Shut Down" alternative
+    /// A running VM's force stop carries the gentler "Stop" alternative
     /// (`VMCommandCore.forceStopPrompt`), so it is the shape that proves the
     /// retry is not gated on a prompt having no alternatives — keying on that
     /// would leave Force Stop permanently unreachable for a hung guest.
@@ -517,7 +528,7 @@ struct VMIntentGatewayTests {
         }
 
         #expect(asked.map(\.kind) == [.forceStop])
-        #expect(asked.first?.alternatives == [ConfirmationAlternative(title: "Shut Down", disposition: .graceful)])
+        #expect(asked.first?.alternatives == [ConfirmationAlternative(title: "Stop", disposition: .graceful)])
         // Forced both times: the alternative is never taken in its place.
         #expect(virtualization.forceStopCallCount == 1)
         #expect(virtualization.stopCallCount == 0)

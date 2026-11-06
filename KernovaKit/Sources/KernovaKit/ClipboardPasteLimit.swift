@@ -56,7 +56,7 @@ public enum ClipboardPasteLimit {
         return nearest
     }
 
-    /// The ceiling a received `PolicyUpdate.clipboard_max_paste_bytes` selects.
+    /// The ceiling a received `ClipboardPolicy.max_paste_bytes` selects.
     ///
     /// `0` is the field's unset value, not a real ceiling of zero — reading it
     /// literally would refuse every paste. A host that sends nothing leaves the

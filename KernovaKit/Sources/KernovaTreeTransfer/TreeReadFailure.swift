@@ -19,6 +19,9 @@ public struct TreeReadFailure: Error, Equatable, Sendable {
         case changed
         /// A directory the reader was inside was moved.
         case moved
+        /// The entry's data is not on the volume — it is dataless, evicted by a File Provider such as iCloud
+        /// Drive — and the access that downloads it left it so.
+        case notLocal
         /// The container format cannot carry the entry.
         case notCarried(NotCarried)
         /// The files total more than the pull's byte ceiling.
@@ -69,11 +72,26 @@ public struct TreeReadFailure: Error, Equatable, Sendable {
         case .system(let failure):
             error.code = .readFailed
             item.posixErrno = failure.code
-        case .changed, .moved, .notCarried:
+        case .changed, .moved, .notLocal, .notCarried:
             error.code = .readFailed
         }
         error.posixErrno = item.posixErrno
         error.item = item
+        error.debugDetail = reason.description
         return error
+    }
+}
+
+extension TreeReadFailure.Reason: CustomStringConvertible {
+    /// The reason in words, for a log; it names no entry.
+    public var description: String {
+        switch self {
+        case .system(let failure): "a file-system call failed, errno \(failure.code)"
+        case .changed: "it changed while it was read"
+        case .moved: "a folder the read was inside was moved"
+        case .notLocal: "its data is not on this volume, and reading it did not download it"
+        case .notCarried(let what): "the container format cannot carry it: \(what)"
+        case .exceedsByteCeiling(let ceiling): "the files total more than the pull's \(ceiling)-byte ceiling"
+        }
     }
 }

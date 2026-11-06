@@ -177,21 +177,24 @@ struct AgentHubState: Sendable {
         return AgentHubSnapshot(
             peers: ordered.map(summary), features: features,
             away: away.filter { !visible.contains($0.key) }.values.sorted { $0.order > $1.order },
-            power: provision(features: features),
-            shutsDownIgnoringApps: !PowerRouting.candidates(
-                for: .shutdown, ignoringApps: true, peers: routingPeers, excluding: []
-            ).isEmpty,
+            power: provision(ignoringApps: false, features: features),
+            powerIgnoringApps: provision(ignoringApps: true, features: features),
             routing: power.progress, consolePeers: consolePeers)
     }
 
-    /// The merged POWER entry: the first candidate a shutdown would ask, else why there is none.
-    private func provision(features: FeatureStatusTable) -> PowerProvision {
-        if let first = PowerRouting.candidates(for: .shutdown, peers: routingPeers, excluding: []).first,
-            let role = connections[first]?.peer?.claim.role
+    /// The merged POWER entry for a shutdown, without waiting for apps when `ignoringApps`: the first candidate
+    /// it would ask, else why there is none — POWER's merged absence; then, with POWER offered, `NOT_ON_CONSOLE`
+    /// for the graceful one, and for the one ignoring apps `NO_AGENT` when no peer offers it at all.
+    private func provision(ignoringApps: Bool, features: FeatureStatusTable) -> PowerProvision {
+        let peers = routingPeers
+        if let first = PowerRouting.candidates(for: .shutdown, ignoringApps: ignoringApps, peers: peers, excluding: [])
+            .first, let role = connections[first]?.peer?.claim.role
         {
             return .agent(role)
         }
-        return .absent(Self.absence(of: .power, in: features))
+        let absence = Self.absence(of: .power, in: features)
+        guard ignoringApps, absence == .notOnConsole else { return .absent(absence) }
+        return .absent(peers.contains { $0.offers(.shutdown, ignoringApps: true) } ? .unspecified : .noAgent)
     }
 
     /// Why no console peer serves `feature`: the merged absence, or `NOT_ON_CONSOLE` for a feature some peer

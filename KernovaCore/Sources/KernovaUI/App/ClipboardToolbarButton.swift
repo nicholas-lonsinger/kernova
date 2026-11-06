@@ -1,6 +1,6 @@
 import Cocoa
 
-/// The clipboard toolbar item's view: a standard `.toolbar`-bezel button with a
+/// A clipboard command's toolbar view: a standard `.toolbar`-bezel button with a
 /// transfer-progress bar overlaid as a subview across the bottom of the platter
 /// circle, on the construction of Safari's downloads button.
 final class ClipboardToolbarButton: NSButton {
@@ -20,9 +20,9 @@ final class ClipboardToolbarButton: NSButton {
         }
     }
 
-    init() {
+    init(symbol: String, accessibilityDescription: String) {
         super.init(frame: .zero)
-        image = .systemSymbol("doc.on.clipboard", accessibilityDescription: "Clipboard")
+        image = .systemSymbol(symbol, accessibilityDescription: accessibilityDescription)
         bezelStyle = .toolbar
         isBordered = true
         translatesAutoresizingMaskIntoConstraints = false

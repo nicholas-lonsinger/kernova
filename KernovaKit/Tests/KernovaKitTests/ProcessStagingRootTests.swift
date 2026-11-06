@@ -18,6 +18,13 @@ struct ProcessStagingRootTests {
         return file
     }
 
+    @Test("claiming a root excludes the staging parent, and so everything staged under it, from backups")
+    func parentExcludedFromBackups() throws {
+        _ = try stageFile(in: staging.root)
+        let parent = staging.root.url.deletingLastPathComponent()
+        #expect(try parent.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+    }
+
     @Test("a staging root whose lock is held survives reclaim")
     func heldRootSurvivesReclaim() throws {
         let otherProcess = staging.makeSibling()

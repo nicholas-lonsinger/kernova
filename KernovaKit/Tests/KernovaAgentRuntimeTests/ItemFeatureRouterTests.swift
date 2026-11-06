@@ -11,6 +11,7 @@ import KernovaAgentRuntime
 import KernovaAgentSimulation
 import KernovaFileTree
 import KernovaItemTransfer
+import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
 import Testing
@@ -22,22 +23,25 @@ private enum Heard: Sendable, Equatable {
     case items(FeatureID, ItemTransferEvent)
     case take(DragTakeEvent)
     case content(FeatureID, token: Data)
+    case policy(FeatureID, PolicySnapshot)
 }
 
 /// A router whose owners — of `features` — record into `heard`, each serving `content` when pulled.
 private func router<Peer: Sendable>(
     _ features: Set<FeatureID> = ItemFeatureAvailability.offering, heard: Recorder<Heard>,
-    content: ItemContent = .inline(Data("routed".utf8)), takes: @escaping @Sendable (DragTakeEvent) -> Void = { _ in }
+    content: ItemContent = .inline(Data("routed".utf8)), takes: @escaping @Sendable (DragTakeEvent) -> Void = { _ in },
+    logger: KernovaLogger = Fixture.logger
 ) -> ItemFeatureRouter<Peer> {
     func owner(_ feature: FeatureID) -> ItemFeatureOwner<Peer>? {
         guard features.contains(feature) else { return nil }
         return ItemFeatureOwner(
             usable: { peer in heard.record(.usable(feature, on: peer.map { "\($0)" })) },
             events: { _, event in heard.record(.items(feature, event)) },
-            content: { request, _ in
+            content: { _, request, _ in
                 heard.record(.content(feature, token: request.token))
                 return .success(content)
-            })
+            },
+            policy: { heard.record(.policy(feature, $0)) })
     }
     return ItemFeatureRouter(
         clipboard: owner(.clipboard), drop: owner(.drop),
@@ -46,7 +50,7 @@ private func router<Peer: Sendable>(
                 heard.record(.take(event))
                 takes(event)
             }
-        })
+        }, logger: logger)
 }
 
 @Suite("Item feature router")
@@ -70,6 +74,40 @@ struct ItemFeatureRouterTests {
         #expect(heard.elements == events.map { .items($0.feature, $0) })
     }
 
+    @Test(
+        "Every feature's serve that did not land is logged once, at its level, before its owner hears it; a landed serve or one this side reset is not"
+    )
+    func serveEndsAreLogged() {
+        let heard = Recorder<Heard>()
+        // Each record notes how many ends the owners had heard when it was made.
+        let records = Recorder<(level: KernovaLogLevel, text: String, heard: Int)>()
+        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") { level, _, _, segments in
+            records.record((level, segments.map(\.text).joined(), heard.elements.count))
+        }
+        let router: ItemFeatureRouter<PeerHandle> = router(heard: heard, logger: logger)
+        let unread = WireError(.readFailed, posixErrno: 5, debugDetail: "the file is not local")
+        let ends: [(FeatureID, ItemServeResult)] = [
+            (.clipboard, .landed),
+            (.clipboard, .closed(.resetLocally(unread))),
+            (.clipboard, .failed(unread)),
+            (.drop, .closed(.resetByPeer(unread))),
+            (.drag, .closed(.resetByPeer(WireError(.cancelled)))),
+            (.clipboard, .closed(.connectionLost)),
+        ]
+        for (feature, result) in ends {
+            router.deliver(.serveEnded(feature, Self.pull, result), from: PeerHandle(rawValue: 1))
+        }
+
+        #expect(records.elements.map(\.level) == [.error, .error, .notice, .warning])
+        let logged: [FeatureID] = [.clipboard, .drop, .drag, .clipboard]
+        for (record, feature) in zip(records.elements, logged) {
+            #expect(record.text.contains("\(feature) pull this side served"), "\(record.text)")
+        }
+        #expect(records.elements[0].text.contains("errno 5"))
+        #expect(records.elements.map(\.heard) == [2, 3, 4, 5])
+        #expect(heard.elements == ends.map { .items($0.0, .serveEnded($0.0, Self.pull, $0.1)) })
+    }
+
     @Test("A drag take reaches DRAG's owner, interleaved in order with item events")
     func dragTakeReachesDrag() {
         let heard = Recorder<Heard>()
@@ -77,15 +115,29 @@ struct ItemFeatureRouterTests {
         let offerEnded = ItemTransferEvent.offerEnded(.drag, .local, token: SimItems.token(1), Self.closed)
         router.deliver(.dragTake(.requested(Self.take, token: SimItems.token(1))))
         router.deliver(.items(offerEnded))
-        router.deliver(.policyReceived)
+        router.deliver(.updateAvailable(nil))
         #expect(heard.elements == [.take(.requested(Self.take, token: SimItems.token(1))), .items(.drag, offerEnded)])
+    }
+
+    @Test("The host's policy reaches every owner, in order with item events")
+    func policyReachesEveryOwner() {
+        let heard = Recorder<Heard>()
+        let router: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: heard)
+        let policy = PolicySnapshot([FeaturePolicyValue(feature: .clipboard, enabled: true, params: Data([8, 1]))])
+        let offerEnded = ItemTransferEvent.offerEnded(.clipboard, .local, token: SimItems.token(1), Self.closed)
+        router.deliver(.policyReceived(policy))
+        router.deliver(.items(offerEnded))
+        #expect(
+            heard.elements == [.policy(.clipboard, policy), .policy(.drag, policy), .items(.clipboard, offerEnded)])
     }
 
     @Test("Content comes from the owner of the pulled offer's feature", arguments: [FeatureID.clipboard, .drop, .drag])
     func contentReachesOwner(_ feature: FeatureID) {
         let heard = Recorder<Heard>()
         let router: ItemFeatureRouter<PeerHandle> = router(heard: heard)
-        let result = router.content(feature, SimItems.request(3), SimItems.representation(.inline, size: 6))
+        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+        let result = router.content(
+            feature, pull, SimItems.request(3), SimItems.representation(.inline, size: 6))
         #expect(result == .success(.inline(Data("routed".utf8))))
         #expect(heard.elements == [.content(feature, token: SimItems.token(3))])
     }
@@ -95,8 +147,9 @@ struct ItemFeatureRouterTests {
         let heard = Recorder<Heard>()
         let router: ItemFeatureRouter<PeerHandle> = router([.clipboard, .drag], heard: heard)
         #expect(router.features == [.clipboard, .drag])
-        #expect(ItemFeatureRouter<PeerHandle>().features.isEmpty)
-        let content = router.content(.drop, SimItems.request(1), SimItems.representation(.inline, size: 1))
+        #expect(ItemFeatureRouter<PeerHandle>(logger: Fixture.logger).features.isEmpty)
+        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
+        let content = router.content(.drop, pull, SimItems.request(1), SimItems.representation(.inline, size: 1))
         guard case .failure(let error) = content else { Issue.record("content of an unowned feature"); return }
         #expect(error.code == .itemRepresentationUnavailable)
         #expect(heard.elements.isEmpty)
@@ -145,7 +198,9 @@ struct ItemFeatureRouterTests {
             claim: Fixture.peerClaim, state: Fixture.peerState,
             registry: PeerFeatureRegistry(
                 items: ItemAdapters(
-                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { peerRouter.content($0, $1, $2) },
+                    source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: Fixture.logger) {
+                        peerRouter.content($0, $1, $2, $3)
+                    },
                     sink: MemoryItems(), features: peerRouter.features)),
             dialer: HubDialer(harness: harness), scheduler: SystemScheduler(), logger: Fixture.logger,
             handlers: PeerAgentRuntime.Handlers(event: { peerRouter.deliver($0) }, stop: { _ in }))
@@ -162,12 +217,12 @@ struct ItemFeatureRouterTests {
         var host = hostHeard.waiter()
         _ = await host.next { if case .items(.clipboard, .offerReceived) = $0 { true } else { false } }
         let pulled = await withCheckedContinuation { continuation in
-            harness.hub.pullItem(ItemPullOrder(SimItems.request(1), landing: .inline), from: handle) {
+            harness.hub.pullItem(ItemPullOrder(SimItems.request(1), landing: DecodingItemSink.landing), from: handle) {
                 continuation.resume(returning: $0)
             }
         }
         guard case .success(let id) = pulled else { Issue.record("pulled \(pulled)"); return }
-        _ = await host.next { $0 == .items(.clipboard, .pullEnded(.clipboard, id, .landed(.inline(Data())))) }
+        _ = await host.next { $0 == .items(.clipboard, .pullEnded(.clipboard, id, .landed(.named(Data())))) }
         var served = peerHeard.waiter()
         _ = await served.next { $0 == .content(.clipboard, token: SimItems.token(1)) }
         _ = await served.next {
@@ -199,7 +254,15 @@ struct ItemFeatureRouterTests {
         let on = "\(handle)"
         // DROP, which the peer does not serve, never had a console peer, so its owner hears nothing.
         #expect(Array(hostHeard.elements.prefix(2)) == [.usable(.clipboard, on: on), .usable(.drag, on: on)])
-        #expect(Array(peerHeard.elements.prefix(2)) == [.usable(.clipboard, on: "()"), .usable(.drag, on: "()")])
+        // The peer's owners hear the host's policy before the usability it decides.
+        let peerHead = peerHeard.elements.prefix(4).map { heard -> Heard in
+            if case .policy(let feature, _) = heard { .policy(feature, PolicySnapshot()) } else { heard }
+        }
+        #expect(
+            peerHead == [
+                .policy(.clipboard, PolicySnapshot()), .policy(.drag, PolicySnapshot()),
+                .usable(.clipboard, on: "()"), .usable(.drag, on: "()"),
+            ])
 
         await withCheckedContinuation { continuation in peer.close { continuation.resume() } }
         _ = await host.next { $0 == .usable(.drag, on: nil) }

@@ -21,11 +21,14 @@ package enum VMCapability: CaseIterable, Hashable {
     case cancelGuestSetup
     case stop
     case restart
+    /// Terminate the guest — Force Stop, and the stop half of Force Restart,
+    /// which is offered wherever Force Stop is.
     case forceStop
-    /// Shut the guest down without waiting for apps: named only where the
-    /// guest's agents offer it, admitted as Stop is, and refused
-    /// ``VMAdmission/Refusal/guestPaused`` while the guest is paused.
-    case shutDownAnyway
+    /// Shut the guest down without waiting for apps — Stop Anyway, and the
+    /// stop half of Restart Anyway, which is offered wherever Stop Anyway is:
+    /// named only where the guest's agents offer it, admitted as Stop is, and
+    /// refused ``VMAdmission/Refusal/guestPaused`` while the guest is paused.
+    case stopAnyway
     case discardSavedState
     case pause
     case resume
@@ -63,6 +66,9 @@ package enum VMCapability: CaseIterable, Hashable {
     /// Move the network device between its mode's common network and a
     /// network of its own — which a saved state of some modes restores across.
     case switchNetworkMembership
+    /// Write a configuration key that says how the host presents the VM
+    /// (``VMConfigurationKeyGate/presentation``).
+    case editPresentation
     case clone
     case rename
     /// Put a library tag on the VM or take it off.
@@ -71,7 +77,12 @@ package enum VMCapability: CaseIterable, Hashable {
     case showInFinder
     case togglePopOut
     case toggleFullscreen
-    case showClipboard
+    /// Copy the guest's clipboard to the Mac's: named only while passthrough
+    /// is off and an agent carries the clipboard.
+    case copyGuestClipboardToMac
+    /// Copy the Mac's clipboard to the guest's, named as
+    /// ``copyGuestClipboardToMac`` is.
+    case copyMacClipboardToGuest
     case showGuestAgentStatus
     case toggleGuestAgentDisk
     case toggleSettingsPane
@@ -89,7 +100,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .snapshots: .snapshots
         case .start: .start
         case .cancelGuestSetup: .cancelGuestSetup
-        case .stop, .forceStop, .shutDownAnyway, .discardSavedState: .stop
+        case .stop, .forceStop, .stopAnyway, .discardSavedState: .stop
         case .restart: .restart
         case .pause: .pause
         case .resume: .resume
@@ -107,15 +118,16 @@ package enum VMCapability: CaseIterable, Hashable {
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
         case .editConfiguration, .editLiveConfiguration, .switchNetworkMode,
-            .switchNetworkMembership:
+            .switchNetworkMembership, .editPresentation:
             .setConfiguration
         case .clone: .clone
         case .rename: .rename
         case .delete: .delete
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
-        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen, .showClipboard,
-            .showGuestAgentStatus, .toggleSettingsPane, .editTags:
+        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen,
+            .copyGuestClipboardToMac, .copyMacClipboardToGuest, .showGuestAgentStatus, .toggleSettingsPane,
+            .editTags:
             nil
         }
     }
@@ -138,14 +150,14 @@ package enum VMCapability: CaseIterable, Hashable {
         case .switchNetworkMembership: .networkMembership
         case .editLiveSharedDirectories: .liveShares
         case .rename: .rename
-        case .editTags: .hostPresentation
+        case .editTags, .editPresentation: .hostPresentation
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
-            .restart, .forceStop, .shutDownAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
+            .restart, .forceStop, .stopAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
             .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
             .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .showGuestAgentStatus,
-            .toggleSettingsPane:
+            .showInFinder, .togglePopOut, .toggleFullscreen, .copyGuestClipboardToMac,
+            .copyMacClipboardToGuest, .showGuestAgentStatus, .toggleSettingsPane:
             nil
         }
     }
@@ -169,7 +181,7 @@ package enum VMCapability: CaseIterable, Hashable {
             // restart resumes it first, and the stop verb refuses as a step,
             // which the app's Stop takes as a resume and then a stop.
             return instance.isLivePaused ? .resume : .sessionAction(.requestStop)
-        case .shutDownAnyway:
+        case .stopAnyway:
             // Only an agent runs it: a macOS guest's agent installed "For
             // everyone", connected.
             return instance.agentHubSnapshot.shutsDownIgnoringApps ? .sessionAction(.requestStop) : nil
@@ -199,7 +211,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
             .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia,
             .removeRemovableMedia, .forgetUSBPairing, .editLiveConfiguration, .switchNetworkMode,
-            .switchNetworkMembership, .rename, .editTags:
+            .switchNetworkMembership, .editPresentation, .rename, .editTags:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)
@@ -220,7 +232,11 @@ package enum VMCapability: CaseIterable, Hashable {
             return .operation(.deleting)
         case .togglePopOut, .toggleFullscreen:
             return .affordance(.externalDisplay)
-        case .showClipboard:
+        case .copyGuestClipboardToMac, .copyMacClipboardToGuest:
+            // With passthrough on the clipboards are one already, and with no
+            // agent carrying the clipboard there is nothing to copy over.
+            guard !instance.configuration.clipboardPassthroughEnabled, instance.clipboardService?.isConnected == true
+            else { return nil }
             return .affordance(.clipboard)
         case .showGuestAgentStatus:
             return .affordance(.guestAgentStatus)
@@ -280,14 +296,14 @@ package struct VMCapabilityCatalog {
     /// ``VMActivity`` commits — so what a surface offers and what a verb takes
     /// agree by construction.
     ///
-    /// Shut Down Anyway layers one rule over admission's: the agent that runs
+    /// Stop Anyway layers one rule over admission's: the agent that runs
     /// it runs nothing while the guest is paused.
     func decision(
         _ capability: VMCapability, on instance: VMInstance, posture: VMAdmission.Posture
     ) -> VMAdmission.Decision? {
         guard let request = capability.request(on: instance) else { return nil }
         let decision = instance.activity.decide(request, posture: posture)
-        if capability == .shutDownAnyway, decision == .admit, instance.isLivePaused {
+        if capability == .stopAnyway, decision == .admit, instance.isLivePaused {
             return .refuse(.guestPaused)
         }
         return decision

@@ -7,7 +7,10 @@ import KernovaLogging
 ///
 /// Distinct from per-VM `VMConfiguration`: this holds settings that apply to the
 /// whole app and live in the standard defaults domain.
-package struct AppPreferences {
+///
+/// `@unchecked` because its one stored value, `UserDefaults`, is not marked `Sendable` though Apple documents it
+/// thread-safe ([UserDefaults](https://developer.apple.com/documentation/foundation/userdefaults), "Thread Safety").
+package struct AppPreferences: @unchecked Sendable {
     /// Shared production instance over the standard defaults domain.
     @MainActor package static let shared = AppPreferences(defaults: .standard)
 
@@ -35,8 +38,10 @@ package struct AppPreferences {
         static let agentInstallPromptDisabled = "agentInstallPromptDisabled"
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
+        static let duplicateMachineIDQuestionDismissed = "duplicateMachineIDQuestionDismissed"
         static let cloneKeepsMachineID = "cloneKeepsMachineID"
         static let clipboardMaxPasteBytes = "clipboardMaxPasteBytes"
+        static let disabledReservedShortcuts = "disabledReservedShortcuts"
     }
 
     // MARK: - Inverted Storage
@@ -175,6 +180,19 @@ package struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
     }
 
+    /// Whether the user chose not to be asked the question
+    /// ``allowsDuplicateMachineIDOverride`` asks, so that every bring-up beside
+    /// a VM sharing its machine identity starts without asking while that
+    /// setting is on.
+    ///
+    /// Read and written through
+    /// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, whose
+    /// `@Observable` mirror is what wakes the Reminders pane.
+    var duplicateMachineIDQuestionDismissed: Bool {
+        get { defaults.bool(forKey: Keys.duplicateMachineIDQuestionDismissed) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.duplicateMachineIDQuestionDismissed) }
+    }
+
     /// What Clone makes of a VM that offers both outcomes, defaulting to New
     /// Machine.
     package var cloneOutcome: CloneOutcome {
@@ -203,6 +221,23 @@ package struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.clipboardMaxPasteBytes) }
     }
 
+    /// The reserved shortcuts the user turned off; every other one is on, so
+    /// an unset key leaves them all on.
+    ///
+    /// A stored name no ``ReservedShortcut`` case carries is dropped on read.
+    /// Read and written through `VMLibraryViewModel.disabledReservedShortcuts`,
+    /// whose `@Observable` mirror is what wakes the menu bar.
+    var disabledReservedShortcuts: Set<ReservedShortcut> {
+        get {
+            Set(
+                (defaults.stringArray(forKey: Keys.disabledReservedShortcuts) ?? [])
+                    .compactMap(ReservedShortcut.init(rawValue:)))
+        }
+        nonmutating set {
+            defaults.set(newValue.map(\.rawValue).sorted(), forKey: Keys.disabledReservedShortcuts)
+        }
+    }
+
     /// The Clone menu items for the VM `configuration` describes: `primary`
     /// makes what ``cloneOutcome(for:)`` resolves to, and `alternate` the
     /// other outcome — `nil` where only one is offered.
@@ -213,16 +248,6 @@ package struct AppPreferences {
         let other: CloneOutcome = primary == .newMachine ? .exactCopy : .newMachine
         let offersOther = other == .exactCopy || configuration?.offersNewMachineClone != false
         return (CloneMenuItem(outcome: primary), offersOther ? CloneMenuItem(outcome: other) : nil)
-    }
-
-    /// Re-arms every host-side reminder by clearing its dismissed flag, so each
-    /// nag shows again the next time its condition is met.
-    ///
-    /// Covers only the menu-bar quit reminder. The guest-agent install nudge —
-    /// app-wide here, per-VM in each bundle configuration — is re-armed as one
-    /// by `VMLibraryViewModel.resetAllAgentInstallNudges()`.
-    package func resetHostReminders() {
-        menuBarQuitReminderDismissed = false
     }
 }
 

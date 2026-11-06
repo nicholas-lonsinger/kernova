@@ -97,10 +97,39 @@ public enum ClipboardPromisePolicy {
     public static func pasteBudget(_ items: [OfferedItem], limit: Int) -> PasteBudget {
         var total: UInt64 = 0
         for item in items {
-            for promised in promisedTypes(for: item) where promised.isFileURL {
+            // A reference names the receiver's own offer: nothing of it crosses the wire.
+            for promised in promisedTypes(for: item)
+            where promised.isFileURL && !item.representations[promised.representation].hasReference {
                 total = total.saturatingAdding(item.representations[promised.representation].sizeEstimate)
             }
         }
         return PasteBudget(total: total, limit: limit)
+    }
+
+    /// How a copy is written within the paste ceiling, decided before anything of it is written.
+    public enum CopyPlan: Equatable, Sendable {
+        /// Whole: its files fit.
+        case whole
+        /// Without its `files` file representations, which do not fit; the rest is written.
+        case withoutFiles(count: Int)
+        /// Not at all: its files do not fit, and nothing else is in it.
+        case tooLarge
+
+        /// Whether the write serves `public.file-url`.
+        public var servesFileURLs: Bool { self == .whole }
+    }
+
+    /// How `items` are written as a copy whose files may land at most `room` bytes more: what is left of the
+    /// copy's budget once its INLINE representations landed.
+    public static func copyPlan(_ items: [OfferedItem], room: UInt64) -> CopyPlan {
+        let files = fileCount(items)
+        guard files > 0, pasteBudget(items, limit: Int(clamping: room)).exceeds else { return .whole }
+        let remains = items.contains { !promisedTypes(for: $0, servingFileURLs: false).isEmpty }
+        return remains ? .withoutFiles(count: files) : .tooLarge
+    }
+
+    /// How many representations of `items` are served as `public.file-url`.
+    public static func fileCount(_ items: [OfferedItem]) -> Int {
+        items.reduce(0) { $0 + promisedTypes(for: $1).filter(\.isFileURL).count }
     }
 }

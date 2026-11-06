@@ -199,9 +199,9 @@ public final class ClipboardInboundOffers {
     /// Whether an inbound-paste refusal also goes to the peer as an `Error`
     /// frame.
     ///
-    /// The guest's refusal is the only account the host's clipboard window can
-    /// render of a paste made inside the VM; the host renders the peer's frame
-    /// itself and has nothing to send back.
+    /// The guest's refusal is the only account the host can render of a paste
+    /// made inside the VM; the host renders the peer's frame itself and has
+    /// nothing to send back.
     nonisolated private var sendsPasteRefusalsToPeer: Bool { session.role == .guest }
 
     // MARK: - Reading what is offered
@@ -1118,8 +1118,8 @@ public final class ClipboardInboundOffers {
     }
 
     /// Reports an inbound-paste failure on both surfaces the gesture is owed: the
-    /// menu of the side the paste was made on, and an `Error` frame so the peer's
-    /// clipboard window shows it too.
+    /// menu of the side the paste was made on, and an `Error` frame so the peer
+    /// shows it too.
     ///
     /// Deduped by the offer's refusal-burst window — one paste fires one provider
     /// per promised item, so its failures are reported once, while a later paste

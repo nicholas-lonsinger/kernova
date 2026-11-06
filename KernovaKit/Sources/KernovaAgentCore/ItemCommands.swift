@@ -26,8 +26,8 @@ public enum ItemCommand: Sendable, Equatable {
     /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
     /// does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
-    /// Withdraw this side's offer of `token`; its `.offerEnded` follows.
-    case withdraw(token: Data)
+    /// Withdraw this side's offer of `token`, RESET with `code`; its `.offerEnded` follows.
+    case withdraw(token: Data, code: ErrorCode = .cancelled)
     /// Release the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
     /// the release is END with `endBody`, its kind's acceptor END body. Releasing a taken drag offer completes
     /// the drag.
@@ -70,8 +70,8 @@ extension ItemMachines {
         switch command {
         case .offer(let id, let offer, let feature):
             return (id, .offered(self.offer(offer, feature: feature, connection: &connection)))
-        case .withdraw(let token):
-            withdraw(token, connection: &connection)
+        case .withdraw(let token, let code):
+            withdraw(token, code: code, connection: &connection)
         case .release(let token, let endBody):
             release(token, endBody: endBody, connection: &connection)
         case .refuse(let token, let error):

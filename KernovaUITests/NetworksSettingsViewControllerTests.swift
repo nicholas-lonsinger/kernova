@@ -65,7 +65,8 @@ struct NetworksSettingsViewControllerTests {
     @Test("The Settings window shows a Networks tab only in a build that can attach named networks")
     func networksTabFollowsTheEntitlement() {
         for entitled in [true, false] {
-            let tabs = SettingsTabViewController(viewModel: makeViewModel(entitled: entitled))
+            let tabs = SettingsTabViewController(
+                viewModel: makeViewModel(entitled: entitled), visibleFrame: offDesktopVisibleFrame)
             tabs.loadViewIfNeeded()
             let networks = tabs.tabViewItems.filter {
                 $0.viewController is NetworksSettingsViewController

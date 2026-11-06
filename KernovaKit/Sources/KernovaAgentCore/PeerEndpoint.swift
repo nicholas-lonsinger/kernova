@@ -78,8 +78,8 @@ public enum PeerEffect: Sendable, Equatable {
 public enum PeerEvent: Sendable, Equatable {
     /// The host's Hello was read.
     case established(host: PeerClaim)
-    /// A `PolicyUpdate` arrived (coalesced).
-    case policyReceived
+    /// A `PolicyUpdate` arrived (coalesced): the host's policy as it stands.
+    case policyReceived(PolicySnapshot)
     /// A liveness verdict about the host.
     case hostLiveness(LivenessChange)
     /// What the host offers (coalesced).
@@ -311,8 +311,8 @@ public struct PeerEndpoint: Sendable {
             refreshItemUsability()
         case .peerStateChanged:
             break
-        case .policyChanged:
-            events.append(.policyReceived, coalescing: .policy)
+        case .policyChanged(let policy):
+            events.append(.policyReceived(policy), coalescing: .policy)
             notifyAll(.policyChanged, now)
             notifyAll(.usabilityChanged, now)
             refreshItemUsability()

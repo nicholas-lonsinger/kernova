@@ -538,7 +538,7 @@ extension GuestDragOut {
                     guard case .offerEnded(_, .local, let token, _) = event else { return }
                     MainActorBridge.async { self?.offerEnded(token) }
                 },
-                content: { request, _ in served.content(request) }),
+                content: { _, request, _ in served.content(request) }),
             takes: { [weak self] _, event in
                 switch event {
                 case .requested(let id, let token): MainActorBridge.async { self?.take(id, token: token) }
@@ -550,24 +550,24 @@ extension GuestDragOut {
     }
 }
 
-/// The session peer's runtime as drag-out's connection, once the peer exists:
-/// it is built from the router drag-out's owner is part of.
+/// The session peer's item calls as drag-out's connection, once the peer hands
+/// them over: it builds them with the router drag-out's owner is part of.
 @MainActor
 final class GuestDragOutRuntimePeer: GuestDragOutPeer {
-    var peer: MacAgentPeer?
+    var calls: PeerItemCalls?
 
     func offerDrag(_ offer: ItemOffer, _ completion: @escaping @MainActor (WireError?) -> Void) {
-        guard let peer else {
+        guard let calls else {
             return completion(WireError(.featureUnavailable, debugDetail: "the session peer is not up"))
         }
-        peer.offerItems(offer, feature: .drag) { refusal in MainActorBridge.async { completion(refusal) } }
+        calls.offerItems(offer, feature: .drag) { refusal in MainActorBridge.async { completion(refusal) } }
     }
 
     func withdrawDrag(_ token: Data) {
-        peer?.withdrawOffer(token)
+        calls?.withdrawOffer(token)
     }
 
     func answerTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
-        peer?.answerDragTake(id, answer)
+        calls?.answerDragTake(id, answer)
     }
 }

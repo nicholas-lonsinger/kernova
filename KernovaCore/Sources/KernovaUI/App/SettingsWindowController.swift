@@ -11,7 +11,7 @@ final class SettingsWindowController: NSWindowController {
     let tabs: SettingsTabViewController
 
     init(viewModel: VMLibraryViewModel, stage: WindowStage) {
-        let tabs = SettingsTabViewController(viewModel: viewModel)
+        let tabs = SettingsTabViewController(viewModel: viewModel, visibleFrame: stage.visibleFrame)
         // `WindowStage.makeWindow(stableContentSize:…)` pins a fixed initial
         // content size, and this window has none: its height is whatever the
         // selected pane publishes as `preferredContentSize`, re-applied by

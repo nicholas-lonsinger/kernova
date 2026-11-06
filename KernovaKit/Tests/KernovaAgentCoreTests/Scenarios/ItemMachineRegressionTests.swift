@@ -187,6 +187,15 @@ struct ItemMachineRegressionTests {
         #expect(!run.hostEvents.contains { if case .update(.result) = $0 { true } else { false } })
     }
 
+    @Test("A peer's clipboard offer hands the host the host offer it was made after")
+    func offerCarriesAfter() {
+        let run = Regression.host()
+        var header = HostileItems.header(token: Regression.token(1), count: 0)
+        header.after = Regression.token(9)
+        run.feed([WireFrames.open(1, .clipboardOfferByPeer, body: header), Unit.end(1)])
+        #expect(Regression.received(run).map(\.after) == [Regression.token(9)])
+    }
+
     @Test("Offer tokens are per side: the far side may reuse this side's token, and each end names its origin")
     func tokensPerSide() {
         let run = Regression.host()

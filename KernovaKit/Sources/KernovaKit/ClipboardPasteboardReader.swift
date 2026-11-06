@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaFileTree
 import KernovaLogging
 import UniformTypeIdentifiers
 
@@ -79,12 +80,11 @@ public enum ClipboardPasteboardReader {
     /// the resolve stage; the inline snapshot reads item 0 and is taken only
     /// when no item resolved to a file on disk.
     ///
-    /// When a file URL or promise is present but no file survives, the URL/path
-    /// text representations are only the file's descriptor and are never
-    /// returned as content.
+    /// When a file URL or promise is present but no file survives, the types
+    /// carrying its URL name only the file and are never returned as content.
     ///
     /// `allowsBinary` is `false` for a transport that carries plain text alone,
-    /// which refuses a file copy by policy rather than sending its path.
+    /// which refuses a file copy by policy.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard, allowsBinary: Bool
     ) -> Outcome {
@@ -121,8 +121,7 @@ public enum ClipboardPasteboardReader {
         // *through* the inline read below rather than short-circuiting it.
 
         guard allowsBinary else {
-            // A file copy's path text is the file's descriptor, not content, and
-            // a text-only transport refuses file copies by policy either way.
+            // A text-only transport refuses file copies by policy.
             guard unresolvedFiles == 0, let text = item.string(forType: .string), !text.isEmpty
             else { return .textOnlyRefusal }
             return .content(ClipboardContent(text: text, isConcealed: isConcealed), skipped: 0)
@@ -131,13 +130,12 @@ public enum ClipboardPasteboardReader {
         let isFileOrPromiseDrag = item.types.contains { ClipboardSnapshotPolicy.isFileReference(uti: $0.rawValue) }
 
         // Identity-based skips run before any data is read. A file/promise copy
-        // additionally drops the URL/path text fallbacks, so one can never
-        // surface its path as text content.
+        // additionally drops the types carrying a URL, which name the file.
         let qualified = item.types.filter { type in
             guard !ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: type.rawValue) else {
                 return false
             }
-            return !(isFileOrPromiseDrag && isPathFallbackType(type.rawValue))
+            return !(isFileOrPromiseDrag && PasteboardTypeIdentity(type.rawValue).carriesURL)
         }
         let raw: [(uti: String, data: Data)] = qualified.compactMap { type in
             guard let data = item.data(forType: type) else { return nil }
@@ -187,9 +185,11 @@ public enum ClipboardPasteboardReader {
     /// failing that folder's own transfer.
     ///
     /// The item is named from the URL that was copied or dragged while its
-    /// bytes come from ``readableSource(for:)``, so a symlink crosses as its
-    /// target's content under the name the user acted on — what copying one in
-    /// Finder delivers.
+    /// bytes come from ``readableSource(for:opening:)``, so a symlink crosses as
+    /// its target's content under the name the user acted on — what copying one
+    /// in Finder delivers. Nothing here downloads a dataless file
+    /// (``DatalessMaterialization/off``), so a dataless folder's estimate counts
+    /// only what is on this Mac.
     ///
     /// `unresolved` is what the snapshot stage already dropped for having no
     /// file left on disk, folded into the same count so one report covers every
@@ -197,6 +197,13 @@ public enum ClipboardPasteboardReader {
     nonisolated public static func resolve(
         filesAt urls: [URL], unresolved: Int = 0,
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
+    ) -> FileIntake {
+        DatalessMaterialization.off.during { resolveLocally(filesAt: urls, unresolved: unresolved, sizeOf: sizeOf) }
+    }
+
+    /// ``resolve(filesAt:unresolved:sizeOf:)``'s work, downloading nothing.
+    nonisolated private static func resolveLocally(
+        filesAt urls: [URL], unresolved: Int, sizeOf: (@Sendable (URL) -> Int)?
     ) -> FileIntake {
         var representations: [ClipboardContent.Representation] = []
         var skipped = unresolved
@@ -232,19 +239,43 @@ public enum ClipboardPasteboardReader {
     }
 
     /// Where one item's bytes are read from, or `nil` when there are none to
-    /// read: a link with nothing at the end of it, an item this process cannot
+    /// read: a link with nothing at the end of it, an item this process may not
     /// open, one deleted since the gesture began.
     ///
-    /// `stat(2)` alone answers none of this — a mode-`000` file stats exactly
-    /// like a readable one — so the open permission is asked for separately.
-    nonisolated static func readableSource(for url: URL) -> URL? {
-        let isSymbolicLink =
-            (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
-        let source = isSymbolicLink ? url.resolvingSymlinksInPath() : url
-        guard (try? source.checkResourceIsReachable()) == true,
-            FileManager.default.isReadableFile(atPath: source.path)
-        else { return nil }
-        return source
+    /// The item is opened for reading, as a pull of it opens it, by `open`,
+    /// which answers `0` or the `errno` it failed with: neither `stat(2)` nor
+    /// `access(2)` answers whether that open succeeds. A file in a guest's
+    /// Photos library, mode `0644`, passed `isReadableFile(atPath:)` at a copy
+    /// and failed the agent's open `EPERM` at its paste (macOS 27.2 guest,
+    /// 2026-11-04), the privacy system refusing a process with no grant.
+    ///
+    /// The open runs with ``DatalessMaterialization/off``, so it never
+    /// downloads a dataless file: one fails `EDEADLK`, which says only that its
+    /// bytes are not on this Mac yet, and it is offered, its pull downloading
+    /// it. Whether an open downloads one otherwise depends on the policy the
+    /// process inherited, which a process started from a shell on macOS 27.2
+    /// read as on (`getiopolicy_np`, 2026-11-04).
+    nonisolated static func readableSource(
+        for url: URL, opening open: (String) -> Int32 = ClipboardPasteboardReader.openForReading
+    ) -> URL? {
+        DatalessMaterialization.off.during {
+            let isSymbolicLink =
+                (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+            let source = isSymbolicLink ? url.resolvingSymlinksInPath() : url
+            switch open(source.path) {
+            case 0, EDEADLK: return source
+            default: return nil
+            }
+        }
+    }
+
+    /// Opens `path` for reading and closes it: `0`, or the `errno` the open
+    /// failed with.
+    nonisolated static func openForReading(_ path: String) -> Int32 {
+        let descriptor = Darwin.open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
+        guard descriptor >= 0 else { return errno }
+        close(descriptor)
+        return 0
     }
 
     // MARK: - Classifying one item
@@ -302,12 +333,5 @@ public enum ClipboardPasteboardReader {
     static func carriesPromiseReceiver(_ item: any ClipboardPasteboardItemReading) -> Bool {
         let readable = Set(NSFilePromiseReceiver.readableDraggedTypes)
         return item.types.contains { readable.contains($0.rawValue) }
-    }
-
-    /// `true` for text/URL types that, in a file/promise snapshot, merely
-    /// describe the file's path or name rather than being real content.
-    static func isPathFallbackType(_ uti: String) -> Bool {
-        uti == "public.url" || uti == "public.utf8-plain-text"
-            || uti == "Apple URL pasteboard type"
     }
 }

@@ -273,7 +273,7 @@ package final class HostileRun {
     }
 
     /// Pulls `request` from the far side's offer, landing it as `landing` says.
-    package func pullItem(_ request: PullRequest, landing: ItemLanding = DecodingItemSink.landing(.file))
+    package func pullItem(_ request: PullRequest, landing: ItemLanding = DecodingItemSink.landing)
         -> Result<ItemPullID, WireError>?
     {
         let order = ItemPullOrder(request, landing: landing)

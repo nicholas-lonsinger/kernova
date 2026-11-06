@@ -55,8 +55,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var preferences: AppPreferences { viewModel.preferences }
     /// Summons the GUI — `nil` opens the library, a VM id opens just that VM.
     private let onOpen: (UUID?) -> Void
-    /// Opens the clipboard window of the VM a notice names.
-    private let onOpenClipboard: (UUID) -> Void
     private let onQuit: () -> Void
 
     /// Keeps the tooltip, the readout, the notice popover and — while the
@@ -118,14 +116,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         viewModel: VMLibraryViewModel,
         heldAlerts: HeldAlerts,
         onOpen: @escaping (UUID?) -> Void,
-        onOpenClipboard: @escaping (UUID) -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.viewModel = viewModel
         self.heldAlerts = heldAlerts
         self.onOpen = onOpen
-        self.onOpenClipboard = onOpenClipboard
         self.onQuit = onQuit
         super.init()
 
@@ -227,12 +223,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 noticeLedger.route(finish.date, for: instance.instanceID, dropdownIsOpen: isMenuOpen)
                     == .notice
             else { continue }
-            let instanceID = instance.instanceID
-            let content = ClipboardNoticeViewController(wording: wording) { [weak self] in
-                guard let self else { return }
-                self.transientPopover.dismiss()
-                self.onOpenClipboard(instanceID)
-            }
+            let content = ClipboardNoticeViewController(wording: wording)
             if case .skipped(let reason) = transientPopover.show(
                 content, for: Self.clipboardNoticeDuration)
             {

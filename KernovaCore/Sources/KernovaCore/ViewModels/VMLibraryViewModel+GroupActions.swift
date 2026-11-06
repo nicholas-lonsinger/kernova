@@ -27,7 +27,7 @@ extension VMLibraryViewModel {
     package func performGroupAction(_ action: VMGroupAction, on group: VMGroupReference) async {
         let report: VMGroupActionReport
         do {
-            report = try await commands.groupAction(action, on: group)
+            report = try await verbs().groupAction(action, on: group)
         } catch let failure as CommandError {
             surfaceUnawaitedFailure(failure)
             return

@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -71,7 +72,7 @@ struct VMCapabilityCatalogTests {
         .stop: .sessionAction(.requestStop),
         .restart: .sessionAction(.requestStop),
         .forceStop: .sessionAction(.forceStop),
-        .shutDownAnyway: .sessionAction(.requestStop),
+        .stopAnyway: .sessionAction(.requestStop),
         .discardSavedState: .operation(.discardingSavedState),
         .pause: .operation(.pausing),
         .resume: .resume,
@@ -95,6 +96,7 @@ struct VMCapabilityCatalogTests {
         .editLiveConfiguration: .edit(.liveKeys),
         .switchNetworkMode: .edit(.networkAttachment),
         .switchNetworkMembership: .edit(.networkMembership),
+        .editPresentation: .edit(.hostPresentation),
         .clone: .operation(.copyingOut(.stopped)),
         .rename: .edit(.rename),
         .editTags: .edit(.hostPresentation),
@@ -102,7 +104,8 @@ struct VMCapabilityCatalogTests {
         .showInFinder: .affordance(.inspect),
         .togglePopOut: .affordance(.externalDisplay),
         .toggleFullscreen: .affordance(.externalDisplay),
-        .showClipboard: .affordance(.clipboard),
+        .copyGuestClipboardToMac: .affordance(.clipboard),
+        .copyMacClipboardToGuest: .affordance(.clipboard),
         .showGuestAgentStatus: .affordance(.guestAgentStatus),
         .toggleGuestAgentDisk: .affordance(.guestAgentDisk),
         .toggleSettingsPane: .affordance(.display),
@@ -112,10 +115,12 @@ struct VMCapabilityCatalogTests {
     func requestPerCapability() {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        // Shut Down Anyway names a request only where the guest's agents offer it.
-        #expect(VMCapability.shutDownAnyway.request(on: instance) == nil)
-        instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: true))
+        // Stop Anyway names a request only where the guest's agents offer it.
+        #expect(VMCapability.stopAnyway.request(on: instance) == nil)
+        // The clipboard commands name one only while an agent carries the clipboard.
+        #expect(VMCapability.copyGuestClipboardToMac.request(on: instance) == nil)
+        #expect(VMCapability.copyMacClipboardToGuest.request(on: instance) == nil)
+        Self.carryClipboard(on: instance, powerIgnoringApps: .agent(.systemPeer))
         for capability in VMCapability.allCases {
             let request = capability.request(on: instance)
             switch capability {
@@ -584,16 +589,54 @@ struct VMCapabilityCatalogTests {
                 .editUSBAccessories, to: makeInstance(in: with, name: "Resting", phase: .stopped)))
     }
 
-    @Test("The clipboard window follows the VM's own sharing toggle")
-    func clipboardFollowsTheSharingToggle() {
+    /// Has a console peer carry `instance`'s clipboard through its hub.
+    private static func carryClipboard(
+        on instance: VMInstance, powerIgnoringApps: PowerProvision = .absent(.noAgent)
+    ) {
+        let peer = PeerHandle(rawValue: 1)
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: powerIgnoringApps,
+                consolePeers: [.clipboard: peer]))
+        instance.hubClipboard.setConsolePeer(peer)
+    }
+
+    @Test(
+        "The clipboard commands follow the VM's sharing toggle, an agent carrying the clipboard, and passthrough",
+        arguments: [VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest])
+    func clipboardCommandsFollowSharingCarriageAndPassthrough(command: VMCapability) {
         let harness = makeHarness()
         let instance = makeInstance(
             in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
-
-        #expect(!harness.catalog.isApplicable(.showClipboard, to: instance))
-
         harness.library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = true }
-        #expect(harness.catalog.isApplicable(.showClipboard, to: instance))
+        // No agent carries the clipboard.
+        #expect(!harness.catalog.isAvailable(command, on: instance))
+
+        Self.carryClipboard(on: instance)
+        #expect(harness.catalog.isAvailable(command, on: instance))
+
+        harness.library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = false }
+        #expect(!harness.catalog.isAvailable(command, on: instance))
+
+        // Passthrough on: the two clipboards are one already.
+        harness.library.editConfiguration(of: instance) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+        }
+        #expect(!harness.catalog.isAvailable(command, on: instance))
+    }
+
+    @Test(
+        "The clipboard commands are off while the guest is paused",
+        arguments: [
+            VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest,
+        ])
+    func clipboardCommandsOffWhilePaused(command: VMCapability) {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, phase: .livePaused(sessionID: UUID()), guestOS: .macOS)
+        harness.library.editConfiguration(of: instance) { $0.clipboardSharingEnabled = true }
+        Self.carryClipboard(on: instance)
+        #expect(!harness.catalog.isAvailable(command, on: instance))
     }
 
     // MARK: - Reveal surface

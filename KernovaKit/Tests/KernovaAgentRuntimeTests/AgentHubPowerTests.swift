@@ -112,7 +112,9 @@ struct AgentHubPowerTests {
 
         async let outcome = harness.hub.requestPower(.shutdown)
         let accepted = await harness.snapshot { $0.routing?.stage == .accepted }
-        #expect(accepted.routing == PowerRoutingProgress(action: .shutdown, role: .sessionPeer, stage: .accepted))
+        #expect(
+            accepted.routing
+                == PowerRoutingProgress(action: .shutdown, ignoringApps: false, role: .sessionPeer, stage: .accepted))
         // A second request while the first runs is refused at once.
         #expect(await harness.hub.requestPower(.shutdown) == .busy)
 
@@ -175,6 +177,32 @@ struct AgentHubPowerTests {
         #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .untaken(refusals: []))
         #expect(power.performed.elements.isEmpty)
         await close([session], harness)
+    }
+
+    @Test(
+        "At a login window, with only a background session's peer and the system peer, a graceful action asks no one and is untaken"
+    )
+    func loginWindowGracefulUntaken() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let sessionPower = FakePowerAdapter(initial: .available(PowerOffer(actions: [.shutdown, .restart])))
+        let systemPower = FakePowerAdapter(
+            initial: .available(PowerOffer(actions: [], ignoringApps: [.shutdown])))
+        let session = await connect(
+            harness, sessionPower, state: PeerSessionState(console: .off, sessionID: "1", userName: "user"))
+        let system = await connect(
+            harness, systemPower, claim: Self.systemClaim, state: PeerSessionState(console: .off), peers: 2)
+        let ready = await harness.snapshot { $0.shutsDownIgnoringApps }
+        #expect(ready.power == .absent(.notOnConsole))
+
+        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
+        #expect(await harness.hub.requestPower(.restart) == .untaken(refusals: []))
+        #expect(sessionPower.performed.elements.isEmpty)
+        #expect(systemPower.performed.elements.isEmpty)
+
+        #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .handedOff)
+        #expect(systemPower.performedIgnoringApps.elements.count == 1)
+        await close([session, system], harness)
     }
 
     @Test("A system peer that says the console is off keeps the session peer out of the merged entry")

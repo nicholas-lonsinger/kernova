@@ -3,34 +3,19 @@ import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
 
-/// One vsock feature channel, described once: the ports it binds, what gates
-/// them, which slot on the coordinator holds its service, and what a channel
+/// One vsock feature channel, described once: the port it binds, what gates
+/// it, which slot on the coordinator holds its service, and what a channel
 /// dying under that service means for the slot.
 ///
 /// Every closure takes the coordinator (or the VM) as an argument instead of
 /// capturing one, so a descriptor is a session-independent constant that holds
 /// nothing and can never close a retain cycle over what it drives.
 struct VsockFeatureDescriptor {
-    /// A framed channel's per-transfer data port, which rises and falls with
-    /// the channel port: a data port that outlived it would admit a transfer no
-    /// service is left to serve.
-    struct DataPort {
-        let port: UInt32
-
-        /// Where the listener lands each accepted connection — the sink the
-        /// coordinator points at whichever service currently owns the channel.
-        let sink: KeyPath<VsockFeatureCoordinator, VsockDataConnectionSink>
-    }
-
     /// This channel's name in test failure messages.
     let name: String
 
     /// The framed channel port.
     let port: UInt32
-
-    /// The data port paired with this channel, or `nil` for one that carries
-    /// everything in frames.
-    let data: DataPort?
 
     /// The guest capability an accepted connection needs beyond the completed
     /// control handshake, or `nil` for a listener that admits unconditionally.
@@ -42,21 +27,17 @@ struct VsockFeatureDescriptor {
     /// Reads this channel's service slot.
     let current: @MainActor (VsockFeatureCoordinator) -> (any VsockFeatureService)?
 
-    /// Builds the service for one accepted channel, fills the slot, and points
-    /// the data sink at it.
+    /// Builds the service for one accepted channel and fills the slot.
     let install:
         @MainActor (VsockFeatureCoordinator, VMInstance, VsockChannel) ->
             any VsockFeatureService
 
-    /// Empties the slot and the data sink.
+    /// Empties the slot.
     let clear: @MainActor (VsockFeatureCoordinator) -> Void
 
     /// Whether a channel that died under its service empties the slot too, or
     /// the settled service stays referenced until the next accept replaces it.
     let releasesSlotOnChannelLoss: Bool
-
-    /// Every port this channel binds, the framed port first.
-    var ports: [UInt32] { data.map { [port, $0.port] } ?? [port] }
 
     /// Whether a session running `configuration` binds this channel — the one
     /// predicate install, accept and live edit all read.
@@ -69,8 +50,8 @@ struct VsockFeatureDescriptor {
     }
 }
 
-/// The two shapes a channel takes, each building the slot accessors its
-/// service type needs without a cast at the use site.
+/// A channel's shape, building the slot accessors its service type needs
+/// without a cast at the use site.
 @MainActor
 extension VsockFeatureDescriptor {
     /// A framed channel whose service serves that channel alone.
@@ -86,7 +67,6 @@ extension VsockFeatureDescriptor {
         VsockFeatureDescriptor(
             name: name,
             port: port,
-            data: nil,
             requirement: requirement,
             toggle: toggle,
             current: { $0[keyPath: slot] },
@@ -98,45 +78,9 @@ extension VsockFeatureDescriptor {
             clear: { $0[keyPath: slot] = nil },
             releasesSlotOnChannelLoss: releasesSlotOnChannelLoss)
     }
-
-    /// A framed channel paired with the data port its service serves one
-    /// transfer at a time.
-    ///
-    /// The generic constraint is the pairing: a channel only earns a data port
-    /// if its service can take a raw descriptor off the accepting thread.
-    static func streamingChannel<Service: VsockFeatureService & VsockDataConnectionAccepting>(
-        name: String,
-        port: UInt32,
-        dataPort: UInt32,
-        dataSink: KeyPath<VsockFeatureCoordinator, VsockDataConnectionSink>,
-        requirement: FeatureChannelRequirement,
-        toggle: @escaping @MainActor (VMConfiguration) -> Bool,
-        slot: ReferenceWritableKeyPath<VsockFeatureCoordinator, Service?>,
-        releasesSlotOnChannelLoss: Bool = false,
-        make: @escaping @MainActor (VMInstance, VsockChannel) -> Service
-    ) -> VsockFeatureDescriptor {
-        VsockFeatureDescriptor(
-            name: name,
-            port: port,
-            data: DataPort(port: dataPort, sink: dataSink),
-            requirement: requirement,
-            toggle: toggle,
-            current: { $0[keyPath: slot] },
-            install: { coordinator, instance, channel in
-                let service = make(instance, channel)
-                coordinator[keyPath: slot] = service
-                coordinator[keyPath: dataSink].set(service)
-                return service
-            },
-            clear: { coordinator in
-                coordinator[keyPath: slot] = nil
-                coordinator[keyPath: dataSink].set(nil)
-            },
-            releasesSlotOnChannelLoss: releasesSlotOnChannelLoss)
-    }
 }
 
-/// The four channels a session serves.
+/// The channels a session serves.
 ///
 /// Static because a descriptor holds nothing: the table is the same for
 /// every VM, and every session drives it through its own coordinator.
@@ -144,7 +88,7 @@ extension VsockFeatureDescriptor {
 extension VsockFeatureDescriptor {
     /// Every vsock channel a session serves, in the order a session installs
     /// them and a live edit applies them.
-    static let all: [VsockFeatureDescriptor] = [control, log, clipboard]
+    static let all: [VsockFeatureDescriptor] = [control, log]
 
     static let control = channel(
         name: "control",
@@ -170,50 +114,6 @@ extension VsockFeatureDescriptor {
         make: { instance, channel in
             VsockGuestLogService(channel: channel, label: instance.name)
         })
-
-    static let clipboard = streamingChannel(
-        name: "clipboard",
-        port: KernovaVsockPort.clipboard,
-        dataPort: KernovaVsockPort.clipboardData,
-        dataSink: \.clipboardDataSink,
-        requirement: .clipboardStreaming,
-        toggle: { $0.clipboardSharingEnabled },
-        slot: \.clipboard,
-        // The slot is kept on channel loss: a settled service's materialized
-        // representations stay servable, and the clipboard window reads its
-        // buffer through `ClipboardServicing`.
-        make: { instance, channel in
-            makeClipboardService(for: instance, channel: channel)
-        })
-
-    /// Builds the clipboard service for one accepted channel, wired to the VM's
-    /// transfer reporter, its live paste ceiling, and the host-pasteboard hooks
-    /// that keep a stale promised write from outliving the offer behind it.
-    private static func makeClipboardService(
-        for instance: VMInstance, channel: VsockChannel
-    ) -> VsockClipboardService {
-        // Read through the instance at each budget check, so a Settings change
-        // lands on the live session without restarting the service.
-        let service = VsockClipboardService(
-            channel: channel, label: instance.name, reporter: instance.clipboardTransfers,
-            maxPasteBytes: { [weak instance] in
-                instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-            },
-            stagingRoot: ClipboardFileStaging.processRoot,
-            stagingKey: instance.instanceID.uuidString)
-        let publisher = instance.hostClipboardPublisher
-        service.hostPasteboardHoldsOurWrite = { publisher.pasteboardHoldsLastWrite }
-        service.retractStaleHostWrite = { [weak instance] in
-            // With passthrough on, the newer offer's automatic re-publish is
-            // what supersedes the stale write; retracting too would only flash
-            // an empty pasteboard and a Copy-to-Mac hint for a button
-            // passthrough hides.
-            guard let instance, instance.sessionContext?.clipboardPassthroughCoordinator == nil
-            else { return false }
-            return publisher.retractPromisedWrite()
-        }
-        return service
-    }
 }
 
 /// One session's vsock feature channels: the listeners it installs, the
@@ -221,9 +121,9 @@ extension VsockFeatureDescriptor {
 ///
 /// Created with a ``VMSessionContext`` and released with it, so the service
 /// slots below cannot outlive the `VZVirtualMachine` whose socket device the
-/// listeners are bound to. The admission gate and the two data sinks are the
-/// VM's and outlive every session: the accept path reads them from whatever
-/// queue VZ delivers on, so nothing there may reach this main-actor type.
+/// listeners are bound to. The admission gate is the VM's and outlives every
+/// session: the accept path reads it from whatever queue VZ delivers on, so
+/// nothing there may reach this main-actor type.
 @MainActor
 @Observable
 final class VsockFeatureCoordinator {
@@ -241,10 +141,6 @@ final class VsockFeatureCoordinator {
     /// Where the feature listeners read admission verdicts, off the main actor.
     @ObservationIgnored private let admissionGate: VsockAdmissionGate
 
-    /// Where the clipboard data listener lands each accepted transfer
-    /// connection.
-    @ObservationIgnored fileprivate let clipboardDataSink: VsockDataConnectionSink
-
     // MARK: - Service slots
 
     /// The always-on control channel's service, replaced by every reconnect.
@@ -253,20 +149,14 @@ final class VsockFeatureCoordinator {
     /// Forwards guest log records for as long as its channel lives.
     var log: VsockGuestLogService?
 
-    /// The macOS guest's clipboard transport; the SPICE one lives on
-    /// ``VMSessionContext/clipboardService``.
-    var clipboard: VsockClipboardService?
-
     // MARK: - Initializer
 
     init(
         instance: VMInstance,
-        admissionGate: VsockAdmissionGate,
-        clipboardDataSink: VsockDataConnectionSink
+        admissionGate: VsockAdmissionGate
     ) {
         self.instance = instance
         self.admissionGate = admissionGate
-        self.clipboardDataSink = clipboardDataSink
     }
 
     /// The service currently serving `descriptor`'s channel, type-erased.
@@ -280,12 +170,11 @@ final class VsockFeatureCoordinator {
     func listeners(for configuration: VMConfiguration, sessionID: UUID) -> [VsockListener] {
         VsockFeatureDescriptor.all
             .filter { $0.isEnabled(configuration) }
-            .flatMap { makeListeners(for: $0, sessionID: sessionID) }
+            .map { makeListener(for: $0, sessionID: sessionID) }
     }
 
-    /// One channel's listeners: the framed port first, then the data port that
-    /// moves with it.
-    func makeListeners(for descriptor: VsockFeatureDescriptor, sessionID: UUID) -> [VsockListener] {
+    /// One channel's listener.
+    func makeListener(for descriptor: VsockFeatureDescriptor, sessionID: UUID) -> VsockListener {
         // Nothing on the accept path may reach this main-actor type, so the
         // admission closure captures the gate itself.
         var shouldAdmit: VsockListener.ShouldAdmit?
@@ -293,24 +182,14 @@ final class VsockFeatureCoordinator {
             let gate = admissionGate
             shouldAdmit = { gate.admission(for: requirement) }
         }
-        var listeners = [
-            VsockListener(port: descriptor.port, shouldAdmit: shouldAdmit) {
-                [weak self] channel in
-                guard let self else {
-                    channel.close()
-                    return
-                }
-                self.accept(channel, as: descriptor, sessionID: sessionID)
+        return VsockListener(port: descriptor.port, shouldAdmit: shouldAdmit) {
+            [weak self] channel in
+            guard let self else {
+                channel.close()
+                return
             }
-        ]
-        if let data = descriptor.data {
-            let sink = self[keyPath: data.sink]
-            listeners.append(
-                VsockListener(
-                    port: data.port, shouldAdmit: shouldAdmit,
-                    onAcceptFd: { fd in sink.accept(fd: fd) }))
+            self.accept(channel, as: descriptor, sessionID: sessionID)
         }
-        return listeners
     }
 
     // MARK: - Accept
@@ -349,8 +228,7 @@ final class VsockFeatureCoordinator {
 
     // MARK: - Teardown
 
-    /// Settles one channel: its service stops, its slot empties, and its data
-    /// sink forgets the service it was pointed at.
+    /// Settles one channel: its service stops and its slot empties.
     func settle(_ descriptor: VsockFeatureDescriptor) {
         descriptor.current(self)?.stop()
         descriptor.clear(self)
@@ -425,7 +303,7 @@ final class VsockFeatureCoordinator {
             guard let live = self, live.isLive(session) else { return }
             Self.logger.log(
                 .notice,
-                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public), clipboard=\(newConfig.clipboardSharingEnabled, privacy: .public))"
+                "Applied live policy for '\(label, privacy: .public)' (logForwarding=\(newConfig.agentLogForwardingEnabled, privacy: .public))"
             )
         }
     }
@@ -443,11 +321,9 @@ final class VsockFeatureCoordinator {
         return context.session === session
     }
 
-    /// Installs or withdraws one channel's ports on a running VM.
+    /// Installs or withdraws one channel's port on a running VM.
     ///
-    /// A channel and its data port move in one hop: a data port outliving the
-    /// channel port that admits transfers onto it would accept a transfer no
-    /// service is left to serve. The install is an idempotent reinstall —
+    /// The install is an idempotent reinstall —
     /// `attach` rebinds a port before releasing the host it displaces, so no
     /// accept can land on a dead delegate.
     func applyLive(
@@ -455,10 +331,10 @@ final class VsockFeatureCoordinator {
         on installer: any VsockListenerInstalling, sessionID: UUID
     ) async {
         if enabled {
-            await installer.attach(makeListeners(for: descriptor, sessionID: sessionID))
+            await installer.attach([makeListener(for: descriptor, sessionID: sessionID)])
         } else {
             settle(descriptor)
-            await installer.detach(ports: descriptor.ports)
+            await installer.detach(ports: [descriptor.port])
         }
     }
 }

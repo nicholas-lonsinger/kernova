@@ -28,11 +28,32 @@ public protocol ClipboardReadPasteboard: AnyObject {
     /// Every item currently on the pasteboard, in order; empty when it holds
     /// nothing.
     var items: [any ClipboardPasteboardItemReading] { get }
+
+    /// The file promises the pasteboard holds, as
+    /// `readObjects(forClasses: [NSFilePromiseReceiver.self])` returns them:
+    /// the receivers `ClipboardPasteboardReader.readOffer` takes.
+    @MainActor var filePromiseReceivers: [any FilePromiseReceiving] { get }
 }
 
 extension NSPasteboard: ClipboardReadPasteboard {
     /// The pasteboard's items, or none when it is empty or cannot vend them.
     public var items: [any ClipboardPasteboardItemReading] { pasteboardItems ?? [] }
+
+    /// The pasteboard's file promises, as `readObjects` returns them.
+    @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] {
+        readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver] ?? []
+    }
+}
+
+extension ClipboardReadPasteboard {
+    /// Whether what the pasteboard holds may offer something, read from its
+    /// types alone so nothing is fetched: it is not empty, and not marked
+    /// transient.
+    public var mayOfferSomething: Bool {
+        let types = items.flatMap(\.types)
+        let transient = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI)
+        return !types.isEmpty && !types.contains(transient)
+    }
 }
 
 /// Both halves of a pasteboard: the one a clipboard end polls for the user's

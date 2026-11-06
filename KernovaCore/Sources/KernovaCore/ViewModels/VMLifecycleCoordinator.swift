@@ -118,12 +118,16 @@ final class VMLifecycleCoordinator {
         }
     }
 
-    /// A Restart's graceful stop, owing `boot` to the end of the session it
-    /// asks to go down — see ``VMActivity/requestStop(continuingWith:_:)`` —
-    /// sent as ``shutDownGuest(_:session:)`` sends it.
-    func requestRestartStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
+    /// A Restart's stop, owing `boot` to the end of the session it asks to go
+    /// down — see ``VMActivity/requestStop(continuingWith:_:)`` — sent as
+    /// ``shutDownGuest(_:session:ignoringApps:)`` sends it: Restart Anyway's
+    /// `ignoringApps`, throwing ``ShutdownIgnoringAppsUntaken`` as
+    /// ``requestStopIgnoringApps(_:)`` does.
+    func requestRestartStop(
+        _ instance: VMInstance, ignoringApps: Bool, continuingWith boot: VMFollowUp
+    ) async throws {
         try await instance.activity.requestStop(continuingWith: boot) { session in
-            try await shutDownGuest(instance, session: session)
+            try await shutDownGuest(instance, session: session, ignoringApps: ignoringApps)
         }
     }
 
@@ -171,6 +175,14 @@ final class VMLifecycleCoordinator {
     /// Immediately terminates the VM — see ``VMActivity/forceStop(_:)``.
     func forceStop(_ instance: VMInstance) async throws {
         try await instance.activity.forceStop {
+            try await virtualizationService.forceStop(instance)
+        }
+    }
+
+    /// Force Restart's termination, owing `boot` to the end of the session it
+    /// ends — see ``VMActivity/forceStop(continuingWith:_:)``.
+    func forceStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
+        try await instance.activity.forceStop(continuingWith: boot) {
             try await virtualizationService.forceStop(instance)
         }
     }

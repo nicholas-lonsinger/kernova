@@ -125,7 +125,7 @@ enum AgentShell {
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.
-                    if event == .policyReceived { update?.confirm() }
+                    if case .policyReceived = event { update?.confirm() }
                 },
                 stop: { reason in
                     logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")

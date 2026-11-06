@@ -31,6 +31,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// whole section.
     private var appMenuQuitSectionStart: NSMenuItem?
 
+    /// The Edit menu, retained so the reserved shortcuts the user has on can be
+    /// shown on it.
+    private var editMenu: NSMenu?
+    /// Shows the reserved shortcuts on ``editMenu`` again whenever the user
+    /// turns one on or off.
+    private var reservedShortcutsObservation: ObservationLoop?
+
     /// The Virtual Machine menu, retained so its opening can refresh the revert
     /// submenu that decides one of its items' enablement.
     private var virtualMachineMenu: NSMenu?
@@ -68,14 +75,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// to a View menu stay clear of it.
     private var viewMenuSidebarSectionEnd: NSMenuItem?
 
-    /// The Window menu, retained so its opening can set the clipboard item's
-    /// enablement and so the presence check reads this controller's own menu.
+    /// The Window menu, retained so the presence check reads this controller's
+    /// own menu.
     private var windowsMenu: NSMenu?
     /// The Services menu AppKit fills, retained for the `NSApp` handoff.
     private var servicesMenu: NSMenu?
     /// The Help menu, retained for the `NSApp` handoff.
     private var helpMenu: NSMenu?
-    private var clipboardMenuItem: NSMenuItem?
 
     /// Value snapshot of the revert submenu's rendered contents.
     private struct RevertSnapshotMenuModel: Equatable {
@@ -143,12 +149,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// ``menuNeedsUpdate(_:)`` for `menu`, with `workingInstance` as the VM the
     /// working window shows.
     func update(_ menu: NSMenu, workingInstance: VMInstance?) {
-        if menu === windowsMenu {
-            clipboardMenuItem?.isEnabled =
-                workingInstance.map {
-                    viewModel.capabilities.isAvailable(.showClipboard, on: $0)
-                } ?? false
-        } else if menu === viewMenu {
+        if menu === viewMenu {
             rebuildViewMenuSidebarSection()
         } else if menu === appMenu {
             // Re-derive the quit section so a Settings toggle flip is reflected on
@@ -296,6 +297,27 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         }
     }
 
+    // MARK: - Reserved Shortcuts
+
+    /// Puts on ``editMenu`` the reserved shortcuts the user has on, now and on
+    /// every change.
+    ///
+    /// Pushed rather than applied in `menuNeedsUpdate(_:)`:
+    /// `NSMenu.performKeyEquivalent(with:)` on an installed main menu matched an
+    /// item's stale key equivalent without calling that method (observed on
+    /// macOS 27.2), and ``ReservedShortcutCatcher`` reads the items directly.
+    private func observeReservedShortcuts() {
+        applyReservedShortcuts()
+        reservedShortcutsObservation = observeRecurring(
+            track: { [weak self] in _ = self?.viewModel.disabledReservedShortcuts },
+            apply: { [weak self] in self?.applyReservedShortcuts() })
+    }
+
+    private func applyReservedShortcuts() {
+        guard let editMenu else { return }
+        ReservedShortcut.apply(in: editMenu, disabled: viewModel.disabledReservedShortcuts)
+    }
+
     // MARK: - Menu Validation
 
     /// The capability a menu selector performs, or `nil` for an app-level
@@ -317,8 +339,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // State…") is the one surface for that action, and two enabled items
         // must not alias one action under two names.
         case #selector(AppDelegate.forceStopVM(_:)): .forceStop
-        case #selector(AppDelegate.shutDownAnywayVM(_:)): .shutDownAnyway
+        case #selector(AppDelegate.stopAnywayVM(_:)): .stopAnyway
         case #selector(AppDelegate.restartVM(_:)): .restart
+        // Each restart is offered where the stop it takes is.
+        case #selector(AppDelegate.restartAnywayVM(_:)): .stopAnyway
+        case #selector(AppDelegate.forceRestartVM(_:)): .forceStop
         case #selector(AppDelegate.saveVM(_:)): .suspend
         case #selector(AppDelegate.takeSnapshot(_:)): .takeSnapshot
         case #selector(AppDelegate.renameVM(_:)): .rename
@@ -327,11 +352,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         case #selector(AppDelegate.deleteVM(_:)), #selector(AppDelegate.deleteImmediatelyVM(_:)):
             .delete
         case #selector(AppDelegate.showVMInFinder(_:)): .showInFinder
-        // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
-        // menuNeedsUpdate(_:) handles the Clipboard item's visual state. This
-        // entry covers its keyboard shortcut, which still routes through
-        // validateMenuItem(_:).
-        case #selector(AppDelegate.showClipboard(_:)): .showClipboard
+        case #selector(AppDelegate.copyGuestClipboardToMac(_:)): .copyGuestClipboardToMac
+        case #selector(AppDelegate.copyMacClipboardToGuest(_:)): .copyMacClipboardToGuest
         case #selector(AppDelegate.showGuestAgentStatus(_:)): .showGuestAgentStatus
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
         case #selector(AppDelegate.attachUSBAccessory(_:)),
@@ -353,6 +375,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// ``validate(_:)`` with `workingInstance` as the VM the working window
     /// shows.
     func validate(_ menuItem: NSMenuItem, workingInstance: VMInstance?) -> Bool {
+        if menuItem.action == #selector(AppDelegate.toggleClipboardPassthrough(_:)) {
+            return validatePassthrough(menuItem, target: target(of: menuItem, workingInstance: workingInstance))
+        }
         // App-level commands — New, Show Library, Open VMs Folder, Check Config
         // Files, Quit Completely — are never gated on the selection, or a selected import
         // still copying would disable the GUI's only full-quit affordance.
@@ -403,6 +428,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             break
         }
         return isAvailable
+    }
+
+    /// Checks the passthrough item when `instance` runs passthrough, enabled while a write flipping it takes.
+    private func validatePassthrough(_ menuItem: NSMenuItem, target instance: VMInstance?) -> Bool {
+        guard let instance else {
+            menuItem.state = .off
+            return false
+        }
+        let isOn = instance.configuration.clipboardPassthroughEnabled
+        menuItem.state = isOn ? .on : .off
+        return viewModel.capabilities.isAvailable(
+            VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!isOn), on: instance)
     }
 
     // MARK: - Main Menu
@@ -489,6 +526,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
+        for item in ClipboardCommandMenu.items() { editMenu.addItem(item) }
+        editMenu.addItem(.separator())
         // A guest display that captures system keys (System Key Forwarding
         // Always, the default, or Full Screen Only in full screen) receives ⌘F
         // first. Otherwise this item takes ⌘F before the display's keyDown sees
@@ -496,6 +535,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Find is out of reach: accepted, for the standard Find shortcut.
         editMenu.addItem(
             withTitle: "Find VM…", action: #selector(AppDelegate.findVM(_:)), keyEquivalent: "f")
+        self.editMenu = editMenu
+        observeReservedShortcuts()
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
@@ -541,16 +582,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         let resumeItem = vmMenu.addItem(
             withTitle: "Resume", action: #selector(AppDelegate.resumeVM(_:)), keyEquivalent: "r")
         resumeItem.keyEquivalentModifierMask = [.command, .option]
-        vmMenu.addItem(
-            withTitle: "Stop", action: #selector(AppDelegate.stopVM(_:)), keyEquivalent: "")
-        vmMenu.addItem(
-            withTitle: "Shut Down Anyway…", action: #selector(AppDelegate.shutDownAnywayVM(_:)),
-            keyEquivalent: "")
-        vmMenu.addItem(
-            withTitle: "Force Stop…", action: #selector(AppDelegate.forceStopVM(_:)),
-            keyEquivalent: "")
-        vmMenu.addItem(
-            withTitle: "Restart", action: #selector(AppDelegate.restartVM(_:)), keyEquivalent: "")
+        // Every power command is listed, with nothing behind Option, so each
+        // can be found here; validation disables what the VM does not take.
+        for (title, action) in [
+            ("Stop", #selector(AppDelegate.stopVM(_:))),
+            ("Stop Anyway…", #selector(AppDelegate.stopAnywayVM(_:))),
+            ("Force Stop…", #selector(AppDelegate.forceStopVM(_:))),
+            ("Restart", #selector(AppDelegate.restartVM(_:))),
+            ("Restart Anyway…", #selector(AppDelegate.restartAnywayVM(_:))),
+            ("Force Restart…", #selector(AppDelegate.forceRestartVM(_:))),
+        ] {
+            vmMenu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        }
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(
             withTitle: "Suspend", action: #selector(AppDelegate.saveVM(_:)), keyEquivalent: "s")
@@ -662,15 +705,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             keyEquivalent: "0"
         )
         windowMenu.addItem(showLibraryItem)
-        windowMenu.addItem(.separator())
-        let clipboardItem = NSMenuItem(
-            title: "Clipboard",
-            action: #selector(AppDelegate.showClipboard(_:)),
-            keyEquivalent: "v"
-        )
-        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
-        clipboardMenuItem = clipboardItem
-        windowMenu.addItem(clipboardItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

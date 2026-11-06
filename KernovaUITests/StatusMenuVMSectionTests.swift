@@ -355,17 +355,17 @@ struct StatusMenuVMSectionTests {
         let second = UUID()
         let (menu, section, _) = makeSection(rows: [
             row(first, "One — Running", notice: "Clipboard: earlier copy was removed"),
-            row(second, "Two — Running", notice: "Clipboard: some items weren't forwarded"),
+            row(second, "Two — Running", notice: "Clipboard: some files weren't forwarded"),
         ])
 
         section.sync(to: [
-            row(second, "Two — Running", notice: "Clipboard: some items weren't forwarded"),
+            row(second, "Two — Running", notice: "Clipboard: some files weren't forwarded"),
             row(first, "One — Running", notice: "Clipboard: earlier copy was removed"),
         ])
 
         #expect(
             menu.items.map(\.title) == [
-                "Open Kernova", "", "Two — Running", "Clipboard: some items weren't forwarded",
+                "Open Kernova", "", "Two — Running", "Clipboard: some files weren't forwarded",
                 "One — Running", "Clipboard: earlier copy was removed", "", "Quit Kernova",
             ])
     }

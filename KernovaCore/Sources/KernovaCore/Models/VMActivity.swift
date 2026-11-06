@@ -1252,7 +1252,8 @@ package final class VMActivity {
     /// delivers `terminate`'s completion as the session's end, to whichever
     /// phase holds the session by then. A second Force Stop joins the first.
     ///
-    /// The admission withdraws the continuations owed to the session
+    /// The admission — or the join of a Force Stop already under way —
+    /// withdraws the continuations owed to the session
     /// (``follow(_:continuing:)``), so the session's end settles as an end no
     /// Restart is owed does.
     ///
@@ -1260,10 +1261,36 @@ package final class VMActivity {
     /// session has ended; an operation that tolerated the stop keeps holding
     /// the VM until its body ends.
     func forceStop(_ terminate: () async throws -> Void) async throws {
+        try await forceStop(continuingWith: nil, terminate)
+    }
+
+    /// Force Restart's own Force Stop: admitted as ``forceStop(_:)`` is, but
+    /// owing `boot` to the end of the session it terminates as its
+    /// continuation (``follow(_:continuing:)``) rather than withdrawing any —
+    /// so a Restart already waiting on that session restarts with it, as a
+    /// second Restart's graceful stop joins the first's
+    /// (``requestStop(continuingWith:_:)``).
+    func forceStop(
+        continuingWith boot: VMFollowUp, _ terminate: () async throws -> Void
+    ) async throws {
+        try await forceStop(continuingWith: Optional(boot), terminate)
+    }
+
+    private func forceStop(
+        continuingWith boot: VMFollowUp?, _ terminate: () async throws -> Void
+    ) async throws {
         let stop = VMOutcome()
         let sessionID: UUID
         switch decide(.sessionAction(.forceStop), posture: .commit) {
         case .join(let outcome):
+            // The Force Stop already under way ends the session this one
+            // would have: a Force Restart's boot is owed to that end, and a
+            // Force Stop someone asks for cancels a Force Restart's.
+            if let live = liveSessionID {
+                if let boot { follow(boot, continuing: live) } else { withdrawContinuations(of: live) }
+            } else if let boot {
+                boot.outcome.resolve(.failure(followUpRefusal(.invalidState, for: boot)))
+            }
             return try await outcome.value()
         case .refuse(let reason):
             throw VMAdmissionRefusal(refusal: reason)
@@ -1288,7 +1315,11 @@ package final class VMActivity {
             case .stopped, .initialBoot, .failed, .suspended, .removed:
                 throw VMAdmissionRefusal(refusal: .invalidState)
             }
-            withdrawContinuations(of: sessionID)
+            if let boot {
+                follow(boot, continuing: sessionID)
+            } else {
+                withdrawContinuations(of: sessionID)
+            }
         }
         do {
             try await terminate()

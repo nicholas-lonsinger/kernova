@@ -495,8 +495,6 @@ package final class Duet {
     private var lastOpenedTake: DragTakeID?
     /// The item commands sent and not yet answered, each with the step's text.
     private var asked: [ItemRequestID: String] = [:]
-    /// The item the last `.read` answered.
-    private var read: OfferedItem?
     private var nextRequest: UInt64 = 0
     private lazy var bundleContent: Data? = TranscriptFixture.host(exchange.hostFixture)?.bundles.first.map {
         SimHub.expectedContent($0.manifest)
@@ -582,12 +580,7 @@ package final class Duet {
             guard let offer = TranscriptFixture.offer(name) else { break }
             item(side, ask(input) { .offer($0, offer, feature: feature) })
         case .itemPull(let side, let request):
-            // The landing takes the storage of the representation the pull names, so the item is read first.
-            read = nil
-            item(side, ask(input) { .read($0, token: request.token, item: request.item) })
-            drainAll()
-            let storage = read?.representations.dropFirst(Int(request.representation)).first?.storage ?? .file
-            let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
+            let order = ItemPullOrder(request, landing: DecodingItemSink.landing)
             item(side, ask(input) { .pull($0, order) })
         case .withdraw(let side, let token): item(side, .withdraw(token: token))
         case .release(let side, let token): item(side, .release(token: token))
@@ -647,7 +640,6 @@ package final class Duet {
             case .pulled(.failure(let error)), .took(.failure(let error)): error
             case .pulled, .took, .read: nil
             }
-        if case .read(let item) = reply { read = item }
         if case .took(.success(let id)) = reply { lastOpenedTake = id }
         if let refusal { failures.append("t=\(now): `\(text)` refused: \(refusal)") }
     }

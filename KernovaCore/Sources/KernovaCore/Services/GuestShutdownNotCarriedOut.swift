@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentCore
+import KernovaCommandModel
 
 /// A graceful stop the guest's agents took that did not take the guest down,
 /// or one Kernova can't tell the fate of: a fact about the session it was
@@ -33,7 +34,7 @@ package struct GuestShutdownNotCarriedOut: LocalizedError, TitledError, Equatabl
         switch reason {
         case .blocked(let apps):
             Self.blockers(apps)
-                + " To shut it down anyway, use Force Stop, which loses any unsaved data inside the guest."
+                + " To shut it down anyway, use Force Stop, which loses \(StopDisposition.forceLoss)."
         case .cancelledInGuest:
             "Shutting down was cancelled inside \u{201C}\(vmName)\u{201D}."
         case .failed(let error):

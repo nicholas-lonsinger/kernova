@@ -53,7 +53,7 @@ package final class HubDropService: Sendable {
             events: { [self] _, event in
                 DispatchQueue.main.async { [self] in MainActor.assumeIsolated { handle(event) } }
             },
-            content: { [self] request, _ in content(request) })
+            content: { [self] _, request, _ in content(request) })
     }
 
     /// Offers through `hub`, the one built with ``owner``.
@@ -124,7 +124,6 @@ package final class HubDropService: Sendable {
 
     @MainActor
     private func handle(_ event: ItemTransferEvent) {
-        if case .serveEnded(_, _, let result) = event { return Self.log(served: result) }
         guard case .offerEnded(_, .local, let token, let closure) = event,
             let offer = offers.withLock({ $0.removeValue(forKey: token) })
         else { return }
@@ -150,24 +149,6 @@ package final class HubDropService: Sendable {
         } else {
             reporter.completed(.drop, startedAt: offer.began)
         }
-    }
-
-    /// Logs a pull of a drop's item that this side did not serve whole: the code, and the errno and entry a
-    /// read failure names.
-    private static func log(served result: ItemServeResult) {
-        let error: WireError
-        switch result {
-        case .landed: return
-        case .failed(let failure): error = failure
-        case .closed(.resetLocally(let failure)), .closed(.resetByPeer(let failure)): error = failure
-        case .closed(let closure):
-            return logger.log(
-                .warning, "A dropped item's serve ended: \(String(describing: closure), privacy: .public)")
-        }
-        let path = (error.item?.path ?? []).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")
-        let reason = "\(error.code), errno \(error.posixErrno)"
-        let detail = "\(path) (\(error.debugDetail))"
-        logger.log(.error, "A dropped item was not served: \(reason, privacy: .public) at \(detail, privacy: .private)")
     }
 
     /// What a drop whose offer of `items` items ended by `closure`, before the peer released it, reports.

@@ -78,19 +78,15 @@ enum SettingsPaneMetrics {
     /// tab view's bounds — see `SettingsTabViewController`'s sizing contract.
     static let width: CGFloat = 520
 
-    /// The tallest a pane can be while its window still fits the visible area
-    /// below the window's top edge — the window grows downward from a fixed
-    /// top — or the main screen's whole visible height before the window is
-    /// on a screen; `nil` with no screen at all.
+    /// The tallest a pane can be while `window` still fits `visibleFrame`
+    /// below its top edge — the window grows downward from a fixed top — or
+    /// the whole visible height while the window is on no screen.
     ///
     /// A pane taller than this scrolls; below it, the window follows the pane.
-    @MainActor static func maxHeight(in window: NSWindow?) -> CGFloat? {
+    @MainActor static func maxHeight(in window: NSWindow?, visibleFrame: NSRect) -> CGFloat {
         let chrome = window.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 0
-        if let window, let screen = window.screen {
-            return maxHeight(windowTop: window.frame.maxY, visibleFrame: screen.visibleFrame, chrome: chrome)
-        }
-        guard let screen = NSScreen.main else { return nil }
-        return maxHeight(windowTop: nil, visibleFrame: screen.visibleFrame, chrome: chrome)
+        let windowTop = window?.screen == nil ? nil : window?.frame.maxY
+        return maxHeight(windowTop: windowTop, visibleFrame: visibleFrame, chrome: chrome)
     }
 
     /// The pane height that keeps a window whose top edge sits at `windowTop`
@@ -112,16 +108,19 @@ extension SettingsPane {
 /// The toolbar-style tab container for the Settings window: one tab per
 /// ``SettingsPane`` the build offers.
 ///
-/// The Reminders, Clipboard, Networks and Tags panes need the app's
+/// The Reminders, Clipboard, Keyboard, Networks and Tags panes need the app's
 /// `VMLibraryViewModel`, so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "SettingsTabViewController")
 
     private let viewModel: VMLibraryViewModel
+    /// The visible frame the window must fit inside, which caps a pane's height.
+    private let visibleFrame: @MainActor (_ window: NSWindow?) -> NSRect?
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, visibleFrame: @escaping @MainActor (_ window: NSWindow?) -> NSRect?) {
         self.viewModel = viewModel
+        self.visibleFrame = visibleFrame
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -145,8 +144,9 @@ final class SettingsTabViewController: NSTabViewController {
     private func makeController(_ pane: SettingsPane) -> NSViewController {
         switch pane {
         case .general: GeneralSettingsViewController(viewModel: viewModel)
-        case .reminders: RemindersSettingsViewController(viewModel: viewModel)
+        case .reminders: RemindersSettingsViewController(viewModel: viewModel, visibleFrame: visibleFrame)
         case .clipboard: ClipboardSettingsViewController(viewModel: viewModel)
+        case .keyboard: KeyboardSettingsViewController(viewModel: viewModel)
         case .networks: NetworksSettingsViewController(viewModel: viewModel)
         case .tags: TagsSettingsViewController(viewModel: viewModel)
         case .advanced:

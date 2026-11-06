@@ -433,13 +433,13 @@ package final class VMCommandCore {
         let verb = bringUpTitle(verb)
         return ConfirmationPrompt(
             kind: .startBesideSharedMachineIdentity,
-            title: "\(verb) \u{201C}\(instance.name)\u{201D} Anyway?",
+            title: "\(verb) \u{201C}\(instance.name)\u{201D} with a Duplicate Machine ID?",
             message: CommandErrorDTO.sharedMachineIdentitySentence(
                 vm: instance.name, other: other.name,
                 otherHeldByAnotherCopy: other.heldByAnotherCopy)
                 + " Apple: \u{201C}Running two virtual machines concurrently with the same "
                 + "identifier results in undefined behavior in the guest operating system.\u{201D}",
-            confirmTitle: "\(verb) Anyway",
+            confirmTitle: verb,
             dismissTitle: "Cancel")
     }
 

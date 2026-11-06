@@ -1057,6 +1057,49 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
+    /// A restart the user starts, and the stop they choose while it waits.
+    enum CancelledRestart: CaseIterable, Sendable {
+        /// A Restart waiting on a guest that holds its shutdown, as one at a
+        /// login window does, then a Stop.
+        case restartThenStop
+        /// The same Restart, then a Force Stop.
+        case restartThenForceStop
+    }
+
+    @Test(
+        "A Restart the user's own stop cancels ends quietly once the guest powers off: no error, and no boot",
+        arguments: CancelledRestart.allCases)
+    func restartCancelledByAStopPresentsNothing(_ scenario: CancelledRestart) async throws {
+        let virtService = MockVirtualizationService()
+        virtService.guestIgnoresShutdownRequest = true
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let instance = viewModel.library.admitFixture()
+        let session = UUID()
+        instance.activity.placeForTesting(.running(sessionID: session))
+        presenter.confirmationAnswer = .answered(.confirm())
+
+        let restart = Task { @MainActor in await viewModel.restart(instance) }
+        try await virtService.stopRequested.wait { virtService.stopCallCount == 1 }
+        try await waitForChange {
+            !instance.activity.isRequestingStop && instance.activity.liveSessionContinues
+        }
+
+        switch scenario {
+        case .restartThenStop:
+            await viewModel.stop(instance)
+            #expect(!instance.activity.liveSessionContinues)
+            // The guest finally powers off.
+            instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        case .restartThenForceStop:
+            await viewModel.forceStop(instance)
+        }
+        await restart.value
+
+        #expect(presenter.errors.isEmpty)
+        #expect(virtService.startCallCount == 0)
+        #expect(instance.status == .stopped)
+    }
+
     @Test("restart whose shutdown fails presents the error and boots nothing")
     func restartPresentsAFailedShutdown() async {
         let virtService = MockVirtualizationService()
@@ -1432,6 +1475,8 @@ struct VMLibraryViewModelTests {
         // Refused at admission, before the service was reached.
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
+        #expect(presenter.errorMessage?.hasSuffix(" You can change this in Settings \u{25B8} Advanced.") == true)
+        #expect(presenter.errorSettingsDestination == .pane(.advanced))
         #expect(starting.status == .stopped)
     }
 
@@ -1443,7 +1488,7 @@ struct VMLibraryViewModelTests {
         let (starting, other) = appendMachineIDPair(to: viewModel, exactCopies: true)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = .answered(true)
+        presenter.confirmationAnswer = .answered(.confirm())
 
         await viewModel.start(starting)
 
@@ -1460,13 +1505,13 @@ struct VMLibraryViewModelTests {
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = .answered(true)
+        presenter.confirmationAnswer = .answered(.confirm())
 
         await viewModel.start(starting)
 
         #expect(
             presenter.confirmationRequests.map(\.prompt.title)
-                == ["Start \u{201C}Starting\u{201D} Anyway?"])
+                == ["Start \u{201C}Starting\u{201D} with a Duplicate Machine ID?"])
         #expect(presenter.confirmationRequests.first?.instance === starting)
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
@@ -1487,6 +1532,8 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
         #expect(presenter.errorTitle == "Duplicate Machine ID")
         #expect(presenter.errorSubject?.vm === starting)
+        // The setting is on, so the refusal offers no way to it.
+        #expect(presenter.errorSettingsDestination == nil)
         #expect(
             presenter.errorMessage?.hasPrefix(
                 "\u{201C}Starting\u{201D} has the same machine ID as \u{201C}Twin\u{201D}, which is active.")
@@ -1500,7 +1547,7 @@ struct VMLibraryViewModelTests {
         let (starting, other) = appendMachineIDPair(to: viewModel)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = .answered(false)
+        presenter.confirmationAnswer = .answered(.decline)
 
         await viewModel.start(starting)
 
@@ -1508,6 +1555,83 @@ struct VMLibraryViewModelTests {
         #expect(virtService.startCallCount == 0)
         #expect(presenter.showError == false)
         #expect(starting.status == .stopped)
+    }
+
+    @Test("The machine ID question offers Don't ask again, and confirming with it ticked saves the choice")
+    func confirmingWithDontAskAgainSavesTheChoice() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        preferences.allowsDuplicateMachineIDOverride = true
+        presenter.confirmationAnswer = .answered(.confirm(dontAskAgain: true))
+
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.map(\.offersDontAskAgain) == [true])
+        #expect(virtService.startCallCount == 1)
+        #expect(viewModel.duplicateMachineIDQuestionDismissed)
+        #expect(preferences.duplicateMachineIDQuestionDismissed)
+
+        // Started again beside its twin, it asks nothing.
+        starting.activity.placeForTesting(.stopped)
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.count == 1)
+        #expect(virtService.startCallCount == 2)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("Confirming without Don't ask again, or declining, saves nothing")
+    func answersWithoutTheCheckboxSaveNothing() async {
+        let virtService = MockVirtualizationService()
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+        preferences.allowsDuplicateMachineIDOverride = true
+
+        presenter.confirmationAnswer = .answered(.decline)
+        await viewModel.start(starting)
+        #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
+
+        presenter.confirmationAnswer = .answered(.confirm(dontAskAgain: false))
+        await viewModel.start(starting)
+        #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
+        #expect(preferences.duplicateMachineIDQuestionDismissed == false)
+        #expect(presenter.confirmationRequests.count == 2)
+    }
+
+    @Test("With the question dismissed, a start beside a machine ID twin asks nothing and starts")
+    func dismissedQuestionStartsWithoutAsking() async {
+        let virtService = MockVirtualizationService()
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.showError == false)
+    }
+
+    @Test("With the question dismissed, a start beside a running Exact Copy is still refused on the address")
+    func dismissedQuestionStillRefusesASharedMAC() async {
+        let virtService = MockVirtualizationService()
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
+        let (starting, other) = appendMachineIDPair(to: viewModel, exactCopies: true)
+        other.activity.placeForTesting(.running(sessionID: UUID()))
+
+        await viewModel.start(starting)
+
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(virtService.startCallCount == 0)
+        #expect(presenter.stepRouteRequests.count == 1)
+        #expect(presenter.errorTitle == "Duplicate MAC Address")
     }
 
     @Test("start proceeds when the machine ID twin is stopped")
@@ -1610,13 +1734,13 @@ struct VMLibraryViewModelTests {
         try VMInstanceFixture.writeSaveFile(for: resuming)
         other.activity.placeForTesting(.running(sessionID: UUID()))
         preferences.allowsDuplicateMachineIDOverride = true
-        presenter.confirmationAnswer = .answered(true)
+        presenter.confirmationAnswer = .answered(.confirm())
 
         await viewModel.resume(resuming)
 
         #expect(
             presenter.confirmationRequests.map(\.prompt.title)
-                == ["Resume \u{201C}Starting\u{201D} Anyway?"])
+                == ["Resume \u{201C}Starting\u{201D} with a Duplicate Machine ID?"])
         #expect(virtService.lastStartRoute == .restoredSavedState)
         #expect(presenter.showError == false)
     }
@@ -1773,7 +1897,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    @Test("Resume and Shut Down beside a MAC address twin takes the route, restores, then stops")
+    @Test("Resume and Stop beside a MAC address twin takes the route, restores, then stops")
     func resumeAndStopTakesARouteThenStops() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -3094,7 +3218,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    @Test("Resume and Shut Down on a paused VM resumes it, then stops it")
+    @Test("Resume and Stop on a paused VM resumes it, then stops it")
     func resumeAndStopOfAPausedVMTakesBothSteps() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
@@ -4184,8 +4308,8 @@ struct VMLibraryViewModelTests {
         #expect(storage.saveHostStateCallCount == 1)
     }
 
-    @Test("resetAllAgentInstallNudges re-arms every VM and the app-wide preference")
-    func resetAllAgentInstallNudgesReArmsEveryVM() {
+    @Test("resetAllReminders re-arms the install reminder everywhere, the quit reminder and the machine ID question")
+    func resetAllRemindersReArmsEveryReminder() {
         let (viewModel, _, _, _, _) = makeViewModel()
         let first = viewModel.library.admitFixture(
             name: "First", guestOS: .macOS,
@@ -4196,14 +4320,19 @@ struct VMLibraryViewModelTests {
         let third = viewModel.library.admitFixture(name: "Third", guestOS: .macOS)
         // `third` stays armed to confirm the reset no-ops on already-armed VMs.
         viewModel.agentInstallPromptDisabled = true
+        viewModel.duplicateMachineIDQuestionDismissed = true
+        preferences.menuBarQuitReminderDismissed = true
 
-        viewModel.resetAllAgentInstallNudges()
+        viewModel.resetAllReminders()
 
         #expect(first.hostState.agentInstallNudgeDismissed == false)
         #expect(second.hostState.agentInstallNudgeDismissed == false)
         #expect(third.hostState.agentInstallNudgeDismissed == false)
         #expect(viewModel.agentInstallPromptDisabled == false)
         #expect(preferences.agentInstallPromptDisabled == false)
+        #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
+        #expect(preferences.duplicateMachineIDQuestionDismissed == false)
+        #expect(preferences.menuBarQuitReminderDismissed == false)
     }
 
     @Test("agentInstallPromptDisabled defaults off and persists in both directions")
@@ -4715,6 +4844,26 @@ struct VMLibraryViewModelTests {
         #expect(presenter.errorTitles == [VMLibraryViewModel.autoStartUndoneTitle])
         #expect(presenter.errors.first?.hasPrefix("Skipped Twin: ") == true)
         #expect(presenter.errors.first?.hasSuffix(" Start it on its own to answer.") == true)
+    }
+
+    @Test("startAutomaticVMsForLaunch starts a marked VM beside its machine ID twin once the question is dismissed")
+    func autoStartStartsBesideATwinOnceTheQuestionIsDismissed() async {
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        let identity = Data([4, 5, 6])
+        let live = viewModel.library.admitFixture(name: "Live") { $0.genericMachineIdentifierData = identity }
+        live.activity.placeForTesting(.running(sessionID: UUID()))
+        let twin = makeAutoStartInstance(in: viewModel.library, name: "Twin") {
+            $0.genericMachineIdentifierData = identity
+        }
+        for instance in [live, twin] { instance.peers = viewModel.library }
+
+        await viewModel.startAutomaticVMsForLaunch()
+
+        #expect(virtService.startCallCount == 1)
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(presenter.errors.isEmpty)
     }
 
     /// A login launch has no window: the account goes to the presenter as a

@@ -57,6 +57,18 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         queue.async { handler(event) }
     }
 
+    /// Suspends until the hub has handled every event delivered so far, and every main-queue block that
+    /// handling queued has run: a delivery reaches the hub on its own queue, which hops to the main queue only
+    /// once it gets to the event, so draining the main queue alone can finish before the hub got to it.
+    package func settle() async {
+        let queues = state.withLock { $0.handlers.map(\.queue) }
+        for queue in queues {
+            await withCheckedContinuation { continuation in
+                queue.async { DispatchQueue.main.async { continuation.resume() } }
+            }
+        }
+    }
+
     /// The console session's peer a ``connectPowerPeer(claim:state:answering:)`` says Hello as by default.
     package static let consoleSessionPeer = (
         claim: PeerClaim(role: .sessionPeer, scope: .user, os: .linux, architecture: .arm64),

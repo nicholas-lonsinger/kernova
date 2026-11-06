@@ -1,15 +1,15 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaWire
 
-/// Writes a clipboard service's current content to the host pasteboard,
-/// lazily — the window-independent home of the "Copy to Mac" write-back path.
+/// Writes a VM's clipboard to the host pasteboard: passthrough's write of the
+/// guest's clipboard, lazily, and a copy command's of it, as data with its files
+/// promised.
 ///
-/// The single inbound-publication mechanism: the clipboard window's button and
-/// the automatic passthrough coordinator both publish through the same per-VM
-/// instance. Each item promises its types through a `LazyClipboardDataProvider`,
-/// handed to the app-scoped provider registry on a successful write — a paste
-/// can land long after the window, or the VM, is gone.
+/// Each item promises its types through a `LazyClipboardDataProvider`, handed to
+/// the app-scoped provider registry on a successful write — a paste can land
+/// long after the VM is gone.
 @MainActor
 package final class HostClipboardPublisher {
     /// Label for the host-side clipboard staging root.
@@ -36,6 +36,12 @@ package final class HostClipboardPublisher {
     /// Monotonic generation for the staging root, bumped per publish
     /// so each supersedes older staged artifacts within the recency window.
     private var stagingGeneration: UInt64 = 1
+
+    /// Hears each paste of a write of this publisher's whose promised bytes the pasteboard refused.
+    var onPasteRefused: (@MainActor () -> Void)? {
+        get { publisher.onPasteRefused }
+        set { publisher.onPasteRefused = newValue }
+    }
 
     /// The change a passthrough coordinator polling the same pasteboard skips,
     /// so guest content is never re-forwarded back to the guest.
@@ -68,12 +74,12 @@ package final class HostClipboardPublisher {
             label: HostClipboardPublisher.stagingLabel, root: stagingRoot)
     }
 
-    /// Builds the service's "Copy to Mac" items and writes them to the host
+    /// Builds the service's guest clipboard items and writes them to the host
     /// pasteboard as lazy promised items, returning the terminal outcome.
     ///
-    /// A live guest offer publishes from metadata alone — every promised rep's
-    /// bytes are pulled at paste time through its provide closure — so nothing
-    /// crosses the wire here; resolved (local) reps stage their bytes as before.
+    /// A live guest offer publishes from metadata alone — every promised type's
+    /// bytes are pulled at paste time through the offer's puller — so nothing
+    /// crosses the wire here; resolved (local) reps stage their bytes.
     ///
     /// Cooperatively cancellable: a task cancelled before the write throws
     /// `CancellationError` with the pasteboard untouched and its staging
@@ -86,22 +92,21 @@ package final class HostClipboardPublisher {
         let generation = stagingGeneration
         stagingGeneration += 1
 
-        let copyItems = service.materializeForCopy()
+        let copyItems = service.guestClipboardItems()
         var resolvedReps: [ClipboardContent.Representation] = []
-        var promises: [CopyToMacPromise] = []
+        var offers: [CopyToMacOffer] = []
         var droppedReasons: [CopyToMacDropReason] = []
         for item in copyItems {
             switch item {
             case .resolved(let rep): resolvedReps.append(rep)
-            case .promised(let promise): promises.append(promise)
+            case .offer(let offer): offers.append(offer)
             case .droppedFile(let reason): droppedReasons.append(reason)
             }
         }
-        guard !resolvedReps.isEmpty || !promises.isEmpty else {
+        guard !resolvedReps.isEmpty || !offers.isEmpty else {
             return .nothingServed(reasons: droppedReasons)
         }
 
-        // Only `VsockClipboardService` produces `.promised`.
         var specs: [ClipboardPasteboardPublisher.ItemSpec]
         do throws(CancellationError) {
             specs = try await Self.hostPasteboardItems(
@@ -118,8 +123,10 @@ package final class HostClipboardPublisher {
             staging.discardGeneration(generation)
             throw error
         }
-        if let serving = service as? any ClipboardPromiseServing {
-            specs += Self.promisedItemSpecs(for: promises, serve: serving)
+        for offer in offers {
+            specs += ClipboardPasteboardPublisher.itemSpecs(
+                for: offer.items, concealed: offer.concealed, servingFileURLs: offer.servingFileURLs,
+                puller: offer.puller)
         }
 
         // An empty `specs` means every resolved payload was dropped (e.g. a lone
@@ -130,58 +137,52 @@ package final class HostClipboardPublisher {
             return .stagingFailed
         }
 
-        guard publisher.write(specs, promised: !promises.isEmpty) else {
+        var parts = offers.map {
+            ClipboardWriteSource.Part(
+                items: $0.items, concealed: $0.concealed, servingFileURLs: $0.servingFileURLs, puller: $0.puller)
+        }
+        if !resolvedReps.isEmpty { parts.insert(.init(holding: resolvedReps), at: 0) }
+        guard publisher.write(specs, source: ClipboardWriteSource(serving: offers.first?.serving, parts: parts))
+        else {
             Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
             return .writeFailed
         }
-        let representationCount = resolvedReps.count + promises.count
+        let representationCount =
+            resolvedReps.count + offers.reduce(0) { $0 + $1.items.reduce(0) { $0 + $1.representations.count } }
         Self.logger.log(
             .info,
-            "Published clipboard buffer to host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
+            "Published the guest's clipboard to the host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
         )
         return .written(representationCount: representationCount, droppedReasons: droppedReasons)
+    }
+
+    /// Writes the guest's copy `contents`: every representation but a file or folder as data, the files
+    /// promised, and withheld when `servingFileURLs` is false. The copy is released once something replaces its
+    /// write, or at once when it promised none or the write failed. Returns whether the write was taken.
+    func writeCopy(_ contents: GuestCopyContents, servingFileURLs: Bool) -> Bool {
+        let (written, promised) = publisher.publishCopy(
+            contents.items, concealed: contents.concealed, servingFileURLs: servingFileURLs,
+            held: contents.held, puller: contents.puller, serving: contents.serving,
+            onReleased: contents.release)
+        if !written || !promised { contents.release() }
+        Self.logger.log(
+            .info,
+            "Wrote the guest's clipboard copy to the host pasteboard (written: \(written, privacy: .public), files promised: \(promised, privacy: .public))"
+        )
+        return written
     }
 
     /// `true` while the host pasteboard still holds this publisher's most recent
     /// write — nothing (the user included) has replaced it since.
     var pasteboardHoldsLastWrite: Bool { publisher.holdsLastWrite }
 
-    /// Clears the host pasteboard when it still holds this publisher's most
-    /// recent *promised* write, returning whether it did — the stale-promise
-    /// retraction the clipboard service triggers when the guest's clipboard
-    /// supersedes an offer whose promises can no longer be served.
-    func retractPromisedWrite() -> Bool {
-        guard publisher.retractPromisedWrite() else { return false }
-        Self.logger.log(.notice, "Retracted stale promised clipboard write from the host pasteboard")
-        return true
-    }
-
-    /// Builds the per-item provider specs for reps promised by offer coordinates —
-    /// the same grouping the resolved path plans, driven by offer metadata alone.
-    ///
-    /// The pull each flavor's closure runs happens on the thread of the
-    /// pasteboard server's `provideData` callback (usually main, which keeps
-    /// running its event loop meanwhile) while the stream receiver delivers
-    /// off-main; the offer's paste-bound total is size-capped so the pull and
-    /// stage complete within the OS paste deadline. A promise that withholds
-    /// `.fileURL` (the over-cap refusal) never registers that type.
-    nonisolated static func promisedItemSpecs(
-        for promises: [CopyToMacPromise], serve: any ClipboardPromiseServing
-    ) -> [ClipboardPasteboardPublisher.ItemSpec] {
-        let descriptors = promises.map {
-            ClipboardRepresentationDescriptor(
-                uti: $0.uti, filename: $0.filename, isInline: $0.isInline, isPromisable: true)
-        }
-        // A "Copy to Mac" plans over the promises it kept, not the offer's own
-        // representations, so a promised type's index is into `promises` and the
-        // coordinates it serves from come from there.
-        return ClipboardPasteboardPublisher.specs(
-            for: ClipboardPasteboardItemPlan.plan(for: descriptors), serve: serve
-        ) { promisedType in
-            let promise = promises[promisedType.representationIndex]
-            guard !(promisedType.isFileURL && promise.withholdsFileURL) else { return nil }
-            return (generation: promise.generation, repIndex: promise.repIndex)
-        }
+    /// Withdraws `withdrawal`'s promises of this publisher's most recent write
+    /// when the host pasteboard still holds it and it serves the offer
+    /// `token`, and returns what that left: what the offer's end owes a write
+    /// whose promises it can no longer serve
+    /// (``ClipboardPasteboardPublisher/retractWrite(servingOffer:withdrawing:)``).
+    func retractWrite(servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal) -> ClipboardRetraction? {
+        publisher.retractWrite(servingOffer: token, withdrawing: withdrawal)
     }
 
     /// Builds the per-item provider specs to promise on the host pasteboard for

@@ -13,7 +13,9 @@ services and the `VMLibraryViewModel` over them, and hands that to
 `AppDelegate.init`, which builds `AppWindowRegistry` (holding
 `VMDisplayPlacementController`), `AppAlertPresenter` (attached to the view
 model before the library's first read), `AppResidencyController`,
-`MainMenuController` and `AppTerminationController`.
+`MainMenuController` and `AppTerminationController`. The shared application
+it starts is a `KernovaApplication`, whose `sendEvent(_:)` hands every event to
+`ReservedShortcutCatcher` before AppKit dispatches it.
 
 What those owners decide lives in AppKit-free types they call:
 `AppResidencyPolicy`, `VMDisplayPlacement`, `AlertQueue` and
@@ -111,8 +113,8 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   session hosts as a `VsockListenerHost`; per VM, a
   `VsockAdmissionGate` and a `VsockDataConnectionSink` held by `VMInstance`;
   per session, `VsockFeatureCoordinator` (held by `VMSessionContext`) over
-  `VsockFeatureDescriptor.all` — `VsockControlService`, `VsockGuestLogService`,
-  `VsockClipboardService`.
+  `VsockFeatureDescriptor.all` — `VsockControlService` and
+  `VsockGuestLogService`.
 - Agent hub, every VM with a socket device: one `AgentHub` (KernovaKit's
   `KernovaAgentHost`) per `VMInstance`, beside the macOS ports above; each
   session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`
@@ -125,11 +127,14 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   Linux agent's ISO, which `GuestAgentDiskCache` writes into Application Support
   with KernovaKit's `KernovaISO9660`; the guest is attached the VM's own copy,
   which `GuestAgentDiskCopies` keeps in the bundle.
-- Clipboard: `ClipboardServicing` unifies `VsockClipboardService` and
-  `SpiceClipboardService` (Linux) behind `VMInstance.clipboardService`;
+- Clipboard: `ClipboardServicing` unifies `HubClipboardService` (the guest
+  agent's CLIPBOARD owner, one per `VMInstance`) and `SpiceClipboardService`
+  (Linux) behind `VMInstance.clipboardService`, which `ClipboardRoute` picks;
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host
-  pasteboard; the engine both host services and both guest agents drive is
-  KernovaKit's `ClipboardEndpoint`.
+  pasteboard, and `VMInstance`'s clipboard commands copy a snapshot each way
+  through the service. `HubClipboardService` and the macOS agent's `GuestClipboard` run
+  over KernovaKit's `ClipboardItemExchange` (`KernovaClipboardItems`); the drop
+  services and agent drive KernovaKit's `ClipboardEndpoint`.
 - Sockets: `UnixSocketListener` under `SerialSocketRelay` and
   `VMCommandSocketListener`.
 
@@ -141,8 +146,8 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
 `VMDisplayBackingView`, fed only through `VMDisplayHandle`; it moves files both
 ways through the `VMDisplayTransferHosting` its host resolves (`VMInstance`).
 `MainWindowController` and `VMDisplayWindowController` each build their
-toolbar through a `VMToolbarManager`; `ClipboardToolbarButton` is the one
-view-backed item.
+toolbar through a `VMToolbarManager`; the two clipboard commands' items are
+its view-backed ones, each a `ClipboardToolbarButton`.
 
 ## Shared package and helper targets
 

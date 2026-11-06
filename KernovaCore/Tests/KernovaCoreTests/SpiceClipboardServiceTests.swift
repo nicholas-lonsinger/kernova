@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -44,8 +45,8 @@ struct SpiceClipboardServiceTests {
     }
 
     /// Connects the service via a non-requesting capabilities message (no pipe writes).
-    private func connect(_ service: SpiceClipboardService, byDemand: Bool = true) {
-        service.handleIncomingData(buildCapabilities(clipboard: true, byDemand: byDemand))
+    private func connect(_ service: SpiceClipboardService, byDemand: Bool = true) async {
+        await service.handleIncomingData(buildCapabilities(clipboard: true, byDemand: byDemand))
     }
 
     /// Reads all currently buffered data from the pipe (non-blocking).
@@ -82,134 +83,41 @@ struct SpiceClipboardServiceTests {
     // MARK: - Capability Handshake
 
     @Test("Connects when guest advertises only legacy clipboard capability")
-    func connectLegacy() {
+    func connectLegacy() async {
         let (service, _, _) = makeService()
-        connect(service, byDemand: false)
+        await connect(service, byDemand: false)
         #expect(service.isConnected)
     }
 
     @Test("Stays disconnected when guest lacks clipboard capability")
-    func rejectWithoutClipboard() {
+    func rejectWithoutClipboard() async {
         let (service, _, _) = makeService()
-        service.handleIncomingData(buildCapabilities(clipboard: false, byDemand: false))
+        await service.handleIncomingData(buildCapabilities(clipboard: false, byDemand: false))
         #expect(!service.isConnected)
     }
 
-    @Test("agentStatus is .waiting before the capabilities handshake")
-    func agentStatusBeforeHandshake() {
-        let (service, _, _) = makeService()
-        #expect(service.agentStatus == .waiting)
-    }
-
-    @Test("agentStatus is .current after the handshake")
-    func agentStatusAfterHandshake() {
-        let (service, _, _) = makeService()
-        connect(service, byDemand: true)
-        // Linux guests install spice-vdagent themselves, so the host has
-        // nothing to install/update — .current suppresses install affordances.
-        #expect(service.agentStatus == .current(version: "spice-vdagent"))
-    }
-
     @Test("Sends capabilities reply when guest requests it")
-    func capabilitiesReply() {
+    func capabilitiesReply() async {
         let (service, inputPipe, _) = makeService()
-        service.handleIncomingData(buildCapabilities(clipboard: true, byDemand: true, request: true))
+        await service.handleIncomingData(buildCapabilities(clipboard: true, byDemand: true, request: true))
 
         let types = messageTypes(in: drainPipe(inputPipe))
         #expect(types.contains(.announceCapabilities))
     }
 
-    // MARK: - grabIfChanged Guards
-
-    @Test("grabIfChanged does nothing when disconnected")
-    func grabWhileDisconnected() {
-        let (service, inputPipe, _) = makeService()
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        // Nothing reached the guest, so the copy is still owed to it.
-        #expect(service.grabIfChanged() == .undelivered)
-        #expect(drainPipe(inputPipe).isEmpty)
-    }
-
-    @Test("grabIfChanged does nothing when clipboard text is empty")
-    func grabWithEmptyText() {
-        let (service, inputPipe, _) = makeService()
-        connect(service)
-        drainPipe(inputPipe)
-
-        #expect(service.grabIfChanged() == .settled)
-        #expect(drainPipe(inputPipe).isEmpty)
-    }
-
-    @Test("grabIfChanged is a no-op for content without a text representation")
-    func grabWithNonTextContent() {
-        let (service, inputPipe, _) = makeService()
-        connect(service)
-        drainPipe(inputPipe)
-
-        // SPICE transport is text-only until the issue #112 follow-up; an
-        // image-only buffer must produce no GRAB on the pipe.
-        service.clipboardContent = ClipboardContent(representations: [
-            .init(uti: "public.png", data: Data([0x89, 0x50, 0x4E, 0x47]))
-        ])
-        // Settled, not owed: this transport can never carry it.
-        #expect(service.grabIfChanged() == .settled)
-        #expect(drainPipe(inputPipe).isEmpty)
-    }
-
-    @Test("grabIfChanged skips duplicate grab for unchanged text")
-    func grabDeduplication() {
-        let (service, inputPipe, _) = makeService()
-        connect(service)
-
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        #expect(service.grabIfChanged() == .settled)
-        drainPipe(inputPipe)
-
-        #expect(service.grabIfChanged() == .settled)
-        #expect(drainPipe(inputPipe).isEmpty)
-    }
-
-    // MARK: - grabIfChanged Modes
-
-    @Test("By-demand grab sends only CLIPBOARD_GRAB")
-    func grabByDemandMode() {
-        let (service, inputPipe, _) = makeService()
-        connect(service, byDemand: true)
-        drainPipe(inputPipe)
-
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        #expect(service.grabIfChanged() == .settled)
-
-        let types = messageTypes(in: drainPipe(inputPipe))
-        #expect(types == [.clipboardGrab])
-    }
-
-    @Test("Legacy grab sends CLIPBOARD_GRAB followed by CLIPBOARD data")
-    func grabLegacyMode() {
-        let (service, inputPipe, _) = makeService()
-        connect(service, byDemand: false)
-        drainPipe(inputPipe)
-
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        #expect(service.grabIfChanged() == .settled)
-
-        let types = messageTypes(in: drainPipe(inputPipe))
-        #expect(types == [.clipboardGrab, .clipboard])
-    }
-
     // MARK: - Failure Recovery
 
     @Test("Write failure disconnects the service")
-    func writeFailureDisconnects() throws {
+    func writeFailureDisconnects() async throws {
         let (service, inputPipe, _) = makeService()
-        connect(service)
+        await connect(service)
         drainPipe(inputPipe)
 
         try inputPipe.fileHandleForWriting.close()
 
-        service.clipboardContent = ClipboardContent(text: "Hello")
         // The write never left, so the copy is owed to the next connection.
-        #expect(service.grabIfChanged() == .undelivered)
+        let (copy, _) = try await macCopy("Hello")
+        #expect(await service.offerHostCopy(copy) == .undelivered)
 
         #expect(!service.isConnected)
     }
@@ -219,7 +127,7 @@ struct SpiceClipboardServiceTests {
         let (service, inputPipe, outputPipe) = makeService()
         service.start()
         drainPipe(inputPipe)
-        connect(service)
+        await connect(service)
         #expect(service.isConnected)
 
         try outputPipe.fileHandleForWriting.close()
@@ -234,71 +142,340 @@ struct SpiceClipboardServiceTests {
 
     // MARK: - Inbound Message Handling
 
-    @Test("Guest clipboard data updates text and resets grab tracking")
-    func clipboardDataUpdatesState() {
+    @Test("Guest clipboard data is the guest's text, until a grab of either side's replaces it")
+    func clipboardDataUpdatesState() async throws {
         let (service, inputPipe, _) = makeService()
-        connect(service)
+        await connect(service)
         drainPipe(inputPipe)
 
-        // Grab "Hello" — sets lastGrabbedText
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        _ = service.grabIfChanged()
-        drainPipe(inputPipe)
-
-        // Guest sends its own data → resets lastGrabbedText
         var payload = Data()
         payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-        payload.append(Data("From guest".utf8))
-        service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: payload))
+        await service.handleIncomingData(
+            buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
+        #expect(service.guestText == "From guest")
+        #expect(service.inboundOfferSeq == 1)
+        guard case .resolved(let text)? = service.guestClipboardItems().first else {
+            Issue.record("the guest's text is not offered to the Mac")
+            return
+        }
+        #expect(text.inMemoryData == Data("From guest".utf8))
 
-        #expect(service.clipboardContent.text == "From guest")
+        // The guest grabbing again ends the text it sent before.
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardGrab, payload: payload))
+        #expect(service.guestText == nil)
 
-        // Re-grabbing "Hello" should succeed because lastGrabbedText was reset
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        _ = service.grabIfChanged()
-        let types = messageTypes(in: drainPipe(inputPipe))
-        #expect(types.contains(.clipboardGrab))
+        await service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: payload + Data("Later".utf8)))
+        let (copy, _) = try await macCopy("from the Mac")
+        #expect(await service.offerHostCopy(copy) == .settled)
+        // The Mac's grab replaces the guest's clipboard.
+        #expect(service.guestText == nil)
+        #expect(service.guestClipboardItems().isEmpty)
     }
 
-    @Test("Guest clipboard request sends pending outbound text")
-    func clipboardRequestWithPending() {
+    @Test("The guest releasing its clipboard ends the text it sent: Copy to Mac then has nothing to copy")
+    func clipboardReleaseEndsTheGuestsText() async throws {
         let (service, inputPipe, _) = makeService()
-        connect(service, byDemand: true)
+        await connect(service)
         drainPipe(inputPipe)
+        var payload = Data()
+        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        await service.handleIncomingData(
+            buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
+        #expect(service.guestText == "From guest")
 
-        // Grab sets pendingOutboundText
-        service.clipboardContent = ClipboardContent(text: "Hello")
-        _ = service.grabIfChanged()
-        drainPipe(inputPipe)
-
-        // Guest requests the data
-        var requestPayload = Data()
-        requestPayload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-        service.handleIncomingData(buildGuestMessage(type: .clipboardRequest, payload: requestPayload))
-
-        let types = messageTypes(in: drainPipe(inputPipe))
-        #expect(types == [.clipboard])
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardRelease, payload: Data()))
+        #expect(service.guestText == nil)
+        guard case .nothing = await service.guestClipboardCopy({ _ in }) else {
+            Issue.record("the released text is still the guest's clipboard")
+            return
+        }
     }
 
     @Test("Guest clipboard request with no pending text sends nothing")
-    func clipboardRequestWithoutPending() {
+    func clipboardRequestWithoutPending() async {
         let (service, inputPipe, _) = makeService()
-        connect(service, byDemand: true)
+        await connect(service, byDemand: true)
         drainPipe(inputPipe)
 
         var requestPayload = Data()
         requestPayload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-        service.handleIncomingData(buildGuestMessage(type: .clipboardRequest, payload: requestPayload))
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardRequest, payload: requestPayload))
 
         #expect(drainPipe(inputPipe).isEmpty)
+    }
+
+    // MARK: - Another route carrying the clipboard
+
+    @Test(
+        "The guest agent taking the clipboard over releases the host's grab; SPICE then asks for no grab, answers no request and takes no data"
+    )
+    func notCarryingSendsNothing() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        let (copy, _) = try await macCopy("Hello")
+        #expect(await service.offerHostCopy(copy) == .settled)
+        drainPipe(inputPipe)
+
+        service.carriesClipboard = false
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardRelease])
+        var text = Data()
+        text.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardGrab, payload: text))
+        await service.handleIncomingData(buildGuestMessage(type: .clipboardRequest, payload: text))
+        await service.handleIncomingData(buildGuestMessage(type: .clipboard, payload: text + Data("From guest".utf8)))
+        let (later, _) = try await macCopy("Later")
+
+        #expect(await service.offerHostCopy(later) == .undelivered)
+        #expect(drainPipe(inputPipe).isEmpty)
+        #expect(service.inboundOfferSeq == 0)
+    }
+
+    // MARK: - A copy on the Mac
+
+    /// The Mac's copy of `text`, read from a pasteboard as passthrough reads it.
+    private func macCopy(_ text: String) async throws -> (copy: ClipboardOfferSource, pasteboard: FakePasteboard) {
+        let pasteboard = FakePasteboard()
+        pasteboard.setText(text)
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        guard case .offer(let copy, _) = outcome else {
+            Issue.record("expected an offer, got \(outcome)")
+            throw CancellationError()
+        }
+        return (copy, pasteboard)
+    }
+
+    /// The guest's `CLIPBOARD_REQUEST` for UTF-8 text.
+    private var textRequest: Data {
+        var payload = Data()
+        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        return buildGuestMessage(type: .clipboardRequest, payload: payload)
+    }
+
+    /// The payload of each `CLIPBOARD` data message in `data`: its clipboard type and bytes.
+    private func clipboardData(in data: Data) -> [(type: UInt32, bytes: Data)] {
+        var replies: [(type: UInt32, bytes: Data)] = []
+        var offset = 0
+        while offset + VDIChunkHeader.size + VDAgentMessageHeader.size <= data.count {
+            let chunkSlice = data.subdata(in: offset..<offset + VDIChunkHeader.size)
+            guard let chunk = VDIChunkHeader.deserialize(from: chunkSlice) else { break }
+            let message = offset + VDIChunkHeader.size
+            let end = message + Int(chunk.dataSize)
+            if data.readLittleEndianUInt32(at: message + 4) == SpiceAgentMessageType.clipboard.rawValue,
+                let type = data.readLittleEndianUInt32(at: message + VDAgentMessageHeader.size)
+            {
+                replies.append((type, data.subdata(in: message + VDAgentMessageHeader.size + 4..<end)))
+            }
+            offset = end
+        }
+        return replies
+    }
+
+    @Test("A copy on the Mac is grabbed unread, its text read only when the guest requests it")
+    func hostCopyIsReadOnRequest() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        drainPipe(inputPipe)
+        let (copy, pasteboard) = try await macCopy("from the Mac")
+
+        #expect(await service.offerHostCopy(copy) == .settled)
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+        // The copy read nothing, so a privacy prompt can come only with a paste in the guest.
+        #expect(pasteboard.residentReadTypes.isEmpty)
+
+        await service.handleIncomingData(textRequest)
+        let replies = clipboardData(in: drainPipe(inputPipe))
+        #expect(replies.map(\.type) == [SpiceClipboardType.utf8Text.rawValue])
+        #expect(replies.map(\.bytes) == [Data("from the Mac".utf8)])
+        #expect(pasteboard.residentReadTypes == [ClipboardContent.utf8TextUTI])
+    }
+
+    @Test("A request after the Mac's clipboard moved on is answered with no data")
+    func requestAfterTheCopyMovedOn() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        let (copy, pasteboard) = try await macCopy("from the Mac")
+        #expect(await service.offerHostCopy(copy) == .settled)
+        drainPipe(inputPipe)
+
+        // A newer copy, not yet polled: the grab still stands, but what it was read from is gone.
+        pasteboard.setText("copied since")
+        await service.handleIncomingData(textRequest)
+
+        let replies = clipboardData(in: drainPipe(inputPipe))
+        #expect(replies.map(\.type) == [SpiceClipboardType.none.rawValue])
+        #expect(replies.map(\.bytes) == [Data()])
+    }
+
+    @Test("A legacy guest, which never requests, is sent the Mac's copy with its grab")
+    func hostCopyToLegacyGuest() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: false)
+        drainPipe(inputPipe)
+        let (copy, _) = try await macCopy("from the Mac")
+
+        #expect(await service.offerHostCopy(copy) == .settled)
+        let wire = drainPipe(inputPipe)
+        #expect(messageTypes(in: wire) == [.clipboardGrab, .clipboard])
+        #expect(clipboardData(in: wire).map(\.bytes) == [Data("from the Mac".utf8)])
+    }
+
+    @Test("A copy on the Mac with no text grabs nothing")
+    func hostCopyWithoutTextGrabsNothing() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        pasteboard.setData(Data([0x89, 0x50, 0x4E, 0x47]), forTypeIdentifier: "public.png")
+        guard case .offer(let copy, _) = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        else {
+            Issue.record("the image copy offers nothing")
+            return
+        }
+
+        #expect(await service.offerHostCopy(copy) == .settled)
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
+    @Test("Passthrough stopping releases its grab in the guest: the guest's request after gets no data")
+    func passthroughOffReleasesTheGrab() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        let (copy, _) = try await macCopy("from the Mac")
+        #expect(await service.offerHostCopy(copy) == .settled)
+        drainPipe(inputPipe)
+
+        service.passthroughStopped()
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardRelease])
+        await service.handleIncomingData(textRequest)
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
+    // MARK: - The clipboard commands
+
+    /// The Mac's clipboard as a copy command snapshots it.
+    private func macSnapshot(_ pasteboard: FakePasteboard) async throws -> ClipboardOfferSource {
+        guard
+            case .snapshot(let snapshot, _) = await ClipboardPasteboardReader.readSnapshot(
+                from: pasteboard, copyingTo: nil, sizeOf: nil)
+        else {
+            Issue.record("the Mac's clipboard gave no snapshot")
+            throw CancellationError()
+        }
+        return snapshot
+    }
+
+    @Test(
+        "Copy to Guest grabs for the Mac's text as the command read it, answered so after the Mac's clipboard moves on")
+    func copyToGuestGrabsTheSnapshot() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        pasteboard.setText("from the Mac")
+        let snapshot = try await macSnapshot(pasteboard)
+
+        #expect(service.copyMacClipboardToGuest(snapshot) == nil)
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+        pasteboard.setText("copied since")
+        await service.handleIncomingData(textRequest)
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("from the Mac".utf8)])
+    }
+
+    @Test("Passthrough stopping leaves a command's grab: it crossed by the user's command")
+    func passthroughOffKeepsACommandsGrab() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        let pasteboard = FakePasteboard()
+        pasteboard.setText("by command")
+        #expect(service.copyMacClipboardToGuest(try await macSnapshot(pasteboard)) == nil)
+        drainPipe(inputPipe)
+
+        service.passthroughStopped()
+        #expect(drainPipe(inputPipe).isEmpty)
+        await service.handleIncomingData(textRequest)
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("by command".utf8)])
+    }
+
+    @Test("Copy to Guest of a Mac clipboard with no text grabs nothing and says text is all SPICE carries")
+    func copyToGuestWithoutText() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        pasteboard.setData(Data([0x89, 0x50, 0x4E, 0x47]), forTypeIdentifier: "public.png")
+
+        #expect(service.copyMacClipboardToGuest(try await macSnapshot(pasteboard)) == .noTextToCopy)
+        #expect(drainPipe(inputPipe).isEmpty)
+    }
+
+    /// Another VM's offer: answers every pull with `bytes`, and never ends.
+    private final class OtherVMPuller: ClipboardItemPulling {
+        let bytes: Data
+        init(bytes: Data) { self.bytes = bytes }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completion(nil)
+        }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+    }
+
+    @Test("Copy to Guest of another VM's passthrough text grabs for that text, read at the command")
+    func copyToGuestOfAnotherVMsPassthroughText() async throws {
+        let (service, inputPipe, _) = makeService()
+        await connect(service, byDemand: true)
+        drainPipe(inputPipe)
+        let pasteboard = FakePasteboard()
+        // A macOS VM's host publisher writes its guest's passthrough text, promised, to the Mac pasteboard.
+        let otherVM = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        var text = Representation()
+        text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        text.storage = .inline
+        var item = OfferedItem()
+        item.representations = [text]
+        #expect(
+            otherVM.publish(
+                [item], concealed: false, puller: OtherVMPuller(bytes: Data("from VM A".utf8)),
+                serving: .init(token: Data(repeating: 0xA1, count: 16), connection: ClipboardConnectionID())))
+
+        let snapshot = try await macSnapshot(pasteboard)
+        #expect(pasteboard.providerInvocations == 0)
+        #expect(service.copyMacClipboardToGuest(snapshot) == nil)
+        #expect(messageTypes(in: drainPipe(inputPipe)) == [.clipboardGrab])
+        await service.handleIncomingData(textRequest)
+        #expect(clipboardData(in: drainPipe(inputPipe)).map(\.bytes) == [Data("from VM A".utf8)])
+    }
+
+    @Test("Copy to Mac takes the text the guest's agent last sent, as data; nothing before it sends any")
+    func copyToMacTakesTheGuestsText() async throws {
+        let (service, _, _) = makeService()
+        await connect(service)
+        guard case .nothing = await service.guestClipboardCopy({ _ in }) else {
+            Issue.record("a copy before the guest sent any text")
+            return
+        }
+        var payload = Data()
+        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
+        await service.handleIncomingData(
+            buildGuestMessage(type: .clipboard, payload: payload + Data("From guest".utf8)))
+
+        var written: GuestCopyContents?
+        guard case .landed = await service.guestClipboardCopy({ written = $0 }), let contents = written else {
+            Issue.record("no copy of the guest's text")
+            return
+        }
+        #expect(contents.items.map { $0.representations.map(\.storage) } == [[.inline]])
+        #expect(contents.held(0, 0) == .bytes(Data("From guest".utf8)))
     }
 
     // MARK: - Lifecycle
 
     @Test("stop() clears connected state")
-    func stopClearsState() {
+    func stopClearsState() async {
         let (service, _, _) = makeService()
-        connect(service)
+        await connect(service)
         #expect(service.isConnected)
 
         service.stop()

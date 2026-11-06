@@ -65,11 +65,6 @@ package final class SimItemSide {
 
     init() {}
 
-    /// Item `item` of the far side's offer of `token`, as this side last read it.
-    func read(_ token: Data, item: UInt32) -> OfferedItem? {
-        reads.last { $0.token == token && $0.item == item }?.result
-    }
-
     /// The ids of the commands sent and never answered.
     var unanswered: [ItemRequestID] { Array(awaiting.keys) }
 
@@ -133,7 +128,7 @@ package final class SimItemSide {
             switch event {
             case .offerReceived(let header):
                 offersReceived.append((world.now, header))
-                // The owner reads each item as the offer arrives, as a pull's landing depends on its storage.
+                // The owner reads each item as the offer arrives.
                 let index = world.links.firstIndex { $0 === link } ?? 0
                 world.at(world.now) { world in
                     world.itemCommand(side, link: index) { items in
@@ -284,13 +279,10 @@ extension SimWorld {
         itemCommand(.host, link: index) { items in items.openTakes.map { .cancelTake($0) } }
     }
 
-    /// `side` pulls `request` on link `index`, landing it as `DecodingItemSink.landing(_:)` takes the storage
-    /// of the representation it names.
+    /// `side` pulls `request` on link `index`, landing it as `DecodingItemSink.landing`.
     package func pullItem(_ request: PullRequest, by side: SimSide, link index: Int = 0) {
         itemCommand(side, link: index) { items in
-            let representations = items.read(request.token, item: request.item)?.representations ?? []
-            let storage = representations.dropFirst(Int(request.representation)).first?.storage ?? .file
-            let order = ItemPullOrder(request, landing: DecodingItemSink.landing(storage))
+            let order = ItemPullOrder(request, landing: DecodingItemSink.landing)
             return [items.command(.pull(request)) { .pull($0, order) }]
         }
     }

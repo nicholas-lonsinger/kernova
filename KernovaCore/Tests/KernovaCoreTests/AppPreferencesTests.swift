@@ -283,13 +283,25 @@ struct AppPreferencesTests {
         #expect(ClipboardPasteLimit.choices.contains(prefs.clipboardMaxPasteBytes))
     }
 
-    @Test("resetHostReminders clears the host reminder flag")
-    func resetHostRemindersClearsTheFlag() {
-        let (prefs, _) = makePreferences()
-        prefs.menuBarQuitReminderDismissed = true
+    @Test("Every reserved shortcut is on until one is turned off, and the switches round-trip")
+    func reservedShortcutsRoundTrip() {
+        let (prefs, defaults) = makePreferences()
+        #expect(prefs.disabledReservedShortcuts.isEmpty)
 
-        prefs.resetHostReminders()
+        prefs.disabledReservedShortcuts = [.copyMacClipboardToGuest]
+        #expect(prefs.disabledReservedShortcuts == [.copyMacClipboardToGuest])
+        #expect(defaults.stringArray(forKey: "disabledReservedShortcuts") == ["copyMacClipboardToGuest"])
+        // A second preferences object over the same store is the next launch.
+        #expect(AppPreferences(defaults: defaults).disabledReservedShortcuts == [.copyMacClipboardToGuest])
 
-        #expect(prefs.menuBarQuitReminderDismissed == false)
+        prefs.disabledReservedShortcuts = []
+        #expect(AppPreferences(defaults: defaults).disabledReservedShortcuts.isEmpty)
+    }
+
+    @Test("A stored shortcut name no case carries is dropped on read")
+    func reservedShortcutsDropUnknownNames() {
+        let (prefs, defaults) = makePreferences()
+        defaults.set(["copyGuestClipboardToMac", "noSuchShortcut"], forKey: "disabledReservedShortcuts")
+        #expect(prefs.disabledReservedShortcuts == [.copyGuestClipboardToMac])
     }
 }

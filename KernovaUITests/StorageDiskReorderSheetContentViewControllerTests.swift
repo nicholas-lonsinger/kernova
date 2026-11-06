@@ -141,7 +141,7 @@ struct StorageDiskReorderSheetContentViewControllerTests {
             return
         }
         // A per-test unique name so parallel/retried runs never share this global
-        // named pasteboard (matches ClipboardPasteboardIntakeTests).
+        // named pasteboard.
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("kernova-test-\(UUID().uuidString)"))
         pasteboard.clearContents()
         pasteboard.writeObjects([writer])

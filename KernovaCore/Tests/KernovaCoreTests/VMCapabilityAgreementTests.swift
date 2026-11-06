@@ -42,7 +42,7 @@ struct VMCapabilityAgreementTests {
         case .forceStop: return [.forceStop, .discardSavedState]
         // Its admission is Stop's; the agents' offer and a paused guest are
         // refused past it, as steps.
-        case .shutDownAnyway: return [.shutDownAnyway, .stop]
+        case .stopAnyway: return [.stopAnyway, .stop]
         // One verb, whose edit the list's size and the VM's session route to
         // either capability.
         case .editSharedDirectories, .editLiveSharedDirectories:
@@ -77,9 +77,9 @@ struct VMCapabilityAgreementTests {
             try await core.stop(vm, disposition: .graceful, consent: .none, timeout: nil)
         case .forceStop:
             try await core.stop(vm, disposition: .force, consent: .none, timeout: nil)
-        case .shutDownAnyway:
+        case .stopAnyway:
             try await core.stop(vm, disposition: .anyway, consent: .none, timeout: nil)
-        case .restart: try await core.restart(vm, timeout: 1, consent: .none)
+        case .restart: try await core.restart(vm, disposition: .graceful, timeout: 1, consent: .none)
         case .pause: try await core.pause(vm)
         case .resume: try await core.resume(vm, consent: .none)
         case .suspend: try await core.suspend(vm)
@@ -132,13 +132,23 @@ struct VMCapabilityAgreementTests {
                             ? "common" : "isolated")
                 ],
                 consent: .all)
+        case .editPresentation:
+            try core.setConfiguration(
+                vm,
+                assignments: [
+                    ConfigurationEntry(
+                        key: "display.preference",
+                        value: instance.hostState.displayPreference == .inline ? "popOut" : "inline")
+                ],
+                consent: .all)
         case .clone: try core.beginClone(vm, outcome: .newMachine)
         case .rename: try core.rename(vm, to: "Renamed VM")
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)
         case .showInFinder: try core.showInFinder(vm)
         case .toggleGuestAgentDisk: _ = try await core.mountGuestAgentDisk(vm, awaiting: nil)
         case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen,
-            .showClipboard, .showGuestAgentStatus, .toggleSettingsPane, .editTags:
+            .copyGuestClipboardToMac, .copyMacClipboardToGuest, .showGuestAgentStatus, .toggleSettingsPane,
+            .editTags:
             Issue.record("\(capability) has no verb to call")
         }
     }
@@ -153,7 +163,7 @@ struct VMCapabilityAgreementTests {
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
             .guestAccountPasswordRequired, .invalidArgument, .stepRequired,
             .unsupported, .timedOut,
-            .operationFailed, .filesKept, .shutdownNotCarriedOut:
+            .operationFailed, .filesKept, .shutdownNotCarriedOut, .restartCancelledByStop:
             false
         }
     }

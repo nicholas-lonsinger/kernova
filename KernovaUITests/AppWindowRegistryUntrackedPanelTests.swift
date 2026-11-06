@@ -8,8 +8,8 @@ import Testing
 /// standard About panel) that the registry doesn't otherwise track, so the Dock
 /// icon isn't stripped while one is the last window on screen.
 ///
-/// Regression coverage for #437: closing a tracked auxiliary window (a display or
-/// clipboard window) while only the About panel remains visible must not drop the
+/// Regression coverage for #437: closing a tracked auxiliary window (a display
+/// window) while only the About panel remains visible must not drop the
 /// resident agent to `.accessory`.
 @Suite("AppWindowRegistry.isUntrackedUserPanel", .serialized, .caseScoped, .scopedWindows)
 @MainActor

@@ -12,7 +12,7 @@ A running copy you did not launch belongs to the maintainer or another session, 
 
 Take an offered agent update before observing anything: what an older agent does is not what the build does.
 
-Keystrokes a screen-control tool sends into a VM's display can reach the guest as other characters, or not at all, while the tool reports success, so read the guest screen back before pressing Return. Move anything longer than a short answer by clipboard: with the VM's **Clipboard sharing** on, the Clipboard window's **Paste from Mac** takes in the host pasteboard and offers it to the guest, where ⌘V pastes it.
+Keystrokes a screen-control tool sends into a VM's display can reach the guest as other characters, or not at all, while the tool reports success, so read the guest screen back before pressing Return. Move anything longer than a short answer by clipboard: with the VM's **Clipboard sharing** on, **Edit → Copy Mac Clipboard to Guest** copies the host pasteboard to the guest's clipboard, where ⌘V pastes it.
 
 The guest agent installs with no prompt to answer, by SSH or a pasted line, once Virtual Machine ▸ Install Guest Agent… has mounted its disk:
 

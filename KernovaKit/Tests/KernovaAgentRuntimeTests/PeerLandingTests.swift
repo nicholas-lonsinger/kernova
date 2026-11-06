@@ -30,7 +30,7 @@ struct PeerLandingTests {
         var events = harness.events.waiter()
         _ = await events.next { if case .items(.pullEnded) = $0 { true } else { false } }
         await harness.settle()
-        #expect(Self.pullsEnded(harness) == [.pullEnded(.clipboard, id, .landed(.inline(Data())))])
+        #expect(Self.pullsEnded(harness) == [.pullEnded(.clipboard, id, .landed(.named(Data())))])
     }
 
     @Test("A publish that has not reported does not hold back close(), and its pull ends once when it reports")
@@ -48,7 +48,7 @@ struct PeerLandingTests {
         var events = harness.events.waiter()
         _ = await events.next { if case .items(.pullEnded) = $0 { true } else { false } }
         await harness.settle()
-        #expect(Self.pullsEnded(harness) == [.pullEnded(.clipboard, id, .landed(.inline(Data())))])
+        #expect(Self.pullsEnded(harness) == [.pullEnded(.clipboard, id, .landed(.named(Data())))])
         #expect(completions.elements == [1])
     }
 
@@ -69,7 +69,7 @@ struct PeerLandingTests {
         await harness.pump(link)
         var events = harness.events.waiter()
         _ = await events.next { if case .items(.offerReceived) = $0 { true } else { false } }
-        harness.runtime.pullItem(ItemPullOrder(SimItems.request(1), landing: .inline)) { _ in }
+        harness.runtime.pullItem(ItemPullOrder(SimItems.request(1), landing: DecodingItemSink.landing)) { _ in }
         await harness.pump(link)
         var committed = sink.committed.waiter()
         _ = await committed.next { _ in true }
@@ -105,7 +105,7 @@ final class HeldPublishSink: ItemSink {
         for (id, reporter) in held.withLock({ held in
             defer { held.removeAll() }; return held
         }) {
-            reporter.report(.published(id, .inline(Data())))
+            reporter.report(.published(id, .named(Data())))
         }
     }
 }

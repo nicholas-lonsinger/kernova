@@ -8,9 +8,9 @@ import KernovaSynchronization
 
 // Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
 // `session`, it is the session peer: an `.accessory` menu-bar app holding the
-// v2 peer's connection to the host, which lands drops, beside the clipboard,
-// drag-out and control channels. Every other command — the system peer, the installer, the
-// rollback check — runs headless (`MacAgentTools`).
+// v2 peer's connection to the host, which carries the clipboard, lands drops
+// and serves drags out, beside the control channel. Every other command —
+// the system peer, the installer, the rollback check — runs headless (`MacAgentTools`).
 
 @main
 @MainActor
@@ -53,7 +53,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
 
     private var peer: MacAgentPeer?
     private var dragOut: GuestDragOut?
-    private var clipboardAgent: VsockGuestClipboardAgent?
+    private var clipboard: GuestClipboard?
     private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
 
@@ -117,45 +117,47 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         Self.logger.log(.notice, "Kernova Guest Agent \(Self.versionLabel, privacy: .public) started")
 
         // A live instance's sweep never reaches an exited agent's staging; only
-        // this launch-time reclaim bounds its growth.
+        // this launch-time reclaim bounds its growth, each item of the
+        // clipboard naming a file there withdrawn first.
         let stagingRoot = ClipboardFileStaging.processRoot
         stagingRoot.reclaimAbandonedRoots()
 
+        let clipboard = GuestClipboard(
+            stagingRoot: stagingRoot,
+            onNotice: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.clipboardNoticeRaised()
+                }
+            })
+        let state = DarwinSessionState.sessionPeer()
+        clipboard.setOnConsole(state.console == .on)
         let dragPeer = GuestDragOutRuntimePeer()
         let dragOut = GuestDragOut(peer: dragPeer, system: .live, stagingRoot: stagingRoot)
-        self.dragOut = dragOut
         let peer = MacAgentPeer(
-            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: DarwinSessionState.sessionPeer(),
-            drag: dragOut.owner,
+            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: state,
             revealDrop: { urls in
                 DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+            },
+            owners: { calls in
+                dragPeer.calls = calls
+                return ItemFeatureOwners(clipboard: clipboard.owner(calls: calls), drag: dragOut.owner)
             })
-        dragPeer.peer = peer
         self.peer = peer
-        followSession(peer)
+        self.clipboard = clipboard
+        self.dragOut = dragOut
+        followSession(peer, clipboard: clipboard)
 
         let transferReporter = ClipboardTransferReporter()
         transferReporter.onReportChanged = { [weak self] report in
             self?.statusItemController?.transferReportChanged(report)
         }
-        let clipboardAgent = VsockGuestClipboardAgent(
-            stagingRoot: stagingRoot,
-            reporter: transferReporter,
-            onClipboardNotice: { [weak self] in
-                DispatchQueue.main.async {
-                    self?.statusItemController?.clipboardNoticeRaised()
-                }
-            })
 
-        // `onPolicy` gates the clipboard capability and says whether the host
-        // forwards logs; `onStateChange` drives the status-item icon.
+        // `onPolicy` says whether the host forwards logs; `onStateChange`
+        // drives the status-item icon.
         let logForwardingEnabled = self.logForwardingEnabled
         let controlAgent = VsockGuestControlAgent(
             onPolicy: { policy in
                 logForwardingEnabled.withLock { $0 = policy.logForwardingEnabled }
-                clipboardAgent.applyPolicy(
-                    enabled: policy.clipboardSharingEnabled,
-                    maxPasteBytes: ClipboardPasteLimit.fromPolicy(policy.clipboardMaxPasteBytes))
             },
             onStateChange: { [weak self] _ in
                 // Called off-main; hop to the main actor to touch the status item.
@@ -166,7 +168,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         )
 
         self.transferReporter = transferReporter
-        self.clipboardAgent = clipboardAgent
         self.controlAgent = controlAgent
 
         // The LaunchAgent's `KeepAlive={SuccessfulExit:false}` keeps only a
@@ -175,9 +176,13 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let shutDown: @Sendable (Int32) -> Void = { status in
             Self.logger.log(.notice, "Shutting down, exit status \(status, privacy: .public)")
             controlAgent.stop()
-            clipboardAgent.stop()
-            MainActorBridge.async { dragOut.stop() }
-            peer.exit(status: status)
+            // What the clipboard holds of a file staged here goes before the process does; the next launch
+            // reclaims the staging, as it does an exit that never came this way.
+            MainActorBridge.async {
+                dragOut.stop()
+                stagingRoot.processEnding()
+                peer.exit(status: status)
+            }
         }
         self.shutDown = shutDown
         let stop: @Sendable () -> Void = { shutDown(0) }
@@ -185,7 +190,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         self.statusItemController = AgentStatusItemController(
             connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
             logForwardingEnabled: { logForwardingEnabled.withLock { $0 } },
-            clipboardActivity: { [weak clipboardAgent] in clipboardAgent?.clipboardActivity ?? .disabled },
+            clipboardActivity: { [weak clipboard] in clipboard?.activity ?? .disabled },
             onCancelTransfer: { [weak transferReporter] id in
                 transferReporter?.cancel(id)
             },
@@ -195,7 +200,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         installSignalHandlers(stop)
 
         peer.start()
-        clipboardAgent.start()
         controlAgent.start()
     }
 
@@ -217,19 +221,21 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // Stop control first so heartbeat cessation is the cleanest going-away
         // signal to the host; clipboard follows.
         controlAgent?.stop()
-        clipboardAgent?.stop()
+        clipboard?.stop()
         dragOut?.stop()
     }
 
     // MARK: - Session state
 
     /// Reports the session's state again whenever a fast user switch moves this
-    /// session onto the console or off it.
-    private func followSession(_ peer: MacAgentPeer) {
+    /// session onto the console or off it, to the peer and the clipboard.
+    private func followSession(_ peer: MacAgentPeer, clipboard: GuestClipboard) {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.sessionDidResignActiveNotification] {
-            center.addObserver(forName: name, object: nil, queue: nil) { _ in
-                peer.setPeerState(DarwinSessionState.sessionPeer())
+            center.addObserver(forName: name, object: nil, queue: .main) { _ in
+                let state = DarwinSessionState.sessionPeer()
+                peer.setPeerState(state)
+                MainActor.assumeIsolated { clipboard.setOnConsole(state.console == .on) }
             }
         }
     }

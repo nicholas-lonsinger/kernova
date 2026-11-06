@@ -92,7 +92,7 @@ package final class HubDragOut {
             items: ItemFeatureOwner(
                 usable: { [weak self] peer in Self.onMain { self?.consolePeerChanged(peer) } },
                 events: { [weak self] peer, event in Self.onMain { self?.handle(event, from: peer) } },
-                content: { _, _ in
+                content: { _, _, _ in
                     .failure(WireError(.itemRepresentationUnavailable, debugDetail: "the host offers no drag"))
                 }),
             takes: { [weak self, deliveries] peer, event in
