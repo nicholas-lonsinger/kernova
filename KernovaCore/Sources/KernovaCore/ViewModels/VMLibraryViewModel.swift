@@ -234,6 +234,29 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Records where `instance`'s display opens, through the
+    /// `display.preference` key, when that moves it.
+    ///
+    /// Kernova's own record of where the display went rather than an edit the
+    /// user asked for: it saves no edit open in a field first, and a write
+    /// that does not land is logged, never presented.
+    package func recordDisplayPreference(
+        _ preference: VMDisplayPreference, for instance: VMInstance
+    ) {
+        guard instance.hostState.displayPreference != preference else { return }
+        do {
+            try commands.setConfiguration(
+                .id(instance.id),
+                assignments: [VMConfigurationKeyRegistry.displayPreference.assigning(preference.rawValue)],
+                consent: .none)
+        } catch {
+            Self.logger.log(
+                .notice,
+                "Did not record the display preference of '\(instance.name, privacy: .public)': \(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
     /// Records the screen `instance`'s display was last full screen on.
     ///
     /// Kernova's own bookkeeping rather than a user's edit, so it takes no key:

@@ -172,7 +172,7 @@ extension VMHostState {
         .field("startsAutomaticallyOnLaunch", \.startsAutomaticallyOnLaunch, .liveKeys),
         .field("ephemeralModeEnabled", \.ephemeralModeEnabled, .liveKeys),
         .field("ephemeralBaselineSnapshotID", \.ephemeralBaselineSnapshotID, .liveKeys),
-        .field("displayPreference", \.displayPreference, .liveKeys),
+        .field("displayPreference", \.displayPreference, .hostPresentation),
         .field("lastFullscreenDisplayID", \.lastFullscreenDisplayID, .hostPresentation),
         // An agent that never showed up is evidence against a silenced
         // install reminder, so an observation may turn it back on; only the

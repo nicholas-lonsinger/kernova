@@ -132,6 +132,15 @@ struct VMCapabilityAgreementTests {
                             ? "common" : "isolated")
                 ],
                 consent: .all)
+        case .editPresentation:
+            try core.setConfiguration(
+                vm,
+                assignments: [
+                    ConfigurationEntry(
+                        key: "display.preference",
+                        value: instance.hostState.displayPreference == .inline ? "popOut" : "inline")
+                ],
+                consent: .all)
         case .clone: try core.beginClone(vm, outcome: .newMachine)
         case .rename: try core.rename(vm, to: "Renamed VM")
         case .delete: try await core.delete(vm, permanently: false, alsoRemoving: [], consent: .none)

@@ -322,13 +322,20 @@ struct VMActivityTests {
         }
         #expect(recorded.landed)
         #expect(instance.hostState.lastFullscreenDisplayID == 7)
-        // The display preference is the user's live key, not presentation
-        // bookkeeping: a presentation permit cannot carry it past R8.
+        // Where the display opens is presentation too: the revert neither
+        // reads nor writes it.
         let preferred = try instance.activity.edit(.hostPresentation) { permit in
             library.updateHostState(permit) { $0.displayPreference = .fullscreen }
         }
-        #expect(preferred.fieldsOutsidePermit == ["displayPreference"])
-        #expect(instance.hostState.displayPreference == .inline)
+        #expect(preferred.landed)
+        #expect(instance.hostState.displayPreference == .fullscreen)
+        // A live host-state key is not: a presentation permit cannot carry it
+        // past R8.
+        let autoStart = try instance.activity.edit(.hostPresentation) { permit in
+            library.updateHostState(permit) { $0.startsAutomaticallyOnLaunch = true }
+        }
+        #expect(autoStart.fieldsOutsidePermit == ["startsAutomaticallyOnLaunch"])
+        #expect(!instance.hostState.startsAutomaticallyOnLaunch)
     }
 
     @Test("A commit refuses every field its permit's classes may not write, and changes nothing")

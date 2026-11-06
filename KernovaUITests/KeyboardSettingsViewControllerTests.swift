@@ -91,7 +91,8 @@ struct KeyboardSettingsViewControllerTests {
 
     @Test("Settings offers the Keyboard pane after Clipboard")
     func paneIsOffered() {
-        let tabs = SettingsTabViewController(viewModel: makeLibraryViewModel(preferences: preferences))
+        let tabs = SettingsTabViewController(
+            viewModel: makeLibraryViewModel(preferences: preferences), visibleFrame: offDesktopVisibleFrame)
         tabs.loadViewIfNeeded()
 
         let labels = tabs.tabViewItems.map(\.label)

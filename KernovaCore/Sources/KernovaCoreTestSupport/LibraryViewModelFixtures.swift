@@ -16,6 +16,7 @@ func makeLibraryViewModel(
     fileSystem: MockFileSystem = MockFileSystem(),
     usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
     diskImageService: MockDiskImageService = MockDiskImageService(),
+    virtualizationService: MockVirtualizationService = MockVirtualizationService(),
     organization: VMOrganizationDirectory = VMOrganizationDirectory(fileURL: nil),
     bundleProducts: AppBundleProducts = .testing
 ) -> VMLibraryViewModel {
@@ -24,7 +25,7 @@ func makeLibraryViewModel(
         diskImageService: diskImageService,
         machineFiles: VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles()),
         virtualizationHost: FakeVirtualizationHost(),
-        virtualizationService: MockVirtualizationService(),
+        virtualizationService: virtualizationService,
         installService: MockMacOSInstallService(),
         ipswService: MockIPSWService(),
         localImageInspector: MockLocalRestoreImageInspector(),
