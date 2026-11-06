@@ -31,6 +31,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// whole section.
     private var appMenuQuitSectionStart: NSMenuItem?
 
+    /// The Edit menu, retained so the reserved shortcuts the user has on can be
+    /// shown on it.
+    private var editMenu: NSMenu?
+    /// Shows the reserved shortcuts on ``editMenu`` again whenever the user
+    /// turns one on or off.
+    private var reservedShortcutsObservation: ObservationLoop?
+
     /// The Virtual Machine menu, retained so its opening can refresh the revert
     /// submenu that decides one of its items' enablement.
     private var virtualMachineMenu: NSMenu?
@@ -290,6 +297,27 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         }
     }
 
+    // MARK: - Reserved Shortcuts
+
+    /// Puts on ``editMenu`` the reserved shortcuts the user has on, now and on
+    /// every change.
+    ///
+    /// Pushed rather than applied in `menuNeedsUpdate(_:)`:
+    /// `NSMenu.performKeyEquivalent(with:)` on an installed main menu matched an
+    /// item's stale key equivalent without calling that method (observed on
+    /// macOS 27.2), and ``ReservedShortcutCatcher`` reads the items directly.
+    private func observeReservedShortcuts() {
+        applyReservedShortcuts()
+        reservedShortcutsObservation = observeRecurring(
+            track: { [weak self] in _ = self?.viewModel.disabledReservedShortcuts },
+            apply: { [weak self] in self?.applyReservedShortcuts() })
+    }
+
+    private func applyReservedShortcuts() {
+        guard let editMenu else { return }
+        ReservedShortcut.apply(in: editMenu, disabled: viewModel.disabledReservedShortcuts)
+    }
+
     // MARK: - Menu Validation
 
     /// The capability a menu selector performs, or `nil` for an app-level
@@ -507,6 +535,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Find is out of reach: accepted, for the standard Find shortcut.
         editMenu.addItem(
             withTitle: "Find VM…", action: #selector(AppDelegate.findVM(_:)), keyEquivalent: "f")
+        self.editMenu = editMenu
+        observeReservedShortcuts()
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 

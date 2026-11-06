@@ -468,6 +468,31 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// The reserved shortcuts the user turned off; every other one is on.
+    ///
+    /// The single write path for `AppPreferences.disabledReservedShortcuts`,
+    /// mirrored here because the menu bar applies the shortcuts from
+    /// `withObservationTracking`, which a bare `UserDefaults` read never wakes.
+    package var disabledReservedShortcuts: Set<ReservedShortcut> {
+        didSet {
+            guard disabledReservedShortcuts != oldValue else { return }
+            Self.logger.log(
+                .notice,
+                "Setting reserved shortcuts off=\(self.disabledReservedShortcuts.map(\.rawValue).sorted(), privacy: .public)"
+            )
+            preferences.disabledReservedShortcuts = disabledReservedShortcuts
+        }
+    }
+
+    /// Turns `shortcut` on or off.
+    package func setReservedShortcut(_ shortcut: ReservedShortcut, isOn: Bool) {
+        if isOn {
+            disabledReservedShortcuts.remove(shortcut)
+        } else {
+            disabledReservedShortcuts.insert(shortcut)
+        }
+    }
+
     /// Whether the user chose not to be asked the duplicate machine ID
     /// question — with Don't ask again on it, or its Reminders switch — so a
     /// bring-up beside a VM sharing its machine identity starts
@@ -709,6 +734,7 @@ package final class VMLibraryViewModel {
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
+        self.disabledReservedShortcuts = preferences.disabledReservedShortcuts
         self.duplicateMachineIDQuestionDismissed = preferences.duplicateMachineIDQuestionDismissed
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,

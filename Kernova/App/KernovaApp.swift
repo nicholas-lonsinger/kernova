@@ -18,7 +18,10 @@ enum KernovaApp {
         // Ahead of `NSApplication.shared`, so a second process of a running
         // copy exits before it connects to the window server.
         let copyClaim = claimThisCopy(at: products.bundleURL)
-        let app = NSApplication.shared
+        // The first touch of the shared application, which makes it the
+        // subclass that takes Kernova's reserved shortcuts.
+        let app = KernovaApplication.shared
+        precondition(app is KernovaApplication, "NSApp was created before KernovaApplication")
         let presence = SystemAppPresence()
 
         // `NSApplication.delegate` is weak, so the local binding retains the

@@ -8,6 +8,8 @@ package enum SettingsPane: String, CaseIterable {
     case reminders
     /// The maximum paste size.
     case clipboard
+    /// The shortcuts Kernova reserves, each turned on or off.
+    case keyboard
     /// The library's named networks.
     case networks
     /// The library's tags.
@@ -19,6 +21,7 @@ package enum SettingsPane: String, CaseIterable {
         case .general: "General"
         case .reminders: "Reminders"
         case .clipboard: "Clipboard"
+        case .keyboard: "Keyboard"
         case .networks: "Networks"
         case .tags: "Tags"
         case .advanced: "Advanced"
@@ -30,6 +33,7 @@ package enum SettingsPane: String, CaseIterable {
         case .general: "gearshape"
         case .reminders: "bell"
         case .clipboard: "clipboard"
+        case .keyboard: "keyboard"
         case .networks: "network"
         case .tags: "tag"
         case .advanced: "gearshape.2"

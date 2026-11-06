@@ -370,6 +370,9 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         .body(
             "In Full Screen narrows that to a display filling a screen of its own, so the same keys keep acting on this Mac while the VM is in a window."
         ),
+        .body(
+            "Whatever this setting, the shortcuts turned on in Kernova Settings › Keyboard act on this Mac and never reach the guest."
+        ),
     ]
 
     private func buildInputSection() -> NSView {
