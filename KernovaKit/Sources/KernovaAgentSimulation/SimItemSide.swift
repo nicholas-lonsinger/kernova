@@ -228,7 +228,7 @@ extension SimWorld {
 
     /// `side` withdraws its offer of `token` on link `index`.
     package func withdrawOffer(_ token: Data, from side: SimSide, link index: Int = 0) {
-        itemCommand(side, link: index) { _ in [.withdraw(token: token)] }
+        itemCommand(side, link: index) { _ in [.withdraw(token: token, code: .cancelled)] }
     }
 
     /// `side` releases the far side's offer of `token` on link `index`.

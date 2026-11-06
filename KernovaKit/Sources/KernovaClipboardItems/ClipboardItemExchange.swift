@@ -274,7 +274,8 @@ public final class ClipboardItemExchange {
     }
 
     /// Withdraws this side's offer, RESET with `code`: `CANCELLED` when this end's clipboard moved on to
-    /// nothing it offers, `DISABLED_BY_POLICY` when passthrough stopped; no newer one follows. The far side's
+    /// nothing it offers, `DISABLED_BY_POLICY` when passthrough stopped, `CAPABILITY_WITHDRAWN` when this side can
+    /// no longer offer for another reason (``ending(_:)`` reads each); no newer one follows. The far side's
     /// offer, if it is this end's clipboard, stays so.
     public func withdrawLocal(_ code: ErrorCode = .cancelled) {
         if let localToken { link?.withdrawOffer(localToken, code: code) }

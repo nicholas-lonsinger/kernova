@@ -149,6 +149,21 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("the guest's copy".utf8))
     }
 
+    @Test("Leaving the console withdraws the guest's offer as the feature going, never as its clipboard moving on")
+    func offConsoleWithdrawsAsTheFeatureGoing() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        openGate(rig, link)
+        copy("offered", rig)
+        try await link.changed.wait { link.offers.count == 1 }
+        let token = link.offers[0].token
+        await drainMainQueue()
+
+        rig.clipboard.setOnConsole(false)
+        try await link.changed.wait { link.withdrawals == [token] }
+        #expect(link.withdrawalCodes[token] == .capabilityWithdrawn)
+    }
+
     @Test("Off the console a copy is not offered; the console returning offers nothing until the next copy")
     func offConsoleCopyIsNotOffered() async throws {
         let rig = rig()
@@ -1224,6 +1239,30 @@ struct GuestClipboardTests {
         rig.clipboard.setLink(nil)
         #expect(rig.pasteboard.items.isEmpty)
         #expect(rig.clipboard.activity == .disabled)
+    }
+
+    @Test(
+        "The Mac's concealed copy reset as the feature going is cleared as a link's end, unannounced; a later reset of it changes nothing (M3)"
+    )
+    func concealedHostCopyEndedByTheFeatureGoing() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveConcealedCopy(rig, link)
+        let before = rig.clipboard.activity
+
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.capabilityWithdrawn))),
+            on: link)
+        #expect(rig.pasteboard.items.isEmpty)
+        #expect(rig.clipboard.activity == before)
+        #expect(!rig.clipboard.activity.isNotice)
+
+        let changeCount = rig.pasteboard.changeCount
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)
+        #expect(rig.pasteboard.changeCount == changeCount)
+        #expect(rig.clipboard.activity == before)
     }
 
     @Test("The host's concealed copy is held until a copy in the guest replaces it, then released")

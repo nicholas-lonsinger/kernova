@@ -153,7 +153,9 @@ struct HubDropServiceTests {
 
         probe.deliver(
             .peerStateChanged(PeerSessionState(console: .off, sessionID: "2", userName: "pbear")), fromConnection: 0)
-        try await probe.changed.wait { probe.commands.contains(.items(.withdraw(token: offer.token))) }
+        try await probe.changed.wait {
+            probe.commands.contains(.items(.withdraw(token: offer.token, code: .capabilityWithdrawn)))
+        }
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
         #expect(instance.clipboardTransferReport.failure == .dropStopped(.noAgent))
@@ -173,7 +175,9 @@ struct HubDropServiceTests {
             .helloReceived(other, PeerSessionState(console: .on, sessionID: "3", userName: "other")),
             fromConnection: 1)
         probe.deliver(.featuresChanged(Self.features), fromConnection: 1)
-        try await probe.changed.wait { probe.commands.contains(.items(.withdraw(token: offer.token))) }
+        try await probe.changed.wait {
+            probe.commands.contains(.items(.withdraw(token: offer.token, code: .capabilityWithdrawn)))
+        }
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
         #expect(instance.clipboardTransferReport.failure == .dropStopped(.movedToAnotherAgent))
@@ -191,7 +195,9 @@ struct HubDropServiceTests {
                     (.drop, .absent(.disabledByPolicy, debugDetail: "")),
                 ])),
             fromConnection: 0)
-        try await probe.changed.wait { probe.commands.contains(.items(.withdraw(token: offer.token))) }
+        try await probe.changed.wait {
+            probe.commands.contains(.items(.withdraw(token: offer.token, code: .disabledByPolicy)))
+        }
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
         #expect(instance.clipboardTransferReport.failure == .dropStopped(.turnedOff))

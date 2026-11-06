@@ -156,10 +156,14 @@ final class GuestClipboard {
     var isOffering: Bool { passthrough && onConsole && link != nil }
 
     /// The gate opening sees the pasteboard as it stands, offering nothing: the poll offers only a later copy.
-    /// Closing it withdraws this side's offer, so nothing of it stands while passthrough is off.
+    /// Closing it withdraws this side's offer, so nothing of it stands while passthrough is off, RESET with the
+    /// cause: `DISABLED_BY_POLICY` when passthrough stopped, `CAPABILITY_WITHDRAWN` when the session left the
+    /// console or the link went — never `CANCELLED`, which the host reads as this clipboard moving on.
     private func gateChanged(from was: Bool) {
         guard isOffering != was else { return }
-        guard isOffering else { return exchange.withdrawLocal(passthrough ? .cancelled : .disabledByPolicy) }
+        guard isOffering else {
+            return exchange.withdrawLocal(passthrough ? .capabilityWithdrawn : .disabledByPolicy)
+        }
         logger.log(.notice, "Copies on the clipboard are offered to the host from now on")
         seenChangeCount = pasteboard.changeCount
     }

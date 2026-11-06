@@ -805,6 +805,29 @@ struct HubClipboardServiceTests {
         #expect(await pull(plain, from: instance) == .success(.inline(Data("plain text".utf8))))
     }
 
+    @Test(
+        "The guest leaving the console ends the Mac's concealed copy and passthrough offer as the feature going, never as withdrawn (M3)"
+    )
+    func consoleLeavingEndsTheHostsOffersAsTheFeatureGoing() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let (offer, pasteboard, _) = try await forwardMacCopy("passthrough's", instance, probe)
+        #expect(
+            pasteboard.setItem([
+                (.string, Data("hunter2-mac".utf8)),
+                (NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI), Data()),
+            ]))
+        let copy = try await copyToGuest(instance, probe)
+        try await acceptLastOffer(probe)
+        #expect(copy.concealed)
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await probe.changed.wait { withdrawn(copy.token, probe) && withdrawn(offer.token, probe) }
+        // CANCELLED would read at the guest as the Mac's clipboard moving on: "the Mac withdrew its copy".
+        #expect(withdrawal(of: copy.token, probe) == .capabilityWithdrawn)
+        #expect(withdrawal(of: offer.token, probe) == .capabilityWithdrawn)
+    }
+
     // MARK: - Copy Guest Clipboard to Mac
 
     private static let copyToken = Data(repeating: 5, count: 16)

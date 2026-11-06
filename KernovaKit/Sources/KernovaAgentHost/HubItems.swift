@@ -118,7 +118,10 @@ extension AgentHubState {
 
     /// Ends everything the owner holds where console authority no longer allows it: each offer on a connection
     /// that is not its feature's console peer, and, on a connection that is no peer, its pulls and takes too.
-    /// Returns, in order, each command to send and each event to hand on.
+    /// Returns, in order, each command to send and each event to hand on. An offer of the host's is withdrawn as
+    /// the feature becoming unusable on that connection — `DISABLED_BY_POLICY` when the policy turned it off,
+    /// `CAPABILITY_WITHDRAWN` otherwise, as ``Connection`` resets a stream of an unusable feature — never as the
+    /// host withdrawing it: the far side reads `CANCELLED` as the host's clipboard moving on.
     mutating func settleItems() -> [(handle: PeerHandle, command: ItemCommand?, event: HubItemEvent)] {
         let console = Dictionary(
             uniqueKeysWithValues: ItemFeatureAvailability.offering.map { ($0, consolePeer(for: $0)) })
@@ -131,9 +134,14 @@ extension AgentHubState {
                 guard (console[offer.feature] ?? nil) == nil else { return Self.endedByHub }
                 return .resetLocally(WireError(.featureUnavailable, absence: consoleAbsence(of: offer.feature)))
             }
+            func code(_ offer: HubOpenItems.Offer) -> ErrorCode {
+                guard (console[offer.feature] ?? nil) == nil else { return .capabilityWithdrawn }
+                let absence = consoleAbsence(of: offer.feature)
+                return absence == .disabledByPolicy ? .disabledByPolicy : .capabilityWithdrawn
+            }
             for offer in items.hostOffers where !held(offer) {
                 let end = ItemTransferEvent.offerEnded(offer.feature, .local, token: offer.token, closure(offer))
-                ended.append((handle, .withdraw(token: offer.token), .items(handle, end)))
+                ended.append((handle, .withdraw(token: offer.token, code: code(offer)), .items(handle, end)))
             }
             for offer in items.forwardedOffers where !held(offer) {
                 let end = ItemTransferEvent.offerEnded(offer.feature, .remote, token: offer.token, closure(offer))

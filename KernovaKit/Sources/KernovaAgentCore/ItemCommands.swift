@@ -27,7 +27,7 @@ public enum ItemCommand: Sendable, Equatable {
     /// does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
     /// Withdraw this side's offer of `token`, RESET with `code`; its `.offerEnded` follows.
-    case withdraw(token: Data, code: ErrorCode = .cancelled)
+    case withdraw(token: Data, code: ErrorCode)
     /// Release the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
     /// the release is END with `endBody`, its kind's acceptor END body. Releasing a taken drag offer completes
     /// the drag.
