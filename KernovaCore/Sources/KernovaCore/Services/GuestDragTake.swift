@@ -1,7 +1,9 @@
 import Foundation
+import KernovaAgentCore
+import Synchronization
 import KernovaKit
 import KernovaLogging
-import Synchronization
+import KernovaWire
 import UniformTypeIdentifiers
 
 /// Where a nudge puts the guest pointer.
@@ -22,7 +24,96 @@ package enum GuestDragNudge: Equatable, Sendable {
     var next: GuestDragNudge { self == .exitPoint ? .offset : .exitPoint }
 }
 
-/// The VM display a take over drives: it withholds the press while the guest
+/// One item of a guest's drag offer as a Mac drag session carries it: the
+/// FILE or FOLDER representation the guest offers it as.
+package struct DraggedOutItem: Equatable, Sendable {
+    /// The item's name, as the offer carries it.
+    package var name: Data
+    /// The type a Mac destination is promised.
+    package var type: UTType
+    /// Whether the item is a folder.
+    package var isDirectory: Bool
+    /// Whether the guest's source writes it only once called in, so its name
+    /// is a stand-in until the drag is delivered.
+    package var isPromised: Bool
+    /// The representation a pull names.
+    package var representation: UInt32
+    /// The guest's estimate of its bytes; 0 when unknown.
+    package var sizeEstimate: UInt64
+
+    /// What a Mac destination is told the item is called.
+    package var filename: String { String(decoding: name, as: UTF8.self) }
+
+    /// What a take carries of `items`, which its first `TARGETED` listed and
+    /// the hub checked with `DragItems.carried(_:)`.
+    package static func carried(_ items: [OfferedItem]) -> [DraggedOutItem] {
+        (DragItems.carried(items) ?? []).map { DraggedOutItem($0.representation, at: $0.index) }
+    }
+
+    /// The item carried out of the guest by `representation`, at `index` among
+    /// its item's representations (`DragItems.carried(_:)`).
+    package init(_ representation: Representation, at index: UInt32) {
+        let isDirectory = representation.storage == .folder
+        let declared = representation.type.appleUTI.flatMap { UTType($0) }
+        self.init(
+            name: representation.name, type: declared ?? (isDirectory ? .folder : .data), isDirectory: isDirectory,
+            isPromised: representation.promised, representation: index, sizeEstimate: representation.sizeEstimate)
+    }
+
+    package init(
+        name: Data, type: UTType, isDirectory: Bool, isPromised: Bool = false, representation: UInt32 = 0,
+        sizeEstimate: UInt64 = 0
+    ) {
+        self.name = name
+        self.type = type
+        self.isDirectory = isDirectory
+        self.isPromised = isPromised
+        self.representation = representation
+        self.sizeEstimate = sizeEstimate
+    }
+}
+
+/// Why a dragged item never reached where it was dropped.
+package enum GuestDragWriteError: Error, Equatable, Sendable {
+    /// The transfer failed, for the reason the drag's readout reports.
+    case failed(ClipboardTransferFailure)
+}
+
+/// What a take hears from the guest on its stream.
+package enum GuestDragTakeEvent: Equatable, Sendable {
+    /// A step of the guest's hand-off.
+    case report(DragTakeReport)
+    /// The take ended: the guest's END, or how the stream closed without one.
+    case ended(DragTakeResult)
+}
+
+/// What a take moves its drag over: the guest peer that offered it.
+@MainActor
+package protocol GuestDragTransport: AnyObject {
+    /// Takes the guest's drag over: `events` hears each report and then the
+    /// end, once, and the transport settles `delivery` as the take ends — off
+    /// the main actor, reading the offer a delivering catch names first.
+    func take(delivery: GuestDragDelivery, _ events: @escaping @MainActor (GuestDragTakeEvent) -> Void)
+
+    /// Tells the guest `control` on the take.
+    func control(_ control: DragTakeControl)
+
+    /// Calls the take off; its end follows.
+    func cancel()
+
+    /// Pulls `item`, item `index` of the taken offer, to exactly
+    /// `destination`, calling `ended` once with how the pull ended, and
+    /// returns what cancels it.
+    func pull(
+        _ item: DraggedOutItem, at index: Int, to destination: URL,
+        ended: @escaping @MainActor (Result<Void, WireError>) -> Void
+    ) -> @MainActor () -> Void
+
+    /// Releases the taken offer: this side pulls nothing more of it.
+    func release()
+}
+
+/// The VM display a take drives: it withholds the press while the guest
 /// hands its drag over, and injects into the guest only what the take tells it
 /// to.
 @MainActor
@@ -42,7 +133,8 @@ package protocol GuestDragDisplay: AnyObject {
 
     /// Releases the guest's button where the last event the display sent put
     /// the guest pointer, with a constructed mouse-up, which drops the guest's
-    /// drag on whatever is under it.
+    /// drag on whatever is under it; the rest of the press reaches the guest
+    /// no more.
     ///
     /// Called at most once per take.
     func injectRelease()
@@ -53,19 +145,18 @@ package protocol GuestDragDisplay: AnyObject {
     func beginHostSession(carrying take: any GuestDragTaking) -> Bool
 
     /// Hands the rest of the press back to the guest, the event being withheld
-    /// right now included.
-    func resumeForwarding()
+    /// right now included, and looks again for a drag to take over.
+    func resumeTracking()
 }
 
 /// A guest drag the VM display has taken over, as the display and the Mac
 /// drag session it begins speak to it.
 @MainActor
 package protocol GuestDragTaking: AnyObject, Sendable {
-    /// The generation the guest offered the drag under.
-    var generation: UInt64 { get }
-
-    /// What the drag carries.
-    var items: [ClipboardDraggedItem] { get }
+    /// What the drag carries, in the order the guest's catcher saw it; a
+    /// promised item's name is a stand-in. Empty until the catcher is the
+    /// drag's target, which the Mac session begins after.
+    nonisolated var items: [DraggedOutItem] { get }
 
     /// Whether the Mac session is over the display the take began on,
     /// carrying the guest's drag there.
@@ -81,13 +172,17 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// The display withheld the press's physical mouse-up.
     func withheldMouseUp()
 
-    /// A withheld drag event came back inside the display: the user means the
-    /// drag for the guest after all.
+    /// A withheld drag event came back inside the display before a Mac
+    /// session began: the user means the drag for the guest after all.
     func pointerReturned()
 
     /// The display can no longer carry the press — it left its window, or a
     /// new press began without the last one ending.
     func displayAbandoned()
+
+    /// The Mac drag session carrying the take is beginning, its promises just
+    /// written to the drag pasteboard over whatever an earlier drag put there.
+    func hostSessionWillBegin()
 
     /// The Mac drag session moved, wherever it is.
     func hostSessionMoved()
@@ -107,78 +202,72 @@ package protocol GuestDragTaking: AnyObject, Sendable {
     /// The Mac drag session ended; `dropped` is whether a destination took it.
     func hostSessionEnded(dropped: Bool)
 
-    /// What item `index` is called where a Mac destination writes it, asking
-    /// the guest for a promised item's name when nothing has yet — from any
-    /// thread, holding it for a bounded time.
-    ///
-    /// A promised item the guest could not name gets a stand-in name, and its
-    /// write then fails.
+    /// What item `index` is called where a Mac destination writes it. A
+    /// promised item's name comes from the drag's delivery, which this asks
+    /// for and waits on, from any thread, when the guest's catcher is the
+    /// drag's target; at any other moment it is a stand-in.
     nonisolated func filename(forItemAt index: Int) -> String
 
-    /// Has the guest name the drag's promised items before a destination in
-    /// this app calls them in, holding the main thread for a bounded time,
-    /// and reports whether they are named; a failure is reported as the drag's.
+    /// Has the drag's delivery name its promised items before a destination
+    /// in this app calls them in, holding the main thread, and reports whether
+    /// they are named.
     ///
-    /// An in-app destination's provider can be asked for names off the main
+    /// An in-app destination's provider is asked for names off the main
     /// thread while the main thread waits in `receivePromisedFiles`, and the
-    /// release naming needs runs on the main thread.
+    /// release a delivery needs runs on the main thread.
     func nameItemsForInAppDestination() -> Bool
 
-    /// Writes item `index` to exactly `destination`, blocking until it lands.
-    ///
-    /// For an `NSFilePromiseProvider` operation queue: never the main thread.
-    ///
-    /// - Throws: `CocoaError(.userCancelled)` when the user called the drag's
-    ///   transfers off, ``GuestDragWriteError`` when the transfer failed, or
-    ///   the move's own error when the item could not be put at `destination`.
-    nonisolated func writeItem(at index: Int, to destination: URL) throws
+    /// Writes item `index` to exactly `destination`, calling `completion` once,
+    /// from any thread, when it lands or fails: with `CocoaError(.userCancelled)`
+    /// when the user called the drag's transfers off, and otherwise with a
+    /// ``GuestDragWriteError``.
+    nonisolated func writeItem(
+        at index: Int, to destination: URL, completion: @escaping @Sendable ((any Error)?) -> Void)
+
+    /// Runs `body` once the take retires — it delivers nothing more, so the
+    /// Mac session's promises must be withdrawn — or at once if it has.
+    func whenRetired(_ body: @escaping @MainActor () -> Void)
 }
 
 /// One guest drag the VM display took over at its edge: the hand-off that moves
 /// the guest's drag onto its catcher, and the Mac drag session that carries it
-/// on. Its ``GuestDragItemWriter`` writes the items a Mac destination asks for.
+/// on, each item pulled from the guest to where a Mac destination writes it.
 ///
 /// Every button release the take injects is a real drop under the guest
-/// pointer, so it lands in one of two places: on a catcher that has reported
-/// `TARGETED`, or where the user's own release would have landed with drag-out
-/// off — where they let go over this VM's display, or, when no catcher can
-/// take the drop, where the drag left the display. Before the press goes back
-/// to the guest, the guest pointer returns to that exit point.
+/// pointer, so it lands in one of two places: on a catcher that reported
+/// `TARGETED` for its latest showing, or where the user's own release would
+/// have landed with drag-out off — where they let go over this VM's display,
+/// or, when no catcher can take the drop, where the drag left the display.
 ///
 /// The guest's drag stays live, its button held, for as long as the Mac
 /// session runs: over this VM's display the catcher stands down and the guest
 /// pointer follows the session, so a drag that comes back drops inside the
-/// guest. `NSDraggingSession` cannot be withdrawn, so the session begins only
-/// from ``Phase/ready``, which only `TARGETED` enters, and every failure before
-/// it hands the press back.
+/// guest, released only once the guest reports the catcher `STOOD_DOWN`.
+/// `NSDraggingSession` cannot be withdrawn, so the session begins only from
+/// ``Phase/ready``, which only `TARGETED` enters, and every end before it
+/// hands the press back.
 ///
-/// A promised item has no name until the guest's catcher calls it in, so the
-/// first Mac destination to ask for one has the guest call them all in: the
-/// take asks (`DragResolve`), and releases the guest's button onto its catcher
-/// once the guest answers that the catcher calls them in on that drop; each
-/// ask then waits for its own item's name. A destination that took the drop
-/// without asking yet has the call-in started as the session ends.
+/// A drag a Mac destination takes is delivered: the take asks the guest
+/// (`DragDeliver`) and releases onto its catcher once the guest answers; the
+/// catcher's drop calls the promises in and names them on the take, then
+/// sizes its items and ends it. Every item is pulled from the taken offer,
+/// which only this side ends. The first destination to ask a promised item's
+/// name starts that and waits for the names alone; one that took the drop
+/// without asking yet has it started as the session ends. That wait alone has
+/// a wall clock, `GuestDragDelivery.namingDeadline`, past which the take is
+/// called off and its writes fail timed out; every other wait ends on the
+/// guest's answer, the take's end, or the user's own release or return.
+///
+/// The Mac session's file promises live exactly as long as the take can keep
+/// them: the take retires once it delivers nothing more, and its retirement is
+/// what withdraws them (``whenRetired(_:)``), so the drag pasteboard never
+/// advertises a file Kernova can no longer deliver.
 @MainActor
 @Observable
-package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
-    /// How long the guest may go without its catcher becoming the drag's
-    /// target: from the take to the Mac session, and from the session's end to
-    /// the release onto a catcher shown again.
-    ///
-    /// A bound on a peer Kernova does not own; the catcher normally reports
-    /// within a frame or two of the first nudge.
-    package static let handOffDeadline: TimeInterval = 3
-
-    /// How long a Mac destination asking for one promised item's name waits
-    /// for the guest to name it.
-    ///
-    /// A bound on a peer Kernova does not own; Photos and Safari promises in a
-    /// macOS 26.6.2 guest were named 4–16 ms after the catcher called them in.
-    package static let namingDeadline: TimeInterval = 2
-
+package final class GuestDragTake: GuestDragTaking {
     /// Where the hand-off stands.
     package enum Phase: Equatable, Sendable {
-        /// `DragTake` is out and the press is withheld; `armed` once the guest
+        /// `DRAG_TAKE` is out and the press is withheld; `armed` once the guest
         /// reported its catcher up under the pointer.
         case handingOff(armed: Bool)
         /// The guest reported its catcher as the drag's target, so the next
@@ -190,10 +279,9 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         /// The guest's button was released, once, at `spot`.
         case released(at: ReleaseSpot)
         /// The take ended with no release of its own after the Mac session
-        /// began: the VM stopped under it, or the guest's press is already
-        /// over.
+        /// began: the VM stopped under it, or a newer drag replaced it.
         case unreleased
-        /// The take failed before the Mac session and the press went back to
+        /// The take ended before the Mac session and the press went back to
         /// the guest.
         case abandoned
     }
@@ -203,12 +291,18 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         /// Off this VM's display; `targeted` while the guest's catcher, shown,
         /// is the drag's target.
         case outside(targeted: Bool)
-        /// Over this VM's display: the catcher is stood down, and the guest
-        /// pointer follows the session.
+        /// Over this VM's display: the catcher is asked to stand down, and the
+        /// guest pointer follows the session.
         case inside
+        /// Dropped on this VM's display; the release at the drop point waits
+        /// for the catcher to report itself stood down.
+        case dropped
         /// The session ended away from the guest; the release waits for the
         /// catcher to become the drag's target.
         case ended
+        /// The guest is asked to deliver the drag; the release onto its
+        /// catcher waits for its answer.
+        case delivering
     }
 
     /// Where the take released the guest's button.
@@ -221,8 +315,9 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         case exitPoint
     }
 
-    nonisolated package let generation: UInt64
-    nonisolated package let items: [ClipboardDraggedItem]
+    nonisolated package var items: [DraggedOutItem] { carried.withLock { $0 } }
+    /// The drag's items, set once by the take's first `TARGETED`.
+    nonisolated private let carried = Mutex<[DraggedOutItem]>([])
     /// Where the hand-off stands now; the one observed property.
     package private(set) var phase: Phase = .handingOff(armed: false) {
         didSet {
@@ -236,118 +331,129 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
 
     @ObservationIgnored package var sessionOverDisplayChanged: (@MainActor (Bool) -> Void)?
 
-    nonisolated private let endpoint: ClipboardEndpoint
-    nonisolated private let writer: GuestDragItemWriter
-    nonisolated private let namingDeadline: TimeInterval
+    /// The drag's delivery, which a name ask on any thread waits on.
+    nonisolated private let delivery: GuestDragDelivery
+
+    @ObservationIgnored private let transport: any GuestDragTransport
     @ObservationIgnored private weak var display: (any GuestDragDisplay)?
-    private let reporter: ClipboardTransferReporter
-    private let peerName: String
-    private let clock: any EngineClock
-    private let holds: @MainActor () -> Bool
-    private let onFinished: @MainActor (GuestDragTake) -> Void
+    @ObservationIgnored private let reporter: ClipboardTransferReporter
+    @ObservationIgnored private let peerName: String
+    @ObservationIgnored private let progressRevealDelay: TimeInterval
+    @ObservationIgnored private let progressIdleGap: TimeInterval
+    @ObservationIgnored private let holds: @MainActor () -> Bool
+    @ObservationIgnored private let onFinished: @MainActor (GuestDragTake) -> Void
+    @ObservationIgnored private let onHostSessionBegan: @MainActor (GuestDragTake) -> Void
 
     @ObservationIgnored private var nextNudge: GuestDragNudge = .exitPoint
-    @ObservationIgnored private var deadline: Task<Void, Never>?
     @ObservationIgnored private var holdsWatch: ObservationLoop?
 
     // MARK: The catcher
 
-    /// How many times the guest was asked to show its catcher: `DragTake`,
-    /// then each `DragCatcher` that shows it again.
+    /// How many times the guest was asked to show its catcher: the take, then
+    /// each `DragCatcher` that shows it again.
     @ObservationIgnored private var catcherShowings = 1
     /// How many `ARMED` reports the guest sent. The guest arms once per
-    /// showing, in order on one channel, so a step that arrives while this
+    /// showing, in order on one stream, so a step that arrives while this
     /// trails ``catcherShowings`` answers a showing that was since stood down.
     @ObservationIgnored private var catcherArmings = 0
-    /// Whether the guest's catcher can no longer take the drag: the guest
-    /// reported a failure, or the channel ended.
+    /// How many times the guest was asked to stand its catcher down.
+    @ObservationIgnored private var catcherStandDowns = 0
+    /// How many `STOOD_DOWN` reports the guest sent, one per stand-down, in
+    /// order on one stream.
+    @ObservationIgnored private var catcherStoodDown = 0
+    /// Whether the guest's catcher can no longer take the drag: the take
+    /// ended without a catch.
     @ObservationIgnored private var catcherLost = false
 
     /// Whether the catcher's latest showing is up and can still take the drag.
     private var catcherArmed: Bool { !catcherLost && catcherArmings == catcherShowings }
 
+    /// Whether no catcher is up to take a release: the guest reported every
+    /// stand-down, or the take ended.
+    private var catcherDown: Bool { catcherLost || catcherStoodDown == catcherStandDowns }
+
+    // MARK: The take and the offers
+
+    /// Whether the take's stream is open: the guest has not ended it, and this
+    /// side has not called it off.
+    @ObservationIgnored private var takeOpen = true
+    /// Whether the taken offer is open: this side has not released it, and the
+    /// guest has not ended it.
+    @ObservationIgnored private var offerOpen = true
+
     // MARK: After the Mac session begins
 
-    /// Whether a Mac drag session carries the items, so a destination may ask
-    /// for them.
     @ObservationIgnored private var hasHostSession = false
+    /// Whether the Mac session has begun and not yet ended.
+    @ObservationIgnored private var hostSessionLive = false
     /// Whether no Mac destination will ask for the items: the session ended
     /// with nothing taking it, or was dropped into the guest.
     @ObservationIgnored private var noDestinationAsks = false
-    /// Whether the guest's drag is over — caught, or reported failed — so a
-    /// `DragComplete` can no longer reach its catcher ahead of the injected
-    /// release.
-    @ObservationIgnored private var guestDragEnded = false
-    @ObservationIgnored private var isSuperseded = false
-    /// Whether this take is done with the drag: `DragComplete` sent, or the
-    /// channel gone.
-    @ObservationIgnored private var isRetired = false
+    /// Whether the guest was asked to deliver the drag.
+    @ObservationIgnored private var deliveryAsked = false
+    /// Whether a newer drag's Mac session wrote the drag pasteboard over this
+    /// one's promises: no destination then asks for an item it has not asked
+    /// for.
+    @ObservationIgnored private var superseded = false
     @ObservationIgnored private var isFinished = false
+    /// What runs once the take retires.
+    @ObservationIgnored private var retirement: [@MainActor () -> Void] = []
 
-    // MARK: Naming promised items
+    // MARK: Writing items
 
-    /// Whether the guest is asked to name the drag's promised items, decided
-    /// by the first ask.
-    private enum NamingStance: Equatable, Sendable {
-        case undecided
-        /// The first ask came while the catcher was the drag's target.
-        case asked
-        /// The first ask came at any other moment, so every promised item
-        /// takes a stand-in name.
-        case forgone
+    /// How the writes ended early, once they did.
+    @ObservationIgnored private var terminal: Terminal?
+    @ObservationIgnored private var written: Set<Int> = []
+    /// The items a Mac destination asked for: by name, which it asks before it
+    /// writes, or by a write.
+    nonisolated private let asked = Mutex<Set<Int>>([])
+    /// The writes pulling now, by item index, each with what cancels it.
+    @ObservationIgnored private var inFlight: [Int: @MainActor () -> Void] = [:]
+    /// The writes waiting for the drag's delivery to say what to pull, by item
+    /// index.
+    @ObservationIgnored private var owed: [Int: (destination: URL, completion: @Sendable ((any Error)?) -> Void)] = [:]
+    @ObservationIgnored private var readout: ClipboardTransferOperation?
+
+    private enum Terminal {
+        case cancelled
+        case failed(ClipboardTransferFailure)
     }
-
-    /// What one promised item is called where a Mac destination writes it.
-    private enum ItemNaming: Equatable, Sendable {
-        case named(String)
-        /// A stand-in, which no write fills.
-        case standIn
-    }
-
-    /// What the take decided about naming its promised items: the stance, and
-    /// each item settled so far, by `repIndex`, each written once as it
-    /// settles. Under a lock, so an ask on any thread reads it without the
-    /// main actor; and the take's own, so the drag's retirement or the
-    /// session's end — which forget the endpoint's naming — never unsettle it.
-    nonisolated private let naming = Mutex<(stance: NamingStance, items: [Int: ItemNaming])>(
-        (.undecided, [:]))
 
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "GuestDragTake")
 
-    /// Takes over `drag` on `endpoint` for `display`, which the take drives
-    /// while `holds` stays true.
+    /// Takes over a guest drag through
+    /// `transport` for `display`, which the take drives while `holds` stays
+    /// true.
     ///
-    /// `onFinished` is called once, when the take is retired and no write is
-    /// still pulling or landing — from then on nothing reads what the drag's
-    /// pulls staged. Nothing is sent until ``begin()``.
+    /// `onFinished` is called once, when the take's stream has closed, its
+    /// offers are released or ended, and no write is still pulling;
+    /// `onHostSessionBegan` as its Mac session begins. The delivery's naming
+    /// deadline runs on `clock`. Nothing is sent until ``begin()``.
     init(
-        drag: ClipboardInboundDrag, endpoint: ClipboardEndpoint, display: any GuestDragDisplay,
+        transport: any GuestDragTransport, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
-        progressRevealDelay: TimeInterval, progressIdleGap: TimeInterval,
-        namingDeadline: TimeInterval = GuestDragTake.namingDeadline, clock: any EngineClock,
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        clock: any EngineClock = makePlatformEngineClock(),
         holds: @escaping @MainActor () -> Bool,
-        onFinished: @escaping @MainActor (GuestDragTake) -> Void
+        onFinished: @escaping @MainActor (GuestDragTake) -> Void,
+        onHostSessionBegan: @escaping @MainActor (GuestDragTake) -> Void
     ) {
-        self.generation = drag.generation
-        self.items = drag.items
-        self.endpoint = endpoint
-        self.writer = GuestDragItemWriter(
-            generation: drag.generation, items: drag.items, endpoint: endpoint, reporter: reporter,
-            peerName: peerName, progressRevealDelay: progressRevealDelay,
-            progressIdleGap: progressIdleGap)
-        self.namingDeadline = namingDeadline
+        self.transport = transport
         self.display = display
         self.reporter = reporter
         self.peerName = peerName
-        self.clock = clock
+        self.progressRevealDelay = progressRevealDelay
+        self.progressIdleGap = progressIdleGap
+        self.delivery = GuestDragDelivery(clock: clock)
         self.holds = holds
         self.onFinished = onFinished
-        writer.owner = self
+        self.onHostSessionBegan = onHostSessionBegan
     }
 
-    /// Asks the guest to hand the drag over, and starts the hand-off's bounds:
-    /// its deadline, and the condition it holds under.
+    /// Asks the guest to hand the drag over, and starts watching the condition
+    /// the take holds under.
     ///
     /// Announced to the reporter as a gesture of its own: a write can fail
     /// before its readout publishes anything, and its refusal would otherwise
@@ -355,8 +461,8 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     /// (`ClipboardTransferReporter.gestureBegan`).
     func begin() {
         reporter.gestureBegan()
-        endpoint.sendDragTake(generation: generation)
-        startDeadline()
+        delivery.whenSettled { [weak self] in MainActorBridge.async { self?.deliverySettled() } }
+        transport.take(delivery: delivery) { [weak self] event in self?.handle(event) }
         holdsWatch = observeRecurring(
             track: { [weak self] in _ = self?.holds() },
             apply: { [weak self] in
@@ -365,7 +471,7 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             })
         Self.logger.log(
             .notice,
-            "Taking over the guest drag gen=\(self.generation, privacy: .public) of \(self.items.count, privacy: .public) item(s) from '\(self.peerName, privacy: .public)'"
+            "Taking over a guest drag from '\(self.peerName, privacy: .public)'"
         )
     }
 
@@ -376,15 +482,11 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         case .handingOff(armed: true):
             nudge()
         case .ready:
-            guard display?.beginHostSession(carrying: self) == true else {
-                return release(at: .catcher)
-            }
+            guard display?.beginHostSession(carrying: self) == true else { return release(at: .catcher) }
             hasHostSession = true
+            hostSessionLive = true
             phase = .carried(.outside(targeted: true))
-            Self.logger.log(
-                .notice,
-                "A Mac drag session carries guest drag gen=\(self.generation, privacy: .public); the guest's button stays held"
-            )
+            Self.logger.log(.notice, "A Mac drag session carries the guest's drag; its button stays held")
         case .handingOff(armed: false), .carried, .released, .unreleased, .abandoned:
             break
         }
@@ -392,30 +494,33 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
 
     package func withheldMouseUp() {
         switch phase {
-        case .handingOff:
-            abandon(because: "the button came up before the guest's catcher was targeted", tellingGuest: true)
-        case .ready:
-            release(at: .catcher)
-        case .carried, .released, .unreleased, .abandoned:
-            break
+        case .handingOff: abandon(because: "the button came up before the guest's catcher was targeted")
+        case .ready: release(at: .catcher)
+        case .carried, .released, .unreleased, .abandoned: break
         }
     }
 
     package func pointerReturned() {
-        abandon(because: "the pointer came back over the display", tellingGuest: true)
+        abandon(because: "the pointer came back over the display")
     }
 
     package func displayAbandoned() {
         switch phase {
         case .handingOff, .ready:
-            abandon(because: "the display can no longer carry the press", tellingGuest: true)
+            abandon(because: "the display can no longer carry the press")
         case .carried(let carriage):
             // Nothing can wait for a target any more: a new press is about to
             // reach the guest, or the display is gone.
-            release(at: carriage == .outside(targeted: true) ? .catcher : .exitPoint)
+            guard carriage != .dropped else { return release(at: .dropPoint) }
+            let onCatcher = carriage == .outside(targeted: true) || carriage == .delivering
+            release(at: onCatcher && catcherArmed ? .catcher : .exitPoint)
         case .released, .unreleased, .abandoned:
             break
         }
+    }
+
+    package func hostSessionWillBegin() {
+        onHostSessionBegan(self)
     }
 
     package func hostSessionMoved() {
@@ -430,14 +535,12 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         switch carriage {
         case .outside:
             phase = .carried(.inside)
-            endpoint.sendDragCatcher(generation: generation, shown: false)
-            Self.logger.log(
-                .notice,
-                "The Mac session carrying drag gen=\(self.generation, privacy: .public) came back over its display; the guest's catcher stands down"
-            )
+            catcherStandDowns += 1
+            transport.control(.catcher(shown: false))
+            Self.logger.log(.notice, "The Mac session came back over its display; the guest's catcher stands down")
         case .inside:
             break
-        case .ended:
+        case .ended, .delivering, .dropped:
             return false
         }
         display.injectDrag(at: point)
@@ -454,22 +557,24 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         guard display === self.display, phase == .carried(.inside) else { return false }
         noDestinationAsks = true
         display.injectDrag(at: point)
+        // A catcher still up would take the release the user meant for what
+        // is under it.
+        guard catcherDown else {
+            phase = .carried(.dropped)
+            Self.logger.log(.notice, "Dropped on the display; waiting for the guest's catcher to stand down")
+            return true
+        }
         release(at: .dropPoint)
         return true
     }
 
     package func hostSessionEnded(dropped: Bool) {
+        hostSessionLive = false
         if !dropped { noDestinationAsks = true }
-        if phase == .carried(.outside(targeted: true)), claimOwedNaming() {
-            // The destination may ask for the names only once the session is
-            // over, so the guest calls them in now, on the release that ends
-            // its drag.
-            beginNaming(releasingFrom: phase)
-        }
         guard case .carried(let carriage) = phase else { return retireIfDone() }
         switch carriage {
         case .outside(targeted: true):
-            release(at: .catcher)
+            releaseOntoCatcher()
         case .inside:
             // Ended over the display with no drop there, so nothing in the
             // guest is where the user let go: the catcher takes it.
@@ -477,156 +582,134 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
             awaitTarget()
         case .outside(targeted: false):
             awaitTarget()
-        case .ended:
+        case .ended, .delivering, .dropped:
             break
         }
     }
 
-    // MARK: - The guest's reports
+    // MARK: - The guest's side
 
-    /// Takes one step of the guest's hand-off.
-    func handOff(_ step: ClipboardDragHandOffStep) {
-        switch step {
+    private func handle(_ event: GuestDragTakeEvent) {
+        switch event {
+        case .report(let report): reported(report)
+        case .ended(let result): takeEnded(result)
+        }
+    }
+
+    /// One step of the guest's hand-off.
+    func reported(_ report: DragTakeReport) {
+        switch report {
         case .armed:
             catcherArmings += 1
             guard catcherArmed else { return }
             switch phase {
             case .handingOff(armed: false):
                 phase = .handingOff(armed: true)
+                // The catcher becomes the drag's target only through motion
+                // the guest's drag manager hit-tests after it appears, and a
+                // pointer stopped past the edge makes none.
                 nudge()
             case .carried(.outside(targeted: false)), .carried(.ended):
                 nudge()
             case .handingOff(armed: true), .ready, .carried, .released, .unreleased, .abandoned:
                 break
             }
-        case .targeted:
+        case .targeted(let listed):
+            carried.withLock { if $0.isEmpty { $0 = DraggedOutItem.carried(listed) } }
             // A target for a showing since stood down says nothing about the
             // catcher up now.
             guard catcherArmed else { return }
             switch phase {
             case .handingOff:
                 phase = .ready
-                stopDeadline()
-                Self.logger.log(
-                    .notice,
-                    "The guest's catcher is the target of drag gen=\(self.generation, privacy: .public)")
+                Self.logger.log(.notice, "The guest's catcher is the drag's target")
             case .carried(.outside(targeted: false)):
                 phase = .carried(.outside(targeted: true))
-                Self.logger.log(
-                    .notice,
-                    "The guest's catcher, shown again, is the target of drag gen=\(self.generation, privacy: .public)"
-                )
+                Self.logger.log(.notice, "The guest's catcher, shown again, is the drag's target")
             case .carried(.ended):
-                if claimOwedNaming() {
-                    stopDeadline()
-                    beginNaming(releasingFrom: phase)
-                }
-                release(at: .catcher)
+                releaseOntoCatcher()
             case .ready, .carried, .released, .unreleased, .abandoned:
                 break
             }
-        case .caught:
-            switch phase {
-            case .handingOff, .ready:
-                // Nothing here released the button, so the guest dropped on
-                // its catcher by some path this side did not drive.
-                abandon(because: "the guest reported a catch nothing released", tellingGuest: true)
-            case .carried:
-                guestDragEnded = true
-                endUnreleased(because: "the guest reported a catch nothing released")
-            case .released, .unreleased:
-                guestDragEnded = true
-                retireIfDone()
-            case .abandoned:
-                break
-            }
-        case .resolving, .resolveRefused:
-            // Answer the `DragResolve` a naming of promised items sends, which
-            // the endpoint consumes itself
-            // (`ClipboardEndpoint.beginDragNaming(generation:deadline:releasingGuestButton:)`);
-            // a refusal leaves the catcher's take as it was.
-            break
-        case .failed(let code, let message):
-            let reason = "the guest failed the hand-off (\(code?.rawValue ?? "unknown")): \(message)"
-            switch phase {
-            case .handingOff, .ready:
-                abandon(because: reason, tellingGuest: true)
-            case .carried(let carriage):
-                // The catcher sends `FAILED` only as it comes down, or as it
-                // refuses a targeted drag and stays up to refuse its drop —
-                // a refused `DragResolve` is `RESOLVE_REFUSED` — so a
-                // `DragComplete` can no longer overtake anything. A later
-                // `FAILED` — the stale refusal of a re-show after the guest
-                // ended the take — lands here again and changes nothing.
-                guestDragEnded = true
-                loseCatcher(because: reason, carriage: carriage)
-            case .released, .unreleased:
-                Self.logger.log(
-                    .warning,
-                    "The guest reported drag gen=\(self.generation, privacy: .public) failed after its release (\(code?.rawValue ?? "unknown", privacy: .public)): \(message, privacy: .public)"
-                )
-                guestDragEnded = true
-                retireIfDone()
-            case .abandoned:
-                break
-            }
-        }
-    }
-
-    /// The guest withdrew the drag (`DragRelease`), which the endpoint has
-    /// already retired.
-    ///
-    /// Once the Mac session begins the guest's watcher never withdraws a taken
-    /// drag, so a withdrawal then is the guest user's Cancel on the readout
-    /// serving it, and ends the take's transfers as cancelled.
-    func guestWithdrew() {
-        switch phase {
-        case .handingOff, .ready:
-            abandon(because: "the guest withdrew the drag", tellingGuest: true)
-        case .carried:
-            writer.cancelOwed(destinationMayAsk: destinationMayAsk)
-        case .released, .unreleased:
-            guestDragEnded = true
-            writer.cancelOwed(destinationMayAsk: destinationMayAsk)
-            retireIfDone()
-        case .abandoned:
+        case .delivering, .deliverRefused:
+            deliveryAnswered(delivering: report == .delivering)
+        case .stoodDown:
+            catcherStoodDown += 1
+            if phase == .carried(.dropped), catcherDown { release(at: .dropPoint) }
+        case .named:
+            // The delivery hears the names on the transport's queue.
             break
         }
     }
 
-    /// A newer take replaced this one: a take not yet carried by a Mac session
-    /// is abandoned, and one that is stops waiting for its guest drag, which
-    /// ended with its press, but still writes what its Mac destination asks
-    /// for.
-    func supersede() {
-        isSuperseded = true
+    /// The take ended: the guest's END, or how the stream closed without one.
+    func takeEnded(_ result: DragTakeResult) {
+        takeOpen = false
+        let reason = Self.describe(result)
         switch phase {
         case .handingOff, .ready:
-            abandon(because: "a newer drag replaced it", tellingGuest: true)
-        case .carried:
-            endUnreleased(because: "a newer drag replaced it")
-        case .released, .unreleased:
-            retireIfDone()
-        case .abandoned:
-            break
-        }
-    }
-
-    /// The drop channel is gone, and the drag with it; nothing is sent.
-    func channelEnded() {
-        switch phase {
-        case .handingOff, .ready:
-            abandon(because: "the drop channel closed", tellingGuest: false)
+            abandon(because: "the take ended before the Mac session: \(reason)")
         case .carried(let carriage):
-            writer.interruptOwed(destinationMayAsk: destinationMayAsk)
-            retire(tellingGuest: false)
-            loseCatcher(because: "the drop channel closed", carriage: carriage)
-        case .released, .unreleased:
-            writer.interruptOwed(destinationMayAsk: destinationMayAsk)
-            retire(tellingGuest: false)
-        case .abandoned:
-            break
+            catcherLost = true
+            Self.logger.log(.notice, "The guest's catcher can no longer take the drag: \(reason, privacy: .public)")
+            switch carriage {
+            case .outside: phase = .carried(.outside(targeted: false))
+            case .inside: break
+            case .dropped: release(at: .dropPoint)
+            case .delivering where hostSessionLive: phase = .carried(.outside(targeted: false))
+            case .ended, .delivering: release(at: .exitPoint)
+            }
+        case .released, .unreleased, .abandoned:
+            retireIfDone()
         }
+    }
+
+    /// The taken offer ended without this side releasing it.
+    func offerEnded() {
+        guard offerOpen else { return }
+        offerOpen = false
+        switch phase {
+        case .handingOff, .ready: abandon(because: "the guest's offer ended")
+        case .carried, .released, .unreleased, .abandoned:
+            endWrites(.interrupted(fileCount: items.count - written.count))
+            retireIfDone()
+        }
+    }
+
+    /// A newer take began, its press ending this take's guest drag: one not
+    /// yet carried by a Mac session is abandoned, and one that is stops
+    /// waiting for its guest drag. Its session's promises stay on the drag
+    /// pasteboard until a newer session writes it (``promisesReplaced()``).
+    func newerTakeBegan() {
+        switch phase {
+        case .handingOff, .ready: abandon(because: "a newer drag replaced it")
+        case .carried: endUnreleased(because: "a newer drag replaced it")
+        case .released, .unreleased, .abandoned: break
+        }
+    }
+
+    /// A newer drag's Mac session wrote the drag pasteboard over this take's
+    /// promises, so it writes what its Mac destination has asked for and then
+    /// retires.
+    func promisesReplaced() {
+        superseded = true
+        retireIfDone()
+    }
+
+    /// The app is terminating: the take writes nothing more and retires now,
+    /// without waiting for the guest's answers, so its promises are withdrawn
+    /// before the process resolves them on its way out.
+    func endForTermination() {
+        switch phase {
+        case .handingOff, .ready: abandon(because: "the app is terminating")
+        case .carried: endUnreleased(because: "the app is terminating")
+        case .released: if takeOpen { transport.cancel() }
+        // Each called the take off as it ended.
+        case .unreleased, .abandoned: break
+        }
+        takeOpen = false
+        cancelWrites()
+        retire()
     }
 
     // MARK: - Hand-off steps
@@ -637,42 +720,11 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         display?.injectNudge(nudge)
     }
 
-    private func startDeadline() {
-        deadline?.cancel()
-        deadline = clock.schedule(after: Self.handOffDeadline) { [weak self] in
-            await self?.handOffDeadlinePassed()
-        }
-    }
-
-    private func stopDeadline() {
-        deadline?.cancel()
-        deadline = nil
-    }
-
-    private func handOffDeadlinePassed() {
-        let reason = "the guest went \(Self.handOffDeadline) s without its catcher becoming the target"
-        switch phase {
-        case .handingOff:
-            abandon(because: reason, tellingGuest: true)
-        case .carried(.ended):
-            Self.logger.log(
-                .notice,
-                "Releasing drag gen=\(self.generation, privacy: .public) where it left the display: \(reason, privacy: .public)"
-            )
-            release(at: .exitPoint)
-        case .ready, .carried, .released, .unreleased, .abandoned:
-            break
-        }
-    }
-
     private func vmStopped() {
         switch phase {
-        case .handingOff, .ready:
-            abandon(because: "the VM stopped running", tellingGuest: true)
-        case .carried:
-            endUnreleased(because: "the VM stopped running")
-        case .released, .unreleased, .abandoned:
-            break
+        case .handingOff, .ready: abandon(because: "the VM stopped running")
+        case .carried: endUnreleased(because: "the VM stopped running")
+        case .released, .unreleased, .abandoned: break
         }
     }
 
@@ -681,41 +733,44 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
     private func showCatcherAgain() {
         guard !catcherLost else { return }
         catcherShowings += 1
-        endpoint.sendDragCatcher(generation: generation, shown: true)
+        transport.control(.catcher(shown: true))
     }
 
-    /// Waits, within the hand-off deadline, for the catcher to become the
-    /// target of a drag whose Mac session ended — at once at the exit point
-    /// when no catcher can take it.
+    /// Waits for the catcher to become the target of a drag whose Mac session
+    /// ended — at once at the exit point when no catcher can take it.
     private func awaitTarget() {
         guard !catcherLost else { return release(at: .exitPoint) }
         phase = .carried(.ended)
-        startDeadline()
-        Self.logger.log(
-            .notice,
-            "The Mac session carrying drag gen=\(self.generation, privacy: .public) ended; waiting for the guest's catcher to be the target"
-        )
+        Self.logger.log(.notice, "The Mac session ended; waiting for the guest's catcher to be the target")
         // The user letting go is the last motion the session gives a nudge to
         // ride.
         if catcherArmed { nudge() }
     }
 
-    /// The guest's catcher can no longer take the drag, so the release goes
-    /// where it left the display — now, when the session has already ended.
-    private func loseCatcher(because reason: String, carriage: Carriage) {
-        catcherLost = true
-        Self.logger.log(
-            .notice,
-            "The guest's catcher can no longer take drag gen=\(self.generation, privacy: .public): \(reason, privacy: .public)"
-        )
-        switch carriage {
-        case .outside:
-            phase = .carried(.outside(targeted: false))
-        case .inside:
-            break
-        case .ended:
-            release(at: .exitPoint)
-        }
+    /// Releases onto the targeted catcher, asking the guest to deliver the
+    /// drag first when a Mac destination may still ask for it: the delivery
+    /// names its promises and sizes everything else, none of which the guest
+    /// reads before the drop.
+    private func releaseOntoCatcher() {
+        guard destinationMayAsk else { return release(at: .catcher) }
+        askDelivery()
+    }
+
+    /// Asks the guest to deliver the drag at the drop that follows; the release
+    /// waits for its answer.
+    private func askDelivery() {
+        deliveryAsked = true
+        phase = .carried(.delivering)
+        transport.control(.deliver)
+        Self.logger.log(.notice, "Asked the guest to deliver the drag at its catcher's drop")
+    }
+
+    /// The guest answered the ask for a delivering drop; a refusal means the
+    /// drop delivers nothing, which the delivery's settling reports.
+    private func deliveryAnswered(delivering: Bool) {
+        guard phase == .carried(.delivering) else { return }
+        if !delivering { Self.logger.log(.notice, "The guest refused to deliver the drag; releasing it anyway") }
+        release(at: .catcher)
     }
 
     /// Releases the guest's button at `spot`, which only ``Phase/ready`` and
@@ -726,286 +781,349 @@ package final class GuestDragTake: GuestDragTaking, GuestDragItemWriterOwner {
         case .handingOff, .released, .unreleased, .abandoned: return
         }
         phase = .released(at: spot)
-        stopBounds()
+        stopWatching()
         if spot == .exitPoint { display?.returnToExitPoint() }
         display?.injectRelease()
         Self.logger.log(
             .notice,
-            "Released the guest's button for drag gen=\(self.generation, privacy: .public) at the \(spot.logName, privacy: .public) (Mac session: \(self.hasHostSession, privacy: .public))"
+            "Released the guest's button at the \(spot.logName, privacy: .public) (Mac session: \(self.hasHostSession, privacy: .public))"
         )
         retireIfDone()
     }
 
-    /// Ends a carried take that will never release: the guest's press is
-    /// over, or the VM stopped under it.
+    /// Ends a carried take that will never release, calling it off.
     private func endUnreleased(because reason: String) {
         guard case .carried = phase else { return }
         phase = .unreleased
-        stopBounds()
-        Self.logger.log(
-            .notice,
-            "Ended the take of guest drag gen=\(self.generation, privacy: .public) without a release: \(reason, privacy: .public)"
-        )
+        stopWatching()
+        if takeOpen { transport.cancel() }
+        Self.logger.log(.notice, "Ended the take without a release: \(reason, privacy: .public)")
         retireIfDone()
     }
 
-    /// Ends a take before its Mac session, returning the guest pointer to
-    /// where the drag left the display and handing the press back.
-    private func abandon(because reason: String, tellingGuest: Bool) {
+    /// Ends a take before its Mac session, calling it off, returning the guest
+    /// pointer to where the drag left the display and handing the press back.
+    private func abandon(because reason: String) {
         switch phase {
         case .handingOff, .ready: break
         case .carried, .released, .unreleased, .abandoned: return
         }
         phase = .abandoned
-        stopBounds()
-        Self.logger.log(
-            .notice,
-            "Abandoned the take of guest drag gen=\(self.generation, privacy: .public): \(reason, privacy: .public)"
-        )
-        retire(tellingGuest: tellingGuest)
+        stopWatching()
+        if takeOpen { transport.cancel() }
+        Self.logger.log(.notice, "Abandoned the take of a guest drag: \(reason, privacy: .public)")
         display?.returnToExitPoint()
-        display?.resumeForwarding()
+        display?.resumeTracking()
+        retireIfDone()
     }
 
-    private func stopBounds() {
-        stopDeadline()
+    private func stopWatching() {
         holdsWatch?.cancel()
         holdsWatch = nil
     }
 
     // MARK: - Retiring
 
-    /// Sends the drag's `DragComplete` once nothing will pull from it again and
-    /// the guest's own drag is over.
-    ///
-    /// The guest's catcher comes down on `DragComplete` for a take it did not
-    /// refuse, so one that overtook the injected release would let that
-    /// release drop on whatever lies under the guest pointer — hence a take
-    /// released onto its catcher or at the exit point waits for the guest to
-    /// report `CAUGHT` or `FAILED`, and none goes out before the release. A
-    /// drop into the guest happens with the catcher stood down. A superseded
-    /// take's guest drag ended with its press, before the newer guest press
-    /// the supersession needs, but its destination may still have writes
-    /// queued, so it retires like any other released take.
-    private func retireIfDone() {
-        let guestDone: Bool
-        switch phase {
-        case .released(let spot): guestDone = spot == .dropPoint || guestDragEnded || isSuperseded
-        case .unreleased: guestDone = true
-        case .handingOff, .ready, .carried, .abandoned: return
-        }
-        guard !isRetired else { return }
-        let nothingMoreToWrite = !destinationMayAsk || writer.isDone
-        guard guestDone, nothingMoreToWrite, writer.isIdle else { return }
-        retire(tellingGuest: true)
-    }
-
-    private func retire(tellingGuest: Bool) {
-        guard !isRetired else { return }
-        isRetired = true
-        if tellingGuest {
-            endpoint.completeDrag(generation: generation)
-        } else {
-            endpoint.retireInbound(generation: generation)
-        }
-        finishIfIdle()
-    }
-
-    /// Reports the take finished once it is retired and its last write has
-    /// settled: a channel's end retires a take with writes still in flight.
-    private func finishIfIdle() {
-        guard isRetired, writer.isIdle, !isFinished else { return }
-        isFinished = true
-        onFinished(self)
-    }
-
     /// Whether a Mac destination may still ask for items: a Mac session
     /// carries them, and it neither ended with nothing taking it nor was
     /// dropped into the guest.
     private var destinationMayAsk: Bool { hasHostSession && !noDestinationAsks }
 
+    /// Retires the take once nothing will pull from its offer again and its
+    /// stream has closed.
+    ///
+    /// A Mac destination asks for the items after its session ends, at any
+    /// moment and for only some of them, and AppKit reports no end to its
+    /// asking. So a session a destination took holds the offer until every
+    /// item is written, the writes ended, or a newer drag's session replaced
+    /// its promises — after which only an item already asked for is still
+    /// written.
+    private func retireIfDone() {
+        switch phase {
+        case .handingOff, .ready, .carried: return
+        case .released, .unreleased, .abandoned: break
+        }
+        guard !takeOpen, inFlight.isEmpty, owed.isEmpty else { return }
+        if destinationMayAsk {
+            let askedWritten = superseded && asked.withLock { $0.isSubset(of: written) }
+            guard written.count == items.count || terminal != nil || askedWritten else { return }
+        }
+        retire()
+    }
+
+    /// Releases the guest's offer, withdraws the Mac session's promises and
+    /// reports the take finished, once.
+    private func retire() {
+        if offerOpen {
+            offerOpen = false
+            transport.release()
+        }
+        guard !isFinished else { return }
+        isFinished = true
+        let retired = retirement
+        retirement.removeAll()
+        for body in retired { body() }
+        Self.logger.log(.notice, "Retired the take: its Mac session's promises are withdrawn")
+        onFinished(self)
+    }
+
+    package func whenRetired(_ body: @escaping @MainActor () -> Void) {
+        guard !isFinished else { return body() }
+        retirement.append(body)
+    }
+
     // MARK: - Naming promised items
 
-    /// A promised item's name comes from the guest only while the catcher is
-    /// the drag's target. A destination asking first at any other moment gets
-    /// a stand-in at once rather than having the catcher re-targeted, which
-    /// takes the take's own nudges on the main actor this wait may be holding:
-    /// a Mac drop within a frame or two of the session leaving the display
-    /// again is that case.
-    ///
-    /// Only the drag's undecided first ask touches the main actor, to read
-    /// where the hand-off stands; every other reads the take's own decision.
     nonisolated package func filename(forItemAt index: Int) -> String {
-        guard items.indices.contains(index) else { return Self.genericStem(isDirectory: false) }
+        guard items.indices.contains(index) else { return "Untitled" }
+        asked.withLock { _ = $0.insert(index) }
         let item = items[index]
-        if let filename = item.filename { return filename }
-        let targeted = Phase.carried(.outside(targeted: true))
-        let (stance, settled) = naming.withLock { ($0.stance, $0.items[item.repIndex]) }
-        let asks: Bool
-        switch (settled, stance) {
-        case (let settled?, _): return Self.filename(of: item, settled)
-        case (nil, .asked): asks = true
-        case (nil, .forgone): asks = false
-        case (nil, .undecided): asks = MainActorBridge.sync { self.decideNaming(from: targeted) }
-        }
-        return Self.filename(of: item, asks ? name(of: item, releasingFrom: targeted) : settle(item, .standIn))
+        guard item.isPromised else { return item.filename }
+        if let naming = delivery.naming { return Self.filename(of: index, item, naming) }
+        guard MainActorBridge.sync({ self.startDeliveryForName() }) else { return item.filename }
+        return Self.filename(of: index, item, waitForDelivery())
     }
 
     package func nameItemsForInAppDestination() -> Bool {
-        let promised = items.filter(\.isPromised)
-        guard !promised.isEmpty else { return true }
-        let targeted = Phase.carried(.outside(targeted: true))
-        guard decideNaming(from: targeted),
-            promised.allSatisfy({ name(of: $0, releasingFrom: targeted) != .standIn })
-        else {
-            writer.failNaming()
+        guard items.contains(where: \.isPromised) else { return true }
+        if delivery.naming == nil, !startDeliveryForName() {
+            Self.logger.log(.warning, "A destination in this app asked for names while the drag could not deliver")
             return false
         }
+        guard case .named = waitForDelivery() else { return false }
         return true
     }
 
-    /// Decides, once, whether the guest is asked for names: by whether the
-    /// take is in `expected` when the first ask comes. Reports the decision.
-    private func decideNaming(from expected: Phase) -> Bool {
-        let inExpected = phase == expected
-        let (stance, decidedNow) = naming.withLock { naming -> (NamingStance, Bool) in
-            guard naming.stance == .undecided else { return (naming.stance, false) }
-            naming.stance = inExpected ? .asked : .forgone
-            return (naming.stance, true)
-        }
-        if decidedNow, stance == .forgone {
+    /// Starts the drag's delivery for a destination asking a name, when the
+    /// catcher is the target of the Mac session carrying it, and reports
+    /// whether a delivery is under way. At any other moment the catcher would
+    /// have to be targeted again, which takes the take's own nudges on the
+    /// main thread this ask may be holding.
+    private func startDeliveryForName() -> Bool {
+        if deliveryAsked { return true }
+        guard phase == .carried(.outside(targeted: true)) else {
             Self.logger.log(
-                .warning,
-                "A Mac destination asked for the names of drag gen=\(self.generation, privacy: .public)'s promised items while the guest's catcher was not its target; they get stand-in names"
-            )
+                .warning, "A Mac destination asked a promised item's name while the catcher was not the target")
+            return false
         }
-        return stance == .asked
+        askDelivery()
+        return true
     }
 
-    /// Decides to ask the guest for names when a destination that took the
-    /// drop may yet ask for promised items and nothing decided yet.
-    private func claimOwedNaming() -> Bool {
-        guard destinationMayAsk, items.contains(where: \.isPromised) else { return false }
-        return naming.withLock { naming in
-            guard naming.stance == .undecided else { return false }
-            naming.stance = .asked
-            return true
-        }
-    }
-
-    /// Has the guest call the promised items in, its button released from
-    /// `expected` once the catcher will, without waiting for any name.
-    private func beginNaming(releasingFrom expected: Phase) {
-        let failure = endpoint.beginDragNaming(
-            generation: generation, deadline: .now() + namingDeadline
-        ) {
-            MainActorBridge.sync { self.releaseForNaming(from: expected) }
-        }
-        guard let failure else { return }
+    /// Waits for the drag's delivery to name its promises; a wait on the main
+    /// thread injects the release itself once the guest answers, since nothing
+    /// else can run there while it waits.
+    nonisolated private func waitForDelivery() -> GuestDragDelivery.Naming {
+        let onMain = Thread.isMainThread
+        let began = ContinuousClock.now
+        let outcome = delivery.waitForNames(
+            releasing: onMain
+                ? { MainActor.assumeIsolated { self.deliveryAnswered(delivering: true) } } : nil)
+        let waited = (ContinuousClock.now - began).components
+        let milliseconds = waited.seconds * 1_000 + waited.attoseconds / 1_000_000_000_000_000
         Self.logger.log(
-            .warning,
-            "The guest did not start calling in drag gen=\(self.generation, privacy: .public)'s promised items: \(String(describing: failure), privacy: .public)"
+            .notice,
+            "Waited \(milliseconds, privacy: .public) ms for the guest to deliver \(self.items.count, privacy: .public) dragged item(s) (main thread: \(onMain, privacy: .public))"
         )
-    }
-
-    /// `item`'s settled naming, asking the guest for it — its button released
-    /// from `expected` once the catcher will call the promises in — when it
-    /// has not settled yet.
-    nonisolated private func name(
-        of item: ClipboardDraggedItem, releasingFrom expected: Phase
-    ) -> ItemNaming {
-        if let settled = naming.withLock({ $0.items[item.repIndex] }) { return settled }
-        let asked = DispatchTime.now()
-        let result = endpoint.resolveDragName(
-            generation: generation, repIndex: item.repIndex, deadline: asked + namingDeadline
-        ) {
-            MainActorBridge.sync { self.releaseForNaming(from: expected) }
-        }
-        switch result {
-        case .success(let name):
-            let elapsedMilliseconds = (DispatchTime.now().uptimeNanoseconds - asked.uptimeNanoseconds) / 1_000_000
-            Self.logger.log(
-                .info,
-                "The guest named promised item \(item.repIndex, privacy: .public) of drag gen=\(self.generation, privacy: .public) \(elapsedMilliseconds, privacy: .public) ms after it was asked for"
-            )
-            return settle(item, .named(name))
-        case .failure(let failure):
-            Self.logger.log(
-                .warning,
-                "The guest did not name promised item \(item.repIndex, privacy: .public) of drag gen=\(self.generation, privacy: .public): \(String(describing: failure), privacy: .public)"
-            )
-            return settle(item, .standIn)
-        }
-    }
-
-    /// Records `item`'s naming unless it already settled, and returns how it
-    /// settled.
-    nonisolated private func settle(_ item: ClipboardDraggedItem, _ naming: ItemNaming) -> ItemNaming {
-        self.naming.withLock { decision in
-            if let settled = decision.items[item.repIndex] { return settled }
-            decision.items[item.repIndex] = naming
-            return naming
-        }
+        return outcome
     }
 
     nonisolated private static func filename(
-        of item: ClipboardDraggedItem, _ naming: ItemNaming
+        of index: Int, _ item: DraggedOutItem, _ naming: GuestDragDelivery.Naming
     ) -> String {
-        switch naming {
-        case .named(let name): name
-        case .standIn: standInName(for: item)
-        }
-    }
-
-    /// Releases the guest's button onto its catcher, which answered that it
-    /// calls the promises in on this drop — unless the take has moved on from
-    /// `expected`, where its own paths release.
-    private func releaseForNaming(from expected: Phase) {
-        guard phase == expected else {
-            Self.logger.log(
-                .notice,
-                "Drag gen=\(self.generation, privacy: .public) moved on before the guest's catcher was ready to call its promises in; no release for them"
-            )
-            return
-        }
-        release(at: .catcher)
-    }
-
-    /// What a promised item the guest did not name is called: a generic stem
-    /// with its declared type's extension.
-    nonisolated static func standInName(for item: ClipboardDraggedItem) -> String {
-        let stem = genericStem(isDirectory: item.isDirectory)
-        guard let pathExtension = item.type.preferredFilenameExtension else { return stem }
-        return "\(stem).\(pathExtension)"
-    }
-
-    nonisolated private static func genericStem(isDirectory: Bool) -> String {
-        ClipboardDraggedItem.safeFilename("", isDirectory: isDirectory)
+        guard case .named(let named) = naming, named.indices.contains(index) else { return item.filename }
+        return named[index].filename
     }
 
     // MARK: - Writing items
 
-    nonisolated package func writeItem(at index: Int, to destination: URL) throws {
-        try writer.write(at: index, to: destination)
+    nonisolated package func writeItem(
+        at index: Int, to destination: URL, completion: @escaping @Sendable ((any Error)?) -> Void
+    ) {
+        Task { @MainActor in self.startWrite(index, to: destination, completion) }
     }
 
-    var acceptsWrites: Bool { hasHostSession && !isRetired }
-
-    func takesStandInName(repIndex: Int) -> Bool {
-        naming.withLock { $0.items[repIndex] == .standIn }
+    private func startWrite(
+        _ index: Int, to destination: URL, _ completion: @escaping @Sendable ((any Error)?) -> Void
+    ) {
+        if let terminal { return completion(Self.error(for: terminal)) }
+        guard items.indices.contains(index), destinationMayAsk, inFlight[index] == nil, owed[index] == nil else {
+            return completion(GuestDragWriteError.failed(.transferFailed))
+        }
+        asked.withLock { _ = $0.insert(index) }
+        guard delivery.settled != nil else {
+            owed[index] = (destination, completion)
+            return
+        }
+        pull(index, to: destination, completion)
     }
 
-    func writesSettled() {
+    /// The drag's delivery settled: every write waiting on it pulls now, or
+    /// fails when the delivery expired.
+    private func deliverySettled() {
+        if case .expired(let waited)? = delivery.settled { deliveryExpired(after: waited) }
+        let waiting = owed
+        owed.removeAll()
+        for (index, write) in waiting.sorted(by: { $0.key < $1.key }) {
+            if let terminal {
+                write.completion(Self.error(for: terminal))
+                continue
+            }
+            pull(index, to: write.destination, write.completion)
+        }
         retireIfDone()
-        finishIfIdle()
     }
 
-    #if DEBUG
-    /// Test seam: ``GuestDragItemWriter/onLandingForTesting(_:)``.
-    func onLandingForTesting(_ body: (@Sendable (URL?) -> Void)?) {
-        writer.onLandingForTesting(body)
+    /// Nothing named the drag's promises by the naming deadline: the take is
+    /// called off, so the guest's drop delivers nothing, and every write fails
+    /// timed out.
+    private func deliveryExpired(after waited: TimeInterval) {
+        let promised = items.filter(\.isPromised).count
+        Self.logger.log(
+            .error,
+            "The guest named none of the drag's \(promised, privacy: .public) promised item(s) in \(String(format: "%.1f", waited), privacy: .public) s; calling the take off"
+        )
+        if takeOpen { transport.cancel() }
+        endWrites(.timedOut)
     }
-    #endif
+
+    /// The item a pull of `index` fetches: as delivered, or as offered when
+    /// nothing was.
+    private func source(of index: Int) -> DraggedOutItem? {
+        if case .delivered(let delivered)? = delivery.settled, delivered.indices.contains(index) {
+            return delivered[index]
+        }
+        let item = items[index]
+        // A promise nothing delivered was never called in, so the guest
+        // serves nothing for it.
+        guard !item.isPromised else { return nil }
+        return item
+    }
+
+    private func pull(_ index: Int, to destination: URL, _ completion: @escaping @Sendable ((any Error)?) -> Void) {
+        let operation = liveReadout()
+        guard offerOpen, let item = source(of: index) else {
+            let failure = ClipboardTransferFailure.peerReported(.dragItemUnavailable)
+            operation.unitBegan(id: UInt64(index), expectedBytes: 0, name: items[index].filename)
+            operation.unitFailed(id: UInt64(index), failure)
+            endWrites(failure)
+            return completion(GuestDragWriteError.failed(failure))
+        }
+        operation.unitBegan(id: UInt64(index), expectedBytes: item.sizeEstimate, name: item.filename)
+        var ended = false
+        let cancel = transport.pull(item, at: index, to: destination) { [weak self] result in
+            ended = true
+            self?.endWrite(index, result, operation: operation, completion)
+        }
+        // A pull refused before it opened has already ended.
+        if !ended { inFlight[index] = cancel }
+    }
+
+    private func endWrite(
+        _ index: Int, _ result: Result<Void, WireError>, operation: ClipboardTransferOperation,
+        _ completion: @escaping @Sendable ((any Error)?) -> Void
+    ) {
+        inFlight[index] = nil
+        defer { retireIfDone() }
+        switch result {
+        case .success:
+            written.insert(index)
+            operation.unitEnded(id: UInt64(index), succeeded: true)
+            if written.count == items.count { operation.finish(.completed) } else { operation.finishWhenIdle() }
+            completion(nil)
+        case .failure(let error):
+            if let terminal {
+                operation.unitEnded(id: UInt64(index), succeeded: false)
+                return completion(Self.error(for: terminal))
+            }
+            let failure = Self.failure(for: error, owed: items.count - written.count)
+            Self.logger.log(
+                .error,
+                "Could not write dragged item \(index, privacy: .public) from '\(self.peerName, privacy: .public)': \(String(describing: error.code), privacy: .public) \(error.debugDetail, privacy: .public)"
+            )
+            operation.unitFailed(id: UInt64(index), failure)
+            endWrites(failure)
+            completion(GuestDragWriteError.failed(failure))
+        }
+    }
+
+    /// Ends every write still owed on `failure`, cancelling those in flight.
+    private func endWrites(_ failure: ClipboardTransferFailure) {
+        guard terminal == nil else { return }
+        terminal = .failed(failure)
+        liveReadout().finish(.failed(failure))
+        for cancel in inFlight.values { cancel() }
+        failOwed()
+    }
+
+    /// The readout's Cancel: every write still owed fails as cancelled.
+    private func cancelWrites() {
+        guard terminal == nil else { return }
+        terminal = .cancelled
+        readout?.finish(.cancelled)
+        for cancel in inFlight.values { cancel() }
+        failOwed()
+        retireIfDone()
+    }
+
+    /// Fails every write waiting on the delivery with the writes' end.
+    private func failOwed() {
+        guard let terminal else { return }
+        let waiting = owed
+        owed.removeAll()
+        for write in waiting.values { write.completion(Self.error(for: terminal)) }
+    }
+
+    /// The readout the writes report on — the one running, or a new one when
+    /// the last has ended — sized by the delivered items when there are any,
+    /// and counting files alone unless every item has a size.
+    private func liveReadout() -> ClipboardTransferOperation {
+        if let readout, readout.isLive { return readout }
+        let sized: [DraggedOutItem]
+        if case .delivered(let delivered)? = delivery.settled { sized = delivered } else { sized = items }
+        let operation = ClipboardTransferOperation(
+            gesture: .dragOut, direction: .inbound, peerName: peerName,
+            expectedBytes: sized.contains { $0.sizeEstimate == 0 } ? nil : sized.reduce(0) { $0 + $1.sizeEstimate },
+            expectedItems: items.count,
+            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
+            onCancelRequested: { [weak self] in
+                // Called outside the operation's lock on whichever thread saw
+                // the click, so it hops before touching anything.
+                Task { @MainActor in self?.cancelWrites() }
+            },
+            reporter: reporter)
+        readout = operation
+        return operation
+    }
+
+    private static func error(for terminal: Terminal) -> any Error {
+        switch terminal {
+        case .cancelled: CocoaError(.userCancelled)
+        case .failed(let failure): GuestDragWriteError.failed(failure)
+        }
+    }
+
+    /// What the readout says of a pull that ended in `error`, with `owed`
+    /// items not yet written.
+    static func failure(for error: WireError, owed: Int) -> ClipboardTransferFailure {
+        switch error.code {
+        case .itemOfferStale, .cancelled, .shuttingDown: .interrupted(fileCount: owed)
+        case .itemRepresentationUnavailable: .peerReported(.dragItemUnavailable)
+        case .writeFailed where error.posixErrno == ENOSPC: .diskFull(needed: nil, available: nil)
+        case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .stagingFailed
+        case .readFailed: .sourceUnreadable(nil)
+        default: .transferFailed
+        }
+    }
+
+    private static func describe(_ result: DragTakeResult) -> String {
+        switch result {
+        case .caught: "the guest caught it"
+        case .returned: "the drag ended in the guest"
+        case .refused(let error): "the guest refused it (\(error.code)): \(error.debugDetail)"
+        case .closed(let closure): "the take closed: \(closure)"
+        }
+    }
 }
 
 extension GuestDragTake.ReleaseSpot {

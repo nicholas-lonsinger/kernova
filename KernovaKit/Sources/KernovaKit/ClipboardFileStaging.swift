@@ -186,23 +186,6 @@ public final class ClipboardFileStaging: Sendable {
             freeSpaceProvider: freeSpaceProvider)
     }
 
-    /// Staging for what `role` pulls from its peer's offers on `kind`'s
-    /// channel, kept for as long as that flow's discipline says.
-    ///
-    /// Parameters as ``init(label:root:freeSpaceProvider:)``.
-    public convenience init(
-        label: String,
-        root: ProcessStagingRoot,
-        receivingOn kind: ClipboardControlSession.Kind,
-        as role: ClipboardControlSession.Role,
-        freeSpaceProvider: FreeSpaceProvider? = nil
-    ) {
-        self.init(
-            label: label, root: root,
-            retention: ClipboardOfferDiscipline(kind: kind, receiver: role).stagingRetention,
-            freeSpaceProvider: freeSpaceProvider)
-    }
-
     /// Staging whose every generation is a ``lease()``'s, deleted once its last holder lets it go and by
     /// nothing else. Parameters as ``init(label:root:freeSpaceProvider:)``.
     public static func leased(label: String, root: ProcessStagingRoot) -> ClipboardFileStaging {

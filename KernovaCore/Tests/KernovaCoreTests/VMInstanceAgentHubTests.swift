@@ -44,6 +44,21 @@ struct VMInstanceAgentHubTests {
         #expect(probe.commands.filter { $0 == .setPeerFrozen(true) }.count == 1)
     }
 
+    @Test("DRAG's policy is drag and drop's setting, and a toggle of it reaches every connection")
+    func dragPolicyFollowsDropFiles() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        #expect(probe.policies.last?.isEnabled(.drag) == instance.configuration.dropFilesEnabled)
+        var toggled = instance.configuration
+        toggled.dropFilesEnabled.toggle()
+        let policy = instance.agentHubPolicy(for: toggled)
+        #expect(policy.isEnabled(.drag) == toggled.dropFilesEnabled)
+        #expect(policy.isEnabled(.logs) == toggled.agentLogForwardingEnabled)
+
+        instance.applyLivePolicy(oldConfig: instance.configuration, newConfig: toggled)
+        try await probe.changed.wait { probe.commands.contains(.setPolicy(policy)) }
+    }
+
     @Test("A log-forwarding toggle reaches every connection, and later ones are built with it")
     func logForwardingToggle() async throws {
         let probe = AgentHubProbe()

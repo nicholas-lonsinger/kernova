@@ -58,8 +58,7 @@ enum AgentMenuText {
         case .pasteUnpackFailed: return "couldn't save the pasted item"
         case .pasteFailed, .copyTooLarge, .pasteIncompleteSet,
             .forwardItemsSkipped, .dropDiskFull, .dropDownloadsDenied, .dropFailed,
-            .dropUnpackFailed, .dragTakeStale, .dragTakeRefused, .dragTakeFailed,
-            .dragItemUnavailable:
+            .dropUnpackFailed, .dragItemUnavailable:
             return "paste failed"
         }
     }

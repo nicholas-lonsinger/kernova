@@ -179,20 +179,12 @@ package final class VMInstance {
 
     package var vsockControlService: VsockControlService? { sessionContext?.vsock.control }
 
-    /// Serves files dropped on this VM's display; populated once the guest
-    /// agent's drop client connects.
-    package var vsockDropService: VsockDropService? { sessionContext?.vsock.drop }
-
     /// Where the feature listeners read admission verdicts, off the main actor.
     ///
     /// One per VM across every control-service generation: the accept path
     /// reads it without touching this instance. The live control service
     /// publishes into it; replaced or torn down, the gate is cleared.
     @ObservationIgnored let vsockAdmissionGate = VsockAdmissionGate()
-
-    /// Where the drop data listener lands each accepted item connection,
-    /// pointed at the live `VsockDropService`.
-    @ObservationIgnored let dropDataSink = VsockDataConnectionSink()
 
     /// `true` while the absence watchdog warns about some agent scope
     /// (``warnedMissingAgents``).
@@ -391,8 +383,8 @@ package final class VMInstance {
 
     /// The policy the hub sends `configuration`'s agents: LOGS exactly when it
     /// forwards guest logs, CLIPBOARD exactly when it shares the clipboard, its
-    /// paste ceiling `maxPasteBytes` and whether passthrough runs, and DROP when
-    /// files dragged onto the display go to the guest.
+    /// paste ceiling `maxPasteBytes` and whether passthrough runs, and DROP and
+    /// DRAG exactly when files move by drag and drop.
     static func agentHubPolicy(for configuration: VMConfiguration, maxPasteBytes: Int) -> PolicySnapshot {
         PolicySnapshot([
             FeaturePolicyValue(feature: .logs, enabled: configuration.agentLogForwardingEnabled),
@@ -402,6 +394,7 @@ package final class VMInstance {
             )
             .policy(enabled: configuration.clipboardSharingEnabled),
             FeaturePolicyValue(feature: .drop, enabled: configuration.dropFilesEnabled),
+            FeaturePolicyValue(feature: .drag, enabled: configuration.dropFilesEnabled),
         ])
     }
 
@@ -411,10 +404,24 @@ package final class VMInstance {
         Self.agentHubPolicy(for: configuration, maxPasteBytes: preferences.clipboardMaxPasteBytes)
     }
 
+    /// DRAG's owner: the guest's drag offers, and their takes over this VM's
+    /// display.
+    @ObservationIgnored let dragOut: HubDragOut
+    /// Where every pull of the guest's items lands.
+    @ObservationIgnored private let itemSink: ItemSinkAdapter<POSIXTreeFileSystem>
+
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
 
     package nonisolated var id: UUID { instanceID }
     package var name: String { configuration.name }
+
+    /// The app is terminating: every drag out of the guest retires, its
+    /// promises withdrawn, and every pull's landing is removed before this
+    /// returns, since the process exits before the pulls' own aborts would run.
+    func abandonTransfersForTermination() {
+        dragOut.endForTermination()
+        itemSink.discardForTermination()
+    }
 
     // MARK: - Network Attachment Recovery
 
@@ -478,6 +485,7 @@ package final class VMInstance {
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+        self.itemSink = itemSink
         let hubClipboard = HubClipboardService(
             sink: itemSink, stagingRoot: stagingRoot,
             stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes })
@@ -486,9 +494,13 @@ package final class VMInstance {
         self.clipboardTransfers = clipboardTransfers
         let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService
+        let dragOut = HubDragOut(sink: itemSink, reporter: clipboardTransfers) { [snapshots] in
+            snapshots.instance?.name ?? ""
+        }
+        self.dragOut = dragOut
         let itemLogger = KernovaLogger(subsystem: "app.kernova", category: "ItemSource")
         let itemRouter = ItemFeatureRouter<PeerHandle>(
-            clipboard: hubClipboard.owner(), drop: dropService.owner, logger: itemLogger)
+            clipboard: hubClipboard.owner(), drop: dropService.owner, drag: dragOut.owner, logger: itemLogger)
         let items = ItemAdapters(
             source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: itemLogger) {
                 itemRouter.content($0, $1, $2, $3)
@@ -506,6 +518,7 @@ package final class VMInstance {
             MainActor.assumeIsolated { snapshots.instance?.publishedAgentHubSnapshot = snapshot }
         }
         dropService.attach(agentHub)
+        dragOut.hub = agentHub
         activity.owner = self
         snapshots.instance = self
         clipboardTransfers.onReportChanged = { [weak self] report in
@@ -1002,8 +1015,7 @@ package final class VMInstance {
             bootedIntoRecovery: bootedIntoRecovery,
             vsock: VsockFeatureCoordinator(
                 instance: self,
-                admissionGate: vsockAdmissionGate,
-                dropDataSink: dropDataSink),
+                admissionGate: vsockAdmissionGate),
             agentHub: agentHub)
         openRuntimeFileAccess(into: context)
         return context

@@ -158,12 +158,16 @@ public enum ItemLanding: Sendable, Equatable {
     /// Any representation as one entry — an INLINE one as a file of its bytes — in the directory at the
     /// absolute path `directory`, under the name `name` chooses.
     case staged(directory: String, name: ItemLandingName)
+    /// Any representation as one entry created at exactly the absolute path `path`, which nothing may have yet,
+    /// and written beneath it: nothing beside it is opened or created, so a sink allowed only that one path — a
+    /// file promise's destination in a sandboxed app — lands it. It is published as the path's last component.
+    case exactPath(String)
 
     /// Whether this landing takes a representation of `storage`.
     func takes(_ storage: Representation.Storage) -> Bool {
         switch self {
         case .memory: storage == .inline
-        case .staged: true
+        case .staged, .exactPath: true
         }
     }
 }
@@ -287,6 +291,8 @@ package enum ItemTransferOutput: Sendable, Equatable {
     case sink(ItemSinkEffect)
     /// For the owner.
     case event(ItemTransferEvent)
+    /// The answer to the owner's pull command `ItemRequestID`.
+    case reply(ItemRequestID, ItemReply)
 }
 
 /// One input to the item-transfer machine.
@@ -353,7 +359,9 @@ public struct ItemTransfer: FeatureMachine {
         case .streamClosed(let stream, let closure):
             server.closed(stream, closure, outbox: &outbox)
             client.closed(stream, closure, outbox: &outbox)
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .slotFreed, .deadline:
+        case .slotFreed, .usabilityChanged, .policyChanged:
+            client.admitWaiting(offers: offers, generation: generation, connection: &connection, outbox: &outbox)
+        case .sessionEstablished, .message, .deadline:
             break
         }
     }
@@ -362,7 +370,17 @@ public struct ItemTransfer: FeatureMachine {
     package mutating func handleOffer(_ event: FeatureEvent, connection: inout Connection) {
         offers.handle(event, connection: &connection, events: &outbox)
         server.offersChanged(offers, connection: &connection)
-        client.offersChanged(offers, connection: &connection)
+        client.offersChanged(offers, connection: &connection, outbox: &outbox)
+    }
+
+    /// Gives this side's DRAG offer of `token` its drag's `items`; false when it has no whole, empty one.
+    mutating func carryLocal(_ token: Data, items: [OfferedItem]) -> Bool {
+        offers.carryLocal(token, items: items)
+    }
+
+    /// Gives the far side's DRAG offer of `token` its drag's `items`; nil when it did, or why not.
+    mutating func carryRemote(_ token: Data, items: [OfferedItem]) -> WireError? {
+        offers.carryRemote(token, items: items)
     }
 
     /// Opens an offer of `offer` on a stream of `kind`, an item-set offer kind this role opens; nil when sent,
@@ -387,9 +405,11 @@ public struct ItemTransfer: FeatureMachine {
         offers.refuse(token, error, connection: &connection)
     }
 
-    /// Pulls one representation of the far side's open offer, as `order` says.
-    public mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
-        client.pull(order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
+    /// Pulls one representation of the far side's open offer, as `order` says, answering `request` with
+    /// `.pulled` once the pull opens or cannot: at once, or when a stream slot frees for it.
+    mutating func pull(_ request: ItemRequestID, _ order: ItemPullOrder, connection: inout Connection) {
+        client.pull(
+            request, order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
     }
 
     /// Whether a pull this side committed has not had its sink's publish report: its `.pullEnded` is still

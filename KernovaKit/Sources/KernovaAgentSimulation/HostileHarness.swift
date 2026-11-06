@@ -289,6 +289,12 @@ package final class HostileRun {
         return refusal
     }
 
+    /// Takes the far peer's open drag offer of `token`; nil when the host answered nothing.
+    package func takeDrag(_ token: Data) -> Result<DragTakeID, WireError>? {
+        guard case .took(let result) = ask({ .takeDrag($0, token: token) }) else { return nil }
+        return result
+    }
+
     /// Item `item` of the far side's open offer of `token`, decoded now; nil when none is held.
     package func readItem(_ token: Data, item: UInt32 = 0) -> OfferedItem? {
         guard case .read(let read) = ask({ .read($0, token: token, item: item) }) else { return nil }
@@ -365,7 +371,7 @@ package final class HostileRun {
         switch output {
         case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
         case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
-        case .event: input = nil
+        case .event, .reply: input = nil
         }
         guard let input else { return }
         host?.handle(input, now: now)

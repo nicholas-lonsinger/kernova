@@ -1,52 +1,79 @@
 import AppKit
 import Foundation
+import KernovaAgentCore
 import KernovaKit
+import KernovaSynchronization
 import KernovaTestSupport
+import KernovaWire
 import Testing
 import UniformTypeIdentifiers
 
+/// The guest's drag pasteboard, written by hand: a source writing a drag moves
+/// the change count, and a source still filling the drag it wrote adds items
+/// without moving it.
+final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
+    private struct State: Sendable {
+        var items: [FakePasteboardItem] = []
+        var changeCount = 0
+    }
+
+    private let state = Locked(State())
+
+    var changeCount: Int { state.withLock { $0.changeCount } }
+    var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
+    /// The watcher reads no promise off the drag pasteboard; the catcher's drop
+    /// reads them.
+    @MainActor var filePromiseReceivers: [any FilePromiseReceiving] { [] }
+
+    /// A source writes a drag of `items`, moving the change count.
+    func write(_ items: [FakePasteboardItem]) {
+        state.withLock { state in
+            state.items = items
+            state.changeCount += 1
+        }
+    }
+
+    /// The source of the drag already written goes on filling it to `items`,
+    /// leaving the change count where it is.
+    func fill(_ items: [FakePasteboardItem]) {
+        state.withLock { $0.items = items }
+    }
+}
+
 /// The guest's event stream and drag pasteboard, driven by hand: a test
-/// presses and releases the button, fires the press timer, and decides when
-/// each off-main resolve and folder measure comes back.
+/// presses and releases the button, fires the press timer, sets the file
+/// promises the drag carries, and decides when each coordinated read of a
+/// whole drop's arrival is granted.
 @MainActor
 final class FakeGuestDragInput: GuestDragInput {
-    let pasteboard = FakeReadPasteboard()
+    let pasteboard = FakeDragPasteboard()
     var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
     var isPrimaryButtonHeld = false
-
-    /// Fires on every registration, cancellation, and queued resolve or
-    /// measure.
-    nonisolated let changed = AsyncGate()
-
-    /// Hands each resolve back on the next main-queue turn instead of holding
-    /// it for ``deliverResolves(_:)``.
-    var resolvesOnItsOwn = false
 
     private var pressHandler: (@MainActor @Sendable () -> Void)?
     private var tick: (@MainActor @Sendable () -> Void)?
     private(set) var tickInterval: TimeInterval?
     private(set) var isHoldingActivity = false
-    private(set) var resolveCount = 0
-    private var pendingResolves:
-        [(urls: [URL], completion: @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)] = []
-    private var pendingMeasures: [(folders: [Int: URL], completion: @MainActor @Sendable ([Int: Int]) -> Void)] = []
+    /// The file promises the drag pasteboard holds, as a drop on the catcher
+    /// reads them.
+    var receivers: [FakePromiseReceiver] = []
+    /// Every set of dragged files sized, in order: the only reads of a
+    /// dragged file this side makes.
+    private(set) var sized: [[URL]] = []
+    /// The folder being watched for entries, and who hears them.
+    private var watching: (folder: URL, appeared: @MainActor @Sendable ([URL]) -> Void)?
+    /// Every entry whose coordinated read was asked for and not yet granted.
+    private var coordinating: [(url: URL, granted: @MainActor @Sendable (GuestDragArrival?) -> Void)] = []
 
-    /// How many connections have built a drag-out on this input.
-    private(set) var connectionCount = 0
+    /// The folder a drop's entries are watched in, while one is.
+    var watchedFolder: URL? { watching?.folder }
+    /// Every entry whose coordinated read waits to be granted, in order asked.
+    var coordinationsWaiting: [URL] { coordinating.map(\.url) }
 
     var isObservingPresses: Bool { pressHandler != nil }
     var isTicking: Bool { tick != nil }
-    var pendingResolveCount: Int { pendingResolves.count }
-    /// The folders of each measure queued and not yet delivered, in order.
-    var pendingMeasureFolders: [[Int: URL]] { pendingMeasures.map(\.folders) }
 
     // MARK: Driving it
-
-    /// A connection built a drag-out on this input.
-    func connected() {
-        connectionCount += 1
-        changed.notify()
-    }
 
     /// The button goes down in another app, and the monitor reports it.
     func press() {
@@ -66,34 +93,31 @@ final class FakeGuestDragInput: GuestDragInput {
 
     /// Writes one drag's items as a source would, bumping the change count.
     func drag(_ items: [FakePasteboardItem]) {
-        pasteboard.setItems(items)
+        pasteboard.write(items)
     }
 
-    /// Hands back every queued resolve, each the real resolve of its URLs
-    /// unless `intake` stands in for it.
-    func deliverResolves(_ intake: ClipboardPasteboardReader.FileIntake? = nil) {
-        let pending = pendingResolves
-        pendingResolves.removeAll()
-        for resolve in pending {
-            resolve.completion(intake ?? Self.offerResolve(resolve.urls))
-        }
+    /// The drag's source goes on filling the drag it wrote to `items`, the
+    /// change count unmoved.
+    func fill(_ items: [FakePasteboardItem]) {
+        pasteboard.fill(items)
     }
 
-    /// Hands back every queued measure, each folder at `size` — or walked for
-    /// real when `size` is `nil`.
-    func deliverMeasures(size: Int? = nil) {
-        let pending = pendingMeasures
-        pendingMeasures.removeAll()
-        for measure in pending {
-            measure.completion(
-                measure.folders.mapValues { size ?? ClipboardArchive.estimatedByteCount(at: $0) })
-        }
+    /// Entries named `names` appear in the watched folder, as the live watch
+    /// reports what a listing finds; nothing when no folder is watched.
+    func appear(_ names: [String]) {
+        guard let watching else { return }
+        watching.appeared(names.map { watching.folder.appendingPathComponent($0) })
     }
 
-    /// The resolve the live input runs for an offer, which reads nothing inside
-    /// a folder.
-    private nonisolated static func offerResolve(_ urls: [URL]) -> ClipboardPasteboardReader.FileIntake {
-        ClipboardPasteboardReader.resolve(filesAt: urls, sizeOf: nil)
+    /// Grants the coordinated read of the watched folder's entry `name`, as
+    /// the live input does once a coordinating writer is done: it hands back
+    /// what the entry is now.
+    func grant(_ name: String) {
+        guard let index = coordinating.firstIndex(where: { $0.url.lastPathComponent == name }) else { return }
+        let (url, granted) = coordinating.remove(at: index)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return granted(nil) }
+        granted(GuestDragArrival(url: url, isFolder: isDirectory.boolValue))
     }
 
     // MARK: GuestDragInput
@@ -102,11 +126,7 @@ final class FakeGuestDragInput: GuestDragInput {
         _ handler: @escaping @MainActor @Sendable () -> Void
     ) -> GuestDragCancel {
         pressHandler = handler
-        changed.notify()
-        return { [weak self] in
-            self?.pressHandler = nil
-            self?.changed.notify()
-        }
+        return { [weak self] in self?.pressHandler = nil }
     }
 
     func repeatEvery(
@@ -122,24 +142,87 @@ final class FakeGuestDragInput: GuestDragInput {
         return { [weak self] in self?.isHoldingActivity = false }
     }
 
-    func resolveFiles(
-        _ urls: [URL],
-        then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void
-    ) {
-        resolveCount += 1
-        if resolvesOnItsOwn {
-            MainActorBridge.async { completion(Self.offerResolve(urls)) }
-        } else {
-            pendingResolves.append((urls, completion))
-        }
-        changed.notify()
+    /// Sizes each file as the live input does, and hands the sizes back at
+    /// once.
+    func sizeFiles(_ urls: [URL], then completion: @escaping @MainActor @Sendable ([Int?]) -> Void) {
+        sized.append(urls)
+        completion(urls.map { ClipboardPasteboardReader.resolve(filesAt: [$0]).representations.first?.byteCount })
     }
 
-    func measureFolders(
-        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
+    func watchEntries(
+        in folder: URL, _ appeared: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) -> GuestDragCancel {
+        watching = (folder, appeared)
+        return { [weak self] in self?.watching = nil }
+    }
+
+    /// Queues the read until ``grant(_:)``.
+    func coordinateRead(of url: URL, then granted: @escaping @MainActor @Sendable (GuestDragArrival?) -> Void) {
+        coordinating.append((url, granted))
+    }
+}
+
+/// A delivering drop's promises: whether its first promised item offers the
+/// whole-drop exchange and whether its paste location is taken, recording
+/// every call.
+@MainActor
+final class FakeGuestDragDrop: GuestDragDrop {
+    enum Call: Equatable {
+        case items
+        case offers(item: Int)
+        case setPasteLocation(URL)
+        case request(item: Int)
+        case receivers
+    }
+
+    /// The items that offer their promised file URL, by index in drag order.
+    var offering: Set<Int>
+    /// Whether the paste location is taken.
+    var takesLocation: Bool
+    /// The source writing the whole drop at the paste location, once asked.
+    var onRequest: ((URL) -> Void)?
+    private let promises: [FakePromiseReceiver]
+    /// The drop's items, as its pasteboard holds them.
+    private let dropped: [GuestDragItem]?
+    private(set) var calls: [Call] = []
+    private var location: URL?
+
+    init(
+        _ dropped: [GuestDragItem]?, offering: Set<Int> = [], takesLocation: Bool = true,
+        receivers: [FakePromiseReceiver] = []
     ) {
-        pendingMeasures.append((folders, completion))
-        changed.notify()
+        self.dropped = dropped
+        self.offering = offering
+        self.takesLocation = takesLocation
+        promises = receivers
+    }
+
+    func items() -> [GuestDragItem]? {
+        calls.append(.items)
+        return dropped
+    }
+
+    func offersPromisedFileURL(item index: Int) -> Bool {
+        calls.append(.offers(item: index))
+        return offering.contains(index)
+    }
+
+    func setPasteLocation(_ folder: URL) -> Bool {
+        calls.append(.setPasteLocation(folder))
+        if takesLocation { location = folder }
+        return takesLocation
+    }
+
+    func requestPromisedFileURL(item index: Int) -> Bool {
+        calls.append(.request(item: index))
+        guard let location, offering.contains(index) else { return false }
+        onRequest?(location)
+        return true
+    }
+
+    func receivers() -> [any FilePromiseReceiving] {
+        calls.append(.receivers)
+        return promises
     }
 }
 
@@ -152,19 +235,16 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
     private(set) var shownItems: [GuestDragItem]?
     /// Whether a screen is there to cover.
     var hasScreen = true
-    nonisolated let changed = AsyncGate()
 
     func show(items: [GuestDragItem]) -> Bool {
         showCount += 1
         shownItems = items
         isShown = hasScreen
-        changed.notify()
         return hasScreen
     }
 
     func hide() {
         isShown = false
-        changed.notify()
     }
 }
 
@@ -172,85 +252,85 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
 @MainActor
 final class FakeGuestDragPeer: GuestDragOutPeer {
     enum Event: Equatable {
-        /// An offer, each item by its filename — a promise, which has none, as
-        /// `promise:<its type>`.
-        case offered(generation: UInt64, items: [String])
-        case withdrew(generation: UInt64)
-        case handOff(generation: UInt64, step: ClipboardDragHandOffStep)
-        case sized(generation: UInt64, folderByteCounts: [Int: Int])
-        case named(generation: UInt64, filenames: [Int: String])
-        case resolved(generation: UInt64, repIndex: Int, filename: String, byteCount: Int)
-        case unavailable(generation: UInt64, repIndices: [Int])
+        case offered(token: Data)
+        case withdrew(token: Data)
+        case answered(DragTakeID, DragTakeAnswer)
+    }
+
+    /// A take's answer: a step, or its end, each item a report lists by its
+    /// one representation's name and a refusal by its code alone.
+    enum Answer: Equatable {
+        case armed
+        case targeted([String])
+        case delivering
+        case deliverRefused
+        case stoodDown
+        case named([String])
+        case caught(sizes: [UInt64]?)
+        case returned
+        case refused(ErrorCode)
     }
 
     private(set) var events: [Event] = []
-    private var nextGeneration: UInt64 = 1
-    /// What each offer carried, until it is withdrawn.
-    private var contents: [UInt64: ClipboardContent] = [:]
+    /// Every offer, in order.
+    private(set) var offers: [ItemOffer] = []
 
-    /// Every hand-off step reported, in order.
-    var handOffs: [Event] {
-        events.filter { if case .handOff = $0 { true } else { false } }
+    /// The token of the `index`th offer, or none.
+    func token(_ index: Int) -> Data? {
+        offers.indices.contains(index) ? offers[index].token : nil
     }
 
-    func offerDrag(_ items: [ClipboardDragOutItem]) -> ClipboardEndpoint.OfferOutcome {
-        let generation = nextGeneration
-        nextGeneration += 1
-        let representations = items.map { item -> ClipboardContent.Representation in
-            switch item {
-            case .file(let representation):
-                return representation
-            case .promise(let uti, let isDirectory):
-                return ClipboardContent.Representation(
-                    pendingRemoteUTI: uti, byteCount: 0, filename: "promise:\(uti)", isDirectory: isDirectory)
+    /// Every answer to the take `id`, in order.
+    func answers(to id: DragTakeID) -> [Answer] {
+        events.compactMap { event in
+            guard case .answered(let answered, let answer) = event, answered == id else { return nil }
+            switch answer {
+            case .report(.armed): return .armed
+            case .report(.targeted(let items)): return .targeted(items.map(Self.name))
+            case .report(.delivering): return .delivering
+            case .report(.deliverRefused): return .deliverRefused
+            case .report(.stoodDown): return .stoodDown
+            case .report(.named(let names)): return .named(names.map { String(decoding: $0, as: UTF8.self) })
+            case .caught(let sizes): return .caught(sizes: sizes)
+            case .returned: return .returned
+            case .refused(let error): return .refused(error.code)
             }
         }
-        events.append(.offered(generation: generation, items: representations.map(\.filename)))
-        contents[generation] = ClipboardContent(representations: representations)
-        return .sent(generation: generation)
     }
 
-    func withdraw(generation: UInt64) -> Bool {
-        events.append(.withdrew(generation: generation))
-        contents[generation] = nil
-        return true
+    /// The items each `TARGETED` of take `id` listed, in order.
+    func targeted(_ id: DragTakeID) -> [[OfferedItem]] {
+        events.compactMap { event in
+            guard case .answered(id, .report(.targeted(let items))) = event else { return nil }
+            return items
+        }
     }
 
-    func sendDragHandOff(generation: UInt64, step: ClipboardDragHandOffStep) {
-        events.append(.handOff(generation: generation, step: step))
+    /// How many takes were answered, all told.
+    var answerCount: Int {
+        events.count { if case .answered = $0 { true } else { false } }
     }
 
-    func outboundContent(generation: UInt64) -> ClipboardContent? {
-        contents[generation]
+    private static func name(_ item: OfferedItem) -> String {
+        String(decoding: item.representations.first?.name ?? Data(), as: UTF8.self)
     }
 
-    func sendDragSizes(generation: UInt64, folderByteCounts: [Int: Int]) -> Bool {
-        guard let content = contents[generation] else { return false }
-        contents[generation] = content.withDirectoryEstimates(folderByteCounts)
-        events.append(.sized(generation: generation, folderByteCounts: folderByteCounts))
-        return true
+    func offerDrag(_ offer: ItemOffer, _ completion: @escaping @MainActor (WireError?) -> Void) {
+        offers.append(offer)
+        events.append(.offered(token: offer.token))
+        completion(nil)
     }
 
-    func sendDragNames(generation: UInt64, filenames: [Int: String]) -> Bool {
-        events.append(.named(generation: generation, filenames: filenames))
-        return true
+    func withdrawDrag(_ token: Data) {
+        events.append(.withdrew(token: token))
     }
 
-    func resolvePromisedDragItem(generation: UInt64, repIndex: Int, fileURL: URL, byteCount: Int) -> Bool {
-        events.append(
-            .resolved(
-                generation: generation, repIndex: repIndex, filename: fileURL.lastPathComponent,
-                byteCount: byteCount))
-        return true
-    }
-
-    func markPromisedDragItemsUnavailable(generation: UInt64, repIndices: [Int]) -> Bool {
-        events.append(.unavailable(generation: generation, repIndices: repIndices))
-        return true
+    func answerTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
+        events.append(.answered(id, answer))
     }
 }
 
-/// One file promise a drop carries, whose source a test plays: it names its
+/// One file promise a drag carries, whose source a test plays: it names its
 /// files when called in, and writes each when the test says.
 final class FakePromiseReceiver: FilePromiseReceiving {
     /// The names it gives its files once called in.
@@ -318,10 +398,7 @@ extension GuestDragOutSystem {
         input: FakeGuestDragInput, surface: FakeCatcherSurface
     ) -> GuestDragOutSystem {
         GuestDragOutSystem(
-            makeInput: {
-                input.connected()
-                return input
-            },
+            makeInput: { input },
             makeCatcherSurface: { _ in surface })
     }
 }
@@ -364,5 +441,12 @@ final class FakeGuestDragTypeIcons {
         let image = NSImage(size: NSSize(width: 128, height: 128))
         images.append(image)
         return image
+    }
+}
+
+extension GuestDragCatcher {
+    /// A drop on the surface whose pasteboard holds no items.
+    func performDragOperation() -> Bool {
+        performDragOperation(drop: FakeGuestDragDrop(nil))
     }
 }

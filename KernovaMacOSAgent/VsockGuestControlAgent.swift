@@ -69,17 +69,6 @@ final class VsockGuestControlAgent: Sendable {
         }
     }
 
-    /// Invoked whenever the host's advertised capabilities change — on each
-    /// `Hello`, and on each connection teardown that clears them — with what
-    /// the host now takes over the drop channel.
-    ///
-    /// A host without `drop.files.v3` runs no drop listener, so the guest's
-    /// drop client stays paused rather than redialling a port nothing is bound
-    /// to. Separate from `onStateChange`, which is change-gated on a state
-    /// already set to `.connected` before any `Hello` arrives and so never
-    /// fires for the capabilities themselves. Called off the main thread.
-    private let onHostCapabilitiesChanged: (@Sendable (HostDropCapabilities) -> Void)?
-
     /// Creates the control agent; tests inject a socketpair-backed client and
     /// small cadences.
     init(
@@ -88,8 +77,7 @@ final class VsockGuestControlAgent: Sendable {
             port: KernovaVsockPort.control, label: "control"),
         cadence: ControlChannelCadence = .production,
         onPolicy: (@Sendable (Kernova_V1_PolicyUpdate) -> Void)? = nil,
-        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil,
-        onHostCapabilitiesChanged: (@Sendable (HostDropCapabilities) -> Void)? = nil
+        onStateChange: (@Sendable (HostConnectionState) -> Void)? = nil
     ) {
         self.clock = clock
         self.client = client
@@ -97,7 +85,6 @@ final class VsockGuestControlAgent: Sendable {
         self.state = Locked(State(cadence: cadence))
         self.onPolicy = onPolicy
         self.onStateChange = onStateChange
-        self.onHostCapabilitiesChanged = onHostCapabilitiesChanged
     }
 
     // MARK: - UI state accessors
@@ -138,9 +125,6 @@ final class VsockGuestControlAgent: Sendable {
             state.hostSupportsClipboardStreaming = false
             return state.transition(to: .connected)
         }
-        // The clearing is a capability change like any other: a client enabled by
-        // the previous host's Hello has to stand down until this one says Hello.
-        onHostCapabilitiesChanged?(.unadvertised)
         if connected { onStateChange?(.connected) }
 
         sendHello(on: channel)
@@ -200,7 +184,6 @@ final class VsockGuestControlAgent: Sendable {
                 state.hostSupportsClipboardStreaming = hostStreams
                 state.hostBundledAgentVersion = hello.bundledAgentVersion
             }
-            onHostCapabilitiesChanged?(HostDropCapabilities(advertised: hello.capabilities))
             // `logDescription` bounds the peer-supplied capability strings; these
             // records can be forwarded into the host's log store.
             Self.logger.log(
@@ -296,45 +279,4 @@ final class VsockGuestControlAgent: Sendable {
             channel.close()
         }
     }
-}
-
-/// What a host's `Hello` says it takes over the drop channel.
-struct HostDropCapabilities: Equatable, Sendable {
-    /// `drop.files.v3`: the host runs a drop listener at all.
-    var supportsDropFiles: Bool
-
-    /// What the host takes of a drag that leaves its VM display.
-    var dragOut: HostDragOutSupport
-
-    /// What a host that has not said `Hello` takes: nothing.
-    static let unadvertised = HostDropCapabilities(supportsDropFiles: false, dragOut: .none)
-
-    init(supportsDropFiles: Bool, dragOut: HostDragOutSupport) {
-        self.supportsDropFiles = supportsDropFiles
-        self.dragOut = dragOut
-    }
-
-    /// What `capabilities`, a `Hello`'s list, includes.
-    init(advertised capabilities: [String]) {
-        supportsDropFiles = capabilities.contains(KernovaCapability.dropFilesV3)
-        dragOut =
-            switch (
-                capabilities.contains(KernovaCapability.dragOutFilesV1),
-                capabilities.contains(KernovaCapability.dragOutPromisesV1)
-            ) {
-            case (false, _): .none
-            case (true, false): .files
-            case (true, true): .filesAndPromises
-            }
-    }
-}
-
-/// What a host takes of a drag that leaves its VM display.
-enum HostDragOutSupport: Equatable, Sendable {
-    /// Nothing: the drag stays in the guest.
-    case none
-    /// `drag.out.files.v1`: drags of plain file URLs.
-    case files
-    /// `drag.out.promises.v1` beside it: file promises too.
-    case filesAndPromises
 }

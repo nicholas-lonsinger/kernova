@@ -96,10 +96,8 @@ public final class ClipboardTransferOperation: Sendable {
     }
 
     private enum LogEvent: Sendable {
-        case revealed(elapsed: TimeInterval, transferred: UInt64, total: UInt64)
-        case ended(
-            terminal: String, elapsed: TimeInterval, transferred: UInt64, total: UInt64,
-            revealed: Bool)
+        case revealed(elapsed: TimeInterval, bytes: String)
+        case ended(terminal: String, elapsed: TimeInterval, bytes: String, revealed: Bool)
         case emission(ClipboardProgressSnapshot)
     }
 
@@ -145,6 +143,9 @@ public final class ClipboardTransferOperation: Sendable {
         /// Floor for the denominator — what the whole operation advertised before
         /// any transfer began. Units revise the figure upward, never below this.
         let expectedBytes: UInt64
+        /// Whether the operation knows its bytes; one that does not measures
+        /// its files alone.
+        let bytesKnown: Bool
         /// Floor for the file count, so a drop's bar counts every dropped file
         /// rather than each in turn.
         let expectedItems: Int
@@ -164,12 +165,6 @@ public final class ClipboardTransferOperation: Sendable {
         /// Transfers currently in flight, in the order they began; the readout
         /// names the most recently begun one.
         var activeUnits: [UInt64] = []
-        /// Transfers held until the size of what they will move arrives. Each
-        /// is in flight, though it sends no event until its size is known.
-        var sizeWaits = 0
-        /// What the last published readout said of ``sizeWaits``, so the
-        /// readout that changes it bypasses the throttle.
-        var publishedAwaitsSize = false
         /// Last file seen streaming, kept so the readout still names something
         /// during the gap between two transfers.
         var lastActiveName: String?
@@ -186,17 +181,15 @@ public final class ClipboardTransferOperation: Sendable {
         /// the terminal acts only if it takes the lock uncancelled — so one armed
         /// before a transfer began can never complete the operation.
         var idleTerminal: Task<Void, Never>?
-        /// The armed reveal of a readout whose transfers send no event — a size
-        /// wait — `nil` while none is.
-        var revealCheck: Task<Void, Never>?
         /// This operation's share of the republish-rate bound — the aggregate is
         /// a single byte stream even when several transfers feed it.
         var coalescer = FetchProgressCoalescer()
         var rate = TransferRateEstimator()
 
-        init(startedAt: EngineInstant, expectedBytes: UInt64, expectedItems: Int) {
+        init(startedAt: EngineInstant, expectedBytes: UInt64?, expectedItems: Int) {
             self.startedAt = startedAt
-            self.expectedBytes = expectedBytes
+            self.expectedBytes = expectedBytes ?? 0
+            bytesKnown = expectedBytes != nil
             self.expectedItems = expectedItems
         }
 
@@ -218,15 +211,22 @@ public final class ClipboardTransferOperation: Sendable {
             idleTerminal = nil
         }
 
-        /// Calls off both armed timers, for a terminal.
-        mutating func cancelTimers() {
-            cancelIdleTerminal()
-            revealCheck?.cancel()
-            revealCheck = nil
+        /// Whether nothing is in flight.
+        var isIdle: Bool { activeUnits.isEmpty }
+
+        /// The files the operation expects to transfer.
+        var fileCount: Int { max(units.count, expectedItems) }
+
+        /// How far the operation has come, in the measure it knows: bytes, or
+        /// files unless ``bytesKnown``.
+        var progress: (done: UInt64, total: UInt64) {
+            bytesKnown ? (transferredBytes, totalBytes) : (UInt64(completedCount), UInt64(fileCount))
         }
 
-        /// Whether nothing is in flight, the transfers held on a size included.
-        var isIdle: Bool { activeUnits.isEmpty && sizeWaits == 0 }
+        /// What a record says of the bytes moved.
+        var loggedBytes: String {
+            ClipboardProgressFormat.logBytes(transferred: transferredBytes, total: totalBytes, known: bytesKnown)
+        }
 
         /// Decides whether this event, sampled at `now`, may reach the UI, then
         /// resolves what to publish.
@@ -238,7 +238,8 @@ public final class ClipboardTransferOperation: Sendable {
         /// admits the update that reaches the total.
         mutating func resolve(at now: EngineInstant, revealDelay: TimeInterval, header: Header) -> Outcome {
             let elapsed = startedAt.seconds(to: now)
-            rate.record(bytes: transferredBytes, seconds: elapsed)
+            if bytesKnown { rate.record(bytes: transferredBytes, seconds: elapsed) }
+            let progress = self.progress
 
             var logs: [LogEvent] = []
             let admits: Bool
@@ -247,25 +248,19 @@ public final class ClipboardTransferOperation: Sendable {
                 revealed = true
                 // The reveal bypassed the throttle, so its watermarks must still
                 // reflect what just went on screen — otherwise the next update
-                // would measure its delta from a byte count already shown.
-                coalescer.markForwarded(bytesTransferred: transferredBytes, at: now)
-                logs.append(.revealed(elapsed: elapsed, transferred: transferredBytes, total: totalBytes))
-                admits = true
-            } else if (sizeWaits > 0) != publishedAwaitsSize {
-                // What the readout says of its total changed, which no byte
-                // count reflects.
-                coalescer.markForwarded(bytesTransferred: transferredBytes, at: now)
+                // would measure its delta from a count already shown.
+                coalescer.markForwarded(bytesTransferred: progress.done, at: now)
+                logs.append(.revealed(elapsed: elapsed, bytes: loggedBytes))
                 admits = true
             } else {
                 admits = coalescer.shouldForward(
-                    bytesTransferred: transferredBytes, totalBytes: totalBytes, at: now)
+                    bytesTransferred: progress.done, totalBytes: progress.total, at: now)
             }
             if let current = activeUnits.last, let name = units[current]?.name {
                 lastActiveName = name
             }
             guard admits else { return Outcome(logs: logs) }
             published = true
-            publishedAwaitsSize = sizeWaits > 0
             let snapshot = snapshot(at: now, header: header)
             logs.append(.emission(snapshot))
             return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
@@ -275,7 +270,7 @@ public final class ClipboardTransferOperation: Sendable {
         mutating func finish(_ terminal: Terminal, at now: EngineInstant, header: Header) -> Outcome {
             guard !isFinished else { return Outcome() }
             isFinished = true
-            cancelTimers()
+            cancelIdleTerminal()
             let outcome: ClipboardTransferOutcome
             let label: String
             var isFailure = false
@@ -313,7 +308,7 @@ public final class ClipboardTransferOperation: Sendable {
         mutating func abandon(at now: EngineInstant) -> Outcome {
             guard !isFinished else { return Outcome() }
             isFinished = true
-            cancelTimers()
+            cancelIdleTerminal()
             let logs: [LogEvent] = [ended("abandoned", at: now)]
             guard published else { return Outcome(logs: logs) }
             return Outcome(call: .retire, logs: logs)
@@ -321,28 +316,27 @@ public final class ClipboardTransferOperation: Sendable {
 
         func snapshot(at now: EngineInstant, header: Header) -> ClipboardProgressSnapshot {
             let total = totalBytes
-            let awaitsSize = sizeWaits > 0
             return ClipboardProgressSnapshot(
                 direction: header.direction,
                 peerName: header.peerName,
                 currentItemName: lastActiveName,
                 filesCompleted: completedCount,
-                fileCount: max(units.count, expectedItems),
+                fileCount: fileCount,
                 bytesTransferred: min(transferredBytes, total),
                 totalBytes: total,
-                bytesPerSecond: rate.bytesPerSecond,
-                secondsRemaining: awaitsSize
-                    ? nil : rate.secondsRemaining(bytes: transferredBytes, total: total),
+                bytesPerSecond: bytesKnown ? rate.bytesPerSecond : nil,
+                secondsRemaining: bytesKnown
+                    ? rate.secondsRemaining(bytes: transferredBytes, total: total) : nil,
                 gesture: header.gesture,
                 elapsedSeconds: max(0, startedAt.seconds(to: now)),
                 isCancellable: header.isCancellable,
-                operationID: header.id, awaitsSize: awaitsSize)
+                operationID: header.id, bytesKnown: bytesKnown)
         }
 
         func ended(_ terminal: String, at now: EngineInstant) -> LogEvent {
             .ended(
-                terminal: terminal, elapsed: max(0, startedAt.seconds(to: now)),
-                transferred: transferredBytes, total: totalBytes, revealed: revealed)
+                terminal: terminal, elapsed: max(0, startedAt.seconds(to: now)), bytes: loggedBytes,
+                revealed: revealed)
         }
     }
 
@@ -354,7 +348,8 @@ public final class ClipboardTransferOperation: Sendable {
     ///
     /// `expectedBytes`/`expectedItems` are a **floor** for the denominator, for
     /// an operation that knows its whole set up front (a drop); units revise it
-    /// upward as they are declared.
+    /// upward as they are declared. `expectedBytes` nil is an operation that
+    /// cannot know its bytes: its readout counts files alone.
     ///
     /// `onCancelRequested` stops what this operation measures — the transfers,
     /// not the offer behind them — and is what puts a Cancel affordance on the
@@ -364,7 +359,7 @@ public final class ClipboardTransferOperation: Sendable {
         gesture: ClipboardTransferGesture,
         direction: ClipboardProgressSnapshot.Direction,
         peerName: String,
-        expectedBytes: UInt64 = 0,
+        expectedBytes: UInt64? = 0,
         expectedItems: Int = 0,
         revealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         idleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
@@ -431,43 +426,6 @@ public final class ClipboardTransferOperation: Sendable {
             // A transfer in flight means the operation isn't idle: call off the
             // terminal armed for the gap this transfer just filled.
             state.cancelIdleTerminal()
-        }
-    }
-
-    /// Records that one of this operation's transfers is held until the size of
-    /// what it will move arrives — an event-free wait, so the readout reveals
-    /// at the reveal delay on its own, its total marked unknown
-    /// (``ClipboardProgressSnapshot/awaitsSize``).
-    ///
-    /// Paired with ``sizeWaitEnded()``, which the transfer's own
-    /// ``unitBegan(id:expectedBytes:name:)`` follows once it knows its size.
-    public func sizeWaitBegan() {
-        deliver(
-            state.withLock { state -> Outcome in
-                guard !state.isFinished else { return Outcome() }
-                state.sizeWaits += 1
-                state.cancelIdleTerminal()
-                let outcome = state.resolve(at: clock.now, revealDelay: revealDelay, header: header)
-                if !state.revealed, state.revealCheck == nil {
-                    let elapsed = state.startedAt.seconds(to: clock.now)
-                    state.revealCheck = clock.schedule(after: max(0, revealDelay - elapsed)) {
-                        [weak self] in
-                        self?.revealCheckFired()
-                    }
-                }
-                return outcome
-            })
-    }
-
-    /// Records that a transfer ``sizeWaitBegan()`` held is no longer waiting:
-    /// its size arrived, or it never will.
-    ///
-    /// Publishes nothing of its own: the transfer's next event carries the
-    /// total it now knows.
-    public func sizeWaitEnded() {
-        state.withLock { state in
-            guard !state.isFinished, state.sizeWaits > 0 else { return }
-            state.sizeWaits -= 1
         }
     }
 
@@ -612,16 +570,6 @@ public final class ClipboardTransferOperation: Sendable {
             })
     }
 
-    /// Reveals a readout no event has reached since its transfers were held.
-    private func revealCheckFired() {
-        deliver(
-            state.withLock { state -> Outcome in
-                guard !Task.isCancelled, !state.isFinished, !state.revealed else { return Outcome() }
-                state.revealCheck = nil
-                return state.resolve(at: clock.now, revealDelay: revealDelay, header: header)
-            })
-    }
-
     /// Runs an event's deferred work — the records and the publication — with
     /// the lock released.
     private func deliver(_ outcome: Outcome) {
@@ -657,20 +605,20 @@ public final class ClipboardTransferOperation: Sendable {
 
     private func log(_ event: LogEvent) {
         switch event {
-        case .revealed(let elapsed, let transferred, let total):
+        case .revealed(let elapsed, let bytes):
             Self.logger.log(
                 .info,
-                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes"
+                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(bytes, privacy: .public)"
             )
-        case .ended(let terminal, let elapsed, let transferred, let total, let revealed):
+        case .ended(let terminal, let elapsed, let bytes, let revealed):
             Self.logger.log(
                 .info,
-                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(transferred, privacy: .public)/\(total, privacy: .public) bytes, revealed=\(revealed, privacy: .public)"
+                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(bytes, privacy: .public), revealed=\(revealed, privacy: .public)"
             )
         case .emission(let snapshot):
             Self.logger.log(
                 .debug,
-                "\(String(describing: self.header.gesture), privacy: .public) readout — \(snapshot.bytesTransferred, privacy: .public)/\(snapshot.totalBytes, privacy: .public) bytes, \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
+                "\(String(describing: self.header.gesture), privacy: .public) readout — \(ClipboardProgressFormat.logBytes(transferred: snapshot.bytesTransferred, total: snapshot.totalBytes, known: snapshot.bytesKnown), privacy: .public), \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
             )
         }
     }

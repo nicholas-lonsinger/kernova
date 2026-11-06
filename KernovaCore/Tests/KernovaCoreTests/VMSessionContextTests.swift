@@ -7,12 +7,6 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// A sink target that keeps whatever descriptor it is handed open, so EOF on
-/// the peer proves the sink was cleared rather than never set.
-private final class RetainingAcceptor: VsockDataConnectionAccepting {
-    nonisolated func acceptDataConnection(fd: Int32) {}
-}
-
 /// The session context as the unit scoping rests on: what one boot attempt
 /// opens, what a teardown releases, and that a projection off it still reaches
 /// every observer the loose fields used to.
@@ -59,7 +53,6 @@ struct VMSessionContextTests {
         context.clipboardOutputPipe = Pipe()
         let clipboard = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
         context.clipboardService = clipboard
-        instance.dropDataSink.set(RetainingAcceptor())
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.warnedAgentScopes = [.login]
         context.networkAttachmentPending = true
@@ -74,7 +67,6 @@ struct VMSessionContextTests {
         #expect(context.clipboardService == nil)
         #expect(context.vsock.control == nil)
         #expect(context.vsock.log == nil)
-        #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
         // What the run warned about is its record, which the run's end reads.
@@ -83,8 +75,6 @@ struct VMSessionContextTests {
         #expect(context.session == nil)
         #expect(context.agentAbsenceTimer == nil)
         #expect(context.vsock.livePolicyApplication == nil)
-        // The instance-owned sinks the session published into are cleared too.
-        try expectSinkCleared(instance.dropDataSink)
     }
 
     @Test("tearDownSession drops the context, and every projection reads empty after")
@@ -99,7 +89,6 @@ struct VMSessionContextTests {
         #expect(instance.session == nil)
         #expect(instance.clipboardService == nil)
         #expect(instance.vsockControlService == nil)
-        #expect(instance.vsockDropService == nil)
         #expect(instance.vsockLogService == nil)
         #expect(instance.networkAttachmentCoordinator == nil)
         #expect(instance.networkAttachmentPending == false)
@@ -302,10 +291,6 @@ struct VMSessionContextTests {
         #expect(
             observationFires(reading: { _ = instance.agentPresentation?.status }) {
                 context.warnedAgentScopes = [.login]
-            })
-        #expect(
-            observationFires(reading: { _ = instance.vsockDropService }) {
-                context.vsock.drop = nil
             })
         #expect(
             observationFires(reading: { _ = instance.liveRemovableMedia }) {

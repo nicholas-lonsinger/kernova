@@ -1,52 +1,56 @@
 import AppKit
 import Foundation
+import KernovaAgentCore
 import KernovaKit
 import KernovaLogging
+import KernovaWire
 
 /// Ends a drag the host has taken over by being its destination: a surface
 /// over the whole screen under the guest pointer, answering copy so the source
-/// keeps its items, and reporting each step of the hand-off to the host.
+/// keeps its items, and reporting each step of the hand-off on the take.
 ///
-/// The steps go `armed` (the surface is up), `targeted` (the guest's drag
-/// manager entered it with the taken drag, answered copy), then `caught` (the
-/// drag ended on it). The host releases the guest's button onto the surface
-/// only after `targeted`, so anything else arriving before then — the wrong
-/// items, a source that forbids a copy — is answered with no operation and
-/// `failed`.
+/// The steps go `ARMED` (the surface is up), `TARGETED` (the guest's drag
+/// manager entered it with the taken drag, answered copy), then the take's END:
+/// `CAUGHT` once the drag ended on it. The host releases the guest's button
+/// onto the surface only after `TARGETED`, so anything else arriving before
+/// then — items no drag goes out with, a source that forbids a copy — is
+/// answered with no operation and refuses the take.
 ///
-/// A take whose drag carries file promises calls them in at the catch only
-/// once the host asked with `DragResolve`, which the catcher answers
-/// `resolving` while it is targeted: the host releases the button for that
-/// drop alone, and every other drop on the surface calls nothing in. The ask
-/// holds for the showing it came in, as `targeted` does: standing the surface
-/// down drops it. An ask the catcher cannot act on is answered
-/// `resolveRefused`, never `failed`: the host completes a take once it hears
-/// `failed`, so a `failed` the take did not mean would let a completion
-/// overtake the release and take the surface down under it.
+/// The take's first `TARGETED` lists the drag's items as the surface, its
+/// destination, sees them: AppKit sends a destination `draggingEntered` only
+/// once the drag session is running, and a session's items are the ones it
+/// began with, so this view is the whole drag — where the watcher's read of
+/// the drag pasteboard, taken while the source may still be writing it, can
+/// be a part. A later showing takes only the same items.
 ///
-/// Once `targeted` is out the host may already have released the button, and
+/// A drop delivers the drag — the drag's owner calls its promises in and sizes
+/// its other items before the take ends — only once the host asked with
+/// `DragDeliver`, which the catcher answers `DELIVERING` while it is targeted:
+/// the host releases the button for that drop alone, and every other drop on
+/// the surface calls nothing in. The ask holds for the showing it came in, as
+/// `TARGETED` does: standing the surface down drops it.
+///
+/// Once `TARGETED` is out the host may already have released the button, and
 /// that release is a real drop under the guest pointer, so a refusal after
-/// `targeted` leaves the surface up until the guest's drag ends, to refuse
-/// whatever drops on it. The host completing a take this side did not refuse
-/// takes the surface down at once: the host completes a released take only
-/// after this side's `caught` or `failed`, or on supersession, which needs a
-/// newer guest press and so follows the old drop — so a completion before
-/// then means the host gave the press back without releasing, and the user's
-/// drag goes on in the guest.
+/// `TARGETED` leaves the surface up until the guest's drag ends, to refuse
+/// whatever drops on it. The host calling the take off takes the surface down
+/// at once: it calls a take off only before releasing anything onto it, so the
+/// user's drag goes on in the guest.
 ///
 /// While the host's Mac session is over this VM's display, the host stands the
 /// surface down and moves the guest pointer itself, so the drag can drop
-/// inside the guest; the take stays, and the host shows the surface again —
-/// a fresh `armed`, then `targeted` — when the session leaves. Drag callbacks
+/// inside the guest once `STOOD_DOWN` says the surface is out of the way; the
+/// take stays, and the host shows the surface again —
+/// a fresh `ARMED`, then `TARGETED` — when the session leaves. Drag callbacks
 /// AppKit delivers while the surface is down are refused without a word, and
-/// the press ending then is the user's own drop inside the guest, so it ends
-/// the take without a failure.
+/// the press ending then is the user's own drop inside the guest, which ends
+/// the take `RETURNED`.
 ///
 /// The surface covers the screen and takes mouse events, so while it is up the
-/// guest cannot be clicked: every path that shows it ends at ``finish(failing:)``
-/// — the drag concluding or ending, a failure before `targeted`, the host
-/// completing the drag, the connection ending, the press ending while the drag
-/// is off the surface, or a click reaching the surface, which no drag in
+/// guest cannot be clicked: every path that shows it ends at ``finish(_:)`` —
+/// the drag concluding or ending, a refusal before `TARGETED`, the host
+/// calling the take off, the session peer stopping, the press ending while the
+/// drag is off the surface, or a click reaching the surface, which no drag in
 /// flight lets happen.
 @MainActor
 final class GuestDragCatcher {
@@ -57,156 +61,142 @@ final class GuestDragCatcher {
     struct Drag: Equatable {
         /// The operations the drag's source allows.
         let sourceMask: NSDragOperation
-        /// The drag's items under ``GuestDraggedItems``' rule, promises
-        /// included, or `nil` when it carries anything else.
+        /// The drag's items under ``GuestDraggedItems``' rule, or `nil` when
+        /// it carries anything else.
         let items: [GuestDragItem]?
     }
 
     /// One stretch of the surface being up for a take, reported by its own
-    /// `armed`.
+    /// `ARMED`.
     private struct Showing {
         /// The guest's drag manager is inside the surface with the taken drag.
         var entered = false
-        /// `targeted` went out in this showing, so the host may have released
+        /// `TARGETED` went out in this showing, so the host may have released
         /// the button.
         var targeted = false
-        /// The host asked for the drag's promises in this showing: the drop
-        /// calls them in.
-        var callsIn = false
+        /// The host asked for this showing's drop to deliver the drag.
+        var delivers = false
+    }
+
+    /// What a take carries: the drag's items as the surface saw them, and what
+    /// their offer serves.
+    struct Carried {
+        let items: [GuestDragItem]
+        /// The items as the take lists them.
+        let offered: [OfferedItem]
+        /// What the offer serves each item from, in the same order.
+        let sources: [GuestDragSource]
     }
 
     /// The drag a take armed the catcher for.
     private struct Take {
         let claim: GuestDragWatcher.Claim
+        let id: DragTakeID
+        /// What the take carries, once the drag first entered the surface;
+        /// nil before.
+        var carried: Carried?
         /// The surface is up for the take; `nil` while the host's Mac session
         /// is over this VM's display.
         var showing: Showing? = Showing()
-        /// The take was refused after `targeted`: the surface stays up and
-        /// refuses the drop.
-        var refused = false
-        /// The drag ended on the surface; its items stay pullable.
+        /// This side ended the take: the surface stays up only to see the
+        /// guest's drag end, refusing any drop on it unless it was caught.
+        var ended = false
+        /// The drag ended on the surface.
         var caught = false
     }
 
     private let peer: any GuestDragOutPeer
-    private let promises: GuestDragPromises
     private let makeSurface: @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
     private var surface: (any GuestDragCatcherSurface)?
     private var take: Take?
 
+    /// Hears what a take carries once the take accepted it, before `TARGETED`
+    /// lists it: the take's claim and what it carries.
+    var onCarried: ((GuestDragWatcher.Claim, Carried) -> Void)?
+
+    /// Hears each delivering drop, while the drop is under way: the take it
+    /// ended, the claim and what it carried, and the drop's file promises. It
+    /// ends the take itself.
+    var onDeliver: ((DragTakeID, GuestDragWatcher.Claim, Carried, any GuestDragDrop) -> Void)?
+
     init(
-        peer: any GuestDragOutPeer, promises: GuestDragPromises,
-        makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
+        peer: any GuestDragOutPeer, makeSurface: @escaping @MainActor (GuestDragCatcher) -> any GuestDragCatcherSurface
     ) {
         self.peer = peer
-        self.promises = promises
         self.makeSurface = makeSurface
     }
 
     // MARK: - Takes
 
-    /// Puts the surface up for a drag the watcher has handed over, and tells
-    /// the host it is armed.
-    func arm(_ claim: GuestDragWatcher.Claim) {
+    /// Puts the surface up for a drag the watcher has handed to take `id`, and
+    /// reports it armed.
+    func arm(_ claim: GuestDragWatcher.Claim, take id: DragTakeID) {
+        // A take still up for an earlier press ends with its press; this one
+        // needs the surface.
+        if take != nil { finish(refusing: WireError(.dragNotCurrent, debugDetail: "A newer take replaced it")) }
         let surface = surface ?? makeSurface(self)
         self.surface = surface
-        take = Take(claim: claim)
-        guard surface.show(items: claim.items) else {
-            finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
-            return
+        take = Take(claim: claim, id: id)
+        guard surface.show(items: claim.preview) else {
+            return finish(refusing: WireError(.dragNotCurrent, debugDetail: "There is no screen to put the catcher on"))
         }
-        send(.armed, for: claim.generation)
-        Self.logger.log(.notice, "Catcher armed (gen=\(claim.generation, privacy: .public))")
+        peer.answerTake(id, .report(.armed))
+        Self.logger.log(.notice, "Catcher armed for the host's take")
     }
 
-    /// Tells the host its take of `generation` cannot proceed, leaving any
-    /// live take alone.
-    func refuse(generation: UInt64, code: ClipboardErrorCode, message: String) {
-        Self.logger.log(
-            .notice,
-            "Refused the host's take (gen=\(generation, privacy: .public)): \(message, privacy: .public)"
-        )
-        send(.failed(code, message: message), for: generation)
+    /// The host's Mac session carrying take `id` left this VM's display
+    /// (`shown`) or came back over it: shows the surface again and reports it
+    /// armed, or stands it down and reports it stood down, keeping the take
+    /// either way. A take this side already ended stays as it is.
+    func setShown(_ shown: Bool, take id: DragTakeID) {
+        guard let current = take, current.id == id, !current.ended else { return }
+        guard shown else {
+            take?.showing = nil
+            surface?.hide()
+            peer.answerTake(id, .report(.stoodDown))
+            Self.logger.log(.notice, "Catcher stood down")
+            return
+        }
+        guard current.showing == nil, let surface else { return }
+        guard surface.show(items: current.carried?.items ?? current.claim.preview) else {
+            return finish(refusing: WireError(.dragNotCurrent, debugDetail: "There is no screen to put the catcher on"))
+        }
+        take?.showing = Showing()
+        peer.answerTake(id, .report(.armed))
+        Self.logger.log(.notice, "Catcher armed again")
+    }
+
+    /// A Mac destination takes take `id`'s drag: marks the current showing to
+    /// deliver it at the drop and reports `DELIVERING`, which only a take whose
+    /// drag is on the surface — entered, not ended — can be. Anything else is
+    /// answered `DELIVER_REFUSED`, leaving the take as it was.
+    func deliver(take id: DragTakeID) {
+        guard let current = take, current.id == id, !current.ended else { return }
+        guard current.showing?.entered == true else {
+            Self.logger.log(.notice, "Refused to deliver: the drag is not on the catcher")
+            return peer.answerTake(id, .report(.deliverRefused))
+        }
+        take?.showing?.delivers = true
+        peer.answerTake(id, .report(.delivering))
+        Self.logger.log(.notice, "Catcher will deliver the drag at its drop")
+    }
+
+    /// Take `id` is over without this side ending it: the host called it off,
+    /// its offer ended, or the connection closed. Only a take this side ended
+    /// keeps the surface up, for the drop it must refuse.
+    func cancelled(take id: DragTakeID) {
+        guard let current = take, current.id == id, !current.ended else { return }
+        finish()
     }
 
     /// The press `press` ended; a take whose drag is not on the surface has
     /// nothing left to catch, and no release to drop on it. While the surface
-    /// is stood down the drag was the user's to drop inside the guest, so
-    /// that take ends without a failure.
+    /// is stood down the drag was the user's to drop inside the guest.
     func pressEnded(_ press: UInt64) {
         guard let take, take.claim.press == press, !take.caught else { return }
-        guard let showing = take.showing else {
-            finish(failing: nil)
-            return
-        }
+        guard let showing = take.showing else { return finish(.returned) }
         guard !showing.entered else { return }
-        finish(failing: (.dragTakeFailed, "The press ended before the drag reached the catcher"))
-    }
-
-    /// The host is done with `generation`; only a take this side refused
-    /// after `targeted` keeps the surface up, for the drop it must refuse.
-    func complete(generation: UInt64) {
-        guard let current = take, current.claim.generation == generation,
-            !(current.refused && current.showing != nil)
-        else { return }
-        finish(failing: nil)
-    }
-
-    /// The host's Mac session carrying `generation` left this VM's display
-    /// (`shown`) or came back over it: shows the surface again and reports it
-    /// armed, or stands it down, keeping the take either way.
-    ///
-    /// A take this side already failed stays down, and a take it no longer
-    /// holds is refused as stale.
-    func setShown(_ shown: Bool, generation: UInt64) {
-        guard let current = take, current.claim.generation == generation else {
-            if shown {
-                refuse(generation: generation, code: .dragTakeStale, message: "The catcher holds no such take")
-            }
-            return
-        }
-        guard shown else {
-            take?.showing = nil
-            surface?.hide()
-            Self.logger.log(.notice, "Catcher stood down (gen=\(generation, privacy: .public))")
-            return
-        }
-        guard current.showing == nil, !current.refused, let surface else { return }
-        guard surface.show(items: current.claim.items) else {
-            finish(failing: (.dragTakeFailed, "There is no screen to put the catcher on"))
-            return
-        }
-        take?.showing = Showing()
-        send(.armed, for: generation)
-        Self.logger.log(.notice, "Catcher armed again (gen=\(generation, privacy: .public))")
-    }
-
-    /// A Mac destination wants the names of `generation`'s promised items:
-    /// marks the current showing to call them in at the catch and reports
-    /// `resolving`, which only a take whose drag is on the surface — targeted,
-    /// neither caught nor refused — can be. Anything else is answered
-    /// `resolveRefused`, leaving any live take as it was, and the host
-    /// releases nothing.
-    func resolve(generation: UInt64) {
-        guard let current = take, current.claim.generation == generation else {
-            refuseResolve(generation: generation, because: "The catcher holds no such take")
-            return
-        }
-        guard current.showing?.entered == true, !current.caught, !current.refused else {
-            refuseResolve(
-                generation: generation, because: "The drag is not on the catcher to call its promises in")
-            return
-        }
-        take?.showing?.callsIn = true
-        send(.resolving, for: generation)
-        Self.logger.log(.notice, "Catcher will call the drag's promises in (gen=\(generation, privacy: .public))")
-    }
-
-    private func refuseResolve(generation: UInt64, because reason: String) {
-        Self.logger.log(
-            .notice,
-            "Refused the host's resolve (gen=\(generation, privacy: .public)): \(reason, privacy: .public)")
-        send(.resolveRefused, for: generation)
+        finish(refusing: WireError(.dragPressOver, debugDetail: "The press ended before the drag reached the catcher"))
     }
 
     /// A click reached the surface, so no drag is in flight to catch: the
@@ -214,32 +204,31 @@ final class GuestDragCatcher {
     /// monitor never hears a click on this app's own window.
     func surfaceClicked() {
         guard take != nil else { return }
-        finish(failing: (.dragTakeFailed, "A click reached the catcher, so no drag is in flight"))
+        finish(refusing: WireError(.dragPressOver, debugDetail: "A click reached the catcher, so no drag is in flight"))
     }
 
-    /// The connection ended; nothing is left to report to.
+    /// The session peer stops; nothing is left to answer.
     func stop() {
         guard take != nil else { return }
         take = nil
         surface?.hide()
     }
 
-    /// Takes the surface down and forgets the take, telling the host first
-    /// when it failed — unless a refusal already told it.
-    private func finish(failing failure: (code: ClipboardErrorCode, message: String)?) {
+    /// Takes the surface down and forgets the take, ending it with `answer`
+    /// unless this side already ended it.
+    private func finish(_ answer: DragTakeAnswer? = nil) {
         guard let ended = take else { return }
         take = nil
         surface?.hide()
-        guard let failure, !ended.refused else { return }
-        Self.logger.log(
-            .notice,
-            "Catcher gave up (gen=\(ended.claim.generation, privacy: .public)): \(failure.message, privacy: .public)"
-        )
-        send(.failed(failure.code, message: failure.message), for: ended.claim.generation)
+        guard let answer, !ended.ended else { return }
+        if case .refused(let error) = answer {
+            Self.logger.log(.notice, "Catcher gave up: \(error.debugDetail, privacy: .public)")
+        }
+        peer.answerTake(ended.id, answer)
     }
 
-    private func send(_ step: ClipboardDragHandOffStep, for generation: UInt64) {
-        peer.sendDragHandOff(generation: generation, step: step)
+    private func finish(refusing error: WireError) {
+        finish(.refused(error))
     }
 
     // MARK: - Drag destination
@@ -255,44 +244,56 @@ final class GuestDragCatcher {
     }
 
     /// Answers copy for the taken drag and nothing for anything else, which
-    /// fails the take: never move or generic, which let a source delete what
+    /// refuses the take: never move or generic, which let a source delete what
     /// it dragged. A callback with the surface stood down is answered with
     /// nothing and reports nothing.
     private func accept(_ drag: Drag) -> NSDragOperation {
-        guard let current = take, let showing = current.showing, !current.caught, !current.refused else {
-            return []
-        }
+        guard let current = take, let showing = current.showing, !current.ended else { return [] }
         guard drag.sourceMask.contains(.copy) else {
-            decline(current, showing, (.dragTakeRefused, "The drag's source does not allow a copy"))
+            decline(
+                current, showing, WireError(.dragNotCurrent, debugDetail: "The drag's source does not allow a copy"))
             return []
         }
-        guard drag.items == current.claim.items else {
-            decline(current, showing, (.dragTakeRefused, "The drag holds other items than the taken one"))
+        guard let items = drag.items, current.carried.map({ $0.items == items }) ?? true else {
+            decline(
+                current, showing,
+                WireError(.dragNotCurrent, debugDetail: "The drag holds other items than the taken one"))
             return []
         }
-        if !showing.entered {
-            take?.showing?.entered = true
-            take?.showing?.targeted = true
-            send(.targeted, for: current.claim.generation)
+        guard !showing.entered else { return .copy }
+        take?.showing?.entered = true
+        if current.carried == nil {
+            guard let offered = GuestDraggedItems.offerItems(items) else {
+                finish(refusing: WireError(.dragNotCurrent, debugDetail: "Some of the drag's items cannot go out"))
+                return []
+            }
+            let carried = Carried(items: items, offered: offered.map(\.item), sources: offered.map(\.source))
+            take?.carried = carried
+            onCarried?(current.claim, carried)
+            _ = surface?.show(items: items)
+            Self.logger.log(.notice, "Catcher read the drag: \(items.count, privacy: .public) item(s)")
         }
+        if let latest = take { target(latest) }
         return .copy
     }
 
-    /// Fails `current`, keeping the surface up when the host may already have
-    /// released the button onto it.
-    private func decline(
-        _ current: Take, _ showing: Showing, _ failure: (code: ClipboardErrorCode, message: String)
-    ) {
-        guard showing.targeted else {
-            finish(failing: failure)
-            return
-        }
-        take?.refused = true
+    /// Reports the current showing `TARGETED`, once, listing what take
+    /// `current` carries.
+    private func target(_ current: Take) {
+        guard let carried = current.carried, current.showing?.targeted == false else { return }
+        take?.showing?.targeted = true
+        peer.answerTake(current.id, .report(.targeted(carried.offered)))
+        Self.logger.log(.notice, "Catcher is the drag's target")
+    }
+
+    /// Refuses `current`, keeping the surface up when the host may already
+    /// have released the button onto it.
+    private func decline(_ current: Take, _ showing: Showing, _ error: WireError) {
+        guard showing.targeted else { return finish(refusing: error) }
+        take?.ended = true
         Self.logger.log(
-            .notice,
-            "Catcher refused the drag after it was targeted (gen=\(current.claim.generation, privacy: .public)): \(failure.message, privacy: .public)"
-        )
-        send(.failed(failure.code, message: failure.message), for: current.claim.generation)
+            .notice, "Catcher refused the drag after it was targeted: \(error.debugDetail, privacy: .public)")
+        peer.answerTake(current.id, .refused(error))
     }
 
     /// The drag left the surface before ending.
@@ -300,33 +301,35 @@ final class GuestDragCatcher {
         take?.showing?.entered = false
     }
 
-    /// The drag ended on the surface. A showing the host asked to resolve
-    /// calls the drop's promises in, read through `receivers`, before it
-    /// reports `caught`; any other reads nothing of them.
-    func performDragOperation(receivers: () -> [any FilePromiseReceiving]) -> Bool {
-        guard let current = take, let showing = current.showing, showing.entered, !current.caught,
-            !current.refused
-        else {
+    /// The drag ended on the surface. A showing the host asked to deliver hands
+    /// the drop's promises, `drop`, to ``onDeliver``, which ends the take; any
+    /// other ends it `CAUGHT` and reads nothing of them.
+    func performDragOperation(drop: any GuestDragDrop) -> Bool {
+        guard let current = take, let showing = current.showing, showing.entered, !current.ended else {
             return false
         }
         take?.caught = true
-        if showing.callsIn {
-            promises.callIn(current.claim, receivers: receivers())
+        take?.ended = true
+        if showing.delivers, let onDeliver, let carried = current.carried {
+            onDeliver(current.id, current.claim, carried, drop)
+        } else {
+            peer.answerTake(current.id, .caught(sizes: nil))
         }
-        send(.caught, for: current.claim.generation)
+        Self.logger.log(.notice, "Catcher caught the drag (delivering: \(showing.delivers, privacy: .public))")
         return true
     }
 
     /// The drop on the surface is over.
     func concludeDragOperation() {
-        finish(failing: nil)
+        finish()
     }
 
     /// The drag ended, wherever it ended; with the surface stood down it was
     /// the user's to drop inside the guest.
     func draggingEnded() {
         guard let current = take else { return }
-        let missed = !current.caught && current.showing != nil
-        finish(failing: missed ? (.dragTakeFailed, "The drag ended without reaching the catcher") : nil)
+        guard current.showing != nil else { return finish(.returned) }
+        guard !current.caught else { return finish() }
+        finish(refusing: WireError(.dragPressOver, debugDetail: "The drag ended without reaching the catcher"))
     }
 }

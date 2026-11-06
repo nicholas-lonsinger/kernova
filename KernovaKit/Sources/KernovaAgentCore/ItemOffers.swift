@@ -72,6 +72,15 @@ package struct ItemOfferRegistry: Sendable {
         remote.first { $0.header.token == token }?.header.feature
     }
 
+    /// The far side's open offer of `token`, held whole: its feature and its items, decoded now; nil while none
+    /// is open or it has not arrived whole.
+    func remoteOffer(_ token: Data) -> (feature: FeatureID, items: [OfferedItem])? {
+        guard let entry = remote.first(where: { $0.header.token == token }), entry.complete else { return nil }
+        let items = entry.items.compactMap { try? OfferedItem(serializedBytes: $0) }
+        guard items.count == entry.items.count else { return nil }
+        return (entry.header.feature, items)
+    }
+
     /// The tokens of the far side's open offers.
     package var remoteTokens: [Data] { remote.map(\.header.token) }
 
@@ -129,6 +138,37 @@ package struct ItemOfferRegistry: Sendable {
         case .inline, .file, .folder: return .success(representation)
         case .unspecified, .UNRECOGNIZED: return .failure(WireError(.itemRepresentationUnavailable))
         }
+    }
+
+    // MARK: A drag's items
+
+    /// Gives this side's whole, empty DRAG offer of `token` its drag's `items`, as its take lists them; false
+    /// when no such offer is open.
+    mutating func carryLocal(_ token: Data, items: [OfferedItem]) -> Bool {
+        guard let index = local.firstIndex(where: { $0.offer.token == token }), local[index].feature == .drag,
+            local[index].ended, local[index].offer.items.isEmpty
+        else { return false }
+        local[index].offer.items = items
+        return true
+    }
+
+    /// Gives the far side's whole, empty DRAG offer of `token` its drag's `items`, as its take listed them,
+    /// charging them as received items; the code refusing it when no such offer is open or the budget cannot
+    /// hold them.
+    mutating func carryRemote(_ token: Data, items: [OfferedItem]) -> WireError? {
+        guard let index = remote.firstIndex(where: { $0.header.token == token }), remote[index].header.feature == .drag,
+            remote[index].complete, remote[index].items.isEmpty
+        else { return WireError(.itemOfferStale, debugDetail: "no whole, empty drag offer of this token is open") }
+        let encoded = items.map(\.encoded)
+        let cost = encoded.reduce(items.count * Self.remoteItemOverhead) { $0 + $1.count }
+        guard cost <= Self.remoteItemByteLimit - remoteCharged else {
+            return WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit))
+        }
+        remote[index].items = encoded
+        remote[index].header.count = items.count
+        remote[index].charged += cost
+        remoteCharged += cost
+        return nil
     }
 
     // MARK: This side's offers
@@ -254,6 +294,10 @@ package struct ItemOfferRegistry: Sendable {
         guard !remote.contains(where: { $0.header.token == header.token }) else {
             return refuse(stream, .streamProtocolError, "a token the far side already offers", &connection)
         }
+        // A drag's items come with its take (`carry`), never on its offer.
+        guard feature != .drag || header.count == 0 else {
+            return refuse(stream, .malformedMessage, "a DRAG_OFFER that lists items", &connection)
+        }
         // The header's claim is reserved whole, so no count can outrun the budget.
         guard header.count <= (Self.remoteItemByteLimit - remoteCharged) / Self.remoteItemOverhead else {
             return connection.reset(stream, WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit)))
@@ -287,7 +331,7 @@ package struct ItemOfferRegistry: Sendable {
     /// Whether every representation of `item` is named as `Representation.name` requires: a FILE or FOLDER by
     /// one path component, an INLINE not at all. The registry holds no other item, this side's or the far
     /// side's.
-    private static func isNamedByContract(_ item: OfferedItem) -> Bool {
+    static func isNamedByContract(_ item: OfferedItem) -> Bool {
         item.representations.allSatisfy { representation in
             switch representation.storage {
             case .file, .folder: PathComponent.isValid(representation.name)

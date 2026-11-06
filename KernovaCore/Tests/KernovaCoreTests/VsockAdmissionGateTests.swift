@@ -7,11 +7,11 @@ import Testing
 
 /// The feature-channel admission verdicts, judged where the listeners judge
 /// them: a channel is admitted only while a published control handshake exists,
-/// and clipboard and drop additionally require their negotiated capability.
+/// and the clipboard channel additionally requires its negotiated capability.
 @Suite("VsockAdmissionGate", .caseScoped)
 struct VsockAdmissionGateTests {
     private let allRequirements: [FeatureChannelRequirement] = [
-        .none, .clipboardStreaming, .dropFiles,
+        .none, .clipboardStreaming,
     ]
 
     /// The state a completed handshake with the bundled agent publishes.
@@ -45,12 +45,6 @@ struct VsockAdmissionGateTests {
                     reason:
                         "the connected guest agent does not advertise \(KernovaCapability.clipboardTransferV3)"
                 ))
-        #expect(
-            gate.admission(for: .dropFiles)
-                == .denied(
-                    reason:
-                        "the connected guest agent does not advertise \(KernovaCapability.dropFilesV3)"
-                ))
     }
 
     @Test("An advertised capability admits its channel and only its channel")
@@ -62,10 +56,6 @@ struct VsockAdmissionGateTests {
                 capabilities: [KernovaCapability.clipboardTransferV3]))
         #expect(gate.admission(for: .none) == .admit)
         #expect(gate.admission(for: .clipboardStreaming) == .admit)
-        if case .denied = gate.admission(for: .dropFiles) {
-        } else {
-            Issue.record("drop admission should be denied without \(KernovaCapability.dropFilesV3)")
-        }
     }
 
     @Test("A full handshake admits every channel")

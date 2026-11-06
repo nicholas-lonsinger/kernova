@@ -218,16 +218,15 @@ struct ClipboardProgressAutoRevealTests {
                 into: &reveal) == .shown)
     }
 
-    @Test("a drag whose total waits on a folder's size reveals on the elapsed floor alone")
-    func awaitedSizeReveals() {
+    @Test("a drag that does not know its bytes reveals on the elapsed floor alone")
+    func unknownBytesReveal() {
         var reveal = ClipboardProgressAutoReveal()
-        // An item already in makes the partial total look complete.
-        let waiting = ClipboardProgressSnapshot(
+        let unsized = ClipboardProgressSnapshot(
             direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 1,
             fileCount: 2, bytesTransferred: 1_000, totalBytes: 1_000, bytesPerSecond: nil,
             secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 5, operationID: operation,
-            awaitsSize: true)
-        #expect(Self.fold(waiting, into: &reveal) == .shown)
+            bytesKnown: false)
+        #expect(Self.fold(unsized, into: &reveal) == .shown)
     }
 
     @Test("the shipped thresholds hold a short paste back and let a longer one through")

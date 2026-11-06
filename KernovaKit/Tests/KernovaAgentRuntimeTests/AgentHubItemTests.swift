@@ -258,6 +258,79 @@ struct AgentHubItemTests {
         harness.hub.close()
     }
 
+    /// The peer's clipboard offer of `count` inline items, once the hub has forwarded it.
+    private func offered(_ harness: HubHarness, count: Int, items: MemoryItems) async -> (HubPeer, PeerHandle) {
+        let peer = HubPeer(harness, claim: Fixture.peerClaim, items: items)
+        let handle = await harness.snapshot { $0.consolePeers.count == 3 }.peers[0].handle
+        let offer = SimItems.offer(1, Array(repeating: [SimItems.representation(.inline, size: 64)], count: count))
+        peer.send(.offer(ItemRequestID(rawValue: 1), offer, feature: .clipboard))
+        var log = harness.itemLog.waiter()
+        _ = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
+        return (peer, handle)
+    }
+
+    private static func order(item: Int) -> ItemPullOrder {
+        ItemPullOrder(SimItems.request(1, item: UInt32(item)), landing: DecodingItemSink.landing)
+    }
+
+    @Test("Three times the 64-stream limit of pulls, asked at once, each opens as a slot frees and every one lands")
+    func pullsPastTheStreamLimitAllLand() async {
+        let harness = await harness()
+        let count = 192
+        let (_, handle) = await offered(harness, count: count, items: MemoryItems())
+        let opened = Recorder<Result<ItemPullID, WireError>>()
+        for item in 0..<count {
+            harness.hub.pullItem(Self.order(item: item), from: handle) { opened.record($0) }
+        }
+        var answers = opened.waiter()
+        var ids: Set<ItemPullID> = []
+        for _ in 0..<count {
+            switch await answers.next(where: { _ in true }) {
+            case .success(let id): ids.insert(id)
+            case .failure(let error): Issue.record("a pull was refused: \(error)")
+            }
+        }
+        var log = harness.itemLog.waiter()
+        var landed = 0
+        while landed < ids.count {
+            let ended = await log.next { if case .event(.items(_, .pullEnded)) = $0 { true } else { false } }
+            guard case .event(.items(handle, .pullEnded(.clipboard, let id, let result))) = ended, ids.contains(id)
+            else { Issue.record("ended \(ended)"); return }
+            guard case .landed = result else { Issue.record("pull \(id.stream.rawValue) ended \(result)"); return }
+            landed += 1
+        }
+        harness.hub.close()
+    }
+
+    @Test("A pull waiting for a stream slot is refused ITEM_OFFER_STALE once its offer ends, and never opens")
+    func waitingPullRefusedAtOfferEnd() async {
+        let harness = await harness()
+        // Reads are held, so every opened pull keeps its slot.
+        let (_, handle) = await offered(harness, count: 65, items: MemoryItems(holdsReads: true))
+        let opened = Recorder<Result<ItemPullID, WireError>>()
+        for item in 0..<64 {
+            harness.hub.pullItem(Self.order(item: item), from: handle) { opened.record($0) }
+        }
+        var answers = opened.waiter()
+        for _ in 0..<64 {
+            guard case .success = await answers.next(where: { _ in true }) else {
+                Issue.record("a pull under the limit did not open"); return
+            }
+        }
+        let waiting = Recorder<Result<ItemPullID, WireError>>()
+        harness.hub.pullItem(Self.order(item: 64), from: handle) { waiting.record($0) }
+        await harness.settled()
+        #expect(waiting.elements.isEmpty, "the 65th pull was answered while every slot was held")
+
+        harness.hub.releaseOffer(SimItems.token(1), of: handle)
+        var answer = waiting.waiter()
+        guard case .failure(let error) = await answer.next(where: { _ in true }) else {
+            Issue.record("the waiting pull opened after its offer ended"); return
+        }
+        #expect(error.code == .itemOfferStale)
+        harness.hub.close()
+    }
+
     @Test("A cancelled pull ends without landing, the end carrying its peer")
     func cancelledPull() async {
         let harness = await harness()
@@ -285,7 +358,7 @@ struct AgentHubItemTests {
         let harness = await harness()
         let peer = HubPeer(harness, claim: Fixture.peerClaim, items: MemoryItems())
         let handle = await harness.snapshot { $0.consolePeers.count == 3 }.peers[0].handle
-        peer.send(.offer(ItemRequestID(rawValue: 1), Self.offer, feature: .drag))
+        peer.send(.offer(ItemRequestID(rawValue: 1), SimItems.offer(1, []), feature: .drag))
         var log = harness.itemLog.waiter()
         _ = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
 
@@ -299,8 +372,8 @@ struct AgentHubItemTests {
                 if case .dragTake(.requested) = $0 { true } else { false }
             })
         else { Issue.record("no take asked"); return }
-        peer.driver.handle(.dragTake(asked, .taken))
-        _ = await log.next { $0 == .event(.dragTake(handle, .ended(take, .taken))) }
+        peer.driver.handle(.dragTake(asked, .caught(sizes: nil)))
+        _ = await log.next { $0 == .event(.dragTake(handle, .ended(take, .caught(nil)))) }
         harness.hub.close()
     }
 

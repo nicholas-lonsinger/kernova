@@ -352,9 +352,10 @@ extension Connection {
         guard let descriptor = descriptor(for: open.kind), !opensAsThisRole(descriptor) else {
             return refuse(id, nil, WireError(.unsupportedKind))
         }
-        openBucket.refill(clock.raw)
-        guard counted < Limits.maxConcurrentStreams, openBucket.take(1) else {
-            return refuse(id, descriptor, WireError(.tooManyStreams))
+        guard counted < Limits.maxConcurrentStreams else { return refuse(id, descriptor, WireError(.tooManyStreams)) }
+        if descriptor.spendsOpenBucket {
+            openBucket.refill(clock.raw)
+            guard openBucket.take(1) else { return refuse(id, descriptor, WireError(.tooManyStreams)) }
         }
         if let feature = descriptor.feature, case .absent(let reason, _) = usability(feature) {
             return refuse(id, descriptor, WireError(.featureUnavailable, absence: reason))

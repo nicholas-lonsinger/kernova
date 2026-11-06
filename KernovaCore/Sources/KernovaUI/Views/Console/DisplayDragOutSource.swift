@@ -22,8 +22,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
     /// The take whose items this session carries.
     nonisolated let take: any GuestDragTaking
 
-    /// Where every item's write runs, one at a time: each blocks on its pull
-    /// for as long as the item takes to stream.
+    /// Where AppKit asks for each item's write, which only starts its pull.
     nonisolated private let writeQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "app.kernova.drag-out-writes"
@@ -37,7 +36,9 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
     ///
     /// Carried as the provider's `userInfo`, which the provider holds strongly,
     /// because its `delegate` is weak and a destination can ask for the file
-    /// after the session that carried it has ended.
+    /// after the session that carried it has ended. The take's retirement
+    /// withdraws the providers from the drag pasteboard
+    /// (``withdrawPromisesAtRetirement(from:)``), which frees them and this.
     final class PromisedItem: Sendable {
         let index: Int
         let source: DisplayDragOutSource
@@ -104,6 +105,24 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
 
     func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
         followImages(of: session)
+        withdrawPromisesAtRetirement(from: session.draggingPasteboard)
+        take.hostSessionWillBegin()
+    }
+
+    /// Clears `pasteboard`, which the session has just written its promises
+    /// to, once the take retires — unless something wrote it since, which
+    /// then owns it.
+    ///
+    /// Nothing else takes the promises back: AppKit leaves them on the drag
+    /// pasteboard, Kernova their owner, until another drag writes it, and a
+    /// terminating app resolves every promise it still owns
+    /// (`CFPasteboardResolveAllPromisedData`, `Pasteboard.h`).
+    func withdrawPromisesAtRetirement(from pasteboard: NSPasteboard) {
+        let changeCount = pasteboard.changeCount
+        take.whenRetired {
+            guard pasteboard.changeCount == changeCount else { return }
+            pasteboard.clearContents()
+        }
     }
 
     func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
@@ -159,12 +178,7 @@ final class DisplayDragOutSource: NSObject, NSDraggingSource, NSFilePromiseProvi
             completionHandler(CocoaError(.fileNoSuchFile))
             return
         }
-        do {
-            try promised.source.take.writeItem(at: promised.index, to: url)
-            completionHandler(nil)
-        } catch {
-            completionHandler(error)
-        }
+        promised.source.take.writeItem(at: promised.index, to: url, completion: completionHandler)
     }
 
     nonisolated func operationQueue(for filePromiseProvider: NSFilePromiseProvider) -> OperationQueue {

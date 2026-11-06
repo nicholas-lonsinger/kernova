@@ -17,33 +17,26 @@ struct VsockFeatureCoordinatorTests {
     /// A collision would silently hand one channel's connections to another's
     /// listener, and a port outside the registry would bind nothing a guest
     /// dials.
-    @Test("Every descriptor binds distinct ports drawn from the registry")
+    @Test("Every descriptor binds a distinct port drawn from the registry")
     func descriptorPortsAreDistinctAndRegistered() {
         let registered: Set<UInt32> = [
             KernovaVsockPort.control, KernovaVsockPort.clipboard, KernovaVsockPort.log,
-            KernovaVsockPort.drop, KernovaVsockPort.clipboardData, KernovaVsockPort.dropData,
+            KernovaVsockPort.clipboardData,
         ]
-        let ports = VsockFeatureDescriptor.all.flatMap(\.ports)
+        let ports = VsockFeatureDescriptor.all.map(\.port)
 
         #expect(Set(ports).count == ports.count)
         #expect(Set(ports).isSubset(of: registered))
-        // The framed port comes first, so a pair installs the channel ahead of
-        // the data port that only has meaning behind it.
-        #expect(VsockFeatureDescriptor.drop.ports.first == KernovaVsockPort.drop)
     }
 
     /// Gating the control channel on the gate its own handshake fills would
     /// deadlock every session.
-    @Test("Only the control channel skips the admission gate, and each feature names its capability")
+    @Test("Only the control channel skips the admission gate")
     func onlyControlSkipsAdmission() {
         #expect(VsockFeatureDescriptor.control.requirement == nil)
-        for descriptor in [VsockFeatureDescriptor.log, .drop] {
-            #expect(descriptor.requirement != nil, "\(descriptor.name): admits ungated")
-        }
+        #expect(VsockFeatureDescriptor.log.requirement != nil, "log: admits ungated")
         // Log forwarding asks for the handshake and nothing more.
         #expect(VsockFeatureDescriptor.log.requirement?.capability == nil)
-        #expect(
-            VsockFeatureDescriptor.drop.requirement?.capability == KernovaCapability.dropFilesV3)
     }
 
     @Test("Each descriptor's install-time gate tracks its own configuration flag")
@@ -52,18 +45,14 @@ struct VsockFeatureCoordinatorTests {
             name: "Gate VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.agentLogForwardingEnabled = false
-        config.dropFilesEnabled = false
 
         // The control plane runs whatever the feature toggles say.
         #expect(VsockFeatureDescriptor.control.isEnabled(config))
         #expect(!VsockFeatureDescriptor.log.isEnabled(config))
-        #expect(!VsockFeatureDescriptor.drop.isEnabled(config))
 
         config.agentLogForwardingEnabled = true
-        config.dropFilesEnabled = true
 
         #expect(VsockFeatureDescriptor.log.isEnabled(config))
-        #expect(VsockFeatureDescriptor.drop.isEnabled(config))
     }
 
     @Test("A Linux session binds no channel with every toggle on, and a macOS one binds them all")
@@ -88,7 +77,7 @@ struct VsockFeatureCoordinatorTests {
         #expect(vsock.listeners(for: linux, sessionID: sessionID).isEmpty)
         #expect(
             vsock.listeners(for: macOS, sessionID: sessionID).map(\.port)
-                == VsockFeatureDescriptor.all.flatMap(\.ports))
+                == VsockFeatureDescriptor.all.map(\.port))
     }
 
     // MARK: - Accept
@@ -112,7 +101,7 @@ struct VsockFeatureCoordinatorTests {
 
     // MARK: - Teardown
 
-    @Test("stopAll settles every slot and clears the gate and both data sinks")
+    @Test("stopAll settles every slot and clears the gate")
     func stopAllReleasesEverything() async throws {
         let (instance, sessionID) = makeInstanceWithLiveSession(named: "Coordinator VM")
         let vsock = try #require(instance.sessionContext?.vsock)
@@ -137,7 +126,6 @@ struct VsockFeatureCoordinatorTests {
                 "\(descriptor.name): the slot survived the teardown")
         }
         #expect(instance.vsockAdmissionGate.admission(for: .none) != .admit)
-        try expectSinkCleared(instance.dropDataSink)
         instance.cancelAgentAbsenceWatchdog()
     }
 }

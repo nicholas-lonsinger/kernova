@@ -12,8 +12,9 @@ import Virtualization
 /// physical drag or mouse-up reaches the guest: each is withheld and drives the
 /// take, and the guest sees only what the take injects. A take that fails, or
 /// one the pointer comes back inside the display before the Mac session
-/// begins, hands the rest of the press back; once a session carries it, the
-/// take drives the guest pointer until it releases.
+/// begins, hands the rest of the press back, looking again for a drag to take;
+/// once a session carries it, the take drives the guest pointer until it
+/// releases.
 ///
 /// `VZVirtualMachineView` receives a press as ordinary `mouseDown`/
 /// `mouseDragged`/`mouseUp` calls and runs no tracking loop of its own, and a
@@ -38,8 +39,6 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         /// A Mac drag session carries the rest of the press, and the take
         /// drives the guest pointer until it releases.
         case carried(any GuestDragTaking)
-        /// The press is the guest's again for the rest of it.
-        case forwarding
     }
 
     private var press: Press = .idle
@@ -71,7 +70,7 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
     override func mouseDown(with event: NSEvent) {
         switch press {
         case .taking(let take), .carried(let take): take.displayAbandoned()
-        case .idle, .tracking, .forwarding: break
+        case .idle, .tracking: break
         }
         press = .tracking
         transferHost()?.displayPressBegan()
@@ -94,9 +93,7 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
                 take.withheldDrag()
                 withheldDrag = nil
             }
-            if case .forwarding = press { forwardPhysical(event) }
-        case .forwarding:
-            forwardPhysical(event)
+            if case .tracking = press { forwardPhysical(event) }
         case .idle, .carried:
             // A press whose release was injected, or one a Mac session owns:
             // one more drag would move a guest pointer the take now drives.
@@ -111,8 +108,8 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
             // A take that failed hands this release back to the guest; one
             // that released injected its own, and a second would be a second
             // drop.
-            if case .forwarding = press { forwardPhysical(event) }
-        case .tracking, .forwarding:
+            if case .tracking = press { forwardPhysical(event) }
+        case .tracking:
             forwardPhysical(event)
         case .idle, .carried:
             break
@@ -128,7 +125,7 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         case .taking(let take), .carried(let take):
             press = .idle
             take.displayAbandoned()
-        case .idle, .tracking, .forwarding:
+        case .idle, .tracking:
             break
         }
     }
@@ -175,9 +172,9 @@ class VMDisplayMachineView: VZVirtualMachineView, GuestDragDisplay {
         return true
     }
 
-    func resumeForwarding() {
+    func resumeTracking() {
         guard case .taking = press else { return }
-        press = .forwarding
+        press = .tracking
     }
 
     // MARK: - Reaching the guest

@@ -104,9 +104,9 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
     /// run, to be worth showing unsummoned.
     private func isWorthRevealing(_ readout: ClipboardProgressSnapshot) -> Bool {
         guard readout.elapsedSeconds >= minimumElapsedToReveal else { return false }
-        // Without a total there is no estimate to weigh, so the elapsed floor is
-        // the whole test.
-        guard readout.totalBytes > 0, !readout.awaitsSize else { return true }
+        // Without a byte total there is no estimate to weigh, so the elapsed
+        // floor is the whole test.
+        guard readout.bytesKnown, readout.totalBytes > 0 else { return true }
         // Every byte is in and only the terminal is outstanding. Checked before
         // consulting the estimate because `secondsRemaining` reports `nil` both
         // here and before a rate exists, and those two mean opposite things.

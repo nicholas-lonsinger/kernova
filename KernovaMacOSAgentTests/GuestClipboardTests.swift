@@ -930,7 +930,7 @@ struct GuestClipboardTests {
                 try text.write(
                     to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
                 rig.clipboard.exchange.pullEnded(id, .landed(.named(name)))
-            case .staged:
+            case .staged, .exactPath:
                 Issue.record("landing \(order.landing)")
             }
         }

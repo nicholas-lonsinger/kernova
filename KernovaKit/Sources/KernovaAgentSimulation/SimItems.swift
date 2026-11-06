@@ -39,6 +39,14 @@ package enum SimItems {
         return representation
     }
 
+    /// A promised representation of `storage`, under a stand-in name, `size` bytes when pulled.
+    package static func promise(_ storage: Representation.Storage, size: Int) -> Representation {
+        var representation = representation(storage, size: size)
+        representation.name = Data("Untitled".utf8)
+        representation.promised = true
+        return representation
+    }
+
     /// An offer of `items`, each its representations.
     package static func offer(_ tag: UInt8, _ items: [[Representation]]) -> ItemOffer {
         ItemOffer(
@@ -260,6 +268,7 @@ package struct DecodingItemSink {
         switch landing {
         case .memory: .inline(withUnsafeBytes(of: digest.bigEndian) { Data($0) })
         case .staged(_, .exactly(let name)), .staged(_, .keepingBoth(let name)): .named(name)
+        case .exactPath(let path): .named(Data(path.utf8.split(separator: UInt8(ascii: "/")).last ?? []))
         }
     }
 

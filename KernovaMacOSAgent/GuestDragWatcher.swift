@@ -1,9 +1,15 @@
 import Foundation
+import KernovaAgentCore
 import KernovaKit
 import KernovaLogging
+import KernovaWire
 
 /// Offers the host each drag in this guest that ``GuestDraggedItems`` lets go
-/// out, for as long as the press that started it is held.
+/// out, for as long as the press that started it is held: an offer that lists
+/// no items and says only that such a drag is in progress. The source may
+/// still be writing the drag pasteboard while this reads it, so the drag's
+/// items come from the catcher once a take arms it, as the drag's destination
+/// sees them.
 ///
 /// Scoped to presses: a global monitor starts one for each primary-button
 /// press, and a timer runs only while the button stays down, reading the drag
@@ -12,9 +18,9 @@ import KernovaLogging
 /// never a read taken when the press is heard of — a monitor's event arrives
 /// after the fact, so a count read then can already include this press's drag.
 ///
-/// One offer per press at a time. Changed items replace it; the press ending
-/// withdraws it unless the host has taken it, and a taken offer is never
-/// withdrawn here — the host's `DragComplete` retires it.
+/// One offer per press at a time. Items no drag goes out with withdraw it; the
+/// press ending withdraws it unless the host has taken it, and a taken offer
+/// is never withdrawn here — the host's release ends it.
 @MainActor
 final class GuestDragWatcher {
     nonisolated private static let logger = KernovaLogger(
@@ -24,7 +30,7 @@ final class GuestDragWatcher {
     /// offer is in place before the pointer reaches the display edge.
     static let tickInterval: TimeInterval = 0.05
 
-    /// Why ``claim(generation:)`` refused a take.
+    /// Why ``claim(token:)`` refused a take.
     enum ClaimRefusal: Error, Equatable {
         /// The take names no offer this press holds, or one already taken.
         case notCurrent
@@ -38,15 +44,25 @@ final class GuestDragWatcher {
             case .pressOver: "The press that carried the drag is over"
             }
         }
+
+        /// The take's refusal on the wire.
+        var error: WireError {
+            switch self {
+            case .notCurrent: WireError(.dragNotCurrent, debugDetail: message)
+            case .pressOver: WireError(.dragPressOver, debugDetail: message)
+            }
+        }
     }
 
-    /// A drag a take has claimed: what the catcher must see arrive.
+    /// A drag a take has claimed: its offer, and the press it belongs to.
     struct Claim: Equatable {
-        let generation: UInt64
+        let token: Data
         /// The press the drag belongs to.
         let press: UInt64
-        /// The items the offer was made from, in drag order.
-        let items: [GuestDragItem]
+        /// The items the drag pasteboard held as the take claimed it, which the
+        /// source may still have been writing: what the catcher's box shows
+        /// until the catcher reads the drag itself.
+        let preview: [GuestDragItem]
     }
 
     private let input: any GuestDragInput
@@ -55,27 +71,22 @@ final class GuestDragWatcher {
     /// Told each time a press ends, with its id.
     var onPressEnded: ((UInt64) -> Void)?
 
-    /// Whether a drag carrying file promises is offered: only to a host that
-    /// takes them, and otherwise it stays in the guest.
-    var offersPromises = false
-
     // MARK: - State
 
     /// What the current press has offered.
-    private enum Phase: Equatable {
+    private enum Phase {
         /// Nothing is offered.
         case watching
-        /// `offer` is live and the host has not taken it.
+        /// `offer` is out and the host has not taken it.
         case offered(Offer)
-        /// A take claimed the offer, or the host retired it:
-        /// the press offers nothing more, and nothing here withdraws it.
+        /// A take claimed the offer, or the host ended it: the press offers
+        /// nothing more, and nothing here withdraws it.
         case settled
     }
 
-    private struct Offer: Equatable {
-        let generation: UInt64
-        let items: [GuestDragItem]
-        /// The change count the offer's items were last read at.
+    private struct Offer {
+        let token: Data
+        /// The change count the drag was last read at.
         var changeCount: Int
     }
 
@@ -87,13 +98,6 @@ final class GuestDragWatcher {
         /// newer press arrives before any tick saw the button go up.
         var lastObservedCount: Int
         var phase: Phase = .watching
-        /// The items whose files' resolve is in flight, so a tick starts no
-        /// second walk of the same items and a superseded walk's result is
-        /// dropped.
-        var resolving: [GuestDragItem]?
-        /// The items whose resolve came back unofferable, so an unchanged drag
-        /// is not walked again every tick.
-        var unofferable: [GuestDragItem]?
     }
 
     private var isRunning = false
@@ -155,9 +159,7 @@ final class GuestDragWatcher {
         baseline = changeCount
         endTicks?()
         endTicks = nil
-        if case .offered(let offer) = ended.phase {
-            _ = peer.withdraw(generation: offer.generation)
-        }
+        if case .offered(let offer) = ended.phase { withdraw(offer) }
         onPressEnded?(ended.id)
     }
 
@@ -180,75 +182,68 @@ final class GuestDragWatcher {
         }
     }
 
-    /// Reads the drag pasteboard of a press whose count has moved, replacing or
-    /// withdrawing an offer its items no longer match and resolving new ones.
+    /// Reads the drag pasteboard of a press whose count has moved: a drag that
+    /// can go out is offered, once, and one that cannot withdraws the offer.
     private func read(at count: Int) {
         guard let current = press else { return }
-        let items = GuestDraggedItems.items(on: input.dragPasteboard, acceptingPromises: offersPromises)
-        if case .offered(var offer) = current.phase {
-            if items == offer.items {
-                offer.changeCount = count
-                press?.phase = .offered(offer)
+        let offerable = GuestDraggedItems.items(on: input.dragPasteboard) != nil
+        switch current.phase {
+        case .offered(var offer):
+            guard offerable else {
+                withdraw(offer)
+                press?.phase = .watching
                 return
             }
-            _ = peer.withdraw(generation: offer.generation)
-            press?.phase = .watching
-        }
-        guard let items, items != current.resolving, items != current.unofferable else { return }
-        press?.resolving = items
-        let pressID = current.id
-        input.resolveFiles(items.compactMap(\.fileURL)) { [weak self] intake in
-            self?.resolved(intake, of: items, readAt: count, press: pressID)
+            offer.changeCount = count
+            press?.phase = .offered(offer)
+        case .watching:
+            guard offerable else { return }
+            offer(Offer(token: Self.token(), changeCount: count))
+        case .settled:
+            break
         }
     }
 
-    /// Offers what a resolve produced, if the press it was read for is still
-    /// the current, held one.
-    private func resolved(
-        _ intake: ClipboardPasteboardReader.FileIntake, of items: [GuestDragItem], readAt count: Int,
-        press pressID: UInt64
-    ) {
-        guard isRunning, let current = press, current.id == pressID, current.resolving == items
-        else { return }
-        press?.resolving = nil
-        // Checked here, immediately before the offer goes out, rather than left
-        // to the next tick: a host that took an offer whose press had already
-        // ended would arm the catcher for a drag that is over.
-        guard input.isPrimaryButtonHeld, case .watching = current.phase else { return }
-        guard let offered = GuestDraggedItems.offerItems(items, resolvedFiles: intake) else {
-            press?.unofferable = items
-            return
-        }
-        switch peer.offerDrag(offered) {
-        case .sent(let generation):
-            press?.phase = .offered(Offer(generation: generation, items: items, changeCount: count))
-            let promised = items.count { $0.fileURL == nil }
+    /// Offers the drag `offer` names and makes it the press's.
+    private func offer(_ offer: Offer) {
+        let token = offer.token
+        press?.phase = .offered(offer)
+        peer.offerDrag(ItemOffer(token: token, items: [])) { [weak self] refusal in
+            guard let self, let refusal else { return }
             Self.logger.log(
-                .notice,
-                "Offered a drag of \(items.count, privacy: .public) item(s), \(promised, privacy: .public) of them promised, to the host (gen=\(generation, privacy: .public))"
-            )
-        case .duplicate, .nothingToOffer, .sendFailed:
-            press?.unofferable = items
+                .error, "The host refused the drag offer: \(String(describing: refusal.code), privacy: .public)")
+            guard case .offered(let current) = self.press?.phase, current.token == token else { return }
+            self.press?.phase = .settled
         }
+        Self.logger.log(.notice, "Offered a drag in progress to the host")
+    }
+
+    private func withdraw(_ offer: Offer) {
+        peer.withdrawDrag(offer.token)
+    }
+
+    static func token() -> Data {
+        var generator = SystemRandomNumberGenerator()
+        return Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
     }
 
     // MARK: - Takes
 
-    /// Hands the offer under `generation` to a take, which it can be only while
-    /// it is the current press's untaken offer and that press is still held.
-    func claim(generation: UInt64) -> Result<Claim, ClaimRefusal> {
-        guard let current = press, case .offered(let offer) = current.phase,
-            offer.generation == generation
+    /// Hands the offer of `token` to a take, which it can be only while it is
+    /// the current press's untaken offer and that press is still held.
+    func claim(token: Data) -> Result<Claim, ClaimRefusal> {
+        guard let current = press, case .offered(let offer) = current.phase, offer.token == token
         else { return .failure(.notCurrent) }
         guard input.isPrimaryButtonHeld else { return .failure(.pressOver) }
         press?.phase = .settled
-        return .success(Claim(generation: generation, press: current.id, items: offer.items))
+        let preview = GuestDraggedItems.items(on: input.dragPasteboard) ?? []
+        return .success(Claim(token: token, press: current.id, preview: preview))
     }
 
-    /// Lets go of the offer under `generation`, which the host has retired; the
-    /// press offers nothing more.
-    func forget(generation: UInt64) {
-        guard case .offered(let offer) = press?.phase, offer.generation == generation else { return }
+    /// Lets go of the offer of `token`, which has ended; the press offers
+    /// nothing more.
+    func forget(token: Data) {
+        guard case .offered(let offer) = press?.phase, offer.token == token else { return }
         press?.phase = .settled
     }
 }

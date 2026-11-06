@@ -3793,7 +3793,7 @@ struct VMLibraryViewModelTests {
         try await diskService.parked.wait { diskService.isParked }
         let staged = try #require(storage.stagedBundleURLs.last)
 
-        viewModel.abandonArrivalsForTermination()
+        viewModel.abandonWorkForTermination()
 
         // Synchronous, because the process ends right after — and aimed at the
         // staged tree, since the destination holds nothing until publication.

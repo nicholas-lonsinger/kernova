@@ -6,20 +6,14 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// What the live drop and log toggles move on the VM's socket device, and
-/// what they leave behind on the instance. The session owns the listener hosts,
-/// so a port coming down and its host being released are one queue hop; these
-/// pin the ports each toggle moves and that the drop pair moves together.
+/// What the live log toggle moves on the VM's socket device, and what it leaves
+/// behind on the instance. The session owns the listener hosts, so a port
+/// coming down and its host being released are one queue hop; these pin the
+/// port the toggle moves.
 @Suite("VMInstance live vsock policy", .caseScoped)
 @MainActor
 struct VMInstanceLiveVsockPolicyTests {
     // MARK: - Helpers
-
-    private final class RecordingAcceptor: VsockDataConnectionAccepting {
-        nonisolated func acceptDataConnection(fd: Int32) {
-            // Keep the descriptor open: a forwarded fd is the probe's signal.
-        }
-    }
 
     /// This instance's live session coordinator, which the live-policy pass and
     /// the accept path both run through.
@@ -27,13 +21,12 @@ struct VMInstanceLiveVsockPolicyTests {
         try #require(instance.sessionContext?.vsock)
     }
 
-    /// The framed listener production builds for `descriptor`, off the live
-    /// session's coordinator — the channel port's host, ahead of any data one.
+    /// The listener production builds for `descriptor`, off the live session's
+    /// coordinator.
     private func framedHost(
         for descriptor: VsockFeatureDescriptor, on instance: VMInstance, sessionID: UUID
     ) throws -> VsockListener {
-        let vsock = try #require(instance.sessionContext?.vsock)
-        return try #require(vsock.makeListeners(for: descriptor, sessionID: sessionID).first)
+        try #require(instance.sessionContext?.vsock).makeListener(for: descriptor, sessionID: sessionID)
     }
 
     /// Runs `host`'s accept path against a live peer, the way a guest dial
@@ -80,43 +73,6 @@ struct VMInstanceLiveVsockPolicyTests {
         #expect(installer.detached == [[KernovaVsockPort.log]])
         #expect(installer.attached.isEmpty)
         #expect(instance.vsockLogService == nil)
-    }
-
-    // MARK: - Drop ports
-
-    @Test("Enabling drag and drop live installs the channel and data ports in one hop")
-    func enablingDropInstallsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        let installer = MockVsockListenerInstall()
-
-        try await coordinator(of: instance)
-            .applyLive(.drop, enabled: true, on: installer, sessionID: sessionID)
-
-        #expect(installer.attached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
-        #expect(installer.detached.isEmpty)
-    }
-
-    /// The data port must never outlive the channel port: an item connection
-    /// admitted onto it after the drop service is gone has nothing to serve it.
-    @Test("Disabling drag and drop live withdraws both ports and stops the service")
-    func disablingDropWithdrawsBothPorts() async throws {
-        let (instance, sessionID) = makeInstanceWithLiveSession(named: "Live Policy VM")
-        var guests: [VsockChannel] = []
-        defer { guests.forEach { $0.close() } }
-        try await connectGuest(
-            to: try framedHost(for: .drop, on: instance, sessionID: sessionID),
-            keptOpenBy: &guests)
-        #expect(instance.vsockDropService != nil)
-        instance.dropDataSink.set(RecordingAcceptor())
-
-        let installer = MockVsockListenerInstall()
-        try await coordinator(of: instance)
-            .applyLive(.drop, enabled: false, on: installer, sessionID: sessionID)
-
-        #expect(installer.detached == [[KernovaVsockPort.drop, KernovaVsockPort.dropData]])
-        #expect(installer.attached.isEmpty)
-        #expect(instance.vsockDropService == nil)
-        try expectSinkCleared(instance.dropDataSink)
     }
 
     // MARK: - The channel dying under a service
@@ -168,27 +124,6 @@ struct VMInstanceLiveVsockPolicyTests {
         await drainMainQueue()
 
         #expect(instance.vsockLogService == nil)
-        await expectEOF(on: guest)
-    }
-
-    @Test("A drop hand-off queued before the toggle-off installs nothing")
-    func dropHandOffCrossingDisableIsRefused() async throws {
-        let library = makeWiredLibrary()
-        let (instance, sessionID) = library.registerInstanceWithLiveSession(named: "Live Policy VM")
-        let host = try framedHost(for: .drop, on: instance, sessionID: sessionID)
-        let (acceptedFd, guestFd) = try makeRawSocketPair()
-        let guest = VsockChannel(fileDescriptor: guestFd)
-        guest.start()
-        defer { guest.close() }
-
-        #expect(host.acceptDuplicatedFd(acceptedFd, dupErrno: 0))
-        instance.dropDataSink.set(nil)
-        library.editConfiguration(of: instance) { $0.dropFilesEnabled = false }
-
-        await drainMainQueue()
-
-        #expect(instance.vsockDropService == nil)
-        try expectSinkCleared(instance.dropDataSink)
         await expectEOF(on: guest)
     }
 }

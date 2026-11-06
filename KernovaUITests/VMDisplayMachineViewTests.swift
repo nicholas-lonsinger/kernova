@@ -4,6 +4,7 @@ import KernovaKit
 import KernovaTestSupport
 import Synchronization
 import Testing
+import UniformTypeIdentifiers
 
 @testable import KernovaCore
 @testable import KernovaUI
@@ -56,7 +57,7 @@ struct VMDisplayMachineViewTests {
     }
 
     private func makeTake() -> FakeTake {
-        FakeTake(items: [.declared("a.txt"), .declared("Photos", uti: "public.folder", isDirectory: true, at: 1)])
+        FakeTake(items: [.declared("a.txt"), .declared("Photos", type: .folder, isDirectory: true)])
     }
 
     // MARK: - Asking to take over
@@ -374,7 +375,7 @@ struct VMDisplayMachineViewTests {
     func failedTakeForwardsTheMouseUp() throws {
         let view = makeView()
         let take = makeTake()
-        take.onWithheldMouseUp = { view.resumeForwarding() }
+        take.onWithheldMouseUp = { view.resumeTracking() }
         host.nextTake = take
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
@@ -385,14 +386,14 @@ struct VMDisplayMachineViewTests {
     }
 
     @Test("a take that fails mid-press hands the rest of the press back")
-    func failedTakeResumesForwarding() throws {
+    func failedTakeResumesTracking() throws {
         let view = makeView()
         let take = makeTake()
         host.nextTake = take
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
 
-        view.resumeForwarding()
+        view.resumeTracking()
         view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
         view.mouseUp(with: try event(.leftMouseUp, x: 260))
 
@@ -405,7 +406,7 @@ struct VMDisplayMachineViewTests {
     func pointerReturnReachesTheGuest() throws {
         let view = makeView()
         let take = makeTake()
-        take.onPointerReturned = { view.resumeForwarding() }
+        take.onPointerReturned = { view.resumeTracking() }
         host.nextTake = take
         view.mouseDown(with: try event(.leftMouseDown, x: 50))
         view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
@@ -446,8 +447,8 @@ struct VMDisplayMachineViewTests {
 struct DisplayDragOutSourceTests {
     private func makeSource() -> (DisplayDragOutSource, FakeTake) {
         let take = FakeTake(items: [
-            .declared("report.txt", uti: "public.plain-text"),
-            .declared("Photos", uti: "public.folder", isDirectory: true, at: 1),
+            .declared("report.txt", type: .plainText),
+            .declared("Photos", type: .folder, isDirectory: true),
         ])
         return (DisplayDragOutSource(vmID: UUID(), take: take), take)
     }
@@ -604,6 +605,45 @@ struct DisplayDragOutSourceTests {
         take.sessionOverDisplay = true
         take.sessionOverDisplay = false
         #expect(session.drawn.allSatisfy { $0.isEmpty })
+    }
+
+    @Test("the take's retirement clears the drag pasteboard the session wrote, freeing the source")
+    func retirementWithdrawsThePromises() throws {
+        let pasteboard = NSPasteboard(name: .init("app.kernova.test.drag-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        weak var released: DisplayDragOutSource?
+        let take = FakeTake(items: [.declared("report.txt", type: .plainText)])
+        try autoreleasepool {
+            let source = DisplayDragOutSource(vmID: UUID(), take: take)
+            released = source
+            pasteboard.clearContents()
+            let providers = try providers(of: source)
+            #expect(pasteboard.writeObjects(providers))
+            source.withdrawPromisesAtRetirement(from: pasteboard)
+        }
+        #expect(pasteboard.pasteboardItems?.count == 1)
+
+        autoreleasepool { take.retire() }
+
+        #expect(pasteboard.pasteboardItems?.isEmpty ?? true)
+        #expect(released == nil, "the withdrawn promises still hold their source")
+    }
+
+    @Test("a drag pasteboard something else wrote since the session is left as it is")
+    func retirementLeavesAnotherOwnersPasteboard() throws {
+        let pasteboard = NSPasteboard(name: .init("app.kernova.test.drag-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let (source, take) = makeSource()
+        pasteboard.clearContents()
+        let providers = try providers(of: source)
+        #expect(pasteboard.writeObjects(providers))
+        source.withdrawPromisesAtRetirement(from: pasteboard)
+
+        pasteboard.clearContents()
+        pasteboard.setString("someone else's", forType: .string)
+        take.retire()
+
+        #expect(pasteboard.string(forType: .string) == "someone else's")
     }
 
     @Test("writes run one at a time, off the main queue")

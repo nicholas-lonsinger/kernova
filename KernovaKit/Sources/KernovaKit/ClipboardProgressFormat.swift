@@ -61,19 +61,12 @@ public enum ClipboardProgressFormat {
     /// parentheses ("47.6 MB of 3.03 GB (7.8 MB/s)") — Safari's download-list
     /// phrasing.
     ///
-    /// Drops the parenthetical before a speed estimate exists. While
-    /// `awaitsSize` the total is not yet known, so the line says that instead
-    /// of naming one.
+    /// Drops the parenthetical before a speed estimate exists.
     public static func byteProgress(
-        bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?,
-        awaitsSize: Bool = false
+        bytesTransferred: UInt64, totalBytes: UInt64, bytesPerSecond: Double?
     ) -> String {
         let transferred = ByteCountFormatter.string(
             fromByteCount: Int64(clamping: bytesTransferred), countStyle: .file)
-        if awaitsSize {
-            guard bytesTransferred > 0 else { return awaitingSize }
-            return "\(transferred) so far — \(awaitingSize.lowercased())"
-        }
         let total = ByteCountFormatter.string(
             fromByteCount: Int64(clamping: totalBytes), countStyle: .file)
         var line = "\(transferred) of \(total)"
@@ -83,8 +76,14 @@ public enum ClipboardProgressFormat {
         return line
     }
 
-    /// What the readout says in place of a total it does not know yet.
-    static let awaitingSize = "Waiting for the total size"
+    /// The readout's byte line for `snapshot`, or `nil` when it does not know
+    /// its bytes.
+    public static func byteProgress(_ snapshot: ClipboardProgressSnapshot) -> String? {
+        guard snapshot.bytesKnown else { return nil }
+        return byteProgress(
+            bytesTransferred: snapshot.bytesTransferred, totalBytes: snapshot.totalBytes,
+            bytesPerSecond: snapshot.bytesPerSecond)
+    }
 
     /// Time remaining in Safari's download phrasing ("6 minutes, 27 seconds
     /// remaining"), or `nil` when it can't be estimated.
@@ -124,9 +123,7 @@ public enum ClipboardProgressFormat {
                 direction: snapshot.direction, peerName: snapshot.peerName,
                 gesture: snapshot.gesture)
         ]
-        parts.append(
-            snapshot.awaitsSize
-                ? awaitingSize.lowercased() : percent(fraction: snapshot.fractionComplete))
+        parts.append(percent(fraction: snapshot.fractionComplete))
         if let counter = itemCounter(
             completed: snapshot.filesCompleted, total: snapshot.fileCount)
         {
@@ -145,5 +142,11 @@ public enum ClipboardProgressFormat {
     package static func logSeconds(_ value: TimeInterval?) -> String {
         guard let value else { return "unknown" }
         return String(format: "%.2f s", value)
+    }
+
+    /// Bytes as a log record spells them ("512/4096 bytes"), or `size unknown`
+    /// for an operation that does not know its bytes.
+    package static func logBytes(transferred: UInt64, total: UInt64, known: Bool) -> String {
+        known ? "\(transferred)/\(total) bytes" : "size unknown"
     }
 }

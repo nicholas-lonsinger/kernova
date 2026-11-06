@@ -92,7 +92,7 @@ struct HubClipboardServiceTests {
             try content.write(
                 to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
             landed = .named(name)
-        case .staged:
+        case .staged, .exactPath:
             Issue.record("landing \(order.landing)")
             return
         }

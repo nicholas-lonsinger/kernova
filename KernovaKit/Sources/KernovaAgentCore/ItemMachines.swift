@@ -132,7 +132,7 @@ struct ItemMachines: Sendable {
             if case .opened(let stream, let body) = event {
                 drag.opened(stream, body: body, items: transfer, connection: &connection)
             } else {
-                drag.handle(event, connection: &connection, now: now)
+                drag.handleTake(event, items: &transfer, connection: &connection)
             }
         case .power, .update, .logs, .testBulk:
             break
@@ -170,14 +170,25 @@ struct ItemMachines: Sendable {
         drag.take(token, items: transfer, connection: &connection)
     }
 
-    /// Peer: answers a take of its drag.
-    mutating func answer(_ id: DragTakeID, _ answer: DragTakeAnswer, connection: inout Connection) {
-        drag.answer(id, answer, connection: &connection)
+    /// Host: tells the peer `control` on a take this side opened.
+    mutating func control(_ id: DragTakeID, _ control: DragTakeControl, connection: inout Connection) {
+        drag.control(id, control, connection: &connection)
     }
 
-    /// Pulls one representation of the far side's open offer, as `order` says.
-    mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
-        transfer.pull(order, connection: &connection)
+    /// Host: calls off a take this side opened.
+    mutating func cancelTake(_ id: DragTakeID, connection: inout Connection) {
+        drag.cancel(id, connection: &connection)
+    }
+
+    /// Peer: answers a take of its drag.
+    mutating func answer(_ id: DragTakeID, _ answer: DragTakeAnswer, connection: inout Connection) {
+        drag.answer(id, answer, items: &transfer, connection: &connection)
+    }
+
+    /// Pulls one representation of the far side's open offer, as `order` says, answering `request` when it
+    /// opens or cannot.
+    mutating func pull(_ request: ItemRequestID, _ order: ItemPullOrder, connection: inout Connection) {
+        transfer.pull(request, order, connection: &connection)
     }
 
     /// Whether a committed pull's publish report is still owed.

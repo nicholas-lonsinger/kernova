@@ -158,7 +158,7 @@ struct VsockListenerTests {
 
         let handedOver = Mutex<Int32?>(nil)
         let host = VsockListener(
-            port: KernovaVsockPort.dropData, shouldAdmit: { verdict },
+            port: KernovaVsockPort.clipboardData, shouldAdmit: { verdict },
             onAcceptFd: { fd in handedOver.withLock { $0 = fd } })
 
         #expect(host.acceptDuplicatedFd(a, dupErrno: 0) == false)

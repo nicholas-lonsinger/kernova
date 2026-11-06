@@ -157,7 +157,7 @@ extension ClipboardPasteboardReader {
     /// and one per file a pasteboard item's file promise names, each a single FILE or FOLDER representation,
     /// reading no content.
     ///
-    /// `promises` are the drop's promises, called in already (``CalledInFilePromise/callIn(_:into:)``), so
+    /// `promises` are the drop's promises, called in already (``CalledInFilePromise/callIn(_:into:operationQueue:)``), so
     /// each file is offered under the name its source gave once called in. An item carrying a promise offers
     /// it even beside a file URL: the promise is what the source means to hand over, where a Photos asset's
     /// URL names the library's smaller derivative of it. An item that is neither is not offered.

@@ -13,25 +13,21 @@ import Testing
 private enum ServiceKind: String, CaseIterable, Sendable, CustomStringConvertible {
     case control
     case log
-    case drop
 
     var description: String { rawValue }
 }
 
 /// The settle contract itself, asserted once per conforming service rather than
-/// inside each service's own suite: a fifth feature channel that forgets to
+/// inside each service's own suite: a new feature channel that forgets to
 /// notify its owner fails here instead of shipping.
 @Suite("Vsock feature service settle contract", .caseScoped)
 @MainActor
 struct VsockFeatureServiceSettleTests {
-    private let stagingRoot = TestStagingRoot()
-
     // MARK: - Harness
 
-    /// Builds `kind` over `channel`, with a label unique to this case so a
-    /// service keying staging on it cannot collide with a concurrent one, and
-    /// how its readers learn whether it is connected — `nil` for the log
-    /// service, which has no such reading.
+    /// Builds `kind` over `channel`, with a label unique to this case, and how
+    /// its readers learn whether it is connected — `nil` for the log service,
+    /// which has no such reading.
     private func makeService(_ kind: ServiceKind, channel: VsockChannel)
         -> (any VsockFeatureService, isConnected: (@MainActor () -> Bool)?)
     {
@@ -43,11 +39,6 @@ struct VsockFeatureServiceSettleTests {
             return (service, { service.isConnected })
         case .log:
             return (VsockGuestLogService(channel: channel, label: label), nil)
-        case .drop:
-            let service = VsockDropService(
-                channel: channel, label: label, reporter: ClipboardTransferReporter(),
-                stagingRoot: stagingRoot.root, stagingKey: label)
-            return (service, { service.isConnected })
         }
     }
 

@@ -102,20 +102,20 @@ struct ClipboardProgressReadoutViewTests {
         #expect(view.barFractionForTesting == 0.1)
     }
 
-    @Test("a readout awaiting its total shows no fraction, and a sized one shows its fraction again")
-    func awaitedSizeShowsNoFraction() {
+    @Test("a readout that does not know its bytes fills its bar by files and shows no byte line")
+    func unknownBytesShowFilesAlone() {
         let view = ClipboardProgressReadoutView(surface: .dropdownItem)
         view.apply(
             ClipboardProgressSnapshot(
-                direction: .inbound, peerName: "VM", currentItemName: "Home", filesCompleted: 0,
-                fileCount: 1, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
-                secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 1, awaitsSize: true))
-        #expect(view.barIsIndeterminateForTesting)
-        #expect(view.byteProgressForTesting == "Waiting for the total size")
+                direction: .inbound, peerName: "VM", currentItemName: "IMG_0001.HEIC", filesCompleted: 250,
+                fileCount: 1_000, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
+                secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 1, bytesKnown: false))
+        #expect(view.barFractionForTesting == 0.25)
+        #expect(view.byteProgressForTesting.isEmpty)
 
         view.apply(makeSnapshot(isCancellable: true))
-        #expect(!view.barIsIndeterminateForTesting)
         #expect(view.barFractionForTesting == 0.1)
+        #expect(!view.byteProgressForTesting.isEmpty)
     }
 
     @Test("the callout readout is as wide as every callout")

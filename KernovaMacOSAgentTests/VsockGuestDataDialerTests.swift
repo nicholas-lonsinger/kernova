@@ -62,12 +62,12 @@ struct VsockGuestDataDialerTests {
         }
 
         let seen = Locked<UInt32?>(nil)
-        _ = try VsockGuestDataDialer.connect(port: KernovaVsockPort.dropData) { port, _ in
+        _ = try VsockGuestDataDialer.connect(port: KernovaVsockPort.clipboardData) { port, _ in
             seen.withLock { $0 = port }
             return .success(near)
         }
 
-        #expect(seen.withLock { $0 } == KernovaVsockPort.dropData)
+        #expect(seen.withLock { $0 } == KernovaVsockPort.clipboardData)
     }
 
     @Test("a connect that never completes is thrown, not returned as a descriptor")

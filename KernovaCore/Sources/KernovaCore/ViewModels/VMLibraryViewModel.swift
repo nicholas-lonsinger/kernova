@@ -129,7 +129,13 @@ package final class VMLibraryViewModel {
 
     func reconcileWithDisk() { library.reconcileWithDisk() }
 
-    package func abandonArrivalsForTermination() { library.abandonArrivalsForTermination() }
+    /// Abandons what a quit cannot wait out: the arrivals still writing
+    /// (``VMLibrary/abandonArrivalsForTermination()``) and every VM's
+    /// transfers (``VMInstance/abandonTransfersForTermination()``).
+    package func abandonWorkForTermination() {
+        library.abandonArrivalsForTermination()
+        for instance in instances { instance.abandonTransfersForTermination() }
+    }
 
     package func moveEntries(fromOffsets source: IndexSet, toOffset destination: Int) {
         library.moveEntries(fromOffsets: source, toOffset: destination)

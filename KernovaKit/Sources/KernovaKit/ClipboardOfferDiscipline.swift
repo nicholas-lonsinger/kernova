@@ -3,19 +3,18 @@ import Foundation
 /// How the offers travelling one way on one channel behave, derived once from
 /// the channel and the end that sends them.
 ///
-/// Three flows share the offer tables: clipboard offers in either direction on
-/// the clipboard channel, and on the drop channel the host's drops and the
-/// guest's drags out. Each table reads a behavior off a field here rather than
-/// branching on the channel, so what makes a flow different is stated once.
+/// Two flows share the offer tables: clipboard offers in either direction on
+/// the clipboard channel, and the host's drops on the drop channel, which
+/// carries no offers guest→host. Each table reads a behavior off a field here
+/// rather than branching on the channel, so what makes a flow different is
+/// stated once.
 struct ClipboardOfferDiscipline: Equatable, Sendable {
-    /// Which of the three flows this is — the frame vocabulary it speaks.
+    /// Which of the two flows this is — the frame vocabulary it speaks.
     enum Flow: Equatable, Sendable {
         /// Clipboard offers, either direction.
         case clipboard
         /// Files dropped on the VM display, host→guest.
         case drop
-        /// Files dragged out of the VM display, guest→host.
-        case dragOut
     }
 
     /// When the sending side's readout of an offer opens, and what ends it.
@@ -26,9 +25,6 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         /// One per offer, opened with the offer and spanning its whole set;
         /// the peer's verdict ends it.
         case upFront
-        /// One per offer, opened on the peer's first request and ended by its
-        /// pulls going idle, so concurrent offers never abandon each other's.
-        case perEntryOnFirstRequest
     }
 
     let flow: Flow
@@ -56,8 +52,6 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
     /// A Cancel on the readout retires the whole offer and tells the peer,
     /// rather than calling off only the transfers in flight.
     let cancelRetiresOffer: Bool
-    /// The owner may withdraw any live offer by generation.
-    let ownerWithdraws: Bool
     /// A representation may cross inline, for a pasteboard; otherwise every one
     /// lands as a file.
     let servesInline: Bool
@@ -70,55 +64,39 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
     let cachesMaterialized: Bool
     /// The offers this side holds go with the session that brought them.
     let retiresOnSessionEnd: Bool
-    /// How long the staging this side's pulls fill lives.
-    ///
-    /// A clipboard offer replaces the last and a drop's jobs pull one at a
-    /// time, so the newest few generations cover every live reader; drags out
-    /// pull concurrently, so each keeps its folder until its take discards it.
-    let stagingRetention: ClipboardFileStaging.Retention
 
-    /// The discipline of the offers `sender` makes on `kind`'s channel.
-    init(kind: ClipboardControlSession.Kind, sender: ClipboardControlSession.Role) {
+    /// The discipline of the offers `sender` makes on `kind`'s channel, or
+    /// `nil` where that channel carries none from `sender`.
+    init?(kind: ClipboardControlSession.Kind, sender: ClipboardControlSession.Role) {
         switch (kind, sender) {
         case (.clipboard, _):
             self.init(
                 flow: .clipboard, supersedes: true, dedups: true, readout: .sharedPeerPaste,
                 servingGesture: .peerPaste, hasClaimDeadline: false, reportsSettle: false,
-                failsOnSessionEnd: false, cancelRetiresOffer: false, ownerWithdraws: false,
-                servesInline: true, namesEveryUnit: false, cachesMaterialized: true,
-                retiresOnSessionEnd: false,
-                stagingRetention: .newest(ClipboardFileStaging.maxGenerations))
+                failsOnSessionEnd: false, cancelRetiresOffer: false, servesInline: true,
+                namesEveryUnit: false, cachesMaterialized: true, retiresOnSessionEnd: false)
         case (.drop, .host):
             self.init(
                 flow: .drop, supersedes: false, dedups: false, readout: .upFront,
                 servingGesture: .drop, hasClaimDeadline: true, reportsSettle: true,
-                failsOnSessionEnd: true, cancelRetiresOffer: true, ownerWithdraws: false,
-                servesInline: false, namesEveryUnit: true, cachesMaterialized: false,
-                retiresOnSessionEnd: true,
-                stagingRetention: .newest(ClipboardFileStaging.maxGenerations))
+                failsOnSessionEnd: true, cancelRetiresOffer: true, servesInline: false,
+                namesEveryUnit: true, cachesMaterialized: false, retiresOnSessionEnd: true)
         case (.drop, .guest):
-            self.init(
-                flow: .dragOut, supersedes: false, dedups: false,
-                readout: .perEntryOnFirstRequest, servingGesture: .dragOut,
-                hasClaimDeadline: false, reportsSettle: false, failsOnSessionEnd: false,
-                cancelRetiresOffer: true, ownerWithdraws: true, servesInline: false,
-                namesEveryUnit: true, cachesMaterialized: false, retiresOnSessionEnd: true,
-                stagingRetention: .untilDiscarded)
+            return nil
         }
     }
 
     /// The discipline of the offers `receiver` takes from its peer on `kind`'s
-    /// channel.
-    init(kind: ClipboardControlSession.Kind, receiver: ClipboardControlSession.Role) {
+    /// channel, or `nil` where that channel brings it none.
+    init?(kind: ClipboardControlSession.Kind, receiver: ClipboardControlSession.Role) {
         self.init(kind: kind, sender: receiver == .host ? .guest : .host)
     }
 
     private init(
         flow: Flow, supersedes: Bool, dedups: Bool, readout: Readout,
         servingGesture: ClipboardTransferGesture, hasClaimDeadline: Bool, reportsSettle: Bool,
-        failsOnSessionEnd: Bool, cancelRetiresOffer: Bool, ownerWithdraws: Bool,
-        servesInline: Bool, namesEveryUnit: Bool, cachesMaterialized: Bool,
-        retiresOnSessionEnd: Bool, stagingRetention: ClipboardFileStaging.Retention
+        failsOnSessionEnd: Bool, cancelRetiresOffer: Bool, servesInline: Bool,
+        namesEveryUnit: Bool, cachesMaterialized: Bool, retiresOnSessionEnd: Bool
     ) {
         self.flow = flow
         self.supersedes = supersedes
@@ -129,27 +107,22 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         self.reportsSettle = reportsSettle
         self.failsOnSessionEnd = failsOnSessionEnd
         self.cancelRetiresOffer = cancelRetiresOffer
-        self.ownerWithdraws = ownerWithdraws
         self.servesInline = servesInline
         self.namesEveryUnit = namesEveryUnit
         self.cachesMaterialized = cachesMaterialized
         self.retiresOnSessionEnd = retiresOnSessionEnd
-        self.stagingRetention = stagingRetention
     }
 
     // MARK: - Vocabulary
 
-    /// The frame announcing `reps` under `generation`; only a drag out carries
-    /// `promised` items.
+    /// The frame announcing `reps` under `generation`.
     func offerFrame(
-        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool,
-        promised: [Int]
+        generation: UInt64, reps: [Kernova_V1_ClipboardRepresentationInfo], isConcealed: Bool
     ) -> Frame {
         switch flow {
         case .clipboard:
             .clipboardOffer(generation: generation, reps: reps, isConcealed: isConcealed)
         case .drop: .dropOffer(generation: generation, reps: reps)
-        case .dragOut: .dragOffer(generation: generation, reps: reps, promised: promised)
         }
     }
 
@@ -158,7 +131,6 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         switch flow {
         case .clipboard: .clipboardRelease(generation: generation)
         case .drop: .dropRelease(generation: generation)
-        case .dragOut: .dragRelease(generation: generation)
         }
     }
 
@@ -167,7 +139,6 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         switch flow {
         case .clipboard: "Request for superseded generation \(generation)"
         case .drop: "No live drop for generation \(generation)"
-        case .dragOut: "No live drag for generation \(generation)"
         }
     }
 
@@ -175,7 +146,7 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
     func rangeMessage(repIndex: Int) -> String {
         switch flow {
         case .clipboard: "Representation index \(repIndex) out of range"
-        case .drop, .dragOut: "Item index \(repIndex) out of range"
+        case .drop: "Item index \(repIndex) out of range"
         }
     }
 
@@ -184,7 +155,6 @@ struct ClipboardOfferDiscipline: Equatable, Sendable {
         switch flow {
         case .clipboard: "Requested UTI '\(uti)' does not match offered representation"
         case .drop: "Requested UTI '\(uti)' does not match the dropped item"
-        case .dragOut: "Requested UTI '\(uti)' does not match the dragged item"
         }
     }
 }

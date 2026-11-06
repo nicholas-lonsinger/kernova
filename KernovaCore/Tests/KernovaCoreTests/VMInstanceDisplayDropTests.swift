@@ -17,11 +17,9 @@ import Testing
 @Suite("VMInstance display drop availability", .caseScoped)
 @MainActor
 struct VMInstanceDisplayDropTests {
-    /// A VM instance plus the socket pairs its drag-out service runs on.
+    /// A VM instance in a running session.
     private final class Harness {
         let instance: VMInstance
-        private var channels: [VsockChannel] = []
-        private let stagingRoot = TestStagingRoot()
 
         @MainActor
         init(
@@ -34,8 +32,6 @@ struct VMInstanceDisplayDropTests {
                 $0.clipboardSharingEnabled = clipboardSharingEnabled
                 $0.dropFilesEnabled = dropFilesEnabled
             }
-            // The services below are session state, so they need a session to
-            // live in — the boot paths open one before any listener is wired.
             instance.beginSessionContextForTesting()
         }
 
@@ -46,57 +42,11 @@ struct VMInstanceDisplayDropTests {
                 AgentHubSnapshot(
                     peers: [], features: FeatureStatus.merge([]), consolePeers: peer.map { [.drop: $0] } ?? [:]))
         }
-
-        @MainActor
-        @discardableResult
-        func attachDrop() throws -> VsockChannel {
-            let (guest, host) = try makePair()
-            let service = VsockDropService(
-                channel: host, label: "Drop VM", reporter: instance.clipboardTransfers,
-                stagingRoot: stagingRoot.root, stagingKey: "drop-vm")
-            instance.sessionContext?.vsock.drop = service
-            service.start()
-            return guest
-        }
-
-        /// Offers a one-file drag from the guest end and waits for the drop
-        /// service to hold it.
-        @MainActor
-        func offerDrag(on guest: VsockChannel, generation: UInt64 = 1) async throws {
-            try guest.send(
-                .dragOffer(
-                    generation: generation,
-                    reps: [
-                        RepInfo(uti: "public.data", byteCount: 4, filename: "a.bin", isInline: false)
-                            .wire
-                    ]))
-            try await waitForChange {
-                self.instance.vsockDropService?.guestDrag?.generation == generation
-            }
-        }
-
-        @MainActor
-        private func makePair() throws -> (guest: VsockChannel, host: VsockChannel) {
-            let (guestFd, hostFd) = try makeRawSocketPair()
-            let guest = VsockChannel(fileDescriptor: guestFd)
-            let host = VsockChannel(fileDescriptor: hostFd)
-            guest.start()
-            host.start()
-            channels.append(contentsOf: [guest, host])
-            return (guest, host)
-        }
-
-        @MainActor
-        func tearDown() {
-            instance.vsockDropService?.stop()
-            for channel in channels { channel.close() }
-        }
     }
 
     @Test("a VM that has never seen an agent is not a drag destination")
     func neverConnectedIsNotADestination() {
         let harness = Harness(lastSeenAgentVersion: nil)
-        defer { harness.tearDown() }
 
         #expect(harness.instance.displayDropAvailability == .none)
     }
@@ -106,7 +56,6 @@ struct VMInstanceDisplayDropTests {
         // A Linux guest never records an agent version, so this is belt and
         // braces; the guest-OS check is what makes it explicit.
         let harness = Harness(guestOS: .linux, lastSeenAgentVersion: "1.0.0")
-        defer { harness.tearDown() }
 
         #expect(harness.instance.displayDropAvailability == .none)
     }
@@ -114,7 +63,6 @@ struct VMInstanceDisplayDropTests {
     @Test("a VM whose agent has connected before, but isn't now, refuses the drag")
     func previouslyConnectedRefuses() {
         let harness = Harness()
-        defer { harness.tearDown() }
 
         // Registered as a destination (not `.none`), so the drag participates and
         // springs back rather than passing through to whatever is behind.
@@ -124,7 +72,6 @@ struct VMInstanceDisplayDropTests {
     @Test("a hub whose peers offer no DROP still refuses")
     func requiresADropConsolePeer() {
         let harness = Harness()
-        defer { harness.tearDown() }
 
         harness.publishConsolePeer(nil)
 
@@ -135,7 +82,6 @@ struct VMInstanceDisplayDropTests {
     @Test("a DROP console peer makes a running VM a destination that takes the drop")
     func consolePeerMakesItAvailable() {
         let harness = Harness()
-        defer { harness.tearDown() }
 
         harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
@@ -147,7 +93,6 @@ struct VMInstanceDisplayDropTests {
     @Test("a VM with drag and drop switched off is not a drag destination")
     func dropToggleOffIsNotADestination() {
         let harness = Harness(dropFilesEnabled: false)
-        defer { harness.tearDown() }
         harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
         // `.none` rather than `.disconnected`: the display unregisters, so a drag
@@ -159,7 +104,6 @@ struct VMInstanceDisplayDropTests {
     @Test("drag and drop is independent of clipboard sharing")
     func dropIsIndependentOfClipboardSharing() {
         let harness = Harness(clipboardSharingEnabled: false)
-        defer { harness.tearDown() }
 
         harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
@@ -170,7 +114,6 @@ struct VMInstanceDisplayDropTests {
     @Test("the policy turns DROP on and off with the drag and drop setting", arguments: [true, false])
     func policyFollowsTheSetting(enabled: Bool) {
         let harness = Harness(dropFilesEnabled: enabled)
-        defer { harness.tearDown() }
 
         let policy = harness.instance.agentHubPolicy(for: harness.instance.configuration)
 
@@ -182,7 +125,6 @@ struct VMInstanceDisplayDropTests {
     @Test("a paused VM refuses the drag — its guest is frozen, not gone")
     func pausedRefusesTheDrag() {
         let harness = Harness()
-        defer { harness.tearDown() }
         harness.publishConsolePeer(PeerHandle(rawValue: 1))
 
         // Pausing ends no connection, so the hub still names DROP's console
@@ -196,7 +138,6 @@ struct VMInstanceDisplayDropTests {
     @Test("losing DROP's console peer downgrades an available VM back to a refusal")
     func losingTheConsolePeerRefusesAgain() {
         let harness = Harness()
-        defer { harness.tearDown() }
         harness.publishConsolePeer(PeerHandle(rawValue: 1))
         #expect(harness.instance.displayDropAvailability == .available)
 
@@ -210,7 +151,6 @@ struct VMInstanceDisplayDropTests {
     @Test("a drop reports itself on a VM whose Clipboard Sharing is switched off")
     func dropReportsWithClipboardSharingOff() throws {
         let harness = Harness(clipboardSharingEnabled: false)
-        defer { harness.tearDown() }
         let instance = harness.instance
         // The toggle disables the clipboard toolbar items that carry the bar,
         // which is why the menu-bar status item — driven by this report alone —
@@ -241,100 +181,5 @@ struct VMInstanceDisplayDropTests {
         // The Cancel it carries reaches the drop through the same report.
         #expect(instance.clipboardTransfers.cancel(shown.operationID))
         withExtendedLifetime(operation) {}
-    }
-
-    // MARK: - Dragging out
-
-    /// A display that records only whether a take handed the press back.
-    @MainActor
-    private final class ResumeRecordingDisplay: GuestDragDisplay {
-        private(set) var resumed = false
-        let changed = AsyncGate()
-
-        func injectNudge(_ nudge: GuestDragNudge) {}
-        func injectDrag(at point: CGPoint) {}
-        func returnToExitPoint() {}
-        func injectRelease() {}
-        func beginHostSession(carrying take: any GuestDragTaking) -> Bool { false }
-
-        func resumeForwarding() {
-            resumed = true
-            changed.notify()
-        }
-    }
-
-    /// What can stand between a guest's drag and its display.
-    enum DragGate: CaseIterable, Sendable {
-        case settingOff
-        case notRunning
-        case serviceStopped
-    }
-
-    @Test("a running macOS guest's drag is one its display may take")
-    func guestDragIsOfferedToTheDisplay() async throws {
-        let harness = Harness()
-        defer { harness.tearDown() }
-        let guest = try harness.attachDrop()
-
-        try await harness.offerDrag(on: guest)
-
-        #expect(harness.instance.displayGuestDrag?.generation == 1)
-        #expect(harness.instance.displayGuestDrag?.items.map(\.filename) == ["a.bin"])
-    }
-
-    @Test("the display is offered no guest drag past a gate", arguments: DragGate.allCases)
-    func guestDragIsGated(_ gate: DragGate) async throws {
-        let harness = Harness(dropFilesEnabled: gate != .settingOff)
-        defer { harness.tearDown() }
-        let guest = try harness.attachDrop()
-        try await harness.offerDrag(on: guest)
-
-        switch gate {
-        case .settingOff: break
-        case .notRunning: harness.instance.activity.placeForTesting(.suspended)
-        case .serviceStopped: harness.instance.vsockDropService?.stop()
-        }
-
-        #expect(harness.instance.displayGuestDrag == nil)
-        #expect(harness.instance.takeGuestDrag(display: ResumeRecordingDisplay()) == nil)
-    }
-
-    @Test("a Linux guest's display is never offered a drag")
-    func linuxIsNeverOfferedADrag() async throws {
-        let harness = Harness(guestOS: .linux)
-        defer { harness.tearDown() }
-        let guest = try harness.attachDrop()
-        try await harness.offerDrag(on: guest)
-
-        #expect(harness.instance.displayGuestDrag == nil)
-    }
-
-    @Test("a new press on the display clears the drag on offer")
-    func pressClearsTheDrag() async throws {
-        let harness = Harness()
-        defer { harness.tearDown() }
-        let guest = try harness.attachDrop()
-        try await harness.offerDrag(on: guest)
-
-        harness.instance.displayPressBegan()
-
-        #expect(harness.instance.displayGuestDrag == nil)
-    }
-
-    @Test("a take holds only while the VM runs: pausing hands the press back")
-    func pausingAbandonsTheTake() async throws {
-        let harness = Harness()
-        defer { harness.tearDown() }
-        let guest = try harness.attachDrop()
-        try await harness.offerDrag(on: guest)
-        let display = ResumeRecordingDisplay()
-
-        let take = try #require(harness.instance.takeGuestDrag(display: display))
-        #expect(take.generation == 1)
-        #expect(harness.instance.displayGuestDrag == nil)
-
-        harness.instance.activity.placeForTesting(.suspended)
-
-        try await display.changed.wait { display.resumed }
     }
 }

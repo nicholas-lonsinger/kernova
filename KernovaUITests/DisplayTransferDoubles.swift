@@ -3,6 +3,7 @@ import KernovaKit
 import KernovaTestSupport
 import Observation
 import Synchronization
+import UniformTypeIdentifiers
 
 @testable import KernovaCore
 
@@ -50,6 +51,7 @@ final class FakeTake: GuestDragTaking {
         case withheldMouseUp
         case pointerReturned
         case displayAbandoned
+        case hostSessionWillBegin
         case hostSessionMoved
         case hostSessionOver(CGPoint)
         case hostSessionLeft
@@ -58,8 +60,7 @@ final class FakeTake: GuestDragTaking {
         case namedItemsForInAppDestination
     }
 
-    nonisolated let generation: UInt64 = 1
-    nonisolated let items: [ClipboardDraggedItem]
+    nonisolated let items: [DraggedOutItem]
     private(set) var events: [Event] = []
 
     /// Runs on each withheld drag, so a test can answer as a take would.
@@ -86,11 +87,28 @@ final class FakeTake: GuestDragTaking {
 
     /// Every write asked for, by item index and destination.
     nonisolated let writes = Mutex<[(index: Int, destination: URL)]>([])
-    /// What a write throws, or `nil` to succeed.
+    /// What a write fails with, or `nil` to succeed.
     nonisolated let writeError = Mutex<(any Error & Sendable)?>(nil)
 
-    init(items: [ClipboardDraggedItem]) {
+    /// What runs once the test retires the take.
+    private var retirement: [@MainActor () -> Void] = []
+    private(set) var isRetired = false
+
+    init(items: [DraggedOutItem]) {
         self.items = items
+    }
+
+    func whenRetired(_ body: @escaping @MainActor () -> Void) {
+        guard !isRetired else { return body() }
+        retirement.append(body)
+    }
+
+    /// Retires the take, as a real one does once it delivers nothing more.
+    func retire() {
+        isRetired = true
+        let retired = retirement
+        retirement.removeAll()
+        for body in retired { body() }
     }
 
     func withheldDrag() {
@@ -109,6 +127,8 @@ final class FakeTake: GuestDragTaking {
     }
 
     func displayAbandoned() { events.append(.displayAbandoned) }
+
+    func hostSessionWillBegin() { events.append(.hostSessionWillBegin) }
 
     func hostSessionMoved() { events.append(.hostSessionMoved) }
 
@@ -134,7 +154,7 @@ final class FakeTake: GuestDragTaking {
     }
 
     nonisolated func filename(forItemAt index: Int) -> String {
-        items[index].filename ?? "File"
+        items[index].filename
     }
 
     func nameItemsForInAppDestination() -> Bool {
@@ -142,23 +162,17 @@ final class FakeTake: GuestDragTaking {
         return onNameItems()
     }
 
-    nonisolated func writeItem(at index: Int, to destination: URL) throws {
+    nonisolated func writeItem(
+        at index: Int, to destination: URL, completion: @escaping @Sendable ((any Error)?) -> Void
+    ) {
         writes.withLock { $0.append((index, destination)) }
-        if let error = writeError.withLock({ $0 }) { throw error }
+        completion(writeError.withLock { $0 })
     }
 }
 
-extension ClipboardDraggedItem {
-    /// A dragged item as the guest would declare it.
-    static func declared(
-        _ filename: String, uti: String = "public.data", isDirectory: Bool = false,
-        byteCount: UInt64 = 1, at repIndex: Int = 0
-    ) -> ClipboardDraggedItem {
-        ClipboardDraggedItem(
-            repIndex: repIndex,
-            declared: RepInfo(
-                uti: uti, byteCount: byteCount, filename: filename, isInline: false,
-                isDirectory: isDirectory
-            ).wire, isPromised: false)
+extension DraggedOutItem {
+    /// A dragged item as the guest would offer it.
+    static func declared(_ filename: String, type: UTType = .data, isDirectory: Bool = false) -> DraggedOutItem {
+        DraggedOutItem(name: Data(filename.utf8), type: type, isDirectory: isDirectory)
     }
 }

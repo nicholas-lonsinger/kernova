@@ -37,6 +37,12 @@ message Frame {
   // rep now rides the plain-file stream path as a request-time archive.
   reserved 29;
 
+  // 43..49, 60 and 61 were `DragOffer`, `DragComplete`, `DragRelease`,
+  // `DragTake`, `DragHandOff`, `DragCatcher`, `DragSizes`, `DragResolve` and
+  // `DragNames`, the guest's drag out of the VM display on the drop channel.
+  // Never reuse — reserved for wire history.
+  reserved 43, 44, 45, 46, 47, 48, 49, 60, 61;
+
   oneof payload {
     Hello hello = 10;
     Error error = 11;
@@ -67,13 +73,8 @@ message Frame {
     DropOffer drop_offer = 40;
     DropComplete drop_complete = 41;
     DropRelease drop_release = 42;
-    DragOffer drag_offer = 43;
-    DragComplete drag_complete = 44;
-    DragRelease drag_release = 45;
-    DragTake drag_take = 46;
-    DragHandOff drag_hand_off = 47;
-    DragCatcher drag_catcher = 48;
-    DragSizes drag_sizes = 49;
+
+    // 43..49 retired (see `reserved` above).
 
     // 50..59: the clipboard data connection. One guest-initiated vsock
     // connection per transfer carries these two frames as its header, then the
@@ -82,8 +83,7 @@ message Frame {
     ClipboardTransferRequest clipboard_transfer_request = 50;
     ClipboardTransferReply clipboard_transfer_reply = 51;
 
-    DragResolve drag_resolve = 60;
-    DragNames drag_names = 61;
+    // 60, 61 retired (see `reserved` above).
   }
 }
 
@@ -249,8 +249,7 @@ message ClipboardOffer {
   bool is_concealed = 5;
 }
 
-// Sent in response to a `ClipboardOffer` — or, on the drop channel, a
-// `DragOffer` — to pull one representation's bytes, by the side that cannot
+// Sent in response to a `ClipboardOffer` to pull one representation's bytes, by the side that cannot
 // dial: the host, which only ever accepts vsock connections. The OS asks the
 // pasteboard per type, so a paste pulls only the representation actually read;
 // the requester sends one `ClipboardRequest` per representation it consumes.
@@ -410,9 +409,8 @@ message PolicyUpdate {
   // `0` means unset — the receiver uses its own built-in default.
   uint64 clipboard_max_paste_bytes = 3;
 
-  // Whether the guest's drop agent should dial the drop port, take
-  // `DropOffer` frames, and — with the host's `drag.out.files.v1` — offer the
-  // files dragged out of the guest as `DragOffer` frames. The host binds the
+  // Whether the guest's drop agent should dial the drop port and take
+  // `DropOffer` frames. The host binds the
   // drop and drop-data ports only while this is set, so a guest that dials
   // anyway is refused every retry interval for as long as the setting is off.
   bool drop_files_enabled = 4;
@@ -492,132 +490,4 @@ message DropComplete {
 // Downloads, and replies `DropComplete{OUTCOME_CANCELLED}`.
 message DropRelease {
   uint64 generation = 1;
-}
-
-// Guest->host: a drag carrying files is in progress in the guest. Metadata
-// only, like `DropOffer` in the other direction. The host may take it over
-// (`DragTake`) once the pointer leaves the VM display, and pulls each item it
-// needs with a `ClipboardRequest` on this channel, which the guest answers
-// over the drop data port. Every representation but a promised one carries a
-// non-empty `filename`; `is_inline` is ignored, and so is a folder's
-// `byte_count`: the guest lists no folder's contents to offer a drag, and
-// sends the folders' sizes in `DragSizes` once the host takes it.
-message DragOffer {
-  // Per-connection counter, starting at 1, scoped to the guest. Several drags
-  // can be live at once: a taken drag stays pullable while a new one starts.
-  uint64 generation = 1;
-
-  // Metadata for each dragged item, in the order the drag carried them.
-  repeated ClipboardRepresentationInfo rep_info = 2;
-
-  // Indices into `rep_info` of the items the drag carries as file promises,
-  // which exist only once a destination calls them in. Each declares only its
-  // promised type in `uti`, with an empty `filename`, a `byte_count` of 0, and
-  // `is_directory` set when that type conforms to `public.directory`. Once the
-  // host's `DragResolve` has them called in, the guest names each in
-  // `DragNames` as it is called in, and sizes each in `DragSizes` once it is
-  // written.
-  repeated uint32 promised = 3;
-}
-
-// Host->guest: the host is done with the drag for `generation` — nothing will
-// pull from it again, or a take that was not caught is abandoned. The guest
-// retires the offer and orders out a catcher armed for it — at once, or, for
-// one still up that refused the drag after it was targeted, once the guest's
-// drag ends, refusing its drop.
-message DragComplete {
-  uint64 generation = 1;
-}
-
-// Guest->host: the guest withdraws the drag for `generation` — it ended inside
-// the guest, or a newer drag in the same press replaced it. A host that has
-// already taken `generation` treats this as that take's `STAGE_FAILED`.
-message DragRelease {
-  uint64 generation = 1;
-}
-
-// Host->guest: the pointer left the VM display holding the drag for
-// `generation`; the guest arms its catcher and reports each step in
-// `DragHandOff`.
-message DragTake {
-  uint64 generation = 1;
-}
-
-// Host->guest: the Mac drag session carrying the drag for `generation`
-// entered this VM's display (`shown` false) or left it (`shown` true). Entering,
-// the guest orders its catcher out and keeps the take, and the host moves the
-// guest pointer with the session; leaving, the guest orders the catcher front
-// again and reports `STAGE_ARMED`, then `STAGE_TARGETED` as the guest drag
-// manager re-enters it. A catcher this side already failed stays out.
-message DragCatcher {
-  uint64 generation = 1;
-  bool shown = 2;
-}
-
-// Guest->host: one step of the hand-off for `generation`.
-message DragHandOff {
-  uint64 generation = 1;
-
-  enum Stage {
-    STAGE_UNSPECIFIED = 0;
-    // The catcher is ordered front under the pointer — once for `DragTake`,
-    // and once for each `DragCatcher` that shows it again.
-    STAGE_ARMED = 1;
-    // The guest drag manager entered the catcher, which answered copy.
-    STAGE_TARGETED = 2;
-    // The guest drag ended on the catcher; its items stay pullable.
-    STAGE_CAUGHT = 3;
-    // The hand-off cannot complete — see `code` and `message`.
-    STAGE_FAILED = 4;
-    // Answers `DragResolve`: the catcher will call the drag's promises in when
-    // the drop lands on it. The one step after which the host releases the
-    // guest's button to resolve them.
-    STAGE_RESOLVING = 5;
-    // Answers a `DragResolve` the catcher will not act on — it holds no such
-    // take, or the drag is not on it, or it was caught or refused. The take
-    // stands as it was: this says nothing about the hand-off.
-    STAGE_RESOLVE_REFUSED = 6;
-  }
-  Stage stage = 2;
-
-  // `ClipboardErrorCode` raw value for `STAGE_FAILED`; empty otherwise.
-  string code = 3;
-
-  // Human-readable detail for logs. Never rendered in host UI.
-  string message = 4;
-}
-
-// Guest->host: sizes for items of the drag for `generation` whose offer
-// carried none — its folders, measured once the guest accepted the host's
-// `DragTake`, and its promised items, each once its file is written. Each
-// frame settles only the items it lists; the host pulls no folder or promised
-// item until a frame has settled it. The drag's plain files carry their sizes
-// in the offer.
-message DragSizes {
-  uint64 generation = 1;
-
-  // Each listed item's size — a folder's or a promised folder's measured tree,
-  // the sum of its regular files — keyed by its index in the offer.
-  map<uint32, uint64> byte_counts = 2;
-
-  // Indices of items that will never be sized, such as a promise its source
-  // failed to write. The host refuses their pulls.
-  repeated uint32 unavailable = 3;
-}
-
-// Host->guest: a Mac destination wants the promised items of the drag for
-// `generation`. The guest answers `DragHandOff{STAGE_RESOLVING}` once its
-// catcher will call them in on the drop the host then releases onto it, or
-// `STAGE_RESOLVE_REFUSED`, and sends `DragNames` as they are called in.
-message DragResolve {
-  uint64 generation = 1;
-}
-
-// Guest->host: names for promised items of the drag for `generation`, sent as
-// the catcher calls each in, keyed by the item's index in the offer. Each
-// frame names only the items it lists, and names accumulate across frames; an
-// empty name means that item will not be named.
-message DragNames {
-  uint64 generation = 1;
-  map<uint32, string> filenames = 2;
 }
