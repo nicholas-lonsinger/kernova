@@ -299,21 +299,15 @@ package actor VMSession: VMSessionOperating {
         }
     }
 
-    // MARK: - Vsock Listeners
+    // MARK: - Agent Listener
 
-    /// The listener hosts bound to this VM's socket device, keyed by port.
+    /// The agent transport's listener host while it is bound.
     ///
     /// VZ holds a `VZVirtioSocketListener`'s delegate weakly and its accept
     /// method is `@optional`, so a listener whose host has been released stays
     /// bound to its port with undocumented admission behavior. The session
-    /// retains each host for exactly as long as its listener is bound.
-    private var socketListenerHosts: [UInt32: any VsockPortListening] = [:]
-
-    /// Installs every listener in `listeners` in one hop, replacing whatever
-    /// was bound to the ports they serve.
-    package func attach(_ listeners: [VsockListener]) {
-        for host in listeners.map(VsockListenerHost.init) { bind(host) }
-    }
+    /// retains the host for exactly as long as its listener is bound.
+    private var agentListener: AgentListenerHost?
 
     /// The agent hub's transport on this session's socket device, `nil` when
     /// the VM has none.
@@ -323,44 +317,22 @@ package actor VMSession: VMSessionOperating {
 
     /// Binds the agent transport's listener, replacing whatever held its port.
     func bindAgentListener(_ host: AgentListenerHost) {
-        bind(host)
-    }
-
-    private func bind(_ host: any VsockPortListening) {
         guard let device = virtioSocketDevice() else { return }
         // Store after the bind: `setSocketListener` has already replaced the
         // prior listener, so a displaced host is never released while it is
         // still the one bound.
         host.attach(to: device)
-        socketListenerHosts[host.port] = host
+        agentListener = host
     }
 
-    /// Unbinds every port in `ports` in one hop and releases the host that
-    /// served it. A port this session never bound is skipped.
-    package func detach(ports: [UInt32]) {
-        guard !ports.isEmpty, let device = virtioSocketDevice() else { return }
-        for port in ports {
-            guard let host = socketListenerHosts.removeValue(forKey: port) else { continue }
-            // `host` outlives the unbind, so the delegate is released only
-            // once the port it served is gone.
-            host.detach(from: device)
-        }
-    }
-
-    /// Unbinds every listener this session still has bound.
-    ///
-    /// Ordered fire-and-forget on the session's queue, the same contract as
-    /// ``detachNetworkAttachment()``: the queued unbind retains the session,
-    /// which retains the hosts, so releasing the session cannot leave a port
-    /// bound to a delegate that is already gone. Releasing it is not enough on
-    /// its own — the `VZVirtualMachine` outlives the session whenever the
-    /// display view is still holding it.
-    package nonisolated func detachRemainingListeners() {
-        queue.async {
-            self.assumeIsolated { session in
-                session.detach(ports: Array(session.socketListenerHosts.keys))
-            }
-        }
+    /// Unbinds the agent transport's listener and releases its host; a no-op
+    /// when none is bound.
+    func unbindAgentListener() {
+        guard let host = agentListener, let device = virtioSocketDevice() else { return }
+        agentListener = nil
+        // `host` outlives the unbind, so the delegate is released only once
+        // the port it served is gone.
+        host.detach(from: device)
     }
 
     private func virtioSocketDevice() -> VZVirtioSocketDevice? {

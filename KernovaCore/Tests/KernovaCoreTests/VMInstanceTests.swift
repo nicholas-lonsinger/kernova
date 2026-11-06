@@ -1244,9 +1244,8 @@ struct VMInstanceTests {
         ])
     func watchdogNoopUnlessRunning(phase fixture: PhaseFixture) {
         // A live-paused guest is frozen: it cannot say Hello, so a grace clock
-        // running against it would blame the agent for the user's pause. The
-        // control channel settles for silence at the same time, which is what
-        // re-arms the watchdog — hence the guard rather than caller discipline.
+        // running against it would blame the agent for the user's pause —
+        // hence the guard rather than caller discipline.
         let instance = makeMacOSInstanceWithAgentInstalled()
         instance.activity.placeForTesting(fixture.phase)
 

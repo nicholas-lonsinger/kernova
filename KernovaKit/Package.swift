@@ -45,9 +45,7 @@ var dependencies: [Package.Dependency] = [
 var targets: [Target] = [
     // The one logging spelling: `KernovaLogger` and the `LogMessage` its
     // `log(_:_:)` takes. Its own target so the relaunch helper can link it
-    // without linking everything else, and so it stays clear of
-    // SwiftProtobuf — `KernovaLogLevel` is what a forwarded record carries,
-    // and `VsockHostConnection` maps it to the proto enum.
+    // without linking everything else.
     .target(
         name: "KernovaLogging",
         dependencies: ["KernovaSynchronization"],
@@ -403,10 +401,7 @@ targets += [
             "KernovaSynchronization",
             "KernovaFileTree",
             "KernovaWire",
-            .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
-        // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
-        exclude: ["Proto/kernova.proto"],
         swiftSettings: sharedSwiftSettings
     ),
     // What the app and the `kernova` tool share and no guest agent links:

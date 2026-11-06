@@ -7,11 +7,11 @@ import Virtualization
 extension VMInstance {
     /// Brings a built configuration all the way up: adopts its pipes and media,
     /// creates the `VZVirtualMachine`, and starts the serial, clipboard and
-    /// vsock plumbing that rides it.
+    /// agent-transport plumbing that rides it.
     ///
     /// The whole of what a boot path does between building a configuration and
     /// telling VZ to run, so a cold boot and a restore cannot drift apart. The
-    /// install path stops short of the vsock listeners and stays hand-wired.
+    /// install path stops short of the agent transport and stays hand-wired.
     ///
     /// `nil` for the same reason ``attachSession(_:from:)`` returns `nil`, and
     /// the caller must not proceed to start anything.
@@ -22,7 +22,7 @@ extension VMInstance {
         guard let session = await attachSession(context, from: result) else { return nil }
         startSerialReading()
         startClipboardService()
-        await startVsockServices()
+        attachSessionAgentTransport()
         return session
     }
 

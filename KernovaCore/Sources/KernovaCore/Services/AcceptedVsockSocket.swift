@@ -1,8 +1,8 @@
 import Foundation
 import KernovaLogging
 
-/// The host's first steps on a vsock connection the guest opened, for every
-/// listener: v1's ports and the agent hub's.
+/// The host's first steps on a vsock connection the guest opened to the agent
+/// hub's listener.
 package enum AcceptedVsockSocket {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AcceptedVsockSocket")
 

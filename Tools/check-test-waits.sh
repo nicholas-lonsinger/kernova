@@ -3,9 +3,8 @@
 # inside the span, and a starved CI runner loses the bet: a positive wait
 # fails, and a sleep-then-assert-nothing check passes before the thing it
 # rules out could have happened. A test wait ends on the event it waits for,
-# through the seams in KernovaTestSupport (`AsyncGate`, `nextFrame`,
-# `expectNoNewFrames`, `testWaitBackstop`) and KernovaCoreTestSupport
-# (`waitForChange`).
+# through the seams in KernovaTestSupport (`AsyncGate`, `testWaitBackstop`)
+# and KernovaCoreTestSupport (`waitForChange`).
 #
 # Scope is every tracked Swift file with a directory component ending in
 # `Tests`: a test target, its `Support/` folder included. A test-support module

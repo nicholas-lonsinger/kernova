@@ -38,7 +38,7 @@ package enum VMSessionError: Error {
 /// The engine makes each session and hands it to ``VMActivity`` to hold; an
 /// operation whose arguments are Virtualization objects is the engine's own,
 /// on the concrete session.
-package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, VsockListenerInstalling {
+package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating {
     /// Session identity, carried by every delivered event so the owner can
     /// drop events from a session it has already replaced.
     var id: UUID { get }
@@ -63,10 +63,6 @@ package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating, Vsoc
     /// Throws `VMSessionError.usbControllerUnavailable` when the VM has no
     /// controller, or the framework's error for an image it cannot open.
     func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID
-
-    /// Unbinds every vsock listener this session still has bound, ordered
-    /// fire-and-forget on the session's queue.
-    func detachRemainingListeners()
 
     /// The agent hub's transport on this session's socket device, `nil` when
     /// the VM has none.
