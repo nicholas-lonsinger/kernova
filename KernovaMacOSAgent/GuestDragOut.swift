@@ -26,7 +26,8 @@ import UniformTypeIdentifiers
 /// and no size for anything. The drop the host asks to deliver — a Mac
 /// destination took the drag — receives the promises (``GuestDragPromises``),
 /// serves them from the taken offer, and names them on the take
-/// (`STEP_NAMED`), then sizes its plain files and folders and ends the take
+/// (`STEP_NAMED`), then sizes every item whose file is at hand — its plain
+/// files and folders, and each promise already landed — and ends the take
 /// `CAUGHT` with their sizes. The taken offer carries the drag throughout, and
 /// this side never withdraws it once taken. A drop that does not deliver, and
 /// a drag that never leaves the guest, receives nothing.
@@ -127,8 +128,8 @@ final class GuestDragOut {
     // MARK: - Delivering
 
     /// Delivers the drag `claim` names, caught on a drop take `id` asked to
-    /// deliver: receives its promises off `drop`, then ``named(_:_:_:_:files:)``
-    /// serves and names them and sizes the plain files and folders. A drop
+    /// deliver: receives its promises off `drop`, then ``named(_:_:_:_:)``
+    /// serves and names them and sizes the drag's items. A drop
     /// holding other items than the take carried, or whose promises gave no
     /// names, ends `CAUGHT` undelivered.
     ///
@@ -145,12 +146,11 @@ final class GuestDragOut {
             Self.logger.log(.error, "The drop holds other items than the take carried; delivering none")
             return peer.answerTake(id, .caught(sizes: nil))
         }
-        let files = dropped.compactMap(\.fileURL)
         guard let first = dropped.firstIndex(where: { $0.fileURL == nil }) else {
             peer.answerTake(id, .report(.named([])))
-            return size(files, take: id)
+            return size(dropped.map(\.fileURL), take: id)
         }
-        let taken = files.map(\.lastPathComponent)
+        let taken = dropped.compactMap(\.fileURL?.lastPathComponent)
         guard let folder = promises.makeFolder() else { return peer.answerTake(id, .caught(sizes: nil)) }
         let refusal: String? =
             if !drop.offersPromisedFileURL(item: first) {
@@ -170,22 +170,23 @@ final class GuestDragOut {
                 Self.logger.log(.notice, "The drag's promises could not all be named; the host gets them unnamed")
                 return peer.answerTake(id, .caught(sizes: nil))
             }
-            return named(id, claim, carried, callIn, files: files)
+            return named(id, claim, carried, callIn)
         }
         Self.logger.log(.notice, "Asked the drag's source for every promise at once")
         let arrivals = promises.awaitArrivals(dropped, into: folder, taken: taken, input: input) {
             [weak self] callIn in
             guard let self, self.arriving.removeValue(forKey: id) != nil else { return }
-            self.named(id, claim, carried, callIn, files: files)
+            self.named(id, claim, carried, callIn)
         }
         arriving[id] = (claim.token, arrivals)
     }
 
     /// Serves `callIn`'s promises from the taken offer of `claim`, names them
-    /// on take `id`, then sizes `files` and ends the take `CAUGHT`.
+    /// on take `id`, then sizes the drag's items whose files are at hand and
+    /// ends the take `CAUGHT`.
     private func named(
         _ id: DragTakeID, _ claim: GuestDragWatcher.Claim, _ carried: GuestDragCatcher.Carried,
-        _ callIn: GuestDragPromises.CallIn, files: [URL]
+        _ callIn: GuestDragPromises.CallIn
     ) {
         guard
             let offered = GuestDraggedItems.offerItems(carried.items, promises: callIn.offered),
@@ -197,25 +198,31 @@ final class GuestDragOut {
         callIns[claim.token] = callIn
         let names = carried.items.indices.compactMap { callIn.offered[$0].map { Data($0.name.utf8) } }
         peer.answerTake(id, .report(.named(names)))
-        size(files, take: id)
+        size(carried.items.indices.map { carried.items[$0].fileURL ?? callIn.landed[$0] }, take: id)
     }
 
-    /// Sizes `files`, the drop's plain files and folders in drag order, and
-    /// ends take `id` `CAUGHT` with their sizes. This is the first read of a
-    /// dragged file, made only at the drop
-    /// (``GuestDraggedItems/offerItems(_:promises:sizes:)``); a file that
-    /// cannot be read is sized `0`, and its pull fails.
-    private func size(_ files: [URL], take id: DragTakeID) {
-        input.sizeFiles(files) { [weak self] sizes in
-            let unread = sizes.count { $0 == nil }
+    /// Sizes `files`, one per item of the drag in its order, nil for a promise
+    /// not yet landed, and ends take `id` `CAUGHT` with their sizes, `0` for
+    /// each one unknown. This is the first read of a dragged plain file, made
+    /// only at the drop (``GuestDraggedItems/offerItems(_:promises:sizes:)``);
+    /// a file that cannot be read is sized `0`, and its pull fails.
+    private func size(_ files: [URL?], take id: DragTakeID) {
+        let present = files.indices.filter { files[$0] != nil }
+        input.sizeFiles(present.compactMap { files[$0] }) { [weak self] read in
+            let unread = read.count { $0 == nil }
             if unread > 0 {
                 Self.logger.log(
                     .error,
-                    "\(unread, privacy: .public) of the drag's \(sizes.count, privacy: .public) files could not be read"
+                    "\(unread, privacy: .public) of the drag's \(read.count, privacy: .public) files could not be read"
                 )
             }
-            self?.peer.answerTake(id, .caught(sizes: sizes.map { UInt64(max($0 ?? 0, 0)) }))
-            Self.logger.log(.notice, "Delivered the drag: its promises named and its files sized")
+            var sizes = [UInt64](repeating: 0, count: files.count)
+            for (index, size) in zip(present, read) { sizes[index] = UInt64(max(size ?? 0, 0)) }
+            self?.peer.answerTake(id, .caught(sizes: sizes))
+            Self.logger.log(
+                .notice,
+                "Delivered the drag: its promises named and \(present.count, privacy: .public) of its \(files.count, privacy: .public) items sized"
+            )
         }
     }
 
@@ -274,8 +281,8 @@ protocol GuestDragInput: AnyObject {
     /// until cancelled.
     func holdActivity(reason: String) -> GuestDragCancel
 
-    /// Opens and sizes each of `urls`, a delivering drop's plain files and
-    /// folders, off the main actor as a pull would open it — a file by its
+    /// Opens and sizes each of `urls`, a delivering drop's files and folders
+    /// at hand, off the main actor as a pull would open it — a file by its
     /// size, a folder by a walk of its tree — and hands back on it their sizes
     /// in order, nil for one that cannot be read.
     func sizeFiles(_ urls: [URL], then completion: @escaping @MainActor @Sendable ([Int?]) -> Void)

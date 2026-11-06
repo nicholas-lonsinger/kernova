@@ -59,6 +59,7 @@ package final class HubDragOut {
     @ObservationIgnored private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
     @ObservationIgnored private let reporter: ClipboardTransferReporter
     @ObservationIgnored private let peerName: @MainActor () -> String
+    @ObservationIgnored private let progressRevealDelay: TimeInterval
 
     /// Every take still running, each with its offer's token: held by the
     /// take, since a guest may offer a token again while a take of it runs.
@@ -75,13 +76,16 @@ package final class HubDragOut {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubDragOut")
 
     /// An owner landing its pulls through `sink`, reporting them to `reporter`
-    /// under the name `peerName` gives.
+    /// under the name `peerName` gives, each readout revealed once it has run
+    /// `progressRevealDelay`.
     package init(
         sink: ItemSinkAdapter<POSIXTreeFileSystem>, reporter: ClipboardTransferReporter,
+        progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         peerName: @escaping @MainActor () -> String
     ) {
         self.sink = sink
         self.reporter = reporter
+        self.progressRevealDelay = progressRevealDelay
         self.peerName = peerName
     }
 
@@ -127,7 +131,7 @@ package final class HubDragOut {
         let transport = Transport(owner: self, hub: hub, peer: offer.peer, token: offer.token)
         let take = GuestDragTake(
             transport: transport, display: display, reporter: reporter,
-            peerName: peerName(), holds: holds,
+            peerName: peerName(), progressRevealDelay: progressRevealDelay, holds: holds,
             onFinished: { [weak self] finished in self?.takes.removeAll { $0.take === finished } },
             onHostSessionBegan: { [weak self] began in self?.hostSessionBegan(began) })
         takes.append((offer.token, take))
@@ -365,7 +369,7 @@ package final class HubDragOut {
         }
 
         /// `items` under the names `delivery` gives its promises and the sizes
-        /// it gives its other items.
+        /// it gives its items.
         private static func items(_ items: [DraggedOutItem], _ delivery: DragDelivery) -> [DraggedOutItem] {
             items.indices.map { index in
                 var item = items[index]

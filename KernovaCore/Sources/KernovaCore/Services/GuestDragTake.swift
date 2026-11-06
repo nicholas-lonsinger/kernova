@@ -250,7 +250,7 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// A drag a Mac destination takes is delivered: the take asks the guest
 /// (`DragDeliver`) and releases onto its catcher once the guest answers; the
 /// catcher's drop calls the promises in and names them on the take, then
-/// sizes its other items and ends it. Every item is pulled from the taken offer,
+/// sizes its items and ends it. Every item is pulled from the taken offer,
 /// which only this side ends. The first destination to ask a promised item's
 /// name starts that and waits for the names alone; one that took the drop
 /// without asking yet has it started as the session ends. That wait alone has
@@ -1075,14 +1075,16 @@ package final class GuestDragTake: GuestDragTaking {
     }
 
     /// The readout the writes report on — the one running, or a new one when
-    /// the last has ended — sized by the delivered items when there are any.
+    /// the last has ended — sized by the delivered items when there are any,
+    /// and counting files alone unless every item has a size.
     private func liveReadout() -> ClipboardTransferOperation {
         if let readout, readout.isLive { return readout }
         let sized: [DraggedOutItem]
         if case .delivered(let delivered)? = delivery.settled { sized = delivered } else { sized = items }
         let operation = ClipboardTransferOperation(
             gesture: .dragOut, direction: .inbound, peerName: peerName,
-            expectedBytes: sized.reduce(0) { $0 + $1.sizeEstimate }, expectedItems: items.count,
+            expectedBytes: sized.contains { $0.sizeEstimate == 0 } ? nil : sized.reduce(0) { $0 + $1.sizeEstimate },
+            expectedItems: items.count,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap,
             onCancelRequested: { [weak self] in
                 // Called outside the operation's lock on whichever thread saw

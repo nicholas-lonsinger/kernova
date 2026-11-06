@@ -11,7 +11,7 @@ import Testing
 
 /// A drag is one offer, whose items its take carries: the peer's DRAG_OFFER lists none, the take's first
 /// `TARGETED` lists the drag as its catcher sees it, a delivering drop's `STEP_NAMED` names the promises and the
-/// CAUGHT END sizes every other item, and the offer carries the drag throughout, ending only when the host releases
+/// CAUGHT END sizes every item, and the offer carries the drag throughout, ending only when the host releases
 /// it. What the peer says is checked as an offer is, and a hostile word fails the take cleanly.
 @Suite("DragDelivery")
 struct DragDeliveryTests {
@@ -77,7 +77,7 @@ struct DragDeliveryTests {
         return WireFrames.message(id.stream.rawValue, report)
     }
 
-    /// The peer's CAUGHT END on take `id`, sizing its unpromised items.
+    /// The peer's CAUGHT END on take `id`, sizing its items.
     static func caught(_ id: DragTakeID, _ sizes: [UInt64] = []) -> Frame {
         var outcome = Kernova_V2_DragTakeOutcome()
         outcome.kind = .caught
@@ -122,17 +122,17 @@ struct DragDeliveryTests {
         #expect(run.state == ConnectionState.established)
     }
 
-    @Test("STEP_NAMED names the promises, the END sizes the other items, and every item pulls from the taken offer")
+    @Test("STEP_NAMED names the promises, the END sizes every item, and every item pulls from the taken offer")
     func delivered() throws {
         let (run, id) = try Self.taking()
         run.feed([Self.naming(id, ["IMG_0042.heic"])])
         #expect(Self.namings(run) == [[Data("IMG_0042.heic".utf8)]])
         #expect(Self.ended(run).isEmpty)
 
-        run.feed([Self.caught(id, [2048, 4096])])
+        run.feed([Self.caught(id, [8192, 2048, 4096])])
         #expect(
             Self.ended(run) == [
-                .caught(DragDelivery(names: [0: Data("IMG_0042.heic".utf8)], sizes: [1: 2048, 2: 4096]))
+                .caught(DragDelivery(names: [0: Data("IMG_0042.heic".utf8)], sizes: [0: 8192, 1: 2048, 2: 4096]))
             ])
         for item in 0..<3 {
             #expect(
@@ -255,7 +255,7 @@ struct DragDeliveryTests {
 
     @Test(
         "sizes its taken offer cannot take end the take CAUGHT undelivered",
-        arguments: [[], [1], [1, 2, 3], [UInt64.max, 0], [UInt64(Int64.max), 1]] as [[UInt64]])
+        arguments: [[], [1, 2], [1, 2, 3, 4], [UInt64.max, 0, 0], [UInt64(Int64.max), 1, 0]] as [[UInt64]])
     func hostileSizes(_ sizes: [UInt64]) throws {
         let (run, id) = try Self.taking()
         run.feed([Self.naming(id, ["IMG.heic"]), Self.caught(id, sizes)])
@@ -285,7 +285,7 @@ struct DragDeliveryTests {
         run.input(.dragTake(id, .report(.targeted(Self.items(Self.drag)))))
         run.input(.dragTake(id, .report(.targeted(Self.items(Self.drag)))))
         run.input(.dragTake(id, .report(.named([Data("IMG.heic".utf8)]))))
-        run.input(.dragTake(id, .caught(sizes: [2048, 4096])))
+        run.input(.dragTake(id, .caught(sizes: [8192, 2048, 4096])))
         run.writerStalled = false
         run.drain()
 
@@ -298,7 +298,7 @@ struct DragDeliveryTests {
         #expect(reports.map(\.items.count) == [3, 0, 0], "only the first TARGETED lists the items")
         #expect(reports.last?.promiseNames == [Data("IMG.heic".utf8)])
         let end = try #require(onTake.last.flatMap { $0.type == .end ? $0 : nil })
-        #expect(try Kernova_V2_DragTakeOutcome(serializedBytes: end.payload).sizes == [2048, 4096])
+        #expect(try Kernova_V2_DragTakeOutcome(serializedBytes: end.payload).sizes == [8192, 2048, 4096])
 
         let takenEnded = {
             run.peerEvents.contains {

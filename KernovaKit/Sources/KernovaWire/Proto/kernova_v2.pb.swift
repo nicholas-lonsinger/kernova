@@ -2752,7 +2752,7 @@ public nonisolated struct Kernova_V2_DragCatcher: Sendable {
 }
 
 /// A Mac destination takes the drag: the next drop on the catcher delivers
-/// it, calling its promises in and sizing its other items. The peer answers
+/// it, calling its promises in and sizing its items. The peer answers
 /// DELIVERING, or DELIVER_REFUSED while the drag is not on its catcher.
 public nonisolated struct Kernova_V2_DragDeliver: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2885,10 +2885,11 @@ public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
   public mutating func clearError() {self._error = nil}
 
-  /// CAUGHT after STEP_NAMED, so by a delivering drop: each size estimate,
-  /// one per item of the taken offer that is not promised, in its order, the
-  /// drag's estimates summing to at most 2^63-1. A list breaking that reads as
-  /// CAUGHT undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
+  /// CAUGHT after STEP_NAMED, so by a delivering drop: each item's size
+  /// estimate, one per item of the taken offer, promised ones included, in its
+  /// order, under Representation.size_estimate's rule (0 when unknown), and
+  /// summing to at most 2^63-1. A list breaking that reads as CAUGHT
+  /// undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
   /// taken offer carries the drag as offered.
   public var sizes: [UInt64] = []
 

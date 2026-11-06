@@ -28,14 +28,13 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     public let filesCompleted: Int
     /// Files the operation expects to transfer.
     public let fileCount: Int
-    /// Bytes moved across the whole operation.
+    /// Bytes moved across the whole operation; 0 unless ``bytesKnown``.
     public let bytesTransferred: UInt64
-    /// Bytes the whole operation expects to move — short of the whole while
-    /// ``awaitsSize``.
+    /// Bytes the whole operation expects to move; 0 unless ``bytesKnown``.
     public let totalBytes: UInt64
-    /// Whether a transfer is waiting for the size of what it will move, so the
-    /// operation's total is not yet known.
-    public let awaitsSize: Bool
+    /// Whether the operation knows how many bytes it moves. One that does not
+    /// measures its progress in files alone, and says nothing of bytes.
+    public let bytesKnown: Bool
     /// Recent throughput, or `nil` before enough samples to estimate one.
     public let bytesPerSecond: Double?
     /// Estimated seconds until the operation finishes, or `nil` when it can't be
@@ -66,16 +65,16 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         secondsRemaining: Double?, gesture: ClipboardTransferGesture,
         elapsedSeconds: TimeInterval, isCancellable: Bool = false,
         operationID: ClipboardTransferOperationID = .unattached,
-        pendingBehind: Int = 0, awaitsSize: Bool = false
+        pendingBehind: Int = 0, bytesKnown: Bool = true
     ) {
         self.direction = direction
         self.peerName = peerName
         self.currentItemName = currentItemName
         self.filesCompleted = filesCompleted
         self.fileCount = fileCount
-        self.bytesTransferred = bytesTransferred
-        self.totalBytes = totalBytes
-        self.awaitsSize = awaitsSize
+        self.bytesTransferred = bytesKnown ? bytesTransferred : 0
+        self.totalBytes = bytesKnown ? totalBytes : 0
+        self.bytesKnown = bytesKnown
         self.bytesPerSecond = bytesPerSecond
         self.secondsRemaining = secondsRemaining
         self.gesture = gesture
@@ -85,11 +84,14 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
         self.pendingBehind = pendingBehind
     }
 
-    /// Progress as a `0...1` fraction, clamped (a zero or unknown total reads
-    /// as 0).
+    /// Progress as a `0...1` fraction, clamped: of the bytes, or of the files
+    /// unless ``bytesKnown``; a zero total reads as 0.
     public var fractionComplete: Double {
-        guard totalBytes > 0, !awaitsSize else { return 0 }
-        return min(1, max(0, Double(bytesTransferred) / Double(totalBytes)))
+        let (done, total) =
+            bytesKnown
+            ? (Double(bytesTransferred), Double(totalBytes)) : (Double(filesCompleted), Double(fileCount))
+        guard total > 0 else { return 0 }
+        return min(1, max(0, done / total))
     }
 
     /// The same readout as it stands `seconds` later with nothing reported in
@@ -103,7 +105,7 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
             bytesPerSecond: bytesPerSecond,
             secondsRemaining: secondsRemaining.map { max(0, $0 - seconds) }, gesture: gesture,
             elapsedSeconds: elapsedSeconds + seconds, isCancellable: isCancellable,
-            operationID: operationID, pendingBehind: pendingBehind, awaitsSize: awaitsSize)
+            operationID: operationID, pendingBehind: pendingBehind, bytesKnown: bytesKnown)
     }
 
     /// The same readout with ``pendingBehind`` set, for the reporter to stamp
@@ -116,6 +118,6 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
             bytesTransferred: bytesTransferred, totalBytes: totalBytes,
             bytesPerSecond: bytesPerSecond, secondsRemaining: secondsRemaining, gesture: gesture,
             elapsedSeconds: elapsedSeconds, isCancellable: isCancellable, operationID: operationID,
-            pendingBehind: count, awaitsSize: awaitsSize)
+            pendingBehind: count, bytesKnown: bytesKnown)
     }
 }

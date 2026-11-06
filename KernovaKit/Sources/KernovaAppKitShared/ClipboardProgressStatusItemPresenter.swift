@@ -255,7 +255,7 @@ public final class ClipboardProgressStatusItemPresenter {
             gesture=\(String(describing: readout.gesture), privacy: .public), \
             elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
-            \(readout.bytesTransferred, privacy: .public)/\(readout.totalBytes, privacy: .public) bytes, \
+            \(ClipboardProgressFormat.logBytes(transferred: readout.bytesTransferred, total: readout.totalBytes, known: readout.bytesKnown), privacy: .public), \
             menuOpen=\(dropdownOpen, privacy: .public)
             """
         )

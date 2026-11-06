@@ -436,7 +436,7 @@ package struct Exchange: Sendable {
         Exchange(
             id: "C07",
             title:
-                "drag: the catcher stands down → STOOD_DOWN and shows again; a delivering drop names the promise, ENDs CAUGHT sizing the folder, and the host pulls the promise from the taken offer",
+                "drag: the catcher stands down → STOOD_DOWN and shows again; a delivering drop names the promise, ENDs CAUGHT sizing the promise and the folder, and the host pulls the promise from the taken offer",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
                 (500, .offer(.peer, .drag, "drag-4")), (600, .takeDrag(SimItems.token(4))),
@@ -446,7 +446,7 @@ package struct Exchange: Sendable {
                 (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted([])))),
                 (750, .controlTake(.deliver)), (760, .answerTake(.report(.delivering))),
                 (800, .answerTake(.report(.named([Data("IMG_0042.jpeg".utf8)])))),
-                (810, .answerTake(.caught(sizes: [8192]))),
+                (810, .answerTake(.caught(sizes: [2048, 8192]))),
                 (850, .itemPull(.host, SimItems.request(4, ceiling: 1 << 20))),
                 (950, .release(.host, SimItems.token(4))),
             ], end: 1100),

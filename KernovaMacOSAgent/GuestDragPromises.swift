@@ -44,15 +44,20 @@ final class GuestDragPromises {
         let folder: URL
         /// Each promised item's name and landing, by its index in the drag.
         let offered: [Int: (name: String, landing: GuestDragLanding)]
+        /// Each promised item's file already landed once named, by its index
+        /// in the drag: every one for a drop received whole, none for one
+        /// whose promises are each called in.
+        let landed: [Int: URL]
         /// Every file the promises' sources still owe a report on.
         let pending: [Task<URL, any Error>]
 
         init(
-            folder: URL, offered: [Int: (name: String, landing: GuestDragLanding)],
+            folder: URL, offered: [Int: (name: String, landing: GuestDragLanding)], landed: [Int: URL] = [:],
             pending: [Task<URL, any Error>]
         ) {
             self.folder = folder
             self.offered = offered
+            self.landed = landed
             self.pending = pending
         }
     }
@@ -66,6 +71,7 @@ final class GuestDragPromises {
         /// lands as a folder.
         fileprivate let expected: [(index: Int, isFolder: Bool)]
         fileprivate var assigned: [Int: (name: String, landing: GuestDragLanding)] = [:]
+        fileprivate var landed: [Int: URL] = [:]
         fileprivate var keys: Set<String>
         fileprivate var stopWatching: GuestDragCancel?
         fileprivate var named: ((CallIn) -> Void)?
@@ -163,9 +169,11 @@ final class GuestDragPromises {
         let landing = GuestDragLanding()
         landing.settle(.success(arrival.url))
         arrivals.assigned[index] = (Self.unlike(name, &arrivals.keys), landing)
+        arrivals.landed[index] = arrival.url
         guard arrivals.assigned.count == arrivals.expected.count, let named = arrivals.named else { return }
         arrivals.stop()
-        let callIn = CallIn(folder: arrivals.folder, offered: arrivals.assigned, pending: [])
+        let callIn = CallIn(
+            folder: arrivals.folder, offered: arrivals.assigned, landed: arrivals.landed, pending: [])
         callIns[ObjectIdentifier(callIn)] = callIn
         named(callIn)
     }

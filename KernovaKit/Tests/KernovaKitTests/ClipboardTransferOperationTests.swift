@@ -61,7 +61,7 @@ struct ClipboardTransferOperationTests {
         clock: GatedEngineClock,
         gesture: ClipboardTransferGesture = .preview,
         direction: ClipboardProgressSnapshot.Direction = .inbound,
-        expectedBytes: UInt64 = 0,
+        expectedBytes: UInt64? = 0,
         expectedItems: Int = 0,
         onCancelRequested: (@Sendable () -> Void)? = nil
     ) -> ClipboardTransferOperation {
@@ -115,63 +115,29 @@ struct ClipboardTransferOperationTests {
         #expect(recorder.finish?.failure == .timedOut)
     }
 
-    // MARK: - Size wait
+    // MARK: - Unknown bytes
 
-    @Test("a transfer held on its size reveals the readout at the reveal delay, its total unknown")
-    func sizeWaitRevealsWithNoEvent() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .dragOut)
-
-        operation.sizeWaitBegan()
-        await settle()
-        #expect(recorder.reports.isEmpty)
-
-        // Nothing else happens until the size arrives: the reveal is the
-        // operation's own.
-        let reveal = try #require(clock.parked.first)
-        #expect(reveal.seconds == Self.revealDelay)
-        clock.advance(seconds: Self.revealDelay)
-        clock.release(reveal)
-        await clock.completion(of: reveal)
-        await settle()
-        let waiting = try #require(recorder.runningSnapshot)
-        #expect(waiting.awaitsSize)
-        #expect(waiting.bytesTransferred == 0)
-        #expect(waiting.secondsRemaining == nil)
-        #expect(waiting.fractionComplete == 0)
-
-        // The size arriving is news the throttle would not otherwise admit:
-        // no byte has moved since the reveal.
-        operation.sizeWaitEnded()
-        operation.unitBegan(id: 0, expectedBytes: 4_096)
-        await settle()
-        let sized = try #require(recorder.runningSnapshot)
-        #expect(!sized.awaitsSize)
-        #expect(sized.totalBytes == 4_096)
-    }
-
-    @Test("a transfer held on its size keeps the idle terminal from completing the operation")
-    func sizeWaitHoldsOffTheIdleTerminal() async throws {
+    @Test("an operation that cannot know its bytes counts its files, and says nothing of bytes")
+    func unknownBytesCountFiles() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .dragOut, expectedItems: 2)
+            recorder: recorder, clock: clock, gesture: .dragOut, expectedBytes: nil, expectedItems: 4)
         clock.advance(seconds: Self.revealDelay)
-        operation.unitBegan(id: 0, expectedBytes: 100)
+
+        operation.unitBegan(id: 0, expectedBytes: 2_048)
         operation.unitEnded(id: 0, succeeded: true)
-        operation.finishWhenIdle()
-        let gap = try #require(clock.parked.first)
-
-        // The next item is a folder whose size has not arrived.
-        operation.sizeWaitBegan()
-        try await clock.parkedChanged.wait { !clock.parked.contains(gap) }
-        operation.finishWhenIdle()
         await settle()
-
-        #expect(clock.parked.isEmpty)
-        #expect(operation.isLive)
-        #expect(recorder.runningSnapshot?.awaitsSize == true)
+        let running = try #require(recorder.runningSnapshot)
+        #expect(!running.bytesKnown)
+        #expect(running.bytesTransferred == 0)
+        #expect(running.totalBytes == 0)
+        #expect(running.filesCompleted == 1)
+        #expect(running.fileCount == 4)
+        #expect(running.fractionComplete == 0.25)
+        #expect(running.bytesPerSecond == nil)
+        #expect(running.secondsRemaining == nil)
+        #expect(ClipboardProgressFormat.byteProgress(running) == nil)
     }
 
     // MARK: - Aggregation

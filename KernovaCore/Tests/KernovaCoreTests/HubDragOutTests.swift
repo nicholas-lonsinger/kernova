@@ -106,6 +106,8 @@ struct HubDragOutTests {
 
     private let scratch = TestScratchDirectory(prefix: "HubDragOutTests")
     private let hub = FakeDragOutHub()
+    /// Every readout a take shows, revealed at its first event.
+    private let reporter = ClipboardTransferReporter()
     /// Held here: a take holds its display weakly.
     private let display = SessionDisplay()
     private let dragOut: HubDragOut
@@ -116,7 +118,7 @@ struct HubDragOutTests {
     init() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         dragOut = HubDragOut(
-            sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), reporter: ClipboardTransferReporter(),
+            sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), reporter: reporter, progressRevealDelay: 0,
             peerName: { "Test VM" })
         dragOut.hub = hub
     }
@@ -250,7 +252,7 @@ struct HubDragOutTests {
         #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
     }
 
-    @Test("a delivering drop names the promises, then sizes the other items, and every item pulls from the one offer")
+    @Test("a delivering drop names the promises, then sizes the items, and every item pulls from the one offer")
     func deliveryNamesThenSizes() async throws {
         let take = try await carriedTake(Self.promiseAndFolder)
         take.hostSessionEnded(dropped: true)
@@ -267,12 +269,63 @@ struct HubDragOutTests {
         #expect(hub.pullCount == 0, "a write pulled before the delivery sized the items")
 
         await deliver(
-            .ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: [1: 4096]))))
+            .ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: [0: 1_000, 1: 4096]))))
         try await hub.changed.wait { hub.pullCount == 2 }
         let pulls = hub.state.withLock { $0.pulls.map(\.order.request) }
         #expect(pulls.map(\.token) == [token, token])
         #expect(Set(pulls.map(\.item)) == [0, 1])
         #expect(hub.releaseCount == 0, "the offer went before its items were written")
+    }
+
+    /// Drops a carried take of a promise and a folder that the guest names and
+    /// sizes `sizes`, writes and lands both, and returns the readout's final
+    /// snapshot.
+    private func deliveredReadout(sizes: [Int: UInt64]) async throws -> ClipboardProgressSnapshot {
+        let reported = AsyncGate()
+        reporter.onReportChanged = { _ in reported.notify() }
+        let take = try await carriedTake(Self.promiseAndFolder)
+        take.hostSessionEnded(dropped: true)
+        await deliver(.report(takeID, .delivering))
+        await deliver(.report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
+        await deliver(.ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: sizes))))
+        for (index, name) in ["IMG_0042.jpeg", "Photos"].enumerated() {
+            take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { _ in }
+            try await hub.changed.wait { hub.pullCount == index + 1 }
+            let id = ItemPullID(
+                generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: UInt32(9 + index)))
+            hub.state.withLock { $0.pulls[index] }.completion(.success(id))
+            await MainActorTurn.next()
+            dragOut.pullEnded(id, .landed(.named(Data(name.utf8))))
+        }
+        let finished = { [reporter] () -> ClipboardTransferFinish? in
+            if case .finished(let finish) = reporter.report { finish } else { nil }
+        }
+        try await reported.wait { finished() != nil }
+        return try #require(finished()?.finalSnapshot)
+    }
+
+    @Test("a promised drag's readout totals the sizes the guest gave its files")
+    func promisedReadoutTotalsDeliveredSizes() async throws {
+        let final = try await deliveredReadout(sizes: [0: 1_000, 1: 4_096])
+
+        #expect(final.bytesKnown)
+        #expect(final.totalBytes == 5_096)
+        #expect(final.bytesTransferred == 5_096)
+        #expect(final.filesCompleted == 2)
+        #expect(ClipboardProgressFormat.byteProgress(final)?.contains(" of ") == true)
+    }
+
+    @Test("a drag with an item of unknown size reads its files, never a byte count")
+    func unknownSizeCountsFilesAlone() async throws {
+        let final = try await deliveredReadout(sizes: [0: 0, 1: 4_096])
+
+        #expect(!final.bytesKnown)
+        #expect(final.totalBytes == 0)
+        #expect(final.filesCompleted == 2)
+        #expect(final.fileCount == 2)
+        #expect(final.fractionComplete == 1)
+        #expect(ClipboardProgressFormat.byteProgress(final) == nil)
+        #expect(!ClipboardProgressFormat.summary(final).contains("KB"))
     }
 
     @Test("a promised name asked on the main thread waits on names the hub's queue gives without it")

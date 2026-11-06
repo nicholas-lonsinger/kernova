@@ -1004,7 +1004,7 @@ message DragCatcher {
 }
 
 // A Mac destination takes the drag: the next drop on the catcher delivers
-// it, calling its promises in and sizing its other items. The peer answers
+// it, calling its promises in and sizing its items. The peer answers
 // DELIVERING, or DELIVER_REFUSED while the drag is not on its catcher.
 message DragDeliver {
 }
@@ -1060,10 +1060,11 @@ message DragTakeOutcome {
   Error error = 2;
   reserved 3;
   reserved "reoffer";
-  // CAUGHT after STEP_NAMED, so by a delivering drop: each size estimate,
-  // one per item of the taken offer that is not promised, in its order, the
-  // drag's estimates summing to at most 2^63-1. A list breaking that reads as
-  // CAUGHT undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
+  // CAUGHT after STEP_NAMED, so by a delivering drop: each item's size
+  // estimate, one per item of the taken offer, promised ones included, in its
+  // order, under Representation.size_estimate's rule (0 when unknown), and
+  // summing to at most 2^63-1. A list breaking that reads as CAUGHT
+  // undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
   // taken offer carries the drag as offered.
   repeated uint64 sizes = 4;
 }

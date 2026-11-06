@@ -895,7 +895,7 @@ struct GuestDragOutTests {
         #expect(
             rig.peer.answers(to: takeID(1)) == [
                 .armed, .targeted(["img_0001.heic", "Untitled.heic", "Untitled.jpeg", "Untitled.jpeg"]), .delivering,
-                .named(["IMG_0001 2.HEIC", "IMG_0002.JPG", "img_0002 2.jpg"]), .caught(sizes: [5]),
+                .named(["IMG_0001 2.HEIC", "IMG_0002.JPG", "img_0002 2.jpg"]), .caught(sizes: [5, 0, 0, 0]),
             ])
         let listed = try #require(rig.peer.targeted(takeID(1)).first).compactMap(\.representations.first)
         #expect(listed.map(\.promised) == [false, true, true, true])
@@ -906,8 +906,9 @@ struct GuestDragOutTests {
         #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
     }
 
-    @Test("a delivering drop sizes each unpromised item, in order, after naming the promises")
-    func aDeliveringDropSizesTheOtherItems() throws {
+    @Test(
+        "a delivering drop sizes each plain item, in order, after naming the promises, and a promise not yet landed 0")
+    func aDeliveringDropSizesThePlainItems() throws {
         let note = try file("note.txt", "four")
         let tree = try folder("Tree", files: ["a.txt": "alpha", "b.txt": "bravo!"])
         let album = try folder("Album", files: ["c.txt": "charlie"])
@@ -922,8 +923,12 @@ struct GuestDragOutTests {
         #expect(listed.map(\.storage) == [.file, .folder, .file, .folder])
         #expect(listed.map(\.sizeEstimate) == [0, 0, 0, 0])
         #expect(rig.input.sized == [[note, tree, album]])
-        let sizes = [4] + [tree, album].map { UInt64(ClipboardArchive.estimatedByteCount(at: $0)) }
-        #expect(sizes.allSatisfy { $0 > 0 })
+        let (treeSize, albumSize) = (
+            UInt64(ClipboardArchive.estimatedByteCount(at: tree)),
+            UInt64(ClipboardArchive.estimatedByteCount(at: album))
+        )
+        #expect(treeSize > 0 && albumSize > 0)
+        let sizes: [UInt64] = [4, treeSize, 0, albumSize]
         #expect(
             Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
                 .named(["IMG_0001.HEIC"]), .caught(sizes: sizes),
@@ -1106,11 +1111,33 @@ struct GuestDragOutTests {
 
         #expect(
             Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
-                .named(["IMG_00001.jpg", "IMG_00002.jpg"]), .caught(sizes: [5]),
+                .named(["IMG_00001.jpg", "IMG_00002.jpg"]), .caught(sizes: [5, 8, 8]),
             ])
         #expect(served.content(request(token, item: 1)) == .success(.tree(path: first.path)))
         #expect(served.content(request(token, item: 2)) == .success(.tree(path: second.path)))
         #expect(rig.input.watchedFolder == nil)
+    }
+
+    @Test("a whole drop sizes each promise by the file granted it, with the plain files, in drag order")
+    func aWholeDropSizesThePromises() throws {
+        let (rig, _, folder) = try wholeDropRig(["public.jpeg", "public.folder", "public.jpeg"])
+        let first = try place("IMG_00001.jpg", in: folder, bytes: 1_000)
+        let album = folder.appendingPathComponent("Album")
+        try FileManager.default.createDirectory(at: album, withIntermediateDirectories: false)
+        try Data(repeating: 1, count: 300).write(to: album.appendingPathComponent("a.jpg"))
+        let second = try place("IMG_00002.jpg", in: folder, bytes: 2_345)
+
+        rig.input.appear(["IMG_00001.jpg", "Album", "IMG_00002.jpg"])
+        for name in ["IMG_00001.jpg", "Album", "IMG_00002.jpg"] { rig.input.grant(name) }
+
+        let plain = try #require(rig.input.sized.first?.first)
+        #expect(
+            rig.input.sized.map { $0.map(\.standardizedFileURL.path) } == [
+                [plain, first, album, second].map(\.standardizedFileURL.path)
+            ])
+        let albumSize = UInt64(ClipboardArchive.estimatedByteCount(at: album))
+        #expect(albumSize >= 300)
+        #expect(rig.peer.answers(to: takeID(1)).last == .caught(sizes: [5, 1_000, albumSize, 2_345]))
     }
 
     @Test("a whole drop gives each arriving file to the first waiting promise of its kind")
@@ -1176,7 +1203,7 @@ struct GuestDragOutTests {
         #expect(rig.input.watchedFolder == nil)
         #expect(
             Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
-                .named(["IMG_0001.HEIC"]), .caught(sizes: [5]),
+                .named(["IMG_0001.HEIC"]), .caught(sizes: [5, 0]),
             ])
     }
 

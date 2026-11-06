@@ -26,8 +26,7 @@ public enum DragTakeControl: Sendable, Equatable {
     /// The Mac drag session left the VM's display (`shown`), so the catcher shows again, or came back over it, so
     /// the catcher stands down and the drag is the guest's.
     case catcher(shown: Bool)
-    /// A Mac destination takes the drag: the next drop on the catcher calls its promises in and sizes its other
-    /// items.
+    /// A Mac destination takes the drag: the next drop on the catcher calls its promises in and sizes its items.
     case deliver
 }
 
@@ -58,8 +57,8 @@ public enum DragTakeAnswer: Sendable, Equatable {
     /// A step of the hand-off.
     case report(DragTakeReport)
     /// The drag ended on the catcher. After `.report(.named)`, the drop delivered it, and `sizes` sizes each
-    /// item of the taken offer that is not promised, in its order; nil when the drop delivered nothing. The
-    /// taken offer stays open until the host releases it.
+    /// item of the taken offer, promised ones included, in its order, 0 where unknown; nil when the drop
+    /// delivered nothing. The taken offer stays open until the host releases it.
     case caught(sizes: [UInt64]?)
     /// The drag ended in the guest, its catcher stood down.
     case returned
@@ -76,7 +75,7 @@ public enum DragTakeAnswer: Sendable, Equatable {
 public struct DragDelivery: Sendable, Equatable {
     /// The name each promised item took once called in.
     public var names: [Int: Data]
-    /// The size estimate of each item that is not promised.
+    /// The size estimate of each item, 0 where unknown.
     public var sizes: [Int: UInt64]
 
     /// Creates a delivery.
@@ -153,14 +152,11 @@ public enum DragItems {
         return Dictionary(uniqueKeysWithValues: zip(promised, names))
     }
 
-    /// `sizes`, one per unpromised item of `items` in order, by item index; nil unless the count matches and the
-    /// drag's estimates, these in place of those items' own, sum to at most ``maxTotalEstimate``.
+    /// `sizes`, one per item of `items` in order, by item index; nil unless the count matches and they sum to at
+    /// most ``maxTotalEstimate``.
     public static func checkedSizes(_ sizes: [UInt64], of items: [Representation]) -> [Int: UInt64]? {
-        let unpromised = items.indices.filter { !items[$0].promised }
-        guard sizes.count == unpromised.count else { return nil }
-        let sized = Dictionary(uniqueKeysWithValues: zip(unpromised, sizes))
-        guard total(items.indices.map { sized[$0] ?? items[$0].sizeEstimate }) != nil else { return nil }
-        return sized
+        guard sizes.count == items.count, total(sizes) != nil else { return nil }
+        return Dictionary(uniqueKeysWithValues: zip(items.indices, sizes))
     }
 
     /// The sum of `estimates`, or nil past ``maxTotalEstimate``.
