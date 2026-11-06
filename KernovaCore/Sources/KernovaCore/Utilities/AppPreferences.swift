@@ -176,7 +176,7 @@ package struct AppPreferences {
         nonmutating set { defaults.set(newValue, forKey: Keys.allowDuplicateMachineIDBoot) }
     }
 
-    /// Whether the user chose Don't ask again on the question
+    /// Whether the user chose not to be asked the question
     /// ``allowsDuplicateMachineIDOverride`` asks, so that every bring-up beside
     /// a VM sharing its machine identity starts without asking while that
     /// setting is on.

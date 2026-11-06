@@ -24,13 +24,15 @@ struct RemindersSettingsViewControllerTests {
         self.preferences = makeTestPreferences()
     }
 
-    private func makeViewModel() -> VMLibraryViewModel {
+    private func makeViewModel(
+        virtualization: MockVirtualizationService = MockVirtualizationService()
+    ) -> VMLibraryViewModel {
         VMLibraryViewModel(
             storageService: MockVMStorageService(),
             diskImageService: MockDiskImageService(),
             machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
             virtualizationHost: VirtualizationHost(),
-            virtualizationService: MockVirtualizationService(),
+            virtualizationService: virtualization,
             installService: MockMacOSInstallService(),
             ipswService: MockIPSWService(),
             localImageInspector: LocalRestoreImageInspector(),
@@ -200,44 +202,103 @@ struct RemindersSettingsViewControllerTests {
         #expect(!toggle.isEnabled)
     }
 
-    @Test("While the question is asked, its switch is on and turned off only on the question")
-    func questionRowOnWhileAsked() throws {
-        preferences.allowsDuplicateMachineIDOverride = true
-        let (controller, _) = makeLaidOutPane(vmCount: 1)
-        defer { controller.viewDidDisappear() }
-
+    /// Flips the duplicate machine ID question's switch the way a click does,
+    /// so the pane's own action wiring is what drives the change.
+    private func setQuestion(on: Bool, in controller: RemindersSettingsViewController) throws {
         let toggle = try questionSwitch(in: controller)
-        #expect(toggle.state == .on)
-        #expect(!toggle.isEnabled)
-        #expect(
-            findLabel(
-                withText: "Turned off with Don\u{2019}t ask again on the question itself.",
-                in: controller.view)?.isHidden == false)
+        toggle.state = on ? .on : .off
+        #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
     }
 
-    @Test("Turning the question's switch on clears the choice not to be asked")
-    func turningTheQuestionOnClearsTheChoice() throws {
+    @Test(
+        "The question's switch can be changed exactly while the duplicate machine ID setting is on, whichever way it is set",
+        arguments: [false, true])
+    func questionRowEnabledExactlyWhileTheSettingIsOn(dismissed: Bool) throws {
         preferences.allowsDuplicateMachineIDOverride = true
         let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
         defer { controller.viewDidDisappear() }
-        viewModel.duplicateMachineIDQuestionDismissed = true
-        controller.viewWillAppear()
-
+        viewModel.duplicateMachineIDQuestionDismissed = dismissed
         let toggle = try questionSwitch(in: controller)
-        #expect(toggle.state == .off)
-        #expect(toggle.isEnabled)
-        // A state note keeps its last text while hidden.
-        #expect(
-            findLabel(containing: "Don\u{2019}t ask again on the question itself", in: controller.view)?.isHidden
-                != false)
 
-        toggle.state = .on
-        #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
+        for settingOn in [true, false, true] {
+            preferences.allowsDuplicateMachineIDOverride = settingOn
+            // The Advanced pane is another tab of the same window, so coming
+            // back here is an appear.
+            controller.viewWillAppear()
+
+            #expect(toggle.isEnabled == settingOn)
+            #expect(toggle.state == (dismissed ? .off : .on))
+            // A state note keeps its last text while hidden.
+            #expect(
+                (findLabel(containing: "No effect while Offer to start", in: controller.view)?.isHidden == false)
+                    == !settingOn)
+        }
+    }
+
+    @Test("Turning the question's switch off saves the choice not to be asked, and on clears it")
+    func theQuestionsSwitchWorksBothWays() throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        let toggle = try questionSwitch(in: controller)
+        #expect(toggle.state == .on)
+        #expect(toggle.isEnabled)
+
+        try setQuestion(on: false, in: controller)
+
+        #expect(viewModel.duplicateMachineIDQuestionDismissed)
+        #expect(preferences.duplicateMachineIDQuestionDismissed)
+        #expect(toggle.isEnabled)
+
+        try setQuestion(on: true, in: controller)
 
         #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
         #expect(preferences.duplicateMachineIDQuestionDismissed == false)
-        #expect(toggle.state == .on)
-        #expect(!toggle.isEnabled)
+        #expect(toggle.isEnabled)
+    }
+
+    @Test("A restart beside a machine ID twin goes ahead unasked once the switch is off, and asks again once it is on")
+    func theSwitchDecidesWhetherARestartAsks() async throws {
+        preferences.allowsDuplicateMachineIDOverride = true
+        let virtualization = MockVirtualizationService()
+        let viewModel = makeViewModel(virtualization: virtualization)
+        let presenter = MockVMLibraryPresenting()
+        viewModel.presenter = presenter
+        func admitTwin(_ name: String, macAddress: String) -> VMInstance {
+            let instance = viewModel.library.admitFixture(
+                name: name, guestOS: .macOS, phase: .running(sessionID: UUID())
+            ) {
+                $0.machineIdentifierData = Data([1, 2, 3])
+                $0.macAddress = macAddress
+            }
+            viewModel.library.wireHooks(for: instance)
+            return instance
+        }
+        let restarting = admitTwin("Restarting", macAddress: "02:4b:4e:56:02:01")
+        _ = admitTwin("Twin", macAddress: "02:4b:4e:56:02:02")
+        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        _ = controller.view
+        controller.viewWillAppear()
+        defer { controller.viewDidDisappear() }
+
+        try setQuestion(on: false, in: controller)
+        await viewModel.restart(restarting)
+
+        #expect(presenter.confirmationRequests.isEmpty)
+        #expect(virtualization.stopCallCount == 1)
+        #expect(virtualization.startCallCount == 1)
+        #expect(restarting.status == .running)
+        #expect(presenter.errors.isEmpty)
+
+        try setQuestion(on: true, in: controller)
+        presenter.confirmationAnswer = .answered(.decline)
+        await viewModel.restart(restarting)
+
+        #expect(presenter.confirmationRequests.map(\.prompt.kind) == [.startBesideSharedMachineIdentity])
+        // Declined before the guest went down.
+        #expect(virtualization.stopCallCount == 1)
+        #expect(virtualization.startCallCount == 1)
+        #expect(restarting.status == .running)
     }
 
     @Test("The question's switch follows a choice made while the pane is on screen")
@@ -252,7 +313,6 @@ struct RemindersSettingsViewControllerTests {
         // The pane's observation loop applies on a later turn; the switch
         // itself is not observable.
         try await waitUntil { toggle.state == .off }
-        #expect(toggle.isEnabled)
     }
 
     @Test("Reset All Reminders clears the choice not to be asked")
