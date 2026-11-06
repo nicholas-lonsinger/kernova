@@ -158,16 +158,17 @@ package final class HostClipboardPublisher {
 
     /// Writes the guest's copy `contents`: every representation but a file or folder as data, the files
     /// promised, and withheld when `servingFileURLs` is false. The copy is released once something replaces its
-    /// write, or at once when it promised none or the write failed. Returns whether the write was taken.
+    /// write, or at once when the write failed or does not hold it: it promised no file, and is not concealed.
+    /// Returns whether the write was taken.
     func writeCopy(_ contents: GuestCopyContents, servingFileURLs: Bool) -> Bool {
-        let (written, promised) = publisher.publishCopy(
+        let (written, holdsCopy) = publisher.publishCopy(
             contents.items, concealed: contents.concealed, servingFileURLs: servingFileURLs,
             held: contents.held, puller: contents.puller, serving: contents.serving,
             onReleased: contents.release)
-        if !written || !promised { contents.release() }
+        if !written || !holdsCopy { contents.release() }
         Self.logger.log(
             .info,
-            "Wrote the guest's clipboard copy to the host pasteboard (written: \(written, privacy: .public), files promised: \(promised, privacy: .public))"
+            "Wrote the guest's clipboard copy to the host pasteboard (written: \(written, privacy: .public), held until replaced: \(holdsCopy, privacy: .public))"
         )
         return written
     }

@@ -84,7 +84,8 @@ public struct ClipboardWriteSource: Sendable {
 /// A write of this process standing on a pasteboard: what it serves, which types each item holds as data, and,
 /// for one that promised something, what it was made from, for as long as the write stands. It ends at the first
 /// poll of its pasteboard's watch to find the change count moved, or when ``end()`` comes first: its source goes,
-/// and its end runs. While it stands, its observation of the watch holds it; everything else holds it weakly.
+/// and its end runs, for one that is ``withdrawable``. While it stands, its observation of the watch holds it;
+/// everything else holds it weakly.
 ///
 /// It keeps types, never bytes: the pasteboard holds each type as data, so the write keeps no second copy of what
 /// it wrote while it stands.
@@ -98,6 +99,9 @@ public struct ClipboardWriteSource: Sendable {
 final class ClipboardStandingWrite {
     /// The far side's offer or copy the write serves, which a retraction names.
     let servingOffer: Data?
+    /// Whether the end of the offer or copy the write serves withdraws from it: an item promises a type, which
+    /// that end can serve no more, or is marked concealed, which lives only while the far side still holds it.
+    let withdrawable: Bool
     /// The types each item was written with as data.
     let written: [[NSPasteboard.PasteboardType]]
     /// The types each item promises.
@@ -108,21 +112,26 @@ final class ClipboardStandingWrite {
     private(set) var source: ClipboardWriteSource?
     /// The publisher that made the write, held while it stands, so whatever must withdraw from the write can.
     private(set) var publisher: ClipboardPasteboardPublisher?
-    /// Runs once, when the write ends.
+    /// Runs once, when a ``withdrawable`` write ends.
     private var onEnded: (@MainActor () -> Void)?
     private var observation: ClipboardPasteboardWatch.Observation?
 
+    /// A write of `written` and `promised`, made from `source`, which `onEnded` hears end when it is
+    /// ``withdrawable``.
     init(
         source: ClipboardWriteSource?, by publisher: ClipboardPasteboardPublisher,
         written: [[NSPasteboard.PasteboardType]], promised: [[NSPasteboard.PasteboardType]],
         onEnded: (@MainActor () -> Void)?
     ) {
+        let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
+        let promises = promised.contains { !$0.isEmpty }
+        withdrawable = promises || written.contains { $0.contains(marker) }
         servingOffer = source?.serving?.token
-        self.source = source
+        self.source = promises ? source : nil
         self.publisher = publisher
         self.written = written
         self.promised = promised
-        self.onEnded = onEnded
+        self.onEnded = withdrawable ? onEnded : nil
     }
 
     /// Whether any item promises a type.
@@ -145,8 +154,7 @@ final class ClipboardStandingWrite {
 
     /// What of the write stays on `pasteboard`, which holds it, once `withdrawal` withdraws its promises
     /// (``ClipboardWithdrawal``) and every item `goesWhole` picks out by what it holds goes whole: each item's types
-    /// to write again as data, an item that keeps nothing but its concealed marker left out; and whether that is
-    /// all of it, nothing withdrawn.
+    /// to write again as data; and whether that is all of it, nothing withdrawn.
     func remains(
         after withdrawal: ClipboardWithdrawal, on pasteboard: any ClipboardWritePasteboard,
         goesWhole: ([(type: NSPasteboard.PasteboardType, bytes: Data)]) -> Bool = { _ in false }
@@ -155,20 +163,22 @@ final class ClipboardStandingWrite {
         let read = read.data(on: pasteboard, items: written.count)
         var whole = true
         let items = written.indices.compactMap { item -> [(type: NSPasteboard.PasteboardType, bytes: Data)]? in
-            let concealed = written[item].contains(marker)
-            let kept = withdrawal == .unread && !concealed ? read[item] : []
+            guard !written[item].contains(marker) else {
+                whole = false
+                return nil
+            }
+            let kept = withdrawal == .unread ? read[item] : []
             let withdrawn = promised[item].filter { type in !kept.contains { $0.type == type } }
             whole = whole && withdrawn.isEmpty
             guard !withdrawn.contains(where: { PasteboardTypeIdentity($0.rawValue).isFileReference }) else {
                 return nil
             }
-            // The marker is written again from the types, whatever an empty type reads back as.
-            let data = Self.data(of: written[item].filter { $0 != marker }, item: item, on: pasteboard) + kept
+            let data = Self.data(of: written[item], item: item, on: pasteboard) + kept
             guard !goesWhole(data) else {
                 whole = false
                 return nil
             }
-            return data.isEmpty ? nil : data + (concealed ? [(marker, Data())] : [])
+            return data.isEmpty ? nil : data
         }
         return (items, whole)
     }

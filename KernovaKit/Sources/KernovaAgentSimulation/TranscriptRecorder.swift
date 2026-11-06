@@ -509,7 +509,7 @@ package final class Duet {
         case .itemPull(let side, let request):
             let order = ItemPullOrder(request, landing: DecodingItemSink.landing)
             item(side, ask(input) { .pull($0, order) })
-        case .withdraw(let side, let token): item(side, .withdraw(token: token))
+        case .withdraw(let side, let token): item(side, .withdraw(token: token, code: .cancelled))
         case .release(let side, let token): item(side, .release(token: token))
         case .takeDrag(let token):
             item(.host, ask(input) { .takeDrag($0, token: token) })

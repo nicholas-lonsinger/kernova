@@ -226,11 +226,18 @@ final class HubClipboardService: ClipboardServicing {
     }
 
     /// A copy the guest sent ended, with the link or withdrawn by the guest: what the Mac's clipboard holds
-    /// of it that no paste had is retracted, its files being on the guest's disk, and the user told what went and
-    /// why.
+    /// of it that no paste had is retracted, its files being on the guest's disk, and a concealed copy goes whole,
+    /// pasted or not; the user is told what went and why. A concealed copy whose source moved on went where the
+    /// guest's clipboard went, as passthrough's does: nothing is said.
     private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
-        let withdrawn = if case .byFarSide = ending { true } else { false }
-        switch logRetraction(retractHostWrite(copy.token, .unread), of: .copy, because: .ended(ending)) {
+        let retraction = logRetraction(retractHostWrite(copy.token, .unread), of: .copy, because: .ended(ending))
+        let withdrawn: Bool
+        switch ending {
+        case .movedOn: return
+        case .byFarSide: withdrawn = true
+        case .superseded, .passthroughStopped, .linkLost: withdrawn = false
+        }
+        switch retraction {
         case .cleared: reportRefusal(gesture: .copy, withdrawn ? .withdrawnCopyRetracted : .disconnectedCopyRetracted)
         case .keptPart:
             reportRefusal(gesture: .copy, withdrawn ? .withdrawnFilesRetracted : .disconnectedFilesRetracted)
@@ -358,7 +365,7 @@ final class HubClipboardService: ClipboardServicing {
         switch ending {
         case .superseded: return
         case .linkLost, .passthroughStopped: withdrawal = .unread
-        case .byFarSide: withdrawal = .everyPromise
+        case .byFarSide, .movedOn: withdrawal = .everyPromise
         }
         logRetraction(retractHostWrite(remote.token, withdrawal), of: .clipboard, because: .ended(ending))
     }

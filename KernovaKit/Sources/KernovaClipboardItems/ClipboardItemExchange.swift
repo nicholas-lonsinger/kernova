@@ -23,7 +23,9 @@ import KernovaWire
 ///   still landing supersedes it: the earlier one is refused there and then, and never written
 ///   (``land(_:then:)``). What a copy names of the receiver's own offers by reference
 ///   (`Representation.reference`) is filled from those offers as they stood when it arrived, never pulled. A copy
-///   this side sent whose files are served from another connection's offer is withdrawn once that offer ends.
+///   this side sent is withdrawn once its source is owed it (``ClipboardOfferSource/whenWithdrawalOwed(_:)``): its
+///   files are served from another connection's offer that ended, or it is concealed and this side's clipboard
+///   moved on from it.
 /// - A connection's leaving ends every offer and copy it carried: what an end wrote of the far side's is the
 ///   end's to retract, since nothing more of it can be pulled.
 ///
@@ -44,6 +46,9 @@ public final class ClipboardItemExchange {
     public enum RemoteEnding: Sendable, Equatable {
         /// The far side withdrew it: `hasSuccessor` when its next offer follows.
         case byFarSide(hasSuccessor: Bool)
+        /// The far side's clipboard moved on from a concealed copy it sent, which lives only while its source holds
+        /// it: the copy's expected end, not a withdrawal to tell the user of.
+        case movedOn
         /// This side made a copy of its own.
         case superseded
         /// The far side stopped passthrough, withdrawing it `DISABLED_BY_POLICY`: its clipboard may hold it still.
@@ -269,7 +274,8 @@ public final class ClipboardItemExchange {
     }
 
     /// Withdraws this side's offer, RESET with `code`: `CANCELLED` when this end's clipboard moved on to
-    /// nothing it offers, `DISABLED_BY_POLICY` when passthrough stopped; no newer one follows. The far side's
+    /// nothing it offers, `DISABLED_BY_POLICY` when passthrough stopped, `CAPABILITY_WITHDRAWN` when this side can
+    /// no longer offer for another reason (``ending(_:)`` reads each); no newer one follows. The far side's
     /// offer, if it is this end's clipboard, stays so.
     public func withdrawLocal(_ code: ErrorCode = .cancelled) {
         if let localToken { link?.withdrawOffer(localToken, code: code) }
@@ -325,16 +331,23 @@ public final class ClipboardItemExchange {
             guard !wasOpened, let self, let source = self.sentCopies.removeValue(forKey: token) else { return }
             self.onCopyRefused?(source, WireError(.cancelled, debugDetail: "the copy was not opened"))
         }
-        source.whenUpstreamEnds { [weak self] in self?.withdrawCopy(token) }
+        source.whenWithdrawalOwed { [weak self] in self?.withdrawCopy(token, because: $0) }
         return true
     }
 
-    /// Ends this side's copy `token`, if the far side still holds it: an offer a file of it is served from
-    /// ended, so the far side's write of it is owed a retraction, as at a link's end.
-    private func withdrawCopy(_ token: Data) {
+    /// Ends this side's copy `token`, if the far side still holds it, so the far side's write of it is retracted:
+    /// RESET `CANCELLED` when what its files were served from ended, `CLIPBOARD_CHANGED` when this side's clipboard
+    /// moved on from a concealed copy (``RemoteEnding/movedOn``).
+    private func withdrawCopy(_ token: Data, because withdrawal: ClipboardOfferSource.Withdrawal) {
         guard sentCopies.removeValue(forKey: token) != nil else { return }
-        logger.log(.notice, "What a clipboard copy's files were served from ended: the copy is withdrawn")
-        link?.withdrawOffer(token, code: .cancelled)
+        switch withdrawal {
+        case .upstreamEnded:
+            logger.log(.notice, "What a clipboard copy's files were served from ended: the copy is withdrawn")
+            link?.withdrawOffer(token, code: .cancelled)
+        case .movedOn:
+            logger.log(.notice, "The clipboard moved on from a concealed copy it sent: the copy is withdrawn")
+            link?.withdrawOffer(token, code: .clipboardChanged)
+        }
     }
 
     /// The host: asks the guest for a snapshot of its clipboard as it stands now; `answer` hears the guest's
@@ -631,7 +644,8 @@ public final class ClipboardItemExchange {
 
     /// How a far-side offer that ended with `closure` stopped being this end's clipboard, the same at both ends.
     /// Only the far side withdrawing it is `.byFarSide`: RESET `CANCELLED`, or `ITEM_OFFER_REPLACED` when its next
-    /// offer follows. `DISABLED_BY_POLICY` is passthrough stopping. Every other end, `CAPABILITY_WITHDRAWN` from a
+    /// offer follows. `CLIPBOARD_CHANGED` is the far side's clipboard moving on from a concealed copy it sent.
+    /// `DISABLED_BY_POLICY` is passthrough stopping. Every other end, `CAPABILITY_WITHDRAWN` from a
     /// side the feature stopped being usable on included, is the link ending: the far side's clipboard may hold it
     /// still.
     static func ending(_ closure: StreamClosure) -> RemoteEnding {
@@ -639,6 +653,7 @@ public final class ClipboardItemExchange {
         switch error.code {
         case .cancelled: return .byFarSide(hasSuccessor: false)
         case .itemOfferReplaced: return .byFarSide(hasSuccessor: true)
+        case .clipboardChanged: return .movedOn
         case .disabledByPolicy: return .passthroughStopped
         default: return .linkLost
         }
