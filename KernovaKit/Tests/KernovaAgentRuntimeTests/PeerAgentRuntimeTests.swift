@@ -321,7 +321,10 @@ struct HostConnectionRuntimeTests {
             let events = events
             connection = runtime.makeConnection(
                 stream, policy: PolicySnapshot(),
-                bundles: [BundledPayload(os: .linux, architecture: .arm64, scope: .user, manifest: manifest)],
+                bundles: [
+                    BundledPayload(
+                        os: .linux, architecture: .arm64, scope: .user, manifest: manifest, updatesInBand: true)
+                ],
                 deliveringOn: hub
             ) { events.record($0) }
             connection.start()

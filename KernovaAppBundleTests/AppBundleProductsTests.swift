@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import KernovaCommandModel
+import Security
 import KernovaTestSupport
 import Testing
 
@@ -52,6 +53,19 @@ struct AppBundleProductsTests {
         #expect(
             SHA256.hash(data: try Data(contentsOf: packed, options: .mappedIfSafe))
                 == SHA256.hash(data: try Data(contentsOf: bundled, options: .mappedIfSafe)))
+    }
+
+    @Test("The built app offers its macOS agent in band exactly when the built agent carries a signing team")
+    func macOSPayloadUpdatesInBandWhenTeamSigned() throws {
+        let agent = try BuiltProducts.url(named: "Kernova Guest Agent.app")
+        var code: SecStaticCode?
+        try #require(SecStaticCodeCreateWithPath(agent as CFURL, [], &code) == errSecSuccess)
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        try #require(SecCodeCopySigningInformation(try #require(code), flags, &information) == errSecSuccess)
+        let team = (information as? [String: Any])?[kSecCodeInfoTeamIdentifier as String] as? String
+        let entry = try #require(products.guestAgents.entry(.macOS, .arm64, .user))
+        #expect(entry.updatesInBand == (team != nil), "agent team: \(team ?? "none")")
     }
 
     @Test("isInstallerDisk(path:) matches the app's bundled installer image path only")

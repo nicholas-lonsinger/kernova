@@ -275,7 +275,7 @@ package final class SimHub {
     ) -> BundledPayload {
         let manifest = UpdateManifestValue(
             payloadHash: tagHash(tag), payloadSize: UInt64(size), format: format, versionLabel: "2.\(tag)")
-        return BundledPayload(os: os, architecture: .arm64, scope: scope, manifest: manifest)
+        return BundledPayload(os: os, architecture: .arm64, scope: scope, manifest: manifest, updatesInBand: true)
     }
 
     /// The bytes the payload source serves for `manifest`, and the fake installer expects.

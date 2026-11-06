@@ -10,7 +10,10 @@
 # The app, the test host and the test bundles additionally assign no signing
 # of their own: a target xcconfig outranks Config/Local.xcconfig, so an
 # identity, team or profile written there reverts a developer to ad-hoc signing
-# while `make doctor` goes on reporting Local.xcconfig's values. The app's
+# while `make doctor` goes on reporting Local.xcconfig's values. The guest
+# agent, the CLI and the relaunch helper pin an identity for Release only, and
+# take Local.xcconfig's in Debug: an installed guest agent's launch constraint
+# is its own cdhash when ad-hoc, which no later build meets. The app's
 # entitlement path is Local.xcconfig's to choose too; the test host's plist
 # holds no restricted key (Tools/check-entitlements.sh), so it signs under any
 # identity and names its path itself.
@@ -81,9 +84,7 @@ violations=$(awk '
     }
 ' "$pbxproj" "$pbxproj")
 
-# The targets Config/Local.xcconfig has to reach. KernovaCLI.xcconfig and
-# KernovaRelaunchHelper.xcconfig pin Release to `-` because export re-signs
-# them, so they are out of scope here.
+# The targets Config/Local.xcconfig has to reach in every configuration.
 signing_files=(
     Config/Targets/Kernova.xcconfig
     Config/Targets/KernovaAppBundleTests.xcconfig
@@ -91,9 +92,15 @@ signing_files=(
     Config/Targets/KernovaTestHost.xcconfig
     Config/Targets/KernovaUITests.xcconfig
 )
+# The targets it has to reach in Debug: Release pins their identity.
+release_pinned_files=(
+    Config/Targets/KernovaCLI.xcconfig
+    Config/Targets/KernovaMacOSAgent.xcconfig
+    Config/Targets/KernovaRelaunchHelper.xcconfig
+)
 app_file=Config/Targets/Kernova.xcconfig
 
-for f in "${signing_files[@]}"; do
+for f in "${signing_files[@]}" "${release_pinned_files[@]}"; do
     if [ ! -f "$f" ]; then
         echo "check-build-settings-layering: $f is missing" >&2
         exit 1
@@ -103,7 +110,11 @@ done
 # A declaration is NAME, optional [condition] groups, then `=`; the condition
 # is part of the spelling, not an escape, so a conditioned assignment fails the
 # same way an unconditioned one does.
-signing_violations=$(awk -v app="$app_file" '
+signing_violations=$(awk -v app="$app_file" -v pinned="${release_pinned_files[*]}" '
+    BEGIN {
+        n = split(pinned, files, " ")
+        for (i = 1; i <= n; i++) release_pinned[files[i]] = 1
+    }
     {
         line = $0
         sub(/\/\/.*$/, "", line)
@@ -115,13 +126,14 @@ signing_violations=$(awk -v app="$app_file" '
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
 
         if (name == "CODE_SIGN_IDENTITY" || name == "DEVELOPMENT_TEAM")
-            printf "  %s:%d: %s — Config/Local.xcconfig has to reach this target\n", FILENAME, FNR, name
+            if (!(FILENAME in release_pinned) || substr(line, 1, RLENGTH) !~ /\[config=Release\]/)
+                printf "  %s:%d: %s — Config/Local.xcconfig has to reach this target\n", FILENAME, FNR, name
         else if (name == "PROVISIONING_PROFILE_SPECIFIER" && value != "")
             printf "  %s:%d: %s = %s — leave it empty\n", FILENAME, FNR, name, value
         else if (name == "CODE_SIGN_ENTITLEMENTS" && FILENAME == app && value !="$(KERNOVA_APP_ENTITLEMENTS)")
             printf "  %s:%d: %s = %s — read $(KERNOVA_APP_ENTITLEMENTS) instead\n", FILENAME, FNR, name, value
     }
-' "${signing_files[@]}")
+' "${signing_files[@]}" "${release_pinned_files[@]}")
 
 failed=0
 
@@ -140,4 +152,4 @@ fi
 [ "$failed" -eq 0 ] || exit 1
 
 pass "build settings: every configuration is xcconfig-backed with an empty inline block"
-pass "signing: the app, test host, and test xcconfigs name no identity, team, or profile, and the app's entitlement path is KERNOVA_APP_ENTITLEMENTS"
+pass "signing: the app, test host, and test xcconfigs name no identity, team, or profile, the agent, CLI and relaunch helper pin one for Release only, and the app's entitlement path is KERNOVA_APP_ENTITLEMENTS"

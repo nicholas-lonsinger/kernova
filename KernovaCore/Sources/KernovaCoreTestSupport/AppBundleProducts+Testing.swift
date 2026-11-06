@@ -16,14 +16,14 @@ extension BundledGuestAgents {
     /// No agent at all.
     package static let none = BundledGuestAgents(entries: [:], macOSInstallerDiskImageURL: nil, linuxDisk: .testing)
 
-    /// The entries of one payload file at `url` serving both scopes of `os` on arm64.
+    /// The entries of one payload file at `url` serving both scopes of `os` on arm64, updating in band.
     private static func entries(
         _ os: OSFamily, _ format: PayloadFormat, at url: URL, versionLabel: String
     ) -> [BundledGuestAgentKey: BundledGuestAgentEntry] {
         var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
         for scope in [InstallScope.user, .system] {
             entries[BundledGuestAgentKey(os, .arm64, scope)] = BundledGuestAgentEntry(
-                fileURL: url, format: format, versionLabel: versionLabel)
+                fileURL: url, format: format, versionLabel: versionLabel, updatesInBand: true)
         }
         return entries
     }

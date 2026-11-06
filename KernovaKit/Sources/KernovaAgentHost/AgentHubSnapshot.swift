@@ -95,16 +95,16 @@ public struct PeerSummary: Sendable, Equatable {
     public var payloadHash: Data
     /// The guest OS version it reports, as the OS spells it.
     public var osVersion: String
-    /// How it stands against the payload the host offers it.
+    /// How it stands against the payload the host bundles for it.
     public var standing: Standing
     /// Whether the host judges it responsive.
     public var isResponsive: Bool
 
-    /// How a peer stands against the payload the host offers it.
+    /// How a peer stands against the payload the host bundles for it.
     public enum Standing: Sendable, Equatable {
-        /// The host offers it nothing, so says nothing of its version.
+        /// It does not run the bundled payload, and the host offers it nothing, so says nothing of its version.
         case notOffered
-        /// Its payload hash is the offered payload's.
+        /// Its payload hash is the bundled payload's.
         case current
         /// The host offers it the payload `offeredVersionLabel` names, which it does not run; `update` says
         /// whether it is updating itself to it.

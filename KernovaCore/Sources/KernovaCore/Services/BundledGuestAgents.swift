@@ -30,11 +30,21 @@ package struct BundledGuestAgentEntry: Sendable, Equatable {
     package let format: PayloadFormat
     /// The display version it installs.
     package let versionLabel: String
+    /// Whether the host offers it as an in-band update to an agent that runs another payload.
+    ///
+    /// A macOS agent offers it only when the build signed it with a team. An installed agent's launch
+    /// constraint is built from its designated requirement, which for an ad-hoc signature is its own cdhash,
+    /// so launchd kills a relaunch into any other build ("Launch Constraint Violation"). With this false, the
+    /// guest is told no update is available: its agents keep running the build they were installed from, the
+    /// host shows them by version rather than as out of date, and the installer disk is what puts this build's
+    /// agent in the guest.
+    package let updatesInBand: Bool
 
-    package init(fileURL: URL, format: PayloadFormat, versionLabel: String) {
+    package init(fileURL: URL, format: PayloadFormat, versionLabel: String, updatesInBand: Bool) {
         self.fileURL = fileURL
         self.format = format
         self.versionLabel = versionLabel
+        self.updatesInBand = updatesInBand
     }
 }
 
@@ -56,14 +66,21 @@ package struct BundledGuestAgents: Sendable {
     /// Where the bundle carries the macOS agent's update payload, under its Resources.
     static let macOSAgentPath = "GuestAgents/macos-arm64/agent.payload"
 
+    /// Where the bundle records the macOS agent's signing team, under its Resources: a property list whose
+    /// `TeamIdentifier` the "Package Guest Agent DMG" build phase reads from the agent's signature, and leaves
+    /// out for an ad-hoc one.
+    static let macOSAgentSigningPath = "GuestAgents/macos-arm64/agent.signing.plist"
+
     /// Where the bundle carries the macOS installer disk, under its Resources.
     static let macOSInstallerDiskPath = "KernovaMacOSAgent.dmg"
 
-    /// The payloads a bundle carries: where, for which OS family and architecture, and packed how.
-    private static let payloadFiles: [(path: String, os: OSFamily, architecture: Architecture, format: PayloadFormat)] =
-        [
-            (macOSAgentPath, .macOS, .arm64, .containerTree),
-            (linuxAgentPath, .linux, .arm64, .executable),
+    /// The payloads a bundle carries: where, for which OS family and architecture, packed how, and where
+    /// the build records its signing team — `nil` for a payload no launch constraint holds to its signature,
+    /// which always updates in band.
+    private static let payloadFiles:
+        [(path: String, os: OSFamily, architecture: Architecture, format: PayloadFormat, signingPath: String?)] = [
+            (macOSAgentPath, .macOS, .arm64, .containerTree, macOSAgentSigningPath),
+            (linuxAgentPath, .linux, .arm64, .executable, nil),
         ]
 
     /// Every entry, by what it installs onto.
@@ -105,12 +122,38 @@ package struct BundledGuestAgents: Sendable {
         var entries: [BundledGuestAgentKey: BundledGuestAgentEntry] = [:]
         for file in payloadFiles {
             guard let url = resource(file.path, in: bundle) else { continue }
+            let updatesInBand = file.signingPath.map { isTeamSigned(recordedAt: $0, in: bundle) } ?? true
             for scope in [InstallScope.user, .system] {
                 entries[BundledGuestAgentKey(file.os, file.architecture, scope)] = BundledGuestAgentEntry(
-                    fileURL: url, format: file.format, versionLabel: versionLabel)
+                    fileURL: url, format: file.format, versionLabel: versionLabel, updatesInBand: updatesInBand)
             }
         }
         return entries
+    }
+
+    /// Whether the signing record at `path` under `bundle` names a team; a record the bundle lacks or that
+    /// does not read is a packaging defect, and names none.
+    private static func isTeamSigned(recordedAt path: String, in bundle: Bundle) -> Bool {
+        struct Signing: Decodable {
+            var teamIdentifier: String?
+
+            enum CodingKeys: String, CodingKey {
+                case teamIdentifier = "TeamIdentifier"
+            }
+        }
+        guard let url = resource(path, in: bundle) else {
+            reportMissing(path)
+            return false
+        }
+        do {
+            let signing = try PropertyListDecoder().decode(Signing.self, from: Data(contentsOf: url))
+            return signing.teamIdentifier?.isEmpty == false
+        } catch {
+            logger.log(
+                .fault, "\(path, privacy: .public) does not read: \(error.localizedDescription, privacy: .public)")
+            assertionFailure("\(path) does not read: \(error)")
+            return false
+        }
     }
 
     /// The file at `path` under `bundle`'s Resources, or `nil` when it carries none.
@@ -135,8 +178,9 @@ package struct BundledGuestAgents: Sendable {
         entries[BundledGuestAgentKey(os, architecture, scope)]
     }
 
-    /// The update payloads bundled for `os`, in scope order, each with the manifest the host offers a peer
-    /// it fits (`BundledPayload.offer(from:for:)`): the file's digest with the entry's own format and label.
+    /// The update payloads bundled for `os`, in scope order, each with the manifest the host judges a peer it
+    /// fits by and, when the entry updates in band, offers it (`BundledPayload.offer(from:for:)`): the file's
+    /// digest with the entry's own format and label.
     /// Each file is hashed once per process, off the main actor, on the first ask, and never re-read; the
     /// guest verifies the payload's hash before it installs one, so a file changed since is refused, not
     /// installed. A file that cannot be read is logged and left out.
@@ -150,7 +194,8 @@ package struct BundledGuestAgents: Sendable {
                     os: key.os, architecture: key.architecture, scope: key.scope,
                     manifest: UpdateManifestValue(
                         payloadHash: digest.sha256, payloadSize: digest.byteCount, format: entry.format,
-                        versionLabel: entry.versionLabel)))
+                        versionLabel: entry.versionLabel),
+                    updatesInBand: entry.updatesInBand))
         }
         return payloads
     }

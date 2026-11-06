@@ -42,9 +42,19 @@ final class SocketPair: Sendable {
     let host: HostConnection
     private let hub = DispatchQueue(label: "app.kernova.tests.hub")
 
-    /// A pair whose host offers `manifest` unless `offersUpdate` is false.
+    /// How the host bundles `manifest`.
+    enum Bundled {
+        /// Not at all.
+        case nothing
+        /// As an update it offers.
+        case inBand
+        /// Only as the payload a current peer runs.
+        case notInBand
+    }
+
+    /// A pair whose host bundles `manifest` as `bundled` says.
     init(
-        peerSendBuffer: Int32? = nil, offersUpdate: Bool = true, handsOff: Bool = true, stallAfter: Int? = nil,
+        peerSendBuffer: Int32? = nil, bundled: Bundled = .inBand, handsOff: Bool = true, stallAfter: Int? = nil,
         sourceShortBy: Int = 0
     ) throws {
         let descriptors = try RawSocket.pair(sendBuffer: peerSendBuffer)
@@ -64,8 +74,13 @@ final class SocketPair: Sendable {
             claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: source, logger: Fixture.logger)
         host = runtime.makeConnection(
             hostStream, policy: Fixture.logsEnabled,
-            bundles: offersUpdate
-                ? [BundledPayload(os: .linux, architecture: .arm64, scope: .user, manifest: Self.manifest)] : [],
+            bundles: bundled == .nothing
+                ? []
+                : [
+                    BundledPayload(
+                        os: .linux, architecture: .arm64, scope: .user, manifest: Self.manifest,
+                        updatesInBand: bundled == .inBand)
+                ],
             deliveringOn: hub
         ) { event in hostEvents.record(event) }
         host.start()
@@ -204,6 +219,20 @@ extension SocketTests {
             await pair.finish()
         }
 
+        @Test("A payload bundled but not updating in band is never offered, so the peer pulls nothing")
+        func notInBandIsNeverPulled() async throws {
+            let pair = try SocketPair(bundled: .notInBand)
+            var peer = pair.peerEvents.waiter()
+            let available = await peer.next {
+                if case .updateAvailable = $0 { return true }
+                return false
+            }
+            #expect(available == .updateAvailable(nil))
+            await pair.finish()
+            #expect(!pair.hostEvents.elements.contains { if case .update = $0 { true } else { false } })
+            #expect(pair.installer.calls.elements.isEmpty)
+        }
+
         @Test("A payload source that runs out short of the size fails the pull READ_FAILED, and the peer aborts")
         func updatePullShortSource() async throws {
             let pair = try SocketPair(sourceShortBy: 1_000)
@@ -252,7 +281,7 @@ extension SocketTests {
 
         @Test("A RESET(0) SUPERSEDED that arrives behind a failed write stops the peer instead of redialing")
         func supersededAfterWriteErrorStops() async throws {
-            let pair = try SocketPair(peerSendBuffer: 4_096, offersUpdate: false)
+            let pair = try SocketPair(peerSendBuffer: 4_096, bundled: .nothing)
             var peer = pair.peerEvents.waiter()
             _ = await peer.next { $0.isPolicyReceived }
 
