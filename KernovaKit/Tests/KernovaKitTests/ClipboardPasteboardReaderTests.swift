@@ -19,10 +19,6 @@ struct ClipboardPasteboardReaderTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
-    private func fileURLItem(_ url: URL) -> FakePasteboardItem {
-        FakePasteboardItem([(type: .fileURL, data: Data(url.absoluteString.utf8))])
-    }
-
     private static let promisedFileURLType = NSPasteboard.PasteboardType(
         "com.apple.pasteboard.promised-file-url")
     private static let promisedFileNameType = NSPasteboard.PasteboardType(

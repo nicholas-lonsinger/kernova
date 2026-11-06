@@ -303,23 +303,6 @@ public struct ClipboardContent: Equatable, Sendable {
         representations.reduce(0) { $0.saturatingAdding($1.byteCount) }
     }
 
-    /// Caps the representation list to `maxOfferableRepresentations`.
-    ///
-    /// Returns the content unchanged in the common case (no recompute);
-    /// `truncatedFrom` is the original representation count when truncation
-    /// happened — so a caller can log it — and `nil` otherwise.
-    public func cappedToOfferLimit() -> (content: ClipboardContent, truncatedFrom: Int?) {
-        guard representations.count > Self.maxOfferableRepresentations else {
-            return (self, nil)
-        }
-        return (
-            ClipboardContent(
-                representations: Array(representations.prefix(Self.maxOfferableRepresentations)),
-                isConcealed: isConcealed),
-            representations.count
-        )
-    }
-
     /// Digest comparison — equivalent to full structural equality (SHA-256
     /// collision resistance) at a constant 32-byte cost.
     public static func == (lhs: ClipboardContent, rhs: ClipboardContent) -> Bool {

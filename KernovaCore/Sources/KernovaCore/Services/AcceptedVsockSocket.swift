@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 import KernovaLogging
 
 /// The host's first steps on a vsock connection the guest opened, for every
