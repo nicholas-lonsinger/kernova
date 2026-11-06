@@ -120,7 +120,7 @@ struct ClipboardCopyTests {
         let released = AsyncGate()
         var wasReleased = false
 
-        let (written, promised) = publisher.publishCopy(
+        let (written, holdsCopy) = publisher.publishCopy(
             [item], concealed: false, servingFileURLs: true,
             held: { _, representation in representation == 0 ? .bytes(Data("text".utf8)) : nil },
             puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
@@ -129,7 +129,7 @@ struct ClipboardCopyTests {
                 wasReleased = true
                 released.notify()
             })
-        #expect(written && promised)
+        #expect(written && holdsCopy)
         #expect(
             pasteboard.dataByItem == [[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("text".utf8)]])
         #expect(pasteboard.promisedTypes == [.fileURL])
@@ -139,8 +139,10 @@ struct ClipboardCopyTests {
         try await released.wait { wasReleased }
     }
 
-    @Test("A copy with no file promises nothing, and a concealed one carries its marker as data")
-    func copyWithoutFilesPromisesNothing() {
+    @Test(
+        "A copy with no file promises nothing and is not held; a concealed one carries its marker as data, held until replaced",
+        arguments: [false, true])
+    func copyWithoutFilesPromisesNothing(concealed: Bool) {
         let pasteboard = FakePasteboard()
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
@@ -148,15 +150,15 @@ struct ClipboardCopyTests {
         var item = OfferedItem()
         item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
 
-        let (written, promised) = publisher.publishCopy(
-            [item], concealed: true, servingFileURLs: true, held: { _, _ in .bytes(Data("hunter2".utf8)) },
+        let (written, holdsCopy) = publisher.publishCopy(
+            [item], concealed: concealed, servingFileURLs: true, held: { _, _ in .bytes(Data("hunter2".utf8)) },
             puller: FilePuller(url: nil),
             serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection), onReleased: {})
-        #expect(written && !promised)
+        #expect(written && holdsCopy == concealed)
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(
             pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)]
-                == Data())
+                == (concealed ? Data() : nil))
         #expect(registry.countForTesting == 0)
     }
 
@@ -359,7 +361,8 @@ struct ClipboardCopyTests {
         // The upstream offer ends: the snapshot says so, and its file is served no more.
         let ended = AsyncGate()
         let heard = Locked(false)
-        source.whenUpstreamEnds {
+        source.whenWithdrawalOwed { withdrawal in
+            #expect(withdrawal == .upstreamEnded)
             heard.withLock { $0 = true }
             ended.notify()
         }
@@ -876,7 +879,7 @@ struct ClipboardCopyTests {
         item.representations = [Self.representation("public.data", .file, name: "a.bin")]
         let released = AsyncGate()
         var wasReleased = false
-        let (written, promised) = publisher.publishCopy(
+        let (written, holdsCopy) = publisher.publishCopy(
             [item], concealed: false, servingFileURLs: true, held: { _, _ in nil },
             puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
             serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
@@ -884,7 +887,7 @@ struct ClipboardCopyTests {
                 wasReleased = true
                 released.notify()
             })
-        #expect(written && promised)
+        #expect(written && holdsCopy)
 
         // A paste has the file URL, and AppKit finishes with the provider, the write standing.
         let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
@@ -912,12 +915,12 @@ struct ClipboardCopyTests {
         do {
             let publisher = ClipboardPasteboardPublisher(
                 pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
-            let (written, promised) = publisher.publishCopy(
+            let (written, holdsCopy) = publisher.publishCopy(
                 [item], concealed: false, servingFileURLs: true, held: { _, _ in nil },
                 puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
                 serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
                 onReleased: { released = true })
-            #expect(written && promised)
+            #expect(written && holdsCopy)
         }
 
         // Another app's copy replaces the write, nothing having pasted it: AppKit finishes no provider until this
@@ -944,12 +947,12 @@ struct ClipboardCopyTests {
         let reader = ClipboardPasteboardWatch.observe(pasteboard, in: .newCopies) { heard.append("reader") }
         var item = OfferedItem()
         item.representations = [Self.representation("public.data", .file, name: "a.bin")]
-        let (written, promised) = publisher.publishCopy(
+        let (written, holdsCopy) = publisher.publishCopy(
             [item], concealed: false, servingFileURLs: true, held: { _, _ in nil },
             puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
             serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
             onReleased: { heard.append("released") })
-        #expect(written && promised)
+        #expect(written && holdsCopy)
         let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
         #expect(await paste.value != nil)
         pasteboard.finishProvider(itemIndex: 0)
@@ -977,11 +980,12 @@ struct ClipboardCopyTests {
         do {
             let puller = CountingPuller(bytes: Data())
             watched = puller
-            let (written, promised) = publisher.publishCopy(
+            let (written, holdsCopy) = publisher.publishCopy(
                 [item], concealed: true, servingFileURLs: true, held: { _, _ in .bytes(Data("hunter2".utf8)) },
                 puller: puller, serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection),
                 onReleased: {})
-            #expect(written && !promised)
+            // Concealed, it is held until replaced, but holds no source.
+            #expect(written && holdsCopy)
         }
         #expect(watched == nil)
         #expect(ledger.standingWrite(on: pasteboard) == nil)

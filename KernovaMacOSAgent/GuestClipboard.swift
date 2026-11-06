@@ -257,8 +257,8 @@ final class GuestClipboard {
     /// arrived first (``ClipboardItemExchange/land(_:then:)``). What it names of this agent's own offers by
     /// reference is filled from them; what they can no longer give is left out, and the host told so. Files
     /// over the paste ceiling are left out of the write, and the host told that too; with nothing else in the
-    /// copy, nothing is written. The copy is released once something replaces its write, or at once when it
-    /// promised none.
+    /// copy, nothing is written. The copy is released once something replaces its write, or at once when the
+    /// write does not hold it: it promised no file, and is not concealed.
     private func write(_ copy: ClipboardRemoteOffer) {
         let arrivedAt = pasteboard.changeCount
         let exchange = exchange
@@ -285,7 +285,7 @@ final class GuestClipboard {
             onNotice()
             return
         }
-        let (written, promised) = publisher.publishCopy(
+        let (written, holdsCopy) = publisher.publishCopy(
             copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
             held: { copy.held(item: $0, representation: $1) }, puller: copy, serving: copy.serving,
             onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
@@ -311,7 +311,7 @@ final class GuestClipboard {
             exchange.refuseCopy(copy, WireError(.clipboardFilesWithheld, limit: UInt64(ceiling)))
             activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
             onNotice()
-        } else if !promised {
+        } else if !holdsCopy {
             // A copy naming this agent's own offers by reference promises nothing: its references are all it
             // names of the agent's, so the host hears now what was left out.
             if leftOut > 0 {
@@ -384,8 +384,8 @@ final class GuestClipboard {
     }
 
     /// A copy the host sent ended, with the link or withdrawn by the host: what this clipboard holds of it
-    /// that no paste had is retracted, its files being on the Mac's disk. A withdrawal that took something back is
-    /// a notice; a link's end shows as sharing going off.
+    /// that no paste had is retracted, its files being on the Mac's disk, and a concealed copy goes whole, pasted
+    /// or not. A withdrawal that took something back is a notice; a link's end shows as sharing going off.
     private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         let retraction = retractWrite(
             servingOffer: copy.token, withdrawing: .unread, of: .copy, because: .ended(ending))

@@ -66,15 +66,17 @@ extension ClipboardPasteboardPublisher {
     /// side's own offer (`Representation.reference`) and that `held` does not
     /// hold is left out: nothing of it can be pulled.
     ///
-    /// The write serves the copy `copy`, and `onReleased` runs once the
-    /// pasteboard is done with every file it promised. Returns whether the
-    /// pasteboard took the write, and whether it promised anything.
+    /// The write serves the copy `copy`. One that promises a file, or is
+    /// concealed, which the copy's end withdraws whole, holds the copy until
+    /// something replaces it, when `onReleased` runs. Returns whether the
+    /// pasteboard took the write, and whether it holds the copy; one it does
+    /// not hold is the caller's to let go now.
     public func publishCopy(
         _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
         held: @escaping @Sendable (_ item: Int, _ rep: Int) -> ClipboardWriteSource.Held?,
         puller: any ClipboardItemPulling, serving copy: ClipboardWriteSource.Serving,
         onReleased: @escaping @MainActor @Sendable () -> Void
-    ) -> (written: Bool, promised: Bool) {
+    ) -> (written: Bool, holdsCopy: Bool) {
         // What is held now, read once: the write's source holds what landed, never a closure over the copy.
         var table: [[ClipboardWriteSource.Held?]] = []
         for (index, item) in items.enumerated() {
@@ -89,14 +91,14 @@ extension ClipboardPasteboardPublisher {
             for: items, concealed: concealed, servingFileURLs: servingFileURLs, holding: lookup, puller: puller,
             eventLoopWait: { NestedEventLoopWait.current() })
         guard !specs.isEmpty else { return (false, false) }
-        let promised = specs.contains { !$0.types.isEmpty }
         let source = ClipboardWriteSource(
             serving: copy,
             parts: [
                 .init(
                     items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller, held: lookup)
             ])
-        return (write(specs, source: source, onReleased: onReleased), promised)
+        let record = place(specs, source: source, onReleased: onReleased)
+        return (record != nil, record?.withdrawable == true)
     }
 
     /// The item specs ``publishCopy(_:concealed:servingFileURLs:held:puller:serving:onReleased:)``

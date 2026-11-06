@@ -773,6 +773,38 @@ struct HubClipboardServiceTests {
         #expect(error.code == .itemRepresentationUnavailable)
     }
 
+    @Test(
+        "Copy to Guest of a concealed Mac copy is withdrawn once the Mac's clipboard is cleared or replaced; a plain copy stays served",
+        arguments: [true, false])
+    func concealedCopyToGuestIsWithdrawnWhenTheMacMovesOn(cleared: Bool) async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try hostPasteboard(instance)
+        #expect(pasteboard.setString("plain text", forType: .string))
+        let plain = try await copyToGuest(instance, probe)
+        try await acceptLastOffer(probe)
+        #expect(!plain.concealed)
+        #expect(
+            pasteboard.setItem([
+                (.string, Data("hunter2-mac".utf8)),
+                (NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI), Data()),
+            ]))
+        let concealed = try await copyToGuest(instance, probe)
+        try await acceptLastOffer(probe)
+        #expect(concealed.concealed)
+        #expect(!withdrawn(concealed.token, probe))
+
+        if cleared {
+            _ = pasteboard.clearContents()
+        } else {
+            #expect(pasteboard.setString("copied since", forType: .string))
+        }
+        try await probe.changed.wait { withdrawn(concealed.token, probe) }
+        #expect(withdrawal(of: concealed.token, probe) == .cancelled)
+        #expect(!withdrawn(plain.token, probe))
+        #expect(await pull(plain, from: instance) == .success(.inline(Data("plain text".utf8))))
+    }
+
     // MARK: - Copy Guest Clipboard to Mac
 
     private static let copyToken = Data(repeating: 5, count: 16)
@@ -1012,17 +1044,31 @@ struct HubClipboardServiceTests {
         #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
     }
 
-    @Test("Copy to Mac's concealed text, written as data, stays at the connection's end; its unpasted file goes")
-    func concealedCopyToMacKeepsItsText() async throws {
+    @Test(
+        "Copy to Mac's concealed copy goes whole at the connection's end, its text pasted or not, and that is said",
+        arguments: [false, true])
+    func concealedCopyToMacGoesWithTheLink(pasted: Bool) async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         _ = try await copyToMac(Self.text, Self.textAndFile, on: probe, into: instance, concealed: true)
         try await landPulls(2, on: probe) { Data($0.request.item == 0 ? "s3cret".utf8 : "a.bin".utf8) }
         let pasteboard = try hostPasteboard(instance)
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+        if pasted { #expect(pasteboard.items.first?.data(forType: Self.textType) == Data("s3cret".utf8)) }
 
         probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
-        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        try await pasteboard.changed.wait { pasteboard.dataByItem.isEmpty && pasteboard.promisedTypes.isEmpty }
+        #expect(try await reported(instance, .copy) == .disconnectedCopyRetracted)
+    }
+
+    /// Runs Copy to Mac of the guest's concealed text, waiting for its write, which holds the copy: not released.
+    private func concealedCopyToMac(
+        _ probe: AgentHubProbe, _ instance: VMInstance
+    ) async throws -> FakePasteboard {
+        _ = try await copyToMac(Self.text, on: probe, into: instance, concealed: true)
+        try await landPulls(1, on: probe) { _ in Data("s3cret".utf8) }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { !pasteboard.dataByItem.isEmpty }
         #expect(
             pasteboard.dataByItem == [
                 [
@@ -1030,7 +1076,33 @@ struct HubClipboardServiceTests {
                     NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI): Data(),
                 ]
             ])
-        #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
+        await probe.settle()
+        #expect(!released(Self.copyToken, probe))
+        return pasteboard
+    }
+
+    @Test(
+        "Copy to Mac's concealed text goes when the guest withdraws it, its clipboard having moved on, pasted or not",
+        arguments: [false, true])
+    func concealedCopyToMacGoesWhenTheGuestWithdrawsIt(pasted: Bool) async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try await concealedCopyToMac(probe, instance)
+        if pasted { #expect(pasteboard.items.first?.data(forType: Self.textType) == Data("s3cret".utf8)) }
+
+        withdrawGuestCopy(on: probe)
+        try await pasteboard.changed.wait { pasteboard.dataByItem.isEmpty }
+        #expect(try await reported(instance, .copy) == .withdrawnCopyRetracted)
+    }
+
+    @Test("Copy to Mac's concealed text is held until the Mac's clipboard moves on, and released then")
+    func concealedCopyToMacReleasesWhenTheMacMovesOn() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try await concealedCopyToMac(probe, instance)
+
+        #expect(pasteboard.setString("the user's next copy", forType: .string))
+        try await probe.changed.wait { released(Self.copyToken, probe) }
     }
 
     @Test("Copy to Mac from a guest clipboard holding nothing writes nothing and says so")
@@ -1765,13 +1837,13 @@ struct HubClipboardServiceTests {
         let otherVM = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         let puller = OtherVMPuller(bytes: Data(), file: file)
-        let (written, promised) = otherVM.publishCopy(
+        let (written, holdsCopy) = otherVM.publishCopy(
             [Self.textAndFile], concealed: false, servingFileURLs: true,
             held: { _, representation in representation == 0 ? .bytes(Data("VM A's text".utf8)) : nil },
             puller: puller,
             serving: .init(token: Data(repeating: 0xA2, count: 16), connection: ClipboardConnectionID()),
             onReleased: { puller.end() })
-        #expect(written && promised)
+        #expect(written && holdsCopy)
         return (puller, otherVM)
     }
 

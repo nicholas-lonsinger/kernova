@@ -10,8 +10,8 @@ import Foundation
 public final class ClipboardPasteboardWatch {
     /// When an observer hears a poll, relative to the others.
     public enum Turn: Comparable, Sendable {
-        /// Ends a write the change replaced. Heard first, so all a replaced write held is let go before anything
-        /// reads what replaced it.
+        /// Ends what the change replaced: a write, or a concealed copy sent of what the pasteboard held. Heard
+        /// first, so all a replaced write held is let go before anything reads what replaced it.
         case standingWrites
         /// Reads what the change put on the pasteboard.
         case newCopies
@@ -52,19 +52,20 @@ public final class ClipboardPasteboardWatch {
     /// How often a pasteboard is polled.
     private static let interval: TimeInterval = 0.5
 
-    /// Held so its identity names no other pasteboard while it is watched.
-    private let pasteboard: any ClipboardWritePasteboard
+    /// Held so its identity names no other pasteboard while it is watched; each observer reads its change count
+    /// itself.
+    private let pasteboard: AnyObject
     private var observers: [Observer] = []
     private var nextID = 0
     private var timer: Timer?
 
-    private init(pasteboard: any ClipboardWritePasteboard) {
+    private init(pasteboard: AnyObject) {
         self.pasteboard = pasteboard
     }
 
     /// Calls `heard` at each poll of `pasteboard`, in `turn`, until the observation returned is cancelled or let go.
     public static func observe(
-        _ pasteboard: any ClipboardWritePasteboard, in turn: Turn, _ heard: @escaping @MainActor () -> Void
+        _ pasteboard: AnyObject, in turn: Turn, _ heard: @escaping @MainActor () -> Void
     ) -> Observation {
         let key = ObjectIdentifier(pasteboard)
         let watch = watches[key] ?? ClipboardPasteboardWatch(pasteboard: pasteboard)
@@ -106,12 +107,12 @@ public final class ClipboardPasteboardWatch {
 
     #if DEBUG
     /// Whether `pasteboard` is polled now.
-    static func isPollingForTesting(_ pasteboard: any ClipboardWritePasteboard) -> Bool {
+    static func isPollingForTesting(_ pasteboard: AnyObject) -> Bool {
         watches[ObjectIdentifier(pasteboard)]?.timer != nil
     }
 
     /// Polls `pasteboard` once, now, when anything observes it.
-    static func pollForTesting(_ pasteboard: any ClipboardWritePasteboard) {
+    static func pollForTesting(_ pasteboard: AnyObject) {
         watches[ObjectIdentifier(pasteboard)]?.poll()
     }
     #endif

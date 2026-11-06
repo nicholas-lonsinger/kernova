@@ -79,10 +79,13 @@ public final class ClipboardOfferSource {
     private let leases: [ClipboardStagingLease]
     /// The pasteboard the offer was read from, and its change then, whether or not it serves from it.
     private let readFrom: (pasteboard: any ClipboardReadPasteboard, changeCount: Int)?
-    /// Whether an offer an ``Origin/upstream`` file is served from has ended.
-    private var upstreamEnded = false
-    /// Hears the first upstream end.
-    private var onUpstreamEnded: (@MainActor () -> Void)?
+    /// Why a copy sent of this source is owed a withdrawal, once it is.
+    private var owed: Withdrawal?
+    /// Hears the first reason a copy sent of this source is owed a withdrawal.
+    private var onOwed: (@MainActor (Withdrawal) -> Void)?
+    /// Watches the pasteboard a concealed source was read from, while a copy sent of it is withdrawn when it moves
+    /// on.
+    private var movedOnWatch: ClipboardPasteboardWatch.Observation?
     /// The items, by index, the read left a file out of.
     let incompleteItems: Set<Int>
 
@@ -111,20 +114,36 @@ public final class ClipboardOfferSource {
         readFrom.map { $0.pasteboard.changeCount == $0.changeCount } ?? false
     }
 
-    /// Runs `handler` once an offer one of this snapshot's files is served from ends, at once when one has: those
-    /// files can be served no more, so what serves them is owed an end. A snapshot with no such file never runs
-    /// it.
-    public func whenUpstreamEnds(_ handler: @escaping @MainActor () -> Void) {
-        guard !upstreamEnded else { return handler() }
-        onUpstreamEnded = handler
+    /// Why the far side's write of a copy of this snapshot is owed a withdrawal (``whenWithdrawalOwed(_:)``).
+    public enum Withdrawal: Sendable, Equatable {
+        /// An offer one of the snapshot's files is served from ended: those files can be served no more.
+        case upstreamEnded
+        /// The snapshot is concealed, and the pasteboard it was read from moved on: the source no longer holds it.
+        case movedOn
     }
 
-    private func upstreamDidEnd() {
-        guard !upstreamEnded else { return }
-        upstreamEnded = true
-        let handler = onUpstreamEnded
-        onUpstreamEnded = nil
-        handler?()
+    /// Runs `handler` once, at the first reason the far side's write of a copy of this snapshot is owed a
+    /// withdrawal, at once when one has come already. A snapshot with neither reason never runs it. From then on, a
+    /// concealed snapshot watches the pasteboard it was read from, for as long as it lives.
+    public func whenWithdrawalOwed(_ handler: @escaping @MainActor (Withdrawal) -> Void) {
+        if let owed { return handler(owed) }
+        onOwed = handler
+        guard concealed, let readFrom else { return }
+        guard standsOnItsPasteboard else { return owe(.movedOn) }
+        movedOnWatch = ClipboardPasteboardWatch.observe(readFrom.pasteboard, in: .standingWrites) { [weak self] in
+            guard let self, !self.standsOnItsPasteboard else { return }
+            self.owe(.movedOn)
+        }
+    }
+
+    private func owe(_ withdrawal: Withdrawal) {
+        guard owed == nil else { return }
+        owed = withdrawal
+        movedOnWatch?.cancel()
+        movedOnWatch = nil
+        let handler = onOwed
+        onOwed = nil
+        handler?(withdrawal)
     }
 
     /// Whether `url` is a file of this offer's own staging, which goes when the offer does.
@@ -248,7 +267,7 @@ public final class ClipboardOfferSource {
     /// when the snapshot's copy goes over `destination`, the connection that offer arrived on. Otherwise that
     /// promise is the write's own source's: an INLINE representation is pulled through the part's puller now
     /// and held as data, and a FILE or FOLDER kept as a placeholder pulled through it when pulled
-    /// (``Origin/upstream``), for as long as that offer lasts (``whenUpstreamEnds(_:)``). Only the
+    /// (``Origin/upstream``), for as long as that offer lasts (``whenWithdrawalOwed(_:)``). Only the
     /// representations the write placed are kept; one that cannot be pulled is left out, and an item left with
     /// none is dropped. Nil when nothing remains. `pasteboard` holds the write now.
     ///
@@ -332,7 +351,7 @@ public final class ClipboardOfferSource {
             pasteboard: nil, changeCount: 0, promises: [],
             promiseDestination: { throw ClipboardServeError.unavailable }, readFrom: readFrom)
         for upstream in upstreams {
-            upstream.whenEnded { [weak snapshot] in MainActorBridge.async { snapshot?.upstreamDidEnd() } }
+            upstream.whenEnded { [weak snapshot] in MainActorBridge.async { snapshot?.owe(.upstreamEnded) } }
         }
         return (snapshot, lost)
     }

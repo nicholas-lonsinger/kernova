@@ -691,6 +691,52 @@ struct GuestClipboardTests {
         #expect(!link.withdrawals.contains(copy.token))
     }
 
+    /// Has the host ask for the guest's clipboard as it stands, returning the guest's answering copy.
+    private func answerAsk(_ token: Data, _ rig: Rig, _ link: RecordingLink) async throws -> ItemOffer {
+        let before = link.offers.count
+        rig.clipboard.exchange.handle(
+            .offerReceived(
+                ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 0, copy: .ask)),
+            on: link)
+        try await link.changed.wait { link.offers.count == before + 1 && link.releases.contains(token) }
+        return try #require(link.offers.last)
+    }
+
+    /// A password manager's copy: text beside `org.nspasteboard.ConcealedType`.
+    private static func setConcealed(_ text: String, on pasteboard: FakePasteboard) {
+        #expect(
+            pasteboard.setItem([
+                (type: .string, data: Data(text.utf8)),
+                (type: NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI), data: Data()),
+            ]))
+    }
+
+    @Test(
+        "The guest's concealed copy is withdrawn from the host once the guest's clipboard is cleared or replaced; a plain one stays",
+        arguments: [true, false])
+    func concealedAnswerIsWithdrawnWhenThePasteboardMovesOn(cleared: Bool) async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        #expect(rig.pasteboard.setString("plain text", forType: .string))
+        let plain = try await answerAsk(Data(repeating: 0xA1, count: 16), rig, link)
+        #expect(!plain.concealed)
+        Self.setConcealed("hunter2-guest", on: rig.pasteboard)
+        let concealed = try await answerAsk(Data(repeating: 0xA2, count: 16), rig, link)
+        #expect(concealed.concealed)
+        await drainMainQueue()
+        #expect(link.withdrawals.isEmpty)
+
+        if cleared {
+            _ = rig.pasteboard.clearContents()
+        } else {
+            #expect(rig.pasteboard.setString("copied since", forType: .string))
+        }
+        try await link.changed.wait { link.withdrawals.contains(concealed.token) }
+        #expect(!link.withdrawals.contains(plain.token))
+    }
+
     @Test("Off the console the host's ask is declined: nothing to copy")
     func askOffTheConsoleAnswersNothing() async throws {
         let rig = rig()
@@ -1116,6 +1162,62 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.promisedTypes.isEmpty)
         #expect(rig.pasteboard.dataByItem.isEmpty)
         #expect(rig.clipboard.activity == .copyWithdrawn(filesOnly: false))
+    }
+
+    /// Has the host send its concealed copy of text, landing it, and waits for the guest's write of it, which is
+    /// held: not released.
+    private func receiveConcealedCopy(_ rig: Rig, _ link: RecordingLink) async throws {
+        try await receiveCopy(Self.textItem(), text: Data("hunter2-mac".utf8), concealed: true, on: rig, link)
+        try await rig.pasteboard.changed.wait { !rig.pasteboard.dataByItem.isEmpty }
+        #expect(
+            rig.pasteboard.dataByItem == [
+                [
+                    NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("hunter2-mac".utf8),
+                    NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI): Data(),
+                ]
+            ])
+        await drainMainQueue()
+        #expect(!link.releases.contains(Self.copyToken))
+    }
+
+    @Test(
+        "The host withdrawing its concealed copy, its clipboard having moved on, clears the guest's write of it, pasted or not",
+        arguments: [false, true])
+    func concealedHostCopyGoesWhenTheHostWithdrawsIt(pasted: Bool) async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveConcealedCopy(rig, link)
+        if pasted { #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("hunter2-mac".utf8)) }
+
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)
+        #expect(rig.pasteboard.items.isEmpty)
+        #expect(rig.clipboard.activity == .copyWithdrawn(filesOnly: false))
+    }
+
+    @Test("The connection leaving clears the host's concealed copy, pasted or not", arguments: [false, true])
+    func concealedHostCopyGoesWithTheLink(pasted: Bool) async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveConcealedCopy(rig, link)
+        if pasted { #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("hunter2-mac".utf8)) }
+
+        rig.clipboard.setLink(nil)
+        #expect(rig.pasteboard.items.isEmpty)
+        #expect(rig.clipboard.activity == .disabled)
+    }
+
+    @Test("The host's concealed copy is held until a copy in the guest replaces it, then released")
+    func concealedHostCopyReleasesWhenReplaced() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveConcealedCopy(rig, link)
+
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        try await link.changed.wait { link.releases.contains(Self.copyToken) }
     }
 
     /// Another connection's offer of a file, which ends when asked to.

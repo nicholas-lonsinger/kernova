@@ -207,6 +207,31 @@ struct ClipboardPasteboardPublisherTests {
         #expect(registry.countForTesting == 0)
     }
 
+    @Test(
+        "a write promising nothing is withdrawn only when it holds a concealed item: that item goes whole, the rest stays",
+        arguments: [ClipboardWithdrawal.unread, .everyPromise])
+    func concealedDataGoesWholeAtAnyWithdrawal(_ withdrawal: ClipboardWithdrawal) {
+        let pasteboard = FakeWritePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry)
+        let marker = ClipboardSnapshotPolicy.concealedMarkerUTI
+        let plain = ClipboardPasteboardPublisher.ItemSpec(data: [(textUTI, Data("plain".utf8))], types: []) { _ in nil }
+
+        publisher.write([plain], source: servingOffer)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: withdrawal) == nil)
+
+        publisher.write(
+            [
+                ClipboardPasteboardPublisher.ItemSpec(
+                    data: [(textUTI, Data("hunter2".utf8)), (marker, Data())], types: []
+                ) { _ in nil },
+                plain,
+            ], source: servingOffer)
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: withdrawal) == .keptPart)
+        #expect(pasteboard.dataByItem == [[NSPasteboard.PasteboardType(textUTI): Data("plain".utf8)]])
+    }
+
     // MARK: - Planning
 
     @Test("a plan's file URL and inline types reach their own serving calls")

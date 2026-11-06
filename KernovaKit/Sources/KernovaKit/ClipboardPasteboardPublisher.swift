@@ -102,7 +102,8 @@ public protocol ClipboardPromiseServing: AnyObject, Sendable {
 
 /// Which promises of a write a retraction withdraws. Two rules hold for either, item by item:
 ///
-/// - An item marked concealed loses every promise, read or not: once the source can no longer clear it, nothing
+/// - An item marked concealed goes whole, read or not, what it holds as data with it: it lives only while its
+///   source still holds it and the link carrying it is up, and once the source can no longer clear it, nothing
 ///   else will.
 /// - An item that loses a file-reference type (`public.file-url`) goes whole, what it holds as data with it: its
 ///   other types name or picture the file, and alone they paste as a stand-in for it — a name clipping in Finder.
@@ -119,7 +120,7 @@ public enum ClipboardWithdrawal: Equatable, Sendable {
 
 /// What withdrawing a write's promises left on the pasteboard.
 public enum ClipboardRetraction: Equatable, Sendable {
-    /// Nothing: no item kept anything but its concealed marker.
+    /// Nothing: no item kept anything.
     case cleared
     /// Part of the write, written again alone as data: the items and types the withdrawal left.
     case keptPart
@@ -213,11 +214,20 @@ public final class ClipboardPasteboardPublisher {
     /// write that serves from what this side holds. Its record (``ClipboardStandingWrite``), `source` with it,
     /// lives as long as the write stands. `onReleased` runs once the write no longer stands, which is when no
     /// paste can be served from the offer any more; a paste of every promised type leaves the write standing, so
-    /// it runs nothing. A write that promises nothing, or fails, never runs it.
+    /// it runs nothing. A write that fails, or neither promises anything nor holds an item marked concealed, never
+    /// runs it.
     @discardableResult
     public func write(
         _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
     ) -> Bool {
+        place(specs, source: source, onReleased: onReleased) != nil
+    }
+
+    /// Writes `specs` as ``write(_:source:onReleased:)`` does, returning the write's record while it stands; nil
+    /// when the pasteboard refused it.
+    func place(
+        _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)?
+    ) -> ClipboardStandingWrite? {
         // Captures the registry, not `self`, so a provider's lifetime is
         // decoupled from this object.
         let registry = providerRegistry
@@ -228,10 +238,8 @@ public final class ClipboardPasteboardPublisher {
             }
         }
         let promised = specs.map { $0.types.map(NSPasteboard.PasteboardType.init(rawValue:)) }
-        let promises = promised.contains { !$0.isEmpty }
         let record = ClipboardStandingWrite(
-            source: promises ? source : nil, by: self, written: data.map { $0.map(\.type) }, promised: promised,
-            onEnded: promises ? onReleased : nil)
+            source: source, by: self, written: data.map { $0.map(\.type) }, promised: promised, onEnded: onReleased)
         let read = record.read
         let items = zip(specs, data).enumerated().map { index, entry -> ClipboardWriteItem in
             let (spec, data) = entry
@@ -264,11 +272,11 @@ public final class ClipboardPasteboardPublisher {
         guard written else {
             heldChangeCount = nil
             ledger.record(nil, by: self, on: pasteboard)
-            return false
+            return nil
         }
         stand(record)
         providerRegistry.retain(providers)
-        return true
+        return record
     }
 
     /// The pasteboard took `record`'s write, which stands from now on.
@@ -308,13 +316,14 @@ public final class ClipboardPasteboardPublisher {
     /// alone, as data, and the pasteboard is cleared when nothing is. Nil when the write no longer stands there.
     ///
     /// A pasteboard the user has written over since is theirs and is left untouched, as is a write serving
-    /// another offer, or none, or promising nothing. What a paste had is read back from the pasteboard, which
-    /// holds each provided type as data, so the write keeps no second copy of it while it stands.
+    /// another offer, or none, or neither promising anything nor holding an item marked concealed. What a paste
+    /// had is read back from the pasteboard, which holds each provided type as data, so the write keeps no second
+    /// copy of it while it stands.
     @discardableResult
     public func retractWrite(
         servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal
     ) -> ClipboardRetraction? {
-        guard let held = standing, held.promisesSomething, held.servingOffer == token,
+        guard let held = standing, held.withdrawable, held.servingOffer == token,
             heldChangeCount == pasteboard.changeCount
         else { return nil }
         return writeAgain(held.remains(after: withdrawal, on: pasteboard))
