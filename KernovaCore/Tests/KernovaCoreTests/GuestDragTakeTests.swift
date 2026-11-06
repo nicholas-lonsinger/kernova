@@ -988,6 +988,6 @@ struct GuestDragTakeTests {
             GuestDragTake.failure(for: WireError(.writeFailed, posixErrno: ENOSPC), owed: 1)
                 == .diskFull(needed: nil, available: nil))
         #expect(GuestDragTake.failure(for: WireError(.writeFailed), owed: 1) == .stagingFailed)
-        #expect(GuestDragTake.failure(for: WireError(.readFailed), owed: 1) == .sourceUnreadable(nil))
+        #expect(GuestDragTake.failure(for: WireError(.readFailed), owed: 1) == .sourceUnreadable)
     }
 }

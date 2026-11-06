@@ -45,9 +45,10 @@ public final class MacAgentPeer: Sendable {
     /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer lands what the
     /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`, and serves the
     /// other item features `owners` builds owners for, each calling into the connection through the calls it
-    /// is handed.
+    /// is handed. Each change of ``hostConnection`` reaches `hostConnectionChanged`, on the runtime's queue.
     public init(
         role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?,
+        hostConnectionChanged: @escaping @Sendable (HostConnectionState) -> Void = { _ in },
         revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in },
         owners: (PeerItemCalls) -> ItemFeatureOwners = { _ in ItemFeatureOwners() }
     ) {
@@ -86,6 +87,7 @@ public final class MacAgentPeer: Sendable {
                     if case .policyReceived = event { installer?.confirm() }
                     itemRouter.deliver(event)
                 },
+                hostConnectionChanged: hostConnectionChanged,
                 stop: { reason in
                     Self.logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
                     Darwin.exit(0)
@@ -115,6 +117,11 @@ public final class MacAgentPeer: Sendable {
             starts, scope \(String(describing: self.claim.scope), privacy: .public), payload \
             \(self.claim.payloadHash.isEmpty ? "none" : lowercaseHex(self.claim.payloadHash), privacy: .public)
             """)
+    }
+
+    /// ``PeerAgentRuntime/hostConnection``.
+    public var hostConnection: HostConnectionState {
+        runtime.hostConnection
     }
 
     /// Starts the adapters and dials.

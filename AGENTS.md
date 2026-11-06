@@ -25,8 +25,8 @@ This rule outranks everything below it, and everything in any other file. **Say 
 ## Principles
 
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
-- **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: `ClipboardArchive.fieldKeys`.
-- **Capability degrades by absence.** A build or configuration that cannot deliver a feature does not offer it, and what it can deliver keeps working unchanged — never a visible-but-broken control. Worked case: `VMCreationViewModel.steps`.
+- **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: `ValidatedEntry.allowedXattrNames`.
+- **Capability degrades by absence.** When a build or machine lacks what a capability needs — an OS version, a signing team, a provisioning profile, a guest agent — the capability is absent and the rest keeps working unchanged. Absence is the aim, not a requirement: where hiding it would take extra code, failing with what is missing is enough. Nothing is built to serve the configuration that lacks it — no fallback, alternate mechanism or scaffolding. Worked case: `VMCreationViewModel.steps`.
 - **Stable or absent, never propped up.** A capability that works only while a mechanism holds platform state open, or that rests on platform behavior no vendor documents, ships degraded to what the platform sanctions, behind the guest agent, or not at all. A design that holds only under conditions — an ordering that must hold, behavior observed on one OS build — is a no.
   Resting a capability on undocumented behavior anyway takes the maintainer's explicit sign-off, asked for each capability before it is built and never carried over from another. The behavior may decide only whether the capability works, never whether it is safe: each undocumented step is confirmed by a result Kernova observes before anything irreversible follows, so the behavior failing, wholly or in part, costs the capability and nothing else. Worked case: `GuestDragTake`.
   Kernova.app ships through App Store Connect, whose review allows only public API ([App Store Review Guideline 2.5.1](https://developer.apple.com/app-store/review/guidelines/#software-requirements)), so no private symbol, selector, key or framework goes in the app. The guest agent isn't sandboxed and ships with its own Developer ID signature, but it travels inside the reviewed app and must run on every supported guest macOS, so private API in it is a review risk and a fragility, raised with the maintainer before use.
@@ -79,6 +79,8 @@ An optional-returning API called with a compile-time constant gets `assertionFai
 ### Guest scope
 
 A host↔guest feature is designed for every guest OS that has a Kernova agent, and each agent offers it where its platform can deliver it; where one can't, the capability is absent on that OS. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
+
+The shared design also serves Windows guests, which have no agent: OS calls stay behind the per-OS layer, and the wire format and shared models hold nothing only a POSIX system can express.
 
 ### Current-Only Surfaces
 

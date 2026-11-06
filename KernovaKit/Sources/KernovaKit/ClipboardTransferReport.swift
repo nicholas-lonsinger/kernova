@@ -66,9 +66,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// Over the transfer ceiling in force when the refusal was raised — the copy
     /// budget under `.copy`, the peer's paste cap under `.peerPaste`.
     case tooLarge(limitBytes: Int)
-    /// The peer reported a failure of its own; `nil` for a code this build does
-    /// not define.
-    case peerReported(ClipboardErrorCode?)
+    /// The peer reported a failure of its own.
+    case peerReported(ClipboardErrorCode)
     /// A Copy to Mac still on the host pasteboard was retracted whole because the guest's connection ended, so
     /// nothing more of it could be pasted.
     case disconnectedCopyRetracted
@@ -81,9 +80,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
     /// the guest withdrew the copy, its connection still up; the rest of the copy stays.
     case withdrawnFilesRetracted
-    /// A paste fired after the session ended with only part of the copied file
-    /// set staged, so nothing was served rather than a silent subset.
-    case incompleteFileSet
     /// The session ended mid-transfer. `fileCount` is how many files a drop was
     /// still carrying; `nil` for a paste, which speaks of the clipboard.
     case interrupted(fileCount: Int?)
@@ -93,12 +89,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The transfer aborted for a reason with no more specific case.
     case transferFailed
     /// The sending side could not read what it was sending, so the transfer
-    /// stopped there; the failure names the item and how, when the read said.
-    case sourceUnreadable(ClipboardItemFailure?)
-    /// The bytes arrived but could not be unpacked into the file or folder; the
-    /// failure names the entry the receiving side could not write, and how,
-    /// when it said.
-    case unpackFailed(ClipboardItemFailure?)
+    /// stopped there.
+    case sourceUnreadable
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
     /// Items the sending side did not send whole, and the rest crossed whole;
@@ -113,9 +105,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case sendFailed
     /// This side ended a drop the VM had not finished landing, for the reason given.
     case dropStopped(ClipboardDropStop)
-    /// The peer never asked for a single item of an offered drop, so the batch
-    /// was called off rather than left waiting forever.
-    case unclaimed
     /// The destination's clipboard changed before a copy to it landed, so it was
     /// left as it is.
     case clipboardChanged
@@ -148,32 +137,6 @@ extension ClipboardTransferFailure {
         switch self {
         case .itemsSkipped, .filesLeftOut, .partsGone, .disconnectedFilesRetracted, .withdrawnFilesRetracted: true
         default: false
-        }
-    }
-
-    /// The failure a `diskFull` abort carries, from whatever numbers it knew.
-    public static func diskFull(from info: ClipboardStreamAbortInfo) -> ClipboardTransferFailure {
-        .diskFull(
-            needed: info.neededBytes.map(UInt64.init(clamping:)),
-            available: info.availableBytes.map(Int64.init(clamping:)))
-    }
-
-    /// What an aborted inbound pull reports — one classification for every pull
-    /// of a peer offer, the paste-time blocking fire and the lazy preview pull
-    /// alike — or `nil` when the abort retires the transfer quietly.
-    ///
-    /// A code this build does not define is a failure to surface, not one to
-    /// swallow: `isRetiring` is false for it, so it lands on the generic failure
-    /// alongside every integrity, staging, and timeout code.
-    public static func inboundPullAborted(
-        _ info: ClipboardStreamAbortInfo
-    ) -> ClipboardTransferFailure? {
-        guard !info.isRetiring else { return nil }
-        switch info.code {
-        case .diskFull: return .diskFull(from: info)
-        case .extractError: return .unpackFailed(info.itemFailure)
-        case .readError: return .sourceUnreadable(info.itemFailure)
-        default: return .transferFailed
         }
     }
 }

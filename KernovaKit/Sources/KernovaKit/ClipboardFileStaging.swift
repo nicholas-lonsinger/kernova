@@ -30,6 +30,10 @@ public final class ClipboardFileStaging: Sendable {
     /// alive for staging that replaces what it last vended.
     public static let maxGenerations = 3
 
+    /// Margin kept free above a transfer's size when checking disk space, so a
+    /// transfer never fills the staging volume to the last byte.
+    public static let freeSpaceMargin = 64 * 1024 * 1024
+
     /// How long a generation's directory lives.
     enum Retention: Equatable, Sendable {
         /// The newest `count` generations are kept, so a pasteboard URL a newer
@@ -247,7 +251,7 @@ public final class ClipboardFileStaging: Sendable {
     /// margined total leaves `Int64` as "does not fit" — the caller's `byteCount`
     /// can come from a peer-declared size.
     public func hasCapacity(
-        forByteCount byteCount: Int, margin: Int = ClipboardStreamTuning.freeSpaceMargin
+        forByteCount byteCount: Int, margin: Int = ClipboardFileStaging.freeSpaceMargin
     ) -> Bool {
         guard let available = availableCapacity() else { return true }
         let (needed, overflow) = Int64(byteCount).addingReportingOverflow(Int64(margin))
@@ -273,28 +277,6 @@ public final class ClipboardFileStaging: Sendable {
             let handle = try FileHandle(forWritingTo: url)
             _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
             return Sink(url: url, handle: handle)
-        }
-    }
-
-    /// Reserves an empty child directory named exactly `name` under the
-    /// generation directory, for the receiver to extract a directory tree into.
-    ///
-    /// Nested under a fresh UUID parent so the folder keeps its *exact* name: a
-    /// same-named sibling in the generation directory would otherwise force a
-    /// ` 2` suffix onto it. `name` is sanitized to one path component so a
-    /// crafted offer can't escape the generation directory.
-    ///
-    /// - Throws: a filesystem error if the directory can't be created, or
-    ///   `generation` was discarded.
-    public func reserveDirectory(generation: UInt64, name: String) throws -> URL {
-        try state.withLock { state in
-            let dir = try state.directory(
-                for: generation, root: root, processRoot: processRoot, retention: retention)
-            let parent = dir.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            let url = parent.appendingPathComponent(
-                NameUniquing.sanitizedComponent(name), isDirectory: true)
-            try processRoot.createDirectory(at: url)
-            return url
         }
     }
 

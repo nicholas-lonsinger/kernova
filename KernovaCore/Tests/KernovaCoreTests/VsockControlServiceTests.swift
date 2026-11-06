@@ -409,7 +409,10 @@ struct VsockControlServiceTests {
         try await waitForChange { service.isConnected }
 
         // A clipboard offer on the control port: the guest talking out of turn.
-        try guest.send(Frame.clipboardOffer(generation: 1, reps: [], isConcealed: false))
+        var offer = Frame()
+        offer.protocolVersion = 1
+        offer.clipboardOffer = Kernova_V1_ClipboardOffer()
+        try guest.send(offer)
         // The frames are ordered on one channel, so a second Hello landing is
         // what proves the service kept serving past the stray one — no
         // observation window needed for a "still up" assertion.

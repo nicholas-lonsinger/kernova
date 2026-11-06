@@ -1,17 +1,6 @@
 import Foundation
 import KernovaKit
 
-/// Connection state of the always-on control channel to the host.
-enum HostConnectionState: Equatable, Sendable {
-    /// No live control channel — the reconnect loop is attempting to connect.
-    case connecting
-    /// Control channel is up and the host is responding.
-    case connected
-    /// Control channel is up but the host has gone silent past the unresponsive
-    /// threshold (it may be hung; the watchdog will eventually recycle the channel).
-    case unresponsive
-}
-
 /// Clipboard sharing state for display in the menu.
 ///
 /// `enabled` / `disabled` are the host-policy feature state; every other case

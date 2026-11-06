@@ -35,6 +35,25 @@ struct PeerAgentRuntimeTests {
         #expect(harness.scheduler.armed.isEmpty)
     }
 
+    @Test("The host connection reads connected from the host's Hello, and connecting once the connection ends")
+    func hostConnectionFollowsTheConnection() async {
+        let harness = PeerRuntimeHarness()
+        harness.runtime.start()
+        await harness.settle()
+        #expect(harness.runtime.hostConnection == .connecting)
+
+        let link = await harness.connect(1)
+        var changes = harness.hostConnections.waiter()
+        _ = await changes.next { $0 == .connected }
+        #expect(harness.runtime.hostConnection == .connected)
+
+        link.far.command(.close(.shuttingDown, retryAfter: nil))
+        await harness.pump(link)
+        _ = await changes.next { $0 == .connecting }
+        #expect(harness.runtime.hostConnection == .connecting)
+        #expect(harness.hostConnections.elements == [.connected, .connecting])
+    }
+
     @Test("A dial timer that fires early is armed again, and dials at its deadline")
     func earlyDialFire() async {
         let harness = PeerRuntimeHarness()
