@@ -23,9 +23,11 @@ public final class MacAgentPeer: Sendable {
     /// The status a peer exits with to relaunch.
     public static let relaunchStatus: Int32 = 75
 
-    /// The lander of the macOS agent's payloads: the app bundle, its self-test run through its executable.
+    /// The lander of the macOS agent's payloads: the app bundle, an update's checked against the running agent's
+    /// launch requirement and then self-tested through its executable.
     public static let lander = ContainerTreeLander(
-        itemName: MacInstallLayout.appName, selfTestExecutable: MacInstallLayout.executable)
+        itemName: MacInstallLayout.appName, selfTestExecutable: MacInstallLayout.executable,
+        system: ContainerTreeLander.System(launchRefusal: { LaunchRequirement.refusal(ofBundleAt: $0) }))
 
     private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "Peer")
 

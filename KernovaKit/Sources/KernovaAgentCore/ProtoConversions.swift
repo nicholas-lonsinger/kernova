@@ -268,14 +268,18 @@ extension UpdateOffer {
     var encodedCapability: Data {
         var capability = Kernova_V2_UpdateCapability()
         capability.formats = formats
-        capability.rejectedHash = rejectedHash ?? Data()
+        capability.rejectedHash = rejected?.hash ?? Data()
+        capability.rejectedCode = rejected?.code ?? .unspecified
         return capability.encoded
     }
 
     /// Decodes a peer's `UpdateCapability` params; nil when they do not decode.
     public init?(params: Data) {
         guard let capability = try? Kernova_V2_UpdateCapability(serializedBytes: params) else { return nil }
+        let code = capability.rejectedCode == .unspecified ? nil : capability.rejectedCode
         self.init(
-            formats: capability.formats, rejectedHash: capability.rejectedHash.isEmpty ? nil : capability.rejectedHash)
+            formats: capability.formats,
+            rejected: capability.rejectedHash.isEmpty ? nil : RejectedPayload(hash: capability.rejectedHash, code: code)
+        )
     }
 }

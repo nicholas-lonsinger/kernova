@@ -32,6 +32,7 @@ struct GuestAgentStatusViewControllerTests {
         let cases: [(status: AgentStatus, title: String)] = [
             (.waiting, "Set up the Kernova guest agent"),
             (.outdated(installed: "0.9.1", bundled: "0.9.2"), "Update available"),
+            (.reinstallNeeded(installed: "0.9.1", bundled: "0.9.2"), "Guest agent can\u{2019}t update in place"),
             (.updating(installed: "0.9.1", bundled: "0.9.2"), "Updating guest agent"),
             (.current(version: "0.9.2"), "Guest agent connected"),
             (.connected(version: "0.9.2"), "Guest agent connected"),

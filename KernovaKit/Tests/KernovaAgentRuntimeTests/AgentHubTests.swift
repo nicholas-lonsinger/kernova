@@ -138,9 +138,24 @@ struct AgentHubTests {
     }
 
     @Test(
-        "An outdated peer that refuses the offered hash reads failed; one that cannot take its format, unavailable",
+        "An outdated peer that refuses the offered hash reads failed, or launch-refused for UPDATE_LAUNCH_REFUSED; one that cannot take its format, unavailable",
         arguments: [
-            (UpdateOffer(formats: [.executable], rejectedHash: Data(repeating: 0xB2, count: 32)), .failed),
+            (
+                UpdateOffer(formats: [.executable], rejected: RejectedPayload(hash: Data(repeating: 0xB2, count: 32))),
+                .failed
+            ),
+            (
+                UpdateOffer(
+                    formats: [.executable],
+                    rejected: RejectedPayload(hash: Data(repeating: 0xB2, count: 32), code: .updateHashMismatch)),
+                .failed
+            ),
+            (
+                UpdateOffer(
+                    formats: [.executable],
+                    rejected: RejectedPayload(hash: Data(repeating: 0xB2, count: 32), code: .updateLaunchRefused)),
+                .launchRefused
+            ),
             (UpdateOffer(formats: [.paxTree]), PeerSummary.InBandUpdate.unavailable),
         ])
     func refusedOffer(offer: UpdateOffer, expected: PeerSummary.InBandUpdate) async {
@@ -149,6 +164,30 @@ struct AgentHubTests {
         let peer = HubPeer(harness, claim: .session(.user, instance: 1), update: .available(offer))
         _ = await harness.snapshot { Self.inBandUpdate($0) == expected }
         #expect(!harness.connector.events.elements.contains { if case .update = $0.event { true } else { false } })
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
+    @Test(
+        "A pull the peer refuses on this connection reads launch-refused for UPDATE_LAUNCH_REFUSED, else failed",
+        arguments: [
+            (ErrorCode.updateLaunchRefused, PeerSummary.InBandUpdate.launchRefused), (.updateHashMismatch, .failed),
+        ])
+    func refusedPull(code: ErrorCode, expected: PeerSummary.InBandUpdate) async {
+        let harness = HubHarness(bundles: [Self.offered], payloadSource: ZeroPayloads())
+        await harness.attached()
+        let peer = HubPeer(
+            harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])),
+            refuses: code)
+        var events = harness.connector.events.waiter()
+        let result = await events.next { if case .update(.result) = $0.event { true } else { false } }
+        guard case .update(.result(_, let value)) = result.event else {
+            Issue.record("no result")
+            return
+        }
+        #expect(value.kind == .rejected)
+        #expect(value.error?.code == code)
+        _ = await harness.snapshot { Self.inBandUpdate($0) == expected }
         peer.driver.close(.shuttingDown)
         harness.hub.close()
     }

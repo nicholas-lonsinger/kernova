@@ -89,6 +89,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 case .current: return "Up to date"
                 case .outdated(_, .updating): return "Updating\u{2026}"
                 case .outdated(_, .failed): return "Update failed"
+                case .outdated(_, .launchRefused): return "Can\u{2019}t update in place"
                 case .outdated(_, .unavailable): return "Out of date; this agent can\u{2019}t update itself"
                 case .notOffered: return version.isEmpty ? "Connected" : "Version \(version)"
                 }
@@ -222,10 +223,11 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
     }
 
-    /// The agents' state as one value: an outdated agent that is not updating
-    /// itself first, then one that is, then an unresponsive one, else the
-    /// newest — current only when every agent is, and connected when the host
-    /// offers any of them nothing to judge it against.
+    /// The agents' state as one value: an agent that refused the update as one
+    /// it can't launch first, then another outdated agent that is not updating
+    /// itself, then one that is, then an unresponsive one, else the newest —
+    /// current only when every agent is, and connected when the host offers
+    /// any of them nothing to judge it against.
     package static func status(of peers: [PeerSummary]) -> AgentStatus {
         status(of: peers.map { ($0.standing, $0.isResponsive, $0.versionLabel) })
     }
@@ -236,13 +238,17 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         of agents: [(standing: PeerSummary.Standing, isResponsive: Bool, version: String)]
     ) -> AgentStatus {
         guard let newest = agents.first else { return .waiting }
+        var outdated: AgentStatus?
         var updating: AgentStatus?
         for agent in agents {
             guard case .outdated(let offered, let update) = agent.standing else { continue }
-            if update != .updating { return .outdated(installed: agent.version, bundled: offered) }
-            if updating == nil { updating = .updating(installed: agent.version, bundled: offered) }
+            switch update {
+            case .launchRefused: return .reinstallNeeded(installed: agent.version, bundled: offered)
+            case .failed, .unavailable: outdated = outdated ?? .outdated(installed: agent.version, bundled: offered)
+            case .updating: updating = updating ?? .updating(installed: agent.version, bundled: offered)
+            }
         }
-        if let updating { return updating }
+        if let status = outdated ?? updating { return status }
         if let silent = agents.first(where: { !$0.isResponsive }) { return .unresponsive(version: silent.version) }
         return agents.allSatisfy { $0.standing == .current }
             ? .current(version: newest.version) : .connected(version: newest.version)

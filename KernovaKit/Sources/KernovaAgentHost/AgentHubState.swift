@@ -21,9 +21,10 @@ struct PeerRecord: ConsolePeer, Sendable {
     var connectedOrder: UInt64
     /// The pull open on the connection, and the hash it pulls.
     var pull: (id: UpdatePullID, hash: Data)?
-    /// The payload hash whose pull on this connection ended without installing it. The peer pulls no hash
-    /// twice on one connection, so it will not update itself to this one before it reconnects.
-    var failedPullHash: Data?
+    /// The payload whose pull on this connection ended without installing it, with the code the peer's
+    /// refusal reported, if it reported one. The peer pulls no hash twice on one connection, so it will not
+    /// update itself to this one before it reconnects.
+    var failedPull: RejectedPayload?
     /// The peer installed an update on this connection, so its close is the relaunch into it.
     var stagedUpdate = false
 
@@ -231,8 +232,11 @@ struct AgentHubState: Sendable {
         guard case .available(let params)? = record.features?[.update], let offer = UpdateOffer(params: params),
             offer.formats.contains(offered.format)
         else { return .unavailable }
-        if offer.rejectedHash == offered.payloadHash || record.failedPullHash == offered.payloadHash { return .failed }
-        return .updating
+        let refusals = [offer.rejected, record.failedPull].compactMap { $0 }.filter {
+            $0.hash == offered.payloadHash
+        }
+        if refusals.contains(where: { $0.code == .updateLaunchRefused }) { return .launchRefused }
+        return refusals.isEmpty ? .updating : .failed
     }
 
     /// `handle`'s connection reported `event` of a pull: what the peer's standing reads of it.
@@ -244,11 +248,15 @@ struct AgentHubState: Sendable {
         case .result(let id, let result):
             guard let pull = record.pull, pull.id == id else { return }
             record.pull = nil
-            if result.kind == .rejected { record.failedPullHash = pull.hash } else { record.stagedUpdate = true }
+            if result.kind == .rejected {
+                record.failedPull = RejectedPayload(hash: pull.hash, code: result.error?.code)
+            } else {
+                record.stagedUpdate = true
+            }
         case .closed(let id, _):
             guard let pull = record.pull, pull.id == id else { return }
             record.pull = nil
-            record.failedPullHash = pull.hash
+            record.failedPull = RejectedPayload(hash: pull.hash)
         }
         connections[handle]?.peer = record
     }

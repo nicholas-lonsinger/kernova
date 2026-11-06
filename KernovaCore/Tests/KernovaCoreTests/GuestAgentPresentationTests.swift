@@ -116,6 +116,26 @@ struct GuestAgentPresentationTests {
             ])
     }
 
+    @Test(
+        "An agent that refused the update as one it can't launch makes the presentation reinstall-needed, ahead of another outdated one"
+    )
+    func hubWithALaunchRefusedPeer() {
+        let presentation = GuestAgentPresentation(
+            hub: Self.snapshot([
+                Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .unavailable)),
+                Self.peer(
+                    3, role: .systemPeer, version: "0.8",
+                    standing: .outdated(offeredVersionLabel: "1.0", update: .launchRefused)),
+            ]))
+        #expect(presentation.status == .reinstallNeeded(installed: "0.8", bundled: "1.0"))
+        #expect(presentation.status.wireName == "reinstallNeeded")
+        #expect(
+            presentation.windowLines == [
+                .init(title: "Session agent — pbear", state: "Out of date; this agent can\u{2019}t update itself"),
+                .init(title: "System service", state: "Can\u{2019}t update in place"),
+            ])
+    }
+
     @Test("Outdated agents that all update themselves make the presentation updating, ahead of an unresponsive one")
     func hubWithUpdatingPeers() {
         let presentation = GuestAgentPresentation(

@@ -226,7 +226,7 @@ public struct UpdateClient: FeatureMachine {
 
     private mutating func consider(_ connection: inout Connection) {
         guard let offered, case .available(let offer) = availability else { return }
-        var rejected = offer.rejectedHash
+        var rejected = offer.rejected?.hash
         if let hash = rejected, hash != offered.payloadHash {
             if clearedFor != offered.payloadHash {
                 clearedFor = offered.payloadHash

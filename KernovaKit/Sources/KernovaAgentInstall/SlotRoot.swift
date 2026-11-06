@@ -229,7 +229,7 @@ public final class SlotRoot: Sendable {
         var state = try readState()
         let before = state
         if exists(InstallRoot.switchRejectedName) {
-            if let reverted = state.pendingSwitch { state.rejectedSHA256 = reverted.payloadSHA256 }
+            if let reverted = state.pendingSwitch { state.rejected = .init(payloadSHA256: reverted.payloadSHA256) }
             state.pendingSwitch = nil
         } else if let pending = state.pendingSwitch {
             if !exists(InstallRoot.switchPendingName) {
@@ -239,7 +239,7 @@ public final class SlotRoot: Sendable {
                     state.pendingSwitch = nil
                 } else if exists(InstallRoot.switchRejectedName) {
                     // The rollback check reverted it between the two looks.
-                    state.rejectedSHA256 = pending.payloadSHA256
+                    state.rejected = .init(payloadSHA256: pending.payloadSHA256)
                     state.pendingSwitch = nil
                 }
             }

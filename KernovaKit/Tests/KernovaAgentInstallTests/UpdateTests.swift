@@ -180,8 +180,10 @@ enum Payloads {
     static let manifest = UpdateManifestValue(
         payloadHash: hash, payloadSize: UInt64(bytes.count), format: .executable, versionLabel: "2.0")
 
-    static func available(rejected: Data? = nil) -> UpdateInput {
-        .availability(.available(UpdateOffer(formats: [.executable], rejectedHash: rejected)))
+    static func available(rejected: Data? = nil, code: ErrorCode? = nil) -> UpdateInput {
+        .availability(
+            .available(
+                UpdateOffer(formats: [.executable], rejected: rejected.map { RejectedPayload(hash: $0, code: code) })))
     }
 
     /// Writes `bytes` in three pieces, each reported consumed.
@@ -222,7 +224,7 @@ struct SlotUpdateInstallerTests {
         #expect(state.active == "b")
         #expect(state.slots["b"] == InstallState.Slot(payloadSHA256: hash, versionLabel: "2.0"))
         #expect(state.pendingSwitch == InstallState.Switch(from: "a", to: "b", payloadSHA256: hash))
-        #expect(state.rejectedSHA256 == nil)
+        #expect(state.rejected == nil)
     }
 
     @Test(
@@ -251,7 +253,7 @@ struct SlotUpdateInstallerTests {
         _ = try run.reports.next()
         try Payloads.write(run)
         run.installer.complete(Payloads.id, manifest)
-        #expect(try run.reports.next() == Payloads.available(rejected: manifest.payloadHash))
+        #expect(try run.reports.next() == Payloads.available(rejected: manifest.payloadHash, code: code))
         guard case .rejected(let id, let error) = try run.reports.next() else {
             Issue.record("no rejection")
             return
@@ -259,24 +261,28 @@ struct SlotUpdateInstallerTests {
         #expect(id == Payloads.id)
         #expect(error.code == code)
         try Self.expectUnswitched(fixture)
-        #expect(try fixture.state().rejectedSHA256 == lowercaseHex(manifest.payloadHash))
+        #expect(try fixture.state().rejected?.payloadSHA256 == lowercaseHex(manifest.payloadHash))
     }
 
-    @Test("A payload its lander refuses as it publishes is rejected and recorded before any switch")
-    func landerRefuses() throws {
+    @Test(
+        "A payload its lander refuses as it publishes is rejected and recorded with its code before any switch",
+        arguments: [ErrorCode.updateInstallFailed, .updateLaunchRefused])
+    func landerRefuses(code: ErrorCode) throws {
         let fixture = try SlotFixture()
-        let run = try InstallerRun(
-            fixture, lander: TestLander(refusal: PayloadRefusal(.updateInstallFailed, "self-test: exited(1)")))
+        let run = try InstallerRun(fixture, lander: TestLander(refusal: PayloadRefusal(code, "refused")))
         _ = try run.reports.next()
         try Payloads.write(run)
         run.installer.complete(Payloads.id, Payloads.manifest)
-        #expect(try run.reports.next() == Payloads.available(rejected: Payloads.hash))
+        #expect(try run.reports.next() == Payloads.available(rejected: Payloads.hash, code: code))
         guard case .rejected(_, let error) = try run.reports.next() else {
             Issue.record("no rejection")
             return
         }
-        #expect(error.code == .updateInstallFailed)
+        #expect(error.code == code)
         try Self.expectUnswitched(fixture)
+        // A later process advertises the refusal with its code.
+        let later = try InstallerRun(fixture)
+        #expect(try later.reports.next() == Payloads.available(rejected: Payloads.hash, code: code))
     }
 
     @Test("A write failing ENOSPC fails the pull DISK_FULL, drops the staged file, and ignores the pull's rest")
@@ -308,7 +314,7 @@ struct SlotUpdateInstallerTests {
         }
         #expect(error == refusal.error)
         try Self.expectUnswitched(fixture)
-        #expect(try fixture.state().rejectedSHA256 == nil)
+        #expect(try fixture.state().rejected == nil)
     }
 
     @Test("abort drops the staged file")
@@ -333,13 +339,13 @@ struct SlotUpdateInstallerTests {
         let hash = Data(repeating: 0xC3, count: 32)
         run.installer.recordRejected(hash)
         #expect(try run.reports.next() == Payloads.available(rejected: hash))
-        #expect(try fixture.state().rejectedSHA256 == lowercaseHex(hash))
+        #expect(try fixture.state().rejected?.payloadSHA256 == lowercaseHex(hash))
         // A later process reads it back.
         let later = try InstallerRun(fixture)
         #expect(try later.reports.next() == Payloads.available(rejected: hash))
         later.installer.clearRejected()
         #expect(try later.reports.next() == Payloads.available())
-        #expect(try fixture.state().rejectedSHA256 == nil)
+        #expect(try fixture.state().rejected == nil)
     }
 
     @Test("The new version confirms the switch to itself once connected: the marker goes, the record clears")
@@ -374,7 +380,7 @@ struct SlotUpdateInstallerTests {
         let state = try fixture.state()
         #expect(state.pendingSwitch == nil)
         #expect(state.active == "a")
-        #expect(state.rejectedSHA256 == lowercaseHex(Data(repeating: 1, count: 32)))
+        #expect(state.rejected?.payloadSHA256 == lowercaseHex(Data(repeating: 1, count: 32)))
     }
 
     /// Switches the fixture to slot b through the installer, as the running version a does.
@@ -444,7 +450,7 @@ struct RollbackCheckTests {
         let previous = try InstallerRun(fixture, running: "a")
         #expect(try previous.reports.next() == Payloads.available(rejected: Payloads.hash))
         let state = try fixture.state()
-        #expect(state.rejectedSHA256 == lowercaseHex(Payloads.hash))
+        #expect(state.rejected?.payloadSHA256 == lowercaseHex(Payloads.hash))
         #expect(state.pendingSwitch == nil)
         #expect(state.active == "a")
         #expect(!fixture.exists("switch-rejected"))
@@ -517,10 +523,21 @@ struct SlotMetadataTests {
         #expect(!fresh.contains("rejected"))
         var state = InstallState.fresh(slot: "a", payloadSHA256: "aa", versionLabel: "1")
         state.pendingSwitch = InstallState.Switch(from: "a", to: "b", payloadSHA256: "bb")
-        state.rejectedSHA256 = "cc"
+        state.rejected = .init(payloadSHA256: "cc", code: .updateLaunchRefused)
         let encoded = try state.encoded()
-        #expect(String(decoding: encoded, as: UTF8.self).contains(#""switch""#))
+        let text = String(decoding: encoded, as: UTF8.self)
+        #expect(text.contains(#""switch""#))
+        #expect(text.contains(#""rejectedPayloadSHA256" : "cc""#))
+        #expect(text.contains(#""rejectedPayloadCode" : 127"#))
         #expect(try InstallState.decoded(encoded) == state)
+    }
+
+    @Test("A rejected hash recorded with no code reads back with none, and a code with no hash is not read")
+    func rejectionWithoutCode() throws {
+        let hashOnly = #"{"active": "a", "slots": {}, "rejectedPayloadSHA256": "cc"}"#
+        #expect(try InstallState.decoded(Array(hashOnly.utf8)).rejected == .init(payloadSHA256: "cc"))
+        let codeOnly = #"{"active": "a", "slots": {}, "rejectedPayloadCode": 127}"#
+        #expect(try InstallState.decoded(Array(codeOnly.utf8)).rejected == nil)
     }
 }
 
@@ -561,7 +578,7 @@ struct RejectedHashThroughTheCoreTests {
         // The next process, and its next connection, offered the same payload.
         let later = try InstallerRun(fixture)
         let availability = try later.reports.next()
-        #expect(availability == Payloads.available(rejected: bad.payloadHash))
+        #expect(availability == Payloads.available(rejected: bad.payloadHash, code: .updateHashMismatch))
         let run = HostileRun(local: .peer, seed: 41)
         run.input(.update(availability))
         run.feed([WireFrames.hello(role: .host)], preamble: true)
@@ -575,7 +592,7 @@ struct RejectedHashThroughTheCoreTests {
         #expect(Self.pulls(run) == [Payloads.hash])
         later.installer.clearRejected()
         #expect(try later.reports.next() == Payloads.available())
-        #expect(try fixture.state().rejectedSHA256 == nil)
+        #expect(try fixture.state().rejected == nil)
     }
 }
 #endif

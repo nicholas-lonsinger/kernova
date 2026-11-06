@@ -225,9 +225,12 @@ final class FakeInstaller: UpdateInstaller {
     private let received = Locked<[UpdatePullID: Data]>([:])
     let calls = Recorder<String>()
     let expected: Data
+    /// The code it refuses every payload with, recording it rejected as an install does; nil to install.
+    let refuses: ErrorCode?
 
-    init(expected: Data) {
+    init(expected: Data, refuses: ErrorCode? = nil) {
         self.expected = expected
+        self.refuses = refuses
     }
 
     func start(reporter: UpdateReporter) {
@@ -247,7 +250,11 @@ final class FakeInstaller: UpdateInstaller {
         let bytes = received.withLock { $0[id] ?? Data() }
         calls.record("complete \(bytes.count)")
         let reporter = reporter.withLock { $0 }
-        if bytes == expected {
+        if let refuses {
+            let rejected = RejectedPayload(hash: manifest.payloadHash, code: refuses)
+            reporter?.report(.availability(.available(UpdateOffer(formats: [.executable], rejected: rejected))))
+            reporter?.report(.rejected(id, WireError(refuses)))
+        } else if bytes == expected {
             reporter?.report(.installed(id))
         } else {
             reporter?.report(.rejected(id, WireError(.updateHashMismatch)))

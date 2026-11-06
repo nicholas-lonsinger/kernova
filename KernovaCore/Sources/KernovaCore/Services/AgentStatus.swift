@@ -19,6 +19,12 @@ package enum AgentStatus: Equatable, Sendable {
     case outdated(installed: String, bundled: String)
 
     /// The guest agent is connected, runs a payload other than the one the host
+    /// bundles, and refused it as an update because the bundled agent's
+    /// signature fails its own launch requirement: only a reinstall from the
+    /// installer disk puts the bundled agent in.
+    case reinstallNeeded(installed: String, bundled: String)
+
+    /// The guest agent is connected, runs a payload other than the one the host
     /// bundles, and is updating itself to it in-band.
     case updating(installed: String, bundled: String)
 
@@ -83,6 +89,7 @@ package enum AgentStatus: Equatable, Sendable {
         case .current: "current"
         case .connected: "connected"
         case .outdated: "outdated"
+        case .reinstallNeeded: "reinstallNeeded"
         case .updating: "updating"
         case .unresponsive: "unresponsive"
         case .expectedMissing: "expectedMissing"

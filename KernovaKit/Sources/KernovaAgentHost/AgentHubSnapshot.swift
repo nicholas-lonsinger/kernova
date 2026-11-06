@@ -120,6 +120,9 @@ public struct PeerSummary: Sendable, Equatable {
         /// failed install does, or its pull of it on this connection ended without installing it, and the
         /// peer pulls no hash twice on one connection.
         case failed
+        /// It refused the payload as `UPDATE_LAUNCH_REFUSED`: the payload's signature fails the running
+        /// agent's designated requirement, so only a fresh install from the installer disk puts it in.
+        case launchRefused
         /// It cannot update itself to the payload: it offers no UPDATE, or none in the payload's format.
         case unavailable
     }

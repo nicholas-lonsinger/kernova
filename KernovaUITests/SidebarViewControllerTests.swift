@@ -378,6 +378,54 @@ struct SidebarViewControllerTests {
                 .isHidden == false)
     }
 
+    /// An agent that refused the bundled build as one it can't launch is the
+    /// existing badge in its reinstall state: the badge, its popover's text and
+    /// its action all say to reinstall from the installer disk.
+    @Test("A macOS guest's badge for an agent that can't update in place offers the reinstall")
+    func badgeOffersReinstallForALaunchRefusedAgent() throws {
+        _ = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(
+                peers: [
+                    Self.peer(
+                        3, role: .systemPeer, standing: .outdated(offeredVersionLabel: "2.0", update: .launchRefused))
+                ],
+                features: FeatureStatus.merge([])))
+        let cell = makeRow(instance: instance, isBusy: false) {
+            GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+        }
+
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+        #expect(badge.status == .reinstallNeeded(installed: "1.0", bundled: "2.0"))
+        #expect(SidebarAgentStatusButtonView.symbolName(for: badge.status) == "exclamationmark.triangle.fill")
+        #expect(badge.toolTip == "Guest agent can't update in place (1.0 → 2.0)")
+        let control = try #require(badge.diskControl)
+        #expect(control == .init(title: "Reinstall Guest Agent…", isEnabled: true, action: .mount(.install)))
+
+        let popover = GuestAgentStatusViewController()
+        popover.update(
+            presentation: badge.presentation, diskControl: control, hasDismissAction: badge.hasDismissAction)
+        popover.loadViewIfNeeded()
+        let texts = visibleTexts(in: popover.view)
+        #expect(texts.first == "Guest agent can\u{2019}t update in place")
+        #expect(
+            texts.dropFirst().first
+                == "This agent has a different signature from the one Kernova bundles, so it can\u{2019}t update "
+                + "in place. Reinstall it from the installer disk.")
+        #expect(texts.contains("Can\u{2019}t update in place"))
+        #expect(
+            firstSubview(NSButton.self, in: popover.view) { $0.title == "Reinstall Guest Agent…" }?.isHidden == false)
+
+        // Any other status hides the explanation.
+        popover.update(
+            presentation: GuestAgentPresentation(hub: .empty), diskControl: control, hasDismissAction: false)
+        #expect(!visibleTexts(in: popover.view).contains { $0.hasPrefix("This agent has a different signature") })
+    }
+
     /// The text of every label on screen, in document order: none under a hidden view.
     private func visibleTexts(in view: NSView) -> [String] {
         guard !view.isHidden else { return [] }

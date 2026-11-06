@@ -85,7 +85,8 @@ extension CoreUnits {
         @Test("An offer of the install's rejected hash: no pull and the rejected hash stays")
         func rejectedHash() {
             let run = Self.peer(
-                installer: .available(UpdateOffer(formats: [.executable], rejectedHash: Self.manifest.payloadHash)))
+                installer: .available(
+                    UpdateOffer(formats: [.executable], rejected: RejectedPayload(hash: Self.manifest.payloadHash))))
             #expect(Self.pulls(run.written).isEmpty)
             #expect(Self.effects(run).isEmpty)
         }
@@ -93,7 +94,8 @@ extension CoreUnits {
         @Test("An offer of another hash than the rejected one → .clearRejected, then the pull; once per offered hash")
         func clearsRejected() {
             let run = Self.peer(
-                installer: .available(UpdateOffer(formats: [.executable], rejectedHash: Self.newer.payloadHash)))
+                installer: .available(
+                    UpdateOffer(formats: [.executable], rejected: RejectedPayload(hash: Self.newer.payloadHash))))
             #expect(Self.effects(run) == [.clearRejected])
             #expect(Self.pulls(run.written) == [1: Self.manifest.payloadHash])
             run.feed([Unit.updateAvailable(Self.manifest)])

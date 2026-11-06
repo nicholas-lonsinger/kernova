@@ -428,17 +428,31 @@ public struct PowerOffer: Sendable, Equatable {
     }
 }
 
-/// What a peer's installer accepts, and the install's rejected hash.
+/// What a peer's installer accepts, and the payload its install rejected.
 public struct UpdateOffer: Sendable, Equatable {
     /// The formats it installs.
     public var formats: [PayloadFormat]
-    /// The hash the install's slot metadata records as rejected, if any.
-    public var rejectedHash: Data?
+    /// The payload the install's slot metadata records as rejected, if any.
+    public var rejected: RejectedPayload?
 
     /// Creates an offer.
-    public init(formats: [PayloadFormat], rejectedHash: Data? = nil) {
+    public init(formats: [PayloadFormat], rejected: RejectedPayload? = nil) {
         self.formats = formats
-        self.rejectedHash = rejectedHash
+        self.rejected = rejected
+    }
+}
+
+/// A payload an install will not update itself to, and why.
+public struct RejectedPayload: Sendable, Equatable {
+    /// The payload's SHA-256.
+    public var hash: Data
+    /// The code the install's refusal of it reported; nil when it recorded none, as for a rollback.
+    public var code: ErrorCode?
+
+    /// The rejection of the payload hashing to `hash`, refused with `code`.
+    public init(hash: Data, code: ErrorCode? = nil) {
+        self.hash = hash
+        self.code = code
     }
 }
 

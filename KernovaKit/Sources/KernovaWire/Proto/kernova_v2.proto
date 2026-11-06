@@ -191,7 +191,11 @@ enum ErrorCode {
   ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED = 124;
   ERROR_CODE_UPDATE_INSTALL_FAILED = 125;
   ERROR_CODE_UPDATE_IN_PROGRESS = 126;
-  reserved 127 to 139;
+  // The payload's code signature does not meet the running agent's
+  // designated requirement, which the guest OS holds every launch of the
+  // install's job to: only a fresh install puts it in.
+  ERROR_CODE_UPDATE_LAUNCH_REFUSED = 127;
+  reserved 128 to 139;
 
   // 140-199: logs, guest info, metrics.
   reserved 140 to 199;
@@ -559,6 +563,10 @@ message UpdateCapability {
   // when none. The peer pulls no payload of this hash, so a host offering it
   // knows the peer will not update itself to it. Re-advertised on change.
   bytes rejected_hash = 2;
+  // Why the install rejected `rejected_hash`: the code its refusal reported.
+  // UNSPECIFIED when there is no rejected hash, or the install recorded no
+  // code for it — a rollback, or a pull the peer cut short.
+  ErrorCode rejected_code = 3;
 }
 
 // FROZEN. What one bundled payload is.
