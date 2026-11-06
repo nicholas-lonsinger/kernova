@@ -208,11 +208,14 @@ struct AgentHubState: Sendable {
 
     private func summary(_ record: PeerRecord) -> PeerSummary {
         let standing: PeerSummary.Standing =
-            switch BundledPayload.offer(from: bundles, for: record.claim) {
-            case nil: .notOffered
-            case let offered? where offered.payloadHash == record.claim.payloadHash: .current
-            case let offered?:
+            if BundledPayload.bundle(from: bundles, for: record.claim)?.manifest.payloadHash
+                == record.claim.payloadHash
+            {
+                .current
+            } else if let offered = BundledPayload.offer(from: bundles, for: record.claim) {
                 .outdated(offeredVersionLabel: offered.versionLabel, update: Self.inBandUpdate(record, to: offered))
+            } else {
+                .notOffered
             }
         return PeerSummary(
             handle: record.handle, role: record.claim.role, scope: record.claim.scope,

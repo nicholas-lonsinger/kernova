@@ -354,27 +354,38 @@ public struct BundledPayload: Sendable, Equatable {
     public var scope: InstallScope
     /// What the payload is.
     public var manifest: UpdateManifestValue
+    /// Whether the host offers it as an update; when false it only names the payload a current peer runs.
+    public var updatesInBand: Bool
 
     /// Creates a bundled payload.
-    public init(os: OSFamily, architecture: Architecture, scope: InstallScope, manifest: UpdateManifestValue) {
+    public init(
+        os: OSFamily, architecture: Architecture, scope: InstallScope, manifest: UpdateManifestValue,
+        updatesInBand: Bool
+    ) {
         self.os = os
         self.architecture = architecture
         self.scope = scope
         self.manifest = manifest
+        self.updatesInBand = updatesInBand
     }
 
-    /// What the host offers a peer claiming `claim`: a session peer of USER
-    /// scope its os and architecture's USER bundle, a system peer the SYSTEM bundle,
-    /// anything else nothing. The first matching bundle wins.
-    public static func offer(from bundles: [BundledPayload], for claim: PeerClaim) -> UpdateManifestValue? {
+    /// The bundle for a peer claiming `claim`: a session peer of USER scope its os and architecture's USER
+    /// bundle, a system peer the SYSTEM bundle, anything else none. The first matching bundle wins.
+    public static func bundle(from bundles: [BundledPayload], for claim: PeerClaim) -> BundledPayload? {
         let scope: InstallScope
         switch (claim.role, claim.scope) {
         case (.sessionPeer, .user): scope = .user
         case (.systemPeer, .system): scope = .system
         default: return nil
         }
-        return bundles.first { $0.scope == scope && $0.os == claim.os && $0.architecture == claim.architecture }?
-            .manifest
+        return bundles.first { $0.scope == scope && $0.os == claim.os && $0.architecture == claim.architecture }
+    }
+
+    /// What the host offers a peer claiming `claim`: its ``bundle(from:for:)``'s manifest, when that bundle
+    /// updates in band.
+    public static func offer(from bundles: [BundledPayload], for claim: PeerClaim) -> UpdateManifestValue? {
+        guard let bundle = bundle(from: bundles, for: claim), bundle.updatesInBand else { return nil }
+        return bundle.manifest
     }
 }
 

@@ -37,7 +37,8 @@ package enum TranscriptFixture {
                 BundledPayload(
                     os: .macOS, architecture: .arm64, scope: .system,
                     manifest: UpdateManifestValue(
-                        payloadHash: macSystemHash, payloadSize: 48_000_000, format: .paxTree, versionLabel: "2.0"))
+                        payloadHash: macSystemHash, payloadSize: 48_000_000, format: .paxTree, versionLabel: "2.0"),
+                    updatesInBand: true)
             ]
         case "host-exec-2.5m":
             bundles = [SimHub.bundle(size: executableSize, tag: executableTag)]

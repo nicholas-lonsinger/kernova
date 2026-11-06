@@ -43,11 +43,24 @@ struct BundledGuestAgentsTests {
     private static let linuxAgent = BundledGuestAgents.linuxAgentPath
     private static let macOSAgent = BundledGuestAgents.macOSAgentPath
     private static let macOSDisk = BundledGuestAgents.macOSInstallerDiskPath
+    private static let macOSSigning = BundledGuestAgents.macOSAgentSigningPath
     private static let payload = Data((0..<4096).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ 3) })
     private static let macOSPayload = Data((0..<3000).map { UInt8(truncatingIfNeeded: $0 &* 11 &+ 5) })
 
-    /// Every file a build packs, as stand-ins.
-    private static let packed = [linuxAgent: payload, macOSAgent: macOSPayload, macOSDisk: Data([0])]
+    /// Every file a build packs, as stand-ins, the macOS agent signed with a team.
+    private static let packed = [
+        linuxAgent: payload, macOSAgent: macOSPayload, macOSDisk: Data([0]), macOSSigning: signing(team: "ABCDE12345"),
+    ]
+
+    /// The macOS agent's signing record as the build writes it: `team`'s, or an ad-hoc signature's.
+    private static func signing(team: String?) -> Data {
+        let entry = team.map { "<key>TeamIdentifier</key><string>\($0)</string>" } ?? ""
+        return Data(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plist version="1.0"><dict>\(entry)</dict></plist>
+            """.utf8)
+    }
 
     private static func manifest(
         of payload: Data, format: PayloadFormat = .executable, label: String = "1.2 (34)"
@@ -106,6 +119,7 @@ struct BundledGuestAgentsTests {
         #expect(user == system)
         #expect(user.format == .containerTree)
         #expect(user.versionLabel == "1.2 (34)")
+        #expect(user.updatesInBand)
         #expect(user.fileURL.path(percentEncoded: false).hasSuffix("Contents/Resources/\(Self.macOSAgent)"))
 
         let payloads = await agents.payloads(for: .macOS)
@@ -128,6 +142,25 @@ struct BundledGuestAgentsTests {
         #expect(try await agents.installerDisk(for: .macOS) == dmg)
         #expect(agents.isInstallerDisk(path: dmg.path(percentEncoded: false)))
         #expect(!agents.isInstallerDisk(path: user.fileURL.path(percentEncoded: false)))
+    }
+
+    @Test("A macOS agent signed ad-hoc keeps its identity and installer disk, and is offered to no peer")
+    func macOSAdHoc() async throws {
+        let agents = BundledGuestAgents(
+            bundle: try bundle([Self.macOSSigning: Self.signing(team: nil)]), versionLabel: "1.2 (34)")
+        let user = try #require(agents.entry(.macOS, .arm64, .user))
+        #expect(!user.updatesInBand)
+        #expect(agents.entry(.linux, .arm64, .user)?.updatesInBand == true)
+
+        let manifest = Self.manifest(of: Self.macOSPayload, format: .containerTree)
+        let payloads = await agents.payloads(for: .macOS)
+        #expect(payloads.map(\.manifest) == [manifest, manifest])
+        #expect(await agents.payloadHashes()[.macOS] == manifest.payloadHash)
+        let session = PeerClaim(role: .sessionPeer, scope: .user, os: .macOS, architecture: .arm64)
+        let service = PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64)
+        #expect(BundledPayload.offer(from: payloads, for: session) == nil)
+        #expect(BundledPayload.offer(from: payloads, for: service) == nil)
+        #expect(agents.bundlesInstallerDisk(for: .macOS))
     }
 
     // MARK: The hub's provider
@@ -203,5 +236,52 @@ struct BundledGuestAgentsTests {
         #expect(probe.connect())
         try await probe.changed.wait { probe.bundles.count == 2 }
         #expect(probe.bundles[1] == (await agents.payloads(for: .linux)))
+    }
+
+    /// The agent the guest runs is another build's: a peer claiming a hash the host does not bundle.
+    @Test(
+        "A macOS VM's hub offers a peer on another build the bundled agent only when the build signed it with a team",
+        arguments: [true, false])
+    @MainActor
+    func hubOffersTheMacOSBundleOnlyTeamSigned(teamSigned: Bool) async throws {
+        let agents = BundledGuestAgents(
+            bundle: try bundle([Self.macOSSigning: Self.signing(team: teamSigned ? "ABCDE12345" : nil)]),
+            versionLabel: "1.2 (34)")
+        let products = AppBundleProducts(
+            bundleURL: URL(filePath: "/var/empty/Kernova.app", directoryHint: .isDirectory), hostVersion: "1.2",
+            buildNumber: "34", guestAgents: agents)
+        let probe = AgentHubProbe()
+        let instance = VMInstanceFixture.make(
+            guestOS: .macOS, phase: .running(sessionID: UUID()), bundleProducts: products, agentConnector: probe)
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(probe)
+        try await probe.changed.wait { probe.isStarted }
+        #expect(probe.connect())
+        // The connection is built with the bundles the hub holds, or handed them once they load.
+        func handed() -> [BundledPayload]? {
+            let set = probe.commands.compactMap { if case .setBundles(let bundles) = $0 { bundles } else { nil } }
+            return set.last ?? probe.bundles.first.flatMap { $0.isEmpty ? nil : $0 }
+        }
+        try await probe.changed.wait { handed() != nil }
+        let bundles = try #require(handed())
+        #expect(bundles == (await agents.payloads(for: .macOS)))
+
+        let claim = PeerClaim(
+            role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64,
+            payloadHash: Data(repeating: 0xEE, count: 32), versionLabel: "1.2 (33)",
+            instanceID: Data(repeating: 1, count: 16))
+        #expect((BundledPayload.offer(from: bundles, for: claim) != nil) == teamSigned)
+        probe.deliver(.helloReceived(claim, PeerSessionState(console: .off, sessionID: "")), fromConnection: 0)
+        probe.deliver(.featuresChanged(FeatureStatusTable()), fromConnection: 0)
+        try await waitForChange { !instance.agentHubSnapshot.peers.isEmpty }
+
+        let standing = try #require(instance.agentHubSnapshot.peers.first).standing
+        if teamSigned {
+            #expect(standing == .outdated(offeredVersionLabel: "1.2 (34)", update: .unavailable))
+            #expect(instance.agentPresentation?.status == .outdated(installed: "1.2 (33)", bundled: "1.2 (34)"))
+        } else {
+            #expect(standing == .notOffered)
+            #expect(instance.agentPresentation?.status == .connected(version: "1.2 (33)"))
+        }
     }
 }

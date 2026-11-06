@@ -26,7 +26,8 @@ struct AgentHubTests {
         let hub = AgentHub(
             claim: Fixture.hostClaim, policy: PolicySnapshot(),
             payloads: FixedPayloads(bundles: [
-                BundledPayload(os: .linux, architecture: .arm64, scope: .user, manifest: Self.manifest)
+                BundledPayload(
+                    os: .linux, architecture: .arm64, scope: .user, manifest: Self.manifest, updatesInBand: true)
             ]), logger: Fixture.logger
         ) { snapshot in
             MainActor.assumeIsolated { snapshots.record(snapshot) }
@@ -64,21 +65,26 @@ struct AgentHubTests {
     #endif
 
     @Test(
-        "A peer stands current, outdated, or — offered nothing — not judged at all",
+        "A peer stands current on the bundled payload, outdated on another one offered in band, and otherwise is not judged",
         arguments: [
-            (hash: UInt8(0xA1), scope: InstallScope.user, standing: PeerSummary.Standing.current),
+            (hash: UInt8(0xA1), scope: InstallScope.user, inBand: true, standing: PeerSummary.Standing.current),
             (
-                hash: UInt8(0xA2), scope: InstallScope.user,
+                hash: UInt8(0xA2), scope: InstallScope.user, inBand: true,
                 standing: .outdated(offeredVersionLabel: "next", update: .unavailable)
             ),
-            (hash: UInt8(0xA1), scope: InstallScope.unspecified, standing: .notOffered),
+            (hash: UInt8(0xA1), scope: InstallScope.unspecified, inBand: true, standing: .notOffered),
+            (hash: UInt8(0xA1), scope: InstallScope.user, inBand: false, standing: .current),
+            (hash: UInt8(0xA2), scope: InstallScope.user, inBand: false, standing: .notOffered),
         ])
-    func standing(_ expected: (hash: UInt8, scope: InstallScope, standing: PeerSummary.Standing)) async {
+    func standing(
+        _ expected: (hash: UInt8, scope: InstallScope, inBand: Bool, standing: PeerSummary.Standing)
+    ) async {
         let manifest = UpdateManifestValue(
             payloadHash: Data(repeating: expected.hash, count: 32), payloadSize: 1, format: .executable,
             versionLabel: "next")
         let harness = HubHarness(bundles: [
-            BundledPayload(os: .linux, architecture: .arm64, scope: .user, manifest: manifest)
+            BundledPayload(
+                os: .linux, architecture: .arm64, scope: .user, manifest: manifest, updatesInBand: expected.inBand)
         ])
         await harness.attached()
         var claim = PeerClaim.session(expected.scope, instance: 1)
@@ -96,7 +102,8 @@ struct AgentHubTests {
         os: .linux, architecture: .arm64, scope: .user,
         manifest: UpdateManifestValue(
             payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 100_000, format: .executable,
-            versionLabel: "next"))
+            versionLabel: "next"),
+        updatesInBand: true)
 
     static func inBandUpdate(_ snapshot: AgentHubSnapshot) -> PeerSummary.InBandUpdate? {
         guard case .outdated(_, let update)? = snapshot.peers.first?.standing else { return nil }
@@ -236,7 +243,8 @@ struct AgentHubTests {
             os: .linux, architecture: .arm64, scope: .user,
             manifest: UpdateManifestValue(
                 payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 1000, format: .executable,
-                versionLabel: "next"))
+                versionLabel: "next"),
+            updatesInBand: true)
         let harness = HubHarness(bundles: [small], payloadSource: ZeroPayloads())
         await harness.attached()
         let peer = HubPeer(

@@ -8,7 +8,9 @@
 # The host serves the payload to installed agents and identifies them by its
 # SHA-256. The disk carries the app alone: its installer packs the app it runs
 # from with the same packer as it lands it, recording the same hash, so a fresh
-# install and an in-band update install one identity.
+# install and an in-band update install one identity. Beside the payload, the
+# agent app's signing team, read from its signature: the host offers the payload
+# as an in-band update only when there is one (BundledGuestAgentEntry).
 #
 # Environment (exported by Xcode): SRCROOT, DERIVED_FILE_DIR,
 # BUILT_PRODUCTS_DIR, CONTENTS_FOLDER_PATH.
@@ -22,11 +24,22 @@ AGENT_APP="${BUILT_PRODUCTS_DIR}/Kernova Guest Agent.app"
 RESOURCES="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources"
 DMG_OUTPUT="${RESOURCES}/KernovaMacOSAgent.dmg"
 PAYLOAD_OUTPUT="${RESOURCES}/GuestAgents/macos-arm64/agent.payload"
+SIGNING_OUTPUT="${RESOURCES}/GuestAgents/macos-arm64/agent.signing.plist"
 
 # The agent packs itself: the packer is its `pack-payload` command, which emits
 # only the update profile every installed agent lands.
 mkdir -p "$(dirname "${PAYLOAD_OUTPUT}")"
 "${AGENT_APP}/Contents/MacOS/KernovaMacOSAgent" pack-payload "${AGENT_APP}" "${PAYLOAD_OUTPUT}"
+
+# codesign prints `TeamIdentifier=not set` for an ad-hoc signature, which
+# records no team.
+signature=$(codesign --display --verbose=2 "${AGENT_APP}" 2>&1)
+team=$(printf '%s\n' "${signature}" | sed -n 's/^TeamIdentifier=//p')
+rm -f "${SIGNING_OUTPUT}"
+plutil -create xml1 "${SIGNING_OUTPUT}"
+if [ -n "${team}" ] && [ "${team}" != "not set" ]; then
+    plutil -insert TeamIdentifier -string "${team}" "${SIGNING_OUTPUT}"
+fi
 
 ditto "${AGENT_APP}" "${STAGING_DIR}/Kernova Guest Agent.app"
 cp "${SRCROOT}/KernovaMacOSAgent/install.command" "${STAGING_DIR}/install.command"

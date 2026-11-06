@@ -42,8 +42,8 @@ public enum VMGuestAgentBucket: String, Codable, CaseIterable, Sendable {
     /// `lastSeen`, one per scope on record — `nil` for a record kept without
     /// one — against the hash of the payload bundled for its guest OS: up to
     /// date only when each is that hash, the identity the agent hub judges a
-    /// peer current by and offers any other the bundled payload; `nil` when an
-    /// agent is on record and no bundled hash is known to judge it against.
+    /// peer current by; `nil` when an agent is on record and no bundled hash
+    /// is known to judge it against.
     public init?(lastSeen: [Data?], bundled: Data?) {
         guard !lastSeen.isEmpty else {
             self = .neverConnected

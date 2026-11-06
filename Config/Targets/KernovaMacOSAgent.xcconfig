@@ -37,9 +37,11 @@ CLANG_INSTRUMENT_FOR_OPTIMIZATION_PROFILING[config=Debug] = NO
 // absence of an injected get-task-allow are set here rather than left to
 // export, which is where Xcode otherwise adds the one and strips the other
 // (developer.apple.com/documentation/security/resolving-common-notarization-issues).
-// Debug stays ad-hoc: inside the guest a host code identity buys nothing. Both
-// identity pins shadow Config/Local.xcconfig.
-CODE_SIGN_IDENTITY[sdk=macosx*] = -
+// The Release pin shadows Config/Local.xcconfig; Debug takes its identity and
+// team, and is ad-hoc without them. An installed agent's launch constraint
+// comes from its designated requirement, which for an ad-hoc signature is its
+// own cdhash, so only a certificate signature lets a later build relaunch in
+// its place.
 CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = Developer ID Application
 CODE_SIGN_STYLE = Automatic
 CODE_SIGN_STYLE[config=Release] = Manual
