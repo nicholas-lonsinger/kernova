@@ -1,4 +1,3 @@
-import AppleArchive
 import Darwin
 import Foundation
 import KernovaFileTree
@@ -6,23 +5,12 @@ import KernovaSynchronization
 import System
 import Testing
 
-@testable import KernovaKit
-
-/// Extracts `archive` into `destination`, returning what ended the extract,
-/// or `nil` when it unpacked whole.
-func extractFailure(_ archive: Data, into destination: URL) -> Error? {
-    ClipboardArchiveCodec.extract(
-        from: ClipboardArchiveDataSource(bytes: archive), into: destination,
-        counted: Locked(0), pacingBytes: ClipboardStreamTuning.extractPacingBytes,
-        onOutputAdvanced: nil)
-}
-
 // MARK: - A volume that counts and fails
 
 /// The local volume, counting the directories it holds open, and handing each
 /// call that changes the volume to `before` first, which fails the call with
 /// the `errno` it throws.
-final class InterposedArchiveVolume: MutableTreeFileSystem {
+final class CountingTreeVolume: MutableTreeFileSystem {
     /// A call that changes the volume, about to be made.
     enum Call {
         case setMode(UInt32, name: [UInt8])
@@ -47,17 +35,9 @@ final class InterposedArchiveVolume: MutableTreeFileSystem {
     /// How many directories are open now.
     var openDirectoryCount: Int { directories.withLock { $0.open.count } }
 
-    /// - Parameters:
-    ///   - renameFailure: what every rename fails with.
-    ///   - before: runs ahead of every call that changes the volume.
-    init(
-        failingRenamesWith renameFailure: Errno? = nil,
-        before: @escaping @Sendable (Call) throws(Errno) -> Void = { _ in }
-    ) {
-        self.before = { call throws(Errno) in
-            if case .rename = call, let renameFailure { throw renameFailure }
-            try before(call)
-        }
+    /// - Parameter before: runs ahead of every call that changes the volume.
+    init(before: @escaping @Sendable (Call) throws(Errno) -> Void = { _ in }) {
+        self.before = before
     }
 
     func openDirectory(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
@@ -262,16 +242,4 @@ func makeDeepTree(
     defer { close(file) }
     try #require(contents.withUnsafeBytes { write(file, $0.baseAddress, $0.count) } == contents.count)
     return (Array(repeating: name, count: depth) + [leaf]).joined(separator: "/")
-}
-
-/// The status of `path`, not following a symlink.
-func linkStatus(_ path: String) throws -> stat {
-    var status = stat()
-    try #require(lstat(path, &status) == 0, "lstat \(path): \(String(cString: strerror(errno)))")
-    return status
-}
-
-/// Whether two times are the same instant.
-func sameInstant(_ a: timespec, _ b: timespec) -> Bool {
-    a.tv_sec == b.tv_sec && a.tv_nsec == b.tv_nsec
 }

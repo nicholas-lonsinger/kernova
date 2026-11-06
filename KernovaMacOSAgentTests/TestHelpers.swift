@@ -116,31 +116,6 @@ final class AtomicBox<Value: Sendable>: Sendable {
     }
 }
 
-// MARK: - Host-side transfer driver
-
-/// Reads one whole outbound transfer off the data connection the agent dialled
-/// to answer a host `ClipboardRequest`: the reply describing the payload, the
-/// payload bytes, and the trailer that ended them.
-///
-/// A macOS guest only ever initiates connections, so the transfer arrives on one
-/// the agent opened rather than as frames on the control channel — the test
-/// takes it from `connections`, the collector standing in for the host's data
-/// listener. The reads block, so they run off the caller's actor.
-func collectOutboundTransfer(
-    transferID: UInt64, from connections: DialledDataConnections
-) async throws -> ReceivedTransfer {
-    let fd = try await connections.next()
-    guard let received = await offCooperativePool({ try? receiveTransfer(fd: fd) }) else {
-        throw TestFailure(
-            "The agent's data connection for transfer \(transferID) carried nothing readable")
-    }
-    guard received.reply.transferID == transferID else {
-        throw TestFailure(
-            "The agent streamed transfer \(received.reply.transferID), not \(transferID)")
-    }
-    return received
-}
-
 func makeLogFrame(message: String) -> Frame {
     var frame = Frame()
     frame.protocolVersion = 1

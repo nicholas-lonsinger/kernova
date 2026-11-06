@@ -29,7 +29,7 @@ final class SystemGuestDragInput: GuestDragInput {
     private let watchClosed: @Sendable () -> Void
 
     init(
-        measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) },
+        measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardDirectory.estimatedByteCount(at: $0) },
         watchClosed: @escaping @Sendable () -> Void = {}
     ) {
         self.measureFolder = measureFolder

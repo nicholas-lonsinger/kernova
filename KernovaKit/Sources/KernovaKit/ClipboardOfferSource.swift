@@ -244,7 +244,7 @@ public final class ClipboardOfferSource {
         kept.sizeEstimate = UInt64(
             max(
                 isFolder
-                    ? await Task.detached { ClipboardArchive.estimatedByteCount(at: url) }.value
+                    ? await Task.detached { ClipboardDirectory.estimatedByteCount(at: url) }.value
                     : values.fileSize ?? 0, 0))
         let name = Data(url.lastPathComponent.utf8)
         if PathComponent.isValid(name) { kept.name = name }

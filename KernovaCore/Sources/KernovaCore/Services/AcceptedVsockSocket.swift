@@ -1,5 +1,4 @@
 import Foundation
-import KernovaKit
 import KernovaLogging
 
 /// The host's first steps on a vsock connection the guest opened, for every
@@ -55,5 +54,5 @@ package enum AcceptedVsockSocket {
 
     /// Host-side socket send-buffer size, well under `kern.ipc.maxsockbuf`
     /// (8 MiB) — see ``raiseSendBuffer(_:port:)`` for why it is raised at all.
-    private static let sendBufferBytes = ClipboardStreamTuning.dataSendBufferBytes
+    private static let sendBufferBytes = 1024 * 1024
 }

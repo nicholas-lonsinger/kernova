@@ -149,18 +149,9 @@ package struct ClipboardTransferWording: Equatable {
                 headline: "Files not copied to \(vm).", message: message, menuLine: menuLine,
                 mentionsMacClipboardKept: false)
 
-        case (.peerReported(let code), _):
-            let message: String
-            switch code {
-            case .pasteDiskFull:
-                message = "The guest ran out of disk space receiving the clipboard file"
-            case .pasteTimeout:
-                message = "The clipboard transfer to the guest timed out"
-            default:
-                message = "Clipboard transfer failed on the guest side"
-            }
+        case (.peerReported, _):
             return ClipboardTransferWording(
-                headline: "Clipboard not pasted into \(vm).", message: message,
+                headline: "Clipboard not pasted into \(vm).", message: "Clipboard transfer failed on the guest side",
                 menuLine: "Clipboard: paste into the guest failed",
                 mentionsMacClipboardKept: false)
 
@@ -225,14 +216,6 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: part of the copy was no longer in the guest",
                 mentionsMacClipboardKept: false)
 
-        case (.incompleteFileSet, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard not pasted from \(vm).",
-                message:
-                    "Clipboard sharing with the VM stopped before every copied file transferred, so the paste didn't finish.",
-                menuLine: "Clipboard: paste from the guest failed",
-                mentionsMacClipboardKept: false)
-
         case (.interrupted(let fileCount), .drop):
             // The connection ending is all a drop observes: the VM stopping, the
             // agent quitting and the host letting go each end it the same way.
@@ -290,8 +273,7 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest timed out",
                 mentionsMacClipboardKept: false)
 
-        case (.transferFailed, .preview), (.unpackFailed, .preview), (.stagingFailed, .preview),
-            (.sourceUnreadable, .preview):
+        case (.transferFailed, .preview), (.stagingFailed, .preview), (.sourceUnreadable, .preview):
             return ClipboardTransferWording(
                 headline: "Clipboard preview from \(vm) failed.",
                 message: "The preview from the guest couldn't be loaded.",
@@ -319,48 +301,14 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest failed",
                 mentionsMacClipboardKept: false)
 
-        case (.sourceUnreadable(let readFailure), let gesture):
+        case (.sourceUnreadable, let gesture):
             let reader = gesture.readsOnThisMac ? "This Mac" : "The VM"
+            let prefix = gesture == .drop ? "Drop" : "Clipboard"
             return ClipboardTransferWording(
                 headline: headline(for: gesture, vm: vm),
-                message:
-                    "\(unreadableClause(readFailure, reader: reader)), so \(unfinished(gesture)) didn't finish.",
-                menuLine: unreadableMenuLine(
-                    readFailure, prefix: gesture == .drop ? "Drop" : "Clipboard", reader: reader),
+                message: "\(reader) couldn't read one of the items, so \(unfinished(gesture)) didn't finish.",
+                menuLine: "\(prefix): \(reader.lowercasedFirst) couldn't read an item",
                 mentionsMacClipboardKept: false)
-
-        case (.unpackFailed(let writeFailure), let gesture):
-            let writer = gesture.readsOnThisMac ? "The VM" : "This Mac"
-            if let clause = namedItemClause(writeFailure, .write, actor: writer),
-                let menuLine = namedItemMenuLine(
-                    writeFailure, .write, prefix: gesture == .drop ? "Drop" : "Clipboard",
-                    actor: writer)
-            {
-                return ClipboardTransferWording(
-                    headline: headline(for: gesture, vm: vm),
-                    message: "\(clause), so \(unfinished(gesture)) didn't finish.",
-                    menuLine: menuLine, mentionsMacClipboardKept: false)
-            }
-            switch gesture {
-            case .peerPaste:
-                return ClipboardTransferWording(
-                    headline: headline(for: gesture, vm: vm),
-                    message: "The VM couldn't unpack the copied item, so the paste didn't finish.",
-                    menuLine: "Clipboard: paste into the guest failed",
-                    mentionsMacClipboardKept: false)
-            case .drop:
-                return ClipboardTransferWording(
-                    headline: headline(for: gesture, vm: vm),
-                    message: "The VM couldn't unpack a dropped item, so the drop didn't finish.",
-                    menuLine: "Drop: the files didn't reach the VM",
-                    mentionsMacClipboardKept: false)
-            case .paste, .preview, .copy, .forward, .send, .dragOut:
-                return ClipboardTransferWording(
-                    headline: "Clipboard not pasted from \(vm).",
-                    message: "The copied item couldn't be unpacked, so the paste didn't finish.",
-                    menuLine: "Clipboard: paste from the guest failed",
-                    mentionsMacClipboardKept: false)
-            }
 
         case (.stagingFailed, _):
             return ClipboardTransferWording(
@@ -436,13 +384,6 @@ package struct ClipboardTransferWording: Equatable {
                 message: "The files couldn't be offered to the VM, so none were sent.",
                 menuLine: "Drop: the files didn't reach the VM",
                 mentionsMacClipboardKept: false)
-
-        case (.unclaimed, _):
-            return ClipboardTransferWording(
-                headline: "Files not copied to \(vm).",
-                message: "The VM never started taking the files, so the drop was called off.",
-                menuLine: "Drop: the VM never took the files",
-                mentionsMacClipboardKept: false)
         }
     }
 
@@ -483,17 +424,6 @@ package struct ClipboardTransferWording: Equatable {
         case .timedOut:
             message = "The VM stopped sending the files, so the drag was called off."
             menuLine = "Drag: the VM stopped sending the files"
-        case .unpackFailed(let writeFailure):
-            if let clause = namedItemClause(writeFailure, .write, actor: "This Mac"),
-                let line = namedItemMenuLine(
-                    writeFailure, .write, prefix: "Drag", actor: "This Mac")
-            {
-                message = "\(clause), so the drag didn't finish."
-                menuLine = line
-            } else {
-                message = "A dragged folder couldn't be unpacked, so the drag didn't finish."
-                menuLine = "Drag: the files didn't reach your Mac"
-            }
         case .stagingFailed:
             message = "The files couldn't be saved where you dropped them, so the drag didn't finish."
             menuLine = "Drag: the files couldn't be saved"
@@ -503,13 +433,12 @@ package struct ClipboardTransferWording: Equatable {
         case .peerReported:
             message = "The VM couldn't send the files, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
-        case .sourceUnreadable(let readFailure):
-            message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
-            menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
+        case .sourceUnreadable:
+            message = "The VM couldn't read one of the items, so the drag didn't finish."
+            menuLine = "Drag: the VM couldn't read an item"
         case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
-            .withdrawnFilesRetracted,
-            .incompleteFileSet, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed,
-            .dropStopped, .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
+            .withdrawnFilesRetracted, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
+            .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
@@ -525,89 +454,6 @@ package struct ClipboardTransferWording: Equatable {
         case .dragOut: "the drag"
         case .copy, .forward, .send: "the copy"
         case .paste, .peerPaste, .preview: "the paste"
-        }
-    }
-
-    /// Whether an item failed to be read on the sending side or saved on the
-    /// receiving side.
-    private enum ItemAccess {
-        case read, write
-
-        var verb: String {
-            switch self {
-            case .read: "read"
-            case .write: "save"
-            }
-        }
-    }
-
-    /// The clause naming the item `actor` could not read or save — its own
-    /// name, which may sit deep inside what the user moved — and the reason the
-    /// failure gave, if it gave one; `nil` when the failure names no item.
-    private static func namedItemClause(
-        _ failure: ClipboardItemFailure?, _ access: ItemAccess, actor: String
-    ) -> String? {
-        guard let failure, !failure.itemName.isEmpty else { return nil }
-        let clause = "\(actor) couldn't \(access.verb) \(quoted(failure.itemName))"
-        guard let reason = reasonPhrase(failure.reason, access) else { return clause }
-        return "\(clause) (\(reason))"
-    }
-
-    /// The dropdown line naming the item `actor` could not read or save, or
-    /// `nil` when the failure names no item.
-    private static func namedItemMenuLine(
-        _ failure: ClipboardItemFailure?, _ access: ItemAccess, prefix: String, actor: String
-    ) -> String? {
-        guard let failure, !failure.itemName.isEmpty else { return nil }
-        return
-            "\(prefix): \(actor.lowercasedFirst) couldn't \(access.verb) \(quoted(failure.itemName))"
-    }
-
-    /// The clause naming the item `reader` could not read, or saying one of the
-    /// items when the failure names none.
-    private static func unreadableClause(
-        _ failure: ClipboardItemFailure?, reader: String
-    ) -> String {
-        namedItemClause(failure, .read, actor: reader)
-            ?? "\(reader) couldn't read one of the items"
-    }
-
-    /// The dropdown line for an item `reader` could not read.
-    private static func unreadableMenuLine(
-        _ failure: ClipboardItemFailure?, prefix: String, reader: String
-    ) -> String {
-        namedItemMenuLine(failure, .read, prefix: prefix, actor: reader)
-            ?? "\(prefix): \(reader.lowercasedFirst) couldn't read an item"
-    }
-
-    /// The reason a read or save gave, at the strength its error code carries,
-    /// or `nil` when it gave none.
-    ///
-    /// `EPERM` and `EACCES` both mean the reader or saver was refused the
-    /// item; neither says what refused it. A save writes into a folder it has
-    /// just made, so `EILSEQ` is the volume refusing the item's name, `EEXIST`
-    /// an earlier item of the same folder whose name the volume treats as the
-    /// same, and `ENAMETOOLONG` the item's whole path past the system's limit.
-    private static func reasonPhrase(
-        _ reason: ClipboardItemFailure.Reason, _ access: ItemAccess
-    ) -> String? {
-        switch (reason, access) {
-        case (.posix(EILSEQ), .write): return "the disk can't store its name"
-        case (.posix(EEXIST), .write): return "another item in the folder has the same name"
-        case (.posix(ENAMETOOLONG), .write): return "its path is too long"
-        default: break
-        }
-        switch reason {
-        case .posix(EPERM), .posix(EACCES):
-            return "permission denied"
-        case .posix(ENOENT):
-            return "it no longer exists"
-        case .posix(let code):
-            return String(cString: strerror(code)).lowercasedFirst
-        case .endedEarly:
-            return "it changed size"
-        case .unknown:
-            return nil
         }
     }
 
