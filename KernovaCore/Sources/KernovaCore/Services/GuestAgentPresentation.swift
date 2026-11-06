@@ -79,8 +79,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
 
         /// What the line shows of it: whether it answers, then whether it is
-        /// the agent Kernova bundles, or only its version where Kernova offers
-        /// it nothing to compare against.
+        /// the agent Kernova bundles, or only its version where Kernova bundles
+        /// nothing to compare it against.
         package var state: String {
             switch standing {
             case .connected(let standing, let isResponsive), .relaunching(let standing, let isResponsive):
@@ -89,7 +89,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 case .current: return "Up to date"
                 case .outdated(_, .updating): return "Updating\u{2026}"
                 case .outdated(_, .failed): return "Update failed"
-                case .outdated(_, .launchRefused): return "Can\u{2019}t update in place"
+                case .outdated(_, .launchRefused), .outdated(_, .notTeamSigned): return "Can\u{2019}t update in place"
                 case .outdated(_, .unavailable): return "Out of date; this agent can\u{2019}t update itself"
                 case .notOffered: return version.isEmpty ? "Connected" : "Version \(version)"
                 }
@@ -223,11 +223,11 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
     }
 
-    /// The agents' state as one value: an agent that refused the update as one
-    /// it can't launch first, then another outdated agent that is not updating
+    /// The agents' state as one value: an agent that can't take the update in
+    /// place first, then another outdated agent that is not updating
     /// itself, then one that is, then an unresponsive one, else the newest —
-    /// current only when every agent is, and connected when the host offers
-    /// any of them nothing to judge it against.
+    /// current only when every agent is, and connected when the host bundles
+    /// nothing to judge any of them against.
     package static func status(of peers: [PeerSummary]) -> AgentStatus {
         status(of: peers.map { ($0.standing, $0.isResponsive, $0.versionLabel) })
     }
@@ -243,7 +243,10 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         for agent in agents {
             guard case .outdated(let offered, let update) = agent.standing else { continue }
             switch update {
-            case .launchRefused: return .reinstallNeeded(installed: agent.version, bundled: offered)
+            case .launchRefused:
+                return .reinstallNeeded(installed: agent.version, bundled: offered, reason: .launchRefused)
+            case .notTeamSigned:
+                return .reinstallNeeded(installed: agent.version, bundled: offered, reason: .notTeamSigned)
             case .failed, .unavailable: outdated = outdated ?? .outdated(installed: agent.version, bundled: offered)
             case .updating: updating = updating ?? .updating(installed: agent.version, bundled: offered)
             }

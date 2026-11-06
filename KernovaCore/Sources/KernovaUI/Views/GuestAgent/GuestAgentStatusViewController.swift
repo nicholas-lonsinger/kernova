@@ -295,9 +295,13 @@ final class GuestAgentStatusViewController: NSViewController {
     /// What the user does about `status`, where its title alone doesn't say.
     static func explanation(for status: AgentStatus) -> String? {
         switch status {
-        case .reinstallNeeded:
+        case .reinstallNeeded(_, _, .launchRefused):
             "This agent has a different signature from the one Kernova bundles, so it can\u{2019}t update in "
                 + "place. Reinstall it from the installer disk."
+        case .reinstallNeeded(_, _, .notTeamSigned):
+            "This build of Kernova bundles a guest agent signed without a team, so agents can\u{2019}t update "
+                + "in place. Reinstall it from the installer disk. A build signed with a development team "
+                + "updates agents in place."
         case .waiting, .current, .connected, .outdated, .updating, .unresponsive, .expectedMissing, .connecting:
             nil
         }

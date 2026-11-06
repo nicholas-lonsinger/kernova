@@ -117,17 +117,20 @@ struct GuestAgentPresentationTests {
     }
 
     @Test(
-        "An agent that refused the update as one it can't launch makes the presentation reinstall-needed, ahead of another outdated one"
-    )
-    func hubWithALaunchRefusedPeer() {
+        "An agent that can't take the update in place makes the presentation reinstall-needed for its reason, ahead of another outdated one",
+        arguments: [
+            (PeerSummary.InBandUpdate.launchRefused, AgentStatus.ReinstallReason.launchRefused),
+            (.notTeamSigned, .notTeamSigned),
+        ])
+    func hubWithAPeerThatCantUpdateInPlace(update: PeerSummary.InBandUpdate, reason: AgentStatus.ReinstallReason) {
         let presentation = GuestAgentPresentation(
             hub: Self.snapshot([
                 Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .unavailable)),
                 Self.peer(
                     3, role: .systemPeer, version: "0.8",
-                    standing: .outdated(offeredVersionLabel: "1.0", update: .launchRefused)),
+                    standing: .outdated(offeredVersionLabel: "1.0", update: update)),
             ]))
-        #expect(presentation.status == .reinstallNeeded(installed: "0.8", bundled: "1.0"))
+        #expect(presentation.status == .reinstallNeeded(installed: "0.8", bundled: "1.0", reason: reason))
         #expect(presentation.status.wireName == "reinstallNeeded")
         #expect(
             presentation.windowLines == [
@@ -148,8 +151,9 @@ struct GuestAgentPresentationTests {
     }
 
     @Test(
-        "An agent the host offers nothing claims no currency: its line names its version, and the status is connected")
-    func hubWithAPeerOfferedNothing() {
+        "An agent the host bundles nothing for claims no currency: its line names its version, and the status is connected"
+    )
+    func hubWithAPeerBundledNothing() {
         let alone = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, standing: .notOffered)]))
         #expect(alone.status == .connected(version: "1.0"))
         #expect(alone.windowLines == [.init(title: "Session agent — pbear", state: "Version 1.0")])

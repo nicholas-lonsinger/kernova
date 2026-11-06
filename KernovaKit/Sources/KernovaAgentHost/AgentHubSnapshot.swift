@@ -102,12 +102,12 @@ public struct PeerSummary: Sendable, Equatable {
 
     /// How a peer stands against the payload the host bundles for it.
     public enum Standing: Sendable, Equatable {
-        /// It does not run the bundled payload, and the host offers it nothing, so says nothing of its version.
+        /// The host bundles no payload for it, so says nothing of its version.
         case notOffered
         /// Its payload hash is the bundled payload's.
         case current
-        /// The host offers it the payload `offeredVersionLabel` names, which it does not run; `update` says
-        /// whether it is updating itself to it.
+        /// The host bundles for it the payload `offeredVersionLabel` names, which it does not run; `update`
+        /// says whether it is updating itself to it.
         case outdated(offeredVersionLabel: String, update: InBandUpdate)
     }
 
@@ -125,6 +125,9 @@ public struct PeerSummary: Sendable, Equatable {
         case launchRefused
         /// It cannot update itself to the payload: it offers no UPDATE, or none in the payload's format.
         case unavailable
+        /// The payload this host bundles was signed with no team, so no installed agent can take it in place
+        /// and the host does not offer it.
+        case notTeamSigned
     }
 
     /// Creates a summary.

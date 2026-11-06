@@ -65,7 +65,7 @@ struct AgentHubTests {
     #endif
 
     @Test(
-        "A peer stands current on the bundled payload, outdated on another one offered in band, and otherwise is not judged",
+        "A peer stands current on the bundled payload, outdated on another one whether or not it is offered in band, and is not judged without a matching bundle",
         arguments: [
             (hash: UInt8(0xA1), scope: InstallScope.user, inBand: true, standing: PeerSummary.Standing.current),
             (
@@ -74,7 +74,11 @@ struct AgentHubTests {
             ),
             (hash: UInt8(0xA1), scope: InstallScope.unspecified, inBand: true, standing: .notOffered),
             (hash: UInt8(0xA1), scope: InstallScope.user, inBand: false, standing: .current),
-            (hash: UInt8(0xA2), scope: InstallScope.user, inBand: false, standing: .notOffered),
+            (
+                hash: UInt8(0xA2), scope: InstallScope.user, inBand: false,
+                standing: .outdated(offeredVersionLabel: "next", update: .notTeamSigned)
+            ),
+            (hash: UInt8(0xA2), scope: InstallScope.unspecified, inBand: false, standing: .notOffered),
         ])
     func standing(
         _ expected: (hash: UInt8, scope: InstallScope, inBand: Bool, standing: PeerSummary.Standing)
