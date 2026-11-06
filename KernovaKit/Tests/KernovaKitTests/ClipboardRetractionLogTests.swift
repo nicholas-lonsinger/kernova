@@ -1,9 +1,10 @@
 import KernovaClipboardItems
 import KernovaKit
+import KernovaTestSupport
 import Testing
 
 /// The one wording both ends log a retraction of their write of the far side's clipboard or copy with.
-@Suite("ClipboardRetractionLog")
+@Suite("ClipboardRetractionLog", .caseScoped)
 struct ClipboardRetractionLogTests {
     @Test("The host's lines name the VM and the guest; nothing taken back logs no line")
     func hostLines() {
