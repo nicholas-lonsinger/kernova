@@ -258,7 +258,7 @@ struct VMCommandCoreTests {
         }
 
         try await harness.core.resume(.id(suspended.id), consent: .none)
-        try await harness.core.restart(.id(running.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(running.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(readied == [suspended.id, running.id])
         #expect(presences == [.attended, .attended])
@@ -1030,7 +1030,7 @@ struct VMCommandCoreTests {
         }
         #expect(vm.id == twin.id)
         #expect(other.id == live.id)
-        #expect(reason == .machineIdentity)
+        #expect(reason == .machineIdentity(overrideSettingOn: false))
         // Refused at admission, before the service was reached.
         #expect(harness.virtualization.startCallCount == 0)
         #expect(twin.phase == .stopped)
@@ -1094,13 +1094,13 @@ struct VMCommandCoreTests {
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Start \u{201C}Twin\u{201D} Anyway?")
+        #expect(prompt.title == "Start \u{201C}Twin\u{201D} with a Duplicate Machine ID?")
         #expect(
             prompt.message
                 == "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active. "
                 + "Apple: \u{201C}Running two virtual machines concurrently with the same identifier "
                 + "results in undefined behavior in the guest operating system.\u{201D}")
-        #expect(prompt.confirmTitle == "Start Anyway")
+        #expect(prompt.confirmTitle == "Start")
         #expect(prompt.confirmIsDestructive)
         #expect(prompt.dismissTitle == "Cancel")
         #expect(harness.virtualization.startCallCount == 0)
@@ -1108,6 +1108,49 @@ struct VMCommandCoreTests {
         try await harness.core.start(
             .id(twin.id), recovery: false, consent: Consent([.startBesideSharedMachineIdentity]))
         #expect(harness.virtualization.startCallCount == 1)
+    }
+
+    @Test("With the question dismissed, a start and a restart beside a shared machine ID go ahead without consent")
+    func dismissedQuestionStartsWithoutConsent() async throws {
+        let harness = makeHarness()
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (_, twin) = machineIdentityTwins(in: harness)
+
+        // What `kernova start` sends without --yes.
+        try await harness.core.start(.id(twin.id), recovery: false, consent: .none)
+        #expect(harness.virtualization.startCallCount == 1)
+        #expect(twin.status == .running)
+
+        // And `kernova restart`, whose boot runs with nobody to ask.
+        try await harness.core.restart(.id(twin.id), disposition: .graceful, timeout: nil, consent: .none)
+        #expect(harness.virtualization.startCallCount == 2)
+        #expect(twin.status == .running)
+    }
+
+    @Test("With the question dismissed, a start nobody can be asked about goes ahead beside a shared machine ID")
+    func dismissedQuestionStartsAnUnaskableStart() async throws {
+        let harness = makeHarness()
+        preferences.allowsDuplicateMachineIDOverride = true
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (_, twin) = machineIdentityTwins(in: harness)
+
+        try await harness.core.startNow(twin, policy: .command(.unavailable)).value()
+
+        #expect(harness.virtualization.startCallCount == 1)
+    }
+
+    @Test("With the question dismissed but the setting off, a start beside a shared machine ID is still refused")
+    func dismissedQuestionNeedsTheSetting() async throws {
+        let harness = makeHarness()
+        preferences.duplicateMachineIDQuestionDismissed = true
+        let (_, twin) = machineIdentityTwins(in: harness)
+
+        let error = try await #require(throws: CommandError.self) {
+            try await harness.core.start(.id(twin.id), recovery: false, consent: .all)
+        }
+        #expect(error.isConflict)
+        #expect(harness.virtualization.startCallCount == 0)
     }
 
     @Test("A start nobody can confirm is refused beside a shared machine ID")
@@ -1126,6 +1169,9 @@ struct VMCommandCoreTests {
             }
             #expect(conflict.other === live)
             #expect(!conflict.asks)
+            // The setting is already on, so the refusal names no setting.
+            #expect(conflict.reason == .machineIdentity(overrideSettingOn: true))
+            #expect(conflict.errorDescription?.contains("Settings") == false)
         }
         #expect(harness.virtualization.startCallCount == 0)
     }
@@ -1141,8 +1187,8 @@ struct VMCommandCoreTests {
             try await harness.core.resume(.id(twin.id), consent: .none)
         }
         let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.title == "Resume \u{201C}Twin\u{201D} Anyway?")
-        #expect(prompt.confirmTitle == "Resume Anyway")
+        #expect(prompt.title == "Resume \u{201C}Twin\u{201D} with a Duplicate Machine ID?")
+        #expect(prompt.confirmTitle == "Resume")
         #expect(twin.phase == .suspended)
 
         try await harness.core.resume(
@@ -1163,18 +1209,19 @@ struct VMCommandCoreTests {
         ) { $0.genericMachineIdentifierData = identity }
 
         let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(restarting.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(restarting.id), disposition: .graceful, timeout: nil, consent: .none)
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Restart \u{201C}Restarting\u{201D} Anyway?")
-        #expect(prompt.confirmTitle == "Restart Anyway")
+        #expect(prompt.title == "Restart \u{201C}Restarting\u{201D} with a Duplicate Machine ID?")
+        #expect(prompt.confirmTitle == "Restart")
         // Asked while the guest is still up.
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(restarting.status == .running)
 
         try await harness.core.restart(
-            .id(restarting.id), timeout: nil, consent: Consent([.startBesideSharedMachineIdentity]))
+            .id(restarting.id), disposition: .graceful, timeout: nil,
+            consent: Consent([.startBesideSharedMachineIdentity]))
         #expect(harness.virtualization.startCallCount == 1)
         #expect(restarting.status == .running)
     }
@@ -1191,7 +1238,7 @@ struct VMCommandCoreTests {
         ) { $0.genericMachineIdentifierData = identity }
 
         let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(restarting.id), timeout: nil, consent: .all)
+            try await harness.core.restart(.id(restarting.id), disposition: .graceful, timeout: nil, consent: .all)
         }
         #expect(error.isConflict)
         #expect(harness.virtualization.stopCallCount == 0)
@@ -1291,7 +1338,7 @@ struct VMCommandCoreTests {
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Resume \u{201C}Reverting\u{201D} Anyway?")
+        #expect(prompt.title == "Resume \u{201C}Reverting\u{201D} with a Duplicate Machine ID?")
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
         try await harness.core.revertToSnapshot(
@@ -1349,7 +1396,10 @@ struct VMCommandCoreTests {
         #expect(prompt.title == "Force Stop \u{201C}Runner\u{201D}?")
         #expect(prompt.confirmTitle == "Force Stop")
         #expect(prompt.confirmIsDestructive)
-        #expect(prompt.message.contains("immediately terminated"))
+        #expect(
+            prompt.message
+                == "\u{201C}Runner\u{201D} will be immediately terminated. "
+                + "Anything in the guest that isn\u{2019}t saved to disk will be lost.")
         #expect(prompt.alternatives.map(\.disposition) == [.graceful])
         // The gentler route is the one Return can safely fire.
         #expect(prompt.alternatives.map(\.isDestructive) == [false])
@@ -1399,7 +1449,7 @@ struct VMCommandCoreTests {
             error.stepRequirement
                 == StepRequirement(
                     message:
-                        "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses any unsaved data inside the guest.",
+                        "\u{201C}Paused\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses anything in the guest that isn\u{2019}t saved to disk.",
                     routes: [
                         StepRoute(
                             title: "Resume", steps: [.resume(vm: harness.core.summary(instance))], ending: .refusedVerb)
@@ -1434,7 +1484,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.resumeCallCount == 1)
         #expect(harness.virtualization.stopCallCount == 1)
@@ -3270,7 +3320,7 @@ struct VMCommandCoreTests {
         ) { $0.pendingGuestAccount = makeAccountIntent() }
 
         let refusal = await #expect(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
         }
 
         #expect(refusal?.guestAccountPrompt?.username == "ada")
@@ -3291,7 +3341,7 @@ struct VMCommandCoreTests {
         try harness.core.provideGuestAccountPassword(
             .id(instance.id), password: "analytical-engine")
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.lastStartProvisioning?.password == "analytical-engine")
         #expect(instance.status == .running)
@@ -3573,7 +3623,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: nil, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
@@ -3592,7 +3642,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Rebooting", phase: .running(sessionID: session))
 
         let restart = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // The parked sleep is the power-off deadline: the restart is waiting.
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
@@ -3627,13 +3677,13 @@ struct VMCommandCoreTests {
             in: harness, name: "Twice", phase: .running(sessionID: session))
 
         let first = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // The second asks once the first's shutdown request is sent, which a
         // stop request in flight would refuse.
         try await clock.sleepRequested.wait { clock.parked.count == 1 }
         let second = Task { @MainActor in
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // Both power-off deadlines parked: both restarts owe a boot to the
         // session's end.
@@ -3711,7 +3761,7 @@ struct VMCommandCoreTests {
             }
         }
         let restart = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), timeout: 0, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 0, consent: .none)
         }
         guard case .invalidArgument = restart else {
             Issue.record("Expected an argument refusal, got \(restart)")
@@ -3732,7 +3782,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: session))
 
         let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), timeout: 30, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 30, consent: .none)
         }
 
         guard case .timedOut(_, let verb, let seconds) = error else {
@@ -3826,7 +3876,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Stubborn", phase: .running(sessionID: session))
 
         let restart = Task {
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
 
@@ -3861,7 +3911,7 @@ struct VMCommandCoreTests {
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
         let restart = Task {
-            try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
         }
         // The boot parks before the guest executes, holding the VM.
         await harness.virtualization.waitUntilSuspended()
@@ -3880,7 +3930,7 @@ struct VMCommandCoreTests {
         let instance = makeInstance(
             in: harness, name: "Plain", phase: .running(sessionID: UUID()))
 
-        try await harness.core.restart(.id(instance.id), timeout: 60, consent: .none)
+        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
 
         #expect(harness.virtualization.stopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)

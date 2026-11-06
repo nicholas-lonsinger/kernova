@@ -163,16 +163,25 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     }
 }
 
-/// How a stop should reach a powered-off guest.
+/// How a stop, or the stop half of a restart, takes the guest down.
 public enum StopDisposition: String, Codable, Sendable, Hashable, CaseIterable {
     /// Request an ACPI shutdown and let the guest power itself off.
     case graceful
-    /// Terminate the virtual machine immediately, losing unsaved guest state.
+    /// Terminate the virtual machine immediately, losing anything in the guest
+    /// that isn’t saved to disk.
     case force
     /// Ask the guest's OS to shut down without waiting for apps, which quit
     /// without being asked to save: what a macOS guest's agent installed
     /// "For everyone" serves.
     case anyway
+}
+
+extension StopDisposition {
+    /// What a force stop loses, as a sentence: only what isn’t on disk yet, so a
+    /// document its app autosaved comes back.
+    public static let forceLossSentence = "Anything in the guest that isn\u{2019}t saved to disk will be lost."
+    /// The same, as the object of a clause: "…, which loses \(forceLoss)."
+    public static let forceLoss = "anything in the guest that isn\u{2019}t saved to disk"
 }
 
 /// What a clone is of its source.
@@ -190,8 +199,10 @@ public enum CloneOutcome: String, Codable, Sendable, Hashable, CaseIterable {
 
 /// What two VMs collide on.
 public enum ConflictReason: Codable, Sendable, Hashable {
-    /// The two share a machine identity.
-    case machineIdentity
+    /// The two share a machine identity. `overrideSettingOn` is whether
+    /// Settings ▸ Advanced offers starting anyway; the refusal names that
+    /// setting only while it is off.
+    case machineIdentity(overrideSettingOn: Bool)
     /// Two VMs would run at once on one network with one address, which both
     /// of them already carry.
     case macAddress

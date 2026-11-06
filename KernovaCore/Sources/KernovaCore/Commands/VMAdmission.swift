@@ -78,7 +78,7 @@ package enum VMAdmission {
         case stopRequestInFlight
         /// The guest is paused, and what the request asks is carried out by
         /// its agent, which runs nothing until it resumes. Raised by
-        /// ``VMCapabilityCatalog`` for Shut Down Anyway, only where the VM
+        /// ``VMCapabilityCatalog`` for Stop Anyway, only where the VM
         /// would otherwise admit it, so a surface reads it as applicable.
         case guestPaused
 

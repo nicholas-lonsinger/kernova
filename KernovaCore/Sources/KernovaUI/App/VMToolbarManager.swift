@@ -15,8 +15,10 @@ final class VMToolbarManager: NSObject {
     struct Configuration {
         /// Toolbar item identifiers (different strings per controller to avoid AppKit conflicts).
         let lifecycleID: NSToolbarItem.Identifier
-        /// Shut Down Anyway, offered in the customization palette only.
-        let shutDownAnywayID: NSToolbarItem.Identifier
+        /// Stop Anyway, offered in the customization palette only.
+        let stopAnywayID: NSToolbarItem.Identifier
+        /// Restart Anyway, offered in the customization palette only.
+        let restartAnywayID: NSToolbarItem.Identifier
         let saveStateID: NSToolbarItem.Identifier
         /// Sits immediately after ``saveStateID`` with no space between, so the
         /// two capture-state actions share one glass capsule.
@@ -43,7 +45,8 @@ final class VMToolbarManager: NSObject {
     var sharedItemIdentifiers: [NSToolbarItem.Identifier] {
         [
             configuration.lifecycleID,
-            configuration.shutDownAnywayID,
+            configuration.stopAnywayID,
+            configuration.restartAnywayID,
             configuration.saveStateID,
             configuration.takeSnapshotID,
             configuration.copyToMacID,
@@ -54,8 +57,9 @@ final class VMToolbarManager: NSObject {
         ].compactMap { $0 }
     }
 
-    /// The shared items in default-layout order, less the palette-only Shut
-    /// Down Anyway, with fixed spaces between the glass capsule clusters.
+    /// The shared items in default-layout order, less the palette-only Stop
+    /// Anyway and Restart Anyway, with fixed spaces between the glass capsule
+    /// clusters.
     ///
     /// Adjacent bordered items share one glass background and a fixed space
     /// separates them ([Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)),
@@ -64,7 +68,8 @@ final class VMToolbarManager: NSObject {
     /// needs no space.
     var defaultItemIdentifiers: [NSToolbarItem.Identifier] {
         let clusterStarts = clusterStartIdentifiers
-        return sharedItemIdentifiers.filter { $0 != configuration.shutDownAnywayID }.flatMap {
+        let paletteOnly: Set = [configuration.stopAnywayID, configuration.restartAnywayID]
+        return sharedItemIdentifiers.filter { !paletteOnly.contains($0) }.flatMap {
             clusterStarts.contains($0) ? [.space, $0] : [$0]
         }
     }
@@ -104,7 +109,8 @@ final class VMToolbarManager: NSObject {
     private static let resumeDownloadToolTip = "Resume the interrupted installer image download"
     private static let pauseToolTip = "Pause the virtual machine"
     private static let restartToolTip = "Restart the virtual machine"
-    private static let shutDownAnywayToolTip = "Shut macOS down without waiting for apps"
+    private static let stopAnywayToolTip = "Shut macOS down without waiting for apps"
+    private static let restartAnywayToolTip = "Restart macOS without waiting for apps"
     private static let saveStateToolTip = "Suspend the virtual machine"
     private static let takeSnapshotToolTip = "Take a snapshot of the virtual machine"
     private static let copyToMacToolTip = "Copy the guest\u{2019}s clipboard to the Mac\u{2019}s"
@@ -181,13 +187,22 @@ final class VMToolbarManager: NSObject {
             group.autovalidates = false
             return group
 
-        case configuration.shutDownAnywayID:
+        case configuration.stopAnywayID:
             return makeBorderedItem(
                 identifier: identifier,
-                label: "Shut Down Anyway",
+                label: "Stop Anyway",
                 symbol: "power",
-                action: #selector(AppDelegate.shutDownAnywayVM(_:)),
-                toolTip: Self.shutDownAnywayToolTip
+                action: #selector(AppDelegate.stopAnywayVM(_:)),
+                toolTip: Self.stopAnywayToolTip
+            )
+
+        case configuration.restartAnywayID:
+            return makeBorderedItem(
+                identifier: identifier,
+                label: "Restart Anyway",
+                symbol: "arrow.clockwise.circle",
+                action: #selector(AppDelegate.restartAnywayVM(_:)),
+                toolTip: Self.restartAnywayToolTip
             )
 
         case configuration.saveStateID:
@@ -301,8 +316,12 @@ final class VMToolbarManager: NSObject {
         }
         updateLifecycleGroup(in: toolbar, instance: instance)
         updateItem(
-            in: toolbar, configuration.shutDownAnywayID,
-            isEnabled: isAvailable(.shutDownAnyway, on: instance))
+            in: toolbar, configuration.stopAnywayID,
+            isEnabled: isAvailable(.stopAnyway, on: instance))
+        // Offered where Stop Anyway is: it is that stop, then a start.
+        updateItem(
+            in: toolbar, configuration.restartAnywayID,
+            isEnabled: isAvailable(.stopAnyway, on: instance))
         updateItem(
             in: toolbar, configuration.saveStateID, isEnabled: isAvailable(.suspend, on: instance))
         updateItem(

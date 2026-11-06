@@ -96,8 +96,10 @@ struct VMCommandEnvelopeTests {
             .resume(selector, consent: .none),
             .resume(selector, consent: .all),
             .suspend(selector),
-            .restart(selector, timeout: nil, consent: .none),
-            .restart(selector, timeout: 120, consent: .none),
+            .restart(selector, disposition: .graceful, timeout: nil, consent: .none),
+            .restart(selector, disposition: .graceful, timeout: 120, consent: .none),
+            .restart(selector, disposition: .force, timeout: nil, consent: .all),
+            .restart(selector, disposition: .anyway, timeout: 30, consent: .all),
             .groupAction(.start, group: VMGroupReference(.folder, named: "Client Project")),
             .groupAction(.stop, group: VMGroupReference(.smartGroup, named: "Linux Lab")),
             .open(selector),
@@ -340,11 +342,11 @@ struct VMCommandEnvelopeTests {
         let prompt = ConfirmationPrompt(
             kind: .forceStop,
             title: "Force Stop Virtual Machine",
-            message: "Any unsaved data inside the guest will be lost.",
+            message: "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
             confirmTitle: "Force Stop",
             dismissTitle: "Cancel",
             alternatives: [
-                ConfirmationAlternative(title: "Shut Down", disposition: .graceful),
+                ConfirmationAlternative(title: "Stop", disposition: .graceful),
                 ConfirmationAlternative(title: "Keep File", keepsFile: true),
             ])
         let failures: [CommandErrorDTO] = [
@@ -371,7 +373,7 @@ struct VMCommandEnvelopeTests {
                     ])),
             .stepRequired(requirement: StepRequirement(message: "Take a snapshot first.")),
             .unsupported(capability: "starting in macOS Recovery"),
-            .conflict(vm: summary, with: summary, reason: .machineIdentity),
+            .conflict(vm: summary, with: summary, reason: .machineIdentity(overrideSettingOn: false)),
             .conflict(vm: summary, with: summary, reason: .macAddress),
             .conflict(
                 vm: summary, with: summary,
@@ -414,6 +416,10 @@ struct VMCommandEnvelopeTests {
         let restart = CommandErrorDTO.timedOut(vm: summary, verb: .restart, seconds: 60)
 
         #expect(stop.message.contains("did not power off within 60 seconds"))
+        #expect(
+            stop.message.hasSuffix(
+                "A force stop terminates a guest that will not shut down, losing anything in the guest that "
+                    + "isn\u{2019}t saved to disk."))
         #expect(restart.message.contains("was not started again"))
         // The VM's state at the expiry is its own read: a suspended VM whose
         // saved state the stop already discarded is not "running unchanged",
@@ -513,19 +519,27 @@ struct VMCommandEnvelopeTests {
         return .conflict(vm: summary, with: other, reason: reason)
     }
 
-    @Test("A shared machine ID is refused naming the active VM, with stopping it the only way out")
-    func machineIdentityCopyOffersNoSetting() {
-        let active = sharing(.machineIdentity, otherHeldByAnotherCopy: false)
+    @Test("A shared machine ID is refused naming the active VM, and the setting while it is off")
+    func machineIdentityCopyNamesTheSettingWhileOff() {
+        let active = sharing(.machineIdentity(overrideSettingOn: false), otherHeldByAnotherCopy: false)
         #expect(active.title == "Duplicate Machine ID")
         #expect(
             active.message
                 == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which is active. "
                 + "Two virtual machines with the same machine ID must not run at once. "
-                + "Stop \u{201C}Alpha Copy\u{201D} first.")
+                + "Stop \u{201C}Alpha Copy\u{201D} first. "
+                + "You can change this in Settings \u{25B8} Advanced.")
         #expect(
-            sharing(.machineIdentity, otherHeldByAnotherCopy: true).message
+            sharing(.machineIdentity(overrideSettingOn: false), otherHeldByAnotherCopy: true).message
                 == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
-                + "Two virtual machines with the same machine ID must not run at once.")
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "You can change this in Settings \u{25B8} Advanced.")
+        // With the setting on, the refusal is one nobody could be asked about.
+        #expect(
+            sharing(.machineIdentity(overrideSettingOn: true), otherHeldByAnotherCopy: false).message
+                == "\u{201C}Alpha\u{201D} has the same machine ID as \u{201C}Alpha Copy\u{201D}, which is active. "
+                + "Two virtual machines with the same machine ID must not run at once. "
+                + "Stop \u{201C}Alpha Copy\u{201D} first.")
     }
 
     @Test("A shared MAC address is refused on its own terms, whatever the machine IDs")

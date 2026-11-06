@@ -385,14 +385,70 @@ struct AppAlertPresenterTests {
 
     // MARK: - A confirmation a verb waits on
 
-    private func confirmationRequest(answers: Box<[PresenterAnswer<Bool>]>) -> ConfirmationRequest {
+    private func confirmationRequest(
+        answers: Box<[PresenterAnswer<ConfirmationAnswer>]>, offersDontAskAgain: Bool = false
+    ) -> ConfirmationRequest {
         ConfirmationRequest(
             instance: VMInstanceFixture.make(name: "Twin"),
             prompt: ConfirmationPrompt(
-                kind: .startBesideSharedMachineIdentity, title: "Start \u{201C}Twin\u{201D} Anyway?",
+                kind: .startBesideSharedMachineIdentity,
+                title: "Start \u{201C}Twin\u{201D} with a Duplicate Machine ID?",
                 message: "\u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active.",
-                confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
+                confirmTitle: "Start", dismissTitle: "Cancel"),
+            offersDontAskAgain: offersDontAskAgain,
             answer: { answers.value.append($0) })
+    }
+
+    /// The checkbox titled `title` on the library window's sheet.
+    private func sheetCheckbox(titled title: String, in h: Harness) -> NSButton? {
+        func find(in view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == title { return button }
+            return view.subviews.lazy.compactMap(find(in:)).first
+        }
+        return h.registry.libraryWindow?.attachedSheet?.contentView.flatMap(find(in:))
+    }
+
+    /// The answers a question offering Don't ask again gives, by whether the
+    /// box is ticked and which button ends it.
+    nonisolated static let dontAskAgainCases: [(ticked: Bool, button: Int, answer: ConfirmationAnswer)] = [
+        (true, 0, .confirm(dontAskAgain: true)),
+        (false, 0, .confirm(dontAskAgain: false)),
+        // Cancel saves nothing, ticked or not.
+        (true, 1, .decline),
+    ]
+
+    @Test(
+        "A question offering Don't ask again draws the alert's suppression checkbox, whose state comes back only with a confirm",
+        arguments: dontAskAgainCases.indices)
+    func dontAskAgainAnswersWithTheConfirm(index: Int) throws {
+        let row = Self.dontAskAgainCases[index]
+        let h = makeHarness()
+        h.showLibrary()
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
+
+        h.presenter.presentConfirmationRequest(confirmationRequest(answers: answers, offersDontAskAgain: true))
+        let box = try #require(sheetCheckbox(titled: "Don\u{2019}t ask again", in: h))
+        #expect(box.state == .off)
+        if row.ticked { box.state = .on }
+        #expect(
+            h.dismissShownAlert(
+                NSApplication.ModalResponse(
+                    rawValue: NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + row.button)))
+        h.closeLibrary()
+
+        #expect(answers.value == [.answered(row.answer)])
+    }
+
+    @Test("A question not offering Don't ask again draws no checkbox")
+    func noDontAskAgainWithoutTheOffer() {
+        let h = makeHarness()
+        h.showLibrary()
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
+
+        h.presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
+
+        #expect(sheetCheckbox(titled: "Don\u{2019}t ask again", in: h) == nil)
+        h.closeLibrary()
     }
 
     /// Holds what the requests under test are answered with.
@@ -406,21 +462,21 @@ struct AppAlertPresenterTests {
         let h = makeHarness()
         let presenter = h.presenter
         h.showLibrary()
-        let answers = Box<[PresenterAnswer<Bool>]>([])
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
 
         presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
         #expect(h.isShowingAlert)
         #expect(h.dismissShownAlert(.alertFirstButtonReturn))
         h.closeLibrary()
 
-        #expect(answers.value == [.answered(true)])
+        #expect(answers.value == [.answered(.confirm())])
     }
 
     @Test("A confirmation with no window to ask in is answered unasked at once")
     func aConfirmationWithNoWindowIsUnasked() {
         let h = makeHarness()
         let presenter = h.presenter
-        let answers = Box<[PresenterAnswer<Bool>]>([])
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
 
         presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
 
@@ -436,7 +492,7 @@ struct AppAlertPresenterTests {
         let presenter = h.presenter
         h.showLibrary()
         presenter.presentError("Something else", title: "Couldn't Start", about: .library)
-        let answers = Box<[PresenterAnswer<Bool>]>([])
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
 
         presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
 
@@ -449,7 +505,7 @@ struct AppAlertPresenterTests {
         let h = makeHarness()
         let presenter = h.presenter
         h.showLibrary()
-        let answers = Box<[PresenterAnswer<Bool>]>([])
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
         presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
         #expect(h.isShowingAlert)
 
@@ -463,12 +519,12 @@ struct AppAlertPresenterTests {
         let h = makeHarness()
         let presenter = h.presenter
         h.showLibrary()
-        let answers = Box<[PresenterAnswer<Bool>]>([])
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
         presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
 
         #expect(h.dismissShownAlert(.alertSecondButtonReturn))
 
-        #expect(answers.value == [.answered(false)])
+        #expect(answers.value == [.answered(.decline)])
     }
 
     // MARK: - A step refusal's routes
@@ -832,13 +888,14 @@ struct AppAlertPresenterTests {
         let h = makeHarness()
         let vm = makeRunningInstance(name: "Work", in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
-        let answers = Box<[PresenterAnswer<Bool>]>([])
+        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
         h.presenter.presentConfirmationRequest(
             ConfirmationRequest(
                 instance: vm,
                 prompt: ConfirmationPrompt(
-                    kind: .startBesideSharedMachineIdentity, title: "Start Anyway?", message: "Twin.",
-                    confirmTitle: "Start Anyway", dismissTitle: "Cancel"),
+                    kind: .startBesideSharedMachineIdentity, title: "Start with a Duplicate Machine ID?",
+                    message: "Twin.",
+                    confirmTitle: "Start", dismissTitle: "Cancel"),
                 answer: { answers.value.append($0) }))
         #expect(display.attachedSheet != nil)
 

@@ -311,8 +311,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // State…") is the one surface for that action, and two enabled items
         // must not alias one action under two names.
         case #selector(AppDelegate.forceStopVM(_:)): .forceStop
-        case #selector(AppDelegate.shutDownAnywayVM(_:)): .shutDownAnyway
+        case #selector(AppDelegate.stopAnywayVM(_:)): .stopAnyway
         case #selector(AppDelegate.restartVM(_:)): .restart
+        // Each restart is offered where the stop it takes is.
+        case #selector(AppDelegate.restartAnywayVM(_:)): .stopAnyway
+        case #selector(AppDelegate.forceRestartVM(_:)): .forceStop
         case #selector(AppDelegate.saveVM(_:)): .suspend
         case #selector(AppDelegate.takeSnapshot(_:)): .takeSnapshot
         case #selector(AppDelegate.renameVM(_:)): .rename
@@ -549,16 +552,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         let resumeItem = vmMenu.addItem(
             withTitle: "Resume", action: #selector(AppDelegate.resumeVM(_:)), keyEquivalent: "r")
         resumeItem.keyEquivalentModifierMask = [.command, .option]
-        vmMenu.addItem(
-            withTitle: "Stop", action: #selector(AppDelegate.stopVM(_:)), keyEquivalent: "")
-        vmMenu.addItem(
-            withTitle: "Shut Down Anyway…", action: #selector(AppDelegate.shutDownAnywayVM(_:)),
-            keyEquivalent: "")
-        vmMenu.addItem(
-            withTitle: "Force Stop…", action: #selector(AppDelegate.forceStopVM(_:)),
-            keyEquivalent: "")
-        vmMenu.addItem(
-            withTitle: "Restart", action: #selector(AppDelegate.restartVM(_:)), keyEquivalent: "")
+        // Every power command is listed, with nothing behind Option, so each
+        // can be found here; validation disables what the VM does not take.
+        for (title, action) in [
+            ("Stop", #selector(AppDelegate.stopVM(_:))),
+            ("Stop Anyway…", #selector(AppDelegate.stopAnywayVM(_:))),
+            ("Force Stop…", #selector(AppDelegate.forceStopVM(_:))),
+            ("Restart", #selector(AppDelegate.restartVM(_:))),
+            ("Restart Anyway…", #selector(AppDelegate.restartAnywayVM(_:))),
+            ("Force Restart…", #selector(AppDelegate.forceRestartVM(_:))),
+        ] {
+            vmMenu.addItem(withTitle: title, action: action, keyEquivalent: "")
+        }
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(
             withTitle: "Suspend", action: #selector(AppDelegate.saveVM(_:)), keyEquivalent: "s")

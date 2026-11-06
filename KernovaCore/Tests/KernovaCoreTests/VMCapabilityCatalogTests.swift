@@ -72,7 +72,7 @@ struct VMCapabilityCatalogTests {
         .stop: .sessionAction(.requestStop),
         .restart: .sessionAction(.requestStop),
         .forceStop: .sessionAction(.forceStop),
-        .shutDownAnyway: .sessionAction(.requestStop),
+        .stopAnyway: .sessionAction(.requestStop),
         .discardSavedState: .operation(.discardingSavedState),
         .pause: .operation(.pausing),
         .resume: .resume,
@@ -114,12 +114,12 @@ struct VMCapabilityCatalogTests {
     func requestPerCapability() {
         let harness = makeHarness()
         let instance = makeInstance(in: harness)
-        // Shut Down Anyway names a request only where the guest's agents offer it.
-        #expect(VMCapability.shutDownAnyway.request(on: instance) == nil)
+        // Stop Anyway names a request only where the guest's agents offer it.
+        #expect(VMCapability.stopAnyway.request(on: instance) == nil)
         // The clipboard commands name one only while an agent carries the clipboard.
         #expect(VMCapability.copyGuestClipboardToMac.request(on: instance) == nil)
         #expect(VMCapability.copyMacClipboardToGuest.request(on: instance) == nil)
-        Self.carryClipboard(on: instance, shutsDownIgnoringApps: true)
+        Self.carryClipboard(on: instance, powerIgnoringApps: .agent(.systemPeer))
         for capability in VMCapability.allCases {
             let request = capability.request(on: instance)
             switch capability {
@@ -589,11 +589,13 @@ struct VMCapabilityCatalogTests {
     }
 
     /// Has a console peer carry `instance`'s clipboard through its hub.
-    private static func carryClipboard(on instance: VMInstance, shutsDownIgnoringApps: Bool = false) {
+    private static func carryClipboard(
+        on instance: VMInstance, powerIgnoringApps: PowerProvision = .absent(.noAgent)
+    ) {
         let peer = PeerHandle(rawValue: 1)
         instance.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(
-                peers: [], features: FeatureStatus.merge([]), shutsDownIgnoringApps: shutsDownIgnoringApps,
+                peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: powerIgnoringApps,
                 consolePeers: [.clipboard: peer]))
         instance.hubClipboard.setConsolePeer(peer)
     }

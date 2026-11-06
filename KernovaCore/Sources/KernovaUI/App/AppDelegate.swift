@@ -368,9 +368,19 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         viewModel.requestForceStop(instance)
     }
 
-    @objc func shutDownAnywayVM(_ sender: Any?) {
+    @objc func stopAnywayVM(_ sender: Any?) {
         guard let instance = activeInstance else { return }
-        Task { await viewModel.shutDownAnyway(instance) }
+        Task { await viewModel.stopAnyway(instance) }
+    }
+
+    @objc func restartAnywayVM(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        Task { await viewModel.restartAnyway(instance) }
+    }
+
+    @objc func forceRestartVM(_ sender: Any?) {
+        guard let instance = activeInstance else { return }
+        Task { await viewModel.forceRestart(instance) }
     }
 
     @objc func saveVM(_ sender: Any?) {

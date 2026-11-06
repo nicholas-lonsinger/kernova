@@ -77,6 +77,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     var restoreError: (any Error)?
     var stopError: (any Error)?
     var forceStopError: (any Error)?
+    /// Parks a termination before it ends the session, so a test can act
+    /// while a Force Stop is in flight.
+    var forceStopGate: GatedStep?
     var pauseError: (any Error)?
     /// Thrown by a hot resume, and by the restore a live warm revert ends in.
     var resumeError: (any Error)?
@@ -149,6 +152,7 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     func forceStop(_ instance: VMInstance) async throws {
         forceStopCallCount += 1
+        try await forceStopGate?.pass()
         if let error = forceStopError { throw error }
     }
 

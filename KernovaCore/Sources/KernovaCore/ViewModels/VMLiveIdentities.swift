@@ -39,9 +39,10 @@ final class VMLiveIdentities {
     /// Every other VM's claim is first caught up with another copy of Kernova
     /// (``VMActivity/refreshClaim()``), so a VM that copy holds claims the
     /// identity its bundle carries now. A shared machine identity is answered
-    /// first: waived only by a confirmed override while
-    /// ``AppPreferences/allowsDuplicateMachineIDOverride`` is on, and offered
-    /// for confirmation only to a request that can ask. A MAC address is
+    /// first: waived only while ``AppPreferences/allowsDuplicateMachineIDOverride``
+    /// is on, by a confirmed override or by the standing choice not to be
+    /// asked (``AppPreferences/duplicateMachineIDQuestionDismissed``), and
+    /// otherwise offered for confirmation only to a request that can ask. A MAC address is
     /// never waived, and is answered only once nothing else stands in the way,
     /// so the change of network its refusal routes through is the last step
     /// the bring-up needs.
@@ -58,12 +59,12 @@ final class VMLiveIdentities {
         if let identityTwin {
             guard preferences.allowsDuplicateMachineIDOverride else {
                 return VMIdentityConflict(
-                    vm: instance, other: identityTwin, reason: .machineIdentity,
+                    vm: instance, other: identityTwin, reason: .machineIdentity(overrideSettingOn: false),
                     configuration: configuration)
             }
-            guard override.confirmed else {
+            guard override.confirmed || preferences.duplicateMachineIDQuestionDismissed else {
                 return VMIdentityConflict(
-                    vm: instance, other: identityTwin, reason: .machineIdentity,
+                    vm: instance, other: identityTwin, reason: .machineIdentity(overrideSettingOn: true),
                     configuration: configuration, asks: override.canAsk)
             }
         }
@@ -72,9 +73,10 @@ final class VMLiveIdentities {
                 vm: instance, other: other, reason: .macAddress, configuration: configuration)
         }
         if let identityTwin {
+            let consent = override.confirmed ? "as the user confirmed" : "as the user chose not to be asked again"
             Self.logger.log(
                 .notice,
-                "Starting '\(instance.name, privacy: .public)' beside '\(identityTwin.name, privacy: .public)', which has the same machine identity, as the user confirmed"
+                "Starting '\(instance.name, privacy: .public)' beside '\(identityTwin.name, privacy: .public)', which has the same machine identity, \(consent, privacy: .public)"
             )
         }
         return nil
@@ -82,7 +84,9 @@ final class VMLiveIdentities {
 }
 
 /// What a bring-up's request can do about another active VM claiming its
-/// identity — decided by whoever asked for the bring-up, never stored.
+/// identity — decided by whoever asked for the bring-up, never stored. The
+/// standing choice not to be asked is a preference
+/// ``VMLiveIdentities/conflict(for:bringingUp:override:)`` reads beside it.
 ///
 /// Two independent facts: whether the user confirmed starting beside a VM
 /// sharing its machine identity, and whether anyone is there to be asked. A

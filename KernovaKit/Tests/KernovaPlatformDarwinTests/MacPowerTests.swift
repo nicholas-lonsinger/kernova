@@ -96,7 +96,7 @@ struct MacPowerTests {
     }
 
     @Test(
-        "The system peer offers no graceful shutdown or restart in any console state, and Shut Down Anyway in every one"
+        "The system peer offers no graceful shutdown or restart in any console state, and Stop Anyway in every one"
     )
     func systemPeerAdvert() {
         let harness = Harness(.shutdownCommand(run: { _ in 0 }))

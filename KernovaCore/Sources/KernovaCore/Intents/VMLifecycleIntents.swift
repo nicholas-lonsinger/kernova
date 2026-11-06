@@ -40,13 +40,13 @@ struct StartVMIntent: AppIntent {
 struct StopVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Stops a virtual machine, asking before anything that discards unsaved guest state.",
+        "Stops a virtual machine, asking before a method that loses anything in the guest that isn’t saved to disk.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
-    @Parameter(title: "Stop Method", default: .shutDown)
+    @Parameter(title: "Stop Method", default: .graceful)
     var method: VMStopMethod
 
     @Dependency private var gateway: VMIntentGateway
@@ -137,22 +137,27 @@ struct SuspendVMIntent: AppIntent {
 struct RestartVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Shuts the guest down and starts it again once it has powered off.",
+        "Takes the guest down and starts it again once it has powered off, asking before a method that loses anything in the guest that isn’t saved to disk.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
+    @Parameter(title: "Restart Method", default: .graceful)
+    var method: VMStopMethod
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Restart \(\.$vm)")
+        Summary("Restart \(\.$vm)") {
+            \.$method
+        }
     }
 
     @MainActor
     func perform() async throws -> some IntentResult {
         try await runWithConsent { consent in
-            try await gateway.restart(vm.id, consent: consent)
+            try await gateway.restart(vm.id, disposition: method.disposition, consent: consent)
         }
         return .result()
     }

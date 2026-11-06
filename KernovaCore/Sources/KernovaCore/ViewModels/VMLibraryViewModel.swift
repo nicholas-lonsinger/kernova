@@ -468,6 +468,27 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Whether the user chose not to be asked the duplicate machine ID
+    /// question — with Don't ask again on it, or its Reminders switch — so a
+    /// bring-up beside a VM sharing its machine identity starts
+    /// without asking while ``AppPreferences/allowsDuplicateMachineIDOverride``
+    /// is on.
+    ///
+    /// The single write path for
+    /// `AppPreferences.duplicateMachineIDQuestionDismissed`, mirrored here
+    /// because the Reminders pane refreshes from `withObservationTracking`,
+    /// which a bare `UserDefaults` read never wakes.
+    package var duplicateMachineIDQuestionDismissed: Bool {
+        didSet {
+            guard duplicateMachineIDQuestionDismissed != oldValue else { return }
+            Self.logger.log(
+                .notice,
+                "Setting duplicate machine ID question dismissed=\(self.duplicateMachineIDQuestionDismissed, privacy: .public)"
+            )
+            preferences.duplicateMachineIDQuestionDismissed = duplicateMachineIDQuestionDismissed
+        }
+    }
+
     /// Where the alerts and sheets this view model raises are shown.
     ///
     /// Set by the composition root before the library's first read starts, so
@@ -688,6 +709,7 @@ package final class VMLibraryViewModel {
         self.preferences = preferences
         self.agentInstallPromptDisabled = preferences.agentInstallPromptDisabled
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
+        self.duplicateMachineIDQuestionDismissed = preferences.duplicateMachineIDQuestionDismissed
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
@@ -1013,15 +1035,19 @@ package final class VMLibraryViewModel {
     ///   refusal itself when it could not be asked.
     private func askToConfirm(_ prompt: ConfirmationPrompt, about instance: VMInstance) async throws {
         guard let presenter else { throw CommandError.confirmationRequired(prompt) }
+        let offersDontAskAgain = prompt.kind == .startBesideSharedMachineIdentity
         let answer = await withCheckedContinuation { continuation in
             presenter.presentConfirmationRequest(
                 ConfirmationRequest(
-                    instance: instance, prompt: prompt,
+                    instance: instance, prompt: prompt, offersDontAskAgain: offersDontAskAgain,
                     answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
-        case .answered(true): return
-        case .answered(false): throw ConfirmationDeclined()
+        case .answered(.confirm(let dontAskAgain)):
+            if dontAskAgain, offersDontAskAgain {
+                duplicateMachineIDQuestionDismissed = true
+            }
+        case .answered(.decline): throw ConfirmationDeclined()
         case .unasked: throw CommandError.confirmationRequired(prompt)
         }
     }
@@ -1073,7 +1099,7 @@ package final class VMLibraryViewModel {
     }
 
     /// A graceful stop, or — for a live-paused guest, which cannot take one —
-    /// the sheet offering Resume and Shut Down or Force Stop.
+    /// the sheet offering Resume and Stop or Force Stop.
     ///
     /// The pause is read in the same main-actor turn the core reads it in
     /// before refusing, so the two cannot disagree.
@@ -1106,8 +1132,32 @@ package final class VMLibraryViewModel {
     /// refuses without — the account a guest is still owed, a shared machine
     /// identity. A live-paused guest is resumed by the verb itself.
     package func restart(_ instance: VMInstance) async {
+        await restart(instance, disposition: .graceful)
+    }
+
+    /// Restarts the guest through a shutdown that does not wait for apps,
+    /// putting the confirmation the verb asks on every use on screen first.
+    package func restartAnyway(_ instance: VMInstance) async {
+        await restart(instance, disposition: .anyway)
+    }
+
+    /// Terminates the guest and starts it again, putting the confirmation the
+    /// verb asks on every use on screen first.
+    package func forceRestart(_ instance: VMInstance) async {
+        await restart(instance, disposition: .force)
+    }
+
+    /// A restart a later stop cancelled ends quietly: the user asked for that
+    /// stop after this restart, so the VM is where they last asked it to be,
+    /// and the cancellation is in the log (``VMActivity``'s withdrawal).
+    private func restart(_ instance: VMInstance, disposition: StopDisposition) async {
         await runAsking(on: instance, then: "Restart") { consent in
-            try await self.commands.restart(.id(instance.id), timeout: nil, consent: consent)
+            do {
+                try await self.commands.restart(
+                    .id(instance.id), disposition: disposition, timeout: nil, consent: consent)
+            } catch CommandError.restartCancelledByStop {
+                return
+            }
         }
     }
 
@@ -1120,7 +1170,7 @@ package final class VMLibraryViewModel {
 
     /// Shuts the guest down without waiting for apps, putting the confirmation
     /// the verb asks on every use on screen first.
-    package func shutDownAnyway(_ instance: VMInstance) async {
+    package func stopAnyway(_ instance: VMInstance) async {
         await runAsking(on: instance, then: nil) { consent in
             try await self.commands.stop(.id(instance.id), disposition: .anyway, consent: consent)
         }
@@ -1595,13 +1645,16 @@ package final class VMLibraryViewModel {
             [VMConfigurationKeyRegistry.agentInstallReminder.assigning(!dismissed)], on: instance)
     }
 
-    /// Re-arms the agent-install nudge everywhere: clears the app-wide
-    /// suppression *and* every VM's dismissed flag, so each VM's `.waiting`
-    /// nudge can surface again.
+    /// Re-arms every reminder the Reminders pane lists, so each shows again
+    /// the next time its condition is met: the menu bar quit reminder, the
+    /// duplicate machine ID question, and the agent-install nudge — its
+    /// app-wide suppression and every VM's dismissed flag.
     ///
     /// Each VM's flag lives in its own bundle and is persisted individually;
     /// VMs already armed make no edit.
-    package func resetAllAgentInstallNudges() {
+    package func resetAllReminders() {
+        preferences.menuBarQuitReminderDismissed = false
+        duplicateMachineIDQuestionDismissed = false
         agentInstallPromptDisabled = false
         let key = VMConfigurationKeyRegistry.agentInstallReminder
         for instance in instances where key.applies(instance.configuration) {
@@ -1725,7 +1778,9 @@ package final class VMLibraryViewModel {
     ///
     /// A consent refusal opens the sheet that gathers it; a failure carrying a
     /// recovery opens the alert that offers it; a shutdown the guest didn't
-    /// carry out is about the session it was asked of; everything else is an
+    /// carry out is about the session it was asked of; a shared machine ID
+    /// refused while the setting that would ask is off offers that setting;
+    /// everything else is an
     /// error alert headed by the refusal's own title — a ``TitledError``'s, or
     /// "Error".
     func present(_ error: Error, about subject: AlertSubject) {
@@ -1751,6 +1806,10 @@ package final class VMLibraryViewModel {
             surfaceError(command.message, title: command.alertTitle, about: .session(instance, failure.session))
         case (.operationFailed(_, _, let message, _), _):
             surfaceError(message, title: command.alertTitle, about: subject)
+        case (.conflict(_, _, .machineIdentity(overrideSettingOn: false)), _):
+            presenter?.presentError(
+                command.message, title: command.alertTitle, about: subject,
+                openingSettingsAt: .pane(.advanced))
         default:
             surfaceError(command.message, title: command.alertTitle, about: subject)
         }
@@ -1771,7 +1830,9 @@ package final class VMLibraryViewModel {
             presenter?.presentForceStop(for: instance)
         case .startBesideSharedMachineIdentity:
             // Raised where it could not be asked: the refusal it stands for.
-            surfaceError(prompt.message, title: ConflictReason.machineIdentity.title, about: .vm(instance))
+            surfaceError(
+                prompt.message, title: ConflictReason.machineIdentity(overrideSettingOn: true).title,
+                about: .vm(instance))
         default:
             Self.logger.log(
                 .debug,

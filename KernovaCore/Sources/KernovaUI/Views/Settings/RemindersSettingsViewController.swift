@@ -5,14 +5,16 @@ import KernovaLogging
 /// The "Reminders" pane of the Settings window.
 ///
 /// Surfaces every host-side reminder Kernova can suppress, with a switch to turn
-/// each back on, plus a *Reset All Reminders* action. Each switch's polarity is
+/// each on or off, plus a *Reset All Reminders* action. Each switch's polarity is
 /// **ON = the reminder is shown** (its dismissed flag is `false`), matching the
 /// VM Settings pane's "Show install reminder" toggle.
 ///
 /// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
-/// app-wide *Guest Agent Install Reminder* by
-/// `VMLibraryViewModel.agentInstallPromptDisabled`, which overrides every
-/// per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
+/// *Duplicate machine ID question* by
+/// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, which Don't ask
+/// again on the question itself also turns off; the app-wide *Guest Agent
+/// Install Reminder* by `VMLibraryViewModel.agentInstallPromptDisabled`, which
+/// overrides every per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
 /// macOS VM, are backed by each VM's host state and written through
 /// `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
 ///
@@ -35,6 +37,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     private var heightCap: NSLayoutConstraint?
 
     private let menuBarQuitSwitch = NSSwitch()
+    private let duplicateIDQuestionSwitch = NSSwitch()
+    /// Explains the duplicate machine ID question's disabled row while the
+    /// setting that asks it is off.
+    private lazy var duplicateIDQuestionNote = GroupedFormStateNote(
+        "No effect while Offer to start duplicate machine IDs anyway is off.",
+        shownWhen: { [unowned self] in !preferences.allowsDuplicateMachineIDOverride })
     private let agentInstallSwitch = NSSwitch()
 
     /// The persistent container in the content stack that holds either the
@@ -79,15 +87,30 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         agentInstallSwitch.controlSize = .small
         agentInstallSwitch.target = self
         agentInstallSwitch.action = #selector(agentInstallToggled)
+        duplicateIDQuestionSwitch.controlSize = .small
+        duplicateIDQuestionSwitch.target = self
+        duplicateIDQuestionSwitch.action = #selector(duplicateIDQuestionToggled)
 
-        let menuBarCard = makeGroupedFormCard(rows: [
-            makeGroupedFormCardRow(
-                "Menu bar quit reminder", control: menuBarQuitSwitch,
-                info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")])
-        ])
+        let menuBarCard = makeGroupedFormCard(
+            rows: [
+                makeGroupedFormCardRow(
+                    "Menu bar quit reminder", control: menuBarQuitSwitch,
+                    info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")]),
+                makeGroupedFormCardRow(
+                    "Duplicate machine ID question", control: duplicateIDQuestionSwitch,
+                    info: [
+                        .body(
+                            "With Offer to start duplicate machine IDs anyway on in Advanced, Kernova "
+                                + "asks before it starts a virtual machine while another with the same "
+                                + "machine ID is active. With this off, or once you choose Don\u{2019}t "
+                                + "ask again on that question, Kernova starts it without asking."),
+                        .duplicateMachineIDVendorClaim,
+                    ]),
+            ],
+            notes: [duplicateIDQuestionNote])
 
         // The governing control of the Virtual Machine Reminders section, so it
-        // heads that section rather than sitting with the app reminder above.
+        // heads that section rather than sitting with the app reminders above.
         let agentInstallCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow(
                 "Guest agent install reminder", control: agentInstallSwitch,
@@ -194,6 +217,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             track: { [weak self] in
                 guard let self else { return }
                 _ = viewModel.agentInstallPromptDisabled
+                _ = viewModel.duplicateMachineIDQuestionDismissed
                 for instance in viewModel.instances {
                     _ = instance.id
                     _ = instance.name
@@ -286,6 +310,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// install reminder is off; it just can't be changed until that goes back on.
     private func refreshSwitches() {
         menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
+        duplicateIDQuestionSwitch.state = viewModel.duplicateMachineIDQuestionDismissed ? .off : .on
+        applyGroupedFormRowEnabled(
+            preferences.allowsDuplicateMachineIDOverride, control: duplicateIDQuestionSwitch)
+        duplicateIDQuestionNote.refresh()
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
@@ -308,6 +336,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
     }
 
+    @objc private func duplicateIDQuestionToggled() {
+        viewModel.duplicateMachineIDQuestionDismissed = (duplicateIDQuestionSwitch.state == .off)
+    }
+
     @objc private func agentInstallToggled() {
         viewModel.agentInstallPromptDisabled = (agentInstallSwitch.state == .off)
         refreshSwitches()
@@ -326,8 +358,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     @objc private func resetAllReminders() {
         Self.logger.log(.notice, "User reset all host reminders")
-        preferences.resetHostReminders()
-        viewModel.resetAllAgentInstallNudges()
+        viewModel.resetAllReminders()
         refreshSwitches()
     }
 }

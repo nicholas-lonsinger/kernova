@@ -122,7 +122,7 @@ Pure AppKit in the **Liquid Glass** design language — a source-list sidebar wi
 | Settings pane (⌘,) | Holds |
 |---|---|
 | **General** | Open at Login · continue running in the menu bar |
-| **Reminders** | Menu bar quit reminder · guest agent install reminder, app-wide and per VM · reset all reminders |
+| **Reminders** | Menu bar quit reminder · duplicate machine ID question · guest agent install reminder, app-wide and per VM · reset all reminders |
 | **Clipboard** | Maximum paste size |
 | **Networks** | Named NAT and Host Only networks — create, rename, and delete them, and see which VMs are on each |
 | **Tags** | Create, rename, recolor, and delete tags |
@@ -168,7 +168,7 @@ tell application "Kernova"
     -- A stop that discards guest state refuses without `with confirmation`.
     -- AppleScript gives up on a reply after two minutes unless told otherwise.
     with timeout of 600 seconds
-        stop virtual machine "Alpha" by force with confirmation
+        stop virtual machine "Alpha" method force with confirmation
     end timeout
 end tell
 ```

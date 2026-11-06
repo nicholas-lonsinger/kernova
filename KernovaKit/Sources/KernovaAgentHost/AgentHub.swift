@@ -249,7 +249,8 @@ public final class AgentHub: Sendable {
             }
             let id = state.power.drawID(entry.connection.generation)
             state.power.requests[id] = handle
-            state.power.progress = PowerRoutingProgress(action: action, role: record.claim.role, stage: .asking)
+            state.power.progress = PowerRoutingProgress(
+                action: action, ignoringApps: ignoringApps, role: record.claim.role, stage: .asking)
             return (entry.connection, id, record)
         }
         logger.log(
