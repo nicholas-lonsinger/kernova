@@ -75,7 +75,7 @@ extension ClipboardPasteboardReader {
         from pasteboard: any ClipboardReadPasteboard,
         promises: [any FilePromiseReceiving] = [],
         promiseDestination: @escaping @MainActor () throws -> URL = { throw ClipboardServeError.unavailable },
-        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
+        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardDirectory.estimatedByteCount(at: $0) }
     ) async -> OfferOutcome {
         await read(pasteboard, promises: promises, calledIn: [], rule: .clipboard, sizeOf: sizeOf) {
             try promiseDestination()
@@ -118,7 +118,7 @@ extension ClipboardPasteboardReader {
         ledger: ClipboardWriteLedger = .shared,
         staging: ClipboardFileStaging? = nil,
         copyingTo destination: ClipboardConnectionID?,
-        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) },
+        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardDirectory.estimatedByteCount(at: $0) },
         contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
     ) async -> SnapshotOutcome {
         do throws(ClipboardSnapshotTooLarge) {
@@ -163,7 +163,7 @@ extension ClipboardPasteboardReader {
     /// URL names the library's smaller derivative of it. An item that is neither is not offered.
     public static func readDropOffer(
         from pasteboard: any ClipboardReadPasteboard, promises: [CalledInFilePromise],
-        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardArchive.estimatedByteCount(at: $0) }
+        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardDirectory.estimatedByteCount(at: $0) }
     ) async -> OfferOutcome {
         await read(
             pasteboard, promises: promises.map(\.receiver), calledIn: promises, rule: .drop, sizeOf: sizeOf

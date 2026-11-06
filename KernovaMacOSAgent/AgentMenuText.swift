@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentCore
 import KernovaKit
 
 /// Pure text mappers for the guest agent's menu-bar dropdown.
@@ -41,10 +42,8 @@ enum AgentMenuText {
 
     /// Why a paste of the host's clipboard did not happen, per failure code.
     ///
-    /// `copyTooLarge`, `pasteIncompleteSet`, `forwardItemsSkipped`, the four
-    /// drop codes and the four drag codes are outcomes the guest reports, or
-    /// the host keeps, rather than ones the guest receives, so they read as
-    /// the generic failure.
+    /// The drop and drag codes are outcomes the host reports rather than ones
+    /// the guest receives, so they read as the generic failure.
     private static func pasteRefusalDetail(
         _ code: ClipboardErrorCode, pasteLimitBytes: Int?
     ) -> String {
@@ -53,12 +52,8 @@ enum AgentMenuText {
             guard let pasteLimitBytes else { return "too large to paste" }
             return
                 "too large to paste — over the \(ClipboardPasteLimit.displayLimit(pasteLimitBytes)) transfer limit"
-        case .pasteDiskFull: return "not enough disk space to paste"
-        case .pasteTimeout: return "paste timed out"
-        case .pasteUnpackFailed: return "couldn't save the pasted item"
-        case .pasteFailed, .copyTooLarge, .pasteIncompleteSet,
-            .forwardItemsSkipped, .dropDiskFull, .dropDownloadsDenied, .dropFailed,
-            .dropUnpackFailed, .dragItemUnavailable:
+        case .pasteFailed, .dropDiskFull, .dropDownloadsDenied, .dropFailed, .dropUnpackFailed,
+            .dragItemUnavailable:
             return "paste failed"
         }
     }

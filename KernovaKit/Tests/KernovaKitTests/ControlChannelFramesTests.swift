@@ -132,7 +132,9 @@ struct ControlChannelFramesTests {
 
     @Test("A payload from another channel classifies as wrong port")
     func classifiesWrongPort() {
-        let offer = Frame.clipboardOffer(generation: 1, reps: [], isConcealed: false)
+        var offer = Frame()
+        offer.protocolVersion = 1
+        offer.clipboardOffer = Kernova_V1_ClipboardOffer()
 
         let inbound = ControlChannelInbound.classify(offer)
 
