@@ -152,6 +152,9 @@ final class GuestDragOut {
         }
         let taken = dropped.compactMap(\.fileURL?.lastPathComponent)
         guard let folder = promises.makeFolder() else { return peer.answerTake(id, .caught(sizes: nil)) }
+        // Not each promise through its own NSFilePromiseReceiver first: that sets the paste location per item,
+        // Photos rebuilds its drag cache on each, and a 1,000-photo drop is cancelled part-way (FB25463519,
+        // docs/research/2026-11-05-photos-drop-naming.md). One whole-drop exchange names them all in one pass.
         let refusal: String? =
             if !drop.offersPromisedFileURL(item: first) {
                 "its first promised item offers no promised file URL"
