@@ -96,7 +96,7 @@ package enum AppResidencyPolicy {
 
     /// Decides the reopen leg's presentation: a user window the app already
     /// has owns it, so a reopen never drags the library forward over a per-VM
-    /// display or clipboard window the status item opened alone — matching
+    /// display window the status item opened alone — matching
     /// ``AppResidencyController/summonStatusItemTarget(for:)``'s "opens only
     /// the chosen surface" rule.
     ///

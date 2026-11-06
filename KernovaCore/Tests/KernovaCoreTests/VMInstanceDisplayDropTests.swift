@@ -172,7 +172,7 @@ struct VMInstanceDisplayDropTests {
         let harness = Harness(dropFilesEnabled: enabled)
         defer { harness.tearDown() }
 
-        let policy = VMInstance.agentHubPolicy(for: harness.instance.configuration)
+        let policy = harness.instance.agentHubPolicy(for: harness.instance.configuration)
 
         #expect(policy.isEnabled(.drop) == enabled)
     }
@@ -212,9 +212,9 @@ struct VMInstanceDisplayDropTests {
         let harness = Harness(clipboardSharingEnabled: false)
         defer { harness.tearDown() }
         let instance = harness.instance
-        // The toggle closes the Clipboard window and disables the toolbar item
-        // that carries the ring, which is why the menu-bar status item — driven
-        // by this report alone — is where the drop has to show.
+        // The toggle disables the clipboard toolbar items that carry the bar,
+        // which is why the menu-bar status item — driven by this report alone —
+        // is where the drop has to show.
         #expect(!instance.activity.admits(.affordance(.clipboard), posture: .offer))
 
         let operation = ClipboardTransferOperation(

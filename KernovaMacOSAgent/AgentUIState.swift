@@ -49,11 +49,15 @@ enum ClipboardActivity: Equatable, Sendable {
     ///
     /// The copy was made in this guest, so the outcome is reported here.
     case copyCarriedNothing
-    /// A copy crossed, with `skipped` of its items left out of the offer.
+    /// A copy crossed, with `skipped` of its items not carried whole.
     ///
     /// The host's readout covers only what the offer carried, so the count the
     /// copy lost is named here or nowhere.
     case copyPartlyCarried(skipped: Int)
+    /// The host withdrew a copy it sent, the connection still up, so what no
+    /// paste had of it was removed from this clipboard: only its files and the
+    /// items holding them when `filesOnly`, the rest staying.
+    case copyWithdrawn(filesOnly: Bool)
     /// Host policy turned clipboard sharing off.
     case disabled
 
@@ -62,10 +66,11 @@ enum ClipboardActivity: Equatable, Sendable {
     ///
     /// True for the outcomes of a gesture made in this guest that produces no
     /// other signal — a paste that yields nothing, a copy that crosses nothing
-    /// or only part of itself.
+    /// or only part of itself — and for a copy the Mac took back from this
+    /// clipboard.
     var isNotice: Bool {
         switch self {
-        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried:
+        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried, .copyWithdrawn:
             return true
         case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled:
             return false

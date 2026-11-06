@@ -137,9 +137,10 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
     package func applicationDidFinishLaunching(_ notification: Notification) {
         mainMenu.install()
 
-        // Staged file URLs outlive the window and the process that staged them
+        // Staged files outlive the window and the process that staged them
         // (paste-after-close, a drop's promises still being pulled), so staging
-        // is reclaimed only here, and only from processes that have exited.
+        // is reclaimed only here, and only from processes that have exited —
+        // each item of the clipboard naming a file there withdrawn first.
         Task.detached(priority: .utility) {
             ClipboardFileStaging.processRoot.reclaimAbandonedRoots()
         }
@@ -229,6 +230,7 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
     }
 
     package func applicationWillTerminate(_ notification: Notification) {
+        ClipboardFileStaging.processRoot.processEnding()
         termination.handleWillTerminate()
     }
 
@@ -456,9 +458,21 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         viewModel.showVMInFinder(instance)
     }
 
-    @objc func showClipboard(_ sender: Any?) {
-        guard let instance = activeInstance else { return }
-        windows.showClipboard(for: instance)
+    @objc func copyGuestClipboardToMac(_ sender: Any?) {
+        target(of: sender)?.copyGuestClipboardToMac()
+    }
+
+    @objc func copyMacClipboardToGuest(_ sender: Any?) {
+        target(of: sender)?.copyMacClipboardToGuest()
+    }
+
+    /// Turning passthrough off is immediate; turning it on confirms first, on the working window.
+    @objc func toggleClipboardPassthrough(_ sender: Any?) {
+        guard let instance = target(of: sender) else { return }
+        ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
+            VMConfigurationKeyRegistry.clipboardPassthrough.assigning(
+                !instance.configuration.clipboardPassthroughEnabled),
+            confirmingIn: NSApp.keyWindow ?? NSApp.mainWindow)
     }
 
     @objc func showGuestAgentStatus(_ sender: Any?) {

@@ -10,6 +10,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaLogging
 import KernovaSynchronization
+import KernovaWire
 
 /// This process's v2 peer: its claim, its connection to the host through `PeerAgentRuntime`, its power adapter
 /// and update installer, and the watch on its install's `current` link.
@@ -40,10 +41,13 @@ public final class MacAgentPeer: Sendable {
 
     /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
     /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer lands what the
-    /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`.
+    /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`, and serves the
+    /// other item features `owners` builds owners for, each calling into the connection through the calls it
+    /// is handed.
     public init(
         role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?,
-        revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in }
+        revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in },
+        owners: (PeerItemCalls) -> ItemFeatureOwners = { _ in ItemFeatureOwners() }
     ) {
         claim = DarwinIdentity.current(role: role, versionLabel: label)
         let running = DarwinIdentity.runningSlot()
@@ -51,18 +55,24 @@ public final class MacAgentPeer: Sendable {
         let queue = DispatchQueue(label: "app.kernova.macosagent.peer")
         self.queue = queue
         let (adapter, installer) = Self.updateInstaller(for: claim, running: running, queue: queue, peer: peer)
+        let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+        let calls = PeerItemCalls(sink: sink)
         let power = role == .systemPeer ? MacPowerAdapter.systemPeer() : MacPowerAdapter.sessionPeer()
         if let state { power.consoleChanged(state.console) }
         self.power = power
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
-        let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
-        let drop = role == .sessionPeer ? Self.dropReceiver(sink: itemSink, reveal: revealDrop) : nil
-        let itemRouter = ItemFeatureRouter<Void>(drop: drop?.owner)
+        let built = role == .sessionPeer ? owners(calls) : ItemFeatureOwners()
+        let drop = role == .sessionPeer ? Self.dropReceiver(sink: sink, reveal: revealDrop) : nil
+        let itemLogger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "ItemSource")
+        let itemRouter = ItemFeatureRouter<Void>(
+            clipboard: built.clipboard, drop: drop?.owner, drag: built.drag, logger: itemLogger)
         let items =
             role == .sessionPeer
             ? ItemAdapters(
-                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem()) { itemRouter.content($0, $1, $2) },
-                sink: itemSink, features: itemRouter.features)
+                source: ItemSourceAdapter(fileSystem: POSIXTreeFileSystem(), logger: itemLogger) {
+                    itemRouter.content($0, $1, $2, $3)
+                },
+                sink: sink, features: itemRouter.features)
             : nil
         runtime = PeerAgentRuntime(
             claim: claim, state: state,
@@ -71,13 +81,14 @@ public final class MacAgentPeer: Sendable {
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.
-                    if event == .policyReceived { installer?.confirm() }
+                    if case .policyReceived = event { installer?.confirm() }
                     itemRouter.deliver(event)
                 },
                 stop: { reason in
                     Self.logger.log(.notice, "The peer stops for good: \(String(describing: reason), privacy: .public)")
                     Darwin.exit(0)
                 }))
+        calls.bind(runtime)
         peer.withLock { $0 = self }
         drop?.attach(runtime)
         if let running, claim.scope != .unspecified {
@@ -199,6 +210,102 @@ public final class MacAgentPeer: Sendable {
         } catch {
             logger.log(.error, "Cannot rewrite the user's jobs: \(String(describing: error), privacy: .public)")
         }
+    }
+}
+
+/// The owners of the item features a session peer serves besides DROP, which the peer owns itself; a feature
+/// with none is advertised absent.
+public struct ItemFeatureOwners: Sendable {
+    /// CLIPBOARD's owner.
+    public var clipboard: ItemFeatureOwner<Void>?
+    /// DRAG's owner.
+    public var drag: DragFeatureOwner<Void>?
+
+    /// Owners for the features given one.
+    public init(clipboard: ItemFeatureOwner<Void>? = nil, drag: DragFeatureOwner<Void>? = nil) {
+        self.clipboard = clipboard
+        self.drag = drag
+    }
+}
+
+/// A session peer's item calls into its connection to the host, for the owners of its item features: built
+/// before the runtime they reach, which the peer binds before it starts, so nothing calls through them unbound.
+public final class PeerItemCalls: Sendable {
+    private let runtime = Locked<PeerAgentRuntime?>(nil)
+    private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
+
+    init(sink: ItemSinkAdapter<POSIXTreeFileSystem>) {
+        self.sink = sink
+    }
+
+    func bind(_ runtime: PeerAgentRuntime) {
+        self.runtime.withLock { $0 = runtime }
+    }
+
+    private var bound: PeerAgentRuntime? {
+        let runtime = runtime.withLock { $0 }
+        if runtime == nil { assertionFailure("an item call before the peer bound its runtime") }
+        return runtime
+    }
+
+    /// ``PeerAgentRuntime/offerItems(_:feature:_:)``.
+    public func offerItems(
+        _ offer: ItemOffer, feature: FeatureID, _ completion: @escaping @Sendable (WireError?) -> Void
+    ) {
+        guard let runtime = bound else { return completion(WireError(.internal, debugDetail: "no runtime")) }
+        runtime.offerItems(offer, feature: feature, completion)
+    }
+
+    /// ``PeerAgentRuntime/withdrawOffer(_:code:)``.
+    public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled) {
+        bound?.withdrawOffer(token, code: code)
+    }
+
+    /// ``PeerAgentRuntime/releaseOffer(_:)``.
+    public func releaseOffer(_ token: Data) {
+        bound?.releaseOffer(token)
+    }
+
+    /// ``PeerAgentRuntime/refuseOffer(_:_:)``.
+    public func refuseOffer(_ token: Data, _ error: WireError) {
+        bound?.refuseOffer(token, error)
+    }
+
+    /// ``PeerAgentRuntime/pullItem(_:_:)``.
+    public func pullItem(
+        _ order: ItemPullOrder, _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void
+    ) {
+        guard let runtime = bound else {
+            return completion(.failure(WireError(.internal, debugDetail: "no runtime")))
+        }
+        runtime.pullItem(order, completion)
+    }
+
+    /// ``PeerAgentRuntime/cancelPull(_:)``.
+    public func cancelPull(_ id: ItemPullID) {
+        bound?.cancelPull(id)
+    }
+
+    /// ``PeerAgentRuntime/readItem(_:item:_:)``.
+    public func readItem(_ token: Data, item: UInt32, _ completion: @escaping @Sendable (OfferedItem?) -> Void) {
+        guard let runtime = bound else { return completion(nil) }
+        runtime.readItem(token, item: item, completion)
+    }
+
+    /// ``PeerAgentRuntime/answerDragTake(_:_:)``.
+    public func answerDragTake(_ id: DragTakeID, _ answer: DragTakeAnswer) {
+        bound?.answerDragTake(id, answer)
+    }
+
+    /// The pull the peer's item sink lands, as
+    /// ``ItemSinkAdapter/order(token:item:representation:byteCeiling:landing:budget:)`` builds it.
+    public func order(
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
+        budget: ByteBudget?
+    ) throws(WireError) -> ItemPullOrder {
+        try sink.order(
+            token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
+            budget: budget)
     }
 }
 

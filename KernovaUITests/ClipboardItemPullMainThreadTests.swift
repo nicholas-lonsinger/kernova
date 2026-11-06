@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaSynchronization
+import KernovaWire
 import Testing
 
 @testable import KernovaKit
@@ -14,6 +15,8 @@ struct ClipboardItemPullMainThreadTests {
     /// Completes each pull from a block performed on the main run loop, which
     /// only a turning loop runs.
     private final class RunLoopPuller: ClipboardItemPulling {
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
             RunLoop.main.perform { completion(Data("live".utf8)) }
         }
@@ -26,7 +29,12 @@ struct ClipboardItemPullMainThreadTests {
     @Test("a main-thread paste keeps the run loop turning: a block performed on it completes the pull")
     func performedMainRunLoopBlockCompletesPull() throws {
         let waits = Locked<[NestedEventLoopWait]>([])
-        let items = ClipboardOfferSource(content: ClipboardContent(text: "offered")).items
+        var text = Representation()
+        text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        text.storage = .inline
+        var item = OfferedItem()
+        item.representations = [text]
+        let items = [item]
         let specs = ClipboardPasteboardPublisher.itemSpecs(
             for: items, concealed: false, puller: RunLoopPuller(),
             eventLoopWait: {
@@ -35,9 +43,7 @@ struct ClipboardItemPullMainThreadTests {
                 return wait
             })
 
-        // A parked main thread could never run the completion. The hold has no
-        // deadline of its own: a lost fast path is ended by the test plan's
-        // per-test allowance.
+        // A parked main thread could never run the completion.
         let served = try #require(specs.first).provide(ClipboardContent.utf8TextUTI)
 
         #expect(served == Data("live".utf8))

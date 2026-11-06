@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import KernovaSynchronization
 import KernovaWire
 
 /// One item pull: the connection it runs on and its stream, on either side.
@@ -29,12 +30,27 @@ public struct ItemOffer: Sendable, Equatable {
     public var concealed: Bool
     /// The items, in the order they are sent.
     public var items: [OfferedItem]
+    /// A peer's CLIPBOARD offer: the token of the last host clipboard offer it received on the connection,
+    /// empty when none (`ItemSetHeader.after`); a copy's, the ask it answers. Empty on every other offer.
+    public var after: Data
+    /// What a CLIPBOARD offer is besides its opener's clipboard offer (`ItemSetHeader.copy`): a copy is not
+    /// this side's clipboard offer, so a later one does not withdraw it.
+    public var copy: ClipboardCopyRole
+    /// A copy's: how many items of its opener's clipboard it does not carry whole
+    /// (`ItemSetHeader.left_out`); 0 on every other offer.
+    public var leftOut: Int
 
     /// Creates an offer.
-    public init(token: Data, concealed: Bool = false, items: [OfferedItem]) {
+    public init(
+        token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(),
+        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
+    ) {
         self.token = token
         self.concealed = concealed
         self.items = items
+        self.after = after
+        self.copy = copy
+        self.leftOut = leftOut
     }
 }
 
@@ -48,12 +64,60 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var concealed: Bool
     /// The items the offer sends.
     public var count: Int
+    /// ``ItemOffer/after``, as the OPEN carried it.
+    public var after: Data
+    /// ``ItemOffer/copy``, as the OPEN carried it.
+    public var copy: ClipboardCopyRole
+    /// ``ItemOffer/leftOut``, as the OPEN carried it.
+    public var leftOut: Int
+
+    /// A header announcing `count` items of `feature`'s offer `token`.
+    public init(
+        feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(),
+        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
+    ) {
+        self.feature = feature
+        self.token = token
+        self.concealed = concealed
+        self.count = count
+        self.after = after
+        self.copy = copy
+        self.leftOut = leftOut
+    }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
-        self.feature = feature
-        token = header.token
-        concealed = header.concealed
-        count = Int(header.count)
+        self.init(
+            feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
+            after: header.after, copy: ClipboardCopyRole(header.copy), leftOut: Int(header.leftOut))
+    }
+}
+
+/// What a CLIPBOARD offer is besides its opener's clipboard offer, sent because the user asked for a clipboard
+/// on the far side.
+public enum ClipboardCopyRole: Sendable, Equatable {
+    /// The opener's clipboard offer, and every offer of another feature.
+    case notACopy
+    /// A snapshot of the opener's clipboard.
+    case snapshot
+    /// The host's ask for a snapshot of the peer's clipboard, of no items.
+    case ask
+
+    /// The role `wire` names; an unrecognized one is no copy.
+    init(_ wire: Kernova_V2_ClipboardCopy) {
+        switch wire {
+        case .snapshot: self = .snapshot
+        case .ask: self = .ask
+        case .unspecified, .UNRECOGNIZED: self = .notACopy
+        }
+    }
+
+    /// The wire's spelling.
+    var wire: Kernova_V2_ClipboardCopy {
+        switch self {
+        case .notACopy: .unspecified
+        case .snapshot: .snapshot
+        case .ask: .ask
+        }
     }
 }
 
@@ -65,40 +129,46 @@ public enum ItemOfferOrigin: Sendable, Equatable {
     case remote
 }
 
-/// One pull of a representation of the far side's offer, and where its sink lands it. The sink builds it, since
-/// what the request accepts — the decmpfs types above all — is what that landing's volume reads back; nothing
-/// else can pair a request with a landing.
+/// One pull of a representation of the far side's offer, where its sink lands it, and the budget the landing
+/// draws on. The sink builds it, since what the request accepts — the decmpfs types above all — is what that
+/// landing's volume reads back; nothing else can pair a request with a landing.
 public struct ItemPullOrder: Sendable, Equatable {
     /// What the pull asks the far side for.
     public let request: PullRequest
     /// Where the sink lands it.
     public let landing: ItemLanding
+    /// The budget the sink charges each landed entry's bytes to, shared with the owner's other pulls; nil
+    /// when the request's byte ceiling is the only bound.
+    public let budget: ByteBudget?
 
-    /// Pairs `request` with `landing`, which the caller has made it accept.
-    package init(_ request: PullRequest, landing: ItemLanding) {
+    /// Pairs `request` with `landing`, which the caller has made it accept, charging what lands to `budget`.
+    package init(_ request: PullRequest, landing: ItemLanding, budget: ByteBudget? = nil) {
         self.request = request
         self.landing = landing
+        self.budget = budget
     }
 }
 
 /// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`
-/// without reading it. An INLINE representation lands as its bytes; a FILE or FOLDER in a directory.
+/// without reading it.
 public enum ItemLanding: Sendable, Equatable {
-    /// The INLINE representation's bytes, which the sink publishes as `LandedItem.inline`.
-    case inline
-    /// A FILE or FOLDER, in the directory at the absolute path `directory`, under the name `name` chooses.
-    case tree(directory: String, name: ItemLandingName)
+    /// An INLINE representation's bytes, held in memory and published as `LandedItem.inline`: for content that
+    /// must reach no disk, since a file in staging persists until it is reclaimed.
+    case memory
+    /// Any representation as one entry — an INLINE one as a file of its bytes — in the directory at the
+    /// absolute path `directory`, under the name `name` chooses.
+    case staged(directory: String, name: ItemLandingName)
 
     /// Whether this landing takes a representation of `storage`.
     func takes(_ storage: Representation.Storage) -> Bool {
-        switch (self, storage) {
-        case (.inline, .inline), (.tree, .file), (.tree, .folder): true
-        default: false
+        switch self {
+        case .memory: storage == .inline
+        case .staged: true
         }
     }
 }
 
-/// The name a FILE or FOLDER lands under: one path component, as the volume's raw bytes.
+/// The name a representation lands under: one path component, as the volume's raw bytes.
 public enum ItemLandingName: Sendable, Equatable {
     /// Exactly this name; the publish fails `EEXIST` when anything has it.
     case exactly(Data)
@@ -108,9 +178,9 @@ public enum ItemLandingName: Sendable, Equatable {
 
 /// What a pull's sink published.
 public enum LandedItem: Sendable, Equatable {
-    /// An INLINE representation's bytes.
+    /// An INLINE representation's bytes, landed in memory.
     case inline(Data)
-    /// A FILE or FOLDER, under this name in its landing's directory.
+    /// The representation, under this name in its landing's directory.
     case named(Data)
 }
 
@@ -301,9 +371,9 @@ public struct ItemTransfer: FeatureMachine {
         offers.offer(offer, kind: kind, connection: &connection)
     }
 
-    /// Withdraws this side's offer of `token`.
-    public mutating func withdraw(_ token: Data, connection: inout Connection) {
-        offers.withdraw(token, connection: &connection)
+    /// Withdraws this side's offer of `token`, resetting it with `code`.
+    public mutating func withdraw(_ token: Data, code: ErrorCode = .cancelled, connection: inout Connection) {
+        offers.withdraw(token, code: code, connection: &connection)
     }
 
     /// Releases the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole

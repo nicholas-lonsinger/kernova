@@ -1,7 +1,6 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
-import Synchronization
 import Testing
 import UniformTypeIdentifiers
 
@@ -9,7 +8,7 @@ import UniformTypeIdentifiers
 @testable import KernovaCoreTestSupport
 
 /// Exercises `HostClipboardPublisher.hostPasteboardItems` — the pure
-/// "Copy to Mac" grouping/staging step that turns the buffer into one
+/// grouping/staging step that turns resolved content into one
 /// `ItemSpec` per inline-content block plus one per file payload.
 ///
 /// Each spec promises a set of types and serves their bytes lazily through
@@ -184,98 +183,5 @@ struct ClipboardHostPasteboardItemsTests {
         #expect(
             try String(contentsOf: dirURL.appendingPathComponent("sub/n.txt"), encoding: .utf8)
                 == "nested")
-    }
-
-    // MARK: - Promised items (metadata-only publish)
-
-    /// Records the paste-time fires `promisedItemSpecs` routes to a clipboard
-    /// service, returning canned values — no service, no wire.
-    private final class RecordingRepProvider: ClipboardPromiseServing, Sendable {
-        private struct Calls: Sendable {
-            var fileURL: [(generation: UInt64, repIndex: Int)] = []
-            var data: [(generation: UInt64, repIndex: Int, uti: String)] = []
-        }
-
-        private let urlToReturn: URL?
-        private let dataToReturn: Data?
-        private let calls = Mutex(Calls())
-
-        /// Answers every file-URL fire with `url` and every data fire with
-        /// `data`.
-        init(url: URL? = nil, data: Data? = nil) {
-            urlToReturn = url
-            dataToReturn = data
-        }
-
-        var fileURLCalls: [(generation: UInt64, repIndex: Int)] { calls.withLock { $0.fileURL } }
-        var dataCalls: [(generation: UInt64, repIndex: Int, uti: String)] { calls.withLock { $0.data } }
-        var totalCallCount: Int { calls.withLock { $0.fileURL.count + $0.data.count } }
-
-        func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-            calls.withLock { $0.fileURL.append((generation, repIndex)) }
-            return urlToReturn
-        }
-
-        func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-            calls.withLock { $0.data.append((generation, repIndex, uti)) }
-            return dataToReturn
-        }
-    }
-
-    @Test("promised reps group like resolved ones — inline block, dual-flavor image file, file-only item")
-    func promisedItemsGroupFromMetadata() {
-        let provider = RecordingRepProvider()
-        let promises = [
-            CopyToMacPromise(
-                generation: 3, repIndex: 0, uti: ClipboardContent.utf8TextUTI, filename: "",
-                isInline: true),
-            CopyToMacPromise(
-                generation: 3, repIndex: 1, uti: UTType.png.identifier, filename: "photo.png",
-                isInline: true),
-            CopyToMacPromise(
-                generation: 3, repIndex: 2, uti: "public.data", filename: "blob.bin",
-                isInline: false),
-        ]
-        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, serve: provider)
-
-        #expect(specs.count == 3)
-        let textType = ClipboardContent.utf8TextUTI
-        let pngType = UTType.png.identifier
-        #expect(specs[0].types == [textType])
-        #expect(Set(specs[1].types) == [pngType, fileURLType])
-        #expect(specs[2].types == [fileURLType])
-        // Building the specs is pure planning — no paste-time fire happened.
-        #expect(provider.totalCallCount == 0)
-    }
-
-    @Test("a promised item's provide closure routes .fileURL and inline flavors to the right pulls")
-    func promisedItemClosuresRouteFlavors() throws {
-        let provider = RecordingRepProvider(
-            url: URL(fileURLWithPath: "/tmp/served/photo.png"), data: Data("promised bytes".utf8))
-        let promises = [
-            CopyToMacPromise(
-                generation: 7, repIndex: 0, uti: UTType.png.identifier, filename: "photo.png",
-                isInline: true)
-        ]
-        let specs = HostClipboardPublisher.promisedItemSpecs(for: promises, serve: provider)
-        let spec = try #require(specs.first)
-
-        let pngType = UTType.png.identifier
-        #expect(spec.provide(pngType) == Data("promised bytes".utf8))
-        #expect(provider.dataCalls.count == 1)
-        #expect(provider.dataCalls.first?.generation == 7)
-        #expect(provider.dataCalls.first?.repIndex == 0)
-        #expect(provider.dataCalls.first?.uti == UTType.png.identifier)
-
-        let urlData = try #require(spec.provide(fileURLType))
-        #expect(
-            URL(string: try #require(String(data: urlData, encoding: .utf8)))
-                == URL(fileURLWithPath: "/tmp/served/photo.png"))
-        #expect(provider.fileURLCalls.count == 1)
-        #expect(provider.fileURLCalls.first?.generation == 7)
-
-        // A type the item never promised serves nothing and fires nothing.
-        #expect(spec.provide("public.rtf") == nil)
-        #expect(provider.totalCallCount == 2)
     }
 }

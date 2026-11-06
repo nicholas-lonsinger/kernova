@@ -7,7 +7,10 @@ import KernovaLogging
 ///
 /// Distinct from per-VM `VMConfiguration`: this holds settings that apply to the
 /// whole app and live in the standard defaults domain.
-package struct AppPreferences {
+///
+/// `@unchecked` because its one stored value, `UserDefaults`, is not marked `Sendable` though Apple documents it
+/// thread-safe ([UserDefaults](https://developer.apple.com/documentation/foundation/userdefaults), "Thread Safety").
+package struct AppPreferences: @unchecked Sendable {
     /// Shared production instance over the standard defaults domain.
     @MainActor package static let shared = AppPreferences(defaults: .standard)
 

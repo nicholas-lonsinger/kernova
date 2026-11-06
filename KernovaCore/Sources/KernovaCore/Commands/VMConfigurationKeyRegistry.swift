@@ -722,7 +722,7 @@ package enum VMConfigurationKeyRegistry {
     package static let clipboardPassthrough = VMConfigurationKey(
         name: "clipboard.passthrough",
         summary:
-            "Forward the clipboard both ways with no window step, which needs sharing on.",
+            "Share one clipboard both ways, with no copy command, which needs sharing on.",
         gate: .live,
         read: { String($0.clipboardPassthroughEnabled) },
         write: { value, config, _ in

@@ -8,8 +8,9 @@ import KernovaContainer
 import KernovaContainerPipeline
 import KernovaFileTree
 import KernovaLogging
+import KernovaSynchronization
 
-/// Lands a pulled FILE or FOLDER representation from its container's bytes: a `ContainerDecodePipeline` feeding a
+/// Lands a pulled representation from its container's bytes: a `ContainerDecodePipeline` feeding a
 /// ``TreeWriter``. The item takes the name its caller supplies — the container's root carries none — only in
 /// ``publish()``, after ``finish()`` has confirmed the container whole; any failure, or the receiver ending first,
 /// removes everything it created.
@@ -47,17 +48,18 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     ///   - fileSystem: The calls the writer makes.
     ///   - destination: An open directory, which the receiver takes ownership of and closes when it ends.
     ///   - destinationPathByteCount: The length in bytes of the destination's absolute path.
+    ///   - budget: What each landed entry's bytes are charged to, as ``TreeWriter`` charges them.
     ///   - logger: Where a staging root the writer could not remove is reported.
     public init(
         name: PublishName, accepting acceptance: ContainerAcceptance, decodingWorkers: Int, fileSystem: FileSystem,
         destination: Int32,
-        destinationPathByteCount: Int, logger: KernovaLogger = TreeWriterLog.logger
+        destinationPathByteCount: Int, budget: ByteBudget? = nil, logger: KernovaLogger = TreeWriterLog.logger
     ) {
         state = .receiving(ContainerDecodePipeline(accepting: acceptance, workers: decodingWorkers))
         writer = TreeWriter(
             name: name, fileSystem: fileSystem, destination: destination,
             destinationPathByteCount: destinationPathByteCount,
-            accepting: acceptance, logger: logger)
+            accepting: acceptance, budget: budget, logger: logger)
     }
 
     /// Takes the container's next bytes, landing the entries they complete as their decompression completes: an entry

@@ -1,140 +1,149 @@
 import Foundation
 import KernovaKit
+import KernovaWire
 
 /// Common surface shared by every clipboard transport.
 ///
-/// `SpiceClipboardService` (Linux guests) carries only the UTF-8 representation
-/// of `clipboardContent`; `VsockClipboardService` (macOS guests) carries every
-/// representation. Both implementations must be `@Observable` classes: the macro
-/// installs the registrar on the concrete type, so reading or writing through the
-/// protocol witness still fires observation.
+/// `SpiceClipboardService` carries only UTF-8 text; `HubClipboardService`, over the guest agent's items, carries
+/// every representation. Both implementations must be `@Observable` classes: the macro installs the registrar
+/// on the concrete type, so reading through the protocol witness still fires observation.
 @MainActor
 package protocol ClipboardServicing: AnyObject {
-    /// Bidirectional clipboard buffer: the ordered UTI-tagged representations
-    /// of one logical pasteboard item. Set by the user (via the clipboard
-    /// window) to seed an outbound grab; updated by the implementation when
-    /// the guest pushes new content.
-    var clipboardContent: ClipboardContent { get set }
-
     /// `true` once the implementation has completed its handshake with the guest.
     var isConnected: Bool { get }
 
     /// `true` when the transport carries arbitrary UTI-tagged representations;
     /// `false` when it is limited to plain text (SPICE).
-    ///
-    /// The window gates non-text intake on this rather than accepting content
-    /// that would silently never send.
     var supportsBinaryRepresentations: Bool { get }
 
-    /// Monotonically increases each time a **new inbound guest offer** is
-    /// published to `clipboardContent` — not on our own outbound writes, and not
-    /// on the per-representation preview/copy materialization of an
-    /// already-published offer.
+    /// Bumped once per new guest clipboard the transport takes, which passthrough writes to the Mac.
     var inboundOfferSeq: UInt64 { get }
 
     /// Stops protocol I/O. Idempotent.
     func stop()
 
-    /// Announces the current `clipboardContent` to the guest if it has changed
-    /// since the last successful announcement. Called by the clipboard window
-    /// when it loses focus, and immediately after a paste/drop gesture.
+    /// Passthrough stopped: what passthrough carried across ends, and each side's write of the other's is
+    /// retracted. Default: nothing to end.
+    func passthroughStopped()
+
+    /// Offers a copy on the Mac to the guest, as passthrough read it from the host pasteboard: metadata only,
+    /// each representation's bytes read from `copy` when this transport sends them.
     ///
-    /// `.settled` means this content is done with — announced, already held by
-    /// the guest, or carrying nothing this transport can send. `.undelivered`
-    /// means nothing reached the guest and offering the same content again on a
+    /// `.settled` means this copy is done with — announced, already held by the guest, or carrying nothing this
+    /// transport can send. `.undelivered` means nothing reached the guest and offering the same copy again on a
     /// live connection would send it.
-    func grabIfChanged() -> ClipboardGrabOutcome
+    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome
 
-    /// Empties the buffer (the window's "Clear" gesture) and resets the
-    /// outbound dedup state.
-    ///
-    /// Resetting the dedup is the reason this isn't just `clipboardContent =
-    /// .empty`: otherwise re-copying the just-cleared content would be suppressed
-    /// by `grabIfChanged()` as "unchanged" and silently never reach the guest.
-    func clearBuffer()
+    /// The Mac's pasteboard changed to a copy passthrough offers nothing of — empty, transient, or none of it
+    /// readable: the host's offer of the copy before it is withdrawn. Default: nothing to withdraw.
+    func hostCopyOffersNothing()
 
-    /// Reserves a directory for the window to materialize a dropped file promise
-    /// into, or `nil` when the transport can't stage one.
-    ///
-    /// The files stay there for as long as the buffer, an offer, or the host
-    /// pasteboard can read them, and the service reclaims the directory once none
-    /// can — so the window must not delete the file it keeps, nor stage one
-    /// anywhere else.
-    ///
-    /// Default `nil`: a text-only transport never takes a file drop.
-    func reserveDropDestination() -> URL?
+    /// Bumped once per connection to the guest, so passthrough tells a new connection from the last however
+    /// fast one replaced the other. Default 0: a transport whose service is per connection.
+    var connectionEpoch: UInt64 { get }
 
-    /// Pulls the representations the clipboard window renders richly (text,
-    /// inline RTF, images up to a size limit) for a lazily-offered guest payload,
-    /// updating `clipboardContent` as they land.
-    ///
-    /// Default no-op: transports that deliver content eagerly have nothing to pull.
-    func materializeForPreview() async
+    /// The host pasteboard's change count when the connection now up started, so passthrough sends the guest
+    /// only a Mac copy made since; nil when the transport keeps no record, and passthrough starts the
+    /// connection where the pasteboard stands when it first sees it. Default nil.
+    var connectionStartChangeCount: Int? { get }
 
-    /// Prepares the items to write to the host pasteboard for "Copy to Mac" —
-    /// metadata only, synchronously.
+    /// Copies `snapshot`, the Mac's clipboard as it stood at the command, to the guest's: what does not reach it
+    /// at once, or nil. A refusal the guest answers later goes to the VM's transfer report.
+    func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure?
+
+    /// Copies the guest's clipboard as it stands now: once every representation but a file or folder landed
+    /// here, `write` is handed it, synchronously, unless a newer copy of the guest's arrived first.
+    func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy
+
+    /// Where a snapshot of the Mac's clipboard calls its file promises in, each snapshot holding the lease of
+    /// its own; nil when the transport carries no file. Default nil.
+    var snapshotStaging: ClipboardFileStaging? { get }
+
+    /// The connection a copy of the Mac's clipboard goes over now, so a snapshot names by reference only what
+    /// the guest at its end can fill; nil for a transport that fills no reference. Default nil.
+    var clipboardConnection: ClipboardConnectionID? { get }
+
+    /// Reserves a directory to call a file promise copied on the Mac in to when the guest pulls it, or `nil`
+    /// when the transport can't stage one. Default `nil`: a text-only transport never takes a file.
+    func reservePromiseDestination() -> URL?
+
+    /// The guest's clipboard as passthrough places it on the host pasteboard — metadata only, synchronously.
     ///
-    /// Every usable representation of a live guest offer becomes a `.promised`
-    /// item whose bytes are pulled when a paste consumes them; with no live
-    /// offer (local or user-edited content) the buffer's representations return
-    /// `.resolved`. Reps that can never be served are reported as `.droppedFile`.
-    func materializeForCopy() -> [CopyToMacItem]
+    /// A live guest offer becomes one `.offer` whose bytes are pulled when a paste consumes them; text the
+    /// transport already holds returns `.resolved`. Files that can never be served are reported as
+    /// `.droppedFile`.
+    func guestClipboardItems() -> [CopyToMacItem]
 }
 
-/// What became of a `grabIfChanged()`.
+/// What became of a copy command's copy of the guest's clipboard.
+package enum GuestClipboardCopy {
+    /// It held nothing to copy.
+    case nothing
+    /// Its copy named only what the Mac's clipboard holds already: nothing was written.
+    case alreadyHeld
+    /// It could not be copied, and why.
+    case failed(ClipboardTransferFailure)
+    /// The copy landed and was handed to the write.
+    case landed
+}
+
+/// A copy of the guest's clipboard: its items, every non-file representation landed, and the files still on
+/// the guest's disk, pulled when pasted.
+package struct GuestCopyContents {
+    /// The copy, which a retraction of its write names by its token.
+    let serving: ClipboardWriteSource.Serving
+    let items: [OfferedItem]
+    let concealed: Bool
+    /// How the copy is written within the paste ceiling, decided once its INLINE representations landed.
+    let plan: ClipboardPromisePolicy.CopyPlan
+    /// What this side holds of representation `rep` of item `item`: an INLINE one's landed bytes, or a file a
+    /// reference to this side's own offer was filled with.
+    let held: @Sendable (_ item: Int, _ rep: Int) -> ClipboardWriteSource.Held?
+    /// Pulls the copy's files when a paste asks.
+    let puller: any ClipboardItemPulling
+    /// How many of its references to this side's own offers could not be filled, and are left out.
+    let referencesLeftOut: Int
+    /// How many items of the guest's clipboard its snapshot does not carry whole.
+    var itemsLeftOut = 0
+    /// Lets the copy go, the Mac's clipboard holding nothing more of it.
+    let release: @MainActor () -> Void
+}
+
+/// What became of an `offerHostCopy(_:)`.
 ///
-/// Splits the one outcome a caller can act on — nothing reached the guest, and
-/// the same content offered again on a live connection would go out — from
-/// every outcome that is final for this content, whether it was announced, the
-/// guest already held it, or it carried nothing this transport can send.
+/// Splits the one outcome a caller can act on — nothing reached the guest, and the same copy offered again on
+/// a live connection would go out — from every outcome that is final for this copy.
 package enum ClipboardGrabOutcome: Equatable, Sendable {
     case settled
     case undelivered
 }
 
-/// A representation promised on the host pasteboard by its offer coordinates,
-/// carrying the metadata the publisher needs to plan its pasteboard item and
-/// route each flavor's paste-time pull.
-package struct CopyToMacPromise: Sendable, Equatable {
-    let generation: UInt64
-    let repIndex: Int
-    let uti: String
-    let filename: String
-    /// Whether the rep inlines onto the pasteboard (the offer's `is_inline`),
-    /// mirroring `shouldInlineOnPasteboard` for a resolved rep.
-    let isInline: Bool
-    /// Whether the publisher must leave `public.file-url` off the item it plans
-    /// for this rep — the over-cap refusal for an image file, whose inline
-    /// flavor keeps serving.
-    let withholdsFileURL: Bool
-
-    init(
-        generation: UInt64, repIndex: Int, uti: String, filename: String, isInline: Bool,
-        withholdsFileURL: Bool = false
-    ) {
-        self.generation = generation
-        self.repIndex = repIndex
-        self.uti = uti
-        self.filename = filename
-        self.isInline = isInline
-        self.withholdsFileURL = withholdsFileURL
-    }
+/// A guest's live offer as passthrough places it on the host pasteboard: every item promised, its bytes pulled
+/// through `puller` only when a paste asks for them.
+package struct CopyToMacOffer: Sendable {
+    /// The offer, which a retraction of its write names by its token.
+    let serving: ClipboardWriteSource.Serving
+    let items: [OfferedItem]
+    let concealed: Bool
+    /// `false` leaves `public.file-url` off every item — the over-cap refusal,
+    /// whose inline flavors keep serving.
+    let servingFileURLs: Bool
+    let puller: any ClipboardItemPulling
 }
 
-/// One item "Copy to Mac" places on the host pasteboard.
+/// One item passthrough places on the host pasteboard.
 package enum CopyToMacItem: Sendable {
-    /// A representation whose bytes are already local — the buffer's own content
-    /// when no guest promise is live.
+    /// A representation whose bytes are already local — the text a text-only transport received.
     case resolved(ClipboardContent.Representation)
-    /// A rep promised by its offer coordinates; its bytes cross the wire only
-    /// when a paste consumes them.
-    case promised(CopyToMacPromise)
+    /// A guest offer, promised whole; its bytes cross the wire only when a
+    /// paste consumes them.
+    case offer(CopyToMacOffer)
     /// A file payload that can't be served — the `reason` drives the
     /// user-facing message.
     case droppedFile(CopyToMacDropReason)
 }
 
-/// Why a "Copy to Mac" file payload couldn't be placed on the host pasteboard.
+/// Why a file payload couldn't be placed on the host pasteboard.
 package enum CopyToMacDropReason: Sendable, Equatable {
     /// The offer's `public.file-url`-serving reps total over the user's paste
     /// ceiling (`ClipboardPasteLimit`), so no paste could pull them inside the OS
@@ -144,12 +153,11 @@ package enum CopyToMacDropReason: Sendable, Equatable {
 }
 
 extension ClipboardServicing {
-    func reserveDropDestination() -> URL? { nil }
-    func materializeForPreview() async {}
-    func materializeForCopy() -> [CopyToMacItem] {
-        clipboardContent.representations.map { .resolved($0) }
-    }
-
-    /// Transports that never receive report no inbound offers.
-    var inboundOfferSeq: UInt64 { 0 }
+    func reservePromiseDestination() -> URL? { nil }
+    var snapshotStaging: ClipboardFileStaging? { nil }
+    var clipboardConnection: ClipboardConnectionID? { nil }
+    func hostCopyOffersNothing() {}
+    var connectionEpoch: UInt64 { 0 }
+    var connectionStartChangeCount: Int? { nil }
+    func passthroughStopped() {}
 }

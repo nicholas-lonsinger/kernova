@@ -10,9 +10,11 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     case peerPaste
     /// This side's clipboard window is filling in a preview of the peer's offer.
     case preview
-    /// Copy to Mac — the click, or the automatic passthrough publish of a guest
-    /// offer.
+    /// The guest's clipboard written to the Mac's — Copy Guest Clipboard to Mac,
+    /// or the automatic passthrough publish of a guest offer.
     case copy
+    /// Copy Mac Clipboard to Guest.
+    case send
     /// Automatic passthrough forwarded this side's copy to the peer.
     case forward
     /// Files dropped on the VM display — the host sends, the guest receives.
@@ -47,7 +49,7 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
         switch self {
         case .peerPaste: 2
         case .drop, .dragOut: 1
-        case .paste, .preview, .copy, .forward: 0
+        case .paste, .preview, .copy, .forward, .send: 0
         }
     }
 }
@@ -67,10 +69,18 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The peer reported a failure of its own; `nil` for a code this build does
     /// not define.
     case peerReported(ClipboardErrorCode?)
-    /// A Copy to Mac still on the host pasteboard was retracted because the guest
-    /// clipboard moved on. `hasSuccessor` is whether a guest offer took its
-    /// place, so the message can point at Copy to Mac.
-    case supersededCopyRetracted(hasSuccessor: Bool)
+    /// A Copy to Mac still on the host pasteboard was retracted whole because the guest's connection ended, so
+    /// nothing more of it could be pasted.
+    case disconnectedCopyRetracted
+    /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
+    /// the guest's connection ended; the rest of the copy stays.
+    case disconnectedFilesRetracted
+    /// A Copy to Mac still on the host pasteboard was retracted whole because the guest withdrew it, its
+    /// connection still up.
+    case withdrawnCopyRetracted
+    /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
+    /// the guest withdrew the copy, its connection still up; the rest of the copy stays.
+    case withdrawnFilesRetracted
     /// A paste fired after the session ended with only part of the copied file
     /// set staged, so nothing was served rather than a silent subset.
     case incompleteFileSet
@@ -91,8 +101,11 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case unpackFailed(ClipboardItemFailure?)
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
-    /// Items this side could not read were left out of what it sent, and the
-    /// rest crossed; `count` is how many.
+    /// Items the sending side did not send whole, and the rest crossed whole;
+    /// `count` is how many. A gesture that reads a pasteboard leaves out a file
+    /// it cannot read or that is gone, the rest of its item crossing; a
+    /// snapshot also leaves out what it could not read or pull from another
+    /// offer. A drop's items are its files.
     case itemsSkipped(count: Int)
     /// None of the gesture's items could be read, so nothing was sent.
     case itemsUnreadable
@@ -106,6 +119,19 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// A Mac destination asked for a promised item of a guest drag that the
     /// guest never named, so it holds a stand-in name nothing is written to.
     case dragItemUnnamed
+    /// The destination's clipboard changed before a copy to it landed, so it was
+    /// left as it is.
+    case clipboardChanged
+    /// The source's clipboard held nothing a copy could carry.
+    case nothingToCopy
+    /// A copy was written without its `count` files, which together are over the transfer ceiling `limitBytes`.
+    case filesLeftOut(count: Int, limitBytes: Int)
+    /// A copy named what the destination had sent, and the destination no longer had some of it, so it was
+    /// left out.
+    case partsGone
+    /// The source's clipboard held no text, the one thing a text-only transport
+    /// carries.
+    case noTextToCopy
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.
@@ -119,6 +145,15 @@ public enum ClipboardDropStop: Equatable, Sendable {
 }
 
 extension ClipboardTransferFailure {
+    /// Whether the rest of what the gesture carried reached its destination and stays there: only this part is
+    /// missing.
+    public var deliveredTheRest: Bool {
+        switch self {
+        case .itemsSkipped, .filesLeftOut, .partsGone, .disconnectedFilesRetracted, .withdrawnFilesRetracted: true
+        default: false
+        }
+    }
+
     /// The failure a `diskFull` abort carries, from whatever numbers it knew.
     public static func diskFull(from info: ClipboardStreamAbortInfo) -> ClipboardTransferFailure {
         .diskFull(
@@ -195,6 +230,14 @@ public struct ClipboardTransferFinish: Equatable, Sendable {
         case .completed(let final), .cancelled(let final): return final
         case .failed: return nil
         }
+    }
+
+    /// What the log records of a finish that did not deliver everything, partial or failed; nil for one that
+    /// did.
+    var logLine: String? {
+        guard let failure else { return nil }
+        let ending = failure.deliveredTheRest ? "was partial" : "failed"
+        return "\(gesture) from '\(peerName)' \(ending): \(failure)"
     }
 
     /// Whether two finishes describe the same news, ignoring when it happened.

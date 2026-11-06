@@ -68,14 +68,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// to a View menu stay clear of it.
     private var viewMenuSidebarSectionEnd: NSMenuItem?
 
-    /// The Window menu, retained so its opening can set the clipboard item's
-    /// enablement and so the presence check reads this controller's own menu.
+    /// The Window menu, retained so the presence check reads this controller's
+    /// own menu.
     private var windowsMenu: NSMenu?
     /// The Services menu AppKit fills, retained for the `NSApp` handoff.
     private var servicesMenu: NSMenu?
     /// The Help menu, retained for the `NSApp` handoff.
     private var helpMenu: NSMenu?
-    private var clipboardMenuItem: NSMenuItem?
 
     /// Value snapshot of the revert submenu's rendered contents.
     private struct RevertSnapshotMenuModel: Equatable {
@@ -143,12 +142,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// ``menuNeedsUpdate(_:)`` for `menu`, with `workingInstance` as the VM the
     /// working window shows.
     func update(_ menu: NSMenu, workingInstance: VMInstance?) {
-        if menu === windowsMenu {
-            clipboardMenuItem?.isEnabled =
-                workingInstance.map {
-                    viewModel.capabilities.isAvailable(.showClipboard, on: $0)
-                } ?? false
-        } else if menu === viewMenu {
+        if menu === viewMenu {
             rebuildViewMenuSidebarSection()
         } else if menu === appMenu {
             // Re-derive the quit section so a Settings toggle flip is reflected on
@@ -330,11 +324,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         case #selector(AppDelegate.deleteVM(_:)), #selector(AppDelegate.deleteImmediatelyVM(_:)):
             .delete
         case #selector(AppDelegate.showVMInFinder(_:)): .showInFinder
-        // AppKit bypasses NSMenuItemValidation for windowsMenu items, so
-        // menuNeedsUpdate(_:) handles the Clipboard item's visual state. This
-        // entry covers its keyboard shortcut, which still routes through
-        // validateMenuItem(_:).
-        case #selector(AppDelegate.showClipboard(_:)): .showClipboard
+        case #selector(AppDelegate.copyGuestClipboardToMac(_:)): .copyGuestClipboardToMac
+        case #selector(AppDelegate.copyMacClipboardToGuest(_:)): .copyMacClipboardToGuest
         case #selector(AppDelegate.showGuestAgentStatus(_:)): .showGuestAgentStatus
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)): .toggleGuestAgentDisk
         case #selector(AppDelegate.attachUSBAccessory(_:)),
@@ -356,6 +347,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     /// ``validate(_:)`` with `workingInstance` as the VM the working window
     /// shows.
     func validate(_ menuItem: NSMenuItem, workingInstance: VMInstance?) -> Bool {
+        if menuItem.action == #selector(AppDelegate.toggleClipboardPassthrough(_:)) {
+            return validatePassthrough(menuItem, target: target(of: menuItem, workingInstance: workingInstance))
+        }
         // App-level commands — New, Show Library, Open VMs Folder, Check Config
         // Files, Quit Completely — are never gated on the selection, or a selected import
         // still copying would disable the GUI's only full-quit affordance.
@@ -406,6 +400,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             break
         }
         return isAvailable
+    }
+
+    /// Checks the passthrough item when `instance` runs passthrough, enabled while a write flipping it takes.
+    private func validatePassthrough(_ menuItem: NSMenuItem, target instance: VMInstance?) -> Bool {
+        guard let instance else {
+            menuItem.state = .off
+            return false
+        }
+        let isOn = instance.configuration.clipboardPassthroughEnabled
+        menuItem.state = isOn ? .on : .off
+        return viewModel.capabilities.isAvailable(
+            VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!isOn), on: instance)
     }
 
     // MARK: - Main Menu
@@ -491,6 +497,8 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        for item in ClipboardCommandMenu.items() { editMenu.addItem(item) }
         editMenu.addItem(.separator())
         // A guest display that captures system keys (System Key Forwarding
         // Always, the default, or Full Screen Only in full screen) receives ⌘F
@@ -667,15 +675,6 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             keyEquivalent: "0"
         )
         windowMenu.addItem(showLibraryItem)
-        windowMenu.addItem(.separator())
-        let clipboardItem = NSMenuItem(
-            title: "Clipboard",
-            action: #selector(AppDelegate.showClipboard(_:)),
-            keyEquivalent: "v"
-        )
-        clipboardItem.keyEquivalentModifierMask = [.command, .shift]
-        clipboardMenuItem = clipboardItem
-        windowMenu.addItem(clipboardItem)
         windowMenu.addItem(.separator())
         windowMenu.addItem(
             withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

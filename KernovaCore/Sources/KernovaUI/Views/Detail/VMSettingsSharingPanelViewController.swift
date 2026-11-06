@@ -253,7 +253,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         case .macOS:
             [
                 .body(
-                    "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the clipboard window."
+                    "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the Virtual Machine menu."
                 )
             ]
         case .linux:
@@ -296,7 +296,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// by the macOS and Linux clipboard sections.
     static let passthroughInfoParagraphs: [InfoPopoverParagraph] = [
         .body(
-            "Forwards this Mac's clipboard to the guest automatically and writes the guest's clipboard here — no clipboard window step in either direction. Requires clipboard sharing."
+            "Forwards this Mac's clipboard to the guest automatically and writes the guest's clipboard here — one clipboard, with no copy command in either direction. Requires clipboard sharing."
         ),
         .body(
             "Because the guest then continuously reads whatever you copy (including passwords), turning it on asks for confirmation."

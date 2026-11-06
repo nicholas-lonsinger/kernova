@@ -165,7 +165,8 @@ struct VMAdmissionTests {
         (.affordance(.inspect), "AAAAAAR"),
         (.affordance(.display), "IIIAAAR"),
         (.affordance(.externalDisplay), "IIIIAAR"),
-        (.affordance(.clipboard), "IIIIAAR"),
+        // A paused guest answers no clipboard command until it resumes.
+        (.affordance(.clipboard), "IIIIAIR"),
         (.affordance(.guestAgentStatus), "IIIIAAR"),
         (.affordance(.guestAgentDisk), "IIIIAAR"),
     ]
@@ -624,7 +625,7 @@ struct VMAdmissionTests {
             expected: "III BBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAAA"),
         HeldRow(
             kind: .resuming, startedFrom: .livePaused(sessionID: session),
-            expected: "IIB IBBBBB IIII BBI IIB IAAAAAAAA AAII AAAAAA"),
+            expected: "IIB IBBBBB IIII BBI IIB IAAAAAAAA AAII AAAIAA"),
         HeldRow(
             kind: .saving, startedFrom: live,
             expected: "III BBBBBB IIII BBI IIB IBBBAAAAA BBII AAIIII"),

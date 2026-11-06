@@ -63,7 +63,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
                 queue.async { [self] in connectionEnded() }
             },
             events: { [self] _, event in queue.async { [self] in handle(event) } },
-            content: { _, _ in
+            content: { _, _, _ in
                 .failure(WireError(.itemRepresentationUnavailable, debugDetail: "a peer offers no drops"))
             })
     }
@@ -126,7 +126,8 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         do throws(WireError) {
             order = try sink.order(
                 token: token, item: UInt32(index), representation: UInt32(representation), byteCeiling: .max,
-                landing: .tree(directory: directory, name: .keepingBoth(item.representations[representation].name)))
+                landing: .staged(
+                    directory: directory, name: .keepingBoth(item.representations[representation].name)))
         } catch {
             logger.log(.error, "Cannot land a drop in \(directory, privacy: .private): \(error.code, privacy: .public)")
             return finish(token, refusing: error)

@@ -74,7 +74,12 @@ package enum VMCapability: CaseIterable, Hashable {
     case showInFinder
     case togglePopOut
     case toggleFullscreen
-    case showClipboard
+    /// Copy the guest's clipboard to the Mac's: named only while passthrough
+    /// is off and an agent carries the clipboard.
+    case copyGuestClipboardToMac
+    /// Copy the Mac's clipboard to the guest's, named as
+    /// ``copyGuestClipboardToMac`` is.
+    case copyMacClipboardToGuest
     case showGuestAgentStatus
     case toggleGuestAgentDisk
     case toggleSettingsPane
@@ -117,8 +122,9 @@ package enum VMCapability: CaseIterable, Hashable {
         case .delete: .delete
         case .showInFinder: .showInFinder
         case .toggleGuestAgentDisk: .guestAgentDisk
-        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen, .showClipboard,
-            .showGuestAgentStatus, .toggleSettingsPane, .editTags:
+        case .startInRecovery, .removeRemovableMedia, .togglePopOut, .toggleFullscreen,
+            .copyGuestClipboardToMac, .copyMacClipboardToGuest, .showGuestAgentStatus, .toggleSettingsPane,
+            .editTags:
             nil
         }
     }
@@ -147,8 +153,8 @@ package enum VMCapability: CaseIterable, Hashable {
             .reveal,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .createStorageDisk,
             .trashStorageDisk, .createRemovableMedia, .editUSBAccessories, .clone, .delete,
-            .showInFinder, .togglePopOut, .toggleFullscreen, .showClipboard, .showGuestAgentStatus,
-            .toggleSettingsPane:
+            .showInFinder, .togglePopOut, .toggleFullscreen, .copyGuestClipboardToMac,
+            .copyMacClipboardToGuest, .showGuestAgentStatus, .toggleSettingsPane:
             nil
         }
     }
@@ -223,7 +229,11 @@ package enum VMCapability: CaseIterable, Hashable {
             return .operation(.deleting)
         case .togglePopOut, .toggleFullscreen:
             return .affordance(.externalDisplay)
-        case .showClipboard:
+        case .copyGuestClipboardToMac, .copyMacClipboardToGuest:
+            // With passthrough on the clipboards are one already, and with no
+            // agent carrying the clipboard there is nothing to copy over.
+            guard !instance.configuration.clipboardPassthroughEnabled, instance.clipboardService?.isConnected == true
+            else { return nil }
             return .affordance(.clipboard)
         case .showGuestAgentStatus:
             return .affordance(.guestAgentStatus)

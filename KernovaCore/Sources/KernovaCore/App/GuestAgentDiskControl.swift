@@ -2,7 +2,7 @@ import Foundation
 import KernovaCommandModel
 
 /// The guest-agent disk control every surface offers — the Virtual Machine menu
-/// item, the sidebar agent popover, the Clipboard window's footer — and the one
+/// item, the sidebar agent popover — and the one
 /// place that resolves a VM's title, enabled state, and action for it.
 ///
 /// Every surface resolves through ``model(for:in:)``, which withholds the

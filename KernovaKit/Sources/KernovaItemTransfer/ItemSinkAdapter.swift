@@ -18,15 +18,17 @@ import KernovaAgentRuntime
 import KernovaContainer
 import KernovaContainerPipeline
 import KernovaFileTree
+import KernovaSynchronization
 import KernovaTreeTransfer
 import KernovaWire
 
-/// Lands the far side's items as `ItemSinkEffect` asks: a FILE or FOLDER through a `TreeReceiver` staging beside
-/// its landing's directory and publishing under the landing's name, an INLINE representation decoded into memory
-/// and published as its bytes. Each pull's work runs on a queue of its own.
+/// Lands the far side's items as `ItemSinkEffect` asks: a staged representation, INLINE as much as FILE or
+/// FOLDER, through a `TreeReceiver` staging beside its landing's directory and publishing under the landing's
+/// name, its landed bytes charged to the order's budget when it has one; an INLINE one landing in memory decoded
+/// there, charged to that budget likewise, and published as its bytes. Each pull's work runs on a queue of its own.
 public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink {
     private enum Pull {
-        case tree(TreeReceiver<FileSystem>)
+        case receiving(TreeReceiver<FileSystem>)
         case inline(InlineReceiver)
         /// The sink refused the pull; later bytes are dropped.
         case refused
@@ -52,12 +54,14 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
     }
 
     /// The pull of representation `representation` of item `item` of the far side's offer `token`, to land as
-    /// `landing` says: it decodes every codec this sink does, and lands compressed the decmpfs types the
-    /// volume holding a tree landing's directory reads back (`DecmpfsMatrix.acceptedTypes`).
+    /// `landing` says, its landed bytes charged to `budget` beside `byteCeiling`: it decodes every codec this
+    /// sink does, and lands compressed the decmpfs types the volume holding the landing's directory reads back
+    /// (`DecmpfsMatrix.acceptedTypes`); a memory landing takes none.
     ///
     /// - Throws: `WireError` `WRITE_FAILED` when the landing's directory cannot be opened or its volume asked.
     public func order(
-        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding
+        token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
+        budget: ByteBudget? = nil
     ) throws(WireError) -> ItemPullOrder {
         var request = PullRequest()
         request.token = token
@@ -65,7 +69,9 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         request.representation = representation
         request.byteCeiling = byteCeiling
         request.codecs = [.lz4]
-        guard case .tree(let directory, _) = landing else { return ItemPullOrder(request, landing: landing) }
+        guard case .staged(let directory, _) = landing else {
+            return ItemPullOrder(request, landing: landing, budget: budget)
+        }
         do {
             let opened = try fileSystem.openDirectory(Array(directory.utf8), in: AT_FDCWD)
             defer { fileSystem.close(opened) }
@@ -73,7 +79,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         } catch {
             throw WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)")
         }
-        return ItemPullOrder(request, landing: landing)
+        return ItemPullOrder(request, landing: landing, budget: budget)
     }
 
     /// Carries out `effect` on its pull's queue, reporting through `reporter`.
@@ -82,9 +88,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         case .begin(let id, let order, let representation):
             let acceptance = ContainerAcceptance(order.request, storage: representation.storage)
             pulls.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, decodingWorkers] in
-                switch Self.begin(
-                    acceptance, order.landing, fileSystem: fileSystem, decodingWorkers: decodingWorkers)
-                {
+                switch Self.begin(acceptance, order, fileSystem: fileSystem, decodingWorkers: decodingWorkers) {
                 case .success(let pull):
                     return pull
                 case .failure(let error):
@@ -96,7 +100,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             pulls.run(PullKey(connection: reporter.connection, id: id)) { pull in
                 do throws(WireError) {
                     switch pull {
-                    case .tree(let receiver):
+                    case .receiving(let receiver):
                         try Self.wire { () throws(TreeWriteFailure) in try receiver.receive(bytes) }
                     case .inline(var receiver):
                         // Its bytes then have one owner, so appending to them never copies them.
@@ -115,7 +119,8 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             pulls.run(PullKey(connection: reporter.connection, id: id)) { pull in
                 do throws(WireError) {
                     switch pull {
-                    case .tree(let receiver): try Self.wire { () throws(TreeWriteFailure) in try receiver.finish() }
+                    case .receiving(let receiver):
+                        try Self.wire { () throws(TreeWriteFailure) in try receiver.finish() }
                     case .inline(var receiver):
                         // Its bytes then have one owner, so appending to them never copies them.
                         pull = .refused
@@ -132,7 +137,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         case .commit(let id):
             pulls.close(PullKey(connection: reporter.connection, id: id)) { pull in
                 switch pull {
-                case .tree(let receiver):
+                case .receiving(let receiver):
                     do throws(WireError) {
                         let landed = try Self.wire { () throws(TreeWriteFailure) in try receiver.publish() }
                         reporter.report(.published(id, .named(Data(landed))))
@@ -140,6 +145,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                         reporter.report(.publishFailed(id, error))
                     }
                 case .inline(let receiver):
+                    receiver.keep()
                     reporter.report(.published(id, .inline(receiver.bytes)))
                 case .refused, nil:
                     reporter.report(
@@ -147,31 +153,30 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                 }
             }
         case .abort(let id):
-            // Dropping a tree's receiver removes everything it staged.
+            // Dropping a receiver removes everything it staged, and gives back what it charged.
             pulls.close(PullKey(connection: reporter.connection, id: id))
         }
     }
 
-    /// A pull's landing, or why it cannot begin.
+    /// A pull's receiver, or why it cannot begin.
     private static func begin(
-        _ acceptance: ContainerAcceptance, _ landing: ItemLanding, fileSystem: FileSystem, decodingWorkers: Int
+        _ acceptance: ContainerAcceptance, _ order: ItemPullOrder, fileSystem: FileSystem, decodingWorkers: Int
     ) -> Result<Pull, WireError> {
-        switch landing {
-        case .inline:
-            return .success(.inline(InlineReceiver(accepting: acceptance)))
-        case .tree(let directory, let name):
-            let path = Array(directory.utf8)
-            do {
-                let destination = try fileSystem.openDirectory(path, in: AT_FDCWD)
-                let receiver = TreeReceiver(
-                    name: PublishName(name), accepting: acceptance, decodingWorkers: decodingWorkers,
-                    fileSystem: fileSystem,
-                    destination: destination, destinationPathByteCount: path.count)
-                return .success(.tree(receiver))
-            } catch {
-                return .failure(
-                    WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)"))
-            }
+        guard case .staged(let directory, let name) = order.landing else {
+            return .success(.inline(InlineReceiver(accepting: acceptance, budget: order.budget)))
+        }
+        let path = Array(directory.utf8)
+        do {
+            let destination = try fileSystem.openDirectory(path, in: AT_FDCWD)
+            return .success(
+                .receiving(
+                    TreeReceiver(
+                        name: PublishName(name), accepting: acceptance, decodingWorkers: decodingWorkers,
+                        fileSystem: fileSystem, destination: destination, destinationPathByteCount: path.count,
+                        budget: order.budget)))
+        } catch {
+            return .failure(
+                WireError(.writeFailed, posixErrno: error.code, debugDetail: "the landing's directory: \(error)"))
         }
     }
 
@@ -196,16 +201,24 @@ extension PublishName {
 }
 
 /// An INLINE representation's container decoded into the bytes of its one DATA entry, held to its acceptance's
-/// byte ceiling by the decoder.
+/// byte ceiling by the decoder, and to its budget, when it has one, by charging each byte as it decodes; what it
+/// charged returns to the budget unless ``keep()`` runs.
 struct InlineReceiver {
     private var decoder: ContainerDecoder
     private let acceptance: ContainerAcceptance
+    private let account: ByteBudget.Account?
     /// The DATA entry's bytes so far.
     private(set) var bytes = Data()
 
-    init(accepting acceptance: ContainerAcceptance) {
+    init(accepting acceptance: ContainerAcceptance, budget: ByteBudget? = nil) {
         decoder = ContainerDecoder(accepting: acceptance)
         self.acceptance = acceptance
+        account = budget?.account()
+    }
+
+    /// Makes what it charged the budget's for good: its bytes are published.
+    func keep() {
+        account?.keep()
     }
 
     /// Takes the container's next bytes.
@@ -225,17 +238,34 @@ struct InlineReceiver {
     }
 
     private mutating func drain() throws(WireError) {
-        do {
-            while let event = try decoder.next() {
-                switch event {
-                case .bytes(let data): bytes.append(data)
-                case .zeros(let count): bytes.append(Data(count: Int(count)))
-                default: break
-                }
+        while let event = try nextEvent() {
+            switch event {
+            case .bytes(let data):
+                try charge(UInt64(data.count))
+                bytes.append(data)
+            case .zeros(let count):
+                try charge(count)
+                bytes.append(Data(count: Int(count)))
+            default: break
             }
+        }
+    }
+
+    private mutating func nextEvent() throws(WireError) -> TreeEvent? {
+        do {
+            return try decoder.next()
         } catch {
             throw error.wireError(acceptance)
         }
+    }
+}
+
+extension InlineReceiver {
+    /// Charges `count` decoded bytes to the budget, or refuses them `TOO_LARGE` when it has fewer left.
+    fileprivate func charge(_ count: UInt64) throws(WireError) {
+        guard let account, !account.charge(count) else { return }
+        throw WireError(
+            .tooLarge, limit: account.budget.limit, debugDetail: "over the budget of every landing it shares")
     }
 }
 

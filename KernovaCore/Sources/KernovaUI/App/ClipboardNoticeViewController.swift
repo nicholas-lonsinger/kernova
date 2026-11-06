@@ -3,20 +3,14 @@ import KernovaAppKitShared
 import KernovaCore
 
 /// Content for the transient popover the menu-bar status item shows when a
-/// clipboard transfer was refused and no clipboard window was open to say so.
-///
-/// The link only invokes `onOpenClipboardWindow`; the presenter
-/// (`HostAgentStatusItemController`) owns the dismissal and the window summons.
+/// clipboard transfer was refused; the presenter
+/// (`HostAgentStatusItemController`) owns its dismissal.
 @MainActor
 final class ClipboardNoticeViewController: NSViewController {
     private let wording: ClipboardTransferWording
-    private let onOpenClipboardWindow: () -> Void
 
-    init(
-        wording: ClipboardTransferWording, onOpenClipboardWindow: @escaping () -> Void
-    ) {
+    init(wording: ClipboardTransferWording) {
         self.wording = wording
-        self.onOpenClipboardWindow = onOpenClipboardWindow
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -33,19 +27,11 @@ final class ClipboardNoticeViewController: NSViewController {
         if wording.mentionsMacClipboardKept {
             rows.append(makeCalloutBody("The Mac clipboard still has its previous contents."))
         }
-        rows.append(
-            makeLinkButton(
-                "Open Clipboard Window", target: self, action: #selector(openClipboardTapped)))
-
         installCalloutStack(rows: rows)
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
         syncCalloutContentSize()
-    }
-
-    @objc private func openClipboardTapped() {
-        onOpenClipboardWindow()
     }
 }

@@ -230,21 +230,6 @@ final class AppResidencyController: WindowResidencyHosting {
             viewModel: viewModel,
             heldAlerts: heldAlerts,
             onOpen: { [weak self] entryID in self?.summonStatusItemTarget(for: entryID) },
-            onOpenClipboard: { [weak self] vmID in
-                guard let self else { return }
-                guard
-                    let instance = self.viewModel.instances.first(where: { $0.instanceID == vmID }),
-                    self.viewModel.capabilities.accepts(.showClipboard, on: instance)
-                else {
-                    // The window the notice pointed at can't open — the VM has
-                    // stopped, had sharing turned off, or is gone from the
-                    // library. Land on its usual surface rather than nowhere.
-                    self.summonStatusItemTarget(for: vmID)
-                    return
-                }
-                self.viewModel.selectRevealing(vmID)
-                self.summonUserInterface(showing: .clipboard(instance))
-            },
             onQuit: { [weak self] in self?.host?.requestFullQuit() }
         )
     }
@@ -294,8 +279,6 @@ final class AppResidencyController: WindowResidencyHosting {
         /// One VM's dedicated display window (pop-out or fullscreen, per its
         /// `displayPreference`), and nothing else.
         case display(VMInstance)
-        /// One VM's clipboard window, and nothing else.
-        case clipboard(VMInstance)
     }
 
     /// Summons the surface the status item's per-VM commands land on — the one
@@ -450,9 +433,6 @@ final class AppResidencyController: WindowResidencyHosting {
         case .display(let instance):
             windows.displayPlacement.showDisplayWindow(for: instance)
             summoned = windows.displayPlacement.window(for: instance.instanceID)
-        case .clipboard(let instance):
-            windows.showClipboard(for: instance)
-            summoned = windows.clipboardWindow(for: instance.instanceID)
         }
         // Activation may be refused; the window has to arrive either way.
         // `orderFrontRegardless` is the only ordering call that doesn't
@@ -513,7 +493,7 @@ final class AppResidencyController: WindowResidencyHosting {
     func prepareToPresentWindow() {
         // The chokepoint every window that bypasses `presentSummonedInterface`
         // passes through — a display window an `open` verb asked for, a
-        // clipboard window, Settings.
+        // guest-agent status window, Settings.
         host?.armAutoStartPass()
         setActivationPolicy(.regular)
     }

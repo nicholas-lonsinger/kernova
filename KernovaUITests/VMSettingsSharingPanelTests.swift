@@ -59,7 +59,7 @@ struct VMSettingsSharingPanelTests {
         #expect(
             infoButton(about: "Guest Agent", in: macVC.view)?.paragraphs == [
                 .body(
-                    "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the clipboard window."
+                    "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the Virtual Machine menu."
                 )
             ])
         #expect(

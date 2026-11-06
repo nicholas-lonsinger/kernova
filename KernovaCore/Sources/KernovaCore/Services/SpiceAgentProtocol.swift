@@ -166,6 +166,12 @@ enum SpiceMessageBuilder {
         return wrapMessage(type: .clipboardRequest, payload: payload)
     }
 
+    /// Builds a `CLIPBOARD_RELEASE` message letting go of this side's grab. Without
+    /// `VD_AGENT_CAP_CLIPBOARD_SELECTION` its payload is empty.
+    static func buildClipboardRelease() -> Data {
+        wrapMessage(type: .clipboardRelease, payload: Data())
+    }
+
     /// Builds a `CLIPBOARD` message delivering clipboard data to the peer.
     static func buildClipboardData(type: SpiceClipboardType, data clipboardData: Data) -> Data {
         var payload = Data(capacity: 4 + clipboardData.count)

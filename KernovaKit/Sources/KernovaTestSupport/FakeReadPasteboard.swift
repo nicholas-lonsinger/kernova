@@ -67,6 +67,9 @@ public final class FakeReadPasteboard: ClipboardReadPasteboard, Sendable {
     /// The items currently staged, in order.
     public var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
 
+    /// None: no snapshot on this double carries a file promise.
+    @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { [] }
+
     /// Stages a single item, as one copy does, bumping the change count.
     public func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) {
         setItems([FakePasteboardItem(representations)])

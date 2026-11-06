@@ -200,10 +200,9 @@ public struct ClipboardContent: Equatable, Sendable {
     /// `true` when the source pasteboard marked this snapshot confidential
     /// (`org.nspasteboard.ConcealedType`, the convention password managers use).
     ///
-    /// The content still syncs so it can be pasted into the peer; the host
-    /// clipboard window hides it behind a placeholder rather than rendering the
-    /// secret. **Excluded from the digest** — it changes how content is
-    /// *displayed*, not its identity, so two snapshots with the same bytes stay
+    /// The content still syncs so it can be pasted into the peer, and stays in
+    /// memory. **Excluded from the digest** — it changes how content is held,
+    /// not its identity, so two snapshots with the same bytes stay
     /// echo-suppressed regardless of the flag.
     public let isConcealed: Bool
 

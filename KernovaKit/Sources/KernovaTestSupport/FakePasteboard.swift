@@ -8,8 +8,8 @@ import KernovaSynchronization
 /// The write half — promise registration, the OS-fires-a-provider seam, the
 /// write-failure seam — is the shared double both ends of the wire use. Added
 /// here: the read half, and the resident setup
-/// (`setItem`/`setItems`/`setString`) that models a *user* copying, which an
-/// outbound poll reads. A promise
+/// (`setItem`/`setItems`/`setString`) that models a *user* copying, another
+/// process's write, which an outbound poll reads. A promise
 /// write leaves no resident bytes; a fired provider's bytes are what its item
 /// serves from afterwards, as a real `NSPasteboardItem` retains them.
 ///
@@ -44,7 +44,11 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         let promised = writer.promisedTypesByItem
         guard promised.isEmpty else {
             let bytes = state.withLock { $0.resolved }
-            return promised.map { FakePasteboardItem(types: $0, bytes: bytes) }
+            return zip(promised, writer.dataByItem).map { types, data in
+                FakePasteboardItem(
+                    types: Array(data.keys) + types,
+                    bytes: bytes.merging(data, uniquingKeysWith: { _, written in written }))
+            }
         }
         let state = self.state
         return state.withLock { $0.residents }.map { representations in
@@ -52,9 +56,17 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         }
     }
 
+    /// The receiver ``setFilePromise(_:)`` placed last, or none.
+    @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { promiseReceivers }
+
+    @MainActor private var promiseReceivers: [any FilePromiseReceiving] = []
+
     /// Every type the user's own copy was read for — as data or as a string —
     /// in the order read, for a test proving what was read when.
     public var residentReads: [NSPasteboard.PasteboardType] { state.withLock { $0.reads } }
+
+    /// ``residentReads`` as type identifiers, for a test target that does not import AppKit.
+    public var residentReadTypes: [String] { residentReads.map(\.rawValue) }
 
     // MARK: - Promised writes
 
@@ -77,6 +89,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// Options passed to the most recent `prepareForNewContents(with:)`; `nil`
     /// until the first promise write.
     public var lastPrepareOptions: NSPasteboard.ContentsOptions? { writer.lastPrepareOptions }
+
+    /// The data each written item holds now, in item order — what a write
+    /// placed as real data rather than promised.
+    public var dataByItem: [[NSPasteboard.PasteboardType: Data]] { writer.dataByItem }
 
     /// How many promised providers have been fired, for a test proving a
     /// poll fired none.
@@ -102,6 +118,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return bytes
     }
 
+    /// AppKit finishing with item `itemIndex`'s provider once a reader had every type it promised, the write
+    /// still standing (``FakeWritePasteboard/finishProvider(itemIndex:)``).
+    public func finishProvider(itemIndex: Int) { writer.finishProvider(itemIndex: itemIndex) }
+
     /// Drops the resident copy and clears the write half.
     @discardableResult
     public func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
@@ -111,14 +131,15 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
 
     /// Registers one lazy promise per item, recording no bytes.
     @discardableResult
-    public func writeItems(
-        _ items: [(
-            types: [NSPasteboard.PasteboardType], provider: any NSPasteboardItemDataProvider & Sendable
-        )]
-    ) -> Bool {
+    public func writeItems(_ items: [ClipboardWriteItem]) -> Bool {
         let written = writer.writeItems(items)
         if written { clearResidents() }
         return written
+    }
+
+    /// The bytes item `index` of a write holds as `type` (``FakeWritePasteboard/data(forType:itemAt:)``).
+    public func data(forType type: NSPasteboard.PasteboardType, itemAt index: Int) -> Data? {
+        writer.data(forType: type, itemAt: index)
     }
 
     /// Empties the pasteboard, resident copy and promise alike.
@@ -145,8 +166,7 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
             state.residents = items
             state.resolved.removeAll()
         }
-        // Drops any promise and bumps the change count, as a real write does.
-        writer.clearContents()
+        writer.replaceFromAnotherProcess()
         return true
     }
 
@@ -164,11 +184,55 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         setItem(NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
     }
 
+    /// Places one item carrying `receiver`'s file promise and nothing else, `receiver` the receiver every later
+    /// read of the pasteboard's promises yields.
+    @MainActor
+    @discardableResult
+    public func setFilePromise(_ receiver: any FilePromiseReceiving) -> Bool {
+        setFilePromise()
+        promiseReceivers = [receiver]
+        return true
+    }
+
+    /// Places one item carrying `file`'s URL beside `receiver`'s file promise — a Photos copy's shape, its URL
+    /// naming the library's derivative.
+    @MainActor
+    @discardableResult
+    public func setFile(_ file: URL, promising receiver: any FilePromiseReceiving) -> Bool {
+        setItem([(type: .fileURL, data: Data(file.absoluteString.utf8))], promising: receiver)
+    }
+
+    /// Places one item of `representations` beside `receiver`'s file promise, `receiver` the receiver every
+    /// later read of the pasteboard's promises yields.
+    @MainActor
+    @discardableResult
+    public func setItem(
+        _ representations: [(type: NSPasteboard.PasteboardType, data: Data)],
+        promising receiver: any FilePromiseReceiving
+    ) -> Bool {
+        setItem(representations + NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
+        promiseReceivers = [receiver]
+        return true
+    }
+
     /// Replaces the resident item with a single text representation —
     /// equivalent to a user copying text inside the guest.
     @discardableResult
     public func setString(_ string: String, forType type: NSPasteboard.PasteboardType) -> Bool {
         setItem([(type: type, data: Data(string.utf8))])
+    }
+
+    /// Replaces the resident item with `text` as UTF-8 plain text, for a test target that does not import AppKit.
+    @discardableResult
+    public func setText(_ text: String) -> Bool {
+        setString(text, forType: .string)
+    }
+
+    /// Replaces the resident item with `data` as its one representation, of type `uti`, for a test target that
+    /// does not import AppKit.
+    @discardableResult
+    public func setData(_ data: Data, forTypeIdentifier uti: String) -> Bool {
+        setItem([(type: NSPasteboard.PasteboardType(uti), data: data)])
     }
 
     private func clearResidents() {

@@ -59,7 +59,7 @@ struct VMSessionContextTests {
         context.clipboardOutputPipe = Pipe()
         let clipboard = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
         context.clipboardService = clipboard
-        instance.clipboardDataSink.set(RetainingAcceptor())
+        instance.dropDataSink.set(RetainingAcceptor())
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.warnedAgentScopes = [.login]
         context.networkAttachmentPending = true
@@ -74,7 +74,6 @@ struct VMSessionContextTests {
         #expect(context.clipboardService == nil)
         #expect(context.vsock.control == nil)
         #expect(context.vsock.log == nil)
-        #expect(context.vsock.clipboard == nil)
         #expect(context.vsock.drop == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
@@ -85,7 +84,7 @@ struct VMSessionContextTests {
         #expect(context.agentAbsenceTimer == nil)
         #expect(context.vsock.livePolicyApplication == nil)
         // The instance-owned sinks the session published into are cleared too.
-        try expectSinkCleared(instance.clipboardDataSink)
+        try expectSinkCleared(instance.dropDataSink)
     }
 
     @Test("tearDownSession drops the context, and every projection reads empty after")

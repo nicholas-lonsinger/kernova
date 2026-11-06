@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaAgentCore
+import KernovaLogging
 import KernovaWire
 
 /// What an offered representation's container is made from, as its owner produces it when a pull names it.
@@ -24,19 +25,25 @@ public struct ItemFeatureOwner<Peer: Sendable>: Sendable {
     /// Hears each item event of the feature, from the connection of the peer it names, in the order the end
     /// delivers them and on its queue.
     public var events: @Sendable (Peer, ItemTransferEvent) -> Void
-    /// Produces the content of a representation of this end's offer of the feature that a pull names, or why
-    /// it cannot: called on the pull's own queue, so it may wait, as a promise called in does.
-    public var content: @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
+    /// Produces the content of a representation of this end's offer of the feature that pull `ItemPullID`
+    /// names, or why it cannot: called on the pull's own queue, so it may wait, as a promise called in does,
+    /// until that pull's `.serveEnded` reaches ``events``.
+    public var content: @Sendable (ItemPullID, PullRequest, Representation) -> Result<ItemContent, WireError>
+    /// Hears the host's policy each time a guest agent's connection receives it, in order with the item events;
+    /// never on the host, whose policy it is.
+    public var policy: @Sendable (PolicySnapshot) -> Void
 
     /// Creates an owner.
     public init(
         usable: @escaping @Sendable (Peer?) -> Void,
         events: @escaping @Sendable (Peer, ItemTransferEvent) -> Void,
-        content: @escaping @Sendable (PullRequest, Representation) -> Result<ItemContent, WireError>
+        content: @escaping @Sendable (ItemPullID, PullRequest, Representation) -> Result<ItemContent, WireError>,
+        policy: @escaping @Sendable (PolicySnapshot) -> Void = { _ in }
     ) {
         self.usable = usable
         self.events = events
         self.content = content
+        self.policy = policy
     }
 }
 
@@ -57,7 +64,7 @@ public struct DragFeatureOwner<Peer: Sendable>: Sendable {
 /// One end's item features and their owners, fixed for its life: each item event and drag take reaches the
 /// owner of its feature, and each pull's content request the owner of the pulled offer's feature. Its
 /// `features` are the ones `ItemAdapters` serve, so a feature with no owner is advertised absent, and the core
-/// delivers nothing of it.
+/// delivers nothing of it. How each pull this end served ended is logged here, for every feature alike.
 ///
 /// Delivery is a synchronous call on the caller's thread: the order and queue an end delivers on are the
 /// owners'.
@@ -65,15 +72,17 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
     private let clipboard: ItemFeatureOwner<Peer>?
     private let drop: ItemFeatureOwner<Peer>?
     private let drag: DragFeatureOwner<Peer>?
+    private let logger: KernovaLogger
 
-    /// A router serving the features given an owner.
+    /// A router serving the features given an owner, logging the ends of serves through `logger`.
     public init(
         clipboard: ItemFeatureOwner<Peer>? = nil, drop: ItemFeatureOwner<Peer>? = nil,
-        drag: DragFeatureOwner<Peer>? = nil
+        drag: DragFeatureOwner<Peer>? = nil, logger: KernovaLogger
     ) {
         self.clipboard = clipboard
         self.drop = drop
         self.drag = drag
+        self.logger = logger
     }
 
     /// The features with an owner: the set `ItemAdapters.features` takes.
@@ -86,7 +95,32 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
         guard let owner = owner(of: event.feature) else {
             return assertionFailure("an item event of \(event.feature), which has no owner to be advertised")
         }
+        if case .serveEnded(let feature, _, let result) = event { log(served: result, of: feature) }
         owner.events(peer, event)
+    }
+
+    /// Logs a pull of this end's offer of `feature` that did not land: what the far side said, or how its stream
+    /// ended. A pull this end reset is the item source's to log, which logs each tree it could not read.
+    private func log(served result: ItemServeResult, of feature: FeatureID) {
+        let error: WireError
+        switch result {
+        case .landed, .closed(.resetLocally): return
+        case .closed(.resetByPeer(let reset)) where reset.code == .cancelled:
+            return logger.log(.notice, "The far side cancelled a \(feature, privacy: .public) pull this side served")
+        case .failed(let failure), .closed(.resetByPeer(let failure)): error = failure
+        case .closed(let closure):
+            return logger.log(
+                .warning,
+                "A \(feature, privacy: .public) pull this side served ended: \(String(describing: closure), privacy: .public)"
+            )
+        }
+        let path = (error.item?.path ?? []).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")
+        let reason = "\(error.code), errno \(error.posixErrno)"
+        let detail = "\(path) (\(error.debugDetail))"
+        logger.log(
+            .error,
+            "A \(feature, privacy: .public) pull this side served did not land: \(reason, privacy: .public) at \(detail, privacy: .private)"
+        )
     }
 
     /// Tells `feature`'s owner where it can be used now: on `peer`'s connection, or nowhere.
@@ -103,15 +137,15 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
         drag.takes(peer, event)
     }
 
-    /// The content of `representation` of this end's offer of `feature` that `request` pulls, from its owner:
-    /// the `ItemSourceAdapter.Content` this end's source serves.
+    /// The content of `representation` of this end's offer of `feature` that pull `id`'s `request` pulls, from
+    /// its owner: the `ItemSourceAdapter.Content` this end's source serves.
     public func content(
-        _ feature: FeatureID, _ request: PullRequest, _ representation: Representation
+        _ feature: FeatureID, _ id: ItemPullID, _ request: PullRequest, _ representation: Representation
     ) -> Result<ItemContent, WireError> {
         guard let owner = owner(of: feature) else {
             return .failure(WireError(.itemRepresentationUnavailable, debugDetail: "\(feature) has no owner"))
         }
-        return owner.content(request, representation)
+        return owner.content(id, request, representation)
     }
 
     private func owner(of feature: FeatureID) -> ItemFeatureOwner<Peer>? {
@@ -125,14 +159,16 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
 }
 
 extension ItemFeatureRouter where Peer == Void {
-    /// Hands each item event, drag take and usability change of a peer's connection to its owner; every other
-    /// event is not one.
+    /// Hands each item event, drag take and usability change of a peer's connection to its owner, and the
+    /// host's policy to every owner; every other event is none of these.
     public func deliver(_ event: PeerEvent) {
         switch event {
         case .items(let event): deliver(event, from: ())
         case .dragTake(let event): deliver(event, from: ())
         case .itemFeatureUsable(let feature, let usable): deliver(feature, usableOn: usable ? () : nil)
-        case .established, .policyReceived, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed:
+        case .policyReceived(let policy):
+            for owner in [clipboard, drop, drag?.items].compactMap({ $0 }) { owner.policy(policy) }
+        case .established, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed:
             break
         }
     }

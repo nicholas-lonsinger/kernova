@@ -37,8 +37,12 @@ struct ClipboardTransferWordingTests {
             (.peerReported(.dropDiskFull), .drop),
             (.peerReported(.dropDownloadsDenied), .drop),
             (.peerReported(.dropFailed), .drop),
-            (.supersededCopyRetracted(hasSuccessor: true), .copy),
-            (.supersededCopyRetracted(hasSuccessor: false), .copy),
+            (.disconnectedCopyRetracted, .copy),
+            (.disconnectedFilesRetracted, .copy),
+            (.withdrawnCopyRetracted, .copy),
+            (.withdrawnFilesRetracted, .copy),
+            (.filesLeftOut(count: 1, limitBytes: limit), .copy),
+            (.filesLeftOut(count: 3, limitBytes: limit), .send),
             (.incompleteFileSet, .paste),
             (.interrupted(fileCount: nil), .paste),
             (.interrupted(fileCount: 1), .drop),
@@ -55,6 +59,10 @@ struct ClipboardTransferWordingTests {
             (.itemsSkipped(count: 1), .drop),
             (.itemsUnreadable, .forward),
             (.itemsUnreadable, .drop),
+            (.itemsSkipped(count: 1), .copy),
+            (.itemsSkipped(count: 3), .copy),
+            (.itemsSkipped(count: 1), .send),
+            (.itemsUnreadable, .copy),
             (.sendFailed, .drop),
             (.dropStopped(.turnedOff), .drop),
             (.dropStopped(.noAgent), .drop),
@@ -134,9 +142,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.transferFailed, .preview)).headline
                 == "Clipboard preview from \(quotedVM) failed.")
-        #expect(
-            try #require(wording(.supersededCopyRetracted(hasSuccessor: true), .copy)).headline
-                == "Clipboard changed in \(quotedVM).")
     }
 
     @Test("every arm names the VM in its headline")
@@ -149,6 +154,35 @@ struct ClipboardTransferWordingTests {
     }
 
     // MARK: - Messages
+
+    @Test(
+        "a retracted copy says why it went: sharing stopping, or the VM withdrawing it without claiming sharing stopped"
+    )
+    func retractedCopyNamesItsCause() throws {
+        let expected: [(ClipboardTransferFailure, String, String)] = [
+            (
+                .disconnectedCopyRetracted, "Clipboard sharing stopped in \(quotedVM).",
+                "Clipboard sharing with the VM stopped, so the earlier copy was removed from the Mac clipboard."
+            ),
+            (
+                .disconnectedFilesRetracted, "Clipboard sharing stopped in \(quotedVM).",
+                "Clipboard sharing with the VM stopped, so the copied files were removed from the Mac clipboard. The rest of the copy is still there."
+            ),
+            (
+                .withdrawnCopyRetracted, "Clipboard copy withdrawn by \(quotedVM).",
+                "The VM withdrew the earlier copy, so it was removed from the Mac clipboard."
+            ),
+            (
+                .withdrawnFilesRetracted, "Clipboard copy withdrawn by \(quotedVM).",
+                "The VM withdrew the earlier copy, so its files were removed from the Mac clipboard. The rest of the copy is still there."
+            ),
+        ]
+        for (failure, headline, message) in expected {
+            let copy = try #require(wording(failure, .copy))
+            #expect(copy.headline == headline)
+            #expect(copy.message == message)
+        }
+    }
 
     @Test("a guest-reported failure reads as its own explanation, not the wire text")
     func peerReportedMessages() throws {
@@ -189,17 +223,6 @@ struct ClipboardTransferWordingTests {
             try #require(wording(.diskFull(needed: 4096, available: 1024), .paste)).message
                 == "Not enough disk space to receive the clipboard payload (\(DataFormatters.formatBytes(4096)) needed, \(DataFormatters.formatBytes(1024)) free)"
         )
-    }
-
-    @Test("a retraction points at Copy to Mac only when an offer replaced what it removed")
-    func retractionNamesCopyToMacOnlyWithASuccessor() throws {
-        let replaced = try #require(wording(.supersededCopyRetracted(hasSuccessor: true), .copy))
-        let unreplaced = try #require(wording(.supersededCopyRetracted(hasSuccessor: false), .copy))
-        #expect(replaced.message.contains("use Copy to Mac"))
-        // Without a successor the click has nothing to fetch, so the sentence
-        // stops at what happened.
-        #expect(!unreplaced.message.contains("use Copy to Mac"))
-        #expect(unreplaced.message.hasSuffix("removed from the Mac clipboard."))
     }
 
     @Test("a paste-fire refusal says the paste did not finish, not that nothing landed")
@@ -343,7 +366,7 @@ struct ClipboardTransferWordingTests {
     }
 
     @Test(
-        "a send that left unreadable items out counts them and says the rest crossed",
+        "a drop or a forward that left unreadable files out counts them and says the rest crossed",
         arguments: [
             (
                 ClipboardTransferGesture.drop, 1,
@@ -352,15 +375,38 @@ struct ClipboardTransferWordingTests {
             (.drop, 3, "3 items couldn't be read, so they weren't sent to the VM. The rest were."),
             (
                 .forward, 1,
-                "One copied item couldn't be read, so it wasn't sent to the VM. The rest were."
+                "One copied file couldn't be read, so it wasn't sent to the VM. Everything else was."
             ),
             (
                 .forward, 3,
-                "3 copied items couldn't be read, so they weren't sent to the VM. The rest were."
+                "3 copied files couldn't be read, so they weren't sent to the VM. Everything else was."
             ),
         ])
     func skippedItemsMessage(gesture: ClipboardTransferGesture, count: Int, message: String) throws {
         #expect(try #require(wording(.itemsSkipped(count: count), gesture)).message == message)
+    }
+
+    /// A command's snapshot leaves out an item's file it cannot open or that is gone, the rest of the item
+    /// crossing, or a representation it could not read or pull, and only the count reaches the Mac, so every cause
+    /// reads the same.
+    @Test(
+        "a clipboard command that did not copy items whole says how many, and names no cause: each reaches it alike",
+        arguments: [
+            (
+                ClipboardTransferGesture.copy, 1,
+                "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac in full. The rest were."
+            ),
+            (
+                .copy, 3,
+                "3 items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were."
+            ),
+            (.send, 1, "One item on the Mac clipboard wasn\u{2019}t copied to the guest in full. The rest were."),
+            (.send, 3, "3 items on the Mac clipboard weren\u{2019}t copied to the guest in full. The rest were."),
+        ])
+    func commandLeftOutMessage(gesture: ClipboardTransferGesture, count: Int, message: String) throws {
+        let wording = try #require(wording(.itemsSkipped(count: count), gesture))
+        #expect(wording.message == message)
+        #expect(!wording.message.contains("read"))
     }
 
     @Test("a forward none of whose items could be read says nothing was sent")
@@ -477,12 +523,11 @@ struct ClipboardTransferWordingTests {
             (.incompleteFileSet, .paste, "Clipboard: paste from the guest failed"),
             (.diskFull(needed: 1, available: 0), .paste, "Clipboard: paste from the guest failed"),
             (.transferFailed, .preview, "Clipboard: preview from the guest failed"),
-            (
-                .supersededCopyRetracted(hasSuccessor: true), .copy,
-                "Clipboard: earlier copy was removed"
-            ),
-            (.itemsSkipped(count: 1), .forward, "Clipboard: some items weren't forwarded"),
+            (.itemsSkipped(count: 1), .forward, "Clipboard: some files weren't forwarded"),
             (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
+            (.itemsSkipped(count: 1), .copy, "Clipboard: some items weren't copied in full from the guest"),
+            (.itemsSkipped(count: 1), .send, "Clipboard: some items weren't copied in full to the guest"),
+            (.itemsUnreadable, .copy, "Clipboard: the guest's copy couldn't be read"),
             (.peerReported(.dropDiskFull), .drop, "Drop: the VM ran out of disk space"),
             (
                 .peerReported(.dropDownloadsDenied), .drop,

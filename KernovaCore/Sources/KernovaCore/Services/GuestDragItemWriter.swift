@@ -106,9 +106,9 @@ final class GuestDragItemWriter {
         if writesInFlight > 0 {
             fail(.interrupted(fileCount: owed))
         } else if destinationMayAsk, owed > 0 {
-            // Kernova's own clipboard window takes only a drop's first
-            // promise, so an accepted drop can leave items no destination
-            // will ever ask for.
+            // A destination may take only a drop's first promise, so an
+            // accepted drop can leave items no destination will ever ask
+            // for.
             endTransfers(on: .interrupted(fileCount: owed), reported: false)
         }
     }
