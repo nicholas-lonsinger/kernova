@@ -107,6 +107,15 @@ struct ContainerTreeTests {
 
     static let itemName = "Item.app"
 
+    /// The system of a lander that only installs: an install runs neither check.
+    static let installOnly = ContainerTreeLander.System(
+        selfTest: { _ in
+            Issue.record("an install ran the self-test"); return .passed
+        },
+        launchRefusal: { _ in
+            Issue.record("an install ran the launch check"); return nil
+        })
+
     /// Records the golden payload when it is missing — a frozen file is never rewritten — and fails the run
     /// that does, so a recording is always a deliberate commit.
     @Test("The packer reproduces the golden update-profile payload byte for byte")
@@ -145,17 +154,23 @@ struct ContainerTreeTests {
         let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
         let fixture = try SlotFixture()
         let ran = Inbox<String>()
+        let checked = Inbox<String>()
         let lander = ContainerTreeLander(
             itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: {
-                ran.put($0); return .passed
-            }))
+            system: .init(
+                selfTest: {
+                    ran.put($0); return .passed
+                },
+                launchRefusal: {
+                    checked.put($0); return nil
+                }))
         let landing = try lander.beginUpdate(in: "b", of: fixture.slotRoot())
         for start in stride(from: 0, to: frozen.count, by: 4096) {
             let piece = frozen[start..<min(start + 4096, frozen.count)]
             try piece.withUnsafeBytes { try landing.write($0) }
         }
         try landing.publish()
+        #expect(try checked.next() == fixture.root + "/slots/b/" + Self.itemName)
         #expect(try ran.next() == fixture.root + "/slots/b/" + Self.itemName + "/Contents/MacOS/agent")
         #expect(try BundleFixture.describe(fixture.root + "/slots/b/" + Self.itemName) == BundleFixture.expected)
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
@@ -171,7 +186,7 @@ struct ContainerTreeTests {
 
         let refusing = ContainerTreeLander(
             itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { _ in .exited(1) }))
+            system: .init(selfTest: { _ in .exited(1) }, launchRefusal: { _ in nil }))
         let refused = try refusing.beginUpdate(in: "b", of: fixture.slotRoot())
         try frozen.withUnsafeBytes { try refused.write($0) }
         #expect {
@@ -184,12 +199,40 @@ struct ContainerTreeTests {
 
         let passing = ContainerTreeLander(
             itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { _ in .passed }))
+            system: .init(selfTest: { _ in .passed }, launchRefusal: { _ in nil }))
         let landing = try passing.beginUpdate(in: "b", of: fixture.slotRoot())
         try frozen.withUnsafeBytes { try landing.write($0) }
         try landing.publish()
         #expect(try BundleFixture.describe(old) == BundleFixture.expected)
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
+    }
+
+    @Test("An update the OS would not launch is refused with the check's own refusal before any self-test runs")
+    func launchRefused() throws {
+        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
+        let fixture = try SlotFixture()
+        let old = fixture.root + "/slots/b/" + Self.itemName
+        try FileManager.default.createDirectory(atPath: old, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: URL(fileURLWithPath: old + "/marker"))
+        let refusal = PayloadRefusal(.updateLaunchRefused, "fails the running agent's designated requirement")
+        let lander = ContainerTreeLander(
+            itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
+            system: .init(
+                selfTest: { _ in
+                    Issue.record("the self-test ran"); return .passed
+                },
+                launchRefusal: { _ in refusal }))
+        let landing = try lander.beginUpdate(in: "b", of: fixture.slotRoot())
+        try frozen.withUnsafeBytes { try landing.write($0) }
+        #expect {
+            try landing.publish()
+        } throws: { error in
+            let thrown = error as? PayloadRefusal
+            return thrown?.code == .updateLaunchRefused && thrown?.rejectsPayload == true
+                && thrown?.detail == refusal.detail
+        }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
+        #expect(FileManager.default.contents(atPath: old + "/marker") == Data("old".utf8))
     }
 
     @Test("A discarded update and a truncated one leave the slot as it was")
@@ -198,7 +241,7 @@ struct ContainerTreeTests {
         let fixture = try SlotFixture()
         let lander = ContainerTreeLander(
             itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { _ in .passed }))
+            system: .init(selfTest: { _ in .passed }, launchRefusal: { _ in nil }))
 
         let discarded = try lander.beginUpdate(in: "b", of: fixture.slotRoot())
         try frozen.prefix(frozen.count / 2).withUnsafeBytes { try discarded.write($0) }
@@ -224,7 +267,8 @@ struct ContainerTreeTests {
         let root = InstallRoot(path: "/agent")
         let stage = scratch.path + "/stage"
         try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
-        let lander = ContainerTreeLander(itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent")
+        let lander = ContainerTreeLander(
+            itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent", system: Self.installOnly)
         let installer = Installer(
             stagingRoot: stage, runsCommands: false, payloadSource: .file(payload), lander: lander,
             versionLabel: "9.9 (99)", account: nil)
@@ -251,7 +295,8 @@ struct ContainerTreeTests {
         try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
         let installer = Installer(
             stagingRoot: stage, runsCommands: false, payloadSource: .packedDirectory(bundle.path),
-            lander: ContainerTreeLander(itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent"),
+            lander: ContainerTreeLander(
+                itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent", system: Self.installOnly),
             versionLabel: "9.9 (99)", account: nil)
         let definitions = TestDefinitions(root: root, directory: "/services")
         try installer.run(.install(root: root, payloadName: Self.itemName, definitions: definitions))

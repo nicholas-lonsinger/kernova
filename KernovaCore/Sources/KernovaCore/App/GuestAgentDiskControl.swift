@@ -117,7 +117,7 @@ package enum GuestAgentDiskControl {
             return Model(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install))
         case .outdated:
             return Model(title: "Update Guest Agent…", isEnabled: true, action: .mount(.install))
-        case .expectedMissing:
+        case .expectedMissing, .reinstallNeeded:
             return Model(title: "Reinstall Guest Agent…", isEnabled: true, action: .mount(.install))
         case .current, .connected, .unresponsive:
             return Model(title: "Manage Guest Agent…", isEnabled: true, action: .mount(.manage))

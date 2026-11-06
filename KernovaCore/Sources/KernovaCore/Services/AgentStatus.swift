@@ -19,6 +19,11 @@ package enum AgentStatus: Equatable, Sendable {
     case outdated(installed: String, bundled: String)
 
     /// The guest agent is connected, runs a payload other than the one the host
+    /// bundles, and can't take it in place for `reason`: only a reinstall from
+    /// the installer disk puts the bundled agent in.
+    case reinstallNeeded(installed: String, bundled: String, reason: ReinstallReason)
+
+    /// The guest agent is connected, runs a payload other than the one the host
     /// bundles, and is updating itself to it in-band.
     case updating(installed: String, bundled: String)
 
@@ -41,6 +46,16 @@ package enum AgentStatus: Equatable, Sendable {
     /// absence watchdog fires. Synthesized only by
     /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``.
     case connecting(expected: String)
+
+    /// Why an agent can't take the bundled payload in place.
+    package enum ReinstallReason: Equatable, Sendable {
+        /// It refused the payload because the bundled agent's signature fails
+        /// its own launch requirement.
+        case launchRefused
+        /// The payload this host bundles was signed with no team, so the host
+        /// offers it to no agent in place.
+        case notTeamSigned
+    }
 
     package var isConnecting: Bool {
         if case .connecting = self { return true }
@@ -83,6 +98,7 @@ package enum AgentStatus: Equatable, Sendable {
         case .current: "current"
         case .connected: "connected"
         case .outdated: "outdated"
+        case .reinstallNeeded: "reinstallNeeded"
         case .updating: "updating"
         case .unresponsive: "unresponsive"
         case .expectedMissing: "expectedMissing"

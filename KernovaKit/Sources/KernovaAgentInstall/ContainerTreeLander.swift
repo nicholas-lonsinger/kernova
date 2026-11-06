@@ -27,10 +27,17 @@ public struct ContainerTreeLander: PayloadLander {
     public struct System: Sendable {
         /// Runs the executable at a path through its `self-test`.
         public var selfTest: @Sendable (String) -> SelfTest.Outcome
+        /// Why the guest OS would not launch the item at a path in place of the running agent, or nil when it
+        /// would: the OS's own check, which the platform's agent supplies.
+        public var launchRefusal: @Sendable (String) -> PayloadRefusal?
 
-        /// Runs `SelfTest.run(_:)`.
-        public init(selfTest: @escaping @Sendable (String) -> SelfTest.Outcome = { SelfTest.run($0) }) {
+        /// Runs `SelfTest.run(_:)`, and `launchRefusal` for the launch check.
+        public init(
+            selfTest: @escaping @Sendable (String) -> SelfTest.Outcome = { SelfTest.run($0) },
+            launchRefusal: @escaping @Sendable (String) -> PayloadRefusal?
+        ) {
             self.selfTest = selfTest
+            self.launchRefusal = launchRefusal
         }
     }
 
@@ -40,9 +47,9 @@ public struct ContainerTreeLander: PayloadLander {
     public let selfTestExecutable: String
     let system: System
 
-    /// The lander of items published as `itemName`, an update's checked by running `selfTestExecutable`
-    /// in it.
-    public init(itemName: String, selfTestExecutable: String, system: System = System()) {
+    /// The lander of items published as `itemName`, an update's checked by `system`'s launch check and then by
+    /// running `selfTestExecutable` in it.
+    public init(itemName: String, selfTestExecutable: String, system: System) {
         self.itemName = itemName
         self.selfTestExecutable = selfTestExecutable
         self.system = system
@@ -90,8 +97,13 @@ public struct ContainerTreeLander: PayloadLander {
             operation, errno throws(SlotRoot.Failure) in
             SlotRoot.Failure(operation: operation, name: "slots/" + slot, errno: errno)
         }
-        let executable = path + "/" + itemName + "/" + selfTestExecutable
-        return Update(landing: landing, itemName: itemName) { [system] in system.selfTest(executable) }
+        let item = path + "/" + itemName
+        let executable = item + "/" + selfTestExecutable
+        return Update(landing: landing, itemName: itemName) { [system] in
+            if let refusal = system.launchRefusal(item) { return refusal }
+            let outcome = system.selfTest(executable)
+            return outcome == .passed ? nil : PayloadRefusal(.updateInstallFailed, "self-test: \(outcome)")
+        }
     }
 
     /// A landing of the item `name` in the open `directory` at `path`, the receiver given a descriptor of its own.
@@ -119,12 +131,12 @@ public struct ContainerTreeLander: PayloadLander {
     final class Update: PayloadLanding, @unchecked Sendable {
         private let landing: TreeLanding
         private let itemName: String
-        private let selfTest: @Sendable () -> SelfTest.Outcome
+        private let check: @Sendable () -> PayloadRefusal?
 
-        init(landing: TreeLanding, itemName: String, selfTest: @escaping @Sendable () -> SelfTest.Outcome) {
+        init(landing: TreeLanding, itemName: String, check: @escaping @Sendable () -> PayloadRefusal?) {
             self.landing = landing
             self.itemName = itemName
-            self.selfTest = selfTest
+            self.check = check
         }
 
         func write(_ bytes: UnsafeRawBufferPointer) throws(SlotRoot.Failure) {
@@ -136,13 +148,11 @@ public struct ContainerTreeLander: PayloadLander {
             }
         }
 
-        /// Publishes the landed tree as the slot's item, once its self-test passes: a container that does not
-        /// end whole, or an item that does not run, is refused as the payload's fault.
+        /// Publishes the landed tree as the slot's item, once the guest OS would launch it and its self-test
+        /// passes: a container that does not end whole, an item the OS would not launch, or one that does not run
+        /// is refused.
         func publish() throws(PayloadRefusal) {
-            try landing.publish { [selfTest] in
-                let outcome = selfTest()
-                return outcome == .passed ? nil : "self-test: \(outcome)"
-            }
+            try landing.publish(check: check)
         }
 
         func discard() {
@@ -181,7 +191,7 @@ final class TreeLanding {
     }
 
     /// Publishes the landed item as its name, then runs `check`, which answers why the item is refused, or nil.
-    func publish(check: (() -> String?)?) throws(PayloadRefusal) {
+    func publish(check: (() -> PayloadRefusal?)?) throws(PayloadRefusal) {
         guard let receiver else { preconditionFailure("a publish after the landing ended") }
         self.receiver = nil
         let bytes = Array(name.utf8)
@@ -211,7 +221,7 @@ final class TreeLanding {
         if let refusal = check?() {
             try? TreeRemoval.remove(bytes, in: directory, on: fileSystem)
             restore()
-            throw PayloadRefusal(.updateInstallFailed, refusal, rejectsPayload: true)
+            throw refusal
         }
         if movedAside { try? TreeRemoval.remove(aside, in: directory, on: fileSystem) }
         fsync(directory)

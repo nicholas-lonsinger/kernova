@@ -27,13 +27,19 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// connection offers it. The feature's offers live only there: the hub sends the host's to it, forwards
     /// only its own, and ends both on a peer that stops being it. A feature no such peer offers has no entry.
     public var consolePeers: [FeatureID: PeerHandle]
+    /// Whether the host withholds in-band updates here: some peer in `peers` has a matching bundle the host
+    /// does not offer (`BundledPayload.offered` is nil — a payload signed with no team), so whatever UPDATE
+    /// the peers offer, the host updates none of them in place. False with no peer, or none with a bundle.
+    public var inBandUpdatesWithheld: Bool
 
     /// A snapshot of these peers and merged features.
     public init(
         peers: [PeerSummary], features: FeatureStatusTable, away: [AwayPeer] = [],
         power: PowerProvision = .absent(.noAgent), powerIgnoringApps: PowerProvision = .absent(.noAgent),
-        routing: PowerRoutingProgress? = nil, consolePeers: [FeatureID: PeerHandle] = [:]
+        routing: PowerRoutingProgress? = nil, consolePeers: [FeatureID: PeerHandle] = [:],
+        inBandUpdatesWithheld: Bool = false
     ) {
+        self.inBandUpdatesWithheld = inBandUpdatesWithheld
         self.peers = peers
         self.features = features
         self.away = away
@@ -102,12 +108,12 @@ public struct PeerSummary: Sendable, Equatable {
 
     /// How a peer stands against the payload the host bundles for it.
     public enum Standing: Sendable, Equatable {
-        /// It does not run the bundled payload, and the host offers it nothing, so says nothing of its version.
+        /// The host bundles no payload for it, so says nothing of its version.
         case notOffered
         /// Its payload hash is the bundled payload's.
         case current
-        /// The host offers it the payload `offeredVersionLabel` names, which it does not run; `update` says
-        /// whether it is updating itself to it.
+        /// The host bundles for it the payload `offeredVersionLabel` names, which it does not run; `update`
+        /// says whether it is updating itself to it.
         case outdated(offeredVersionLabel: String, update: InBandUpdate)
     }
 
@@ -120,8 +126,14 @@ public struct PeerSummary: Sendable, Equatable {
         /// failed install does, or its pull of it on this connection ended without installing it, and the
         /// peer pulls no hash twice on one connection.
         case failed
+        /// It refused the payload as `UPDATE_LAUNCH_REFUSED`: the payload's signature fails the running
+        /// agent's designated requirement, so only a fresh install from the installer disk puts it in.
+        case launchRefused
         /// It cannot update itself to the payload: it offers no UPDATE, or none in the payload's format.
         case unavailable
+        /// The payload this host bundles was signed with no team, so no installed agent can take it in place
+        /// and the host does not offer it.
+        case notTeamSigned
     }
 
     /// Creates a summary.

@@ -354,7 +354,7 @@ public struct BundledPayload: Sendable, Equatable {
     public var scope: InstallScope
     /// What the payload is.
     public var manifest: UpdateManifestValue
-    /// Whether the host offers it as an update; when false it only names the payload a current peer runs.
+    /// Whether the host offers it as an update; when false it only names the payload a peer is measured against.
     public var updatesInBand: Bool
 
     /// Creates a bundled payload.
@@ -381,12 +381,13 @@ public struct BundledPayload: Sendable, Equatable {
         return bundles.first { $0.scope == scope && $0.os == claim.os && $0.architecture == claim.architecture }
     }
 
-    /// What the host offers a peer claiming `claim`: its ``bundle(from:for:)``'s manifest, when that bundle
-    /// updates in band.
+    /// What the host offers a peer claiming `claim`: its ``bundle(from:for:)``'s ``offered`` manifest.
     public static func offer(from bundles: [BundledPayload], for claim: PeerClaim) -> UpdateManifestValue? {
-        guard let bundle = bundle(from: bundles, for: claim), bundle.updatesInBand else { return nil }
-        return bundle.manifest
+        bundle(from: bundles, for: claim)?.offered
     }
+
+    /// What the host offers as an update from this bundle: its manifest, when it updates in band.
+    public var offered: UpdateManifestValue? { updatesInBand ? manifest : nil }
 }
 
 /// An app the guest reports as holding a power request.
@@ -428,17 +429,31 @@ public struct PowerOffer: Sendable, Equatable {
     }
 }
 
-/// What a peer's installer accepts, and the install's rejected hash.
+/// What a peer's installer accepts, and the payload its install rejected.
 public struct UpdateOffer: Sendable, Equatable {
     /// The formats it installs.
     public var formats: [PayloadFormat]
-    /// The hash the install's slot metadata records as rejected, if any.
-    public var rejectedHash: Data?
+    /// The payload the install's slot metadata records as rejected, if any.
+    public var rejected: RejectedPayload?
 
     /// Creates an offer.
-    public init(formats: [PayloadFormat], rejectedHash: Data? = nil) {
+    public init(formats: [PayloadFormat], rejected: RejectedPayload? = nil) {
         self.formats = formats
-        self.rejectedHash = rejectedHash
+        self.rejected = rejected
+    }
+}
+
+/// A payload an install will not update itself to, and why.
+public struct RejectedPayload: Sendable, Equatable {
+    /// The payload's SHA-256.
+    public var hash: Data
+    /// The code the install's refusal of it reported; nil when it recorded none, as for a rollback.
+    public var code: ErrorCode?
+
+    /// The rejection of the payload hashing to `hash`, refused with `code`.
+    public init(hash: Data, code: ErrorCode? = nil) {
+        self.hash = hash
+        self.code = code
     }
 }
 
