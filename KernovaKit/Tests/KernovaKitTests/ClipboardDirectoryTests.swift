@@ -4,9 +4,9 @@ import Testing
 
 @testable import KernovaKit
 
-@Suite("ClipboardArchive", .caseScoped)
-struct ClipboardArchiveTests {
-    private let scratch = TestScratchDirectory(prefix: "aar-tests")
+@Suite("ClipboardDirectory", .caseScoped)
+struct ClipboardDirectoryTests {
+    private let scratch = TestScratchDirectory(prefix: "directory-tests")
 
     @Test("estimatedByteCount sums regular-file sizes only")
     func estimateSumsFiles() throws {
@@ -23,6 +23,6 @@ struct ClipboardArchiveTests {
             atPath: root.appendingPathComponent("link").path, withDestinationPath: "a.txt")
 
         // a.txt (5) + sub/b.txt (6) = 11; dirs and symlinks contribute 0.
-        #expect(ClipboardArchive.estimatedByteCount(at: root) == 11)
+        #expect(ClipboardDirectory.estimatedByteCount(at: root) == 11)
     }
 }

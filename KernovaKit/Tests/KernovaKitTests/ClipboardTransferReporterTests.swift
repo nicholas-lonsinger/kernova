@@ -343,10 +343,10 @@ struct ClipboardTransferReporterTests {
         var changes = 0
         reporter.onReportChanged = { _ in changes += 1 }
 
-        let first = finish(.incompleteFileSet, at: Date(timeIntervalSince1970: 1))
+        let first = finish(.transferFailed, at: Date(timeIntervalSince1970: 1))
         reporter.finish(first)
-        reporter.finish(finish(.incompleteFileSet, at: Date(timeIntervalSince1970: 2)))
-        reporter.finish(finish(.incompleteFileSet, at: Date(timeIntervalSince1970: 3)))
+        reporter.finish(finish(.transferFailed, at: Date(timeIntervalSince1970: 2)))
+        reporter.finish(finish(.transferFailed, at: Date(timeIntervalSince1970: 3)))
 
         #expect(changes == 1)
         #expect(reporter.report == .finished(first))
@@ -358,10 +358,10 @@ struct ClipboardTransferReporterTests {
         let reporter = makeReporter(clock: clock)
         let operation = makeOperation(reporter)
 
-        reporter.finish(finish(.incompleteFileSet, at: Date(timeIntervalSince1970: 1)))
+        reporter.finish(finish(.transferFailed, at: Date(timeIntervalSince1970: 1)))
         reporter.publish(from: operation, .running(snapshot(bytes: 5), since: Date()))
         reporter.retire(operation)
-        let later = finish(.incompleteFileSet, at: Date(timeIntervalSince1970: 2))
+        let later = finish(.transferFailed, at: Date(timeIntervalSince1970: 2))
         reporter.finish(later)
 
         #expect(reporter.report == .finished(later))

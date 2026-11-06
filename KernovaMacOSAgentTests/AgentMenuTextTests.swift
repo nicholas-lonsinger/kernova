@@ -46,24 +46,15 @@ struct AgentMenuTextTests {
                 == "Clipboard: too large to paste — over the \(ClipboardPasteLimit.displayLimit(limit)) transfer limit"
         )
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteDiskFull, pasteLimitBytes: limit))
-                == "Clipboard: not enough disk space to paste")
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteTimeout, pasteLimitBytes: limit))
-                == "Clipboard: paste timed out")
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteUnpackFailed, pasteLimitBytes: limit))
-                == "Clipboard: couldn't save the pasted item")
-        #expect(
             AgentMenuText.clipboardLine(.pasteRefused(.pasteFailed, pasteLimitBytes: limit))
                 == "Clipboard: paste failed")
-        // Host-only refusals never reach the guest; they read as the generic
-        // failure rather than a sentence about a gesture made elsewhere.
+        // Drop and drag refusals never reach the guest's paste; they read as the
+        // generic failure rather than a sentence about a gesture made elsewhere.
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.copyTooLarge, pasteLimitBytes: limit))
+            AgentMenuText.clipboardLine(.pasteRefused(.dropFailed, pasteLimitBytes: limit))
                 == "Clipboard: paste failed")
         #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteIncompleteSet, pasteLimitBytes: limit))
+            AgentMenuText.clipboardLine(.pasteRefused(.dragItemUnavailable, pasteLimitBytes: limit))
                 == "Clipboard: paste failed")
     }
 

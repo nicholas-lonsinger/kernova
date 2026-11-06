@@ -30,7 +30,7 @@ struct StagedItemRemovalTests {
             under: root, depth: 8, name: String(repeating: "d", count: 200), contents: Data("x".utf8))
         #expect(leaf.utf8.count > Int(PATH_MAX))
 
-        let volume = InterposedArchiveVolume()
+        let volume = CountingTreeVolume()
         try StagedItemRemoval.remove(at: root, on: volume)
         #expect(!FileManager.default.fileExists(atPath: root.path))
         #expect(volume.mostOpenDirectories <= 2)
@@ -86,7 +86,7 @@ struct StagedItemRemovalTests {
         try Data("x".utf8).write(to: inner.appendingPathComponent("file.txt"))
         let elsewhere = try makeDirectory("elsewhere")
         let moved = elsewhere.appendingPathComponent("b", isDirectory: true)
-        let volume = InterposedArchiveVolume { call throws(Errno) in
+        let volume = CountingTreeVolume { call throws(Errno) in
             guard case .remove(let name) = call, name == Array("file.txt".utf8),
                 !FileManager.default.fileExists(atPath: moved.path)
             else { return }

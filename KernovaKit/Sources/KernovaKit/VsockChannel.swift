@@ -23,8 +23,7 @@ public final class VsockChannel: Sendable {
     /// nothing after it — the check and the loop body share one turn of that
     /// actor. A consumer iterating on another executor runs concurrently with
     /// the close and can still be handling a frame it took an instant before
-    /// it; bounding that one is the consumer's own job, as
-    /// `ClipboardEndpoint.handleControlFrame` does.
+    /// it; bounding that one is the consumer's own job.
     ///
     /// A peer EOF is not a close — frames read before one are still owed and
     /// still delivered. The sequence finishes on either, and
@@ -359,20 +358,14 @@ extension VsockChannel {
     ///   - inReplyTo: the request type this error replies to, e.g.
     ///     `"clipboard.request"`. When `nil` the field is omitted from the frame and
     ///     `hasInReplyTo` reads `false` on the receiving side.
-    ///   - itemFailure: the entry an unpack failure could not write, when it
-    ///     named one.
     /// - Throws: forwards any error from ``send(_:)``.
-    public func sendErrorFrame(
-        code: String, message: String, inReplyTo: String?,
-        itemFailure: ClipboardItemFailure? = nil
-    ) throws {
+    public func sendErrorFrame(code: String, message: String, inReplyTo: String?) throws {
         var frame = Frame()
         frame.protocolVersion = 1
         frame.error = Kernova_V1_Error.with {
             $0.code = code
             $0.message = message
             if let inReplyTo { $0.inReplyTo = inReplyTo }
-            if let wire = itemFailure?.boundedWire { $0.itemFailure = wire }
         }
         try send(frame)
     }

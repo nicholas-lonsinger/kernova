@@ -253,7 +253,7 @@ struct ClipboardFileStagingTests {
         let unknownStaging = makeStaging(freeSpaceProvider: { _ in nil })
         defer { unknownStaging.sweep() }
         // Unknown capacity is treated as "fits" — never block on a failed query.
-        #expect(unknownStaging.hasCapacity(forByteCount: Int.max - ClipboardStreamTuning.freeSpaceMargin))
+        #expect(unknownStaging.hasCapacity(forByteCount: Int.max - ClipboardFileStaging.freeSpaceMargin))
     }
 
     @Test("a byte count whose margined total leaves Int64 does not fit — and does not trap")
@@ -293,44 +293,6 @@ struct ClipboardFileStagingTests {
 
     // MARK: - Directory / tree reservations (Phase 2)
 
-    @Test("reserveDirectory creates an empty directory named exactly `name`")
-    func reserveDirectoryKeepsName() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let dir = try staging.reserveDirectory(generation: 1, name: "MyFolder")
-        var isDir: ObjCBool = false
-        #expect(FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir))
-        #expect(isDir.boolValue)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path).isEmpty)
-        #expect(dir.lastPathComponent == "MyFolder")
-    }
-
-    @Test("two same-named folders in one generation both keep the exact name")
-    func reserveDirectoryNameSurvivesSameNamedSibling() throws {
-        // One copy can carry two folders of the same name. Nesting each under a
-        // fresh UUID parent keeps both names exact instead of degrading the
-        // second to "MyFolder 2".
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let first = try staging.reserveDirectory(generation: 5, name: "MyFolder")
-        let second = try staging.reserveDirectory(generation: 5, name: "MyFolder")
-        #expect(first != second)
-        #expect(first.lastPathComponent == "MyFolder")
-        #expect(second.lastPathComponent == "MyFolder")
-    }
-
-    @Test("reserveDirectory sanitizes a path-traversal name")
-    func reserveDirectorySanitizes() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let dir = try staging.reserveDirectory(generation: 1, name: "../../escape")
-        #expect(dir.lastPathComponent == "escape")
-        #expect(dir.deletingLastPathComponent().lastPathComponent != "..")
-    }
-
     @Test("reserveScratchDirectory hands each caller its own empty directory in the generation")
     func reserveScratchDirectoryIsolatesCallers() throws {
         let staging = makeStaging()
@@ -366,16 +328,16 @@ struct ClipboardFileStagingTests {
         #expect(FileManager.default.fileExists(atPath: second.path))
     }
 
-    @Test("reserved trees and archives ride the generation window (3 newest survive)")
+    @Test("reserved directories ride the generation window (3 newest survive)")
     func reservationsRideGenerationWindow() throws {
         let staging = makeStaging()
         defer { staging.sweep() }
 
         var dirs: [URL] = []
         for generation in 1...4 {
-            dirs.append(try staging.reserveDirectory(generation: UInt64(generation), name: "g"))
+            dirs.append(try staging.reserveScratchDirectory(generation: UInt64(generation)))
         }
-        // Generation 1's directory tree is evicted when generation 4 arrives.
+        // Generation 1's directory is evicted when generation 4 arrives.
         #expect(!FileManager.default.fileExists(atPath: dirs[0].path))
         #expect(FileManager.default.fileExists(atPath: dirs[1].path))
         #expect(FileManager.default.fileExists(atPath: dirs[3].path))

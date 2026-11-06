@@ -924,8 +924,8 @@ struct GuestDragOutTests {
         #expect(listed.map(\.sizeEstimate) == [0, 0, 0, 0])
         #expect(rig.input.sized == [[note, tree, album]])
         let (treeSize, albumSize) = (
-            UInt64(ClipboardArchive.estimatedByteCount(at: tree)),
-            UInt64(ClipboardArchive.estimatedByteCount(at: album))
+            UInt64(ClipboardDirectory.estimatedByteCount(at: tree)),
+            UInt64(ClipboardDirectory.estimatedByteCount(at: album))
         )
         #expect(treeSize > 0 && albumSize > 0)
         let sizes: [UInt64] = [4, treeSize, 0, albumSize]
@@ -945,7 +945,7 @@ struct GuestDragOutTests {
 
         #expect(
             Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
-                .named([]), .caught(sizes: [UInt64(ClipboardArchive.estimatedByteCount(at: tree))]),
+                .named([]), .caught(sizes: [UInt64(ClipboardDirectory.estimatedByteCount(at: tree))]),
             ])
     }
 
@@ -1135,7 +1135,7 @@ struct GuestDragOutTests {
             rig.input.sized.map { $0.map(\.standardizedFileURL.path) } == [
                 [plain, first, album, second].map(\.standardizedFileURL.path)
             ])
-        let albumSize = UInt64(ClipboardArchive.estimatedByteCount(at: album))
+        let albumSize = UInt64(ClipboardDirectory.estimatedByteCount(at: album))
         #expect(albumSize >= 300)
         #expect(rig.peer.answers(to: takeID(1)).last == .caught(sizes: [5, 1_000, albumSize, 2_345]))
     }

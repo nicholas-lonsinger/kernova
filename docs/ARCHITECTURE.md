@@ -133,8 +133,10 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host
   pasteboard, and `VMInstance`'s clipboard commands copy a snapshot each way
   through the service. `HubClipboardService` and the macOS agent's `GuestClipboard` run
-  over KernovaKit's `ClipboardItemExchange` (`KernovaClipboardItems`); the drop
-  services and agent drive KernovaKit's `ClipboardEndpoint`.
+  over KernovaKit's `ClipboardItemExchange` (`KernovaClipboardItems`). Drops and
+  drags out run over the hub too — `HubDropService` and `HubDragOut` on the host,
+  `KernovaItemTransfer`'s `DropReceiver` and `GuestDragOut` in the macOS agent —
+  each end routing its item features through one `ItemFeatureRouter`.
 - Sockets: `UnixSocketListener` under `SerialSocketRelay` and
   `VMCommandSocketListener`.
 

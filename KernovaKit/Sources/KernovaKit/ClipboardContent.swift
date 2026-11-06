@@ -60,13 +60,11 @@ public struct ClipboardContent: Equatable, Sendable {
         public let filename: String
 
         /// `true` when this file representation is a *directory* (folder, or an
-        /// OS package such as `.app`/`.rtfd`) whose bytes are an in-process
-        /// AppleArchive of the tree rather than a single file's bytes.
+        /// OS package such as `.app`/`.rtfd`): its file-backed source is the
+        /// folder itself rather than a single file.
         ///
-        /// The receiver extracts the archive and offers the folder's URL. Implies
-        /// a non-empty `filename` and a file-backed source. **Excluded from the
-        /// digest**: the archive's SHA-256 and the folded `filename` already
-        /// identify the content, and the receiver re-applies it from the offer.
+        /// Implies a non-empty `filename`. **Excluded from the digest**: the
+        /// folded `filename` and the source already identify the content.
         public let isDirectory: Bool
 
         /// Creates a representation from an explicit byte source.
@@ -125,7 +123,7 @@ public struct ClipboardContent: Equatable, Sendable {
         /// opens as a package.
         public init(
             directorySourceURL url: URL, estimatedByteCount: Int, filename: String,
-            uti: String = ClipboardArchive.directoryUTI
+            uti: String = ClipboardDirectory.uti
         ) {
             self.init(
                 uti: uti,
