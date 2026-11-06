@@ -122,9 +122,10 @@ final class GuestDragCatcher {
     /// lists it: the take's claim and what it carries.
     var onCarried: ((GuestDragWatcher.Claim, Carried) -> Void)?
 
-    /// Hears each delivering drop: the take it ended, the claim and what it
-    /// carried, and the drop's file promises. It ends the take itself.
-    var onDeliver: ((DragTakeID, GuestDragWatcher.Claim, Carried, [any FilePromiseReceiving]) -> Void)?
+    /// Hears each delivering drop, while the drop is under way: the take it
+    /// ended, the claim and what it carried, and the drop's file promises. It
+    /// ends the take itself.
+    var onDeliver: ((DragTakeID, GuestDragWatcher.Claim, Carried, any GuestDragDrop) -> Void)?
 
     init(
         peer: any GuestDragOutPeer,
@@ -327,16 +328,16 @@ final class GuestDragCatcher {
     }
 
     /// The drag ended on the surface. A showing the host asked to deliver hands
-    /// the drop's promises, read through `receivers`, to ``onDeliver``, which
-    /// ends the take; any other ends it `CAUGHT` and reads nothing of them.
-    func performDragOperation(receivers: () -> [any FilePromiseReceiving]) -> Bool {
+    /// the drop's promises, `drop`, to ``onDeliver``, which ends the take; any
+    /// other ends it `CAUGHT` and reads nothing of them.
+    func performDragOperation(drop: any GuestDragDrop) -> Bool {
         guard let current = take, let showing = current.showing, showing.entered, !current.ended else {
             return false
         }
         take?.caught = true
         take?.ended = true
         if showing.delivers, let onDeliver, let carried = current.carried {
-            onDeliver(current.id, current.claim, carried, receivers())
+            onDeliver(current.id, current.claim, carried, drop)
         } else {
             peer.answerTake(current.id, .caught(folderSizes: nil))
         }

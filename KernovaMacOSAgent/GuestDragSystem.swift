@@ -1,11 +1,14 @@
 import AppKit
+import ApplicationServices
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaSynchronization
 import UniformTypeIdentifiers
 
 // The live guest's halves of the drag-out seams: its event stream and drag
-// pasteboard for the watcher, and the window the catcher puts up.
+// pasteboard for the watcher, the window the catcher puts up, and the drop's
+// promises and folder it receives them in.
 
 /// The guest's own input, read the way an unprivileged accessory app can.
 ///
@@ -79,6 +82,128 @@ final class SystemGuestDragInput: GuestDragInput {
             let sizes = folders.mapValues(measureFolder)
             MainActorBridge.async { completion(sizes) }
         }
+    }
+
+    /// Lists the folder again each time a vnode source on it reports a write,
+    /// which adding or removing an entry is: one listing per coalesced event,
+    /// with no polling.
+    func watchEntries(
+        in folder: URL, _ appeared: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) -> GuestDragCancel {
+        let descriptor = open(folder.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            Self.logger.log(.error, "Could not watch the promises' folder, errno \(errno, privacy: .public)")
+            return {}
+        }
+        let queue = DispatchQueue(label: "app.kernova.macosagent.drag-arrivals")
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor, eventMask: .write, queue: queue)
+        let seen = Locked<Set<String>>([])
+        let scan: @Sendable () -> Void = {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+            let new = seen.withLock { seen in
+                names.filter { !$0.hasPrefix(".") && seen.insert($0).inserted }.sorted()
+            }
+            guard !new.isEmpty else { return }
+            let urls = new.map { folder.appendingPathComponent($0) }
+            MainActorBridge.async { appeared(urls) }
+        }
+        source.setEventHandler(handler: scan)
+        source.setCancelHandler { close(descriptor) }
+        source.resume()
+        queue.async(execute: scan)
+        return { source.cancel() }
+    }
+
+    /// The queue coordinated reads are granted on.
+    nonisolated private static let coordination = OperationQueue()
+
+    func coordinateRead(of url: URL, then granted: @escaping @MainActor @Sendable (GuestDragArrival?) -> Void) {
+        let intent = NSFileAccessIntent.readingIntent(with: url)
+        NSFileCoordinator(filePresenter: nil).coordinate(with: [intent], queue: Self.coordination) { error in
+            var arrival: GuestDragArrival?
+            if let error {
+                Self.logger.log(
+                    .warning, "A coordinated read was refused: \(error.localizedDescription, privacy: .public)")
+            } else {
+                let url = URL(fileURLWithPath: intent.url.path)
+                let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+                if values?.isDirectory == true {
+                    arrival = GuestDragArrival(url: url, isFolder: true)
+                } else if values?.isRegularFile == true {
+                    arrival = GuestDragArrival(url: url, isFolder: false)
+                }
+            }
+            MainActorBridge.async { [arrival] in granted(arrival) }
+        }
+    }
+}
+
+/// A delivering drop's promises, read off the drag pasteboard while the drop
+/// is under way.
+@MainActor
+final class GuestDragPasteboardDrop: GuestDragDrop {
+    nonisolated private static let logger = KernovaLogger(
+        subsystem: "app.kernova.macosagent", category: "GuestDragCatcher")
+
+    private let pasteboard: NSPasteboard
+
+    /// The drag pasteboard as the Pasteboard Manager sees it, synchronized
+    /// with the drag's once, on first use.
+    private lazy var manager: Pasteboard? = {
+        var created: Pasteboard?
+        let status = PasteboardCreate(pasteboard.name.rawValue as CFString, &created)
+        guard status == noErr, let created else {
+            Self.logger.log(.error, "Could not open the drag pasteboard, status \(status, privacy: .public)")
+            return nil
+        }
+        _ = PasteboardSynchronize(created)
+        return created
+    }()
+
+    init(_ pasteboard: NSPasteboard) {
+        self.pasteboard = pasteboard
+    }
+
+    /// The Pasteboard Manager's identifier of item `index`, in drag order.
+    private func identifier(_ index: Int) -> PasteboardItemID? {
+        guard let manager else { return nil }
+        var identifier: PasteboardItemID?
+        guard PasteboardGetItemIdentifier(manager, CFIndex(index + 1), &identifier) == noErr else { return nil }
+        return identifier
+    }
+
+    func offersPromisedFileURL(item index: Int) -> Bool {
+        guard let manager, let identifier = identifier(index) else { return false }
+        var flavors: CFArray?
+        guard PasteboardCopyItemFlavors(manager, identifier, &flavors) == noErr,
+            let flavors = flavors as? [String]
+        else { return false }
+        return flavors.contains(kPasteboardTypeFileURLPromise as String)
+    }
+
+    func setPasteLocation(_ folder: URL) -> Bool {
+        guard let manager else { return false }
+        let status = PasteboardSetPasteLocation(manager, folder as CFURL)
+        if status != noErr {
+            Self.logger.log(.notice, "The drop's paste location was refused, status \(status, privacy: .public)")
+        }
+        return status == noErr
+    }
+
+    func requestPromisedFileURL(item index: Int) -> Bool {
+        guard let manager, let identifier = identifier(index) else { return false }
+        var data: CFData?
+        let status = PasteboardCopyItemFlavorData(
+            manager, identifier, kPasteboardTypeFileURLPromise as CFString, &data)
+        if status != noErr {
+            Self.logger.log(.notice, "The promised file URL could not be read, status \(status, privacy: .public)")
+        }
+        return status == noErr
+    }
+
+    func receivers() -> [any FilePromiseReceiving] {
+        pasteboard.filePromiseReceivers
     }
 }
 
@@ -203,10 +328,7 @@ private final class CatcherView: NSView {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        catcher?.performDragOperation {
-            sender.draggingPasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self])
-                as? [NSFilePromiseReceiver] ?? []
-        } ?? false
+        catcher?.performDragOperation(drop: GuestDragPasteboardDrop(sender.draggingPasteboard)) ?? false
     }
 
     override func concludeDragOperation(_ sender: (any NSDraggingInfo)?) {

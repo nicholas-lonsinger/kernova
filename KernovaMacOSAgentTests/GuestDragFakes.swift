@@ -62,6 +62,15 @@ final class FakeGuestDragInput: GuestDragInput {
     var receivers: [FakePromiseReceiver] = []
     /// Every set of folders measured, by item index.
     private(set) var measured: [[Int: URL]] = []
+    /// The folder being watched for entries, and who hears them.
+    private var watching: (folder: URL, appeared: @MainActor @Sendable ([URL]) -> Void)?
+    /// Every entry whose coordinated read was asked for and not yet granted.
+    private var coordinating: [(url: URL, granted: @MainActor @Sendable (GuestDragArrival?) -> Void)] = []
+
+    /// The folder a drop's entries are watched in, while one is.
+    var watchedFolder: URL? { watching?.folder }
+    /// Every entry whose coordinated read waits to be granted, in order asked.
+    var coordinationsWaiting: [URL] { coordinating.map(\.url) }
 
     var isObservingPresses: Bool { pressHandler != nil }
     var isTicking: Bool { tick != nil }
@@ -94,6 +103,24 @@ final class FakeGuestDragInput: GuestDragInput {
     /// change count unmoved.
     func fill(_ items: [FakePasteboardItem]) {
         pasteboard.fill(items)
+    }
+
+    /// Entries named `names` appear in the watched folder, as the live watch
+    /// reports what a listing finds; nothing when no folder is watched.
+    func appear(_ names: [String]) {
+        guard let watching else { return }
+        watching.appeared(names.map { watching.folder.appendingPathComponent($0) })
+    }
+
+    /// Grants the coordinated read of the watched folder's entry `name`, as
+    /// the live input does once a coordinating writer is done: it hands back
+    /// what the entry is now.
+    func grant(_ name: String) {
+        guard let index = coordinating.firstIndex(where: { $0.url.lastPathComponent == name }) else { return }
+        let (url, granted) = coordinating.remove(at: index)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return granted(nil) }
+        granted(GuestDragArrival(url: url, isFolder: isDirectory.boolValue))
     }
 
     /// Hands back every queued resolve, each the real resolve of its URLs.
@@ -144,6 +171,70 @@ final class FakeGuestDragInput: GuestDragInput {
     ) {
         measured.append(folders)
         completion(folders.mapValues { ClipboardArchive.estimatedByteCount(at: $0) })
+    }
+
+    func watchEntries(
+        in folder: URL, _ appeared: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) -> GuestDragCancel {
+        watching = (folder, appeared)
+        return { [weak self] in self?.watching = nil }
+    }
+
+    /// Queues the read until ``grant(_:)``.
+    func coordinateRead(of url: URL, then granted: @escaping @MainActor @Sendable (GuestDragArrival?) -> Void) {
+        coordinating.append((url, granted))
+    }
+}
+
+/// A delivering drop's promises: whether its first promised item offers the
+/// whole-drop exchange and whether its paste location is taken, recording
+/// every call.
+@MainActor
+final class FakeGuestDragDrop: GuestDragDrop {
+    enum Call: Equatable {
+        case offers(item: Int)
+        case setPasteLocation(URL)
+        case request(item: Int)
+        case receivers
+    }
+
+    /// The items that offer their promised file URL, by index in drag order.
+    var offering: Set<Int>
+    /// Whether the paste location is taken.
+    var takesLocation: Bool
+    /// The source writing the whole drop at the paste location, once asked.
+    var onRequest: ((URL) -> Void)?
+    private let promises: [FakePromiseReceiver]
+    private(set) var calls: [Call] = []
+    private var location: URL?
+
+    init(offering: Set<Int> = [], takesLocation: Bool = true, receivers: [FakePromiseReceiver] = []) {
+        self.offering = offering
+        self.takesLocation = takesLocation
+        promises = receivers
+    }
+
+    func offersPromisedFileURL(item index: Int) -> Bool {
+        calls.append(.offers(item: index))
+        return offering.contains(index)
+    }
+
+    func setPasteLocation(_ folder: URL) -> Bool {
+        calls.append(.setPasteLocation(folder))
+        if takesLocation { location = folder }
+        return takesLocation
+    }
+
+    func requestPromisedFileURL(item index: Int) -> Bool {
+        calls.append(.request(item: index))
+        guard let location, offering.contains(index) else { return false }
+        onRequest?(location)
+        return true
+    }
+
+    func receivers() -> [any FilePromiseReceiving] {
+        calls.append(.receivers)
+        return promises
     }
 }
 
@@ -368,6 +459,6 @@ final class FakeGuestDragTypeIcons {
 extension GuestDragCatcher {
     /// A drop on the surface whose pasteboard holds no file promises.
     func performDragOperation() -> Bool {
-        performDragOperation(receivers: { [] })
+        performDragOperation(drop: FakeGuestDragDrop())
     }
 }

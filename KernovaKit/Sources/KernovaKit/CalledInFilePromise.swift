@@ -20,13 +20,16 @@ public struct CalledInFilePromise {
     /// none.
     public let files: [File]
 
-    /// Calls `receiver` in now, its files landing in `folder`.
+    /// Calls `receiver` in now, its files landing in `folder` and its source's reports arriving on
+    /// `operationQueue`, which a drop's call-ins may share.
     ///
     /// A source reports each file it writes, or fails, once. A report goes to the file of the name it lands
     /// under, or else to the first file still owed one; a report beyond the files named is not one of them.
-    public static func callIn(_ receiver: any FilePromiseReceiving, into folder: URL) -> CalledInFilePromise {
+    public static func callIn(
+        _ receiver: any FilePromiseReceiving, into folder: URL, operationQueue: OperationQueue = OperationQueue()
+    ) -> CalledInFilePromise {
         let reports = Reports()
-        receiver.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: OperationQueue()) {
+        receiver.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: operationQueue) {
             url, error in
             reports.record(url, error.map { .failure($0) } ?? .success(url))
         }

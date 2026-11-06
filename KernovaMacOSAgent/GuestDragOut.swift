@@ -19,16 +19,16 @@ import UniformTypeIdentifiers
 /// the guest pointer, so every step before that one either succeeds or refuses
 /// the take, and the host then hands the press back to the guest untouched.
 ///
-/// A file promise has no name until it is called in, which `NSFilePromiseReceiver.h`
+/// A file promise has no name until it is received, which `NSFilePromiseReceiver.h`
 /// says to do "once you are accepting the file promise", and an offer lists no
 /// folder's contents, so a drag the host takes goes out under stand-in names
 /// for its promises and no size for its folders. The drop the host asks to
-/// deliver — a Mac destination took the drag — calls the promises in, serves
-/// them from the taken offer, and names them on the take (`STEP_NAMED`), then
-/// walks the folders and ends the take `CAUGHT` with their sizes. The taken
-/// offer carries the drag throughout, and this side never withdraws it once
-/// taken. A drop that does not deliver, and a drag that never leaves the
-/// guest, calls nothing in.
+/// deliver — a Mac destination took the drag — receives the promises
+/// (``GuestDragPromises``), serves them from the taken offer, and names them
+/// on the take (`STEP_NAMED`), then walks the folders and ends the take
+/// `CAUGHT` with their sizes. The taken offer carries the drag throughout, and
+/// this side never withdraws it once taken. A drop that does not deliver, and
+/// a drag that never leaves the guest, receives nothing.
 ///
 /// Built once, for the session peer's life; the watcher runs only while DRAG
 /// is usable on the connection to the host.
@@ -47,6 +47,9 @@ final class GuestDragOut {
     /// The call-in each delivered drag's promises landed through, by its
     /// offer's token.
     private var callIns: [Data: GuestDragPromises.CallIn] = [:]
+    /// Each delivering drop whose source is still writing its promises, by
+    /// its take, with its offer's token.
+    private var arriving: [DragTakeID: (token: Data, arrivals: GuestDragPromises.Arrivals)] = [:]
 
     init(peer: any GuestDragOutPeer, system: GuestDragOutSystem, stagingRoot: ProcessStagingRoot) {
         let input = system.makeInput()
@@ -61,8 +64,8 @@ final class GuestDragOut {
         watcher.onPressEnded = { [weak catcher] press in catcher?.pressEnded(press) }
         let served = served
         catcher.onCarried = { claim, carried in _ = served.serve(claim.token, carried.sources) }
-        catcher.onDeliver = { [weak self] id, claim, carried, receivers in
-            self?.deliver(id, claim, carried, receivers: receivers)
+        catcher.onDeliver = { [weak self] id, claim, carried, drop in
+            self?.deliver(id, claim, carried, drop: drop)
         }
     }
 
@@ -92,9 +95,11 @@ final class GuestDragOut {
         }
     }
 
-    /// Take `id` is over without this side ending it.
+    /// Take `id` is over without this side ending it; a drop it delivers
+    /// whose files have not all arrived delivers nothing.
     func cancelled(_ id: DragTakeID) {
         catcher.cancelled(take: id)
+        if let pending = arriving.removeValue(forKey: id) { promises.abandon(pending.arrivals) }
     }
 
     /// This side's offer of `token` ended: the host released it, this side
@@ -103,9 +108,13 @@ final class GuestDragOut {
         watcher.forget(token: token)
         served.remove(token)
         if let callIn = callIns.removeValue(forKey: token) { promises.complete(callIn) }
+        for (id, pending) in arriving where pending.token == token {
+            arriving[id] = nil
+            promises.abandon(pending.arrivals)
+        }
     }
 
-    /// Ends everything drag-out holds on screen, and lets go of its called-in
+    /// Ends everything drag-out holds on screen, and lets go of its received
     /// promises once their reads settle.
     func stop() {
         watcher.stop()
@@ -113,6 +122,8 @@ final class GuestDragOut {
         served.removeAll()
         for callIn in callIns.values { promises.complete(callIn) }
         callIns.removeAll()
+        for pending in arriving.values { promises.abandon(pending.arrivals) }
+        arriving.removeAll()
     }
 
     // MARK: - Carrying
@@ -134,40 +145,80 @@ final class GuestDragOut {
     // MARK: - Delivering
 
     /// Delivers the drag `claim` names, caught on a drop take `id` asked to
-    /// deliver: calls its promises in through `receivers`, serves them from
-    /// the taken offer and names them on the take, then walks its folders and
-    /// ends the take `CAUGHT` with their sizes. A drag of plain files alone has
-    /// nothing to add, and one whose promises gave no names ends `CAUGHT`
-    /// undelivered.
+    /// deliver: receives its promises off `drop`, then ``named(_:_:_:_:folders:)``
+    /// serves and names them and sizes the folders. A drag of plain files
+    /// alone has nothing to add, and one whose promises gave no names ends
+    /// `CAUGHT` undelivered.
+    ///
+    /// Where the drag's first promised item offers its promised file URL, the
+    /// drop sets the paste location once and asks that item once, and the
+    /// drag is named once a file has arrived for every promised item; any
+    /// other drop, or one whose paste location or ask is refused, calls each
+    /// promise in through its own receiver.
     private func deliver(
         _ id: DragTakeID, _ claim: GuestDragWatcher.Claim, _ carried: GuestDragCatcher.Carried,
-        receivers: [any FilePromiseReceiving]
+        drop: any GuestDragDrop
     ) {
-        let promised = carried.items.contains { $0.fileURL == nil }
         let folders = Self.folders(of: carried)
-        guard promised || !folders.isEmpty else { return peer.answerTake(id, .caught(folderSizes: nil)) }
-        var names: [Data] = []
-        if promised {
-            let taken = carried.items.compactMap { $0.fileURL?.lastPathComponent }
-            guard let callIn = promises.callIn(carried.items, receivers: receivers, taken: taken) else {
+        guard let first = carried.items.firstIndex(where: { $0.fileURL == nil }) else {
+            guard !folders.isEmpty else { return peer.answerTake(id, .caught(folderSizes: nil)) }
+            peer.answerTake(id, .report(.named([])))
+            return measure(folders, take: id)
+        }
+        let taken = carried.items.compactMap { $0.fileURL?.lastPathComponent }
+        guard let folder = promises.makeFolder() else { return peer.answerTake(id, .caught(folderSizes: nil)) }
+        let refusal: String? =
+            if !drop.offersPromisedFileURL(item: first) {
+                "its first promised item offers no promised file URL"
+            } else if !drop.setPasteLocation(folder) {
+                "the drop's paste location was refused"
+            } else if !drop.requestPromisedFileURL(item: first) {
+                "its first promised item's promised file URL could not be read"
+            } else {
+                nil
+            }
+        if let refusal {
+            Self.logger.log(.notice, "Calling each of the drag's promises in: \(refusal, privacy: .public)")
+            guard
+                let callIn = promises.callIn(
+                    carried.items, receivers: drop.receivers(), taken: taken, into: folder)
+            else {
                 Self.logger.log(.notice, "The drag's promises could not all be named; the host gets them unnamed")
                 return peer.answerTake(id, .caught(folderSizes: nil))
             }
-            guard
-                let offered = GuestDraggedItems.offerItems(
-                    carried.items, resolvedFiles: carried.intake, promises: callIn.offered)
-            else {
-                promises.complete(callIn)
-                return peer.answerTake(id, .caught(folderSizes: nil))
-            }
-            guard served.serve(claim.token, offered.map(\.source)) else {
-                promises.complete(callIn)
-                return peer.answerTake(id, .caught(folderSizes: nil))
-            }
-            callIns[claim.token] = callIn
-            names = carried.items.indices.compactMap { callIn.offered[$0].map { Data($0.name.utf8) } }
+            return named(id, claim, carried, callIn, folders: folders)
         }
+        Self.logger.log(.notice, "Asked the drag's source for every promise at once")
+        let arrivals = promises.awaitArrivals(carried.items, into: folder, taken: taken, input: input) {
+            [weak self] callIn in
+            guard let self, self.arriving.removeValue(forKey: id) != nil else { return }
+            self.named(id, claim, carried, callIn, folders: folders)
+        }
+        arriving[id] = (claim.token, arrivals)
+    }
+
+    /// Serves `callIn`'s promises from the taken offer of `claim`, names them
+    /// on take `id`, then sizes `folders` and ends the take `CAUGHT`.
+    private func named(
+        _ id: DragTakeID, _ claim: GuestDragWatcher.Claim, _ carried: GuestDragCatcher.Carried,
+        _ callIn: GuestDragPromises.CallIn, folders: [Int: URL]
+    ) {
+        guard
+            let offered = GuestDraggedItems.offerItems(
+                carried.items, resolvedFiles: carried.intake, promises: callIn.offered),
+            served.serve(claim.token, offered.map(\.source))
+        else {
+            promises.complete(callIn)
+            return peer.answerTake(id, .caught(folderSizes: nil))
+        }
+        callIns[claim.token] = callIn
+        let names = carried.items.indices.compactMap { callIn.offered[$0].map { Data($0.name.utf8) } }
         peer.answerTake(id, .report(.named(names)))
+        measure(folders, take: id)
+    }
+
+    /// Sizes `folders` and ends take `id` `CAUGHT` with their sizes.
+    private func measure(_ folders: [Int: URL], take id: DragTakeID) {
         input.measureFolders(folders) { [weak self] sizes in
             let sized = folders.keys.sorted().map { UInt64(max(sizes[$0] ?? 0, 0)) }
             self?.peer.answerTake(id, .caught(folderSizes: sized))
@@ -252,6 +303,49 @@ protocol GuestDragInput: AnyObject {
     /// walk of its tree, the only read of a folder's contents a drag makes
     /// before the host pulls it — and hands the sizes back on it.
     func measureFolders(_ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void)
+
+    /// Calls `appeared` on the main actor with each entry of `folder` not
+    /// hidden by a leading dot, once, as it appears — every one already there
+    /// included — until cancelled.
+    func watchEntries(
+        in folder: URL, _ appeared: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) -> GuestDragCancel
+
+    /// Asks for a coordinated read of `url` (`NSFileCoordinator`), handing
+    /// back on the main actor what it holds once the read is granted, or nil
+    /// when it is neither a file nor a folder or the read failed. A writer
+    /// that coordinates is done with the file by the time it is granted.
+    func coordinateRead(of url: URL, then granted: @escaping @MainActor @Sendable (GuestDragArrival?) -> Void)
+}
+
+/// One entry a coordinated read was granted on.
+struct GuestDragArrival: Equatable, Sendable {
+    let url: URL
+    /// Whether it is a folder; otherwise it is a regular file.
+    let isFolder: Bool
+}
+
+/// What a delivering drop on the catcher reads of the drag's file promises:
+/// the drag pasteboard as the Pasteboard Manager (`Pasteboard.h`) sees it,
+/// for a drop received whole, and its `NSFilePromiseReceiver`s, for one whose
+/// promises are each called in. Read only while the drop is under way.
+@MainActor
+protocol GuestDragDrop: AnyObject {
+    /// Whether the drag's item `index`, in drag order, offers its promised
+    /// file URL (`kPasteboardTypeFileURLPromise`).
+    func offersPromisedFileURL(item index: Int) -> Bool
+
+    /// Sets the drop's paste location to `folder`, returning false when it is
+    /// refused.
+    func setPasteLocation(_ folder: URL) -> Bool
+
+    /// Reads item `index`'s promised file URL, which asks its source to write
+    /// the promise at the paste location, returning false when the read
+    /// fails.
+    func requestPromisedFileURL(item index: Int) -> Bool
+
+    /// The drop's file promises, one per promised item, in drag order.
+    func receivers() -> [any FilePromiseReceiving]
 }
 
 /// The on-screen window that receives the guest's drag once the host has taken

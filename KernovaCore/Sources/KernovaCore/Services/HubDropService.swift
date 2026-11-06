@@ -85,7 +85,8 @@ package final class HubDropService: Sendable {
                 return true
             }
             staging = directory
-            promises = receivers.map { CalledInFilePromise.callIn($0, into: directory) }
+            let queue = OperationQueue()
+            promises = receivers.map { CalledInFilePromise.callIn($0, into: directory, operationQueue: queue) }
         }
         Task { @MainActor [self, staging, promises] in
             let outcome = await ClipboardPasteboardReader.readDropOffer(from: pasteboard, promises: promises)

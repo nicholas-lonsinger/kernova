@@ -935,12 +935,14 @@ struct GuestDragOutTests {
     }
 
     /// Drops the drag `items` take 1 carries on the catcher, the host having
-    /// asked it to deliver when `delivering`.
-    private func drop(_ rig: Rig, _ items: [GuestDragItem], delivering: Bool = true) {
+    /// asked it to deliver when `delivering`, its promises read off `drop` —
+    /// by default one calling each promise in through the rig's receivers.
+    private func drop(
+        _ rig: Rig, _ items: [GuestDragItem], delivering: Bool = true, drop: FakeGuestDragDrop? = nil
+    ) {
         rig.enter(items)
         if delivering { rig.dragOut.control(takeID(1), .deliver) }
-        let receivers = rig.input.receivers
-        _ = rig.catcher.performDragOperation(receivers: { receivers })
+        _ = rig.catcher.performDragOperation(drop: drop ?? FakeGuestDragDrop(receivers: rig.input.receivers))
         rig.catcher.concludeDragOperation()
     }
 
@@ -1092,7 +1094,7 @@ struct GuestDragOutTests {
     }
 
     @Test("a drag carrying another count of promises than its promised items calls none in")
-    func aPromiseCountMismatchCallsNothingIn() throws {
+    func aPromiseCountMismatchCallsNothingIn() async throws {
         let only = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
         let (rig, items) = try promiseRig(["public.heic", "public.jpeg"], receivers: [only])
         try rig.take(1)
@@ -1101,7 +1103,142 @@ struct GuestDragOutTests {
 
         #expect(!only.wasCalledIn)
         #expect(rig.peer.answers(to: takeID(1)).last == .caught(folderSizes: nil))
-        #expect(!exists(rig.promiseFolders))
+        await rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: rig.promiseFolders.path).isEmpty)
+    }
+
+    // MARK: - Receiving the whole drop at once
+
+    /// A promise rig the host took as take 1 whose drag of a plain file and a
+    /// promise of each of `promised` is dropped to deliver, its first promised
+    /// item offering the whole-drop exchange; with the drop and the folder its
+    /// paste location names.
+    private func wholeDropRig(
+        _ promised: [String], receivers: [FakePromiseReceiver] = []
+    ) throws -> (rig: Rig, drop: FakeGuestDragDrop, folder: URL) {
+        let (rig, items) = try promiseRig(
+            promised, receivers: receivers.isEmpty ? promised.map { _ in FakePromiseReceiver(names: []) } : receivers)
+        try rig.take(1)
+        let wholeDrop = FakeGuestDragDrop(offering: [1], receivers: rig.input.receivers)
+        drop(rig, items, drop: wholeDrop)
+        return (rig, wholeDrop, try #require(rig.input.watchedFolder))
+    }
+
+    /// Writes `name` into `folder` as the drag's source places a finished
+    /// file, whole in one step.
+    @discardableResult
+    private func place(_ name: String, in folder: URL, bytes: Int = 8) throws -> URL {
+        let url = folder.appendingPathComponent(name)
+        try Data(repeating: 7, count: bytes).write(to: url)
+        return url
+    }
+
+    @Test("a drop whose first promise offers its promised file URL sets the paste location once and asks it once")
+    func aWholeDropAsksOnce() throws {
+        let (rig, wholeDrop, folder) = try wholeDropRig(["public.jpeg", "public.jpeg", "public.jpeg"])
+
+        #expect(wholeDrop.calls == [.offers(item: 1), .setPasteLocation(folder), .request(item: 1)])
+        #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
+        #expect(rig.input.receivers.allSatisfy { !$0.wasCalledIn })
+        // Nothing is named before the files arrive.
+        #expect(
+            rig.peer.answers(to: takeID(1)) == [
+                .armed, .targeted(["plain.txt", "Untitled.jpeg", "Untitled.jpeg", "Untitled.jpeg"]), .delivering,
+            ])
+    }
+
+    @Test("a whole drop relays each file only once its coordinated read is granted, naming the drag once all are")
+    func aWholeDropRelaysOnlyGrantedFiles() throws {
+        let (rig, _, folder) = try wholeDropRig(["public.jpeg", "public.jpeg"])
+        let token = try rig.token()
+        let served = rig.dragOut.served
+        let first = try place("IMG_00001.jpg", in: folder)
+        let second = try place("IMG_00002.jpg", in: folder)
+
+        rig.input.appear(["IMG_00001.jpg", "IMG_00002.jpg"])
+
+        #expect(rig.input.coordinationsWaiting.map(\.lastPathComponent) == ["IMG_00001.jpg", "IMG_00002.jpg"])
+        #expect(failureCode(served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+        rig.input.grant("IMG_00001.jpg")
+        // One of two granted: still nothing named, nothing relayed.
+        #expect(!rig.peer.answers(to: takeID(1)).contains { if case .named = $0 { true } else { false } })
+        #expect(failureCode(served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+
+        rig.input.grant("IMG_00002.jpg")
+
+        #expect(
+            Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
+                .named(["IMG_00001.jpg", "IMG_00002.jpg"]), .caught(folderSizes: []),
+            ])
+        #expect(served.content(request(token, item: 1)) == .success(.tree(path: first.path)))
+        #expect(served.content(request(token, item: 2)) == .success(.tree(path: second.path)))
+        #expect(rig.input.watchedFolder == nil)
+    }
+
+    @Test("a whole drop gives each arriving file to the first waiting promise of its kind")
+    func aWholeDropMatchesKinds() throws {
+        let (rig, _, folder) = try wholeDropRig(["public.folder", "public.jpeg"])
+        let photo = try place("IMG_00001.jpg", in: folder)
+        let album = folder.appendingPathComponent("Album", isDirectory: true)
+        try FileManager.default.createDirectory(at: album, withIntermediateDirectories: false)
+
+        rig.input.appear(["IMG_00001.jpg"])
+        rig.input.grant("IMG_00001.jpg")
+        rig.input.appear(["Album"])
+        rig.input.grant("Album")
+
+        #expect(rig.peer.answers(to: takeID(1)).contains(.named(["Album", "IMG_00001.jpg"])))
+        let token = try rig.token()
+        #expect(rig.dragOut.served.content(request(token, item: 1)) == .success(.tree(path: album.path)))
+        #expect(rig.dragOut.served.content(request(token, item: 2)) == .success(.tree(path: photo.path)))
+    }
+
+    @Test(
+        "a whole drop the drag ends before every promise has a file names nothing, serves nothing, and goes",
+        arguments: [true, false])
+    func aShortWholeDropDeliversNothing(offerEnds: Bool) async throws {
+        let (rig, _, folder) = try wholeDropRig(["public.jpeg", "public.jpeg"])
+        let token = try rig.token()
+        try place("IMG_00001.jpg", in: folder)
+        try place("IMG_00002.jpg", in: folder)
+        rig.input.appear(["IMG_00001.jpg", "IMG_00002.jpg"])
+        rig.input.grant("IMG_00001.jpg")
+
+        if offerEnds { rig.dragOut.offerEnded(token) } else { rig.dragOut.cancelled(takeID(1)) }
+
+        #expect(rig.input.watchedFolder == nil)
+        // A file granted after the drag ended changes nothing.
+        rig.input.grant("IMG_00002.jpg")
+        #expect(!rig.peer.answers(to: takeID(1)).contains { if case .named = $0 { true } else { false } })
+        #expect(
+            failureCode(rig.dragOut.served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+        await rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
+        #expect(!exists(folder))
+    }
+
+    @Test(
+        "a drop calls each promise in when its first promise offers no promised file URL or its paste location is refused",
+        arguments: [false, true])
+    func aDropWithoutTheWholeDropCallsEachPromiseIn(offersWholeDrop: Bool) throws {
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let (rig, items) = try promiseRig(["public.heic"], receivers: [photo])
+        try rig.take(1)
+        let fallback = FakeGuestDragDrop(
+            offering: offersWholeDrop ? [1] : [], takesLocation: false, receivers: [photo])
+
+        drop(rig, items, drop: fallback)
+
+        let folder = try #require(photo.destination)
+        #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
+        #expect(
+            fallback.calls
+                == (offersWholeDrop
+                    ? [.offers(item: 1), .setPasteLocation(folder), .receivers] : [.offers(item: 1), .receivers]))
+        #expect(rig.input.watchedFolder == nil)
+        #expect(
+            Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
+                .named(["IMG_0001.HEIC"]), .caught(folderSizes: []),
+            ])
     }
 
     @Test("a drag that stays in the guest calls nothing in")
