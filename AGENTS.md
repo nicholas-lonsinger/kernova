@@ -80,6 +80,8 @@ An optional-returning API called with a compile-time constant gets `assertionFai
 
 A host↔guest feature is designed for every guest OS that has a Kernova agent, and each agent offers it where its platform can deliver it; where one can't, the capability is absent on that OS. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
 
+The shared design also serves Windows guests, which have no agent: OS calls stay behind the per-OS layer, and the wire format and shared models hold nothing only a POSIX system can express.
+
 ### Current-Only Surfaces
 
 No compatibility path is written for any shape that is not the current one. A name a user types — a scripting term included — is a shape: renaming it keeps no synonym for scripts written against the old one.
