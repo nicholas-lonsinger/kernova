@@ -24,13 +24,17 @@ public final class PeerAgentRuntime: Sendable {
         public var event: @Sendable (PeerEvent) -> Void
         /// The agent stops for good; the shell exits with status 0.
         public var stop: @Sendable (StopReason) -> Void
+        /// ``PeerAgentRuntime/hostConnection`` changed to this.
+        public var hostConnectionChanged: @Sendable (HostConnectionState) -> Void
 
         /// Creates the handlers.
         public init(
             event: @escaping @Sendable (PeerEvent) -> Void = { _ in },
+            hostConnectionChanged: @escaping @Sendable (HostConnectionState) -> Void = { _ in },
             stop: @escaping @Sendable (StopReason) -> Void
         ) {
             self.event = event
+            self.hostConnectionChanged = hostConnectionChanged
             self.stop = stop
         }
     }
@@ -60,6 +64,7 @@ public final class PeerAgentRuntime: Sendable {
         var timer = TimerSlot()
         var closeCompletions: [@Sendable () -> Void] = []
         var items = ItemRequests<ConnectionGeneration>()
+        var hostConnection = HostConnectionState.connecting
     }
 
     /// A runtime for a peer claiming `claim`, whose `instanceID` it replaces with 16 bytes it draws once.
@@ -89,6 +94,11 @@ public final class PeerAgentRuntime: Sendable {
                 update: registry.update == nil
                     ? .absent(.notImplemented, debugDetail: unregistered)
                     : .absent(.unspecified, debugDetail: "not yet reported")))
+    }
+
+    /// The connection to the host, as the connections' events leave it.
+    public var hostConnection: HostConnectionState {
+        state.withLock { $0.hostConnection }
     }
 
     /// Starts the adapters and dials.
@@ -328,6 +338,12 @@ public final class PeerAgentRuntime: Sendable {
     }
 
     private func connectionEvent(_ event: PeerEvent, _ generation: ConnectionGeneration) {
+        let changed = state.withLock { state -> HostConnectionState? in
+            let next = state.hostConnection.after(event)
+            defer { state.hostConnection = next }
+            return next == state.hostConnection ? nil : next
+        }
+        if let changed { handlers.hostConnectionChanged(changed) }
         switch event {
         case .policyReceived:
             step { agent, now in agent.policyReceived(generation, now: now) }
