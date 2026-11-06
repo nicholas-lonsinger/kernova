@@ -4,6 +4,22 @@ import KernovaLogging
 import KernovaSynchronization
 import System
 
+/// What a staging root's removals go through when something outside the staging may name a file in what goes: a
+/// pasteboard item never outlives the file it names, so every one naming a file in it is withdrawn first.
+public protocol StagedContentRetirement: Sendable {
+    /// This process's own staging at `directories` is going: withdraws every pasteboard item this process wrote
+    /// that names a file there, then runs `remove`, both off the caller's stack. Called from any thread.
+    func retire(_ directories: [URL], then remove: @escaping @Sendable () -> Void)
+
+    /// Exited processes' staging roots at `roots` are going: withdraws every item of the pasteboard that names a
+    /// file there, then runs `remove`, both off the caller's stack. Called from any thread.
+    func retireAbandoned(_ roots: [URL], then remove: @escaping @Sendable () -> Void)
+
+    /// This process is ending, leaving its staging at `root` for the next launch to reclaim: withdraws now every
+    /// pasteboard item it wrote that names a file there.
+    @MainActor func processEnding(_ root: URL)
+}
+
 /// One process's own directory under a staging parent that several processes
 /// share, locked for as long as the process holds this object.
 ///
@@ -27,10 +43,41 @@ public final class ProcessStagingRoot: Sendable {
     /// Held across ``claim()``'s file-system work, which it serializes.
     private let directoryLock = Locked<ExclusiveFileLock?>(nil)
 
-    /// A root under `parent`; touches no disk.
-    public init(parent: URL) {
+    /// What every removal under the parent goes through; nil where nothing outside the staging names a file in it.
+    private let retirement: (any StagedContentRetirement)?
+
+    /// A root under `parent` whose removals go through `retirement`; touches no disk.
+    public init(parent: URL, retirement: (any StagedContentRetirement)? = nil) {
         self.parent = parent
+        self.retirement = retirement
         url = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    /// Removes `directory`, staged under this root, once nothing this process wrote names a file in it
+    /// (``StagedContentRetirement/retire(_:then:)``): at once with no retirement. What is already gone is not a
+    /// failure.
+    func remove(_ directory: URL) {
+        guard let retirement else { return Self.discard(directory) }
+        retirement.retire([directory]) { Self.discard(directory) }
+    }
+
+    /// This process is ending: every pasteboard item it wrote that names a file under ``url`` is withdrawn now,
+    /// and the root is left for the next launch's ``reclaimAbandonedRoots(then:)``.
+    @MainActor public func processEnding() {
+        retirement?.processEnding(url)
+    }
+
+    /// Removes `url` outright, whatever its depth or modes. Nothing is left to notice the failure but the log:
+    /// every caller is already giving the content up.
+    static func discard(_ url: URL) {
+        do {
+            try StagedItemRemoval.remove(at: url)
+        } catch Errno.noSuchFileOrDirectory {
+            // Already gone.
+        } catch {
+            logger.log(
+                .error, "Could not remove staged content: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Makes sure ``url`` is a directory this object holds the lock on: builds
@@ -120,24 +167,21 @@ public final class ProcessStagingRoot: Sendable {
         return entry.st_dev == locked.st_dev && entry.st_ino == locked.st_ino
     }
 
-    /// Removes every visible entry under the parent whose lock no process
-    /// holds: an exited process's root, and anything else left there.
+    /// Removes every visible entry under the parent whose lock no process holds — an exited process's root, and
+    /// anything else left there — once nothing on the pasteboard names a file in one
+    /// (``StagedContentRetirement/retireAbandoned(_:then:)``), then runs `done`.
     ///
-    /// A root some process holds is kept, this process's own included; a
-    /// hidden entry is a root still being built and is never judged. Safe to
-    /// run from any process at any time, before or after ``claim()``.
-    public func reclaimAbandonedRoots() {
+    /// A root some process holds is kept, this process's own included; a hidden entry is a root still being built
+    /// and is never judged. Each entry taken stays locked until it is gone, so no other reclaimer takes it too.
+    /// Safe to run from any process at any time, before or after ``claim()``.
+    public func reclaimAbandonedRoots(then done: @escaping @Sendable () -> Void = {}) {
         let manager = FileManager.default
-        guard
-            let entries = try? manager.contentsOfDirectory(
-                at: parent, includingPropertiesForKeys: nil)
-        else { return }
+        var abandoned: [(entry: URL, lock: ExclusiveFileLock)] = []
+        let entries = (try? manager.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)) ?? []
         for entry in entries where !entry.lastPathComponent.hasPrefix(".") {
             do {
-                // Held while the entry is removed, so any other reclaimer's
-                // try-lock on it is refused until it is gone.
-                guard let abandoned = try ExclusiveFileLock.tryAcquire(at: entry) else { continue }
-                try withExtendedLifetime(abandoned) { try StagedItemRemoval.remove(at: entry) }
+                guard let lock = try ExclusiveFileLock.tryAcquire(at: entry) else { continue }
+                abandoned.append((entry, lock))
             } catch Errno.noSuchFileOrDirectory {
                 // Another reclaimer removed it first.
             } catch {
@@ -147,5 +191,14 @@ public final class ProcessStagingRoot: Sendable {
                 )
             }
         }
+        let taken = abandoned
+        let removeAll: @Sendable () -> Void = {
+            for (entry, lock) in taken {
+                withExtendedLifetime(lock) { Self.discard(entry) }
+            }
+            done()
+        }
+        guard let retirement, !taken.isEmpty else { return removeAll() }
+        retirement.retireAbandoned(taken.map(\.entry), then: removeAll)
     }
 }

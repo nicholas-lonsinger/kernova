@@ -17,8 +17,11 @@ import KernovaWire
 /// files promised.
 @MainActor
 final class GuestClipboard {
-    nonisolated private static let logger = KernovaLogger(
+    /// The logger a clipboard logs through unless it is built with another.
+    nonisolated static let defaultLogger = KernovaLogger(
         subsystem: "app.kernova.macosagent", category: "GuestClipboard")
+
+    private let logger: KernovaLogger
 
     /// The exchange both directions run through.
     let exchange: ClipboardItemExchange
@@ -54,35 +57,32 @@ final class GuestClipboard {
     private(set) var activity: ClipboardActivity = .disabled
 
     /// A clipboard over `pasteboard`, landing the host's representations and calling in copied promises under
-    /// `stagingRoot`, and raising `onNotice` when a refusal lands in ``activity``. A paste lands no more than
-    /// `pasteCeiling` bytes until the host's policy sets it.
+    /// `stagingRoot`, logging through `logger`, and raising `onNotice` when a refusal lands in ``activity``. A paste
+    /// lands no more than `pasteCeiling` bytes until the host's policy sets it.
     init(
         pasteboard: any ClipboardPasteboard, stagingRoot: ProcessStagingRoot,
-        pasteCeiling: Int = ClipboardPasteLimit.defaultBytes, onNotice: @escaping @Sendable () -> Void = {}
+        pasteCeiling: Int = ClipboardPasteLimit.defaultBytes, logger: KernovaLogger = GuestClipboard.defaultLogger,
+        onNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
+        self.logger = logger
         self.onNotice = onNotice
         let ceiling = Locked(pasteCeiling)
         self.pasteCeiling = ceiling
         exchange = ClipboardItemExchange(
             side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: { ceiling.withLock { $0 } },
-            logger: Self.logger)
+            logger: logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         snapshotStaging = .leased(label: "agent-copies", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         seenChangeCount = pasteboard.changeCount
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
-        exchange.onRemoteOfferEnded = { [weak self] remote, ending in
-            switch ending {
-            case .byFarSide: self?.retract(remote, withdrawing: .everyPromise)
-            case .passthroughStopped, .linkLost: self?.retract(remote, withdrawing: .unread)
-            case .superseded: if self?.published === remote { self?.published = nil }
-            }
-        }
+        exchange.onRemoteOfferEnded = { [weak self] in self?.retract($0, $1) }
         exchange.onCopyAsked = { [weak self] in self?.sendSnapshot(answering: $0) }
         exchange.onCopyReceived = { [weak self] in self?.write($0) }
-        exchange.onCopyEnded = { [weak self] copy in self?.retractWrite(servingOffer: copy.token, withdrawing: .unread)
+        exchange.onCopyEnded = { [weak self] copy, ending in
+            self?.retractWrite(servingOffer: copy.token, withdrawing: .unread, of: .copy, because: .ended(ending))
         }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
@@ -120,7 +120,7 @@ final class GuestClipboard {
             defer { held = ceiling }
             return held != ceiling
         }
-        if changed { Self.logger.log(.notice, "The host sets the paste ceiling to \(ceiling, privacy: .public) bytes") }
+        if changed { logger.log(.notice, "The host sets the paste ceiling to \(ceiling, privacy: .public) bytes") }
         let was = isOffering
         passthrough = value?.passthrough ?? false
         gateChanged(from: was)
@@ -162,7 +162,7 @@ final class GuestClipboard {
     private func gateChanged(from was: Bool) {
         guard isOffering != was else { return }
         guard isOffering else { return exchange.withdrawLocal(passthrough ? .cancelled : .disabledByPolicy) }
-        Self.logger.log(.notice, "Copies on the clipboard are offered to the host from now on")
+        logger.log(.notice, "Copies on the clipboard are offered to the host from now on")
         seenChangeCount = pasteboard.changeCount
     }
 
@@ -236,17 +236,17 @@ final class GuestClipboard {
                 activity = lost > 0 ? .copyPartlyCarried(skipped: lost) : .sentToHost
                 if lost > 0 { onNotice() }
             case .nothing:
-                Self.logger.log(.notice, "The host asked for the clipboard, which holds nothing to copy")
+                logger.log(.notice, "The host asked for the clipboard, which holds nothing to copy")
                 exchange.decline(ask, WireError(.clipboardNothingToCopy))
             case .unreadable:
-                Self.logger.log(.notice, "The host asked for the clipboard, whose files this agent cannot read")
+                logger.log(.notice, "The host asked for the clipboard, whose files this agent cannot read")
                 exchange.decline(ask, WireError(.readFailed))
                 activity = .copyCarriedNothing
                 onNotice()
             case .changed:
                 exchange.decline(ask, WireError(.cancelled, debugDetail: "the clipboard kept changing as it was read"))
             case .tooLarge(let limitBytes):
-                Self.logger.log(.notice, "The host asked for the clipboard, which is over the paste ceiling")
+                logger.log(.notice, "The host asked for the clipboard, which is over the paste ceiling")
                 exchange.decline(ask, WireError(.tooLarge, limit: UInt64(limitBytes)))
             }
         }
@@ -274,14 +274,14 @@ final class GuestClipboard {
     /// pasteboard changed since `arrivedAt`.
     private func writeLanded(_ copy: ClipboardRemoteOffer, arrivedAt: Int, leftOut: Int) {
         guard pasteboard.changeCount == arrivedAt else {
-            Self.logger.log(.notice, "The clipboard changed before the host's copy landed: left as it is")
+            logger.log(.notice, "The clipboard changed before the host's copy landed: left as it is")
             exchange.refuseCopy(copy, WireError(.clipboardChanged))
             return
         }
         let ceiling = pasteCeilingBytes
         let plan = ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom)
         guard plan != .tooLarge else {
-            Self.logger.log(.notice, "The host's copy is files over the paste ceiling alone: not written")
+            logger.log(.notice, "The host's copy is files over the paste ceiling alone: not written")
             exchange.refuseCopy(copy, WireError(.tooLarge, limit: UInt64(ceiling)))
             activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
             onNotice()
@@ -294,11 +294,11 @@ final class GuestClipboard {
         if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
             guard leftOut == 0 else {
-                Self.logger.log(.notice, "Nothing the host's copy named of this agent's clipboard remains: not written")
+                logger.log(.notice, "Nothing the host's copy named of this agent's clipboard remains: not written")
                 exchange.refuseCopy(copy, WireError(.clipboardPartsGone))
                 return
             }
-            Self.logger.log(.error, "The host's clipboard copy could not be written to the pasteboard")
+            logger.log(.error, "The host's clipboard copy could not be written to the pasteboard")
             exchange.refuseCopy(copy, WireError(.writeFailed))
             return writeRefused()
         }
@@ -334,13 +334,13 @@ final class GuestClipboard {
             serving: remote.serving)
         if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
-            Self.logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
+            logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
             exchange.release(remote)
             return writeRefused()
         }
         published = remote
         if budget.exceeds {
-            Self.logger.log(
+            logger.log(
                 .notice,
                 "The host's files total \(budget.total, privacy: .public) bytes, over the \(ceiling, privacy: .public)-byte paste ceiling: published without them"
             )
@@ -363,26 +363,40 @@ final class GuestClipboard {
     private func pullFailed(_ error: WireError) {
         guard error.code == .tooLarge else { return }
         let ceiling = pasteCeilingBytes
-        Self.logger.log(
+        logger.log(
             .notice, "A paste of the host's clipboard is over the \(ceiling, privacy: .public)-byte paste ceiling")
         activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
         onNotice()
     }
 
-    /// The host's offer ended — its clipboard moved on, passthrough stopped, or the connection carrying it
-    /// left: a promise still standing for it could serve only what already landed, so `withdrawal`'s promises
-    /// are withdrawn, unless a copy has replaced it since. The host's next connection offers only its next copy.
-    private func retract(_ remote: ClipboardRemoteOffer, withdrawing withdrawal: ClipboardWithdrawal) {
+    /// The host's offer stopped being this clipboard, as `ending` says. A promise still standing for it could serve
+    /// only what already landed, so its write is retracted, unless a copy has replaced it since: every promise
+    /// when the host's clipboard moved on, and what no paste had when passthrough stopped or the connection carrying
+    /// it left, since the host may hold it still. The host's next connection offers only its next copy.
+    private func retract(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         guard published === remote else { return }
         published = nil
-        retractWrite(servingOffer: remote.token, withdrawing: withdrawal)
+        let withdrawal: ClipboardWithdrawal
+        switch ending {
+        case .superseded: return
+        case .byFarSide: withdrawal = .everyPromise
+        case .passthroughStopped, .linkLost: withdrawal = .unread
+        }
+        retractWrite(servingOffer: remote.token, withdrawing: withdrawal, of: .clipboard, because: .ended(ending))
     }
 
-    /// Withdraws `withdrawal`'s promises of this agent's write serving the offer `token`, if the pasteboard
-    /// still holds it, as this agent's own change: the poll must not read it as a copy.
-    private func retractWrite(servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal) {
-        guard publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) != nil else { return }
+    /// Withdraws `withdrawal`'s promises of this agent's write of `write` serving the offer `token`, if the
+    /// pasteboard still holds it, as this agent's own change — the poll must not read it as a copy — and logs what
+    /// that took back and its `cause`.
+    private func retractWrite(
+        servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal, of write: ClipboardRetractionLog.Write,
+        because cause: ClipboardRetractionLog.Cause
+    ) {
+        guard let retraction = publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) else { return }
         seenChangeCount = pasteboard.changeCount
+        if let line = ClipboardRetractionLog.line(retraction, of: write, on: .guest, because: cause) {
+            logger.log(.notice, "\(line, privacy: .public)")
+        }
     }
 
     /// Stops polling; the pasteboard's promises keep serving what already landed.

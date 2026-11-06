@@ -27,10 +27,13 @@ struct HubClipboardServiceTests {
     private static let clipboard = FeatureStatusTable([(feature: .clipboard, status: .available(Data()))])
     private static let guestToken = Data(repeating: 7, count: 16)
 
-    /// A running macOS VM whose hub's one connection is a session peer on the console carrying CLIPBOARD.
-    private func connected(_ probe: AgentHubProbe) async throws -> VMInstance {
+    /// A running macOS VM staging under `stagingRoot`, whose hub's one connection is a session peer on the
+    /// console carrying CLIPBOARD.
+    private func connected(
+        _ probe: AgentHubProbe, stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot
+    ) async throws -> VMInstance {
         let instance = VMInstanceFixture.make(
-            guestOS: .macOS, phase: .running(sessionID: UUID()), agentConnector: probe)
+            guestOS: .macOS, phase: .running(sessionID: UUID()), agentConnector: probe, stagingRoot: stagingRoot)
         instance.beginSessionContextForTesting()
         instance.attachAgentTransport(probe)
         try await probe.changed.wait { probe.isStarted }
@@ -972,30 +975,6 @@ struct HubClipboardServiceTests {
         #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
     }
 
-    @Test("What a retraction of the guest's write took back is logged: all of it, part of it, or nothing, no line")
-    func retractionLines() {
-        func line(_ retraction: ClipboardRetraction?, _ what: HubClipboardService.Retracted) -> String? {
-            HubClipboardService.retractionLine(retraction, of: what, vm: "macOS TEST", why: "passthrough stopped")
-        }
-        #expect(
-            line(.cleared, .clipboard)
-                == "Retracted the guest's clipboard from the host pasteboard for 'macOS TEST': passthrough stopped")
-        #expect(
-            line(.keptPart, .clipboard)
-                == "Retracted part of the guest's clipboard from the host pasteboard for 'macOS TEST', the rest kept: passthrough stopped"
-        )
-        #expect(
-            line(.cleared, .copy)
-                == "Retracted the guest's copy from the host pasteboard for 'macOS TEST': passthrough stopped")
-        #expect(
-            line(.keptPart, .copy)
-                == "Retracted the guest's copied files from the host pasteboard for 'macOS TEST', the rest of the copy kept: passthrough stopped"
-        )
-        #expect(line(.keptEverything, .clipboard) == nil)
-        #expect(line(.keptEverything, .copy) == nil)
-        #expect(line(nil, .clipboard) == nil)
-    }
-
     @Test("Copy to Mac from a guest clipboard holding nothing writes nothing and says so")
     func copyToMacOfNothing() async throws {
         let probe = AgentHubProbe()
@@ -1810,6 +1789,142 @@ struct HubClipboardServiceTests {
         // Nothing was taken back, so no retraction is logged.
         #expect(retractions.outcomes == [.keptEverything])
         #expect(instance.clipboardTransferReport == .idle)
+    }
+
+    // MARK: - A pasted file and its staging
+
+    /// Has passthrough write the guest's offer of a text item and a file item to the Mac, a paste on the Mac take
+    /// every type of both, and the connection end: what was pasted stays, as data. Returns the staged file the
+    /// second item's `public.file-url` names, and the passthrough to stop.
+    private func keepPastedFile(
+        _ instance: VMInstance, _ probe: AgentHubProbe
+    ) async throws -> (file: URL, passthrough: ClipboardPassthroughCoordinator) {
+        let coordinator = try startPassthrough(instance)
+        let pasteboard = try hostPasteboard(instance)
+        try await passthroughWrites(Self.text, Self.textAndFile, into: instance, on: probe)
+        #expect(
+            try await paste(Self.textType, item: 0, landing: Data("text".utf8), stream: 3, instance, probe) != nil)
+        #expect(
+            try await paste(Self.textType, item: 1, landing: Data("a.bin".utf8), stream: 5, instance, probe) != nil)
+        let served = try #require(
+            try await paste(.fileURL, item: 1, landing: Data("the guest's file".utf8), stream: 7, instance, probe))
+        let file = try #require(URL(string: String(decoding: served, as: UTF8.self)))
+
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await waitForChange { !instance.hubClipboard.isConnected }
+        await probe.settle()
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem.last?[.fileURL] == served)
+        #expect(try Data(contentsOf: file) == Data("the guest's file".utf8))
+        return (file, coordinator)
+    }
+
+    private func refusals(of token: Data, _ probe: AgentHubProbe) -> Int {
+        probe.commands.filter { if case .items(.refuse(token, _)) = $0 { true } else { false } }.count
+    }
+
+    @Test(
+        "A guest file pasted on the Mac goes whole, its name too, once later copies evict its staging; the rest stays")
+    func keptFileGoesWithItsStaging() async throws {
+        let staging = TestStagingRoot(retirement: ClipboardStagingRetirement())
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe, stagingRoot: staging.root)
+        let (file, passthrough) = try await keepPastedFile(instance, probe)
+        defer { passthrough.stop() }
+        let pasteboard = try hostPasteboard(instance)
+
+        // Three Copy Guest Clipboard to Mac whose text never lands each take a generation of staging, unwritten;
+        // the third evicts the pasted file's.
+        probe.deliver(.peerStateChanged(Self.onConsole), fromConnection: 0)
+        try await waitForChange { instance.hubClipboard.isConnected }
+        for attempt in 0..<3 {
+            let before = pulls(probe).count
+            _ = try await copyToMac(Self.text, on: probe, into: instance)
+            try await probe.changed.wait { pulls(probe).count == before + 1 }
+            let pull = open(pulls(probe)[before].id, stream: UInt32(101 + 2 * attempt), on: probe)
+            probe.deliver(
+                .items(.pullEnded(.clipboard, pull, .failed(WireError(.readFailed)))), fromConnection: 0)
+            try await probe.changed.wait { refusals(of: Self.copyToken, probe) == attempt + 1 }
+        }
+
+        try await pasteboard.changed.wait { pasteboard.dataByItem.count == 1 }
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("text".utf8)]])
+        try await staging.removals.wait { !FileManager.default.fileExists(atPath: file.path) }
+    }
+
+    @Test("The app ending withdraws a guest file pasted on the Mac whole, its name too, and leaves the file")
+    func appEndingWithdrawsTheKeptFile() async throws {
+        let staging = TestStagingRoot(retirement: ClipboardStagingRetirement())
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe, stagingRoot: staging.root)
+        let (file, passthrough) = try await keepPastedFile(instance, probe)
+        defer { passthrough.stop() }
+
+        staging.root.processEnding()
+        #expect(try hostPasteboard(instance).dataByItem == [[Self.textType: Data("text".utf8)]])
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    /// Has an app that has since exited write a Copy Guest Clipboard to Mac of a text item and a file item, the
+    /// file one it staged under a root of its own beside `staging`'s and holds, as a filled reference is written:
+    /// as its URL. Returns the Mac's pasteboard and the file it names; the root's lock went with the app.
+    private func exitedAppWroteAFile(_ staging: TestStagingRoot) throws -> (FakePasteboard, URL) {
+        weak var exited: ProcessStagingRoot?
+        let pasteboard = FakePasteboard()
+        let file: URL
+        do {
+            let root = staging.makeSibling()
+            exited = root
+            let sink = try ClipboardFileStaging(label: "host-vm", root: root).makeSink(generation: 1, filename: "a.bin")
+            try sink.write(Data("the guest's file".utf8))
+            file = try sink.commit()
+            let staged = file
+            let contents = GuestCopyContents(
+                serving: .init(token: Self.copyToken, connection: ClipboardConnectionID()),
+                items: [Self.text, Self.textAndFile], concealed: false, plan: .whole,
+                held: { item, representation in
+                    switch (item, representation) {
+                    case (0, 0): .bytes(Data("text".utf8))
+                    case (1, 0): .bytes(Data("a.bin".utf8))
+                    case (1, 1): .file(staged)
+                    default: nil
+                    }
+                },
+                puller: OtherVMPuller(bytes: Data()), referencesLeftOut: 0, release: {})
+            #expect(
+                HostClipboardPublisher(pasteboard: pasteboard, stagingRoot: root).writeCopy(
+                    contents, servingFileURLs: true))
+        }
+        #expect(exited == nil, "the exited app's staging root is still held")
+        #expect(pasteboard.dataByItem.last?[.fileURL] == Data(file.absoluteString.utf8))
+        return (pasteboard, file)
+    }
+
+    @Test("The next launch withdraws, whole, a guest file an exited app's copy left on the Mac, then removes it")
+    func nextLaunchWithdrawsAStaleFile() async throws {
+        let staging = TestStagingRoot()
+        let (pasteboard, file) = try exitedAppWroteAFile(staging)
+
+        let relaunched = staging.makeSibling(
+            retirement: ClipboardStagingRetirement(ledger: ClipboardWriteLedger(), pasteboard: { pasteboard }))
+        await withCheckedContinuation { done in relaunched.reclaimAbandonedRoots { done.resume() } }
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("text".utf8)]])
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test("The next launch leaves a Mac pasteboard that moved on since the app exited alone, and removes the staging")
+    func nextLaunchLeavesAMovedOnPasteboard() async throws {
+        let staging = TestStagingRoot()
+        let (pasteboard, file) = try exitedAppWroteAFile(staging)
+        #expect(pasteboard.setString("moved on", forType: .string))
+        let movedOn = pasteboard.changeCount
+
+        let relaunched = staging.makeSibling(
+            retirement: ClipboardStagingRetirement(ledger: ClipboardWriteLedger(), pasteboard: { pasteboard }))
+        await withCheckedContinuation { done in relaunched.reclaimAbandonedRoots { done.resume() } }
+        #expect(pasteboard.changeCount == movedOn)
+        #expect(pasteboard.items.first?.data(forType: .string) == Data("moved on".utf8))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 }
 

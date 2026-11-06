@@ -117,7 +117,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         Self.logger.log(.notice, "Kernova Guest Agent \(Self.versionLabel, privacy: .public) started")
 
         // A live instance's sweep never reaches an exited agent's staging; only
-        // this launch-time reclaim bounds its growth.
+        // this launch-time reclaim bounds its growth, each item of the
+        // clipboard naming a file there withdrawn first.
         let stagingRoot = ClipboardFileStaging.processRoot
         stagingRoot.reclaimAbandonedRoots()
 
@@ -178,7 +179,12 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             Self.logger.log(.notice, "Shutting down, exit status \(status, privacy: .public)")
             controlAgent.stop()
             dropAgent.stop()
-            peer.exit(status: status)
+            // What the clipboard holds of a file staged here goes before the process does; the next launch
+            // reclaims the staging, as it does an exit that never came this way.
+            MainActorBridge.async {
+                stagingRoot.processEnding()
+                peer.exit(status: status)
+            }
         }
         self.shutDown = shutDown
         let stop: @Sendable () -> Void = { shutDown(0) }

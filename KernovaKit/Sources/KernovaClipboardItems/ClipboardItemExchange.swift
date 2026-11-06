@@ -98,9 +98,9 @@ public final class ClipboardItemExchange {
     public var onCopyAsked: ((CopyAsk) -> Void)?
     /// A guest: the host sent a copy of its clipboard, its items read; this end holds it until it releases it.
     public var onCopyReceived: ((ClipboardRemoteOffer) -> Void)?
-    /// Hears each copy this end held that ended before it let it go: the connection left, or the far side
-    /// withdrew it. What this end wrote of it can be pulled no more.
-    public var onCopyEnded: ((ClipboardRemoteOffer) -> Void)?
+    /// Hears each copy this end held that ended before it let it go, and how: the connection left (`.linkLost`),
+    /// or the far side withdrew it. What this end wrote of it can be pulled no more.
+    public var onCopyEnded: ((_ copy: ClipboardRemoteOffer, _ ending: RemoteEnding) -> Void)?
     /// Hears each copy this side sent that the far side refused, and why: `CLIPBOARD_CHANGED` when its clipboard
     /// changed before the copy landed, `TOO_LARGE` over its paste ceiling, `CLIPBOARD_FILES_WITHHELD` when it
     /// was written without its files.
@@ -196,7 +196,7 @@ public final class ClipboardItemExchange {
         copies.removeAll()
         for copy in held {
             copy.close()
-            onCopyEnded?(copy)
+            onCopyEnded?(copy, .linkLost)
         }
         if let remote {
             self.remote = nil
@@ -606,7 +606,7 @@ public final class ClipboardItemExchange {
             if landing == token { landing = nil }
             if let copy = copies.removeValue(forKey: token) {
                 copy.close()
-                onCopyEnded?(copy)
+                onCopyEnded?(copy, Self.ending(closure))
                 return
             }
             guard let remote, remote.token == token else { return }

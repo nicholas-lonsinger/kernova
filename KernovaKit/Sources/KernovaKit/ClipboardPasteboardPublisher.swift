@@ -186,8 +186,8 @@ public final class ClipboardPasteboardPublisher {
     /// before one, or after a write that failed, which left the prepare's empty pasteboard behind.
     private var heldChangeCount: Int?
 
-    /// The most recent write the pasteboard took that promised something, while it stands: a write, a clear or
-    /// a retraction of this publisher's ends it, and so does anything else replacing it, which the write hears
+    /// The most recent write the pasteboard took, retractions included, while it stands: a write, a clear or a
+    /// retraction of this publisher's ends it, and so does anything else replacing it, which the write hears
     /// through the pasteboard's watch. Only a write serving an offer can be stranded by that offer's end, and
     /// ``retractWrite(servingOffer:withdrawing:)`` retracts it by naming that offer, so no other offer's end reaches it.
     private weak var standing: ClipboardStandingWrite?
@@ -228,7 +228,10 @@ public final class ClipboardPasteboardPublisher {
             }
         }
         let promised = specs.map { $0.types.map(NSPasteboard.PasteboardType.init(rawValue:)) }
-        let record = ClipboardStandingWrite(source: source, data: data, promised: promised, onEnded: onReleased)
+        let promises = promised.contains { !$0.isEmpty }
+        let record = ClipboardStandingWrite(
+            source: promises ? source : nil, by: self, written: data.map { $0.map(\.type) }, promised: promised,
+            onEnded: promises ? onReleased : nil)
         let read = record.read
         let items = zip(specs, data).enumerated().map { index, entry -> ClipboardWriteItem in
             let (spec, data) = entry
@@ -260,16 +263,20 @@ public final class ClipboardPasteboardPublisher {
         // pasteboard it left is nobody's write.
         guard written else {
             heldChangeCount = nil
-            ledger.record(nil, on: pasteboard)
+            ledger.record(nil, by: self, on: pasteboard)
             return false
         }
-        heldChangeCount = pasteboard.changeCount
-        let promises = providers.isEmpty ? nil : record
-        promises?.stand(on: pasteboard)
-        standing = promises
-        ledger.record(promises, on: pasteboard)
+        stand(record)
         providerRegistry.retain(providers)
         return true
+    }
+
+    /// The pasteboard took `record`'s write, which stands from now on.
+    private func stand(_ record: ClipboardStandingWrite) {
+        heldChangeCount = pasteboard.changeCount
+        record.stand(on: pasteboard)
+        standing = record
+        ledger.record(record.promisesSomething ? record : nil, by: self, on: pasteboard)
     }
 
     /// The standing write no longer stands: this publisher's next write, clear or retraction replaced it.
@@ -301,31 +308,67 @@ public final class ClipboardPasteboardPublisher {
     /// alone, as data, and the pasteboard is cleared when nothing is. Nil when the write no longer stands there.
     ///
     /// A pasteboard the user has written over since is theirs and is left untouched, as is a write serving
-    /// another offer, or none. What a paste had is read back from the pasteboard, which holds each provided type
-    /// as data, so the write keeps no second copy of it while it stands.
+    /// another offer, or none, or promising nothing. What a paste had is read back from the pasteboard, which
+    /// holds each provided type as data, so the write keeps no second copy of it while it stands.
     @discardableResult
     public func retractWrite(
         servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal
     ) -> ClipboardRetraction? {
-        guard let held = standing, held.servingOffer == token, heldChangeCount == pasteboard.changeCount
+        guard let held = standing, held.promisesSomething, held.servingOffer == token,
+            heldChangeCount == pasteboard.changeCount
         else { return nil }
-        let (kept, whole) = held.remains(after: withdrawal, on: pasteboard)
-        guard !kept.isEmpty else {
+        return writeAgain(held.remains(after: withdrawal, on: pasteboard))
+    }
+
+    /// Withdraws, whole, every item of this publisher's most recent write that names a file under `directories`
+    /// as its `public.file-url`, when the pasteboard still holds that write: those files are going, and an item
+    /// never outlives the file it names. Every other item keeps what it holds as data, its unread promises
+    /// withdrawn as at a link's end (``ClipboardWithdrawal/unread``). Nil when the pasteboard holds no such item
+    /// of this publisher's, which changes nothing.
+    @discardableResult
+    public func withdrawItems(namingFilesUnder directories: [URL]) -> ClipboardRetraction? {
+        guard let held = standing, heldChangeCount == pasteboard.changeCount,
+            held.held(on: pasteboard).contains(where: { Self.names($0, aFileUnder: directories) })
+        else { return nil }
+        return writeAgain(
+            held.remains(after: .unread, on: pasteboard) { Self.names($0, aFileUnder: directories) })
+    }
+
+    /// Whether an item holding `data` names a file under one of `directories` as its `public.file-url`.
+    nonisolated static func names(
+        _ data: [(type: NSPasteboard.PasteboardType, bytes: Data)], aFileUnder directories: [URL]
+    ) -> Bool {
+        data.contains { type, bytes in
+            guard type == .fileURL, let url = URL(string: String(decoding: bytes, as: UTF8.self)), url.isFileURL
+            else { return false }
+            return directories.contains { ClipboardFileStaging.isURL(url, inside: $0) }
+        }
+    }
+
+    /// Writes `remains` of the standing write again, alone, as data — the pasteboard cleared when nothing is
+    /// left — and says what that left.
+    private func writeAgain(
+        _ remains: (items: [[(type: NSPasteboard.PasteboardType, bytes: Data)]], whole: Bool)
+    ) -> ClipboardRetraction {
+        guard !remains.items.isEmpty else {
             clear()
             return .cleared
         }
         pasteboard.prepareForNewContents(with: .currentHostOnly)
-        // What is written again is data alone, which the pasteboard serves itself: nothing holds a record of it.
         endStanding()
-        let written = pasteboard.writeItems(kept.map { ClipboardWriteItem(data: $0, promised: [], provider: nil) })
+        let written = pasteboard.writeItems(
+            remains.items.map { ClipboardWriteItem(data: $0, promised: [], provider: nil) })
         lastWriteChangeCount = pasteboard.changeCount
-        ledger.record(nil, on: pasteboard)
         guard written else {
             heldChangeCount = nil
+            ledger.record(nil, by: self, on: pasteboard)
             return .cleared
         }
-        heldChangeCount = pasteboard.changeCount
-        return whole ? .keptEverything : .keptPart
+        stand(
+            ClipboardStandingWrite(
+                source: nil, by: self, written: remains.items.map { $0.map(\.type) },
+                promised: remains.items.map { _ in [] }, onEnded: nil))
+        return remains.whole ? .keptEverything : .keptPart
     }
 
     /// Empties the pasteboard, whatever it holds, as this publisher's own write.
@@ -334,7 +377,7 @@ public final class ClipboardPasteboardPublisher {
         endStanding()
         lastWriteChangeCount = pasteboard.changeCount
         heldChangeCount = nil
-        ledger.record(nil, on: pasteboard)
+        ledger.record(nil, by: self, on: pasteboard)
     }
 
     // MARK: - Planning

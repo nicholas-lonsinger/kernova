@@ -460,31 +460,31 @@ package final class VMInstance {
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk, whose clipboard publishes to and polls
-    /// `hostPasteboard`, and whose ``activity`` forwards its records to
-    /// `logSink`.
+    /// `hostPasteboard` and stages under `stagingRoot`, and whose
+    /// ``activity`` forwards its records to `logSink`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
         hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts,
-        logSink: KernovaLogger.ForwardingSink?, agentConnector: (any HostConnectionMaking)? = nil
+        logSink: KernovaLogger.ForwardingSink?, agentConnector: (any HostConnectionMaking)? = nil,
+        stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot
     ) {
         self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
         self.activity = VMActivity(phase: phase, logSink: logSink)
         self.preferences = preferences
-        self.hostClipboardPublisher = HostClipboardPublisher(
-            pasteboard: hostPasteboard, stagingRoot: ClipboardFileStaging.processRoot)
+        self.hostClipboardPublisher = HostClipboardPublisher(pasteboard: hostPasteboard, stagingRoot: stagingRoot)
         let snapshots = AgentHubSnapshotRelay()
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
         let hubClipboard = HubClipboardService(
-            sink: itemSink, stagingRoot: ClipboardFileStaging.processRoot,
+            sink: itemSink, stagingRoot: stagingRoot,
             stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes })
         self.hubClipboard = hubClipboard
         let clipboardTransfers = ClipboardTransferReporter()
         self.clipboardTransfers = clipboardTransfers
-        let dropService = HubDropService(stagingRoot: ClipboardFileStaging.processRoot, reporter: clipboardTransfers)
+        let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService
         let itemLogger = KernovaLogger(subsystem: "app.kernova", category: "ItemSource")
         let itemRouter = ItemFeatureRouter<PeerHandle>(

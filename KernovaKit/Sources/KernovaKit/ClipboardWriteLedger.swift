@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
 
@@ -80,10 +81,13 @@ public struct ClipboardWriteSource: Sendable {
     }
 }
 
-/// A write of this process standing on a pasteboard that promised something: what it serves and holds as data,
-/// and what it was made from, for as long as the write stands. It ends at the first poll of its pasteboard's watch
-/// to find the change count moved, or when ``end()`` comes first: its source goes, and its end runs. While it
-/// stands, its observation of the watch holds it; everything else holds it weakly.
+/// A write of this process standing on a pasteboard: what it serves, which types each item holds as data, and,
+/// for one that promised something, what it was made from, for as long as the write stands. It ends at the first
+/// poll of its pasteboard's watch to find the change count moved, or when ``end()`` comes first: its source goes,
+/// and its end runs. While it stands, its observation of the watch holds it; everything else holds it weakly.
+///
+/// It keeps types, never bytes: the pasteboard holds each type as data, so the write keeps no second copy of what
+/// it wrote while it stands.
 ///
 /// No provider callback gates the end. AppKit finishes with a provider once a reader has had every type it
 /// promised, the write still standing (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md), and
@@ -94,27 +98,35 @@ public struct ClipboardWriteSource: Sendable {
 final class ClipboardStandingWrite {
     /// The far side's offer or copy the write serves, which a retraction names.
     let servingOffer: Data?
-    let data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]]
+    /// The types each item was written with as data.
+    let written: [[NSPasteboard.PasteboardType]]
     /// The types each item promises.
     let promised: [[NSPasteboard.PasteboardType]]
     /// Which promised types a reader has had.
     let read = ClipboardReadPromises()
-    /// What the write was made from; nil once the write ended.
+    /// What the write was made from; nil once the write ended, and for one that promised nothing.
     private(set) var source: ClipboardWriteSource?
+    /// The publisher that made the write, held while it stands, so whatever must withdraw from the write can.
+    private(set) var publisher: ClipboardPasteboardPublisher?
     /// Runs once, when the write ends.
     private var onEnded: (@MainActor () -> Void)?
     private var observation: ClipboardPasteboardWatch.Observation?
 
     init(
-        source: ClipboardWriteSource, data: [[(type: NSPasteboard.PasteboardType, bytes: Data)]],
-        promised: [[NSPasteboard.PasteboardType]], onEnded: (@MainActor () -> Void)?
+        source: ClipboardWriteSource?, by publisher: ClipboardPasteboardPublisher,
+        written: [[NSPasteboard.PasteboardType]], promised: [[NSPasteboard.PasteboardType]],
+        onEnded: (@MainActor () -> Void)?
     ) {
-        servingOffer = source.serving?.token
+        servingOffer = source?.serving?.token
         self.source = source
-        self.data = data
+        self.publisher = publisher
+        self.written = written
         self.promised = promised
         self.onEnded = onEnded
     }
+
+    /// Whether any item promises a type.
+    var promisesSomething: Bool { promised.contains { !$0.isEmpty } }
 
     /// Stands on `pasteboard`, which holds the write at its change count now, until that count moves.
     func stand(on pasteboard: any ClipboardWritePasteboard) {
@@ -124,27 +136,48 @@ final class ClipboardStandingWrite {
         }
     }
 
+    /// What each item holds as data on `pasteboard`, which holds the write: its written types, then each promised
+    /// type a reader had, in the order read.
+    func held(on pasteboard: any ClipboardWritePasteboard) -> [[(type: NSPasteboard.PasteboardType, bytes: Data)]] {
+        let read = read.data(on: pasteboard, items: written.count)
+        return written.indices.map { item in Self.data(of: written[item], item: item, on: pasteboard) + read[item] }
+    }
+
     /// What of the write stays on `pasteboard`, which holds it, once `withdrawal` withdraws its promises
-    /// (``ClipboardWithdrawal``): each item's types to write again as data, an item that keeps nothing but its
-    /// concealed marker left out; and whether that is all of it, nothing withdrawn.
+    /// (``ClipboardWithdrawal``) and every item `goesWhole` picks out by what it holds goes whole: each item's types
+    /// to write again as data, an item that keeps nothing but its concealed marker left out; and whether that is
+    /// all of it, nothing withdrawn.
     func remains(
-        after withdrawal: ClipboardWithdrawal, on pasteboard: any ClipboardWritePasteboard
+        after withdrawal: ClipboardWithdrawal, on pasteboard: any ClipboardWritePasteboard,
+        goesWhole: ([(type: NSPasteboard.PasteboardType, bytes: Data)]) -> Bool = { _ in false }
     ) -> (items: [[(type: NSPasteboard.PasteboardType, bytes: Data)]], whole: Bool) {
         let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
-        let read = read.data(on: pasteboard, items: data.count)
+        let read = read.data(on: pasteboard, items: written.count)
         var whole = true
-        let items = data.indices.compactMap { item -> [(type: NSPasteboard.PasteboardType, bytes: Data)]? in
-            let concealed = data[item].contains { $0.type == marker }
+        let items = written.indices.compactMap { item -> [(type: NSPasteboard.PasteboardType, bytes: Data)]? in
+            let concealed = written[item].contains(marker)
             let kept = withdrawal == .unread && !concealed ? read[item] : []
             let withdrawn = promised[item].filter { type in !kept.contains { $0.type == type } }
             whole = whole && withdrawn.isEmpty
             guard !withdrawn.contains(where: { PasteboardTypeIdentity($0.rawValue).isFileReference }) else {
                 return nil
             }
-            let remaining = data[item] + kept
-            return remaining.contains { $0.type != marker } ? remaining : nil
+            // The marker is written again from the types, whatever an empty type reads back as.
+            let data = Self.data(of: written[item].filter { $0 != marker }, item: item, on: pasteboard) + kept
+            guard !goesWhole(data) else {
+                whole = false
+                return nil
+            }
+            return data.isEmpty ? nil : data + (concealed ? [(marker, Data())] : [])
         }
         return (items, whole)
+    }
+
+    /// The bytes item `item` holds on `pasteboard` as each of `types`, which it holds as data.
+    private static func data(
+        of types: [NSPasteboard.PasteboardType], item: Int, on pasteboard: any ClipboardWritePasteboard
+    ) -> [(type: NSPasteboard.PasteboardType, bytes: Data)] {
+        types.compactMap { type in pasteboard.data(forType: type, itemAt: item).map { (type, $0) } }
     }
 
     /// The write no longer stands.
@@ -152,6 +185,7 @@ final class ClipboardStandingWrite {
         observation?.cancel()
         observation = nil
         source = nil
+        publisher = nil
         let ended = onEnded
         onEnded = nil
         ended?()
@@ -184,44 +218,66 @@ final class ClipboardReadPromises: Sendable {
     }
 }
 
-/// The latest write this process made to each pasteboard that promised something, and what it was made from
-/// while it stands, whichever publisher made it: every publisher of one process records here, so a snapshot of
-/// one VM's pasteboard never reads another VM's promise either.
+/// The latest write this process made to each pasteboard, whichever publisher made it, and — while it stands, for
+/// one that promised something — what it was made from: every publisher of one process records here, so a
+/// snapshot of one VM's pasteboard never reads another VM's promise either, and a staged file's removal reaches
+/// whichever write names it.
 @MainActor
 public final class ClipboardWriteLedger {
     /// The process's ledger, matching the one `NSPasteboard.general` every write targets.
-    public static let shared = ClipboardWriteLedger()
+    public nonisolated static let shared = ClipboardWriteLedger()
+
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardWriteLedger")
 
     private struct Entry {
         weak var pasteboard: AnyObject?
         let changeCount: Int
         weak var write: ClipboardStandingWrite?
+        weak var publisher: ClipboardPasteboardPublisher?
     }
 
     private var entries: [ObjectIdentifier: Entry] = [:]
 
     /// An empty ledger; the process's own is ``shared``.
-    public init() {}
+    public nonisolated init() {}
 
-    /// Records that `pasteboard`, at its change count now, holds `write`; nil when it holds no write of this
-    /// process that promises anything.
-    func record(_ write: ClipboardStandingWrite?, on pasteboard: any ClipboardWritePasteboard) {
-        entries = entries.filter { $0.value.pasteboard != nil && $0.value.write != nil }
-        let key = ObjectIdentifier(pasteboard)
-        guard let write else {
-            entries[key] = nil
-            return
-        }
-        entries[key] = Entry(pasteboard: pasteboard, changeCount: pasteboard.changeCount, write: write)
+    /// Records that `publisher` wrote `pasteboard` last, which at its change count now holds `write`; nil when
+    /// that write promises nothing, or failed.
+    func record(
+        _ write: ClipboardStandingWrite?, by publisher: ClipboardPasteboardPublisher,
+        on pasteboard: any ClipboardWritePasteboard
+    ) {
+        entries = entries.filter { $0.value.pasteboard != nil && $0.value.publisher != nil }
+        entries[ObjectIdentifier(pasteboard)] = Entry(
+            pasteboard: pasteboard, changeCount: pasteboard.changeCount, write: write, publisher: publisher)
     }
 
-    /// What the write `pasteboard` holds was made from, while it holds a write of this process that nothing has
-    /// replaced since.
+    /// What the write `pasteboard` holds was made from, while it holds a write of this process that promised
+    /// something and that nothing has replaced since.
     public func standingWrite(on pasteboard: any ClipboardReadPasteboard) -> ClipboardWriteSource? {
         guard let entry = entries[ObjectIdentifier(pasteboard)], entry.pasteboard === pasteboard,
             entry.changeCount == pasteboard.changeCount
         else { return nil }
         return entry.write?.source
+    }
+
+    /// Whether `pasteboard` still holds the latest write of this process on it.
+    func holdsWrite(on pasteboard: AnyObject) -> Bool {
+        guard let entry = entries[ObjectIdentifier(pasteboard)], entry.pasteboard === pasteboard else { return false }
+        return entry.publisher?.holdsLastWrite == true
+    }
+
+    /// Withdraws, whole, every item of a write of this process that a pasteboard still holds and that names a file
+    /// under `directories`, each through the publisher that wrote it
+    /// (``ClipboardPasteboardPublisher/withdrawItems(namingFilesUnder:)``): those files are going.
+    public func withdrawItems(namingFilesUnder directories: [URL]) {
+        for publisher in entries.values.compactMap(\.publisher) {
+            guard let retraction = publisher.withdrawItems(namingFilesUnder: directories) else { continue }
+            Self.logger.log(
+                .notice,
+                "Withdrew the clipboard items naming staged files about to be removed\(retraction == .keptPart ? ", the rest kept" : "", privacy: .public)"
+            )
+        }
     }
 }
 

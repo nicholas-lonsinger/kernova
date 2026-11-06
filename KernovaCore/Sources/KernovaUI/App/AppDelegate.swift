@@ -137,9 +137,10 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
     package func applicationDidFinishLaunching(_ notification: Notification) {
         mainMenu.install()
 
-        // Staged file URLs outlive the window and the process that staged them
+        // Staged files outlive the window and the process that staged them
         // (paste-after-close, a drop's promises still being pulled), so staging
-        // is reclaimed only here, and only from processes that have exited.
+        // is reclaimed only here, and only from processes that have exited —
+        // each item of the clipboard naming a file there withdrawn first.
         Task.detached(priority: .utility) {
             ClipboardFileStaging.processRoot.reclaimAbandonedRoots()
         }
@@ -229,6 +230,7 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
     }
 
     package func applicationWillTerminate(_ notification: Notification) {
+        ClipboardFileStaging.processRoot.processEnding()
         termination.handleWillTerminate()
     }
 
