@@ -250,7 +250,7 @@ struct HubDragOutTests {
         #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
     }
 
-    @Test("a delivering drop names the promises, then sizes the folders, and every item pulls from the one offer")
+    @Test("a delivering drop names the promises, then sizes the other items, and every item pulls from the one offer")
     func deliveryNamesThenSizes() async throws {
         let take = try await carriedTake(Self.promiseAndFolder)
         take.hostSessionEnded(dropped: true)
@@ -264,10 +264,10 @@ struct HubDragOutTests {
             take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { _ in }
         }
         await MainActorTurn.next()
-        #expect(hub.pullCount == 0, "a write pulled before the delivery sized the folders")
+        #expect(hub.pullCount == 0, "a write pulled before the delivery sized the items")
 
         await deliver(
-            .ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], folderSizes: [1: 4096]))))
+            .ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: [1: 4096]))))
         try await hub.changed.wait { hub.pullCount == 2 }
         let pulls = hub.state.withLock { $0.pulls.map(\.order.request) }
         #expect(pulls.map(\.token) == [token, token])

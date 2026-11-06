@@ -353,7 +353,7 @@ package final class HubDragOut {
                 guard let entry = entries.withLock({ $0[id] }) else { return }
                 let promised = entry.items.indices.filter { entry.items[$0].isPromised }
                 let delivery = DragDelivery(
-                    names: Dictionary(uniqueKeysWithValues: zip(promised, names)), folderSizes: [:])
+                    names: Dictionary(uniqueKeysWithValues: zip(promised, names)), sizes: [:])
                 entry.delivery.named(Self.items(entry.items, delivery))
             case .ended(let id, let result):
                 guard let entry = entries.withLock({ $0.removeValue(forKey: id) }) else { return }
@@ -370,7 +370,7 @@ package final class HubDragOut {
             items.indices.map { index in
                 var item = items[index]
                 if let name = delivery.names[index] { item.name = name }
-                if let size = delivery.folderSizes[index] { item.sizeEstimate = size }
+                if let size = delivery.sizes[index] { item.sizeEstimate = size }
                 return item
             }
         }

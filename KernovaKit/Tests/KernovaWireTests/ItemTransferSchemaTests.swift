@@ -162,7 +162,7 @@ struct ItemTransferSchemaTests {
 
         var caught = Kernova_V2_DragTakeOutcome()
         caught.kind = .caught
-        caught.folderSizes = [5]
+        caught.sizes = [5]
         #expect(try caught.serializedBytes() == [0x08, 1, 0x22, 1, 0x05])
 
         var report = Kernova_V2_DragTakeReport()

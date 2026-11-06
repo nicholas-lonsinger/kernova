@@ -2752,7 +2752,7 @@ public nonisolated struct Kernova_V2_DragCatcher: Sendable {
 }
 
 /// A Mac destination takes the drag: the next drop on the catcher delivers
-/// it, calling its promises in and sizing its folders. The peer answers
+/// it, calling its promises in and sizing its other items. The peer answers
 /// DELIVERING, or DELIVER_REFUSED while the drag is not on its catcher.
 public nonisolated struct Kernova_V2_DragDeliver: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
@@ -2885,13 +2885,12 @@ public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
   public mutating func clearError() {self._error = nil}
 
-  /// CAUGHT after STEP_NAMED, so by a delivering drop: each folder's size
-  /// estimate, one per item of the taken offer that is a FOLDER and not
-  /// promised, in its order, the drag's estimates summing to at most 2^63-1.
-  /// A list breaking that reads as CAUGHT undelivered. CAUGHT with no
-  /// STEP_NAMED delivered nothing, and the taken offer carries the drag as
-  /// offered.
-  public var folderSizes: [UInt64] = []
+  /// CAUGHT after STEP_NAMED, so by a delivering drop: each size estimate,
+  /// one per item of the taken offer that is not promised, in its order, the
+  /// drag's estimates summing to at most 2^63-1. A list breaking that reads as
+  /// CAUGHT undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
+  /// taken offer carries the drag as offered.
+  public var sizes: [UInt64] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -5329,7 +5328,7 @@ nonisolated extension Kernova_V2_DragTakeReport.Step: SwiftProtobuf._ProtoNamePr
 
 nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DragTakeOutcome"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}error\0\u{4}\u{2}folder_sizes\0\u{b}reoffer\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}error\0\u{2}\u{2}sizes\0\u{b}reoffer\0\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5339,7 +5338,7 @@ nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftPr
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
-      case 4: try { try decoder.decodeRepeatedUInt64Field(value: &self.folderSizes) }()
+      case 4: try { try decoder.decodeRepeatedUInt64Field(value: &self.sizes) }()
       default: break
       }
     }
@@ -5356,8 +5355,8 @@ nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftPr
     try { if let v = self._error {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
-    if !self.folderSizes.isEmpty {
-      try visitor.visitPackedUInt64Field(value: self.folderSizes, fieldNumber: 4)
+    if !self.sizes.isEmpty {
+      try visitor.visitPackedUInt64Field(value: self.sizes, fieldNumber: 4)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -5365,7 +5364,7 @@ nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftPr
   public static func ==(lhs: Kernova_V2_DragTakeOutcome, rhs: Kernova_V2_DragTakeOutcome) -> Bool {
     if lhs.kind != rhs.kind {return false}
     if lhs._error != rhs._error {return false}
-    if lhs.folderSizes != rhs.folderSizes {return false}
+    if lhs.sizes != rhs.sizes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

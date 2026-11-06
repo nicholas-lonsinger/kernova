@@ -29,7 +29,7 @@ package final class SimItemSide {
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
     /// Peer: how its owner ends each take, after 20 µs; nil leaves takes unanswered.
-    package var takeAnswer: DragTakeAnswer? = .caught(folderSizes: nil)
+    package var takeAnswer: DragTakeAnswer? = .caught(sizes: nil)
     /// Peer: the items its owner's first `TARGETED` lists, just before it ends a take `CAUGHT`; nil sends none.
     package var takeItems: [OfferedItem]?
     /// Every take `takeDrag` asked for, and what it returned.

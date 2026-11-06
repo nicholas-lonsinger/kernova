@@ -219,7 +219,7 @@ enum ItemFeatureScenarios {
             world.at(.ms(900)) { world in world.withdrawOffer(SimItems.token(1), from: .peer) }
             world.at(.ms(1_000)) { world in
                 guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
-                world.peerInput(.dragTake(id, .caught(folderSizes: nil)), link: link, after: 0)
+                world.peerInput(.dragTake(id, .caught(sizes: nil)), link: link, after: 0)
             }
         },
         expect: { world in
@@ -252,7 +252,7 @@ enum ItemFeatureScenarios {
             world.at(.ms(900)) { world in world.controlTakes(.catcher(shown: false)) }
             world.at(.ms(950)) { world in world.controlTakes(.deliver) }
             world.at(.ms(1_000)) { world in answer(.report(.delivering), world) }
-            world.at(.ms(1_050)) { world in answer(.caught(folderSizes: nil), world) }
+            world.at(.ms(1_050)) { world in answer(.caught(sizes: nil), world) }
             world.at(.ms(1_100)) { world in world.controlTakes(.catcher(shown: true)) }
         },
         expect: { world in
@@ -284,7 +284,7 @@ enum ItemFeatureScenarios {
                 link.peer?.handle(
                     .dragTake(id, .report(.targeted(dragItems))), now: world.localNow(world.process(of: link, .peer)))
                 link.peer?.handle(
-                    .dragTake(id, .caught(folderSizes: nil)), now: world.localNow(world.process(of: link, .peer)))
+                    .dragTake(id, .caught(sizes: nil)), now: world.localNow(world.process(of: link, .peer)))
                 world.drain(link, .peer)
             }
         },
@@ -311,7 +311,7 @@ enum ItemFeatureScenarios {
             world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
             world.at(.ms(800)) { world in answer(.report(.armed), world) }
             world.at(.ms(900)) { world in world.cancelTakes() }
-            world.at(.ms(1_000)) { world in answer(.caught(folderSizes: nil), world) }
+            world.at(.ms(1_000)) { world in answer(.caught(sizes: nil), world) }
         },
         expect: { world in
             let host = items(world, .host)

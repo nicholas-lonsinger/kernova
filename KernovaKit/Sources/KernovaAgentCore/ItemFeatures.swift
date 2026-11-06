@@ -26,8 +26,8 @@ public enum DragTakeControl: Sendable, Equatable {
     /// The Mac drag session left the VM's display (`shown`), so the catcher shows again, or came back over it, so
     /// the catcher stands down and the drag is the guest's.
     case catcher(shown: Bool)
-    /// A Mac destination takes the drag: the next drop on the catcher calls its promises in and sizes its
-    /// folders.
+    /// A Mac destination takes the drag: the next drop on the catcher calls its promises in and sizes its other
+    /// items.
     case deliver
 }
 
@@ -57,10 +57,10 @@ public enum DragTakeReport: Sendable, Equatable {
 public enum DragTakeAnswer: Sendable, Equatable {
     /// A step of the hand-off.
     case report(DragTakeReport)
-    /// The drag ended on the catcher. After `.report(.named)`, the drop delivered it, and `folderSizes` sizes
-    /// each FOLDER item of the taken offer that is not promised, in its order; nil when the drop delivered
-    /// nothing. The taken offer stays open until the host releases it.
-    case caught(folderSizes: [UInt64]?)
+    /// The drag ended on the catcher. After `.report(.named)`, the drop delivered it, and `sizes` sizes each
+    /// item of the taken offer that is not promised, in its order; nil when the drop delivered nothing. The
+    /// taken offer stays open until the host releases it.
+    case caught(sizes: [UInt64]?)
     /// The drag ended in the guest, its catcher stood down.
     case returned
     /// The drag stays the guest's: `DRAG_PRESS_OVER`, `DRAG_NOT_CURRENT`, …
@@ -76,20 +76,20 @@ public enum DragTakeAnswer: Sendable, Equatable {
 public struct DragDelivery: Sendable, Equatable {
     /// The name each promised item took once called in.
     public var names: [Int: Data]
-    /// The size estimate of each FOLDER item that is not promised.
-    public var folderSizes: [Int: UInt64]
+    /// The size estimate of each item that is not promised.
+    public var sizes: [Int: UInt64]
 
     /// Creates a delivery.
-    public init(names: [Int: Data], folderSizes: [Int: UInt64]) {
+    public init(names: [Int: Data], sizes: [Int: UInt64]) {
         self.names = names
-        self.folderSizes = folderSizes
+        self.sizes = sizes
     }
 }
 
 /// How a take the host opened ended.
 public enum DragTakeResult: Sendable, Equatable {
     /// The drag ended on the catcher; `delivery` is what a delivering drop delivered, which passed
-    /// ``DragItems/checkedNames(_:of:)`` and ``DragItems/checkedFolderSizes(_:of:)``, or nil when it delivered
+    /// ``DragItems/checkedNames(_:of:)`` and ``DragItems/checkedSizes(_:of:)``, or nil when it delivered
     /// nothing or broke either. The taken offer stays open until this side releases it.
     case caught(DragDelivery?)
     /// The drag ended in the guest, its catcher stood down.
@@ -153,12 +153,12 @@ public enum DragItems {
         return Dictionary(uniqueKeysWithValues: zip(promised, names))
     }
 
-    /// `sizes`, one per unpromised FOLDER item of `items` in order, by item index; nil unless the count matches
-    /// and the drag's estimates, these in place of the folders' own, sum to at most ``maxTotalEstimate``.
-    public static func checkedFolderSizes(_ sizes: [UInt64], of items: [Representation]) -> [Int: UInt64]? {
-        let folders = items.indices.filter { items[$0].storage == .folder && !items[$0].promised }
-        guard sizes.count == folders.count else { return nil }
-        let sized = Dictionary(uniqueKeysWithValues: zip(folders, sizes))
+    /// `sizes`, one per unpromised item of `items` in order, by item index; nil unless the count matches and the
+    /// drag's estimates, these in place of those items' own, sum to at most ``maxTotalEstimate``.
+    public static func checkedSizes(_ sizes: [UInt64], of items: [Representation]) -> [Int: UInt64]? {
+        let unpromised = items.indices.filter { !items[$0].promised }
+        guard sizes.count == unpromised.count else { return nil }
+        let sized = Dictionary(uniqueKeysWithValues: zip(unpromised, sizes))
         guard total(items.indices.map { sized[$0] ?? items[$0].sizeEstimate }) != nil else { return nil }
         return sized
     }
@@ -414,10 +414,10 @@ public struct DragOffers: FeatureMachine {
         let take = asked.remove(at: index)
         var outcome = Kernova_V2_DragTakeOutcome()
         switch answer {
-        case .caught(let folderSizes):
+        case .caught(let sizes):
             taken.append(take.token)
             outcome.kind = .caught
-            outcome.folderSizes = folderSizes ?? []
+            outcome.sizes = sizes ?? []
         case .returned:
             taken.append(take.token)
             outcome.kind = .returned
@@ -603,7 +603,7 @@ public struct DragOffers: FeatureMachine {
     }
 
     /// Take `take`'s end: the peer's `DragTakeOutcome` when it ENDed, a CAUGHT delivered only after
-    /// `STEP_NAMED` and with folder sizes its taken offer can take; otherwise how the stream closed.
+    /// `STEP_NAMED` and with sizes its taken offer can take; otherwise how the stream closed.
     private mutating func result(of take: Take, _ closure: StreamClosure) -> DragTakeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
         guard let outcome = try? Kernova_V2_DragTakeOutcome(serializedBytes: body) else {
@@ -612,16 +612,16 @@ public struct DragOffers: FeatureMachine {
         switch outcome.kind {
         case .caught:
             guard let names = take.names else {
-                if !outcome.folderSizes.isEmpty {
-                    diagnostics.append(.remoteViolation("folder sizes with no STEP_NAMED"))
+                if !outcome.sizes.isEmpty {
+                    diagnostics.append(.remoteViolation("sizes with no STEP_NAMED"))
                 }
                 return .caught(nil)
             }
-            guard let sizes = DragItems.checkedFolderSizes(outcome.folderSizes, of: take.items) else {
-                diagnostics.append(.remoteViolation("a CAUGHT's folder sizes its taken offer cannot take"))
+            guard let sizes = DragItems.checkedSizes(outcome.sizes, of: take.items) else {
+                diagnostics.append(.remoteViolation("a CAUGHT's sizes its taken offer cannot take"))
                 return .caught(nil)
             }
-            return .caught(DragDelivery(names: names, folderSizes: sizes))
+            return .caught(DragDelivery(names: names, sizes: sizes))
         case .returned: return .returned
         case .refused, .unspecified, .UNRECOGNIZED:
             return .refused(outcome.hasError ? WireError(received: outcome.error) : WireError(.unspecified))

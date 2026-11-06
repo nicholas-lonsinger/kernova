@@ -250,7 +250,7 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// A drag a Mac destination takes is delivered: the take asks the guest
 /// (`DragDeliver`) and releases onto its catcher once the guest answers; the
 /// catcher's drop calls the promises in and names them on the take, then
-/// sizes the folders and ends it. Every item is pulled from the taken offer,
+/// sizes its other items and ends it. Every item is pulled from the taken offer,
 /// which only this side ends. The first destination to ask a promised item's
 /// name starts that and waits for the names alone; one that took the drop
 /// without asking yet has it started as the session ends. That wait alone has

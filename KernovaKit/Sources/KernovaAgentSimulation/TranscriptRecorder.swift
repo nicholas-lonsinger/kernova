@@ -129,8 +129,8 @@ package enum TranscriptInput: Sendable, Equatable {
             return "peer take targeted fixture=\(fixture)"
         case .answerTake(.report(let report)):
             return "peer take report \(TranscriptEvents.name(report))"
-        case .answerTake(.caught(let folderSizes)):
-            return "peer take caught" + (folderSizes.map { " folderSizes=\(TranscriptEvents.list($0))" } ?? "")
+        case .answerTake(.caught(let sizes)):
+            return "peer take caught" + (sizes.map { " sizes=\(TranscriptEvents.list($0))" } ?? "")
         case .answerTake(.returned):
             return "peer take returned"
         case .answerTake(.refused(let error)):
@@ -229,7 +229,7 @@ package enum TranscriptInput: Sendable, Equatable {
                 guard let names = fields["names"].flatMap(TranscriptEvents.names) else { return nil }
                 self = .answerTake(.report(.named(names)))
             case "caught":
-                self = .answerTake(.caught(folderSizes: fields["folderSizes"].flatMap(TranscriptEvents.sizes)))
+                self = .answerTake(.caught(sizes: fields["sizes"].flatMap(TranscriptEvents.sizes)))
             case "returned": self = .answerTake(.returned)
             case "refused": self = .answerTake(.refused(WireError(code("code"))))
             default: return nil
@@ -422,7 +422,7 @@ package struct Exchange: Sendable {
             script: [
                 (500, .offer(.peer, .drag, "drag-1")), (600, .takeDrag(SimItems.token(1))),
                 (620, .answerTake(.report(.armed))), (630, .targetTake("file-2k")),
-                (650, .answerTake(.caught(folderSizes: nil))),
+                (650, .answerTake(.caught(sizes: nil))),
                 (700, .itemPull(.host, SimItems.request(1, ceiling: 1 << 20))),
                 (800, .release(.host, SimItems.token(1))),
             ], end: 1000),
@@ -446,7 +446,7 @@ package struct Exchange: Sendable {
                 (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted([])))),
                 (750, .controlTake(.deliver)), (760, .answerTake(.report(.delivering))),
                 (800, .answerTake(.report(.named([Data("IMG_0042.jpeg".utf8)])))),
-                (810, .answerTake(.caught(folderSizes: [8192]))),
+                (810, .answerTake(.caught(sizes: [8192]))),
                 (850, .itemPull(.host, SimItems.request(4, ceiling: 1 << 20))),
                 (950, .release(.host, SimItems.token(4))),
             ], end: 1100),
@@ -941,7 +941,7 @@ package enum TranscriptEvents {
             "\(prefix) takeEnded id=\(id.stream.rawValue) caught"
                 + (delivery.map { delivery in
                     " names=\(list(delivery.names.sorted { $0.key < $1.key }.map(\.value)))"
-                        + " folderSizes=\(list(delivery.folderSizes.sorted { $0.key < $1.key }.map(\.value)))"
+                        + " sizes=\(list(delivery.sizes.sorted { $0.key < $1.key }.map(\.value)))"
                 } ?? "")
         case .ended(let id, .returned): "\(prefix) takeEnded id=\(id.stream.rawValue) returned"
         case .ended(let id, .refused(let error)):

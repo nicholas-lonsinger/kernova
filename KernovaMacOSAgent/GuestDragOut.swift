@@ -20,12 +20,13 @@ import UniformTypeIdentifiers
 /// the take, and the host then hands the press back to the guest untouched.
 ///
 /// A file promise has no name until it is received, which `NSFilePromiseReceiver.h`
-/// says to do "once you are accepting the file promise", and an offer lists no
-/// folder's contents, so a drag the host takes goes out under stand-in names
-/// for its promises and no size for its folders. The drop the host asks to
-/// deliver — a Mac destination took the drag — receives the promises
-/// (``GuestDragPromises``), serves them from the taken offer, and names them
-/// on the take (`STEP_NAMED`), then walks the folders and ends the take
+/// says to do "once you are accepting the file promise", and nothing reads a
+/// dragged file before the drop (``GuestDraggedItems/offerItems(_:promises:sizes:)``),
+/// so a drag the host takes goes out under stand-in names for its promises
+/// and no size for anything. The drop the host asks to deliver — a Mac
+/// destination took the drag — receives the promises (``GuestDragPromises``),
+/// serves them from the taken offer, and names them on the take
+/// (`STEP_NAMED`), then sizes its plain files and folders and ends the take
 /// `CAUGHT` with their sizes. The taken offer carries the drag throughout, and
 /// this side never withdraws it once taken. A drop that does not deliver, and
 /// a drag that never leaves the guest, receives nothing.
@@ -57,10 +58,7 @@ final class GuestDragOut {
         self.input = input
         watcher = GuestDragWatcher(input: input, peer: peer)
         promises = GuestDragPromises(stagingRoot: stagingRoot)
-        catcher = GuestDragCatcher(peer: peer, makeSurface: system.makeCatcherSurface) { [weak input] items, done in
-            guard let input else { return done(nil) }
-            Self.carry(items, input: input, done)
-        }
+        catcher = GuestDragCatcher(peer: peer, makeSurface: system.makeCatcherSurface)
         watcher.onPressEnded = { [weak catcher] press in catcher?.pressEnded(press) }
         let served = served
         catcher.onCarried = { claim, carried in _ = served.serve(claim.token, carried.sources) }
@@ -126,29 +124,13 @@ final class GuestDragOut {
         arriving.removeAll()
     }
 
-    // MARK: - Carrying
-
-    /// Resolves `items`' file URLs off the main actor, then hands back what a
-    /// take of them carries, or nil unless every item can go out.
-    private static func carry(
-        _ items: [GuestDragItem], input: any GuestDragInput,
-        _ done: @escaping @MainActor (GuestDragCatcher.Carried?) -> Void
-    ) {
-        input.resolveFiles(items.compactMap(\.fileURL)) { intake in
-            guard let offered = GuestDraggedItems.offerItems(items, resolvedFiles: intake) else { return done(nil) }
-            done(
-                GuestDragCatcher.Carried(
-                    items: items, intake: intake, offered: offered.map(\.item), sources: offered.map(\.source)))
-        }
-    }
-
     // MARK: - Delivering
 
     /// Delivers the drag `claim` names, caught on a drop take `id` asked to
-    /// deliver: receives its promises off `drop`, then ``named(_:_:_:_:folders:)``
-    /// serves and names them and sizes the folders. A drag of plain files
-    /// alone has nothing to add, and one whose promises gave no names ends
-    /// `CAUGHT` undelivered.
+    /// deliver: receives its promises off `drop`, then ``named(_:_:_:_:files:)``
+    /// serves and names them and sizes the plain files and folders. A drop
+    /// holding other items than the take carried, or whose promises gave no
+    /// names, ends `CAUGHT` undelivered.
     ///
     /// Where the drag's first promised item offers its promised file URL, the
     /// drop sets the paste location once and asks that item once, and the
@@ -159,14 +141,17 @@ final class GuestDragOut {
         _ id: DragTakeID, _ claim: GuestDragWatcher.Claim, _ carried: GuestDragCatcher.Carried,
         drop: any GuestDragDrop
     ) {
-        let folders = Self.folders(of: carried)
-        guard let first = carried.items.firstIndex(where: { $0.fileURL == nil }) else {
-            guard !folders.isEmpty else { return peer.answerTake(id, .caught(folderSizes: nil)) }
-            peer.answerTake(id, .report(.named([])))
-            return measure(folders, take: id)
+        guard let dropped = drop.items(), dropped == carried.items else {
+            Self.logger.log(.error, "The drop holds other items than the take carried; delivering none")
+            return peer.answerTake(id, .caught(sizes: nil))
         }
-        let taken = carried.items.compactMap { $0.fileURL?.lastPathComponent }
-        guard let folder = promises.makeFolder() else { return peer.answerTake(id, .caught(folderSizes: nil)) }
+        let files = dropped.compactMap(\.fileURL)
+        guard let first = dropped.firstIndex(where: { $0.fileURL == nil }) else {
+            peer.answerTake(id, .report(.named([])))
+            return size(files, take: id)
+        }
+        let taken = files.map(\.lastPathComponent)
+        guard let folder = promises.makeFolder() else { return peer.answerTake(id, .caught(sizes: nil)) }
         let refusal: String? =
             if !drop.offersPromisedFileURL(item: first) {
                 "its first promised item offers no promised file URL"
@@ -180,61 +165,58 @@ final class GuestDragOut {
         if let refusal {
             Self.logger.log(.notice, "Calling each of the drag's promises in: \(refusal, privacy: .public)")
             guard
-                let callIn = promises.callIn(
-                    carried.items, receivers: drop.receivers(), taken: taken, into: folder)
+                let callIn = promises.callIn(dropped, receivers: drop.receivers(), taken: taken, into: folder)
             else {
                 Self.logger.log(.notice, "The drag's promises could not all be named; the host gets them unnamed")
-                return peer.answerTake(id, .caught(folderSizes: nil))
+                return peer.answerTake(id, .caught(sizes: nil))
             }
-            return named(id, claim, carried, callIn, folders: folders)
+            return named(id, claim, carried, callIn, files: files)
         }
         Self.logger.log(.notice, "Asked the drag's source for every promise at once")
-        let arrivals = promises.awaitArrivals(carried.items, into: folder, taken: taken, input: input) {
+        let arrivals = promises.awaitArrivals(dropped, into: folder, taken: taken, input: input) {
             [weak self] callIn in
             guard let self, self.arriving.removeValue(forKey: id) != nil else { return }
-            self.named(id, claim, carried, callIn, folders: folders)
+            self.named(id, claim, carried, callIn, files: files)
         }
         arriving[id] = (claim.token, arrivals)
     }
 
     /// Serves `callIn`'s promises from the taken offer of `claim`, names them
-    /// on take `id`, then sizes `folders` and ends the take `CAUGHT`.
+    /// on take `id`, then sizes `files` and ends the take `CAUGHT`.
     private func named(
         _ id: DragTakeID, _ claim: GuestDragWatcher.Claim, _ carried: GuestDragCatcher.Carried,
-        _ callIn: GuestDragPromises.CallIn, folders: [Int: URL]
+        _ callIn: GuestDragPromises.CallIn, files: [URL]
     ) {
         guard
-            let offered = GuestDraggedItems.offerItems(
-                carried.items, resolvedFiles: carried.intake, promises: callIn.offered),
+            let offered = GuestDraggedItems.offerItems(carried.items, promises: callIn.offered),
             served.serve(claim.token, offered.map(\.source))
         else {
             promises.complete(callIn)
-            return peer.answerTake(id, .caught(folderSizes: nil))
+            return peer.answerTake(id, .caught(sizes: nil))
         }
         callIns[claim.token] = callIn
         let names = carried.items.indices.compactMap { callIn.offered[$0].map { Data($0.name.utf8) } }
         peer.answerTake(id, .report(.named(names)))
-        measure(folders, take: id)
+        size(files, take: id)
     }
 
-    /// Sizes `folders` and ends take `id` `CAUGHT` with their sizes.
-    private func measure(_ folders: [Int: URL], take id: DragTakeID) {
-        input.measureFolders(folders) { [weak self] sizes in
-            let sized = folders.keys.sorted().map { UInt64(max(sizes[$0] ?? 0, 0)) }
-            self?.peer.answerTake(id, .caught(folderSizes: sized))
-            Self.logger.log(.notice, "Delivered the drag: its promises named and its folders sized")
+    /// Sizes `files`, the drop's plain files and folders in drag order, and
+    /// ends take `id` `CAUGHT` with their sizes. This is the first read of a
+    /// dragged file, made only at the drop
+    /// (``GuestDraggedItems/offerItems(_:promises:sizes:)``); a file that
+    /// cannot be read is sized `0`, and its pull fails.
+    private func size(_ files: [URL], take id: DragTakeID) {
+        input.sizeFiles(files) { [weak self] sizes in
+            let unread = sizes.count { $0 == nil }
+            if unread > 0 {
+                Self.logger.log(
+                    .error,
+                    "\(unread, privacy: .public) of the drag's \(sizes.count, privacy: .public) files could not be read"
+                )
+            }
+            self?.peer.answerTake(id, .caught(sizes: sizes.map { UInt64(max($0 ?? 0, 0)) }))
+            Self.logger.log(.notice, "Delivered the drag: its promises named and its files sized")
         }
-    }
-
-    /// The folders among `carried`'s plain file items, by item index.
-    private static func folders(of carried: GuestDragCatcher.Carried) -> [Int: URL] {
-        var folders: [Int: URL] = [:]
-        var files = carried.intake.representations.makeIterator()
-        for (index, item) in carried.items.enumerated() {
-            guard case .file(let url) = item, let resolved = files.next() else { continue }
-            if resolved.isDirectory { folders[index] = url }
-        }
-        return folders
     }
 
     #if DEBUG
@@ -292,17 +274,11 @@ protocol GuestDragInput: AnyObject {
     /// until cancelled.
     func holdActivity(reason: String) -> GuestDragCancel
 
-    /// Resolves `urls` into representations off the main actor — a stat each,
-    /// reading nothing inside a folder, whose estimate is `0` — and hands the
-    /// result back on it.
-    func resolveFiles(
-        _ urls: [URL],
-        then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)
-
-    /// Measures each of `folders`, keyed by item index, off the main actor — a
-    /// walk of its tree, the only read of a folder's contents a drag makes
-    /// before the host pulls it — and hands the sizes back on it.
-    func measureFolders(_ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void)
+    /// Opens and sizes each of `urls`, a delivering drop's plain files and
+    /// folders, off the main actor as a pull would open it — a file by its
+    /// size, a folder by a walk of its tree — and hands back on it their sizes
+    /// in order, nil for one that cannot be read.
+    func sizeFiles(_ urls: [URL], then completion: @escaping @MainActor @Sendable ([Int?]) -> Void)
 
     /// Calls `appeared` on the main actor with each entry of `folder` not
     /// hidden by a leading dot, once, as it appears — every one already there
@@ -325,9 +301,9 @@ struct GuestDragArrival: Equatable, Sendable {
     let isFolder: Bool
 }
 
-/// What a delivering drop on the catcher reads of the drag's file promises:
-/// the drag pasteboard as the Pasteboard Manager (`Pasteboard.h`) sees it,
-/// for a drop received whole, and its `NSFilePromiseReceiver`s, for one whose
+/// What a delivering drop on the catcher reads of the drag: its items, the
+/// drag pasteboard as the Pasteboard Manager (`Pasteboard.h`) sees it, for a
+/// drop received whole, and its `NSFilePromiseReceiver`s, for one whose
 /// promises are each called in. Read only while the drop is under way.
 @MainActor
 protocol GuestDragDrop: AnyObject {
@@ -346,6 +322,11 @@ protocol GuestDragDrop: AnyObject {
 
     /// The drop's file promises, one per promised item, in drag order.
     func receivers() -> [any FilePromiseReceiving]
+
+    /// The drop's items under ``GuestDraggedItems``' rule, read off its
+    /// pasteboard as the drop's destination reads them, or nil when some item
+    /// falls outside it.
+    func items() -> [GuestDragItem]?
 }
 
 /// The on-screen window that receives the guest's drag once the host has taken
@@ -545,32 +526,34 @@ enum GuestDraggedItems {
         return .file(url)
     }
 
-    /// What to offer for `items`, whose file URLs resolved into `intake`, whose
-    /// promises `names` names by index and whose folders `folderSizes` sizes
-    /// by index, each with what its pulls are served from; `nil` unless every
-    /// file resolved and every item has a name — a drag that would arrive on
-    /// the Mac short of what the user dragged stays in the guest.
+    /// What to offer for `items`, whose promises `names` names by index and
+    /// whose other items `sizes` sizes by index, each with what its pulls are
+    /// served from; `nil` unless every item has a name and the offer limit
+    /// holds them all — a drag that would arrive on the Mac short of what the
+    /// user dragged stays in the guest.
+    ///
+    /// A plain file is described by its URL alone — its name, its kind and
+    /// type by ``type(named:)`` — and nothing reads the file: the guest's
+    /// privacy protections let a process read a file in a protected folder,
+    /// without asking, only once the user has dropped it on that process
+    /// ([WWDC19 session 701](https://developer.apple.com/videos/play/wwdc2019/701/)),
+    /// and every offer is made before the drop.
     ///
     /// A promise `names` leaves out is offered under a stand-in name, and
-    /// nothing serves it; a folder `folderSizes` leaves out has no estimate.
+    /// nothing serves it; an item `sizes` leaves out has no estimate.
     nonisolated static func offerItems(
-        _ items: [GuestDragItem], resolvedFiles intake: ClipboardPasteboardReader.FileIntake,
-        promises names: [Int: (name: String, landing: GuestDragLanding)] = [:], folderSizes: [Int: Int] = [:]
+        _ items: [GuestDragItem], promises names: [Int: (name: String, landing: GuestDragLanding)] = [:],
+        sizes: [Int: Int] = [:]
     ) -> [(item: OfferedItem, source: GuestDragSource)]? {
-        let fileCount = items.count { $0.fileURL != nil }
-        guard intake.skipped == 0, intake.representations.count == fileCount,
-            items.count <= ClipboardContent.maxOfferableRepresentations
-        else { return nil }
-        var files = intake.representations.makeIterator()
+        guard items.count <= ClipboardContent.maxOfferableRepresentations else { return nil }
         var offered: [(item: OfferedItem, source: GuestDragSource)] = []
         for (index, item) in items.enumerated() {
             switch item {
             case .file(let url):
-                guard let resolved = files.next() else { return nil }
                 guard
                     let representation = Self.representation(
-                        uti: resolved.uti, isDirectory: resolved.isDirectory, name: url.lastPathComponent,
-                        size: folderSizes[index] ?? resolved.byteCount, promised: false)
+                        uti: Self.type(named: url).identifier, isDirectory: url.hasDirectoryPath,
+                        name: url.lastPathComponent, size: sizes[index] ?? 0, promised: false)
                 else { return nil }
                 offered.append((Self.item(representation), .file(url)))
             case .promise(let uti):
@@ -584,6 +567,22 @@ enum GuestDraggedItems {
             }
         }
         return offered
+    }
+
+    /// The type `url`'s text names, never asking the file: a URL ending in a
+    /// slash, as a drag pasteboard writes a directory's, is a package its
+    /// extension names or else a folder, and anything else is the type of
+    /// its extension.
+    nonisolated static func type(named url: URL) -> UTType {
+        let pathExtension = url.pathExtension
+        if url.hasDirectoryPath {
+            guard !pathExtension.isEmpty,
+                let package = UTType(filenameExtension: pathExtension, conformingTo: .package)
+            else { return .folder }
+            return package
+        }
+        guard !pathExtension.isEmpty else { return .data }
+        return UTType(filenameExtension: pathExtension) ?? .data
     }
 
     nonisolated private static func representation(

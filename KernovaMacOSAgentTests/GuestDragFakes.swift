@@ -41,8 +41,9 @@ final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
 }
 
 /// The guest's event stream and drag pasteboard, driven by hand: a test
-/// presses and releases the button, fires the press timer, decides when each
-/// off-main resolve comes back, and sets the file promises the drag carries.
+/// presses and releases the button, fires the press timer, sets the file
+/// promises the drag carries, and decides when each coordinated read of a
+/// whole drop's arrival is granted.
 @MainActor
 final class FakeGuestDragInput: GuestDragInput {
     let pasteboard = FakeDragPasteboard()
@@ -53,15 +54,12 @@ final class FakeGuestDragInput: GuestDragInput {
     private var tick: (@MainActor @Sendable () -> Void)?
     private(set) var tickInterval: TimeInterval?
     private(set) var isHoldingActivity = false
-    /// Every set of file URLs resolved, in order.
-    private(set) var resolved: [[URL]] = []
-    private var pendingResolves:
-        [(urls: [URL], completion: @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void)] = []
     /// The file promises the drag pasteboard holds, as a drop on the catcher
     /// reads them.
     var receivers: [FakePromiseReceiver] = []
-    /// Every set of folders measured, by item index.
-    private(set) var measured: [[Int: URL]] = []
+    /// Every set of dragged files sized, in order: the only reads of a
+    /// dragged file this side makes.
+    private(set) var sized: [[URL]] = []
     /// The folder being watched for entries, and who hears them.
     private var watching: (folder: URL, appeared: @MainActor @Sendable ([URL]) -> Void)?
     /// Every entry whose coordinated read was asked for and not yet granted.
@@ -74,7 +72,6 @@ final class FakeGuestDragInput: GuestDragInput {
 
     var isObservingPresses: Bool { pressHandler != nil }
     var isTicking: Bool { tick != nil }
-    var pendingResolveCount: Int { pendingResolves.count }
 
     // MARK: Driving it
 
@@ -123,15 +120,6 @@ final class FakeGuestDragInput: GuestDragInput {
         granted(GuestDragArrival(url: url, isFolder: isDirectory.boolValue))
     }
 
-    /// Hands back every queued resolve, each the real resolve of its URLs.
-    func deliverResolves() {
-        let pending = pendingResolves
-        pendingResolves.removeAll()
-        for resolve in pending {
-            resolve.completion(ClipboardPasteboardReader.resolve(filesAt: resolve.urls, sizeOf: nil))
-        }
-    }
-
     // MARK: GuestDragInput
 
     func observePrimaryPresses(
@@ -154,23 +142,11 @@ final class FakeGuestDragInput: GuestDragInput {
         return { [weak self] in self?.isHoldingActivity = false }
     }
 
-    /// Queues the resolve until ``deliverResolves()``, which runs the live
-    /// input's: a stat each, reading nothing inside a folder.
-    func resolveFiles(
-        _ urls: [URL],
-        then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void
-    ) {
-        resolved.append(urls)
-        pendingResolves.append((urls, completion))
-    }
-
-    /// Measures each folder as the live input does, and hands the sizes back
-    /// at once.
-    func measureFolders(
-        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
-    ) {
-        measured.append(folders)
-        completion(folders.mapValues { ClipboardArchive.estimatedByteCount(at: $0) })
+    /// Sizes each file as the live input does, and hands the sizes back at
+    /// once.
+    func sizeFiles(_ urls: [URL], then completion: @escaping @MainActor @Sendable ([Int?]) -> Void) {
+        sized.append(urls)
+        completion(urls.map { ClipboardPasteboardReader.resolve(filesAt: [$0]).representations.first?.byteCount })
     }
 
     func watchEntries(
@@ -192,6 +168,7 @@ final class FakeGuestDragInput: GuestDragInput {
 @MainActor
 final class FakeGuestDragDrop: GuestDragDrop {
     enum Call: Equatable {
+        case items
         case offers(item: Int)
         case setPasteLocation(URL)
         case request(item: Int)
@@ -205,13 +182,24 @@ final class FakeGuestDragDrop: GuestDragDrop {
     /// The source writing the whole drop at the paste location, once asked.
     var onRequest: ((URL) -> Void)?
     private let promises: [FakePromiseReceiver]
+    /// The drop's items, as its pasteboard holds them.
+    private let dropped: [GuestDragItem]?
     private(set) var calls: [Call] = []
     private var location: URL?
 
-    init(offering: Set<Int> = [], takesLocation: Bool = true, receivers: [FakePromiseReceiver] = []) {
+    init(
+        _ dropped: [GuestDragItem]?, offering: Set<Int> = [], takesLocation: Bool = true,
+        receivers: [FakePromiseReceiver] = []
+    ) {
+        self.dropped = dropped
         self.offering = offering
         self.takesLocation = takesLocation
         promises = receivers
+    }
+
+    func items() -> [GuestDragItem]? {
+        calls.append(.items)
+        return dropped
     }
 
     func offersPromisedFileURL(item index: Int) -> Bool {
@@ -278,7 +266,7 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         case deliverRefused
         case stoodDown
         case named([String])
-        case caught(folderSizes: [UInt64]?)
+        case caught(sizes: [UInt64]?)
         case returned
         case refused(ErrorCode)
     }
@@ -303,7 +291,7 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
             case .report(.deliverRefused): return .deliverRefused
             case .report(.stoodDown): return .stoodDown
             case .report(.named(let names)): return .named(names.map { String(decoding: $0, as: UTF8.self) })
-            case .caught(let folderSizes): return .caught(folderSizes: folderSizes)
+            case .caught(let sizes): return .caught(sizes: sizes)
             case .returned: return .returned
             case .refused(let error): return .refused(error.code)
             }
@@ -457,8 +445,8 @@ final class FakeGuestDragTypeIcons {
 }
 
 extension GuestDragCatcher {
-    /// A drop on the surface whose pasteboard holds no file promises.
+    /// A drop on the surface whose pasteboard holds no items.
     func performDragOperation() -> Bool {
-        performDragOperation(drop: FakeGuestDragDrop())
+        performDragOperation(drop: FakeGuestDragDrop(nil))
     }
 }

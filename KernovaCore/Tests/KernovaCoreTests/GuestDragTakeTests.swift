@@ -164,14 +164,14 @@ struct GuestDragTakeTests {
     /// test releases it.
     private let clock = GatedEngineClock()
 
-    private static let delivery = DragDelivery(names: [:], folderSizes: [:])
+    private static let delivery = DragDelivery(names: [:], sizes: [:])
 
     private static let file = DraggedOutItem(
         name: Data("a.txt".utf8), type: .plainText, isDirectory: false, sizeEstimate: 4)
-    private static let folder = DraggedOutItem(name: Data("Folder".utf8), type: .folder, isDirectory: true)
+    nonisolated private static let folder = DraggedOutItem(name: Data("Folder".utf8), type: .folder, isDirectory: true)
     private static let promise = DraggedOutItem(
         name: Data("Untitled.jpeg".utf8), type: .jpeg, isDirectory: false, isPromised: true)
-    private static let namedPromise = DraggedOutItem(
+    nonisolated private static let namedPromise = DraggedOutItem(
         name: Data("IMG_0042.jpeg".utf8), type: .jpeg, isDirectory: false, isPromised: true, sizeEstimate: 9)
     private static let sizedFolder = DraggedOutItem(
         name: Data("Folder".utf8), type: .folder, isDirectory: true, sizeEstimate: 4096)
@@ -670,7 +670,7 @@ struct GuestDragTakeTests {
         try await transport.changed.wait { transport.cancels == 1 }
     }
 
-    @Test("a name ask waits for the names alone: the folder sizes after them hold no writer and no main thread")
+    @Test("a name ask waits for the names alone: the sizes after them hold no writer and no main thread")
     func aNameAskWaitsForNamesAlone() async throws {
         let take = try carriedTake(items: [Self.promise, Self.folder])
         let transport = transport
@@ -685,7 +685,7 @@ struct GuestDragTakeTests {
         guest.start()
 
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
-        #expect(delivery.settled == nil, "the names waited for the folder sizes")
+        #expect(delivery.settled == nil, "the names waited for the sizes")
         let outcome = OutcomeBox(gate: transport.changed)
         take.writeItem(at: 1, to: URL(fileURLWithPath: "/Users/me/Desktop/Folder")) { outcome.set($0) }
         await Task.yield()

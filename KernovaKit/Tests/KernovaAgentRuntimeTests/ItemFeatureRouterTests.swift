@@ -191,7 +191,7 @@ struct ItemFeatureRouterTests {
         let runtime = Locked<PeerAgentRuntime?>(nil)
         let peerRouter: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: peerHeard) { event in
             if case .requested(let id, _) = event {
-                runtime.withLock { $0 }?.answerDragTake(id, .caught(folderSizes: nil))
+                runtime.withLock { $0 }?.answerDragTake(id, .caught(sizes: nil))
             }
         }
         let peer = PeerAgentRuntime(

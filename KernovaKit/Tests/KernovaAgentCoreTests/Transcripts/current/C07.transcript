@@ -46,9 +46,9 @@ t=761    ev      host drag takeReport id=2 delivering
 t=800    in      peer take named names=494d475f303034322e6a706567
 t=800    p>h     00000002 00 01 00000011 0806120d494d475f303034322e6a706567
 t=801    ev      host drag takeReport id=2 named names=494d475f303034322e6a706567
-t=810    in      peer take caught folderSizes=8192
+t=810    in      peer take caught sizes=8192
 t=810    p>h     00000002 02 00 00000006 080122028040
-t=811    ev      host drag takeEnded id=2 caught names=494d475f303034322e6a706567 folderSizes=8192
+t=811    ev      host drag takeEnded id=2 caught names=494d475f303034322e6a706567 sizes=8192
 t=811    h>p     00000002 02 00 00000000
 t=850    in      host pull token=04040404040404040404040404040404 item=0 representation=0 ceiling=1048576
 t=850    h>p     00000004 01 00 0000001b 08e90712160a100404040404040404040404040404040420808040

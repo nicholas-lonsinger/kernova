@@ -10,7 +10,7 @@ import KernovaKit
 /// `NSFilePromiseProvider.h`) and the answer must return synchronously, so that
 /// ask holds the main thread while the guest calls the promises in, and
 /// everything it waits for arrives here without it. The ask waits only for
-/// the names, never for the folder sizes the delivery settles with after.
+/// the names, never for the sizes the delivery settles with after.
 ///
 /// The names are owed within ``namingDeadline`` of the first ask; past it the
 /// delivery settles as ``Outcome/expired(after:)``.
@@ -18,7 +18,7 @@ package final class GuestDragDelivery: @unchecked Sendable {
     /// What the drag's delivery left the host to pull.
     package enum Outcome: Equatable, Sendable {
         /// The drop delivered the drag: its items in the taken offer's order,
-        /// each promise under the name it took and each folder sized.
+        /// each promise under the name it took and every other item sized.
         case delivered([DraggedOutItem])
         /// No delivery: the taken offer carries the drag as offered.
         case undelivered

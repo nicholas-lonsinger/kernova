@@ -25,8 +25,15 @@ final class SystemGuestDragInput: GuestDragInput {
     /// Sizes one folder by walking its tree.
     private let measureFolder: @Sendable (URL) -> Int
 
-    init(measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) }) {
+    /// Hears each folder watch let go of its folder, on the watch's queue.
+    private let watchClosed: @Sendable () -> Void
+
+    init(
+        measureFolder: @escaping @Sendable (URL) -> Int = { ClipboardArchive.estimatedByteCount(at: $0) },
+        watchClosed: @escaping @Sendable () -> Void = {}
+    ) {
         self.measureFolder = measureFolder
+        self.watchClosed = watchClosed
     }
 
     var isPrimaryButtonHeld: Bool { NSEvent.pressedMouseButtons & 1 != 0 }
@@ -64,35 +71,72 @@ final class SystemGuestDragInput: GuestDragInput {
         return { ProcessInfo.processInfo.endActivity(activity) }
     }
 
-    func resolveFiles(
-        _ urls: [URL],
-        then completion: @escaping @MainActor @Sendable (ClipboardPasteboardReader.FileIntake) -> Void
-    ) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let intake = ClipboardPasteboardReader.resolve(filesAt: urls, sizeOf: nil)
-            MainActorBridge.async { completion(intake) }
-        }
-    }
-
-    func measureFolders(
-        _ folders: [Int: URL], then completion: @escaping @MainActor @Sendable ([Int: Int]) -> Void
-    ) {
-        let measureFolder = measureFolder
-        DispatchQueue.global(qos: .userInitiated).async {
-            let sizes = folders.mapValues(measureFolder)
+    func sizeFiles(_ urls: [URL], then completion: @escaping @MainActor @Sendable ([Int?]) -> Void) {
+        GuestDragFiles.size(urls, measuringFolders: measureFolder) { sizes in
             MainActorBridge.async { completion(sizes) }
         }
     }
 
-    /// Lists the folder again each time a vnode source on it reports a write,
-    /// which adding or removing an entry is: one listing per coalesced event,
-    /// with no polling.
     func watchEntries(
         in folder: URL, _ appeared: @escaping @MainActor @Sendable ([URL]) -> Void
     ) -> GuestDragCancel {
+        let stop = GuestDragFiles.watchEntries(in: folder, closed: watchClosed) { urls in
+            MainActorBridge.async { appeared(urls) }
+        }
+        return { stop() }
+    }
+
+    func coordinateRead(of url: URL, then granted: @escaping @MainActor @Sendable (GuestDragArrival?) -> Void) {
+        GuestDragFiles.coordinateRead(of: url) { arrival in
+            MainActorBridge.async { granted(arrival) }
+        }
+    }
+}
+
+/// A drag's file work off the main actor: sizing the dropped files, watching a
+/// drop's staging folder, and the coordinated read of each arrival. Each call
+/// hands back on a queue of its own, never the main actor.
+///
+/// Isolated to no actor, as is every closure it hands Dispatch or a file
+/// coordinator: a closure formed in a main-actor function and passed where no
+/// `@Sendable` is declared, as `setCancelHandler(handler:)`'s is not, is
+/// isolated to the main actor, and Swift 6 checks that on entry, trapping
+/// (`_dispatch_assert_queue_fail` under `swift_task_isCurrentExecutor`) when
+/// Dispatch runs it on its own queue.
+enum GuestDragFiles {
+    private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "GuestDragFiles")
+
+    /// The queue coordinated reads are granted on.
+    private static let coordination = OperationQueue()
+
+    /// Opens and sizes each of `urls` as a pull would open it — a file by its
+    /// size, a folder by `measureFolder` — and hands back their sizes in
+    /// order, nil for one that cannot be read.
+    static func size(
+        _ urls: [URL], measuringFolders measureFolder: @escaping @Sendable (URL) -> Int,
+        then completion: @escaping @Sendable ([Int?]) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            completion(
+                urls.map { url in
+                    ClipboardPasteboardReader.resolve(filesAt: [url], sizeOf: measureFolder).representations.first?
+                        .byteCount
+                })
+        }
+    }
+
+    /// Lists `folder` again each time a vnode source on it reports a write,
+    /// which adding or removing an entry is — one listing per coalesced event,
+    /// with no polling — handing `appeared` each entry not hidden by a leading
+    /// dot, once, every one already there included, until the returned call
+    /// stops it; `closed` hears once the watch has let go of the folder.
+    static func watchEntries(
+        in folder: URL, closed: @escaping @Sendable () -> Void, _ appeared: @escaping @Sendable ([URL]) -> Void
+    ) -> () -> Void {
         let descriptor = open(folder.path, O_EVTONLY)
         guard descriptor >= 0 else {
-            Self.logger.log(.error, "Could not watch the promises' folder, errno \(errno, privacy: .public)")
+            logger.log(.error, "Could not watch the promises' folder, errno \(errno, privacy: .public)")
+            closed()
             return {}
         }
         let queue = DispatchQueue(label: "app.kernova.macosagent.drag-arrivals")
@@ -105,36 +149,37 @@ final class SystemGuestDragInput: GuestDragInput {
                 names.filter { !$0.hasPrefix(".") && seen.insert($0).inserted }.sorted()
             }
             guard !new.isEmpty else { return }
-            let urls = new.map { folder.appendingPathComponent($0) }
-            MainActorBridge.async { appeared(urls) }
+            appeared(new.map { folder.appendingPathComponent($0) })
         }
         source.setEventHandler(handler: scan)
-        source.setCancelHandler { close(descriptor) }
+        source.setCancelHandler {
+            close(descriptor)
+            closed()
+        }
         source.resume()
         queue.async(execute: scan)
         return { source.cancel() }
     }
 
-    /// The queue coordinated reads are granted on.
-    nonisolated private static let coordination = OperationQueue()
-
-    func coordinateRead(of url: URL, then granted: @escaping @MainActor @Sendable (GuestDragArrival?) -> Void) {
+    /// Asks for a coordinated read of `url`, handing `granted` what it holds
+    /// once the read is granted, or nil when it is neither a file nor a folder
+    /// or the read failed.
+    static func coordinateRead(of url: URL, _ granted: @escaping @Sendable (GuestDragArrival?) -> Void) {
         let intent = NSFileAccessIntent.readingIntent(with: url)
-        NSFileCoordinator(filePresenter: nil).coordinate(with: [intent], queue: Self.coordination) { error in
-            var arrival: GuestDragArrival?
+        NSFileCoordinator(filePresenter: nil).coordinate(with: [intent], queue: coordination) { error in
             if let error {
-                Self.logger.log(
-                    .warning, "A coordinated read was refused: \(error.localizedDescription, privacy: .public)")
-            } else {
-                let url = URL(fileURLWithPath: intent.url.path)
-                let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
-                if values?.isDirectory == true {
-                    arrival = GuestDragArrival(url: url, isFolder: true)
-                } else if values?.isRegularFile == true {
-                    arrival = GuestDragArrival(url: url, isFolder: false)
-                }
+                logger.log(.warning, "A coordinated read was refused: \(error.localizedDescription, privacy: .public)")
+                return granted(nil)
             }
-            MainActorBridge.async { [arrival] in granted(arrival) }
+            let url = URL(fileURLWithPath: intent.url.path)
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey])
+            if values?.isDirectory == true {
+                granted(GuestDragArrival(url: url, isFolder: true))
+            } else if values?.isRegularFile == true {
+                granted(GuestDragArrival(url: url, isFolder: false))
+            } else {
+                granted(nil)
+            }
         }
     }
 }
@@ -204,6 +249,10 @@ final class GuestDragPasteboardDrop: GuestDragDrop {
 
     func receivers() -> [any FilePromiseReceiving] {
         pasteboard.filePromiseReceivers
+    }
+
+    func items() -> [GuestDragItem]? {
+        GuestDraggedItems.items(on: pasteboard)
     }
 }
 
@@ -406,14 +455,10 @@ private final class CatcherHUD: NSVisualEffectView {
     /// which has no name until it is called in — as its promised type's icon
     /// and description, and several as the multiple-documents icon and their
     /// count.
-    ///
-    /// A file's type comes from its name alone: a read of a file in a
-    /// protected folder raises the guest's privacy prompt, which the
-    /// transfer itself never needs.
     func present(_ items: [GuestDragItem], typeIcon: @MainActor (UTType) -> NSImage) {
         switch items.first {
         case .file(let url)? where items.count == 1:
-            iconView.image = typeIcon(Self.type(named: url))
+            iconView.image = typeIcon(GuestDraggedItems.type(named: url))
             nameLabel.stringValue = url.lastPathComponent
         case .promise(let uti)? where items.count == 1:
             let type = UTType(uti) ?? .data
@@ -425,22 +470,6 @@ private final class CatcherHUD: NSVisualEffectView {
             iconView.image = multiple
             nameLabel.stringValue = "\(items.count) items"
         }
-    }
-
-    /// The type `url`'s text names, never asking the file: a URL ending in a
-    /// slash, as a drag pasteboard writes a directory's, is a package its
-    /// extension names or else a folder, and anything else is the type of
-    /// its extension.
-    static func type(named url: URL) -> UTType {
-        let pathExtension = url.pathExtension
-        if url.hasDirectoryPath {
-            guard !pathExtension.isEmpty,
-                let package = UTType(filenameExtension: pathExtension, conformingTo: .package)
-            else { return .folder }
-            return package
-        }
-        guard !pathExtension.isEmpty else { return .data }
-        return UTType(filenameExtension: pathExtension) ?? .data
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
