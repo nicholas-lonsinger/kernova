@@ -929,11 +929,28 @@ struct HubClipboardServiceTests {
         #expect(try await reported(instance, .copy) == .disconnectedCopyRetracted)
     }
 
-    /// Has the guest withdraw its copy, its connection still up.
-    private func withdrawGuestCopy(on probe: AgentHubProbe) {
+    /// Has the guest reset its copy `code`, its connection still up: `CANCELLED` withdraws it.
+    private func withdrawGuestCopy(on probe: AgentHubProbe, _ code: ErrorCode = .cancelled) {
         probe.deliver(
-            .items(.offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled)))),
+            .items(.offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(code)))),
             fromConnection: 0)
+    }
+
+    @Test(
+        "Copy to Mac's item of an unpasted file goes when the guest's CLIPBOARD stops being usable; the rest stays, and sharing stopping is said"
+    )
+    func copyToMacRetractedWhenTheGuestsFeatureGoes() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try await copyToMac(Self.text, Self.textAndFile, on: probe, into: instance)
+        try await landPulls(2, on: probe) { Data($0.request.item == 0 ? "the guest's".utf8 : "a.bin".utf8) }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+
+        withdrawGuestCopy(on: probe, .capabilityWithdrawn)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("the guest's".utf8)]])
+        #expect(try await reported(instance, .copy) == .disconnectedFilesRetracted)
     }
 
     @Test(
@@ -1334,10 +1351,70 @@ struct HubClipboardServiceTests {
         #expect(instance.clipboardTransferReport == .idle)
     }
 
+    /// How the guest's passthrough offer stops being the Mac's clipboard while what a paste had of it stays.
+    enum GuestOfferEnd: CaseIterable, Sendable {
+        /// Passthrough is turned off on the Mac.
+        case passthroughStops
+        /// The guest leaves the console, and the hub's connection with it.
+        case guestLeavesTheConsole
+        /// The guest resets its offer `CAPABILITY_WITHDRAWN`, CLIPBOARD having stopped being usable there.
+        case guestFeatureGoes
+    }
+
+    /// Ends the guest's passthrough offer as `end` says.
+    private func end(
+        _ end: GuestOfferEnd, _ instance: VMInstance, _ probe: AgentHubProbe
+    ) async throws {
+        switch end {
+        case .passthroughStops:
+            await stopPassthrough(instance, probe)
+        case .guestLeavesTheConsole:
+            probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+            try await waitForChange { !instance.hubClipboard.isConnected }
+            await probe.settle()
+        case .guestFeatureGoes:
+            let pasteboard = try hostPasteboard(instance)
+            let standing = pasteboard.changeCount
+            probe.deliver(
+                .items(
+                    .offerEnded(
+                        .clipboard, .remote, token: Self.guestToken, .resetByPeer(WireError(.capabilityWithdrawn)))),
+                fromConnection: 0)
+            // The retraction rewrites the Mac's pasteboard.
+            try await pasteboard.changed.wait { pasteboard.changeCount != standing }
+            await probe.settle()
+        }
+    }
+
     @Test(
-        "A concealed guest copy pasted on the Mac goes from it when passthrough stops, and when the connection ends",
-        arguments: [true, false])
-    func pastedConcealedCopyGoes(passthroughStops: Bool) async throws {
+        "The guest's CLIPBOARD stopping being usable takes back its file item whose file no paste had; what a paste had stays"
+    )
+    func guestFeatureGoingKeepsWhatWasPasted() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let coordinator = try startPassthrough(instance)
+        defer { coordinator.stop() }
+        let retractions = recordingRetractions(instance)
+        let pasteboard = try hostPasteboard(instance)
+        try await passthroughWrites(Self.text, Self.textAndFile, into: instance, on: probe)
+        #expect(
+            try await paste(Self.textType, item: 0, landing: Data("text".utf8), stream: 3, instance, probe)
+                == Data("text".utf8))
+        #expect(
+            try await paste(Self.textType, item: 1, landing: Data("a.bin".utf8), stream: 5, instance, probe)
+                == Data("a.bin".utf8))
+
+        try await end(.guestFeatureGoes, instance, probe)
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("text".utf8)]])
+        #expect(retractions.outcomes == [.keptPart])
+        #expect(instance.clipboardTransferReport == .idle)
+    }
+
+    @Test(
+        "A concealed guest copy pasted on the Mac goes from it when passthrough stops, the connection ends, or the guest's CLIPBOARD goes",
+        arguments: GuestOfferEnd.allCases)
+    func pastedConcealedCopyGoes(end ending: GuestOfferEnd) async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         let coordinator = try startPassthrough(instance)
@@ -1349,13 +1426,7 @@ struct HubClipboardServiceTests {
             try await paste(Self.textType, item: 0, landing: Data("hunter2".utf8), stream: 3, instance, probe)
                 == Data("hunter2".utf8))
 
-        if passthroughStops {
-            await stopPassthrough(instance, probe)
-        } else {
-            probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
-            try await waitForChange { !instance.hubClipboard.isConnected }
-            await probe.settle()
-        }
+        try await end(ending, instance, probe)
         #expect(pasteboard.items.isEmpty)
         #expect(retractions.outcomes == [.cleared])
     }

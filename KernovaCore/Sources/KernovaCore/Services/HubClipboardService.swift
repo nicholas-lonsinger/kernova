@@ -225,7 +225,7 @@ final class HubClipboardService: ClipboardServicing {
         }
     }
 
-    /// A copy the guest sent ended, with the connection or withdrawn by the guest: what the Mac's clipboard holds
+    /// A copy the guest sent ended, with the link or withdrawn by the guest: what the Mac's clipboard holds
     /// of it that no paste had is retracted, its files being on the guest's disk, and the user told what went and
     /// why.
     private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
@@ -349,8 +349,8 @@ final class HubClipboardService: ClipboardServicing {
     ///
     /// - The guest ended it, its clipboard moving on: every promise is withdrawn, pasted or not.
     /// - A Mac copy replaced it: the guest's clipboard is that copy now.
-    /// - The guest stopped passthrough, or the connection left: the guest may hold it still, so what a paste
-    ///   had stays (``ClipboardWithdrawal/unread``); the next connection carries only its next copy.
+    /// - The guest stopped passthrough, or the link ended: the guest may hold it still, so what a paste had
+    ///   stays (``ClipboardWithdrawal/unread``); the next link carries only its next copy.
     private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         guard self.remote === remote else { return }
         self.remote = nil

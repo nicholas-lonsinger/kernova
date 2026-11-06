@@ -48,7 +48,7 @@ public enum ClipboardRetractionLog {
         let why =
             switch cause {
             case .passthroughStopped: "passthrough stopped"
-            case .ended(.linkLost): "\(far)'s connection ended"
+            case .ended(.linkLost): "clipboard sharing with \(far) stopped"
             case .ended(.passthroughStopped): "\(far) stopped passthrough"
             case .ended(.byFarSide) where write == .copy: "\(far) withdrew the copy"
             case .ended(.byFarSide): "\(far)'s clipboard moved on"

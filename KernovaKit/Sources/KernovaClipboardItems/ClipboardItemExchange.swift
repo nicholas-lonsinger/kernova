@@ -42,14 +42,15 @@ public final class ClipboardItemExchange {
 
     /// How the far side's offer stopped being this end's clipboard.
     public enum RemoteEnding: Sendable, Equatable {
-        /// The far side ended it, its clipboard having moved on: `hasSuccessor` when its next offer follows.
+        /// The far side withdrew it: `hasSuccessor` when its next offer follows.
         case byFarSide(hasSuccessor: Bool)
         /// This side made a copy of its own.
         case superseded
         /// The far side stopped passthrough, withdrawing it `DISABLED_BY_POLICY`: its clipboard may hold it still.
         case passthroughStopped
-        /// The connection left or no longer carries the feature, so nothing more of it can be pulled; the far
-        /// side's clipboard may hold it still, and the next connection carries only its next copy.
+        /// The link ended — the connection left, or the feature stopped being usable on either side — so nothing
+        /// more of it can be pulled; the far side's clipboard may hold it still, and the next link carries only
+        /// its next copy.
         case linkLost
     }
 
@@ -98,8 +99,8 @@ public final class ClipboardItemExchange {
     public var onCopyAsked: ((CopyAsk) -> Void)?
     /// A guest: the host sent a copy of its clipboard, its items read; this end holds it until it releases it.
     public var onCopyReceived: ((ClipboardRemoteOffer) -> Void)?
-    /// Hears each copy this end held that ended before it let it go, and how: the connection left (`.linkLost`),
-    /// or the far side withdrew it. What this end wrote of it can be pulled no more.
+    /// Hears each copy this end held that ended before it let it go, and how: the link ended (`.linkLost`), or
+    /// the far side withdrew it. What this end wrote of it can be pulled no more.
     public var onCopyEnded: ((_ copy: ClipboardRemoteOffer, _ ending: RemoteEnding) -> Void)?
     /// Hears each copy this side sent that the far side refused, and why: `CLIPBOARD_CHANGED` when its clipboard
     /// changed before the copy landed, `TOO_LARGE` over its paste ceiling, `CLIPBOARD_FILES_WITHHELD` when it
@@ -628,14 +629,18 @@ public final class ClipboardItemExchange {
         }
     }
 
-    /// How a far-side offer that ended with `closure` stopped being this end's clipboard. The far side's RESET
-    /// is its clipboard moving on, `ITEM_OFFER_REPLACED` saying its next offer follows, unless it is
-    /// `DISABLED_BY_POLICY`, passthrough stopping.
+    /// How a far-side offer that ended with `closure` stopped being this end's clipboard, the same at both ends.
+    /// Only the far side withdrawing it is `.byFarSide`: RESET `CANCELLED`, or `ITEM_OFFER_REPLACED` when its next
+    /// offer follows. `DISABLED_BY_POLICY` is passthrough stopping. Every other end, `CAPABILITY_WITHDRAWN` from a
+    /// side the feature stopped being usable on included, is the link ending: the far side's clipboard may hold it
+    /// still.
     static func ending(_ closure: StreamClosure) -> RemoteEnding {
-        switch closure {
-        case .resetByPeer(let error) where error.code == .disabledByPolicy: .passthroughStopped
-        case .resetByPeer(let error): .byFarSide(hasSuccessor: error.code == .itemOfferReplaced)
-        case .completed, .resetLocally, .connectionClosedLocally, .connectionClosedByPeer, .connectionLost: .linkLost
+        guard case .resetByPeer(let error) = closure else { return .linkLost }
+        switch error.code {
+        case .cancelled: return .byFarSide(hasSuccessor: false)
+        case .itemOfferReplaced: return .byFarSide(hasSuccessor: true)
+        case .disabledByPolicy: return .passthroughStopped
+        default: return .linkLost
         }
     }
 

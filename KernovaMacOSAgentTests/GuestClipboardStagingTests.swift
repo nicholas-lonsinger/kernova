@@ -278,7 +278,7 @@ struct GuestClipboardStagingTests {
         #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
         #expect(
             lines.retractions == [
-                "Retracted part of the Mac's clipboard from the guest pasteboard, the rest kept: the Mac's connection ended"
+                "Retracted part of the Mac's clipboard from the guest pasteboard, the rest kept: clipboard sharing with the Mac stopped"
             ])
     }
 
@@ -317,6 +317,25 @@ struct GuestClipboardStagingTests {
             ])
     }
 
+    @Test("The host's CLIPBOARD going takes back a host copy's unpasted file item, said as sharing stopping")
+    func copyEndingWithTheFeatureLogsTheRetraction() async throws {
+        let lines = Lines()
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
+        let link = pastedLink()
+        try await receiveCopy(clipboard, pasteboard, link)
+
+        clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.capabilityWithdrawn))),
+            on: link)
+        #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
+        #expect(
+            lines.retractions == [
+                "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: clipboard sharing with the Mac stopped"
+            ])
+    }
+
     @Test("The connection leaving takes back a host copy's unpasted file item, and the guest says so")
     func copyEndingWithTheLinkLogsTheRetraction() async throws {
         let lines = Lines()
@@ -329,7 +348,7 @@ struct GuestClipboardStagingTests {
         #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
         #expect(
             lines.retractions == [
-                "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: the Mac's connection ended"
+                "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: clipboard sharing with the Mac stopped"
             ])
     }
 

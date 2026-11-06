@@ -369,8 +369,8 @@ final class GuestClipboard {
 
     /// The host's offer stopped being this clipboard, as `ending` says. A promise still standing for it could serve
     /// only what already landed, so its write is retracted, unless a copy has replaced it since: every promise
-    /// when the host's clipboard moved on, and what no paste had when passthrough stopped or the connection carrying
-    /// it left, since the host may hold it still. The host's next connection offers only its next copy.
+    /// when the host's clipboard moved on, and what no paste had when passthrough stopped or the link carrying it
+    /// ended, since the host may hold it still. The host's next connection offers only its next copy.
     private func retract(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         guard published === remote else { return }
         published = nil
@@ -383,9 +383,9 @@ final class GuestClipboard {
         retractWrite(servingOffer: remote.token, withdrawing: withdrawal, of: .clipboard, because: .ended(ending))
     }
 
-    /// A copy the host sent ended, with the connection or withdrawn by the host: what this clipboard holds of it
+    /// A copy the host sent ended, with the link or withdrawn by the host: what this clipboard holds of it
     /// that no paste had is retracted, its files being on the Mac's disk. A withdrawal that took something back is
-    /// a notice; a connection's end shows as sharing going off.
+    /// a notice; a link's end shows as sharing going off.
     private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         let retraction = retractWrite(
             servingOffer: copy.token, withdrawing: .unread, of: .copy, because: .ended(ending))

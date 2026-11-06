@@ -352,15 +352,19 @@ struct GuestClipboardTests {
         clipboard.exchange.pullEnded(link.opened[0], .landed(.named(name)))
     }
 
-    /// The host turning passthrough off: it withdraws its offer as the policy disabling it.
-    private func passthroughStops(_ clipboard: GuestClipboard, _ link: RecordingLink) {
+    /// The host resetting its offer `code`: `DISABLED_BY_POLICY` is it turning passthrough off,
+    /// `CAPABILITY_WITHDRAWN` CLIPBOARD stopping being usable on its side.
+    private func passthroughStops(
+        _ clipboard: GuestClipboard, _ link: RecordingLink, _ code: ErrorCode = .disabledByPolicy
+    ) {
         clipboard.exchange.handle(
-            .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(.disabledByPolicy))),
-            on: link)
+            .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(code))), on: link)
     }
 
-    @Test("Turning passthrough off keeps what a paste in the guest had of the host's offer, as data (step 35c)")
-    func passthroughOffKeepsWhatWasPasted() async throws {
+    @Test(
+        "Turning passthrough off, or the host's CLIPBOARD going, keeps what a paste in the guest had of the host's offer, as data (step 35c)",
+        arguments: [ErrorCode.disabledByPolicy, .capabilityWithdrawn])
+    func passthroughOffKeepsWhatWasPasted(code: ErrorCode) async throws {
         let pasteboard = FakePasteboard()
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
@@ -375,15 +379,15 @@ struct GuestClipboardTests {
         pasteboard.finishProvider(itemIndex: 0)
         await drainMainQueue()
 
-        passthroughStops(clipboard, link)
+        passthroughStops(clipboard, link, code)
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(pasteboard.dataByItem == [[text: pasted]])
     }
 
     @Test(
-        "Turning passthrough off withdraws the host's file item whose file no paste in the guest had, its pasted name too"
-    )
-    func passthroughOffWithdrawsAnUnpastedFilesItem() async throws {
+        "Turning passthrough off, or the host's CLIPBOARD going, withdraws the host's file item whose file no paste in the guest had, its pasted name too",
+        arguments: [ErrorCode.disabledByPolicy, .capabilityWithdrawn])
+    func passthroughOffWithdrawsAnUnpastedFilesItem(code: ErrorCode) async throws {
         let pasteboard = FakePasteboard()
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let link = RecordingLink(
@@ -398,14 +402,24 @@ struct GuestClipboardTests {
         #expect(await paste.value == pasted)
         await drainMainQueue()
 
-        passthroughStops(clipboard, link)
+        passthroughStops(clipboard, link, code)
         #expect(pasteboard.items.isEmpty)
     }
 
+    /// How the host's passthrough offer stops being the guest's clipboard while what a paste had of it stays.
+    enum HostOfferEnd: CaseIterable, Sendable {
+        /// The host turns passthrough off.
+        case passthroughStops
+        /// The connection leaves.
+        case linkLeaves
+        /// The host resets its offer `CAPABILITY_WITHDRAWN`, CLIPBOARD having stopped being usable there.
+        case hostFeatureGoes
+    }
+
     @Test(
-        "A concealed host copy pasted in the guest goes when passthrough stops, and when the connection leaves",
-        arguments: [true, false])
-    func pastedConcealedCopyGoes(passthroughStopped: Bool) async throws {
+        "A concealed host copy pasted in the guest goes when passthrough stops, the connection leaves, or the host's CLIPBOARD goes",
+        arguments: HostOfferEnd.allCases)
+    func pastedConcealedCopyGoes(end: HostOfferEnd) async throws {
         let pasteboard = FakePasteboard()
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
@@ -417,7 +431,11 @@ struct GuestClipboardTests {
         await drainMainQueue()
         let standing = pasteboard.changeCount
 
-        if passthroughStopped { passthroughStops(clipboard, link) } else { clipboard.setLink(nil) }
+        switch end {
+        case .passthroughStops: passthroughStops(clipboard, link)
+        case .linkLeaves: clipboard.setLink(nil)
+        case .hostFeatureGoes: passthroughStops(clipboard, link, .capabilityWithdrawn)
+        }
         #expect(pasteboard.changeCount != standing)
         #expect(pasteboard.items.isEmpty)
     }
@@ -1052,6 +1070,31 @@ struct GuestClipboardTests {
                 [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("from the host".utf8)]
             ])
         #expect(rig.clipboard.activity == .copyWithdrawn(filesOnly: true))
+    }
+
+    @Test(
+        "The host's CLIPBOARD going retracts a host copy's file items whole, its text kept, and says no withdrawal"
+    )
+    func hostCopyRetractedWhenTheHostsFeatureGoes() async throws {
+        let rig = rig()
+        let link = RecordingLink(
+            items: [Self.textItem(), Self.textAndFileItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveCopy(Self.textItem(), Self.textAndFileItem(), text: Data("from the host".utf8), on: rig, link)
+        try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes == [.fileURL] }
+        let before = rig.clipboard.activity
+
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.capabilityWithdrawn))),
+            on: link)
+        #expect(rig.pasteboard.promisedTypes.isEmpty)
+        #expect(
+            rig.pasteboard.dataByItem == [
+                [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("from the host".utf8)]
+            ])
+        // Not the Mac withdrawing its copy: the link's end is no notice.
+        #expect(rig.clipboard.activity == before)
+        #expect(!rig.clipboard.activity.isNotice)
     }
 
     @Test("The host withdrawing a copy of only an unpasted file clears it, and says the Mac withdrew it")
