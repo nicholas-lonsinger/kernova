@@ -66,17 +66,6 @@ extension ThreadHold {
         }
 
         /// Holds until `resolved` returns a value, re-checking it at least
-        /// every `interval`. Nothing times the hold out.
-        func hold<Value>(recheckingEvery interval: TimeInterval = .infinity, until resolved: @Sendable () -> Value?)
-            -> Value
-        {
-            guard let value = hold(deadline: .distantFuture, recheckingEvery: interval, until: resolved) else {
-                preconditionFailure("A hold with no deadline returned without its value")
-            }
-            return value
-        }
-
-        /// Holds until `resolved` returns a value, re-checking it at least
         /// every `interval`, or until `deadline` passes.
         ///
         /// - Returns: the value, or `nil` once `deadline` passed without one.

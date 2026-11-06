@@ -407,12 +407,7 @@ targets += [
         ],
         // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
         exclude: ["Proto/kernova.proto"],
-        swiftSettings: sharedSwiftSettings,
-        // `import AppleArchive` does not autolink the C library its
-        // `__AAHeader…` functions live in
-        // (docs/research/2026-10-23-applearchive-extract-semantics.md,
-        // finding 3).
-        linkerSettings: [.linkedLibrary("AppleArchive")]
+        swiftSettings: sharedSwiftSettings
     ),
     // What the app and the `kernova` tool share and no guest agent links:
     // the command wire, the library's queries, config-file decoding.
