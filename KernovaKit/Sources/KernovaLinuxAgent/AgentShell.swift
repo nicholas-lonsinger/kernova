@@ -31,6 +31,15 @@ enum AgentShell {
     /// What the process holds for as long as it runs.
     private static let held = Locked<Held>(Held())
 
+    /// The fault `Tools/build-linux-guest-agent.sh` builds in, from `KERNOVA_AGENT_FAULT`, Debug only.
+    private static let fault: AgentFault? = {
+        #if KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
+        .hangBeforeHello
+        #else
+        nil
+        #endif
+    }()
+
     private struct Held: Sendable {
         var runtime: PeerAgentRuntime?
         var bus: DBusBusConnection?
@@ -103,11 +112,6 @@ enum AgentShell {
             The \(name, privacy: .public) peer \(label, privacy: .public) starts, scope \
             \(String(describing: claim.scope), privacy: .public), payload \(lowercaseHex(claim.payloadHash), privacy: .public)
             """)
-        #if KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
-        logger.log(.notice, "This build carries the hang-before-Hello fault: it never dials")
-        while true { pause() }
-        #endif
-
         let bus: DBusBusConnection
         do throws(DBusConnectError) {
             bus = try DBusBusConnection(bus: .system)
@@ -121,7 +125,7 @@ enum AgentShell {
         let runtime = PeerAgentRuntime(
             claim: claim, state: nil, registry: PeerFeatureRegistry(logs: logs, update: update),
             dialer: LinuxVsockDialer(),
-            scheduler: SystemScheduler(), logger: logger,
+            scheduler: SystemScheduler(), logger: logger, fault: fault,
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.

@@ -48,6 +48,7 @@ public final class PeerAgentRuntime: Sendable {
     private let logger: KernovaLogger
     private let handlers: Handlers
     private let receiverPolicy: ReceiverPolicy
+    private let fault: AgentFault?
     /// The process's power ledger: written on the driver queue for each effect carried out, and on the
     /// adapter's thread for each report, before the report hops to this queue — so a configuration built
     /// here after a report always carries it.
@@ -68,18 +69,24 @@ public final class PeerAgentRuntime: Sendable {
     }
 
     /// A runtime for a peer claiming `claim`, whose `instanceID` it replaces with 16 bytes it draws once.
-    /// With no `state` it dials nothing until `setPeerState(_:)` gives it one.
+    /// With no `state` it dials nothing until `setPeerState(_:)` gives it one. With a `fault` it never calls
+    /// `dialer`: see ``AgentFault``.
     public init(
         claim: PeerClaim, state: PeerSessionState?, registry: PeerFeatureRegistry, dialer: any TransportDialer,
         scheduler: any RuntimeScheduler, logger: KernovaLogger, receiverPolicy: ReceiverPolicy = .production,
-        handlers: Handlers
+        fault: AgentFault? = nil, handlers: Handlers
     ) {
         var claim = claim
         var generator = SystemRandomNumberGenerator()
         claim.instanceID = Data((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
         self.claim = claim
         self.registry = registry
-        self.dialer = dialer
+        self.fault = fault
+        self.dialer =
+            switch fault {
+            case nil: dialer
+            case .hangBeforeHello: UnansweredDialer()
+            }
         self.scheduler = scheduler
         self.logger = logger
         self.receiverPolicy = receiverPolicy
@@ -103,6 +110,9 @@ public final class PeerAgentRuntime: Sendable {
 
     /// Starts the adapters and dials.
     public func start() {
+        if fault == .hangBeforeHello {
+            logger.log(.notice, "This build carries the hang-before-Hello fault: it never dials")
+        }
         queue.async { [self] in
             registry.power?.start(reporter: PowerReporter { [self] input in report(.power(input)) })
             registry.update?.start(reporter: UpdateReporter { [self] input in report(.update(input)) })

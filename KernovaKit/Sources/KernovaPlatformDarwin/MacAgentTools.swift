@@ -22,15 +22,16 @@ public enum MacAgentTools {
         var termination: (any DispatchSourceSignal)?
     }
 
-    /// Runs `command`, one the session's app does not run itself, then exits: 0 when it did what was asked.
-    public static func run(_ command: MacAgentCommand, label: String) -> Never {
+    /// Runs `command`, one the session's app does not run itself, then exits: 0 when it did what was asked. A
+    /// `fault` reaches the system peer's runtime: see ``AgentFault``.
+    public static func run(_ command: MacAgentCommand, label: String, fault: AgentFault? = nil) -> Never {
         switch command {
         case .session: preconditionFailure("the session peer is the app")
         case .version:
             print(label)
             exit(0)
         case .selfTest: selfTest(label: label)
-        case .system: runSystemPeer(label: label)
+        case .system: runSystemPeer(label: label, fault: fault)
         case .install(let request): runInstaller(request, uninstalling: false, label: label)
         case .uninstall(let request): runInstaller(request, uninstalling: true, label: label)
         case .rollbackCheck(let scope): runRollbackCheck(scope)
@@ -59,10 +60,10 @@ public enum MacAgentTools {
 
     /// Runs the system peer: a "For everyone" install's daemon, reporting the console from the dynamic store and
     /// forwarding its own records when the host's policy turns LOGS on, until SIGTERM.
-    private static func runSystemPeer(label: String) -> Never {
+    private static func runSystemPeer(label: String, fault: AgentFault?) -> Never {
         let logs = LogForwarding()
         KernovaLogger.bootstrapProcessSink(logs.sink)
-        let peer = MacAgentPeer(role: .systemPeer, label: label, logs: logs, state: nil)
+        let peer = MacAgentPeer(role: .systemPeer, label: label, logs: logs, state: nil, fault: fault)
         guard peer.claim.scope == .system else {
             logger.log(.error, "The system peer runs only from the install for everyone")
             exit(1)

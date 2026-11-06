@@ -56,7 +56,7 @@ final class PeerRuntimeHarness: Sendable {
 
     init(
         power: FakePowerAdapter = FakePowerAdapter(handsOff: false), items: ItemAdapters? = nil,
-        state: PeerSessionState? = Fixture.peerState,
+        state: PeerSessionState? = Fixture.peerState, fault: AgentFault? = nil,
         far: @escaping @Sendable (ManualScheduler) -> FarHost = { FarHost(clock: $0) }
     ) {
         self.power = power
@@ -66,7 +66,7 @@ final class PeerRuntimeHarness: Sendable {
         let stops = stops
         runtime = PeerAgentRuntime(
             claim: Fixture.peerClaim, state: state, registry: PeerFeatureRegistry(power: power, items: items),
-            dialer: dialer, scheduler: scheduler, logger: Fixture.logger,
+            dialer: dialer, scheduler: scheduler, logger: Fixture.logger, fault: fault,
             handlers: PeerAgentRuntime.Handlers(
                 event: { events.record($0) }, hostConnectionChanged: { hostConnections.record($0) },
                 stop: { stops.record($0) }))

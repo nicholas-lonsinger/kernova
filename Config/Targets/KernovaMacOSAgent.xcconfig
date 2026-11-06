@@ -54,3 +54,9 @@ OTHER_CODE_SIGN_FLAGS = --options=runtime
 ENABLE_DEBUG_DYLIB = NO
 OTHER_CODE_SIGN_FLAGS[config=Release] = --timestamp
 SKIP_INSTALL[config=Release] = YES
+
+// KERNOVA_AGENT_FAULT=hang-before-hello in the build's environment
+// (`make build KERNOVA_AGENT_FAULT=hang-before-hello`) builds an agent that never
+// dials, for the update rollback gate; AgentAppDelegate refuses it outside Debug.
+KERNOVA_AGENT_FAULT_CONDITION_hang_before_hello = KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) $(KERNOVA_AGENT_FAULT_CONDITION_$(KERNOVA_AGENT_FAULT:c99extidentifier))

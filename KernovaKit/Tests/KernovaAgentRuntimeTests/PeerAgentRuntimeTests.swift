@@ -15,6 +15,21 @@ import Testing
 /// every OS.
 @Suite("Peer agent runtime")
 struct PeerAgentRuntimeTests {
+    @Test("A runtime carrying the hang-before-Hello fault never dials, through a session's loss and return")
+    func hangBeforeHelloNeverDials() async {
+        let harness = PeerRuntimeHarness(fault: .hangBeforeHello)
+        harness.runtime.start()
+        await harness.settle()
+        harness.runtime.setPeerState(nil)
+        await harness.settle()
+        harness.runtime.setPeerState(Fixture.peerState)
+        await harness.settle()
+        #expect(harness.dialer.dials.elements.isEmpty)
+        #expect(harness.scheduler.armed.isEmpty)
+        #expect(harness.stops.elements.isEmpty)
+        #expect(harness.runtime.hostConnection == .connecting)
+    }
+
     @Test("A transient dial failure is redialed after its backoff, not before")
     func transientRedial() async {
         let harness = PeerRuntimeHarness()
