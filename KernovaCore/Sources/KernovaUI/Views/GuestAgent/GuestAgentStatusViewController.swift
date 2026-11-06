@@ -7,8 +7,8 @@ import KernovaKit
 /// opens, and the content of the Guest Agent Status window
 /// (``GuestAgentStatusWindowController``).
 ///
-/// The status reads as a title, then a line per agent and a row per
-/// capability.
+/// The status reads as a title, what to do about it where the title alone
+/// doesn't say, then a line per agent and a row per capability.
 ///
 /// State is mutable in place via
 /// ``update(presentation:diskControl:hasDismissAction:)``
@@ -69,6 +69,8 @@ final class GuestAgentStatusViewController: NSViewController {
     // MARK: - Subviews (held for in-place updates)
 
     private let titleLabel = NSTextField(labelWithString: "")
+    /// ``explanation(for:)``; hidden when there is none.
+    private let explanationLabel = NSTextField(wrappingLabelWithString: "")
     /// The agent lines and capability rows.
     private let rowsStack = NSStackView()
     /// ``installGuidance``: a step alone, or a command under what it needs,
@@ -96,6 +98,7 @@ final class GuestAgentStatusViewController: NSViewController {
         let container = NSView()
 
         configureTitleLabel()
+        configureExplanationLabel()
         configureActionButton()
         configureDismissButton()
         configureCommandRow()
@@ -119,7 +122,7 @@ final class GuestAgentStatusViewController: NSViewController {
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
         rowsStack.spacing = Spacing.small
-        stack.setViews([titleLabel, rowsStack, commandRow, actionRow], in: .leading)
+        stack.setViews([titleLabel, explanationLabel, rowsStack, commandRow, actionRow], in: .leading)
 
         container.addSubview(stack)
         let padding = Self.padding
@@ -167,6 +170,12 @@ final class GuestAgentStatusViewController: NSViewController {
         titleLabel.isSelectable = false
     }
 
+    private func configureExplanationLabel() {
+        explanationLabel.font = .preferredFont(forTextStyle: .callout)
+        explanationLabel.isSelectable = false
+        explanationLabel.preferredMaxLayoutWidth = Self.bodyWidth
+    }
+
     private func configureActionButton() {
         actionButton.bezelStyle = .push
         actionButton.keyEquivalent = "\r"
@@ -208,6 +217,9 @@ final class GuestAgentStatusViewController: NSViewController {
 
     private func applyContent() {
         titleLabel.stringValue = Self.title(for: status)
+        let explanation = Self.explanation(for: status)
+        explanationLabel.stringValue = explanation ?? ""
+        explanationLabel.isHidden = explanation == nil
         rowsStack.setViews(Self.rows(presentation).map(makeRow), in: .leading)
         commandRow.isHidden = installGuidance == nil
         let command: String?
@@ -271,11 +283,27 @@ final class GuestAgentStatusViewController: NSViewController {
         switch status {
         case .waiting: "Set up the Kernova guest agent"
         case .outdated: "Update available"
+        case .reinstallNeeded: "Guest agent can\u{2019}t update in place"
         case .updating: "Updating guest agent"
         case .connecting: "Connecting to guest agent"
         case .current, .connected: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
         case .expectedMissing: "Guest agent didn't reconnect"
+        }
+    }
+
+    /// What the user does about `status`, where its title alone doesn't say.
+    static func explanation(for status: AgentStatus) -> String? {
+        switch status {
+        case .reinstallNeeded(_, _, .launchRefused):
+            "This agent has a different signature from the one Kernova bundles, so it can\u{2019}t update in "
+                + "place. Reinstall it from the installer disk."
+        case .reinstallNeeded(_, _, .notTeamSigned):
+            "This build of Kernova bundles a guest agent signed without a team, so agents can\u{2019}t update "
+                + "in place. Reinstall it from the installer disk. A build signed with a development team "
+                + "updates agents in place."
+        case .waiting, .current, .connected, .outdated, .updating, .unresponsive, .expectedMissing, .connecting:
+            nil
         }
     }
 }

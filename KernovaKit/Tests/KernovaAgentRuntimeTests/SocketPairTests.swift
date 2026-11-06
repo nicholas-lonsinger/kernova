@@ -55,7 +55,7 @@ final class SocketPair: Sendable {
     /// A pair whose host bundles `manifest` as `bundled` says.
     init(
         peerSendBuffer: Int32? = nil, bundled: Bundled = .inBand, handsOff: Bool = true, stallAfter: Int? = nil,
-        sourceShortBy: Int = 0
+        sourceShortBy: Int = 0, refuses: ErrorCode? = nil
     ) throws {
         let descriptors = try RawSocket.pair(sendBuffer: peerSendBuffer)
         hostStream = GatedStream(try POSIXByteStream(adopting: descriptors.far))
@@ -63,7 +63,7 @@ final class SocketPair: Sendable {
         dialer = OneShotDialer(peerStream)
         power = FakePowerAdapter(handsOff: handsOff)
         let content = FakePayloadSource.payload(Self.payloadSize)
-        installer = FakeInstaller(expected: content)
+        installer = FakeInstaller(expected: content, refuses: refuses)
         source = FakePayloadSource(
             content: Data(content.prefix(Self.payloadSize - sourceShortBy)), stallAfter: stallAfter)
 
@@ -217,6 +217,35 @@ extension SocketTests {
             #expect(value.kind == .staged)
             #expect(pair.installer.calls.elements == ["complete \(SocketPair.payloadSize)"])
             await pair.finish()
+        }
+
+        @Test("A refusal reaches the host as UPDATE_LAUNCH_REFUSED, and the peer advertises it and pulls no more")
+        func launchRefusedUpdate() async throws {
+            let pair = try SocketPair(refuses: .updateLaunchRefused)
+            var host = pair.hostEvents.waiter()
+            let result = await host.next(where: \.isUpdateResult)
+            guard case .update(.result(_, let value)) = result else {
+                Issue.record("no result")
+                return
+            }
+            #expect(value == UpdateResultValue(kind: .rejected, error: WireError(.updateLaunchRefused)))
+            // The installer re-advertises before it reports the refusal, so the advert can precede the result.
+            var adverts = pair.hostEvents.waiter()
+            let advertised = await adverts.next { event in
+                guard case .featuresChanged(let table) = event, case .available(let params) = table[.update] else {
+                    return false
+                }
+                return UpdateOffer(params: params)?.rejected != nil
+            }
+            guard case .featuresChanged(let table) = advertised, case .available(let params) = table[.update] else {
+                Issue.record("no advert")
+                return
+            }
+            #expect(
+                UpdateOffer(params: params)?.rejected
+                    == RejectedPayload(hash: SocketPair.manifest.payloadHash, code: .updateLaunchRefused))
+            await pair.finish()
+            #expect(pair.installer.calls.elements == ["complete \(SocketPair.payloadSize)"])
         }
 
         @Test("A payload bundled but not updating in band is never offered, so the peer pulls nothing")

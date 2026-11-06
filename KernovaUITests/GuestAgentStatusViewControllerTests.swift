@@ -32,6 +32,14 @@ struct GuestAgentStatusViewControllerTests {
         let cases: [(status: AgentStatus, title: String)] = [
             (.waiting, "Set up the Kernova guest agent"),
             (.outdated(installed: "0.9.1", bundled: "0.9.2"), "Update available"),
+            (
+                .reinstallNeeded(installed: "0.9.1", bundled: "0.9.2", reason: .launchRefused),
+                "Guest agent can\u{2019}t update in place"
+            ),
+            (
+                .reinstallNeeded(installed: "0.9.1", bundled: "0.9.2", reason: .notTeamSigned),
+                "Guest agent can\u{2019}t update in place"
+            ),
             (.updating(installed: "0.9.1", bundled: "0.9.2"), "Updating guest agent"),
             (.current(version: "0.9.2"), "Guest agent connected"),
             (.connected(version: "0.9.2"), "Guest agent connected"),
@@ -41,6 +49,28 @@ struct GuestAgentStatusViewControllerTests {
         ]
         for testCase in cases {
             #expect(GuestAgentStatusViewController.title(for: testCase.status) == testCase.title)
+        }
+    }
+
+    @Test("Only a reinstall-needed status explains itself, by its reason")
+    func explanationPerStatus() {
+        let cases: [(status: AgentStatus, explanation: String?)] = [
+            (
+                .reinstallNeeded(installed: "0.9.1", bundled: "0.9.2", reason: .launchRefused),
+                "This agent has a different signature from the one Kernova bundles, so it can\u{2019}t update in "
+                    + "place. Reinstall it from the installer disk."
+            ),
+            (
+                .reinstallNeeded(installed: "0.9.1", bundled: "0.9.2", reason: .notTeamSigned),
+                "This build of Kernova bundles a guest agent signed without a team, so agents can\u{2019}t update "
+                    + "in place. Reinstall it from the installer disk. A build signed with a development team "
+                    + "updates agents in place."
+            ),
+            (.outdated(installed: "0.9.1", bundled: "0.9.2"), nil),
+            (.connected(version: "0.9.2"), nil),
+        ]
+        for testCase in cases {
+            #expect(GuestAgentStatusViewController.explanation(for: testCase.status) == testCase.explanation)
         }
     }
 

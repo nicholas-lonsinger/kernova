@@ -59,7 +59,8 @@ package final class SimPeerProcess {
 
     var updateAvailability: Availability<UpdateOffer> {
         guard let installer = spec.installer else { return .absent(.notImplemented, debugDetail: "") }
-        return .available(UpdateOffer(formats: installer.formats, rejectedHash: rejectedHash))
+        return .available(
+            UpdateOffer(formats: installer.formats, rejected: rejectedHash.map { RejectedPayload(hash: $0) }))
     }
 
     func makeEndpoint(generation: ConnectionGeneration, world: SimWorld) -> PeerEndpoint {

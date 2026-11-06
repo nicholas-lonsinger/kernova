@@ -248,17 +248,20 @@ final class HubPeer: Sendable {
     convenience init(
         _ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
         update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false,
-        items: MemoryItems? = nil
+        refuses: ErrorCode? = nil, items: MemoryItems? = nil
     ) {
-        self.init(harness.transport, claim: claim, state: state, update: update, installs: installs, items: items)
+        self.init(
+            harness.transport, claim: claim, state: state, update: update, installs: installs, refuses: refuses,
+            items: items)
     }
 
     /// A peer whose installer is `update`: with `installs`, it reports every pull's bytes consumed and the
-    /// payload installed; otherwise it never answers. With `items`, it serves every item feature through them.
+    /// payload installed; with `refuses`, every pull's bytes consumed and the payload rejected with that code;
+    /// otherwise it never answers. With `items`, it serves every item feature through them.
     init(
         _ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
         update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false,
-        items: MemoryItems? = nil
+        refuses: ErrorCode? = nil, items: MemoryItems? = nil
     ) {
         guard let stream = transport.connect() else { preconditionFailure("the transport refused a connection") }
         self.stream = stream
@@ -274,10 +277,12 @@ final class HubPeer: Sendable {
             handlers: ConnectionDriver<PeerEndpoint>.Handlers(
                 effect: { effect, driver in
                     switch effect {
-                    case .update(.payload(let id, let bytes)) where installs:
+                    case .update(.payload(let id, let bytes)) where installs || refuses != nil:
                         driver.handle(.update(.consumed(id, bytes.count)))
                     case .update(.complete(let id, _)) where installs:
                         driver.handle(.update(.installed(id)))
+                    case .update(.complete(let id, _)):
+                        if let refuses { driver.handle(.update(.rejected(id, WireError(refuses)))) }
                     case .itemSource(let effect):
                         if let input = items?.serve(effect) { driver.handle(.items(.source(input))) }
                     case .itemSink(let effect):

@@ -240,7 +240,7 @@ struct BundledGuestAgentsTests {
 
     /// The agent the guest runs is another build's: a peer claiming a hash the host does not bundle.
     @Test(
-        "A macOS VM's hub offers a peer on another build the bundled agent only when the build signed it with a team",
+        "A macOS VM's hub offers a peer on another build the bundled agent only when the build signed it with a team, and otherwise says it needs a reinstall",
         arguments: [true, false])
     @MainActor
     func hubOffersTheMacOSBundleOnlyTeamSigned(teamSigned: Bool) async throws {
@@ -276,12 +276,15 @@ struct BundledGuestAgentsTests {
         try await waitForChange { !instance.agentHubSnapshot.peers.isEmpty }
 
         let standing = try #require(instance.agentHubSnapshot.peers.first).standing
+        #expect(instance.agentHubSnapshot.inBandUpdatesWithheld == !teamSigned)
         if teamSigned {
             #expect(standing == .outdated(offeredVersionLabel: "1.2 (34)", update: .unavailable))
             #expect(instance.agentPresentation?.status == .outdated(installed: "1.2 (33)", bundled: "1.2 (34)"))
         } else {
-            #expect(standing == .notOffered)
-            #expect(instance.agentPresentation?.status == .connected(version: "1.2 (33)"))
+            #expect(standing == .outdated(offeredVersionLabel: "1.2 (34)", update: .notTeamSigned))
+            #expect(
+                instance.agentPresentation?.status
+                    == .reinstallNeeded(installed: "1.2 (33)", bundled: "1.2 (34)", reason: .notTeamSigned))
         }
     }
 }

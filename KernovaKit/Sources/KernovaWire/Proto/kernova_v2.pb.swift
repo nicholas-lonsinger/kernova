@@ -349,6 +349,11 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
   case updateInstallFailed // = 125
   case updateInProgress // = 126
 
+  /// The payload's code signature does not meet the running agent's
+  /// designated requirement, which the guest OS holds every launch of the
+  /// install's job to: only a fresh install puts it in.
+  case updateLaunchRefused // = 127
+
   /// 1000-1199: item transfer and the features that offer items.
   case itemOfferStale // = 1000
 
@@ -431,6 +436,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case 124: self = .updateFormatUnsupported
     case 125: self = .updateInstallFailed
     case 126: self = .updateInProgress
+    case 127: self = .updateLaunchRefused
     case 1000: self = .itemOfferStale
     case 1001: self = .itemRepresentationUnavailable
     case 1002: self = .itemContainerMalformed
@@ -486,6 +492,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     case .updateFormatUnsupported: return 124
     case .updateInstallFailed: return 125
     case .updateInProgress: return 126
+    case .updateLaunchRefused: return 127
     case .itemOfferStale: return 1000
     case .itemRepresentationUnavailable: return 1001
     case .itemContainerMalformed: return 1002
@@ -541,6 +548,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
     .updateFormatUnsupported,
     .updateInstallFailed,
     .updateInProgress,
+    .updateLaunchRefused,
     .itemOfferStale,
     .itemRepresentationUnavailable,
     .itemContainerMalformed,
@@ -1787,6 +1795,11 @@ public nonisolated struct Kernova_V2_UpdateCapability: Sendable {
   /// knows the peer will not update itself to it. Re-advertised on change.
   public var rejectedHash: Data = Data()
 
+  /// Why the install rejected `rejected_hash`: the code its refusal reported.
+  /// UNSPECIFIED when there is no rejected hash, or the install recorded no
+  /// code for it — a rollback, or a pull the peer cut short.
+  public var rejectedCode: Kernova_V2_ErrorCode = .unspecified
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -2965,7 +2978,7 @@ nonisolated extension Kernova_V2_StreamKind: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{2}j\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0\u{1}ERROR_CODE_ITEM_OFFER_REPLACED\0\u{1}ERROR_CODE_CLIPBOARD_CHANGED\0\u{1}ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY\0\u{1}ERROR_CODE_CLIPBOARD_ALREADY_HELD\0\u{1}ERROR_CODE_CLIPBOARD_FILES_WITHHELD\0\u{1}ERROR_CODE_CLIPBOARD_PARTS_GONE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ERROR_CODE_UNSPECIFIED\0\u{1}ERROR_CODE_PROTOCOL_ERROR\0\u{1}ERROR_CODE_FRAME_TOO_LARGE\0\u{1}ERROR_CODE_FLOW_CONTROL_ERROR\0\u{1}ERROR_CODE_HELLO_TIMEOUT\0\u{1}ERROR_CODE_LIVENESS_EXPIRED\0\u{1}ERROR_CODE_SHUTTING_DOWN\0\u{1}ERROR_CODE_DUPLICATE_PEER\0\u{1}ERROR_CODE_STREAM_IDS_EXHAUSTED\0\u{1}ERROR_CODE_INTERNAL\0\u{1}ERROR_CODE_SUPERSEDED\0\u{2}(ERROR_CODE_CANCELLED\0\u{1}ERROR_CODE_UNSUPPORTED_KIND\0\u{1}ERROR_CODE_FEATURE_UNAVAILABLE\0\u{1}ERROR_CODE_STREAM_PROTOCOL_ERROR\0\u{1}ERROR_CODE_MALFORMED_MESSAGE\0\u{1}ERROR_CODE_TOO_MANY_STREAMS\0\u{1}ERROR_CODE_TIMEOUT\0\u{1}ERROR_CODE_CAPABILITY_WITHDRAWN\0\u{1}ERROR_CODE_DISABLED_BY_POLICY\0\u{1}ERROR_CODE_TOO_LARGE\0\u{1}ERROR_CODE_DISK_FULL\0\u{1}ERROR_CODE_READ_FAILED\0\u{1}ERROR_CODE_WRITE_FAILED\0\u{2}&ERROR_CODE_POWER_NOT_ON_CONSOLE\0\u{1}ERROR_CODE_POWER_NOT_PERMITTED\0\u{1}ERROR_CODE_POWER_ACTION_UNSUPPORTED\0\u{1}ERROR_CODE_POWER_IN_PROGRESS\0\u{1}ERROR_CODE_POWER_OS_FAILED\0\u{2}\u{10}ERROR_CODE_UPDATE_UNAVAILABLE\0\u{1}ERROR_CODE_UPDATE_STALE\0\u{1}ERROR_CODE_UPDATE_HASH_MISMATCH\0\u{1}ERROR_CODE_UPDATE_SIZE_MISMATCH\0\u{1}ERROR_CODE_UPDATE_FORMAT_UNSUPPORTED\0\u{1}ERROR_CODE_UPDATE_INSTALL_FAILED\0\u{1}ERROR_CODE_UPDATE_IN_PROGRESS\0\u{1}ERROR_CODE_UPDATE_LAUNCH_REFUSED\0\u{2}i\u{d}ERROR_CODE_ITEM_OFFER_STALE\0\u{1}ERROR_CODE_ITEM_REPRESENTATION_UNAVAILABLE\0\u{1}ERROR_CODE_ITEM_CONTAINER_MALFORMED\0\u{1}ERROR_CODE_ITEM_UNPACK_REFUSED\0\u{1}ERROR_CODE_ITEM_DECMPFS_REFUSED\0\u{1}ERROR_CODE_DRAG_NOT_CURRENT\0\u{1}ERROR_CODE_DRAG_PRESS_OVER\0\u{1}ERROR_CODE_ITEM_OFFER_REPLACED\0\u{1}ERROR_CODE_CLIPBOARD_CHANGED\0\u{1}ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY\0\u{1}ERROR_CODE_CLIPBOARD_ALREADY_HELD\0\u{1}ERROR_CODE_CLIPBOARD_FILES_WITHHELD\0\u{1}ERROR_CODE_CLIPBOARD_PARTS_GONE\0")
 }
 
 nonisolated extension Kernova_V2_AbsenceReason: SwiftProtobuf._ProtoNameProviding {
@@ -3939,7 +3952,7 @@ nonisolated extension Kernova_V2_BlockingApp: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Kernova_V2_UpdateCapability: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".UpdateCapability"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}formats\0\u{3}rejected_hash\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}formats\0\u{3}rejected_hash\0\u{3}rejected_code\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -3949,6 +3962,7 @@ nonisolated extension Kernova_V2_UpdateCapability: SwiftProtobuf.Message, SwiftP
       switch fieldNumber {
       case 1: try { try decoder.decodeRepeatedEnumField(value: &self.formats) }()
       case 2: try { try decoder.decodeSingularBytesField(value: &self.rejectedHash) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.rejectedCode) }()
       default: break
       }
     }
@@ -3961,12 +3975,16 @@ nonisolated extension Kernova_V2_UpdateCapability: SwiftProtobuf.Message, SwiftP
     if !self.rejectedHash.isEmpty {
       try visitor.visitSingularBytesField(value: self.rejectedHash, fieldNumber: 2)
     }
+    if self.rejectedCode != .unspecified {
+      try visitor.visitSingularEnumField(value: self.rejectedCode, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_UpdateCapability, rhs: Kernova_V2_UpdateCapability) -> Bool {
     if lhs.formats != rhs.formats {return false}
     if lhs.rejectedHash != rhs.rejectedHash {return false}
+    if lhs.rejectedCode != rhs.rejectedCode {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

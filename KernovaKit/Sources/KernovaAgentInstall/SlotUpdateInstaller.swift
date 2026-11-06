@@ -87,8 +87,9 @@ public final class SlotUpdateInstaller: UpdateInstaller {
             state.withLock { $0.reporter = reporter }
             do throws(SlotRoot.Failure) {
                 let reconciled = try root.reconcile(runningSlot: runningSlot)
-                if let rejected = reconciled.rejectedSHA256 {
-                    logger.log(.notice, "This install refuses update payload \(rejected, privacy: .public)")
+                if let rejected = reconciled.rejected {
+                    logger.log(
+                        .notice, "This install refuses update payload \(rejected.payloadSHA256, privacy: .public)")
                 }
                 report(.availability(availability(reconciled)))
             } catch {
@@ -101,7 +102,7 @@ public final class SlotUpdateInstaller: UpdateInstaller {
 
     /// Records `hash` as the payload this install refuses.
     public func recordRejected(_ hash: Data) {
-        queue.async { [self] in setRejected(lowercaseHex(hash)) }
+        queue.async { [self] in setRejected(InstallState.Rejection(payloadSHA256: lowercaseHex(hash))) }
     }
 
     /// Clears the payload this install refuses.
@@ -142,7 +143,10 @@ public final class SlotUpdateInstaller: UpdateInstaller {
                 report(.installed(id))
                 onSwitched()
             case .failure(let refusal):
-                if refusal.rejectsPayload { setRejected(lowercaseHex(manifest.payloadHash)) }
+                if refusal.rejectsPayload {
+                    setRejected(
+                        InstallState.Rejection(payloadSHA256: lowercaseHex(manifest.payloadHash), code: refusal.code))
+                }
                 report(.rejected(id, refusal.error))
             }
         }
@@ -270,11 +274,11 @@ public final class SlotUpdateInstaller: UpdateInstaller {
         }
     }
 
-    private func setRejected(_ hash: String?) {
+    private func setRejected(_ rejection: InstallState.Rejection?) {
         do throws(SlotRoot.Failure) {
             var current = try root.readState()
-            guard current.rejectedSHA256 != hash else { return }
-            current.rejectedSHA256 = hash
+            guard current.rejected != rejection else { return }
+            current.rejected = rejection
             try root.writeState(current)
             report(.availability(availability(current)))
         } catch {
@@ -287,12 +291,12 @@ public final class SlotUpdateInstaller: UpdateInstaller {
         state.withLock { $0.reporter }?.report(input)
     }
 
-    /// What the installer advertises for `state`: the one format its lander lands, and the hash it refuses.
+    /// What the installer advertises for `state`: the one format its lander lands, and the payload it refuses.
     private func availability(_ state: InstallState) -> Availability<UpdateOffer> {
-        .available(
-            UpdateOffer(
-                formats: [lander.format],
-                rejectedHash: state.rejectedSHA256.flatMap(bytes(fromHex:)).map { Data($0) }))
+        let rejected = state.rejected.flatMap { rejection in
+            bytes(fromHex: rejection.payloadSHA256).map { RejectedPayload(hash: Data($0), code: rejection.code) }
+        }
+        return .available(UpdateOffer(formats: [lander.format], rejected: rejected))
     }
 }
 #endif

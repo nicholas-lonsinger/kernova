@@ -62,6 +62,7 @@ struct GuestAgentDiskControlTests {
             nil,
             .waiting,
             .outdated(installed: "0.9.0", bundled: "0.9.2"),
+            .reinstallNeeded(installed: "0.9.0", bundled: "0.9.2", reason: .launchRefused),
             .updating(installed: "0.9.0", bundled: "0.9.2"),
             .expectedMissing(expected: "0.9.0"),
             .current(version: "0.9.2"),
@@ -94,6 +95,15 @@ struct GuestAgentDiskControlTests {
             GuestAgentDiskControl.model(
                 status: .outdated(installed: "0.9.0", bundled: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Update Guest Agent…", isEnabled: true, action: .mount(.install)))
+    }
+
+    @Test(".reinstallNeeded → Reinstall / enabled / mount(.install)")
+    func reinstallNeeded() {
+        #expect(
+            GuestAgentDiskControl.model(
+                status: .reinstallNeeded(installed: "0.9.0", bundled: "0.9.2", reason: .launchRefused),
+                isInstallerMounted: false)
+                == .init(title: "Reinstall Guest Agent…", isEnabled: true, action: .mount(.install)))
     }
 
     @Test(".updating → Manage / disabled: an agent updating itself needs nothing installed")

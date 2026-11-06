@@ -22,12 +22,13 @@ struct GuestAgentPresentationTests {
     }
 
     private static func snapshot(
-        _ peers: [PeerSummary], logs: Availability<Data>? = nil, update: Availability<Data>? = nil
+        _ peers: [PeerSummary], logs: Availability<Data>? = nil, update: Availability<Data>? = nil,
+        inBandUpdatesWithheld: Bool = false
     ) -> AgentHubSnapshot {
         let rows = [logs.map { (feature: FeatureID.logs, status: $0) }, update.map { (feature: .update, status: $0) }]
         let features =
             logs == nil && update == nil ? FeatureStatus.merge([]) : FeatureStatusTable(rows.compactMap { $0 })
-        return AgentHubSnapshot(peers: peers, features: features)
+        return AgentHubSnapshot(peers: peers, features: features, inBandUpdatesWithheld: inBandUpdatesWithheld)
     }
 
     @Test("With no agent connected, the hub's presentation is waiting, and its Status and logs rows say why")
@@ -79,6 +80,38 @@ struct GuestAgentPresentationTests {
     }
 
     @Test(
+        "Where the host withholds in-band updates, the automatic updates row is unavailable and names what enables it, outdated or current; otherwise it reads UPDATE",
+        arguments: [
+            (
+                PeerSummary.Standing.outdated(offeredVersionLabel: "1.1", update: .notTeamSigned), true, false,
+                "Needs a team-signed build of Kernova"
+            ),
+            (.current, true, false, "Needs a team-signed build of Kernova"),
+            (.current, false, true, "On"),
+            (.outdated(offeredVersionLabel: "1.1", update: .updating), false, true, "On"),
+        ])
+    func updateRowWhereTheHostWithholdsUpdates(
+        standing: PeerSummary.Standing, withheld: Bool, isAvailable: Bool, detail: String
+    ) {
+        let presentation = GuestAgentPresentation(
+            hub: Self.snapshot(
+                [Self.peer(1, standing: standing)], update: .available(Data()), inBandUpdatesWithheld: withheld))
+        #expect(
+            presentation.capabilities.first { $0.title == "Automatic agent updates" }
+                == .init(title: "Automatic agent updates", isAvailable: isAvailable, detail: detail))
+    }
+
+    @Test("With no agent connected, the automatic updates row says so whatever the bundles")
+    func updateRowWithNoAgent() {
+        let presentation = GuestAgentPresentation(hub: .empty)
+        #expect(!AgentHubSnapshot.empty.inBandUpdatesWithheld)
+        #expect(
+            presentation.capabilities.first { $0.title == "Automatic agent updates" }
+                == .init(title: "Automatic agent updates", isAvailable: false, detail: "No Kernova agent is connected.")
+        )
+    }
+
+    @Test(
         "The logs row reads the merged LOGS status: on, or the reason it is absent",
         arguments: [
             (AbsenceReason.disabledByPolicy, "Turned off in Settings."),
@@ -116,6 +149,29 @@ struct GuestAgentPresentationTests {
             ])
     }
 
+    @Test(
+        "An agent that can't take the update in place makes the presentation reinstall-needed for its reason, ahead of another outdated one",
+        arguments: [
+            (PeerSummary.InBandUpdate.launchRefused, AgentStatus.ReinstallReason.launchRefused),
+            (.notTeamSigned, .notTeamSigned),
+        ])
+    func hubWithAPeerThatCantUpdateInPlace(update: PeerSummary.InBandUpdate, reason: AgentStatus.ReinstallReason) {
+        let presentation = GuestAgentPresentation(
+            hub: Self.snapshot([
+                Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .unavailable)),
+                Self.peer(
+                    3, role: .systemPeer, version: "0.8",
+                    standing: .outdated(offeredVersionLabel: "1.0", update: update)),
+            ]))
+        #expect(presentation.status == .reinstallNeeded(installed: "0.8", bundled: "1.0", reason: reason))
+        #expect(presentation.status.wireName == "reinstallNeeded")
+        #expect(
+            presentation.windowLines == [
+                .init(title: "Session agent — pbear", state: "Out of date; this agent can\u{2019}t update itself"),
+                .init(title: "System service", state: "Can\u{2019}t update in place"),
+            ])
+    }
+
     @Test("Outdated agents that all update themselves make the presentation updating, ahead of an unresponsive one")
     func hubWithUpdatingPeers() {
         let presentation = GuestAgentPresentation(
@@ -128,8 +184,9 @@ struct GuestAgentPresentationTests {
     }
 
     @Test(
-        "An agent the host offers nothing claims no currency: its line names its version, and the status is connected")
-    func hubWithAPeerOfferedNothing() {
+        "An agent the host bundles nothing for claims no currency: its line names its version, and the status is connected"
+    )
+    func hubWithAPeerBundledNothing() {
         let alone = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, standing: .notOffered)]))
         #expect(alone.status == .connected(version: "1.0"))
         #expect(alone.windowLines == [.init(title: "Session agent — pbear", state: "Version 1.0")])
