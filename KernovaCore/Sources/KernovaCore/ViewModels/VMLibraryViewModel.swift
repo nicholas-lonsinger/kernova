@@ -24,8 +24,27 @@ package final class VMLibraryViewModel {
     /// Which VMs exist, and everything that keeps that set in step with disk.
     package let library: VMLibrary
 
-    /// Every VM verb, headless. The one path from this adapter to a VM.
+    /// Every VM verb, headless. The one path from this adapter to a VM; a verb
+    /// somebody in the app asked for takes it through ``verbs()``.
     package let commands: VMCommandCore
+
+    /// Saves every edit still open in one of the app's controls, through that
+    /// control's own commit — a typed value not yet committed by Return, Tab
+    /// or a click into another field.
+    ///
+    /// Set by the composition root. A toolbar button, a menu item or a key
+    /// equivalent takes no focus, so nothing else commits such an edit before
+    /// the verb it asks for reads the configuration — and an edit committed
+    /// after the verb began meets the VM busy with it and is refused.
+    @ObservationIgnored package var savePendingEdits: (() -> Void)?
+
+    /// ``commands`` for a verb somebody in the app asked for, once every edit
+    /// still open in a control is saved (``savePendingEdits``) — so the verb
+    /// acts on the configuration as the user last set it.
+    func verbs() -> VMCommandCore {
+        savePendingEdits?()
+        return commands
+    }
 
     package let storageService: any VMStorageProviding
     let lifecycle: VMLifecycleCoordinator
@@ -151,7 +170,7 @@ package final class VMLibraryViewModel {
         _ assignments: [ConfigurationEntry], on instance: VMInstance, consent: Consent = .none
     ) -> EditOutcome {
         do {
-            try commands.setConfiguration(
+            try verbs().setConfiguration(
                 .id(instance.id), assignments: assignments, consent: consent)
             return .applied
         } catch let error as CommandError {
@@ -178,7 +197,7 @@ package final class VMLibraryViewModel {
         Task {
             do {
                 let route = try await askForRoute(through: requirement, then: nil, about: instance)
-                for step in route.steps { try await commands.take(step) }
+                for step in route.steps { try await verbs().take(step) }
             } catch is ConfirmationDeclined {
                 return
             } catch {
@@ -199,7 +218,7 @@ package final class VMLibraryViewModel {
     /// save can leave a move made.
     package func deleteNetwork(_ id: UUID) throws {
         do {
-            try commands.deleteNetwork(id.uuidString)
+            try verbs().deleteNetwork(id.uuidString)
         } catch let error as CommandError {
             guard let route = error.stepRequirement?.routes.first,
                 error.stepRequirement?.routes.count == 1
@@ -209,9 +228,9 @@ package final class VMLibraryViewModel {
                 return (vm, assignments)
             }
             for (vm, assignments) in moves {
-                try commands.setConfiguration(.id(vm.id), assignments: assignments, consent: .none)
+                try verbs().setConfiguration(.id(vm.id), assignments: assignments, consent: .none)
             }
-            try commands.deleteNetwork(id.uuidString)
+            try verbs().deleteNetwork(id.uuidString)
         }
     }
 
@@ -297,18 +316,18 @@ package final class VMLibraryViewModel {
     // arrive pre-confirmed; a share removal destroys nothing and asks none.
 
     package func attachStorageDisks(_ files: [PickedFile], to instance: VMInstance) {
-        runEdit(on: instance) { try self.commands.attachStorageDisks(.id(instance.id), paths: files) }
+        runEdit(on: instance) { try self.verbs().attachStorageDisks(.id(instance.id), paths: files) }
     }
 
     package func createStorageDisk(for instance: VMInstance, sizeInGB: Int) async {
         await run(on: instance) {
-            try await self.commands.createStorageDisk(.id(instance.id), sizeInGB: sizeInGB)
+            try await self.verbs().createStorageDisk(.id(instance.id), sizeInGB: sizeInGB)
         }
     }
 
     package func removeStorageDisk(_ disk: UUID, from instance: VMInstance, trashFile: Bool) async {
         await runEdit(on: instance) {
-            try await self.commands.removeStorageDisk(
+            try await self.verbs().removeStorageDisk(
                 .id(instance.id), disk: disk, trashFile: trashFile,
                 consent: Consent([.removeAttachment]))
         }
@@ -316,32 +335,32 @@ package final class VMLibraryViewModel {
 
     package func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.renameStorageDisk(.id(instance.id), disk: disk, to: newLabel)
+            try self.verbs().renameStorageDisk(.id(instance.id), disk: disk, to: newLabel)
         }
     }
 
     package func setStorageDiskNotes(_ disk: UUID, notes: String, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.setStorageDiskNotes(.id(instance.id), disk: disk, notes: notes)
+            try self.verbs().setStorageDiskNotes(.id(instance.id), disk: disk, notes: notes)
         }
     }
 
     package func setStorageDiskReadOnly(_ disk: UUID, readOnly: Bool, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.setStorageDiskReadOnly(
+            try self.verbs().setStorageDiskReadOnly(
                 .id(instance.id), disk: disk, readOnly: readOnly)
         }
     }
 
     package func reorderStorageDisks(_ order: [UUID], on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.reorderStorageDisks(.id(instance.id), order: order)
+            try self.verbs().reorderStorageDisks(.id(instance.id), order: order)
         }
     }
 
     package func attachRemovableMedia(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.attachRemovableMedia(.id(instance.id), paths: files)
+            try self.verbs().attachRemovableMedia(.id(instance.id), paths: files)
         }
     }
 
@@ -349,38 +368,38 @@ package final class VMLibraryViewModel {
         for instance: VMInstance, sizeInGB: Int, destinationURL: URL
     ) async {
         await run(on: instance) {
-            try await self.commands.createRemovableMedia(
+            try await self.verbs().createRemovableMedia(
                 .id(instance.id), sizeInGB: sizeInGB, destinationURL: destinationURL)
         }
     }
 
     package func removeRemovableMedia(_ item: UUID, from instance: VMInstance, trashFile: Bool) async {
         await runEdit(on: instance) {
-            try await self.commands.removeRemovableMedia(
+            try await self.verbs().removeRemovableMedia(
                 .id(instance.id), item: item, trashFile: trashFile,
                 consent: Consent([.removeAttachment]))
         }
     }
 
     package func ejectRemovableMedia(_ item: UUID, from instance: VMInstance) {
-        runEdit(on: instance) { try self.commands.ejectRemovableMedia(.id(instance.id), item: item) }
+        runEdit(on: instance) { try self.verbs().ejectRemovableMedia(.id(instance.id), item: item) }
     }
 
     package func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.renameRemovableMedia(.id(instance.id), item: item, to: newLabel)
+            try self.verbs().renameRemovableMedia(.id(instance.id), item: item, to: newLabel)
         }
     }
 
     package func setRemovableMediaNotes(_ item: UUID, notes: String, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.setRemovableMediaNotes(.id(instance.id), item: item, notes: notes)
+            try self.verbs().setRemovableMediaNotes(.id(instance.id), item: item, notes: notes)
         }
     }
 
     package func setRemovableMediaReadOnly(_ item: UUID, readOnly: Bool, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.setRemovableMediaReadOnly(
+            try self.verbs().setRemovableMediaReadOnly(
                 .id(instance.id), item: item, readOnly: readOnly)
         }
     }
@@ -396,19 +415,19 @@ package final class VMLibraryViewModel {
 
     package func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.addSharedDirectories(.id(instance.id), paths: files)
+            try self.verbs().addSharedDirectories(.id(instance.id), paths: files)
         }
     }
 
     package func removeSharedDirectory(_ directory: UUID, from instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.removeSharedDirectory(.id(instance.id), directory: directory)
+            try self.verbs().removeSharedDirectory(.id(instance.id), directory: directory)
         }
     }
 
     package func setSharedDirectoryReadOnly(_ directory: UUID, readOnly: Bool, on instance: VMInstance) {
         runEdit(on: instance) {
-            try self.commands.setSharedDirectoryReadOnly(
+            try self.verbs().setSharedDirectoryReadOnly(
                 .id(instance.id), directory: directory, readOnly: readOnly)
         }
     }
@@ -417,7 +436,7 @@ package final class VMLibraryViewModel {
     /// already gathered, so this always calls the core pre-confirmed.
     package func cancelGuestSetup(_ instance: VMInstance) {
         do {
-            try commands.cancelGuestSetup(.id(instance.id), consent: Consent([.cancelGuestSetup]))
+            try verbs().cancelGuestSetup(.id(instance.id), consent: Consent([.cancelGuestSetup]))
         } catch let error as CommandError {
             // Setup finishing between the button appearing and the click is a
             // normal race, not something to alert the user about.
@@ -869,7 +888,7 @@ package final class VMLibraryViewModel {
     /// at the next launch — the user has to be told, or the list is lying.
     package func forgetUSBAccessory(key: String, on instance: VMInstance) {
         do {
-            try commands.forgetUSBPairing(.id(instance.id), key: key)
+            try verbs().forgetUSBPairing(.id(instance.id), key: key)
         } catch {
             present(error, about: .vm(instance))
         }
@@ -886,7 +905,7 @@ package final class VMLibraryViewModel {
     /// failure of the write itself arrives after the sheet is gone, and reaches
     /// the user through ``VMCommandCore/onFailure``.
     package func createVM(from wizard: VMCreationViewModel) throws {
-        try commands.create(
+        try verbs().create(
             configuration: wizard.buildConfiguration(),
             diskSizeInGB: wizard.diskSizeInGB,
             startAfterCreate: wizard.startAfterCreate,
@@ -956,7 +975,7 @@ package final class VMLibraryViewModel {
     package func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
         await runAsking(on: instance, then: "Start") { consent in
-            try await self.commands.start(
+            try await self.verbs().start(
                 .id(instance.id), recovery: bootIntoRecovery, consent: consent)
         }
     }
@@ -980,7 +999,7 @@ package final class VMLibraryViewModel {
             return
         }
         do {
-            try await commands.removeStartFailedAttachment(
+            try await verbs().removeStartFailedAttachment(
                 .id(instance.id), attachment: failure)
         } catch {
             present(error, about: .vm(instance))
@@ -1024,7 +1043,7 @@ package final class VMLibraryViewModel {
             try await VMConsentPolicy.run(
                 prompting: { try await self.askToConfirm($0, about: instance) },
                 choosingRoute: { try await self.askForRoute(through: $0, then: verbTitle, about: instance) },
-                taking: { try await self.commands.take($0) }
+                taking: { try await self.verbs().take($0) }
             ) { consent, ending in
                 try await VMConsentPolicy.runGatheringGuestAccount(
                     prompting: { try await self.askForGuestAccount($0) },
@@ -1033,7 +1052,7 @@ package final class VMLibraryViewModel {
                         case .refusedVerb:
                             try await verb(consent)
                         case .start(let vm):
-                            try await self.commands.start(.id(vm.id), recovery: false, consent: consent)
+                            try await self.verbs().start(.id(vm.id), recovery: false, consent: consent)
                         }
                     })
             }
@@ -1114,9 +1133,9 @@ package final class VMLibraryViewModel {
         }
         switch answer {
         case .answered(.password(let password)):
-            try commands.provideGuestAccountPassword(.id(prompt.vm.id), password: password)
+            try verbs().provideGuestAccountPassword(.id(prompt.vm.id), password: password)
         case .answered(.skip):
-            try commands.skipGuestAccount(.id(prompt.vm.id))
+            try verbs().skipGuestAccount(.id(prompt.vm.id))
         case .answered(.cancelled):
             throw GuestAccountPromptDismissed()
         case .unasked:
@@ -1135,7 +1154,7 @@ package final class VMLibraryViewModel {
             return
         }
         await run(on: instance) {
-            try await self.commands.stop(
+            try await self.verbs().stop(
                 .id(instance.id), disposition: .graceful, consent: .none)
         }
     }
@@ -1145,11 +1164,11 @@ package final class VMLibraryViewModel {
     /// asks, and a resume that does not happen stops nothing.
     package func resumeAndStop(_ instance: VMInstance) async {
         let resumed = await runAsking(on: instance, then: "Resume") { consent in
-            try await self.commands.resume(.id(instance.id), consent: consent)
+            try await self.verbs().resume(.id(instance.id), consent: consent)
         }
         guard resumed else { return }
         await run(on: instance) {
-            try await self.commands.stop(
+            try await self.verbs().stop(
                 .id(instance.id), disposition: .graceful, consent: .none)
         }
     }
@@ -1179,7 +1198,7 @@ package final class VMLibraryViewModel {
     private func restart(_ instance: VMInstance, disposition: StopDisposition) async {
         await runAsking(on: instance, then: "Restart") { consent in
             do {
-                try await self.commands.restart(
+                try await self.verbs().restart(
                     .id(instance.id), disposition: disposition, timeout: nil, consent: consent)
             } catch CommandError.restartCancelledByStop {
                 return
@@ -1189,7 +1208,7 @@ package final class VMLibraryViewModel {
 
     package func forceStop(_ instance: VMInstance) async {
         await run(on: instance) {
-            try await self.commands.stop(
+            try await self.verbs().stop(
                 .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
         }
     }
@@ -1198,7 +1217,7 @@ package final class VMLibraryViewModel {
     /// the verb asks on every use on screen first.
     package func stopAnyway(_ instance: VMInstance) async {
         await runAsking(on: instance, then: nil) { consent in
-            try await self.commands.stop(.id(instance.id), disposition: .anyway, consent: consent)
+            try await self.verbs().stop(.id(instance.id), disposition: .anyway, consent: consent)
         }
     }
 
@@ -1214,7 +1233,7 @@ package final class VMLibraryViewModel {
     }
 
     package func pause(_ instance: VMInstance) async {
-        await run(on: instance) { try await self.commands.pause(.id(instance.id)) }
+        await run(on: instance) { try await self.verbs().pause(.id(instance.id)) }
     }
 
     /// The resume half of the in-app door, surfacing what ``start(_:bootIntoRecovery:)``
@@ -1222,12 +1241,12 @@ package final class VMLibraryViewModel {
     package func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
         await runAsking(on: instance, then: "Resume") { consent in
-            try await self.commands.resume(.id(instance.id), consent: consent)
+            try await self.verbs().resume(.id(instance.id), consent: consent)
         }
     }
 
     package func save(_ instance: VMInstance) async {
-        await run(on: instance) { try await self.commands.suspend(.id(instance.id)) }
+        await run(on: instance) { try await self.verbs().suspend(.id(instance.id)) }
     }
 
     /// Suspends a VM for the termination save pass, throwing on failure.
@@ -1262,7 +1281,7 @@ package final class VMLibraryViewModel {
         Task { [weak self] in
             guard let self else { return }
             await self.run(on: instance) {
-                _ = try await self.commands.takeSnapshot(
+                _ = try await self.verbs().takeSnapshot(
                     .id(instance.id), name: name, notes: notes,
                     asEphemeralBaseline: purpose == .ephemeralBaseline)
             }
@@ -1284,7 +1303,7 @@ package final class VMLibraryViewModel {
         guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
         Task {
             await run(on: instance) {
-                try await self.commands.attachUSBAccessory(
+                try await self.verbs().attachUSBAccessory(
                     .id(instance.id), accessory: registryID)
             }
         }
@@ -1295,7 +1314,7 @@ package final class VMLibraryViewModel {
         guard capabilities.isAvailable(.editUSBAccessories, on: instance) else { return }
         Task {
             await run(on: instance) {
-                try await self.commands.detachUSBAccessory(.id(instance.id), device: deviceID)
+                try await self.verbs().detachUSBAccessory(.id(instance.id), device: deviceID)
             }
         }
     }
@@ -1312,7 +1331,7 @@ package final class VMLibraryViewModel {
     ) async {
         if takingSnapshotFirst {
             do {
-                try await commands.takeSnapshot(
+                try await verbs().takeSnapshot(
                     .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "")
             } catch {
                 present(error, about: .vm(instance))
@@ -1320,7 +1339,7 @@ package final class VMLibraryViewModel {
             }
         }
         await runAsking(on: instance, then: nil) { consent in
-            try await self.commands.revertToSnapshot(
+            try await self.verbs().revertToSnapshot(
                 .id(instance.id), snapshot: snapshot.id,
                 consent: consent.adding(.revertToSnapshot))
         }
@@ -1362,7 +1381,7 @@ package final class VMLibraryViewModel {
                 guard off == .applied else { return }
             }
             do {
-                try await self.commands.deleteSnapshot(
+                try await self.verbs().deleteSnapshot(
                     .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
             } catch {
                 guard instance.isEphemeralBaseline(snapshot) else {
@@ -1377,7 +1396,7 @@ package final class VMLibraryViewModel {
     /// Renames a snapshot; an empty or unchanged name is a no-op.
     package func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
         runSync(on: instance) {
-            try self.commands.renameSnapshot(
+            try self.verbs().renameSnapshot(
                 .id(instance.id), snapshot: snapshot.id, to: newName)
         }
     }
@@ -1385,7 +1404,7 @@ package final class VMLibraryViewModel {
     /// Replaces a snapshot's note; an unchanged value is a no-op.
     package func setSnapshotNotes(_ snapshot: VMSnapshot, notes: String, on instance: VMInstance) {
         runSync(on: instance) {
-            try self.commands.setSnapshotNotes(
+            try self.verbs().setSnapshotNotes(
                 .id(instance.id), snapshot: snapshot.id, notes: notes)
         }
     }
@@ -1407,7 +1426,7 @@ package final class VMLibraryViewModel {
         _ instance: VMInstance, deletingExternalIDs: Set<UUID> = [], permanently: Bool = false
     ) async {
         do {
-            try await commands.delete(
+            try await verbs().delete(
                 .id(instance.id), permanently: permanently, alsoRemoving: deletingExternalIDs,
                 consent: Consent([.deleteVM]))
         } catch let error as CommandError {
@@ -1447,7 +1466,7 @@ package final class VMLibraryViewModel {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         Self.logger.log(.notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
-        let batch = commands.beginImports(from: bundles, intoFolder: folder)
+        let batch = verbs().beginImports(from: bundles, intoFolder: folder)
         for case .failure(let error) in batch.imports { present(error, about: .library) }
         if let failure = batch.membershipFailure {
             surfaceError(
@@ -1460,7 +1479,7 @@ package final class VMLibraryViewModel {
 
     /// Selects the VM's bundle in the Finder.
     package func showVMInFinder(_ instance: VMInstance) {
-        runSync(on: instance) { try self.commands.showInFinder(.id(instance.id)) }
+        runSync(on: instance) { try self.verbs().showInFinder(.id(instance.id)) }
     }
 
     // MARK: - Clone
@@ -1477,7 +1496,7 @@ package final class VMLibraryViewModel {
     /// Clones `instance` as `outcome`; `nil` follows the clone preference.
     package func cloneVM(_ instance: VMInstance, as outcome: CloneOutcome? = nil) {
         do {
-            try commands.beginClone(.id(instance.id), outcome: outcome)
+            try verbs().beginClone(.id(instance.id), outcome: outcome)
         } catch let error as CommandError {
             if case .invalidState = error {
                 Self.logger.log(
@@ -1502,7 +1521,7 @@ package final class VMLibraryViewModel {
     /// Cancels an in-flight create, clone or import from that confirmation's confirm.
     package func cancelArrival(_ arrival: VMArrival) {
         do {
-            try commands.cancelPreparing(.id(arrival.id), consent: Consent([.cancelPreparing]))
+            try verbs().cancelPreparing(.id(arrival.id), consent: Consent([.cancelPreparing]))
         } catch let error as CommandError {
             // The arrival settled while the confirmation was up: a failed one
             // left no row, and an adopted one is a VM the cancel refuses.
@@ -1564,7 +1583,7 @@ package final class VMLibraryViewModel {
     /// rename's marker before its UI ever opened.
     package func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
         do {
-            try commands.rename(.id(instance.id), to: newName)
+            try verbs().rename(.id(instance.id), to: newName)
         } catch let error as CommandError where error.isOperationFailure {
             // The configuration funnel already told the user the write failed;
             // the verb throws so a wire client hears about it, and a second
@@ -1624,7 +1643,7 @@ package final class VMLibraryViewModel {
     package func toggleGuestAgentDisk(on instance: VMInstance) async {
         switch GuestAgentDiskControl.model(for: instance, in: capabilities).action {
         case .eject:
-            runEdit(on: instance) { try self.commands.unmountGuestAgentDisk(.id(instance.id)) }
+            runEdit(on: instance) { try self.verbs().unmountGuestAgentDisk(.id(instance.id)) }
         case .mount(let purpose):
             let guestOS = instance.configuration.guestOS
             if purpose == .install, guestOS == .linux {
@@ -1634,7 +1653,7 @@ package final class VMLibraryViewModel {
             }
             let awaited = purpose == .install ? guestOS.installedAgentScopes : []
             await runEdit(on: instance) {
-                let outcome = try await self.commands.mountGuestAgentDisk(.id(instance.id), awaiting: awaited)
+                let outcome = try await self.verbs().mountGuestAgentDisk(.id(instance.id), awaiting: awaited)
                 self.presenter?.presentInstallerMounted(
                     for: instance, purpose: purpose, delivery: outcome.delivery)
             }
@@ -1646,7 +1665,7 @@ package final class VMLibraryViewModel {
     /// question showed the command, so no alert follows.
     package func installLinuxGuestAgent(on instance: VMInstance, choice: LinuxAgentInstallChoice) async {
         await runEdit(on: instance) {
-            _ = try await self.commands.mountGuestAgentDisk(.id(instance.id), awaiting: choice.scopes)
+            _ = try await self.verbs().mountGuestAgentDisk(.id(instance.id), awaiting: choice.scopes)
         }
     }
 
