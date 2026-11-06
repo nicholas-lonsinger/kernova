@@ -41,6 +41,7 @@ package struct AppPreferences: @unchecked Sendable {
         static let duplicateMachineIDQuestionDismissed = "duplicateMachineIDQuestionDismissed"
         static let cloneKeepsMachineID = "cloneKeepsMachineID"
         static let clipboardMaxPasteBytes = "clipboardMaxPasteBytes"
+        static let disabledReservedShortcuts = "disabledReservedShortcuts"
     }
 
     // MARK: - Inverted Storage
@@ -218,6 +219,23 @@ package struct AppPreferences: @unchecked Sendable {
                 defaults.object(forKey: Keys.clipboardMaxPasteBytes) as? Int)
         }
         nonmutating set { defaults.set(newValue, forKey: Keys.clipboardMaxPasteBytes) }
+    }
+
+    /// The reserved shortcuts the user turned off; every other one is on, so
+    /// an unset key leaves them all on.
+    ///
+    /// A stored name no ``ReservedShortcut`` case carries is dropped on read.
+    /// Read and written through `VMLibraryViewModel.disabledReservedShortcuts`,
+    /// whose `@Observable` mirror is what wakes the menu bar.
+    var disabledReservedShortcuts: Set<ReservedShortcut> {
+        get {
+            Set(
+                (defaults.stringArray(forKey: Keys.disabledReservedShortcuts) ?? [])
+                    .compactMap(ReservedShortcut.init(rawValue:)))
+        }
+        nonmutating set {
+            defaults.set(newValue.map(\.rawValue).sorted(), forKey: Keys.disabledReservedShortcuts)
+        }
     }
 
     /// The Clone menu items for the VM `configuration` describes: `primary`

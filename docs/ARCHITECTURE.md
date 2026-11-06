@@ -13,7 +13,9 @@ services and the `VMLibraryViewModel` over them, and hands that to
 `AppDelegate.init`, which builds `AppWindowRegistry` (holding
 `VMDisplayPlacementController`), `AppAlertPresenter` (attached to the view
 model before the library's first read), `AppResidencyController`,
-`MainMenuController` and `AppTerminationController`.
+`MainMenuController` and `AppTerminationController`. The shared application
+it starts is a `KernovaApplication`, whose `sendEvent(_:)` hands every event to
+`ReservedShortcutCatcher` before AppKit dispatches it.
 
 What those owners decide lives in AppKit-free types they call:
 `AppResidencyPolicy`, `VMDisplayPlacement`, `AlertQueue` and

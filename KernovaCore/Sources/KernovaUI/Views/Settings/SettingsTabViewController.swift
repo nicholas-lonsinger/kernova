@@ -108,7 +108,7 @@ extension SettingsPane {
 /// The toolbar-style tab container for the Settings window: one tab per
 /// ``SettingsPane`` the build offers.
 ///
-/// The Reminders, Clipboard, Networks and Tags panes need the app's
+/// The Reminders, Clipboard, Keyboard, Networks and Tags panes need the app's
 /// `VMLibraryViewModel`, so this controller is constructed with it.
 @MainActor
 final class SettingsTabViewController: NSTabViewController {
@@ -146,6 +146,7 @@ final class SettingsTabViewController: NSTabViewController {
         case .general: GeneralSettingsViewController(viewModel: viewModel)
         case .reminders: RemindersSettingsViewController(viewModel: viewModel, visibleFrame: visibleFrame)
         case .clipboard: ClipboardSettingsViewController(viewModel: viewModel)
+        case .keyboard: KeyboardSettingsViewController(viewModel: viewModel)
         case .networks: NetworksSettingsViewController(viewModel: viewModel)
         case .tags: TagsSettingsViewController(viewModel: viewModel)
         case .advanced:
