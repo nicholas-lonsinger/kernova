@@ -365,7 +365,7 @@ package final class HubDragOut {
         }
 
         /// `items` under the names `delivery` gives its promises and the sizes
-        /// it gives its folders.
+        /// it gives its other items.
         private static func items(_ items: [DraggedOutItem], _ delivery: DragDelivery) -> [DraggedOutItem] {
             items.indices.map { index in
                 var item = items[index]

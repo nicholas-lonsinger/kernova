@@ -168,6 +168,8 @@ struct GuestDragTakeTests {
 
     private static let file = DraggedOutItem(
         name: Data("a.txt".utf8), type: .plainText, isDirectory: false, sizeEstimate: 4)
+    /// A plain file as a take lists it: the guest reads no dragged file before the drop, so unsized.
+    private static let unsizedFile = DraggedOutItem(name: Data("a.txt".utf8), type: .plainText, isDirectory: false)
     nonisolated private static let folder = DraggedOutItem(name: Data("Folder".utf8), type: .folder, isDirectory: true)
     private static let promise = DraggedOutItem(
         name: Data("Untitled.jpeg".utf8), type: .jpeg, isDirectory: false, isPromised: true)
@@ -191,13 +193,17 @@ struct GuestDragTakeTests {
         }
     }
 
-    private func makeTake(items: [DraggedOutItem] = [Self.file]) -> GuestDragTake {
+    private func makeTake(
+        items: [DraggedOutItem] = [Self.file], reporter: ClipboardTransferReporter = ClipboardTransferReporter(),
+        revealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay
+    ) -> GuestDragTake {
         let running = running
         let finished = finished
         transport.listed = Self.offered(items)
         let take = GuestDragTake(
             transport: transport, display: display,
-            reporter: ClipboardTransferReporter(), peerName: "Test VM", clock: clock, holds: { running.isRunning },
+            reporter: reporter, peerName: "Test VM", progressRevealDelay: revealDelay, clock: clock,
+            holds: { running.isRunning },
             onFinished: { _ in finished.count += 1 }, onHostSessionBegan: { _ in })
         take.begin()
         return take
@@ -472,21 +478,40 @@ struct GuestDragTakeTests {
 
     // MARK: - Delivery
 
-    @Test("a dropped drag of plain files releases onto the catcher and pulls from the taken offer")
-    func plainFilesNeedNoDelivery() async throws {
-        let take = try carriedTake()
+    @Test("a dropped drag of plain files is delivered at the drop, and its readout counts their delivered sizes")
+    func plainFilesAreDeliveredAtTheDrop() async throws {
+        let reporter = ClipboardTransferReporter()
+        reporter.onReportChanged = { [transport] _ in transport.changed.notify() }
+        let take = makeTake(items: [Self.unsizedFile], reporter: reporter, revealDelay: 0)
+        transport.report(.armed)
+        transport.target()
+        take.withheldDrag()
         take.hostSessionEnded(dropped: true)
 
+        #expect(take.phase == .carried(.delivering))
+        #expect(transport.controls == [.deliver])
+        let outcome = OutcomeBox(gate: transport.changed)
+        take.writeItem(at: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/a 2.txt")) { outcome.set($0) }
+        await Task.yield()
+        #expect(transport.pulls.isEmpty)
+
+        transport.report(.delivering)
         #expect(take.phase == .released(at: .catcher))
-        #expect(transport.controls.isEmpty)
-        let outcome = try await write(take, item: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/a 2.txt")) {
-            $0.end(0, .success(()))
+        transport.end(.caught(Self.delivery), delivered: [Self.file])
+        try await transport.changed.wait { !transport.pulls.isEmpty }
+        #expect(transport.pulls.first?.destination.path == "/Users/me/Desktop/a 2.txt")
+        transport.end(0, .success(()))
+        try await transport.changed.wait { outcome.isSet }
+        #expect(outcome.error == nil)
+
+        try await transport.changed.wait {
+            if case .finished = reporter.report { true } else { false }
         }
-        #expect(outcome == nil)
-        let pull = try #require(transport.pulls.first)
-        #expect(pull.destination.path == "/Users/me/Desktop/a 2.txt")
-        #expect(transport.releases == 0)
-        transport.end(.caught(nil))
+        guard case .finished(let finish) = reporter.report, case .completed(let final) = finish.outcome else {
+            Issue.record("the readout ended \(reporter.report)"); return
+        }
+        #expect(final.bytesTransferred == 4)
+        #expect(final.totalBytes == 4)
         #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
@@ -873,12 +898,14 @@ struct GuestDragTakeTests {
         #expect(transport.pulls.count == 2)
     }
 
-    @Test("termination retires a take at once, mid-write, calling off its pull and its stream")
+    @Test("termination retires a take at once, mid-write, calling off its pull")
     func terminationRetiresMidWrite() async throws {
         let take = try carriedTake(items: [Self.file, Self.file])
         var retired = false
         take.whenRetired { retired = true }
         take.hostSessionEnded(dropped: true)
+        transport.report(.delivering)
+        transport.end(.caught(Self.delivery), delivered: [Self.file, Self.file])
         take.writeItem(at: 0, to: URL(fileURLWithPath: "/tmp/drag-out/a.txt")) { _ in }
         try await transport.changed.wait { !transport.pulls.isEmpty }
 
@@ -888,7 +915,8 @@ struct GuestDragTakeTests {
         #expect(finished.count == 1)
         #expect(transport.releases == 1)
         #expect(transport.pulls[0].cancelled)
-        #expect(transport.cancels == 1)
+        // The take's stream ended with its delivery, before any write could pull.
+        #expect(transport.cancels == 0)
         let later = try await write(take, item: 1, to: URL(fileURLWithPath: "/tmp/drag-out/b.txt"))
         #expect((later as? CocoaError)?.code == .userCancelled)
     }

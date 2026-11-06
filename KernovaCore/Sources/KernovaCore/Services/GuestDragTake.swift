@@ -475,12 +475,6 @@ package final class GuestDragTake: GuestDragTaking {
         )
     }
 
-    /// Whether the drag carries anything only a delivery completes: a promise
-    /// to name, or a folder to size.
-    private var needsDelivery: Bool {
-        items.contains { $0.isPromised || $0.isDirectory }
-    }
-
     // MARK: - The display's events
 
     package func withheldDrag() {
@@ -754,10 +748,11 @@ package final class GuestDragTake: GuestDragTaking {
     }
 
     /// Releases onto the targeted catcher, asking the guest to deliver the
-    /// drag first when a Mac destination may still ask for it and it carries
-    /// something only a delivery completes.
+    /// drag first when a Mac destination may still ask for it: the delivery
+    /// names its promises and sizes everything else, none of which the guest
+    /// reads before the drop.
     private func releaseOntoCatcher() {
-        guard destinationMayAsk, needsDelivery else { return release(at: .catcher) }
+        guard destinationMayAsk else { return release(at: .catcher) }
         askDelivery()
     }
 
@@ -956,7 +951,7 @@ package final class GuestDragTake: GuestDragTaking {
             return completion(GuestDragWriteError.failed(.transferFailed))
         }
         asked.withLock { _ = $0.insert(index) }
-        guard !needsDelivery || delivery.settled != nil else {
+        guard delivery.settled != nil else {
             owed[index] = (destination, completion)
             return
         }
