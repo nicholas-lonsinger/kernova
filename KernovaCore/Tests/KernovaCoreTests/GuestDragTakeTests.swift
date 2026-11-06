@@ -91,6 +91,7 @@ struct GuestDragTakeTests {
 
         func cancel() {
             cancels += 1
+            changed.notify()
         }
 
         func pull(
@@ -159,6 +160,9 @@ struct GuestDragTakeTests {
     private let transport = FakeTransport()
     private let running = RunningFlag()
     private let finished = FinishedFlag()
+    /// The clock the delivery's naming deadline runs on: it fires only when a
+    /// test releases it.
+    private let clock = GatedEngineClock()
 
     private static let delivery = DragDelivery(names: [:], folderSizes: [:])
 
@@ -193,7 +197,7 @@ struct GuestDragTakeTests {
         transport.listed = Self.offered(items)
         let take = GuestDragTake(
             transport: transport, display: display,
-            reporter: ClipboardTransferReporter(), peerName: "Test VM", holds: { running.isRunning },
+            reporter: ClipboardTransferReporter(), peerName: "Test VM", clock: clock, holds: { running.isRunning },
             onFinished: { _ in finished.count += 1 }, onHostSessionBegan: { _ in })
         take.begin()
         return take
@@ -544,6 +548,126 @@ struct GuestDragTakeTests {
         #expect(take.phase == .released(at: .catcher))
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
         #expect(transport.controls == [.deliver])
+    }
+
+    @Test("names that arrive before the naming deadline stop it: the delivery stands and the take goes on")
+    func namesBeforeTheDeadlineStopIt() async throws {
+        let take = try carriedTake(items: [Self.promise])
+        let transport = transport
+        let display = display
+        let delivery = try #require(transport.delivery)
+        let guest = Thread {
+            transport.delivering.wait()
+            delivery.peerAnswered()
+            display.released.wait()
+            delivery.settle(.delivered([Self.namedPromise]))
+        }
+        guest.start()
+
+        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
+        let clock = clock
+        #expect(clock.requestedSeconds == [GuestDragDelivery.namingDeadline])
+        try await clock.parkedChanged.wait { clock.parked.isEmpty }
+        #expect(delivery.settled == .delivered([Self.namedPromise]))
+        #expect(transport.cancels == 0)
+        #expect(take.phase == .released(at: .catcher))
+    }
+
+    // MARK: - The naming deadline
+
+    /// Blocks the calling thread until the delivery's naming deadline is
+    /// armed on `clock`, then moves the clock on by `seconds` and lets the
+    /// deadline fire.
+    nonisolated static func expireDeadline(on clock: GatedEngineClock, advancing seconds: TimeInterval) {
+        let armed = DispatchSemaphore(value: 0)
+        Task {
+            try? await clock.sleepRequested.wait { !clock.parked.isEmpty }
+            armed.signal()
+        }
+        armed.wait()
+        clock.advance(seconds: seconds)
+        for sleep in clock.parked { clock.release(sleep) }
+    }
+
+    @Test(
+        "names that never come end the wait at the deadline with the stand-in, call the take off, and fail its writes timed out",
+        arguments: [true, false])
+    func namesThatNeverComeExpire(guestAnswers: Bool) async throws {
+        let take = try carriedTake(items: [Self.promise])
+        let transport = transport
+        let display = display
+        let clock = clock
+        let delivery = try #require(transport.delivery)
+        // The guest answers and its drop names nothing, or the guest answers
+        // nothing at all; either way the deadline is what ends the wait.
+        let guest = Thread {
+            transport.delivering.wait()
+            if guestAnswers {
+                delivery.peerAnswered()
+                display.released.wait()
+            }
+            Self.expireDeadline(on: clock, advancing: GuestDragDelivery.namingDeadline)
+        }
+        guest.start()
+
+        #expect(take.filename(forItemAt: 0) == "Untitled.jpeg")
+        #expect(delivery.settled == .expired(after: GuestDragDelivery.namingDeadline))
+        #expect(take.phase == (guestAnswers ? .released(at: .catcher) : .carried(.delivering)))
+        try await transport.changed.wait { transport.cancels == 1 }
+
+        let outcome = try await write(take, item: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/Untitled.jpeg"))
+        #expect(outcome as? GuestDragWriteError == .failed(.timedOut))
+        #expect(transport.pulls.isEmpty, "a write pulled for a promise nothing named")
+
+        // A name arriving after the deadline changes nothing.
+        transport.name([Self.namedPromise])
+        #expect(take.filename(forItemAt: 0) == "Untitled.jpeg")
+
+        // The session ends, and the called-off take's end retires it,
+        // releasing the offer.
+        take.hostSessionEnded(dropped: true)
+        transport.end(.closed(.resetLocally(WireError(.cancelled, debugDetail: "the host called the take off"))))
+        #expect(take.phase == .released(at: guestAnswers ? .catcher : .exitPoint))
+        #expect(transport.releases == 1)
+        #expect(finished.count == 1)
+    }
+
+    @Test("every name ask of a take shares one deadline, measured from the first ask")
+    func theDeadlineIsShared() async throws {
+        let take = try carriedTake(items: [Self.promise, Self.promise])
+        let transport = transport
+        let display = display
+        let clock = clock
+        let delivery = try #require(transport.delivery)
+
+        // A first ask off the main thread starts the delivery and the deadline.
+        let firstName = Locked<String?>(nil)
+        let firstReturned = AsyncGate()
+        let first = Thread {
+            firstName.withLock { $0 = take.filename(forItemAt: 0) }
+            firstReturned.notify()
+        }
+        first.start()
+        try await clock.sleepRequested.wait { clock.parked.count == 1 }
+        clock.advance(seconds: GuestDragDelivery.namingDeadline / 2)
+
+        let guest = Thread {
+            transport.delivering.wait()
+            delivery.peerAnswered()
+            display.released.wait()
+            Self.expireDeadline(on: clock, advancing: GuestDragDelivery.namingDeadline / 2)
+        }
+        guest.start()
+
+        // A second ask, on the main thread, waits on the same deadline and
+        // injects the release.
+        #expect(take.filename(forItemAt: 1) == "Untitled.jpeg")
+        try await firstReturned.wait { firstName.withLock { $0 } != nil }
+        #expect(firstName.withLock { $0 } == "Untitled.jpeg")
+        #expect(clock.requestedSeconds == [GuestDragDelivery.namingDeadline], "a second deadline was armed")
+        #expect(delivery.settled == .expired(after: GuestDragDelivery.namingDeadline))
+        #expect(display.calls.filter { $0 == .release }.count == 1)
+        try await transport.changed.wait { transport.cancels == 1 }
     }
 
     @Test("a name ask waits for the names alone: the folder sizes after them hold no writer and no main thread")

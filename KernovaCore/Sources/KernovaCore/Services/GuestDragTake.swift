@@ -253,9 +253,10 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// sizes the folders and ends it. Every item is pulled from the taken offer,
 /// which only this side ends. The first destination to ask a promised item's
 /// name starts that and waits for the names alone; one that took the drop
-/// without asking yet has it started as the session ends. No wall clock bounds
-/// any of it: each wait ends on the guest's answer, the take's end, or the
-/// user's own release or return.
+/// without asking yet has it started as the session ends. That wait alone has
+/// a wall clock, `GuestDragDelivery.namingDeadline`, past which the take is
+/// called off and its writes fail timed out; every other wait ends on the
+/// guest's answer, the take's end, or the user's own release or return.
 ///
 /// The Mac session's file promises live exactly as long as the take can keep
 /// them: the take retires once it delivers nothing more, and its retirement is
@@ -331,7 +332,7 @@ package final class GuestDragTake: GuestDragTaking {
     @ObservationIgnored package var sessionOverDisplayChanged: (@MainActor (Bool) -> Void)?
 
     /// The drag's delivery, which a name ask on any thread waits on.
-    nonisolated private let delivery = GuestDragDelivery()
+    nonisolated private let delivery: GuestDragDelivery
 
     @ObservationIgnored private let transport: any GuestDragTransport
     @ObservationIgnored private weak var display: (any GuestDragDisplay)?
@@ -427,13 +428,14 @@ package final class GuestDragTake: GuestDragTaking {
     ///
     /// `onFinished` is called once, when the take's stream has closed, its
     /// offers are released or ended, and no write is still pulling;
-    /// `onHostSessionBegan` as its Mac session begins. Nothing is sent until
-    /// ``begin()``.
+    /// `onHostSessionBegan` as its Mac session begins. The delivery's naming
+    /// deadline runs on `clock`. Nothing is sent until ``begin()``.
     init(
         transport: any GuestDragTransport, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
+        clock: any EngineClock = makePlatformEngineClock(),
         holds: @escaping @MainActor () -> Bool,
         onFinished: @escaping @MainActor (GuestDragTake) -> Void,
         onHostSessionBegan: @escaping @MainActor (GuestDragTake) -> Void
@@ -444,6 +446,7 @@ package final class GuestDragTake: GuestDragTaking {
         self.peerName = peerName
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
+        self.delivery = GuestDragDelivery(clock: clock)
         self.holds = holds
         self.onFinished = onFinished
         self.onHostSessionBegan = onHostSessionBegan
@@ -960,8 +963,10 @@ package final class GuestDragTake: GuestDragTaking {
         pull(index, to: destination, completion)
     }
 
-    /// The drag's delivery settled: every write waiting on it pulls now.
+    /// The drag's delivery settled: every write waiting on it pulls now, or
+    /// fails when the delivery expired.
     private func deliverySettled() {
+        if case .expired(let waited)? = delivery.settled { deliveryExpired(after: waited) }
         let waiting = owed
         owed.removeAll()
         for (index, write) in waiting.sorted(by: { $0.key < $1.key }) {
@@ -972,6 +977,19 @@ package final class GuestDragTake: GuestDragTaking {
             pull(index, to: write.destination, write.completion)
         }
         retireIfDone()
+    }
+
+    /// Nothing named the drag's promises by the naming deadline: the take is
+    /// called off, so the guest's drop delivers nothing, and every write fails
+    /// timed out.
+    private func deliveryExpired(after waited: TimeInterval) {
+        let promised = items.filter(\.isPromised).count
+        Self.logger.log(
+            .error,
+            "The guest named none of the drag's \(promised, privacy: .public) promised item(s) in \(String(format: "%.1f", waited), privacy: .public) s; calling the take off"
+        )
+        if takeOpen { transport.cancel() }
+        endWrites(.timedOut)
     }
 
     /// The item a pull of `index` fetches: as delivered, or as offered when
