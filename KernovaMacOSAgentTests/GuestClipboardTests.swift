@@ -734,6 +734,7 @@ struct GuestClipboardTests {
             #expect(rig.pasteboard.setString("copied since", forType: .string))
         }
         try await link.changed.wait { link.withdrawals.contains(concealed.token) }
+        #expect(link.withdrawalCodes[concealed.token] == .clipboardChanged)
         #expect(!link.withdrawals.contains(plain.token))
     }
 
@@ -1181,14 +1182,30 @@ struct GuestClipboardTests {
     }
 
     @Test(
-        "The host withdrawing its concealed copy, its clipboard having moved on, clears the guest's write of it, pasted or not",
+        "The Mac's clipboard moving on from its concealed copy clears the guest's write of it, pasted or not, unannounced",
         arguments: [false, true])
-    func concealedHostCopyGoesWhenTheHostWithdrawsIt(pasted: Bool) async throws {
+    func concealedHostCopyGoesWhenTheMacsClipboardMovesOn(pasted: Bool) async throws {
         let rig = rig()
         let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         rig.clipboard.setLink(link)
         try await receiveConcealedCopy(rig, link)
         if pasted { #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("hunter2-mac".utf8)) }
+        let before = rig.clipboard.activity
+
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.clipboardChanged))),
+            on: link)
+        #expect(rig.pasteboard.items.isEmpty)
+        #expect(rig.clipboard.activity == before)
+        #expect(!rig.clipboard.activity.isNotice)
+    }
+
+    @Test("The host withdrawing its concealed copy, what its files came from having ended, says the Mac withdrew it")
+    func concealedHostCopyWithdrawnIsSaid() async throws {
+        let rig = rig()
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveConcealedCopy(rig, link)
 
         rig.clipboard.exchange.handle(
             .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)

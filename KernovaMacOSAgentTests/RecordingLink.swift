@@ -13,6 +13,7 @@ final class RecordingLink: ClipboardItemLink {
     private struct Calls {
         var offers: [ItemOffer] = []
         var withdrawals: [Data] = []
+        var withdrawalCodes: [Data: ErrorCode] = [:]
         var releases: [Data] = []
         var refusals: [(token: Data, code: ErrorCode)] = []
         var ceilings: [UInt64] = []
@@ -33,6 +34,8 @@ final class RecordingLink: ClipboardItemLink {
 
     var offers: [ItemOffer] { calls.withLock(\.offers) }
     var withdrawals: [Data] { calls.withLock(\.withdrawals) }
+    /// The code each withdrawn offer was withdrawn with, by token.
+    var withdrawalCodes: [Data: ErrorCode] { calls.withLock(\.withdrawalCodes) }
     var releases: [Data] { calls.withLock(\.releases) }
     var refusals: [(token: Data, code: ErrorCode)] { calls.withLock(\.refusals) }
     /// The `byte_ceiling` of each pull ordered, in order.
@@ -51,7 +54,10 @@ final class RecordingLink: ClipboardItemLink {
     }
 
     func withdrawOffer(_ token: Data, code: ErrorCode) {
-        calls.withLock { $0.withdrawals.append(token) }
+        calls.withLock { calls in
+            calls.withdrawals.append(token)
+            calls.withdrawalCodes[token] = code
+        }
         changed.notify()
     }
 

@@ -800,7 +800,7 @@ struct HubClipboardServiceTests {
             #expect(pasteboard.setString("copied since", forType: .string))
         }
         try await probe.changed.wait { withdrawn(concealed.token, probe) }
-        #expect(withdrawal(of: concealed.token, probe) == .cancelled)
+        #expect(withdrawal(of: concealed.token, probe) == .clipboardChanged)
         #expect(!withdrawn(plain.token, probe))
         #expect(await pull(plain, from: instance) == .success(.inline(Data("plain text".utf8))))
     }
@@ -1082,13 +1082,26 @@ struct HubClipboardServiceTests {
     }
 
     @Test(
-        "Copy to Mac's concealed text goes when the guest withdraws it, its clipboard having moved on, pasted or not",
+        "Copy to Mac's concealed text goes, unannounced, when the guest's clipboard moves on from it, pasted or not",
         arguments: [false, true])
-    func concealedCopyToMacGoesWhenTheGuestWithdrawsIt(pasted: Bool) async throws {
+    func concealedCopyToMacGoesWhenTheGuestsClipboardMovesOn(pasted: Bool) async throws {
         let probe = AgentHubProbe()
         let instance = try await connected(probe)
         let pasteboard = try await concealedCopyToMac(probe, instance)
         if pasted { #expect(pasteboard.items.first?.data(forType: Self.textType) == Data("s3cret".utf8)) }
+        let before = instance.clipboardTransferReport
+
+        withdrawGuestCopy(on: probe, .clipboardChanged)
+        try await pasteboard.changed.wait { pasteboard.dataByItem.isEmpty }
+        // The retraction and the report it would make run in one turn: none came.
+        #expect(instance.clipboardTransferReport == before)
+    }
+
+    @Test("Copy to Mac's concealed text the guest withdraws, what its files came from having ended, is said withdrawn")
+    func concealedCopyToMacWithdrawnIsSaid() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try await concealedCopyToMac(probe, instance)
 
         withdrawGuestCopy(on: probe)
         try await pasteboard.changed.wait { pasteboard.dataByItem.isEmpty }

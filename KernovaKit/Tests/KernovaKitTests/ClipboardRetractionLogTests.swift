@@ -58,5 +58,11 @@ struct ClipboardRetractionLogTests {
         #expect(
             line(.guest, .copy, .byFarSide(hasSuccessor: false))
                 == "Retracted the Mac's copy from the guest pasteboard: the Mac withdrew the copy")
+        #expect(
+            line(.guest, .copy, .movedOn)
+                == "Retracted the Mac's copy from the guest pasteboard: the Mac's clipboard moved on")
+        #expect(
+            line(.host(vm: "V"), .copy, .movedOn)
+                == "Retracted the guest's copy from the host pasteboard for 'V': the guest's clipboard moved on")
     }
 }

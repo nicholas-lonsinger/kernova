@@ -205,7 +205,7 @@ enum ErrorCode {
   ERROR_CODE_DRAG_NOT_CURRENT = 1005;               // the take names no drag the peer offers, or one already taken
   ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
   ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows; a CLIPBOARD copy's RESET by its receiver: the sender's next copy arrived before it landed, so it was not written
-  ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is
+  ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is; by its sender: its clipboard moved on from a concealed copy, so the receiver removes it
   ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY = 1009;      // a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
   ERROR_CODE_CLIPBOARD_ALREADY_HELD = 1010;         // a CLIPBOARD copy's RESET by its receiver: the copy is only references to one offer of the receiver's that its clipboard still holds, so nothing was written
   ERROR_CODE_CLIPBOARD_FILES_WITHHELD = 1011;       // a CLIPBOARD copy's RESET by its receiver: its clipboard was written without the copy's files, which total over the paste ceiling; Error.limit names it
@@ -772,8 +772,10 @@ enum ClipboardCopy {
   // fill are left out, and the copy RESET CLIPBOARD_PARTS_GONE. Its files over
   // the paste ceiling are left out of that write, and the copy RESET
   // CLIPBOARD_FILES_WITHHELD; with nothing else in it, nothing is written and
-  // the copy is RESET TOO_LARGE. A peer's names the host's ask it answers in
-  // `after`.
+  // the copy is RESET TOO_LARGE. Its sender RESETs a concealed copy
+  // CLIPBOARD_CHANGED once its own clipboard moves on from it, and the
+  // receiver removes what it wrote of it. A peer's names the host's ask it
+  // answers in `after`.
   CLIPBOARD_COPY_SNAPSHOT = 1;
   // Host only, of no items: asks the peer for a snapshot of its clipboard. The
   // peer answers with a CLIPBOARD_COPY_SNAPSHOT naming it, then releases it,

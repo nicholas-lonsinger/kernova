@@ -373,7 +373,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
   /// a CLIPBOARD offer's RESET: the opener's next offer follows; a CLIPBOARD copy's RESET by its receiver: the sender's next copy arrived before it landed, so it was not written
   case itemOfferReplaced // = 1007
 
-  /// a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is
+  /// a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is; by its sender: its clipboard moved on from a concealed copy, so the receiver removes it
   case clipboardChanged // = 1008
 
   /// a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
@@ -829,8 +829,10 @@ public nonisolated enum Kernova_V2_ClipboardCopy: SwiftProtobuf.Enum, Swift.Case
   /// fill are left out, and the copy RESET CLIPBOARD_PARTS_GONE. Its files over
   /// the paste ceiling are left out of that write, and the copy RESET
   /// CLIPBOARD_FILES_WITHHELD; with nothing else in it, nothing is written and
-  /// the copy is RESET TOO_LARGE. A peer's names the host's ask it answers in
-  /// `after`.
+  /// the copy is RESET TOO_LARGE. Its sender RESETs a concealed copy
+  /// CLIPBOARD_CHANGED once its own clipboard moves on from it, and the
+  /// receiver removes what it wrote of it. A peer's names the host's ask it
+  /// answers in `after`.
   case snapshot // = 1
 
   /// Host only, of no items: asks the peer for a snapshot of its clipboard. The
