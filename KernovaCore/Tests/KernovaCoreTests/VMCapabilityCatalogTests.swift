@@ -96,6 +96,7 @@ struct VMCapabilityCatalogTests {
         .editLiveConfiguration: .edit(.liveKeys),
         .switchNetworkMode: .edit(.networkAttachment),
         .switchNetworkMembership: .edit(.networkMembership),
+        .editPresentation: .edit(.hostPresentation),
         .clone: .operation(.copyingOut(.stopped)),
         .rename: .edit(.rename),
         .editTags: .edit(.hostPresentation),

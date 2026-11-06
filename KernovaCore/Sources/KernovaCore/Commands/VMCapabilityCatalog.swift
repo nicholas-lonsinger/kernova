@@ -66,6 +66,9 @@ package enum VMCapability: CaseIterable, Hashable {
     /// Move the network device between its mode's common network and a
     /// network of its own — which a saved state of some modes restores across.
     case switchNetworkMembership
+    /// Write a configuration key that says how the host presents the VM
+    /// (``VMConfigurationKeyGate/presentation``).
+    case editPresentation
     case clone
     case rename
     /// Put a library tag on the VM or take it off.
@@ -115,7 +118,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .editUSBAccessories: .editUSBAccessory
         case .forgetUSBPairing: .forgetUSBPairing
         case .editConfiguration, .editLiveConfiguration, .switchNetworkMode,
-            .switchNetworkMembership:
+            .switchNetworkMembership, .editPresentation:
             .setConfiguration
         case .clone: .clone
         case .rename: .rename
@@ -147,7 +150,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .switchNetworkMembership: .networkMembership
         case .editLiveSharedDirectories: .liveShares
         case .rename: .rename
-        case .editTags: .hostPresentation
+        case .editTags, .editPresentation: .hostPresentation
         case .info, .ipAddress, .snapshots, .start, .startInRecovery, .cancelGuestSetup, .stop,
             .restart, .forceStop, .stopAnyway, .discardSavedState, .pause, .resume, .suspend, .open,
             .reveal,
@@ -208,7 +211,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .renameSnapshot, .setSnapshotNotes, .editStorageDisks, .editSharedDirectories,
             .editLiveSharedDirectories, .editConfiguration, .editRemovableMedia,
             .removeRemovableMedia, .forgetUSBPairing, .editLiveConfiguration, .switchNetworkMode,
-            .switchNetworkMembership, .rename, .editTags:
+            .switchNetworkMembership, .editPresentation, .rename, .editTags:
             return editClasses.map { .edit($0) }
         case .createStorageDisk:
             return .operation(.creatingStorageDisk)

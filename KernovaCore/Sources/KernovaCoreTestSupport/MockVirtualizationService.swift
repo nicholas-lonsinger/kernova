@@ -80,6 +80,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// Parks a termination before it ends the session, so a test can act
     /// while a Force Stop is in flight.
     var forceStopGate: GatedStep?
+    /// Parks a start once its session is bound and before the guest is up, so
+    /// a test can act while the bring-up still holds the VM.
+    var startGate: GatedStep?
     var pauseError: (any Error)?
     /// Thrown by a hot resume, and by the restore a live warm revert ends in.
     var resumeError: (any Error)?
@@ -136,6 +139,7 @@ final class MockVirtualizationService: VirtualizationProviding {
             hostStateAtStart = instance.hostState
             guestExecutionCount += 1
             context.bringUp.bindSessionForTesting(UUID())
+            try await startGate?.pass()
         }
         return .rest(.live(.running), route)
     }

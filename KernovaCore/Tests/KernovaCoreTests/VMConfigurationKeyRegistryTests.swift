@@ -168,6 +168,10 @@ struct VMConfigurationKeyRegistryTests {
         let ephemeral = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
         #expect(ephemeral.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
 
+        // Neither a session nor a saved state reads where the display opens.
+        let preference = try #require(VMConfigurationKeyRegistry.key(named: "display.preference"))
+        #expect(preference.capability(writing: "popOut", for: .macOS) == .editPresentation)
+
         let bridged = try #require(
             VMConfigurationKeyRegistry.key(named: "network.bridgedInterface"))
         #expect(bridged.capability(writing: "en0", for: .macOS) == .switchNetworkMode)

@@ -10,8 +10,15 @@ enum VMConfigurationKeyGate: Hashable, Sendable {
     /// Only while the VM's hardware is not pinned by a live session or a saved
     /// state.
     case atRest
-    /// In any state: the value is read at a moment other than boot.
+    /// Wherever the VM's state takes a settings edit, a live session included:
+    /// the value is read at a moment other than boot. An operation holding the
+    /// VM — a bring-up among them — refuses it.
     case live
+    /// Wherever the VM's state takes an edit of how the host presents it
+    /// (``VMEditClasses/hostPresentation``), which neither a session nor a
+    /// saved state reads — so a bring-up, a save, a capture and a Force Stop
+    /// all take it.
+    case presentation
     /// The network a VM joins — a hot swap on a running VM, except for the
     /// value that takes its device away.
     case networkMode
@@ -159,17 +166,18 @@ package struct VMConfigurationKey: Sendable {
             ConfigurationField(read: read, write: write, refusalOnResult: refusalOnResult))
     }
 
-    /// A key over the VM's host state, which is always ``VMConfigurationKeyGate/live``.
+    /// A key over the VM's host state, gated on `gate` on every guest —
+    /// ``VMConfigurationKeyGate/live`` or ``VMConfigurationKeyGate/presentation``.
     ///
     /// Its gate is asked before either file is touched, whether or not the
     /// value moves: host state commits after the configuration, where a
-    /// refusal would leave the configuration landed without it. A live gate
-    /// refuses only a VM still being created, cloned or imported, which has no
-    /// bundle to write, so an unmoved assignment passes wherever any write
-    /// could land.
+    /// refusal would leave the configuration landed without it. So an
+    /// assignment that leaves the value where it is is refused wherever the
+    /// gate is, an operation holding the VM among them.
     init(
         name: String,
         summary: String,
+        gate: VMConfigurationKeyGate = .live,
         applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
         readHostState: @escaping @Sendable (VMHostState) -> String,
         changeHostState:
@@ -178,7 +186,7 @@ package struct VMConfigurationKey: Sendable {
     ) {
         self.name = name
         self.summary = summary
-        self.gate = { _ in .live }
+        self.gate = { _ in gate }
         self.appliesToGuest = applies
         field = .hostState(HostStateField(read: readHostState, change: changeHostState))
     }
@@ -289,6 +297,7 @@ package struct VMConfigurationKey: Sendable {
         switch gate(guestOS) {
         case .atRest: .editConfiguration
         case .live: .editLiveConfiguration
+        case .presentation: .editPresentation
         case .networkDevice: .switchNetworkMode
         case .networkMembership: .switchNetworkMembership
         case .networkMode:
@@ -428,6 +437,7 @@ package enum VMConfigurationKeyRegistry {
     package static let displayPreference = VMConfigurationKey(
         name: "display.preference",
         summary: "Where the display opens: inline, popOut or fullscreen.",
+        gate: .presentation,
         readHostState: { $0.displayPreference.rawValue },
         changeHostState: { value, _ in
             let preference: VMDisplayPreference = try ConfigurationValue.choice(
