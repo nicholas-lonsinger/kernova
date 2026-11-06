@@ -404,9 +404,8 @@ package final class VMCreationViewModel {
 
     /// The steps this wizard actually walks, in order.
     ///
-    /// The account step is **absent** rather than disabled when nothing can
-    /// deliver an account — "Capability degrades by absence" — so the indicator,
-    /// Next and Back all read one list.
+    /// The account step is present only while unattended setup is active, so
+    /// the indicator, Next and Back all read one list.
     package var steps: [VMCreationStep] {
         VMCreationStep.allCases.filter { $0 != .guestAccount || unattendedSetupActive }
     }
