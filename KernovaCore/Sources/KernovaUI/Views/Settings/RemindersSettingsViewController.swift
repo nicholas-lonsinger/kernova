@@ -30,10 +30,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     private let viewModel: VMLibraryViewModel
     private var preferences: AppPreferences { viewModel.preferences }
+    /// The visible frame the Settings window must fit inside.
+    private let visibleFrame: @MainActor (_ window: NSWindow?) -> NSRect?
 
-    /// Caps the pane at ``SettingsPaneMetrics/maxHeight(in:)``, past which a
-    /// long VM list scrolls; re-read on every publish, since the window may have
-    /// moved to another screen.
+    /// Caps the pane at ``SettingsPaneMetrics/maxHeight(in:visibleFrame:)``,
+    /// past which a long VM list scrolls; re-read on every publish, since the
+    /// window may have moved to another screen.
     private var heightCap: NSLayoutConstraint?
 
     private let menuBarQuitSwitch = NSSwitch()
@@ -69,8 +71,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// Keeps the per-VM rows in sync with the library while the pane is visible.
     private var vmObservation: ObservationLoop?
 
-    init(viewModel: VMLibraryViewModel) {
+    init(viewModel: VMLibraryViewModel, visibleFrame: @escaping @MainActor (_ window: NSWindow?) -> NSRect?) {
         self.viewModel = viewModel
+        self.visibleFrame = visibleFrame
         super.init(nibName: nil, bundle: nil)
         title = "Reminders"
     }
@@ -240,7 +243,8 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     /// Publishes the pane's size for the window to follow.
     private func publishSize() {
-        let maxHeight = SettingsPaneMetrics.maxHeight(in: view.window)
+        let window = view.window
+        let maxHeight = visibleFrame(window).map { SettingsPaneMetrics.maxHeight(in: window, visibleFrame: $0) }
         if let maxHeight { heightCap?.constant = maxHeight }
         heightCap?.isActive = maxHeight != nil
         publishSettingsPaneSize(layoutHeight: maxHeight ?? SettingsPaneMetrics.width)

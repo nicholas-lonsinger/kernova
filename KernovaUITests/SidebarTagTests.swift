@@ -607,7 +607,7 @@ struct SidebarTagTests {
         controller.perform(.editTags)
 
         #expect(requested == [.pane(.tags)])
-        let tabs = SettingsTabViewController(viewModel: viewModel)
+        let tabs = SettingsTabViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         tabs.loadViewIfNeeded()
 
         tabs.show(.pane(.tags))

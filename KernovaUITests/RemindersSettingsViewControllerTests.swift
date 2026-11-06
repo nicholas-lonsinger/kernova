@@ -66,7 +66,7 @@ struct RemindersSettingsViewControllerTests {
         for index in 1...vmCount {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
         controller.viewWillAppear()
         controller.view.setFrameSize(controller.preferredContentSize)
@@ -84,7 +84,7 @@ struct RemindersSettingsViewControllerTests {
         for index in 1...vmCount {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         // Measure while detached, exactly as the pane does before the tab
         // controller sizes the window, then hand the window that measurement.
         controller.viewWillAppear()
@@ -276,7 +276,7 @@ struct RemindersSettingsViewControllerTests {
         }
         let restarting = admitTwin("Restarting", macAddress: "02:4b:4e:56:02:01")
         _ = admitTwin("Twin", macAddress: "02:4b:4e:56:02:02")
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
@@ -420,7 +420,7 @@ struct RemindersSettingsViewControllerTests {
         for index in 1...overflowingVMCount() {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
 
         // Host the pane in an on-screen window first, as the tab view does — and
@@ -448,7 +448,8 @@ struct RemindersSettingsViewControllerTests {
     /// it would point at nothing.
     @Test("The override note does not show when there are no virtual machines")
     func perVMCaptionsHideWithoutVMs() throws {
-        let controller = RemindersSettingsViewController(viewModel: makeViewModel())
+        let controller = RemindersSettingsViewController(
+            viewModel: makeViewModel(), visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
@@ -490,7 +491,7 @@ struct RemindersSettingsViewControllerTests {
         let viewModel = makeViewModel()
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
@@ -506,7 +507,7 @@ struct RemindersSettingsViewControllerTests {
         let storage = try #require(viewModel.storageService as? MockVMStorageService)
         let instance = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS, files: storage.files)
         storage.setSaveHostStateError(CocoaError(.fileWriteNoPermission))
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
@@ -523,7 +524,7 @@ struct RemindersSettingsViewControllerTests {
     func onlyLinuxVMsShowTheEmptyState() throws {
         let viewModel = makeViewModel()
         viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
-        let controller = RemindersSettingsViewController(viewModel: viewModel)
+        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
@@ -532,15 +533,17 @@ struct RemindersSettingsViewControllerTests {
         #expect(findLabel(withText: "No macOS virtual machines yet.", in: controller.view) != nil)
     }
 
-    /// Seven VMs put the pane within a note's height of a fixed 520-point cap,
-    /// which is where a cap below the screen's would clip the note's growth.
-    @Test("The override note grows the Settings window by its full height")
-    func overrideNoteGrowsWindowByItsHeight() throws {
+    /// The Reminders tab of a Settings window holding seven VMs — taller than
+    /// the pane is wide — its window fitting whatever `visibleFrame` returns
+    /// when the pane publishes.
+    private func showRemindersTab(
+        visibleFrame: @escaping @MainActor (NSWindow?) -> NSRect?
+    ) throws -> (window: NSWindow, controller: RemindersSettingsViewController) {
         let viewModel = makeViewModel()
         for index in 1...7 {
             viewModel.library.admitFixture(name: "VM \(index)", guestOS: .macOS)
         }
-        let tabController = SettingsTabViewController(viewModel: viewModel)
+        let tabController = SettingsTabViewController(viewModel: viewModel, visibleFrame: visibleFrame)
         let window = makeTestWindow(styleMask: [.titled, .closable])
         window.contentViewController = tabController
         window.orderFront(nil)
@@ -548,18 +551,31 @@ struct RemindersSettingsViewControllerTests {
             tabController.tabViewItems.first { $0.viewController is RemindersSettingsViewController })
         tabController.tabView.selectTabViewItem(item)
         let controller = try #require(item.viewController as? RemindersSettingsViewController)
-        defer { controller.viewDidDisappear() }
         window.layoutIfNeeded()
+        return (window, controller)
+    }
+
+    private func overrideNote(in controller: RemindersSettingsViewController) throws -> NSTextField {
+        try #require(findLabel(containing: "No effect while the reminder above is off", in: controller.view))
+    }
+
+    @Test("The override note grows the Settings window by its full height while the display has room")
+    func overrideNoteGrowsWindowByItsHeight() throws {
+        let (window, controller) = try showRemindersTab(visibleFrame: offDesktopVisibleFrame)
+        defer { controller.viewDidDisappear() }
         let paneBefore = controller.preferredContentSize.height
         let windowBefore = window.contentLayoutRect.height
 
         try setAppWideInstallReminder(on: false, in: controller)
         window.layoutIfNeeded()
 
-        let note = try #require(
-            findLabel(containing: "No effect while the reminder above is off", in: controller.view))
+        let note = try overrideNote(in: controller)
         #expect(note.frame.height > 0)
         let growth = note.frame.height + GroupedFormStyle.cardStackSpacing
+        try #require(
+            paneBefore + growth
+                <= SettingsPaneMetrics.maxHeight(in: window, visibleFrame: WindowStage.offDesktopVisibleFrame),
+            "the display has no room for the note, so its growth stops at the cap")
         #expect(controller.preferredContentSize.height == paneBefore + growth)
         #expect(window.contentLayoutRect.height == windowBefore + growth)
 
@@ -567,6 +583,33 @@ struct RemindersSettingsViewControllerTests {
         let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height <= scrollView.frame.height)
+    }
+
+    /// A visible frame a test changes while the pane is up.
+    private final class VisibleFrame {
+        var frame = WindowStage.offDesktopVisibleFrame
+    }
+
+    @Test("On a display too short for the override note, the window stops at the cap and the pane scrolls")
+    func overrideNoteOnShortDisplayScrolls() throws {
+        let visibleFrame = VisibleFrame()
+        let (window, controller) = try showRemindersTab(visibleFrame: { _ in visibleFrame.frame })
+        defer { controller.viewDidDisappear() }
+        let paneBefore = controller.preferredContentSize.height
+        let windowBefore = window.contentLayoutRect.height
+        // One point of room below the window: less than any note needs.
+        let chrome = window.frame.height - window.contentRect(forFrameRect: window.frame).height
+        visibleFrame.frame.size.height = paneBefore + 1 + chrome
+
+        try setAppWideInstallReminder(on: false, in: controller)
+        window.layoutIfNeeded()
+
+        #expect(try overrideNote(in: controller).frame.height > 1)
+        #expect(controller.preferredContentSize.height == paneBefore + 1)
+        #expect(window.contentLayoutRect.height == windowBefore + 1)
+        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
+        let documentView = try #require(scrollView.documentView)
+        #expect(documentView.frame.height > scrollView.frame.height)
     }
 
     @Test("A short VM list hugs the content with the text laid out")
