@@ -55,7 +55,8 @@ struct SettingsTabViewControllerTests {
     private func makeOverflowingPane() throws -> (
         SettingsTabViewController, RemindersSettingsViewController
     ) {
-        let tabController = SettingsTabViewController(viewModel: makeViewModel(vmCount: overflowingVMCount()))
+        let tabController = SettingsTabViewController(
+            viewModel: makeViewModel(vmCount: overflowingVMCount()), visibleFrame: offDesktopVisibleFrame)
         tabController.loadViewIfNeeded()
         let item = try remindersItem(in: tabController)
         // Select before hosting: selecting moves the pane's view into the tab
@@ -211,14 +212,15 @@ struct SettingsTabViewControllerTests {
 
     @Test("Each pane is a destination, and one the build does not offer leaves the selection")
     func everyOfferedPaneIsADestination() throws {
-        let tabController = SettingsTabViewController(viewModel: makeSettingsViewModel(preferences: preferences))
+        let tabController = SettingsTabViewController(
+            viewModel: makeSettingsViewModel(preferences: preferences), visibleFrame: offDesktopVisibleFrame)
         for pane in SettingsPane.allCases {
             tabController.show(.pane(pane))
             #expect(tabController.selectedPaneForTesting == pane)
         }
 
         let unentitled = makeSettingsViewModel(preferences: preferences, entitled: false)
-        let limited = SettingsTabViewController(viewModel: unentitled)
+        let limited = SettingsTabViewController(viewModel: unentitled, visibleFrame: offDesktopVisibleFrame)
         limited.show(.pane(.reminders))
         limited.show(.pane(.networks))
         #expect(limited.selectedPaneForTesting == .reminders)

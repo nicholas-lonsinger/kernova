@@ -21,6 +21,10 @@ struct WindowStage: Sendable {
     /// such as the standard About panel.
     let windows: @MainActor @Sendable () -> [NSWindow]
 
+    /// The visible frame a window on this stage must fit inside — its screen's,
+    /// or the main screen's before it is on one — or `nil` with no screen.
+    let visibleFrame: @MainActor @Sendable (_ window: NSWindow?) -> NSRect?
+
     /// The app's own windows.
     static let app = WindowStage(
         autosave: .app,
@@ -28,7 +32,8 @@ struct WindowStage: Sendable {
             NSWindow(contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
         },
         makeContentWindow: { NSWindow(contentViewController: $0) },
-        windows: { NSApp.windows })
+        windows: { NSApp.windows },
+        visibleFrame: { ($0?.screen ?? NSScreen.main)?.visibleFrame })
 
     /// Makes a window hosting `contentViewController` whose content size is
     /// exactly `contentSize`.

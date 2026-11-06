@@ -148,11 +148,17 @@ private final class ParkedTestWindow: NSWindow {
 }
 
 extension WindowStage {
+    /// The visible frame every window beyond every display fits inside: a
+    /// 1440×900 display's below its menu bar, so a test measures against the
+    /// same display on every Mac that runs it.
+    static let offDesktopVisibleFrame = NSRect(x: 0, y: 0, width: 1_440, height: 875)
+
     /// The stage a test builds the app's windows on: AppKit saves nothing for
     /// them (``WindowAutosave/unsaved()``), and every window
     /// is made beyond every display, where its sheets go up too, in the running
-    /// test case's scope. Its windows are that scope's alone, never those of a
-    /// test running alongside in the shared host.
+    /// test case's scope, and fits ``offDesktopVisibleFrame``. Its windows are
+    /// that scope's alone, never those of a test running alongside in the
+    /// shared host.
     static func offDesktop() -> WindowStage {
         let scope = ScopedWindowsTrait.scope
         return WindowStage(
@@ -168,7 +174,8 @@ extension WindowStage {
                 enroll(window)
                 return window
             },
-            windows: { scope?.windows ?? [] })
+            windows: { scope?.windows ?? [] },
+            visibleFrame: { _ in WindowStage.offDesktopVisibleFrame })
     }
 }
 
