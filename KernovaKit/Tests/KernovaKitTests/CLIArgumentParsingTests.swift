@@ -489,7 +489,7 @@ struct CLIArgumentParsingTests {
     @Test("stop defaults to asking the guest, and each method names its own disposition")
     func stopMethodsMapToDispositions() throws {
         let byDefault = try #require(try parse(["stop", "Alpha"]) as? KernovaCommand.Stop)
-        #expect(byDefault.method == .graceful)
+        #expect(byDefault.method == .normal)
         #expect(byDefault.method.disposition == .graceful)
 
         let forced = try #require(try parse(["stop", "Alpha", "--force"]) as? KernovaCommand.Stop)
@@ -505,7 +505,7 @@ struct CLIArgumentParsingTests {
         // The deadline bounds the wait for the guest to actually power off,
         // which every disposition has to travel — a force stop simply gets
         // there in one step.
-        for method in ["--force", "--graceful", "--anyway"] {
+        for method in ["--force", "--normal", "--anyway"] {
             let stop = try #require(
                 try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)
             #expect(stop.timeout == 5)
@@ -532,18 +532,18 @@ struct CLIArgumentParsingTests {
     @Test("Two stop methods at once is a usage error, not a silent winner, for stop and restart alike")
     func stopMethodsAreExclusive() {
         for verb in ["stop", "restart"] {
-            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--force", "--graceful"]) }
+            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--force", "--normal"]) }
             #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--force"]) }
-            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--graceful"]) }
+            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--normal"]) }
         }
     }
 
     @Test("restart defaults to asking the guest, and takes each stop method with a deadline")
     func restartMethodsMapToDispositions() throws {
         let byDefault = try #require(try parse(["restart", "Alpha"]) as? KernovaCommand.Restart)
-        #expect(byDefault.method == .graceful)
+        #expect(byDefault.method == .normal)
         for (flag, disposition) in [
-            ("--graceful", StopDisposition.graceful), ("--force", .force), ("--anyway", .anyway),
+            ("--normal", StopDisposition.graceful), ("--force", .force), ("--anyway", .anyway),
         ] {
             let restart = try #require(
                 try parse(["restart", "Alpha", flag, "--timeout", "5"]) as? KernovaCommand.Restart)

@@ -142,6 +142,17 @@ struct VMIntentGatewayTests {
         }
     }
 
+    @Test("Shortcuts names each stop method with the term the scripting dictionary and the CLI use")
+    func stopMethodsAreNamedAsEverywhereElse() throws {
+        var named: [String: StopDisposition] = [:]
+        for method in VMStopMethod.allCases {
+            let representation = try #require(VMStopMethod.caseDisplayRepresentations[method])
+            named[String(localized: representation.title)] = method.disposition
+        }
+
+        #expect(named == ["Normal": .graceful, "Anyway": .anyway, "Force": .force])
+    }
+
     // MARK: - Lookup
 
     @Test("Resolving by identifier answers only the VMs asked for")

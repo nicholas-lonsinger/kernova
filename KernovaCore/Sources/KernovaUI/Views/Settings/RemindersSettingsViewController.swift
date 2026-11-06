@@ -5,16 +5,16 @@ import KernovaLogging
 /// The "Reminders" pane of the Settings window.
 ///
 /// Surfaces every host-side reminder Kernova can suppress, with a switch to turn
-/// each back on, plus a *Reset All Reminders* action. Each switch's polarity is
+/// each on or off, plus a *Reset All Reminders* action. Each switch's polarity is
 /// **ON = the reminder is shown** (its dismissed flag is `false`), matching the
 /// VM Settings pane's "Show install reminder" toggle.
 ///
 /// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
 /// *Duplicate machine ID question* by
-/// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, and turned off
-/// only on the question itself; the app-wide *Guest Agent Install Reminder* by
-/// `VMLibraryViewModel.agentInstallPromptDisabled`, which overrides every
-/// per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
+/// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, which Don't ask
+/// again on the question itself also turns off; the app-wide *Guest Agent
+/// Install Reminder* by `VMLibraryViewModel.agentInstallPromptDisabled`, which
+/// overrides every per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
 /// macOS VM, are backed by each VM's host state and written through
 /// `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
 ///
@@ -38,14 +38,11 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     private let menuBarQuitSwitch = NSSwitch()
     private let duplicateIDQuestionSwitch = NSSwitch()
-    /// Why the duplicate machine ID question's switch can't be changed: the
-    /// setting that asks it is off, or the question is on and is turned off
-    /// only where it is asked, with Apple's statement in front of the user.
-    private lazy var duplicateIDQuestionNote = GroupedFormStateNote { [unowned self] in
-        Self.duplicateIDQuestionNote(
-            overrideOn: preferences.allowsDuplicateMachineIDOverride,
-            dismissed: viewModel.duplicateMachineIDQuestionDismissed)
-    }
+    /// Explains the duplicate machine ID question's disabled row while the
+    /// setting that asks it is off.
+    private lazy var duplicateIDQuestionNote = GroupedFormStateNote(
+        "No effect while Offer to start duplicate machine IDs anyway is off.",
+        shownWhen: { [unowned self] in !preferences.allowsDuplicateMachineIDOverride })
     private let agentInstallSwitch = NSSwitch()
 
     /// The persistent container in the content stack that holds either the
@@ -105,9 +102,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
                         .body(
                             "With Offer to start duplicate machine IDs anyway on in Advanced, Kernova "
                                 + "asks before it starts a virtual machine while another with the same "
-                                + "machine ID is active. Choosing Don\u{2019}t ask again on that question "
-                                + "turns this off, and Kernova then starts it without asking. Turn this "
-                                + "on to be asked again.")
+                                + "machine ID is active. With this off, or once you choose Don\u{2019}t "
+                                + "ask again on that question, Kernova starts it without asking."),
+                        .duplicateMachineIDVendorClaim,
                     ]),
             ],
             notes: [duplicateIDQuestionNote])
@@ -313,11 +310,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// install reminder is off; it just can't be changed until that goes back on.
     private func refreshSwitches() {
         menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
-        let questionDismissed = viewModel.duplicateMachineIDQuestionDismissed
-        duplicateIDQuestionSwitch.state = questionDismissed ? .off : .on
+        duplicateIDQuestionSwitch.state = viewModel.duplicateMachineIDQuestionDismissed ? .off : .on
         applyGroupedFormRowEnabled(
-            preferences.allowsDuplicateMachineIDOverride && questionDismissed,
-            control: duplicateIDQuestionSwitch)
+            preferences.allowsDuplicateMachineIDOverride, control: duplicateIDQuestionSwitch)
         duplicateIDQuestionNote.refresh()
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
@@ -341,22 +336,8 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
     }
 
-    /// Only ever turns the question back on: the switch takes input only
-    /// while the question is off.
     @objc private func duplicateIDQuestionToggled() {
-        if duplicateIDQuestionSwitch.state == .on {
-            viewModel.duplicateMachineIDQuestionDismissed = false
-        }
-        refreshSwitches()
-    }
-
-    /// The note under the duplicate machine ID question's switch, or `nil`
-    /// while the switch can be changed.
-    static func duplicateIDQuestionNote(overrideOn: Bool, dismissed: Bool) -> String? {
-        if !overrideOn {
-            return "No effect while Offer to start duplicate machine IDs anyway is off."
-        }
-        return dismissed ? nil : "Turned off with Don\u{2019}t ask again on the question itself."
+        viewModel.duplicateMachineIDQuestionDismissed = (duplicateIDQuestionSwitch.state == .off)
     }
 
     @objc private func agentInstallToggled() {

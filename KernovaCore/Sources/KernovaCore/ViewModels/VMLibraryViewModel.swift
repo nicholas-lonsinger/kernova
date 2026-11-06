@@ -468,8 +468,9 @@ package final class VMLibraryViewModel {
         }
     }
 
-    /// Whether the user chose Don't ask again on the duplicate machine ID
-    /// question, so a bring-up beside a VM sharing its machine identity starts
+    /// Whether the user chose not to be asked the duplicate machine ID
+    /// question — with Don't ask again on it, or its Reminders switch — so a
+    /// bring-up beside a VM sharing its machine identity starts
     /// without asking while ``AppPreferences/allowsDuplicateMachineIDOverride``
     /// is on.
     ///

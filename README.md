@@ -175,7 +175,7 @@ tell application "Kernova"
     -- A stop that discards guest state refuses without `with confirmation`.
     -- AppleScript gives up on a reply after two minutes unless told otherwise.
     with timeout of 600 seconds
-        stop virtual machine "Alpha" by force with confirmation
+        stop virtual machine "Alpha" method force with confirmation
     end timeout
 end tell
 ```

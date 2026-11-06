@@ -549,6 +549,57 @@ struct VMScriptingGatewayTests {
         #expect(virtualization.startCallCount == 0)
     }
 
+    // MARK: - Stop methods
+
+    /// `<verb> virtual machine "<name>" [method <method>] [with confirmation]`,
+    /// as AppleScript sends it.
+    private static func stopEvent(
+        _ verb: String, _ name: String, method: VMScriptStopMethod, confirmation: Bool
+    ) -> NSAppleEventDescriptor {
+        let event = ScriptEvent.verb(verb, vm(named: name))
+        event.setParam(NSAppleEventDescriptor(enumCode: method.code), forKeyword: ScriptEvent.code("KpSm"))
+        if confirmation {
+            event.setParam(NSAppleEventDescriptor(boolean: true), forKeyword: ScriptEvent.code("Kpcf"))
+        }
+        return event
+    }
+
+    @Test(
+        "Each stop method a script names reaches the core as its way down, for stop and restart alike",
+        arguments: ["Stop", "Rstr"])
+    func eachStopMethodReachesTheCore(verb: String) async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let normal = wired.register(name: "Normal", phase: .running(sessionID: UUID()))
+        let anyway = wired.register(name: "Anyway", phase: .running(sessionID: UUID()), guestOS: .macOS)
+        let forced = wired.register(name: "Forced", phase: .running(sessionID: UUID()))
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+        let restarts = verb == "Rstr"
+
+        let normalReply = try await host.send(
+            Self.stopEvent(verb, "Normal", method: .normal, confirmation: false), to: gateway)
+        #expect(normalReply.errorNumber == 0)
+        #expect(virtualization.stopCallCount == 1)
+        #expect(virtualization.forceStopCallCount == 0)
+        #expect(normal.status == (restarts ? .running : .stopped))
+
+        // No agent can take it, so the refusal names the install it needs.
+        let anywayReply = try await host.send(
+            Self.stopEvent(verb, "Anyway", method: .anyway, confirmation: true), to: gateway)
+        #expect(anywayReply.errorString?.contains("\u{201C}For everyone\u{201D}") == true)
+        #expect(virtualization.stopCallCount == 1)
+        #expect(anyway.status == .running)
+
+        let forcedReply = try await host.send(
+            Self.stopEvent(verb, "Forced", method: .force, confirmation: true), to: gateway)
+        #expect(forcedReply.errorNumber == 0)
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(virtualization.stopCallCount == 1)
+        #expect(virtualization.startCallCount == (restarts ? 2 : 0))
+        #expect(forced.status == (restarts ? .running : .stopped))
+    }
+
     // MARK: - Addressing
 
     @Test("A verb's addressing reaches the script with what the core refused")

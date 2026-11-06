@@ -10,15 +10,15 @@ import KernovaLogging
 /// The terms and codes here and the enumerators in `Kernova.sdef` are two
 /// halves of one thing, which is what `KernovaScriptingDefinitionTests` checks.
 enum VMScriptStopMethod: CaseIterable {
-    case shutDown
-    case force
+    case normal
     case anyway
+    case force
 
     /// The way of stopping `disposition` names. Exhaustive, so a new
     /// disposition has to be given a term before it compiles.
     init(_ disposition: StopDisposition) {
         switch disposition {
-        case .graceful: self = .shutDown
+        case .graceful: self = .normal
         case .force: self = .force
         case .anyway: self = .anyway
         }
@@ -34,7 +34,7 @@ enum VMScriptStopMethod: CaseIterable {
     /// The term the dictionary names this method with.
     var term: String {
         switch self {
-        case .shutDown: "shut down"
+        case .normal: "normal"
         case .force: "force"
         case .anyway: "anyway"
         }
@@ -43,7 +43,7 @@ enum VMScriptStopMethod: CaseIterable {
     /// The Apple event code the dictionary gives that term.
     var code: FourCharCode {
         switch self {
-        case .shutDown: FourCharCode(scriptingCode: "KmSd")
+        case .normal: FourCharCode(scriptingCode: "KmNo")
         case .force: FourCharCode(scriptingCode: "KmFo")
         case .anyway: FourCharCode(scriptingCode: "KmSa")
         }
@@ -52,7 +52,7 @@ enum VMScriptStopMethod: CaseIterable {
     /// How the core reaches a powered-off guest this way.
     var disposition: StopDisposition {
         switch self {
-        case .shutDown: .graceful
+        case .normal: .graceful
         case .force: .force
         case .anyway: .anyway
         }
@@ -151,7 +151,7 @@ final class VMStartScriptCommand: VMScriptCommand {
     }
 }
 
-/// `stop virtual machine … [by <method>] [with confirmation] [giving up after <seconds>]`
+/// `stop virtual machine … [method <method>] [with confirmation] [giving up after <seconds>]`
 @objc(VMStopScriptCommand)
 final class VMStopScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
@@ -161,7 +161,7 @@ final class VMStopScriptCommand: VMScriptCommand {
     }
 }
 
-/// `restart virtual machine … [by <method>] [with confirmation] [giving up after <seconds>]`
+/// `restart virtual machine … [method <method>] [with confirmation] [giving up after <seconds>]`
 @objc(VMRestartScriptCommand)
 final class VMRestartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
@@ -172,8 +172,8 @@ final class VMRestartScriptCommand: VMScriptCommand {
 }
 
 extension VMScriptCommand {
-    /// The way down the `by` parameter asked for, shutting down when the
-    /// script named none.
+    /// The way down the `method` parameter asked for, `normal` when the script
+    /// named none.
     ///
     /// - Throws: ``CommandError/invalidArgument(_:)`` for a code from no
     ///   vocabulary this app writes.

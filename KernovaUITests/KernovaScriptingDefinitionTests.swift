@@ -333,6 +333,47 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
+    @Test("stop and restart take their method under one label, named as the Virtual Machine menu names each")
+    func theStopMethodReadsAsTheMenu() throws {
+        let suite = try loadSuite()
+
+        let expected: [String: FourCharCode] = [
+            "normal": VMScriptStopMethod.normal.code,
+            "anyway": VMScriptStopMethod.anyway.code,
+            "force": VMScriptStopMethod.force.code,
+        ]
+        #expect(try enumerators("VM stop method") == expected)
+        for verb in ["stop", "restart"] {
+            let command = "command[@name='\(verb)']"
+            #expect(try values("\(command)/parameter[@type='VM stop method']", "name", in: suite) == ["method"])
+            #expect(try values("\(command)/parameter[@name='by']", "name", in: suite).isEmpty)
+        }
+    }
+
+    /// Compiles `body` inside a `tell` to this build of the app, whose terms
+    /// AppleScript reads from the dictionary in its bundle; nothing is sent.
+    @MainActor
+    private func compiles(_ body: String) -> Bool {
+        let source = "tell application \"\(Bundle.main.bundlePath)\"\n\(body)\nend tell"
+        guard let script = NSAppleScript(source: source) else { return false }
+        var error: NSDictionary?
+        return script.compileAndReturnError(&error)
+    }
+
+    @Test(
+        "A script names each stop method after method, and the by spelling no longer compiles",
+        arguments: ["stop", "restart"])
+    @MainActor
+    func theStopMethodCompiles(verb: String) {
+        #expect(compiles("\(verb) virtual machine \"Alpha\""))
+        for term in ["normal", "anyway", "force"] {
+            #expect(compiles("\(verb) virtual machine \"Alpha\" method \(term)"), "method \(term)")
+        }
+        for old in ["by shut down", "by force", "by anyway", "method shut down"] {
+            #expect(!compiles("\(verb) virtual machine \"Alpha\" \(old)"), "\(old)")
+        }
+    }
+
     @Test("Every kind of named network has a term a script can name")
     func everyNetworkKindHasAnEnumerator() throws {
         let declared = try enumerators("network kind")

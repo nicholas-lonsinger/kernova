@@ -120,7 +120,7 @@ struct VMLifecycleScriptCommandsTests {
     }
 
     @Test(
-        "stop by anyway asks for its consent where offered, and is refused naming the For everyone install where not"
+        "stop method anyway asks for its consent where offered, and is refused naming the For everyone install where not"
     )
     func stopStopAnywayRoutes() async throws {
         let virtualization = MockVirtualizationService()
@@ -169,8 +169,8 @@ struct VMLifecycleScriptCommandsTests {
         #expect(alpha.status == .running)
     }
 
-    @Test("stop shuts down when no method is named")
-    func stopShutsDownByDefault() async throws {
+    @Test("stop is normal when no method is named")
+    func stopIsNormalByDefault() async throws {
         let virtualization = MockVirtualizationService()
         let wired = WiredCommandCore(virtualization: virtualization)
         let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
@@ -202,8 +202,8 @@ struct VMLifecycleScriptCommandsTests {
         #expect(alpha.status == .running)
     }
 
-    @Test("restart by force asks for Force Restart's consent, and with confirmation terminates and boots")
-    func restartByForceRoutes() async throws {
+    @Test("restart method force asks for Force Restart's consent, and with confirmation terminates and boots")
+    func restartMethodForceRoutes() async throws {
         let virtualization = MockVirtualizationService()
         let wired = WiredCommandCore(virtualization: virtualization)
         let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
@@ -230,9 +230,9 @@ struct VMLifecycleScriptCommandsTests {
     }
 
     @Test(
-        "restart by anyway asks for Restart Anyway's consent where offered, and is refused naming the For everyone install where not"
+        "restart method anyway asks for Restart Anyway's consent where offered, and is refused naming the For everyone install where not"
     )
-    func restartByAnywayRoutes() async throws {
+    func restartMethodAnywayRoutes() async throws {
         let virtualization = MockVirtualizationService()
         let wired = WiredCommandCore(virtualization: virtualization)
         let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()), guestOS: .macOS)
