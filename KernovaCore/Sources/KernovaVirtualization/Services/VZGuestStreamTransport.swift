@@ -8,8 +8,8 @@ import KernovaWire
 import Virtualization
 
 /// The agent hub's transport on one session's socket device: a listener on
-/// `WireConstants.vsockPort`, beside v1's ports, offering every connection to
-/// the hub's ``GuestStreamAcceptor``.
+/// `WireConstants.vsockPort` offering every connection to the hub's
+/// ``GuestStreamAcceptor``.
 ///
 /// Binding and unbinding run on the session's queue, as every VZ call does.
 final class VZGuestStreamTransport: GuestStreamTransport {
@@ -29,7 +29,7 @@ final class VZGuestStreamTransport: GuestStreamTransport {
     func stop() {
         let session = session
         session.queue.async {
-            session.assumeIsolated { $0.detach(ports: [WireConstants.vsockPort]) }
+            session.assumeIsolated { $0.unbindAgentListener() }
         }
     }
 }
@@ -40,7 +40,7 @@ final class VZGuestStreamTransport: GuestStreamTransport {
 /// Each accepted connection becomes a non-blocking `POSIXByteStream` over a
 /// duplicate of its descriptor; the `VZVirtioSocketConnection` itself is not
 /// kept, and closes its own descriptor when VZ releases it.
-final class AgentListenerHost: NSObject, VsockPortListening, VZVirtioSocketListenerDelegate {
+final class AgentListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VZGuestStreamTransport")
 
     let port = WireConstants.vsockPort

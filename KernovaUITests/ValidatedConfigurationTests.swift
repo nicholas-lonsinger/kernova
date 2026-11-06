@@ -70,12 +70,12 @@ struct ValidatedConfigurationTests {
     }
 
     @Test(
-        "A Linux session's vsock services attach the agent hub a transport",
+        "A Linux session attaches the agent hub a transport",
         .enabled(if: VZVirtualMachine.isSupported)
     )
     @MainActor
     func linuxSessionAttachesTheAgentHub() async throws {
-        let (instance, context) = try await startVsockServices(deviceShape: .current)
+        let (instance, context) = try await attachAgentTransport(deviceShape: .current)
 
         #expect(context.hasAgentTransport)
         instance.handleSessionEvent(.guestDidStop)
@@ -93,17 +93,18 @@ struct ValidatedConfigurationTests {
         let unrecorded = try VMConfiguration.makeJSONDecoder().decode(
             VMConfiguration.self, from: JSONSerialization.data(withJSONObject: object))
 
-        let (instance, context) = try await startVsockServices(deviceShape: unrecorded.deviceShape)
+        let (instance, context) = try await attachAgentTransport(deviceShape: unrecorded.deviceShape)
 
         #expect(context.session?.hasVirtioSocketDevice == false)
         #expect(!context.hasAgentTransport)
         instance.handleSessionEvent(.guestDidStop)
     }
 
-    /// Runs a Linux instance's vsock services over a real session built from a
-    /// configuration recording `deviceShape`, answering the session's context.
+    /// Attaches a Linux instance's agent transport over a real session built
+    /// from a configuration recording `deviceShape`, answering the session's
+    /// context.
     @MainActor
-    private func startVsockServices(
+    private func attachAgentTransport(
         deviceShape: VMDeviceShape
     ) async throws -> (VMInstance, VMSessionContext) {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
@@ -116,7 +117,7 @@ struct ValidatedConfigurationTests {
         let context = instance.beginSessionContextForTesting()
         context.session = session
 
-        await instance.startVsockServices()
+        instance.attachSessionAgentTransport()
         #expect((instance.agentPresentation != nil) == context.hasAgentTransport)
         return (instance, context)
     }

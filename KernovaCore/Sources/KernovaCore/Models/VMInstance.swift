@@ -173,19 +173,6 @@ package final class VMInstance {
     /// The clipboard commands running now: one of each at a time, a repeat while it runs joining it.
     package internal(set) var runningClipboardCommands: Set<ClipboardCommand> = []
 
-    // MARK: - Vsock Channel (macOS guests)
-
-    var vsockLogService: VsockGuestLogService? { sessionContext?.vsock.log }
-
-    package var vsockControlService: VsockControlService? { sessionContext?.vsock.control }
-
-    /// Where the feature listeners read admission verdicts, off the main actor.
-    ///
-    /// One per VM across every control-service generation: the accept path
-    /// reads it without touching this instance. The live control service
-    /// publishes into it; replaced or torn down, the gate is cleared.
-    @ObservationIgnored let vsockAdmissionGate = VsockAdmissionGate()
-
     /// `true` while the absence watchdog warns about some agent scope
     /// (``warnedMissingAgents``).
     var agentExpectedButMissing: Bool { !warnedMissingAgents.isEmpty }
@@ -1013,9 +1000,6 @@ package final class VMInstance {
         let context = VMSessionContext(
             label: name,
             bootedIntoRecovery: bootedIntoRecovery,
-            vsock: VsockFeatureCoordinator(
-                instance: self,
-                admissionGate: vsockAdmissionGate),
             agentHub: agentHub)
         openRuntimeFileAccess(into: context)
         return context
@@ -1063,8 +1047,7 @@ package final class VMInstance {
             // Starts no absence watch: a restore resumes whatever guest state
             // was frozen, which may be a Recovery session that never runs the
             // agent, and no host-side flag survives the save to say which.
-            // The first presence change — a control channel showing up, the
-            // hub publishing — starts it.
+            // The first presence change — the hub publishing — starts it.
             activateNetworkAttachment()
         case .bringUp(.settingUp), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
             .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping,
@@ -1184,30 +1167,14 @@ package final class VMInstance {
         Self.logger.log(.info, "SPICE clipboard service started for '\(self.name, privacy: .public)'")
     }
 
-    // MARK: - Vsock Service Lifecycle
+    // MARK: - Agent Transport Lifecycle
 
-    /// Installs vsock listeners on the live session's `VZVirtioSocketDevice`,
-    /// and attaches the agent hub's transport beside them.
-    ///
-    /// A no-op when no socket device is present. Idempotent: any previously
-    /// installed listeners are torn down first. Which listeners go up is
-    /// `VsockFeatureDescriptor.isEnabled(_:)`'s answer: a macOS guest's only.
-    package func startVsockServices() async {
-        stopVsockServices()
-        guard let session, session.hasVirtioSocketDevice, let vsock = sessionContext?.vsock
-        else { return }
-
-        await session.attach(
-            vsock.listeners(for: configuration, sessionID: session.id))
-        // Torn down while installing: these listeners live and die with the
-        // session that retains them, so nothing is left dangling on a device
-        // the teardown already walked — and there is no start to announce.
-        guard self.session === session else { return }
-
-        if let transport = session.makeAgentTransport() {
-            attachAgentTransport(transport)
-        }
-        Self.logger.log(.info, "Vsock services started for '\(self.name, privacy: .public)'")
+    /// Attaches the agent hub's transport on the live session's
+    /// `VZVirtioSocketDevice`; a no-op when the session has none. A transport
+    /// attached before is detached first.
+    package func attachSessionAgentTransport() {
+        guard let transport = session?.makeAgentTransport() else { return }
+        attachAgentTransport(transport)
     }
 
     /// Attaches `transport` to the hub for this session, with the policy and
@@ -1221,30 +1188,6 @@ package final class VMInstance {
     }
 
     // MARK: - Agent Policy
-
-    /// The policy pushed to a guest with nothing to push through — every
-    /// capability off, and the built-in paste ceiling.
-    static let disabledAgentPolicy = AgentPolicySnapshot(
-        logForwardingEnabled: false,
-        clipboardSharingEnabled: false,
-        dropFilesEnabled: false,
-        clipboardMaxPasteBytes: ClipboardPasteLimit.defaultBytes)
-
-    /// The policy a given configuration produces, combined with the app-wide
-    /// clipboard preference.
-    ///
-    /// The one place a snapshot is built, so the initial Hello push, a live
-    /// toggle, and a preference change can never send differently shaped policy.
-    func agentPolicySnapshot(for configuration: VMConfiguration) -> AgentPolicySnapshot {
-        AgentPolicySnapshot(
-            logForwardingEnabled: configuration.agentLogForwardingEnabled,
-            clipboardSharingEnabled: configuration.clipboardSharingEnabled,
-            dropFilesEnabled: configuration.dropFilesEnabled,
-            clipboardMaxPasteBytes: preferences.clipboardMaxPasteBytes)
-    }
-
-    /// This instance's current policy.
-    var agentPolicySnapshot: AgentPolicySnapshot { agentPolicySnapshot(for: configuration) }
 
     /// The paste ceiling the user set, which both ends enforce on what lands
     /// there: the host on guest→host pastes, and the guest agent, which the
@@ -1267,25 +1210,6 @@ package final class VMInstance {
     /// builds a later session's connections from it.
     func resendAgentPolicy() {
         agentHub.setPolicy(agentHubPolicy(for: configuration))
-        vsockControlService?.sendPolicyUpdate(agentPolicySnapshot)
-    }
-
-    /// Builds the control service for one accepted channel, wired to this
-    /// instance's policy and guest-suspension hooks. Channel loss is
-    /// the accept site's to wire, uniformly for every feature.
-    ///
-    /// Every hook reads through `self` lazily, so both track live
-    /// configuration edits and pause/resume without being re-pushed.
-    func makeControlService(for channel: VsockChannel) -> VsockControlService {
-        VsockControlService(
-            channel: channel,
-            label: name,
-            hostVersion: bundleProducts.hostVersion,
-            policyProvider: { [weak self] in
-                self?.agentPolicySnapshot ?? Self.disabledAgentPolicy
-            },
-            isGuestSuspended: { [weak self] in self?.isLivePaused ?? false },
-            admissionGate: vsockAdmissionGate)
     }
 
     // MARK: - Agent Absence Watchdog
@@ -1520,22 +1444,13 @@ package final class VMInstance {
         }
     }
 
-    /// Stops every vsock service and unbinds the listeners that fed them —
-    /// see ``VMSessionContext/stopVsockServices()``.
-    func stopVsockServices() {
-        sessionContext?.stopVsockServices()
-    }
-
-    /// Reacts to a configuration change while the VM is running by installing
-    /// or tearing down vsock listeners and pushing a fresh `PolicyUpdate` to
-    /// the guest agent.
+    /// Reacts to a configuration change: pushes the agent hub its new policy,
+    /// and applies what a running VM takes live.
     ///
-    /// Only `agentLogForwardingEnabled`, `clipboardSharingEnabled` and
-    /// `dropFilesEnabled` are honored at runtime. A Linux guest's SPICE port
-    /// never changes here: it is a device
-    /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
     /// The agent hub takes every change to its policy, running or not: it
-    /// builds a later session's connections from the policy it holds.
+    /// builds a later session's connections from the policy it holds. A Linux
+    /// guest's SPICE port never changes here: it is a device
+    /// (``VMGuestOS/sharesClipboardThroughDevice``), pinned with the machine.
     func applyLivePolicy(oldConfig: VMConfiguration, newConfig: VMConfiguration) {
         if agentHubPolicy(for: oldConfig) != agentHubPolicy(for: newConfig) {
             agentHub.setPolicy(agentHubPolicy(for: newConfig))
@@ -1560,13 +1475,6 @@ package final class VMInstance {
         {
             refreshClipboardPassthrough()
         }
-
-        guard let context = sessionContext, let session = context.session,
-            session.hasVirtioSocketDevice
-        else { return }
-
-        context.vsock.applyLivePolicy(
-            oldConfig: oldConfig, newConfig: newConfig, on: session)
     }
 
     /// Starts or stops the host-side serial relay live.

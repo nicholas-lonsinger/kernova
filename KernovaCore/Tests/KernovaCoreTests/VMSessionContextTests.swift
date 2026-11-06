@@ -56,7 +56,6 @@ struct VMSessionContextTests {
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.warnedAgentScopes = [.login]
         context.networkAttachmentPending = true
-        context.vsock.livePolicyApplication = Task<Void, Never> {}
 
         context.tearDown()
 
@@ -65,8 +64,6 @@ struct VMSessionContextTests {
         #expect(context.clipboardInputPipe == nil)
         #expect(context.clipboardOutputPipe == nil)
         #expect(context.clipboardService == nil)
-        #expect(context.vsock.control == nil)
-        #expect(context.vsock.log == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
         // What the run warned about is its record, which the run's end reads.
@@ -74,7 +71,6 @@ struct VMSessionContextTests {
         #expect(context.networkAttachmentPending == false)
         #expect(context.session == nil)
         #expect(context.agentAbsenceTimer == nil)
-        #expect(context.vsock.livePolicyApplication == nil)
     }
 
     @Test("tearDownSession drops the context, and every projection reads empty after")
@@ -88,8 +84,6 @@ struct VMSessionContextTests {
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
         #expect(instance.clipboardService == nil)
-        #expect(instance.vsockControlService == nil)
-        #expect(instance.vsockLogService == nil)
         #expect(instance.networkAttachmentCoordinator == nil)
         #expect(instance.networkAttachmentPending == false)
         #expect(instance.liveRemovableMedia.isEmpty)

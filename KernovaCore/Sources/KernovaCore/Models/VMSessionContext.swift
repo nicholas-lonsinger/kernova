@@ -10,10 +10,9 @@ import KernovaLogging
 ///
 /// ``VMInstance`` holds exactly one optional of this type: opening it begins a
 /// session, ``tearDown()`` ends it. Objects that outlive a session by intent —
-/// the admission gate, the two data sinks, the transfer reporter, the host
-/// clipboard publisher — belong to the instance and are handed to whatever
-/// session-scoped owner publishes into them, so a service can do so without
-/// owning them.
+/// the agent hub, the transfer reporter, the host clipboard publisher —
+/// belong to the instance and are handed to whatever session-scoped owner
+/// publishes into them, so a service can do so without owning them.
 @MainActor
 @Observable
 package final class VMSessionContext {
@@ -66,11 +65,7 @@ package final class VMSessionContext {
     /// `VMInstance.refreshClipboardPassthrough()`.
     @ObservationIgnored var clipboardPassthroughCoordinator: ClipboardPassthroughCoordinator?
 
-    // MARK: - Vsock Channel (macOS guests)
-
-    /// This session's vsock feature channels — the listeners, the services
-    /// behind them, and the accept and teardown paths that move both.
-    @ObservationIgnored let vsock: VsockFeatureCoordinator
+    // MARK: - Agent Transport
 
     /// The VM's agent hub, whose transport this session's teardown detaches.
     @ObservationIgnored let agentHub: AgentHub
@@ -168,12 +163,10 @@ package final class VMSessionContext {
     init(
         label: String,
         bootedIntoRecovery: Bool,
-        vsock: VsockFeatureCoordinator,
         agentHub: AgentHub
     ) {
         self.label = label
         self.bootedIntoRecovery = bootedIntoRecovery
-        self.vsock = vsock
         self.agentHub = agentHub
     }
 
@@ -189,12 +182,7 @@ package final class VMSessionContext {
         networkAttachmentPending = false
         clipboardPassthroughCoordinator?.stop()
         clipboardPassthroughCoordinator = nil
-        // Dropping the handle is the whole release: the chain re-checks that
-        // this session is still the live one before each of its steps, so one
-        // in flight settles into a no-op on its own — a `cancel()` would reach
-        // none of those steps, none of which suspend on anything cancellable.
-        vsock.livePolicyApplication = nil
-        stopVsockServices()
+        detachAgentTransport()
         stopClipboardService()
         stopSerialReading()
         cancelAgentAbsenceWatchdog()
@@ -270,22 +258,16 @@ package final class VMSessionContext {
         clipboardOutputPipe = nil
     }
 
-    // MARK: - Vsock Service Lifecycle
+    // MARK: - Agent Transport Lifecycle
 
-    /// Stops every vsock service and unbinds the listeners that fed them, the
-    /// agent hub's transport included.
+    /// Detaches the agent hub's transport, which unbinds its listener from the
+    /// session's socket device and ends every connection it accepted.
     ///
-    /// The unbind is ordered fire-and-forget on the session's queue, which is
-    /// what keeps this synchronous: the session retains each host until its
-    /// port is gone, so there is nothing to await to keep a bound port's
-    /// delegate alive.
-    ///
-    /// The SPICE clipboard service is ``stopClipboardService()``'s, and is
-    /// untouched here.
-    func stopVsockServices() {
-        session?.detachRemainingListeners()
+    /// The transport retains the session until its listener is unbound, so
+    /// releasing the session here cannot leave the port bound to a released
+    /// delegate.
+    func detachAgentTransport() {
         agentHub.detach()
-        vsock.stopAll()
     }
 
     // MARK: - Agent Absence Watchdog

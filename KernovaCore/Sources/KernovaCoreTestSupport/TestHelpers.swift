@@ -563,33 +563,6 @@ extension VMInstance {
     }
 }
 
-// MARK: - Live-session vsock fixtures
-
-/// An instance standing in for one with a live session: every feature toggle on
-/// and the handshake published, so each channel's listener admits a connection
-/// and its accept path installs a service.
-///
-/// The phase's session identity stands in for a live `VZVirtualMachine`, not for
-/// the session context the services and their hand-offs live in — hence the
-/// explicit `beginSessionContextForTesting()`.
-@MainActor
-func makeInstanceWithLiveSession(named name: String = "Live Session VM")
-    -> (instance: VMInstance, sessionID: UUID)
-{
-    enterLiveSession(
-        VMInstanceFixture.make(name: name, guestOS: .macOS, mutate: enableEveryLiveSessionFeature))
-}
-
-extension VMLibrary {
-    /// ``makeInstanceWithLiveSession(named:)``, registered with this library.
-    func registerInstanceWithLiveSession(named name: String = "Live Session VM")
-        -> (instance: VMInstance, sessionID: UUID)
-    {
-        enterLiveSession(
-            registerFixture(name: name, guestOS: .macOS, mutate: enableEveryLiveSessionFeature))
-    }
-}
-
 extension VMLibraryViewModel {
     /// Awaits every arrival in the library, including any registered while an
     /// earlier one is awaited.
@@ -600,45 +573,6 @@ extension VMLibraryViewModel {
             // in; a later turn lets that removal land before looking again.
             await Task.yield()
         }
-    }
-}
-
-private func enableEveryLiveSessionFeature(_ config: inout VMConfiguration) {
-    config.clipboardSharingEnabled = true
-    config.agentLogForwardingEnabled = true
-    config.dropFilesEnabled = true
-}
-
-@MainActor
-private func enterLiveSession(_ instance: VMInstance) -> (instance: VMInstance, sessionID: UUID) {
-    let sessionID = UUID()
-    instance.activity.placeForTesting(.running(sessionID: sessionID))
-    instance.beginSessionContextForTesting()
-    instance.vsockAdmissionGate.publish(
-        VsockAdmissionGate.State(
-            handshakeComplete: true,
-            capabilities: Set(KernovaCapability.controlChannelDefaults)))
-    return (instance, sessionID)
-}
-
-// MARK: - expectEOF
-
-/// Asserts `channel` reaches EOF — the peer closed its end — rather than
-/// producing another frame.
-///
-/// Event-driven via `nextFrame`, whose stuck-stream backstop bounds the wait:
-/// EOF resolves it immediately, a frame or a timeout records a test failure.
-/// Used by the #145 channel-admission tests to observe a service dropping a
-/// non-conformant peer.
-@MainActor
-func expectEOF(on channel: VsockChannel) async {
-    do {
-        let frame = try await nextFrame(from: channel)
-        Issue.record("Expected channel EOF, got frame \(String(describing: frame.payload))")
-    } catch let failure as TestFailure {
-        #expect(failure.message.contains("EOF"), "Expected EOF, got: \(failure.message)")
-    } catch {
-        Issue.record("Expected channel EOF, got error \(error)")
     }
 }
 
@@ -703,23 +637,6 @@ final class ObservationFireRecorder: Sendable {
     var didFire: Bool { fired.withLock { $0 } }
 
     func record() { fired.withLock { $0 = true } }
-}
-
-// MARK: - ChannelLostRecorder
-
-/// Counts a vsock feature service's `onChannelLost` invocations. Main-bound
-/// because `onChannelLost` is `@MainActor` in production, not by convenience.
-@MainActor
-final class ChannelLostRecorder {
-    private(set) var count = 0
-
-    /// Fires on every `record`; await it instead of polling `count`.
-    let changed = AsyncGate()
-
-    func record() {
-        count += 1
-        changed.notify()
-    }
 }
 
 extension VMMemorySize {
