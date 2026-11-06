@@ -39,6 +39,8 @@ struct ClipboardTransferWordingTests {
             (.peerReported(.dropFailed), .drop),
             (.disconnectedCopyRetracted, .copy),
             (.disconnectedFilesRetracted, .copy),
+            (.withdrawnCopyRetracted, .copy),
+            (.withdrawnFilesRetracted, .copy),
             (.filesLeftOut(count: 1, limitBytes: limit), .copy),
             (.filesLeftOut(count: 3, limitBytes: limit), .send),
             (.incompleteFileSet, .paste),
@@ -152,6 +154,35 @@ struct ClipboardTransferWordingTests {
     }
 
     // MARK: - Messages
+
+    @Test(
+        "a retracted copy says why it went: sharing stopping, or the VM withdrawing it without claiming sharing stopped"
+    )
+    func retractedCopyNamesItsCause() throws {
+        let expected: [(ClipboardTransferFailure, String, String)] = [
+            (
+                .disconnectedCopyRetracted, "Clipboard sharing stopped in \(quotedVM).",
+                "Clipboard sharing with the VM stopped, so the earlier copy was removed from the Mac clipboard."
+            ),
+            (
+                .disconnectedFilesRetracted, "Clipboard sharing stopped in \(quotedVM).",
+                "Clipboard sharing with the VM stopped, so the copied files were removed from the Mac clipboard. The rest of the copy is still there."
+            ),
+            (
+                .withdrawnCopyRetracted, "Clipboard copy withdrawn by \(quotedVM).",
+                "The VM withdrew the earlier copy, so it was removed from the Mac clipboard."
+            ),
+            (
+                .withdrawnFilesRetracted, "Clipboard copy withdrawn by \(quotedVM).",
+                "The VM withdrew the earlier copy, so its files were removed from the Mac clipboard. The rest of the copy is still there."
+            ),
+        ]
+        for (failure, headline, message) in expected {
+            let copy = try #require(wording(failure, .copy))
+            #expect(copy.headline == headline)
+            #expect(copy.message == message)
+        }
+    }
 
     @Test("a guest-reported failure reads as its own explanation, not the wire text")
     func peerReportedMessages() throws {

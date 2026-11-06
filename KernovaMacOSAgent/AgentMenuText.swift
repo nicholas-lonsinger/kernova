@@ -31,6 +31,10 @@ enum AgentMenuText {
         case .copyCarriedNothing: return "Clipboard: nothing in that copy could be shared"
         case .copyPartlyCarried(let skipped):
             return "Clipboard: shared with host — \(skipped) item\(skipped == 1 ? "" : "s") not in full"
+        case .copyWithdrawn(filesOnly: false):
+            return "Clipboard: the Mac withdrew its copy, so it was removed"
+        case .copyWithdrawn(filesOnly: true):
+            return "Clipboard: the Mac withdrew its copy, so its files were removed; the rest is still here"
         case .disabled: return "Clipboard: disabled"
         }
     }

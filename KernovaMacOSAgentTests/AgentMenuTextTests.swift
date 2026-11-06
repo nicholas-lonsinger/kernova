@@ -106,13 +106,24 @@ struct AgentMenuTextTests {
                 == "Clipboard: shared with host — 3 items not in full")
     }
 
+    @Test("a copy the Mac withdrew says the Mac withdrew it, and what of it went")
+    func clipboardCopyWithdrawnLine() {
+        #expect(
+            AgentMenuText.clipboardLine(.copyWithdrawn(filesOnly: false))
+                == "Clipboard: the Mac withdrew its copy, so it was removed")
+        #expect(
+            AgentMenuText.clipboardLine(.copyWithdrawn(filesOnly: true))
+                == "Clipboard: the Mac withdrew its copy, so its files were removed; the rest is still here")
+    }
+
     // MARK: - isNotice
 
-    @Test("Only the outcomes of a gesture made in this guest reveal themselves")
+    @Test("Only the outcomes of a gesture made in this guest, and a copy the Mac withdrew, reveal themselves")
     func noticeActivities() {
         #expect(ClipboardActivity.pasteRefused(.pasteFailed, pasteLimitBytes: nil).isNotice)
         #expect(ClipboardActivity.copyCarriedNothing.isNotice)
         #expect(ClipboardActivity.copyPartlyCarried(skipped: 1).isNotice)
+        #expect(ClipboardActivity.copyWithdrawn(filesOnly: false).isNotice)
         for activity: ClipboardActivity in [
             .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled,
         ] {

@@ -75,6 +75,12 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
     /// the guest's connection ended; the rest of the copy stays.
     case disconnectedFilesRetracted
+    /// A Copy to Mac still on the host pasteboard was retracted whole because the guest withdrew it, its
+    /// connection still up.
+    case withdrawnCopyRetracted
+    /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
+    /// the guest withdrew the copy, its connection still up; the rest of the copy stays.
+    case withdrawnFilesRetracted
     /// A paste fired after the session ended with only part of the copied file
     /// set staged, so nothing was served rather than a silent subset.
     case incompleteFileSet
@@ -143,7 +149,7 @@ extension ClipboardTransferFailure {
     /// missing.
     public var deliveredTheRest: Bool {
         switch self {
-        case .itemsSkipped, .filesLeftOut, .partsGone, .disconnectedFilesRetracted: true
+        case .itemsSkipped, .filesLeftOut, .partsGone, .disconnectedFilesRetracted, .withdrawnFilesRetracted: true
         default: false
         }
     }

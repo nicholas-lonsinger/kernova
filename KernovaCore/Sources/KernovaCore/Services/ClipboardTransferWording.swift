@@ -180,6 +180,21 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: copied files were removed",
                 mentionsMacClipboardKept: false)
 
+        case (.withdrawnCopyRetracted, _):
+            return ClipboardTransferWording(
+                headline: "Clipboard copy withdrawn by \(vm).",
+                message: "The VM withdrew the earlier copy, so it was removed from the Mac clipboard.",
+                menuLine: "Clipboard: earlier copy was withdrawn",
+                mentionsMacClipboardKept: false)
+
+        case (.withdrawnFilesRetracted, _):
+            return ClipboardTransferWording(
+                headline: "Clipboard copy withdrawn by \(vm).",
+                message:
+                    "The VM withdrew the earlier copy, so its files were removed from the Mac clipboard. The rest of the copy is still there.",
+                menuLine: "Clipboard: copied files were withdrawn",
+                mentionsMacClipboardKept: false)
+
         case (.filesLeftOut(let count, let limitBytes), .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard copied from \(vm) without its files.",
@@ -494,7 +509,8 @@ package struct ClipboardTransferWording: Equatable {
         case .sourceUnreadable(let readFailure):
             message = "\(unreadableClause(readFailure, reader: "The VM")), so the drag didn't finish."
             menuLine = unreadableMenuLine(readFailure, prefix: "Drag", reader: "The VM")
-        case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted,
+        case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
+            .withdrawnFilesRetracted,
             .incompleteFileSet, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .unclaimed,
             .dropStopped, .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
             message = "The transfer from the VM failed, so the drag didn't finish."

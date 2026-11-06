@@ -226,11 +226,14 @@ final class HubClipboardService: ClipboardServicing {
     }
 
     /// A copy the guest sent ended, with the connection or withdrawn by the guest: what the Mac's clipboard holds
-    /// of it that no paste had is retracted, its files being on the guest's disk, and the user told what went.
+    /// of it that no paste had is retracted, its files being on the guest's disk, and the user told what went and
+    /// why.
     private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
+        let withdrawn = if case .byFarSide = ending { true } else { false }
         switch logRetraction(retractHostWrite(copy.token, .unread), of: .copy, because: .ended(ending)) {
-        case .cleared: reportRefusal(gesture: .copy, .disconnectedCopyRetracted)
-        case .keptPart: reportRefusal(gesture: .copy, .disconnectedFilesRetracted)
+        case .cleared: reportRefusal(gesture: .copy, withdrawn ? .withdrawnCopyRetracted : .disconnectedCopyRetracted)
+        case .keptPart:
+            reportRefusal(gesture: .copy, withdrawn ? .withdrawnFilesRetracted : .disconnectedFilesRetracted)
         case .keptEverything, nil: break
         }
     }

@@ -653,5 +653,8 @@ struct ClipboardTransferReporterTests {
         #expect(
             line(.disconnectedFilesRetracted) == "copy from 'macOS TEST' was partial: disconnectedFilesRetracted")
         #expect(line(.disconnectedCopyRetracted) == "copy from 'macOS TEST' failed: disconnectedCopyRetracted")
+        // The same, the guest having withdrawn the copy.
+        #expect(line(.withdrawnFilesRetracted) == "copy from 'macOS TEST' was partial: withdrawnFilesRetracted")
+        #expect(line(.withdrawnCopyRetracted) == "copy from 'macOS TEST' failed: withdrawnCopyRetracted")
     }
 }

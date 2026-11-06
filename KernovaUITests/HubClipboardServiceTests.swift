@@ -929,6 +929,47 @@ struct HubClipboardServiceTests {
         #expect(try await reported(instance, .copy) == .disconnectedCopyRetracted)
     }
 
+    /// Has the guest withdraw its copy, its connection still up.
+    private func withdrawGuestCopy(on probe: AgentHubProbe) {
+        probe.deliver(
+            .items(.offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled)))),
+            fromConnection: 0)
+    }
+
+    @Test(
+        "Copy to Mac's item of an unpasted file goes when the guest withdraws the copy; the rest stays, and the withdrawal is said"
+    )
+    func copyToMacFilesRetractedWhenTheGuestWithdrawsIt() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try await copyToMac(Self.text, Self.textAndFile, on: probe, into: instance)
+        try await landPulls(2, on: probe) { Data($0.request.item == 0 ? "the guest's".utf8 : "a.bin".utf8) }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+
+        withdrawGuestCopy(on: probe)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(pasteboard.dataByItem == [[Self.textType: Data("the guest's".utf8)]])
+        #expect(try await reported(instance, .copy) == .withdrawnFilesRetracted)
+    }
+
+    @Test(
+        "Copy to Mac of an unpasted file and its name, the guest withdrawing it, clears it and says the guest withdrew it"
+    )
+    func copyToMacOfFilesClearedWhenTheGuestWithdrawsIt() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        _ = try await copyToMac(Self.textAndFile, on: probe, into: instance)
+        try await landPulls(1, on: probe) { _ in Data("hosts".utf8) }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
+
+        withdrawGuestCopy(on: probe)
+        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
+        #expect(pasteboard.dataByItem.isEmpty)
+        #expect(try await reported(instance, .copy) == .withdrawnCopyRetracted)
+    }
+
     @Test("Copy to Mac's item that crossed without its file keeps its data at the connection's end (Photos' ⌘C)")
     func copyToMacKeepsAnItemThatCarriedNoFile() async throws {
         let probe = AgentHubProbe()

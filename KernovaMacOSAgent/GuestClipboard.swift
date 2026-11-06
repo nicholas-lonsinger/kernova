@@ -81,9 +81,7 @@ final class GuestClipboard {
         exchange.onRemoteOfferEnded = { [weak self] in self?.retract($0, $1) }
         exchange.onCopyAsked = { [weak self] in self?.sendSnapshot(answering: $0) }
         exchange.onCopyReceived = { [weak self] in self?.write($0) }
-        exchange.onCopyEnded = { [weak self] copy, ending in
-            self?.retractWrite(servingOffer: copy.token, withdrawing: .unread, of: .copy, because: .ended(ending))
-        }
+        exchange.onCopyEnded = { [weak self] in self?.copyEnded($0, $1) }
         exchange.onServed = { [weak self] in self?.activity = .sentToHost }
         exchange.onLanded = { [weak self] in self?.activity = .receivedFromHost }
         exchange.onPullFailed = { [weak self] in self?.pullFailed($0) }
@@ -385,18 +383,35 @@ final class GuestClipboard {
         retractWrite(servingOffer: remote.token, withdrawing: withdrawal, of: .clipboard, because: .ended(ending))
     }
 
+    /// A copy the host sent ended, with the connection or withdrawn by the host: what this clipboard holds of it
+    /// that no paste had is retracted, its files being on the Mac's disk. A withdrawal that took something back is
+    /// a notice; a connection's end shows as sharing going off.
+    private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
+        let retraction = retractWrite(
+            servingOffer: copy.token, withdrawing: .unread, of: .copy, because: .ended(ending))
+        guard case .byFarSide = ending else { return }
+        switch retraction {
+        case .cleared: activity = .copyWithdrawn(filesOnly: false)
+        case .keptPart: activity = .copyWithdrawn(filesOnly: true)
+        case .keptEverything, nil: return
+        }
+        onNotice()
+    }
+
     /// Withdraws `withdrawal`'s promises of this agent's write of `write` serving the offer `token`, if the
     /// pasteboard still holds it, as this agent's own change — the poll must not read it as a copy — and logs what
-    /// that took back and its `cause`.
+    /// that took back and its `cause`. Returns what it took back; nil when the pasteboard no longer held the write.
+    @discardableResult
     private func retractWrite(
         servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal, of write: ClipboardRetractionLog.Write,
         because cause: ClipboardRetractionLog.Cause
-    ) {
-        guard let retraction = publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) else { return }
+    ) -> ClipboardRetraction? {
+        guard let retraction = publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) else { return nil }
         seenChangeCount = pasteboard.changeCount
         if let line = ClipboardRetractionLog.line(retraction, of: write, on: .guest, because: cause) {
             logger.log(.notice, "\(line, privacy: .public)")
         }
+        return retraction
     }
 
     /// Stops polling; the pasteboard's promises keep serving what already landed.

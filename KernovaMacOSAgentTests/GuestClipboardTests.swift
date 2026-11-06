@@ -1024,6 +1024,8 @@ struct GuestClipboardTests {
             rig.pasteboard.dataByItem == [
                 [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("from the host".utf8)]
             ])
+        // Not the Mac withdrawing its copy: sharing went off.
+        #expect(rig.clipboard.activity == .disabled)
         // The rewrite is the agent's own: the poll offers nothing of it.
         rig.clipboard.setOnConsole(true)
         rig.clipboard.checkPasteboard()
@@ -1049,6 +1051,28 @@ struct GuestClipboardTests {
             rig.pasteboard.dataByItem == [
                 [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("from the host".utf8)]
             ])
+        #expect(rig.clipboard.activity == .copyWithdrawn(filesOnly: true))
+    }
+
+    @Test("The host withdrawing a copy of only an unpasted file clears it, and says the Mac withdrew it")
+    func hostCopyOfAFileWithdrawnIsCleared() async throws {
+        let rig = rig()
+        var file = Representation()
+        file.type = TypeDescriptor(appleUTI: "public.data")
+        file.storage = .file
+        file.name = Data("a.bin".utf8)
+        var item = OfferedItem()
+        item.representations = [file]
+        let link = RecordingLink(items: [item], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        rig.clipboard.setLink(link)
+        try await receiveCopy(item, text: Data(), on: rig, link)
+        try await rig.pasteboard.changed.wait { rig.pasteboard.promisedTypes == [.fileURL] }
+
+        rig.clipboard.exchange.handle(
+            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)
+        #expect(rig.pasteboard.promisedTypes.isEmpty)
+        #expect(rig.pasteboard.dataByItem.isEmpty)
+        #expect(rig.clipboard.activity == .copyWithdrawn(filesOnly: false))
     }
 
     /// Another connection's offer of a file, which ends when asked to.
