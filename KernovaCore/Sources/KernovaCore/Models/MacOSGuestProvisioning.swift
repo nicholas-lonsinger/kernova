@@ -126,8 +126,8 @@ package enum MacOSGuestProvisioning {
     ///
     /// An image whose version nothing has read (`nil`) is offered nothing. The
     /// toggle promises an account, and a guest below ``guestFloor`` discards
-    /// the options in silence, so offering on a guess risks exactly the
-    /// invisible failure "Capability degrades by absence" exists to prevent.
+    /// the options in silence, so an offer made on a guess can fail without a
+    /// word.
     static func offersUnattendedSetup(forImageVersion imageVersion: MacOSVersion?) -> Bool {
         guard hostSupportsProvisioning, let imageVersion else { return false }
         return imageVersion.isAtLeast(guestFloor)
