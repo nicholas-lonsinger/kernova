@@ -39,7 +39,7 @@
 			<enumerator name="USB mass storage" code="KdUs" description="A USB mass storage device."/>
 		</enumeration>
 
-		<class-extension extends="application" description="Kernova's top-level scripting object.">
+		<class-extension extends="application" description="Kernova’s top-level scripting object.">
 			<cocoa class="NSApplication"/>
 			<element type="virtual machine" access="r" description="The virtual machines in the library.">
 				<cocoa key="virtualMachines"/>
@@ -172,7 +172,7 @@
 			<parameter name="recovery mode" code="Kprc" type="boolean" optional="yes" description="Cold-boot a stopped macOS guest into macOS Recovery.">
 				<cocoa key="RecoveryMode"/>
 			</parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 		</command>
@@ -203,7 +203,7 @@
 			<parameter name="method" code="KpSm" type="VM stop method" optional="yes" description="How to take the guest down before starting it again; normal by default.">
 				<cocoa key="StopMethod"/>
 			</parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a destructive restart refuses without, and start it again beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a destructive restart refuses without, and start it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
@@ -225,7 +225,7 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Resume it beside an active virtual machine with the same machine ID, where Kernova's Settings allow starting one anyway.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Resume it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 		</command>

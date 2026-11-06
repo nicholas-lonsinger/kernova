@@ -36,7 +36,7 @@ extension KernovaCommand {
         /// What each flag's help says.
         static func help(for value: StopMethod) -> ArgumentHelp? {
             switch value {
-            case .normal: "Ask the guest to shut down (the default)."
+            case .normal: "Ask the guest to shut down."
             case .anyway:
                 "Shut a macOS guest down without waiting for apps. Apps still open quit without asking to save."
             case .force: "Terminate the guest immediately, losing \(StopDisposition.forceLoss)."
