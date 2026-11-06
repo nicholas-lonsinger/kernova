@@ -1,4 +1,5 @@
 import AppKit
+import KernovaAgentCore
 import KernovaAppKitShared
 import KernovaKit
 import KernovaLogging
@@ -20,23 +21,16 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let connectionState: () -> HostConnectionState
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
-    private let onCancelTransfer: (ClipboardTransferOperationID) -> Void
     private let onQuit: () -> Void
 
     /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
     /// expose.
     private var isMenuOpen = false
 
-    /// The status item's one popover slot, shared by the transfer readout's
-    /// callout and the clipboard notice.
+    /// The status item's popover slot, which carries the clipboard notice.
     private lazy var calloutSlot = TransientStatusItemPopover(
         statusItem: statusItem, menu: menu,
         isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
-
-    /// Built lazily, since most sessions never reveal a paste readout.
-    private lazy var pasteProgressPresenter = ClipboardProgressStatusItemPresenter(
-        menu: menu, slot: calloutSlot,
-        onCancel: { [weak self] id in self?.onCancelTransfer(id) })
 
     /// How long a clipboard notice stays up unattended.
     private static let clipboardNoticeDuration: TimeInterval = 6
@@ -45,14 +39,12 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         connectionState: @escaping () -> HostConnectionState,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
-        onCancelTransfer: @escaping (ClipboardTransferOperationID) -> Void = { _ in },
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.connectionState = connectionState
         self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
-        self.onCancelTransfer = onCancelTransfer
         self.onQuit = onQuit
         super.init()
 
@@ -66,18 +58,9 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Updates the menu-bar icon to reflect a connection-state change.
     ///
-    /// Takes no state: `onStateChange` deliveries are hopped to main through
-    /// independently spawned tasks with no ordering guarantee, so the live
-    /// lock-guarded state is re-read instead of trusting a delivered value.
+    /// Takes no state: each change is hopped to main through its own task, with
+    /// no ordering guarantee, so the current state is re-read instead.
     func connectionStateChanged() {
-        setIcon(for: connectionState())
-    }
-
-    // MARK: - Paste progress
-
-    /// Applies the transfer report this agent's reporter just published.
-    func transferReportChanged(_ report: ClipboardTransferReport) {
-        pasteProgressPresenter.apply(report)
         setIcon(for: connectionState())
     }
 
@@ -128,26 +111,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         }
         image.isTemplate = true
         statusItem.button?.title = ""
-        if let snapshot = pasteProgressPresenter.snapshot {
-            statusItem.button?.image = image.withProgressRing(
-                fraction: snapshot.fractionComplete)
-            statusItem.button?.toolTip = ClipboardProgressFormat.summary(snapshot)
-            return
-        }
         statusItem.button?.image = image
-        statusItem.button?.toolTip = nil
     }
 
     // MARK: - NSMenuDelegate
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         // Opening the dropdown means the user came looking — the notice's line
-        // and the readout are in the menu below.
+        // is in the menu below.
         calloutSlot.dismiss()
 
         menu.removeAllItems()
-
-        pasteProgressPresenter.insertItemsIfActive()
 
         let activity = clipboardActivity()
         // A notice is what the callout announced, so it reads at the top level;

@@ -48,6 +48,7 @@ final class PeerRuntimeHarness: Sendable {
     let dialer = ScriptedDialer()
     let power: FakePowerAdapter
     let events = Recorder<PeerEvent>()
+    let hostConnections = Recorder<HostConnectionState>()
     let stops = Recorder<StopReason>()
     let runtime: PeerAgentRuntime
     /// The host on the far side of each dialed stream.
@@ -61,11 +62,14 @@ final class PeerRuntimeHarness: Sendable {
         self.power = power
         self.far = far
         let events = events
+        let hostConnections = hostConnections
         let stops = stops
         runtime = PeerAgentRuntime(
             claim: Fixture.peerClaim, state: state, registry: PeerFeatureRegistry(power: power, items: items),
             dialer: dialer, scheduler: scheduler, logger: Fixture.logger,
-            handlers: PeerAgentRuntime.Handlers(event: { events.record($0) }, stop: { stops.record($0) }))
+            handlers: PeerAgentRuntime.Handlers(
+                event: { events.record($0) }, hostConnectionChanged: { hostConnections.record($0) },
+                stop: { stops.record($0) }))
     }
 
     /// Runs every block already on the runtime's queue.

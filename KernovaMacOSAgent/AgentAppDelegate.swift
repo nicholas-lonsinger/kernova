@@ -4,12 +4,11 @@ import KernovaAgentRuntime
 import KernovaKit
 import KernovaLogging
 import KernovaPlatformDarwin
-import KernovaSynchronization
 
 // Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
 // `session`, it is the session peer: an `.accessory` menu-bar app holding the
 // v2 peer's connection to the host, which carries the clipboard, lands drops
-// and serves drags out, beside the control channel. Every other command —
+// and serves drags out. Every other command —
 // the system peer, the installer, the rollback check — runs headless (`MacAgentTools`).
 
 @main
@@ -54,17 +53,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     private var peer: MacAgentPeer?
     private var dragOut: GuestDragOut?
     private var clipboard: GuestClipboard?
-    private var controlAgent: VsockGuestControlAgent?
     private var statusItemController: AgentStatusItemController?
-
-    /// Whether the host's policy forwards this guest's logs, as its control
-    /// channel last said.
-    private let logForwardingEnabled = Locked(false)
-
-    /// This side's single transfer report, shared by every agent that moves
-    /// files, so the one status item never has two sources deciding what it
-    /// shows.
-    private var transferReporter: ClipboardTransferReporter?
 
     /// Stops every service and exits with the status given; set once the
     /// services start.
@@ -135,6 +124,10 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let dragOut = GuestDragOut(peer: dragPeer, system: .live, stagingRoot: stagingRoot)
         let peer = MacAgentPeer(
             role: .sessionPeer, label: Self.versionLabel, logs: logs, state: state,
+            hostConnectionChanged: { [weak self] _ in
+                // The controller re-reads the state, so the hops' order doesn't matter.
+                Task { @MainActor in self?.statusItemController?.connectionStateChanged() }
+            },
             revealDrop: { urls in
                 DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting(urls) }
             },
@@ -147,35 +140,11 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         self.dragOut = dragOut
         followSession(peer, clipboard: clipboard)
 
-        let transferReporter = ClipboardTransferReporter()
-        transferReporter.onReportChanged = { [weak self] report in
-            self?.statusItemController?.transferReportChanged(report)
-        }
-
-        // `onPolicy` says whether the host forwards logs; `onStateChange`
-        // drives the status-item icon.
-        let logForwardingEnabled = self.logForwardingEnabled
-        let controlAgent = VsockGuestControlAgent(
-            onPolicy: { policy in
-                logForwardingEnabled.withLock { $0 = policy.logForwardingEnabled }
-            },
-            onStateChange: { [weak self] _ in
-                // Called off-main; hop to the main actor to touch the status item.
-                Task { @MainActor in
-                    self?.statusItemController?.connectionStateChanged()
-                }
-            }
-        )
-
-        self.transferReporter = transferReporter
-        self.controlAgent = controlAgent
-
         // The LaunchAgent's `KeepAlive={SuccessfulExit:false}` keeps only a
         // clean exit stopped, so 0 stops the agent and any other status
         // relaunches it.
         let shutDown: @Sendable (Int32) -> Void = { status in
             Self.logger.log(.notice, "Shutting down, exit status \(status, privacy: .public)")
-            controlAgent.stop()
             // What the clipboard holds of a file staged here goes before the process does; the next launch
             // reclaims the staging, as it does an exit that never came this way.
             MainActorBridge.async {
@@ -188,19 +157,15 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let stop: @Sendable () -> Void = { shutDown(0) }
 
         self.statusItemController = AgentStatusItemController(
-            connectionState: { [weak controlAgent] in controlAgent?.connectionState ?? .connecting },
-            logForwardingEnabled: { logForwardingEnabled.withLock { $0 } },
+            connectionState: { peer.hostConnection },
+            logForwardingEnabled: { logs.isForwarding },
             clipboardActivity: { [weak clipboard] in clipboard?.activity ?? .disabled },
-            onCancelTransfer: { [weak transferReporter] id in
-                transferReporter?.cancel(id)
-            },
             onQuit: stop
         )
 
         installSignalHandlers(stop)
 
         peer.start()
-        controlAgent.start()
     }
 
     /// A quit Apple event — loginwindow's as the session or the machine goes
@@ -218,9 +183,6 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // Stop control first so heartbeat cessation is the cleanest going-away
-        // signal to the host; clipboard follows.
-        controlAgent?.stop()
         clipboard?.stop()
         dragOut?.stop()
     }

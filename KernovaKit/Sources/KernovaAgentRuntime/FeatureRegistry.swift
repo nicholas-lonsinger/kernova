@@ -219,6 +219,12 @@ public final class LogForwarding: Sendable {
     /// An empty ring, buffering.
     public init() {}
 
+    /// Whether the ring forwards its records: the host's policy last enabled LOGS. The mode outlives the
+    /// connection that set it.
+    public var isForwarding: Bool {
+        ring.withLock { $0.mode == .forwarding }
+    }
+
     /// The sink to install with `KernovaLogger.bootstrapProcessSink(_:)`.
     public var sink: KernovaLogger.ForwardingSink {
         { [self] level, subsystem, category, segments in
