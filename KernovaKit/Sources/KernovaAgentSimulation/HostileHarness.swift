@@ -371,7 +371,7 @@ package final class HostileRun {
         switch output {
         case .source(let effect): input = itemSource.handle(effect).map { .source($0) }
         case .sink(let effect): input = itemSink.handle(effect).map { .sink($0) }
-        case .event: input = nil
+        case .event, .reply: input = nil
         }
         guard let input else { return }
         host?.handle(input, now: now)

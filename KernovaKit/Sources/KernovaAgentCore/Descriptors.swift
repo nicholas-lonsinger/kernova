@@ -51,6 +51,9 @@ public struct StreamKindDescriptor: Sendable {
     /// The opener's END answers the acceptor's: one the acceptor receives before its own END was handed out
     /// is a violation, which the connection resets `STREAM_PROTOCOL_ERROR`.
     public var acceptorEndsFirst: Bool
+    /// An OPEN of the kind takes a token from the acceptor's OPEN bucket. An item pull's does not: its opener
+    /// cannot see when that bucket refills, and the 64-stream limit and credit already bound what a pull asks.
+    public var spendsOpenBucket: Bool
     /// The machine serving accepted streams of the kind; nil only for the
     /// placeholder row a refused OPEN of an unknown kind carries.
     package var owner: KindOwner?
@@ -60,7 +63,7 @@ public struct StreamKindDescriptor: Sendable {
         kind: StreamKind, feature: FeatureID?, owner: KindOwner?, openerRole: OpenerRole,
         openerToAcceptor: StreamDirection, acceptorToOpener: StreamDirection, maxPerConnection: Int?,
         duplicateCode: ErrorCode = .streamProtocolError, acceptorEndsFirst: Bool = false,
-        isValidOpenBody: @escaping @Sendable (Data) -> Bool
+        spendsOpenBucket: Bool = true, isValidOpenBody: @escaping @Sendable (Data) -> Bool
     ) {
         self.kind = kind
         self.feature = feature
@@ -71,6 +74,7 @@ public struct StreamKindDescriptor: Sendable {
         self.maxPerConnection = maxPerConnection
         self.duplicateCode = duplicateCode
         self.acceptorEndsFirst = acceptorEndsFirst
+        self.spendsOpenBucket = spendsOpenBucket
         self.isValidOpenBody = isValidOpenBody
     }
 
@@ -91,11 +95,11 @@ public struct StreamKindDescriptor: Sendable {
         StreamKindDescriptor(
             kind: .itemPullByHost, feature: .itemTransfer, owner: .itemTransfer, openerRole: .host,
             openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
-            isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
+            spendsOpenBucket: false, isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
         StreamKindDescriptor(
             kind: .itemPullByPeer, feature: .itemTransfer, owner: .itemTransfer, openerRole: .peer,
             openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
-            isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
+            spendsOpenBucket: false, isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
         itemOffer(.clipboardOfferByHost, feature: .clipboard, openerRole: .host),
         itemOffer(.clipboardOfferByPeer, feature: .clipboard, openerRole: .peer),
         itemOffer(.dropOffer, feature: .drop, openerRole: .host),

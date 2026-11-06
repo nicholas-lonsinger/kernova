@@ -379,6 +379,7 @@ public struct PeerEndpoint: Sendable {
             case .source(let effect): effects.append(.itemSource(effect))
             case .sink(let effect): effects.append(.itemSink(effect))
             case .event(let event): events.append(.items(event))
+            case .reply(let id, let reply): events.append(.itemReply(id, reply))
             }
         }
         for event in outputs.drag { events.append(.dragTake(event)) }

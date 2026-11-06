@@ -291,6 +291,8 @@ package enum ItemTransferOutput: Sendable, Equatable {
     case sink(ItemSinkEffect)
     /// For the owner.
     case event(ItemTransferEvent)
+    /// The answer to the owner's pull command `ItemRequestID`.
+    case reply(ItemRequestID, ItemReply)
 }
 
 /// One input to the item-transfer machine.
@@ -357,7 +359,9 @@ public struct ItemTransfer: FeatureMachine {
         case .streamClosed(let stream, let closure):
             server.closed(stream, closure, outbox: &outbox)
             client.closed(stream, closure, outbox: &outbox)
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .slotFreed, .deadline:
+        case .slotFreed, .usabilityChanged, .policyChanged:
+            client.admitWaiting(offers: offers, generation: generation, connection: &connection, outbox: &outbox)
+        case .sessionEstablished, .message, .deadline:
             break
         }
     }
@@ -366,7 +370,7 @@ public struct ItemTransfer: FeatureMachine {
     package mutating func handleOffer(_ event: FeatureEvent, connection: inout Connection) {
         offers.handle(event, connection: &connection, events: &outbox)
         server.offersChanged(offers, connection: &connection)
-        client.offersChanged(offers, connection: &connection)
+        client.offersChanged(offers, connection: &connection, outbox: &outbox)
     }
 
     /// Gives this side's DRAG offer of `token` its drag's `items`; false when it has no whole, empty one.
@@ -401,9 +405,11 @@ public struct ItemTransfer: FeatureMachine {
         offers.refuse(token, error, connection: &connection)
     }
 
-    /// Pulls one representation of the far side's open offer, as `order` says.
-    public mutating func pull(_ order: ItemPullOrder, connection: inout Connection) -> Result<ItemPullID, WireError> {
-        client.pull(order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
+    /// Pulls one representation of the far side's open offer, as `order` says, answering `request` with
+    /// `.pulled` once the pull opens or cannot: at once, or when a stream slot frees for it.
+    mutating func pull(_ request: ItemRequestID, _ order: ItemPullOrder, connection: inout Connection) {
+        client.pull(
+            request, order, offers: offers, generation: generation, connection: &connection, outbox: &outbox)
     }
 
     /// Whether a pull this side committed has not had its sink's publish report: its `.pullEnded` is still

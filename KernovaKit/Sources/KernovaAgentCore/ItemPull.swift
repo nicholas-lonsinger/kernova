@@ -137,9 +137,14 @@ struct ItemPullServer: Sendable {
 /// once, and the pull ENDs with the sink's publish report as a `PullOutcome`; a container the sink refused
 /// ENDs FAILED with its code. A sink refusal before the END RESETs the pull with the sink's code, and so does
 /// the end of the offer it names, with `ITEM_OFFER_STALE`, until the pull is committed: nothing withdraws a
-/// commit. A pull exists from the `.success` `pull` returns to its stream's close, or its sink's publish
-/// report when that comes later. It emits one `.pullEnded`: a committed pull's on its sink's report, any
-/// other's at its close, after the sink's `.abort`.
+/// commit. A pull exists from its `.pulled` success to its stream's close, or its sink's publish report when
+/// that comes later. It emits one `.pullEnded`: a committed pull's on its sink's report, any other's at its
+/// close, after the sink's `.abort`.
+///
+/// A pull asked for while every one of the connection's 64 stream slots is held waits, in the order asked,
+/// for a slot to free; its `.pulled` answer comes when it opens, or refuses it when its offer ends first or
+/// the connection refuses the open for another reason. One still waiting when the connection ends is never
+/// answered.
 struct ItemPullClient: Sendable {
     private enum Sink: Sendable, Equatable {
         /// Container bytes are arriving.
@@ -166,42 +171,97 @@ struct ItemPullClient: Sendable {
         var isCommitted: Bool { sink == .publishing || sink == .reported }
     }
 
+    /// A pull asked for while no stream slot was free, waiting for one.
+    private struct Waiting: Sendable {
+        var request: ItemRequestID
+        var order: ItemPullOrder
+    }
+
     private var pulls: [Pull] = []
+    /// The pulls waiting for a stream slot, in the order asked.
+    private var waiting: [Waiting] = []
 
     /// Whether a committed pull's publish report is still owed.
     var hasLandingsInFlight: Bool { pulls.contains { $0.sink == .publishing } }
 
+    /// Opens a pull as `order` says, answering `request` now — or, while every stream slot is held, once a
+    /// slot frees for it (`admitWaiting`).
     mutating func pull(
-        _ order: ItemPullOrder, offers: ItemOfferRegistry, generation: ConnectionGeneration,
-        connection: inout Connection, outbox: inout [ItemTransferOutput]
-    ) -> Result<ItemPullID, WireError> {
-        let request = order.request
-        let (feature, representation): (FeatureID, Representation)
-        switch offers.remoteRepresentation(request) {
-        case .failure(let error): return .failure(error)
-        case .success(let named): (feature, representation) = named
+        _ request: ItemRequestID, _ order: ItemPullOrder, offers: ItemOfferRegistry,
+        generation: ConnectionGeneration, connection: inout Connection, outbox: inout [ItemTransferOutput]
+    ) {
+        if case .failure(let error) = Self.representation(order, offers) {
+            return outbox.append(.reply(request, .pulled(.failure(error))))
         }
-        guard order.landing.takes(representation.storage) else {
-            return .failure(
-                WireError(
-                    .internal, debugDetail: "a \(order.landing) landing for a \(representation.storage) representation"
-                ))
-        }
-        let kind: StreamKind = connection.role == .host ? .itemPullByHost : .itemPullByPeer
-        if let refusal = connection.openRefusal(kind) { return .failure(refusal) }
-        let stream = connection.open(kind, body: request.encoded)
-        guard stream != .session else { return .failure(WireError(.internal, debugDetail: "the open failed")) }
-        let id = ItemPullID(generation: generation, stream: stream)
-        pulls.append(Pull(id: id, feature: feature, token: request.token))
-        outbox.append(.sink(.begin(id, order, representation)))
-        return .success(id)
+        waiting.append(Waiting(request: request, order: order))
+        admitWaiting(offers: offers, generation: generation, connection: &connection, outbox: &outbox)
     }
 
-    /// The registry changed: a pull of an offer no longer open ends `ITEM_OFFER_STALE`, uncommitted.
-    mutating func offersChanged(_ offers: ItemOfferRegistry, connection: inout Connection) {
+    /// Opens the waiting pulls, oldest first, while the connection has a stream slot for each; a waiting pull
+    /// the connection refuses for any other reason is answered with that refusal.
+    mutating func admitWaiting(
+        offers: ItemOfferRegistry, generation: ConnectionGeneration, connection: inout Connection,
+        outbox: inout [ItemTransferOutput]
+    ) {
+        let kind: StreamKind = connection.role == .host ? .itemPullByHost : .itemPullByPeer
+        while let next = waiting.first {
+            if let refusal = connection.openRefusal(kind) {
+                guard refusal.code != .tooManyStreams else { return }
+                waiting.removeFirst()
+                outbox.append(.reply(next.request, .pulled(.failure(refusal))))
+                continue
+            }
+            waiting.removeFirst()
+            let representation: Representation
+            let feature: FeatureID
+            switch Self.representation(next.order, offers) {
+            case .failure(let error):
+                outbox.append(.reply(next.request, .pulled(.failure(error))))
+                continue
+            case .success(let named):
+                (feature, representation) = named
+            }
+            let stream = connection.open(kind, body: next.order.request.encoded)
+            guard stream != .session else {
+                outbox.append(
+                    .reply(next.request, .pulled(.failure(WireError(.internal, debugDetail: "the open failed")))))
+                continue
+            }
+            let id = ItemPullID(generation: generation, stream: stream)
+            pulls.append(Pull(id: id, feature: feature, token: next.order.request.token))
+            outbox.append(.reply(next.request, .pulled(.success(id))))
+            outbox.append(.sink(.begin(id, next.order, representation)))
+        }
+    }
+
+    /// The representation `order` pulls and its offer's feature, or why it cannot be pulled.
+    private static func representation(
+        _ order: ItemPullOrder, _ offers: ItemOfferRegistry
+    ) -> Result<(FeatureID, Representation), WireError> {
+        offers.remoteRepresentation(order.request).flatMap { feature, representation in
+            guard order.landing.takes(representation.storage) else {
+                return .failure(
+                    WireError(
+                        .internal,
+                        debugDetail: "a \(order.landing) landing for a \(representation.storage) representation"))
+            }
+            return .success((feature, representation))
+        }
+    }
+
+    /// The registry changed: a pull of an offer no longer open ends `ITEM_OFFER_STALE`, uncommitted, and one
+    /// waiting for a slot is refused it.
+    mutating func offersChanged(
+        _ offers: ItemOfferRegistry, connection: inout Connection, outbox: inout [ItemTransferOutput]
+    ) {
         let open = offers.remoteTokens
         for pull in pulls where !open.contains(pull.token) && !pull.isCommitted && connection.canReset(pull.id.stream) {
             connection.reset(pull.id.stream, WireError(.itemOfferStale))
+        }
+        waiting.removeAll { pull in
+            guard !open.contains(pull.order.request.token) else { return false }
+            outbox.append(.reply(pull.request, .pulled(.failure(WireError(.itemOfferStale)))))
+            return true
         }
     }
 

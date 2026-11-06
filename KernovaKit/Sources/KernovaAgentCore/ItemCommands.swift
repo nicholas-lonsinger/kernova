@@ -19,8 +19,9 @@ public struct ItemRequestID: Hashable, Sendable {
 
 /// What an endpoint's owner asks of its item machines, the one way in. Each command that carries an
 /// `ItemRequestID` is answered by exactly one `ItemReply` event of that id, emitted before any event the
-/// command caused. A command the driver receives after the connection finished is never answered; one
-/// answered while the connection is closing follows `.closed`.
+/// command caused. A command the driver receives after the connection finished, and a pull still waiting for a
+/// stream slot when the connection ends, is never answered; one answered while the connection is closing
+/// follows `.closed`.
 public enum ItemCommand: Sendable, Equatable {
     /// Offer on `feature`'s offer kind: CLIPBOARD, withdrawing this side's previous clipboard offer, DROP from
     /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
@@ -35,7 +36,8 @@ public enum ItemCommand: Sendable, Equatable {
     /// Refuse the far side's offer of `token`: RESET with `error`, so its opener hears why this side pulls
     /// nothing of it.
     case refuse(token: Data, WireError)
-    /// Pull one representation of the far side's open offer, landing it as the order says; answered `.pulled`.
+    /// Pull one representation of the far side's open offer, landing it as the order says; answered `.pulled`
+    /// when the pull opens — while every stream slot is held, once one frees for it — or cannot.
     case pull(ItemRequestID, ItemPullOrder)
     /// Cancel a pull this side opened; its `.pullEnded` follows.
     case cancel(ItemPullID)
@@ -77,7 +79,8 @@ extension ItemMachines {
         case .refuse(let token, let error):
             refuse(token, error, connection: &connection)
         case .pull(let id, let order):
-            return (id, .pulled(pull(order, connection: &connection)))
+            // Answered through the machine's outputs: a pull waiting for a stream slot is answered when it opens.
+            pull(id, order, connection: &connection)
         case .cancel(let pull):
             cancel(pull, connection: &connection)
         case .takeDrag(let id, let token):

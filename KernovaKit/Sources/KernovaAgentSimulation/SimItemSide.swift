@@ -149,6 +149,9 @@ package final class SimItemSide {
                 answered(id, in: &answeredPulls, "pull \(id.stream.rawValue)", link: link, side: side, world: world)
             case .serveEnded(let feature, let id, let result): servesEnded.append((world.now, feature, id, result))
             }
+        case .reply:
+            // The endpoint hands a reply out as its `.itemReply` event, which `reply` records.
+            break
         }
     }
 
