@@ -168,7 +168,11 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))
                 : CapabilityRow(title: "Status", isAvailable: true, detail: "Connected"),
             Self.row("Guest logs in Console", snapshot.features[.logs], availableDetail: "On"),
-            Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
+            snapshot.inBandUpdatesWithheld
+                ? CapabilityRow(
+                    title: "Automatic agent updates", isAvailable: false,
+                    detail: "Needs a team-signed build of Kernova")
+                : Self.row("Automatic agent updates", snapshot.features[.update], availableDetail: "On"),
             Self.powerRow(ignoringApps: false, snapshot),
             Self.powerRow(ignoringApps: true, snapshot),
         ]

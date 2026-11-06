@@ -180,7 +180,10 @@ struct AgentHubState: Sendable {
             away: away.filter { !visible.contains($0.key) }.values.sorted { $0.order > $1.order },
             power: provision(ignoringApps: false, features: features),
             powerIgnoringApps: provision(ignoringApps: true, features: features),
-            routing: power.progress, consolePeers: consolePeers)
+            routing: power.progress, consolePeers: consolePeers,
+            inBandUpdatesWithheld: ordered.contains {
+                BundledPayload.bundle(from: bundles, for: $0.claim).map { $0.offered == nil } ?? false
+            })
     }
 
     /// The merged POWER entry for a shutdown, without waiting for apps when `ignoringApps`: the first candidate

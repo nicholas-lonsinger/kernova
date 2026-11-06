@@ -27,13 +27,19 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     /// connection offers it. The feature's offers live only there: the hub sends the host's to it, forwards
     /// only its own, and ends both on a peer that stops being it. A feature no such peer offers has no entry.
     public var consolePeers: [FeatureID: PeerHandle]
+    /// Whether the host withholds in-band updates here: some peer in `peers` has a matching bundle the host
+    /// does not offer (`BundledPayload.offered` is nil — a payload signed with no team), so whatever UPDATE
+    /// the peers offer, the host updates none of them in place. False with no peer, or none with a bundle.
+    public var inBandUpdatesWithheld: Bool
 
     /// A snapshot of these peers and merged features.
     public init(
         peers: [PeerSummary], features: FeatureStatusTable, away: [AwayPeer] = [],
         power: PowerProvision = .absent(.noAgent), powerIgnoringApps: PowerProvision = .absent(.noAgent),
-        routing: PowerRoutingProgress? = nil, consolePeers: [FeatureID: PeerHandle] = [:]
+        routing: PowerRoutingProgress? = nil, consolePeers: [FeatureID: PeerHandle] = [:],
+        inBandUpdatesWithheld: Bool = false
     ) {
+        self.inBandUpdatesWithheld = inBandUpdatesWithheld
         self.peers = peers
         self.features = features
         self.away = away

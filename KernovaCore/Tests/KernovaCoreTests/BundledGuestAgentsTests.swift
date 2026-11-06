@@ -276,6 +276,7 @@ struct BundledGuestAgentsTests {
         try await waitForChange { !instance.agentHubSnapshot.peers.isEmpty }
 
         let standing = try #require(instance.agentHubSnapshot.peers.first).standing
+        #expect(instance.agentHubSnapshot.inBandUpdatesWithheld == !teamSigned)
         if teamSigned {
             #expect(standing == .outdated(offeredVersionLabel: "1.2 (34)", update: .unavailable))
             #expect(instance.agentPresentation?.status == .outdated(installed: "1.2 (33)", bundled: "1.2 (34)"))

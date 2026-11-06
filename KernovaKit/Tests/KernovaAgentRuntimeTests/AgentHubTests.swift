@@ -65,23 +65,28 @@ struct AgentHubTests {
     #endif
 
     @Test(
-        "A peer stands current on the bundled payload, outdated on another one whether or not it is offered in band, and is not judged without a matching bundle",
+        "A peer stands current on the bundled payload, outdated on another one whether or not it is offered in band, and is not judged without a matching bundle; the hub withholds updates where its matching bundle is not offered",
         arguments: [
-            (hash: UInt8(0xA1), scope: InstallScope.user, inBand: true, standing: PeerSummary.Standing.current),
+            (
+                hash: UInt8(0xA1), scope: InstallScope.user, inBand: true, standing: PeerSummary.Standing.current,
+                withheld: false
+            ),
             (
                 hash: UInt8(0xA2), scope: InstallScope.user, inBand: true,
-                standing: .outdated(offeredVersionLabel: "next", update: .unavailable)
+                standing: .outdated(offeredVersionLabel: "next", update: .unavailable), withheld: false
             ),
-            (hash: UInt8(0xA1), scope: InstallScope.unspecified, inBand: true, standing: .notOffered),
-            (hash: UInt8(0xA1), scope: InstallScope.user, inBand: false, standing: .current),
+            (hash: UInt8(0xA1), scope: InstallScope.unspecified, inBand: true, standing: .notOffered, withheld: false),
+            (hash: UInt8(0xA1), scope: InstallScope.user, inBand: false, standing: .current, withheld: true),
             (
                 hash: UInt8(0xA2), scope: InstallScope.user, inBand: false,
-                standing: .outdated(offeredVersionLabel: "next", update: .notTeamSigned)
+                standing: .outdated(offeredVersionLabel: "next", update: .notTeamSigned), withheld: true
             ),
-            (hash: UInt8(0xA2), scope: InstallScope.unspecified, inBand: false, standing: .notOffered),
+            (hash: UInt8(0xA2), scope: InstallScope.unspecified, inBand: false, standing: .notOffered, withheld: false),
         ])
     func standing(
-        _ expected: (hash: UInt8, scope: InstallScope, inBand: Bool, standing: PeerSummary.Standing)
+        _ expected: (
+            hash: UInt8, scope: InstallScope, inBand: Bool, standing: PeerSummary.Standing, withheld: Bool
+        )
     ) async {
         let manifest = UpdateManifestValue(
             payloadHash: Data(repeating: expected.hash, count: 32), payloadSize: 1, format: .executable,
@@ -96,6 +101,7 @@ struct AgentHubTests {
         let peer = HubPeer(harness, claim: claim)
         let snapshot = await harness.snapshot { $0.peers.count == 1 }
         #expect(snapshot.peers[0].standing == expected.standing)
+        #expect(snapshot.inBandUpdatesWithheld == expected.withheld)
         peer.driver.close(.shuttingDown)
         harness.hub.close()
     }
