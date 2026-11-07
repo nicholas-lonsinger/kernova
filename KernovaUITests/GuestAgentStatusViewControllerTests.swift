@@ -259,6 +259,6 @@ struct GuestAgentStatusViewControllerTests {
 
     @MainActor
     private func dismissButton(in view: NSView) -> NSButton? {
-        findButton(titled: "Don't show again", in: view)
+        findButton(titled: "Don\u{2019}t show again", in: view)
     }
 }

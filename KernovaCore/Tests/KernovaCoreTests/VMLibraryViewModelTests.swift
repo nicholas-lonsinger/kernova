@@ -4323,7 +4323,7 @@ struct VMLibraryViewModelTests {
         // `third` stays armed to confirm the reset no-ops on already-armed VMs.
         viewModel.agentInstallPromptDisabled = true
         viewModel.duplicateMachineIDQuestionDismissed = true
-        preferences.menuBarQuitReminderDismissed = true
+        viewModel.menuBarQuitReminderDismissed = true
         viewModel.ephemeralSettingsBannerDismissed = true
 
         viewModel.resetAllReminders()
@@ -4335,6 +4335,7 @@ struct VMLibraryViewModelTests {
         #expect(preferences.agentInstallPromptDisabled == false)
         #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
         #expect(preferences.duplicateMachineIDQuestionDismissed == false)
+        #expect(viewModel.menuBarQuitReminderDismissed == false)
         #expect(preferences.menuBarQuitReminderDismissed == false)
         #expect(viewModel.ephemeralSettingsBannerDismissed == false)
         #expect(preferences.ephemeralSettingsBannerDismissed == false)

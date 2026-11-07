@@ -10,10 +10,13 @@ import KernovaLogging
 /// **ON = the reminder is shown** (its dismissed flag is `false`), matching the
 /// VM Settings pane's "Show install reminder" toggle.
 ///
-/// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
+/// The app-wide *Menu Bar Quit Reminder* is backed by
+/// `VMLibraryViewModel.menuBarQuitReminderDismissed`; the
 /// *Duplicate machine ID question* by
 /// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, which Don't ask
-/// again on the question itself also turns off; the app-wide *Guest Agent
+/// again on the question itself also turns off; the *Ephemeral Mode settings
+/// banner* by `VMLibraryViewModel.ephemeralSettingsBannerDismissed`, which
+/// Don't show again on the banner also turns off; the app-wide *Guest Agent
 /// Install Reminder* by `VMLibraryViewModel.agentInstallPromptDisabled`, which
 /// overrides every per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
 /// macOS VM, are backed by each VM's host state and written through
@@ -218,6 +221,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             track: { [weak self] in
                 guard let self else { return }
                 _ = viewModel.agentInstallPromptDisabled
+                _ = viewModel.menuBarQuitReminderDismissed
                 _ = viewModel.duplicateMachineIDQuestionDismissed
                 _ = viewModel.ephemeralSettingsBannerDismissed
                 for instance in viewModel.instances {
@@ -312,7 +316,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// A per-VM row keeps showing what its VM reverts to while the app-wide
     /// install reminder is off; it just can't be changed until that goes back on.
     private func refreshSwitches() {
-        menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
+        menuBarQuitSwitch.state = viewModel.menuBarQuitReminderDismissed ? .off : .on
         duplicateIDQuestionSwitch.state = viewModel.duplicateMachineIDQuestionDismissed ? .off : .on
         applyGroupedFormRowEnabled(
             preferences.allowsDuplicateMachineIDOverride, control: duplicateIDQuestionSwitch)
@@ -365,7 +369,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     }
 
     @objc private func menuBarQuitToggled() {
-        preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
+        viewModel.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
     }
 
     @objc private func duplicateIDQuestionToggled() {

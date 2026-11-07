@@ -12,16 +12,19 @@ enum CommandLineSpelling {
         return "'" + text.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 
+    /// The `kernova` command line of `words`, each spelled as one shell word.
+    static func line(_ words: [String]) -> String {
+        "kernova " + words.map(word).joined(separator: " ")
+    }
+
     /// The command line that takes `step`.
     static func line(for step: CommandStep) -> String {
-        let words: [String] =
-            switch step {
-            case .resume(let vm): ["resume", vm.name]
-            case .discardSavedState(let vm): ["stop", vm.name, "--yes"]
-            case .setConfiguration(let vm, let assignments):
-                ["set", vm.name] + assignments.map { "\($0.key)=\($0.value)" }
-            }
-        return "kernova " + words.map(word).joined(separator: " ")
+        switch step {
+        case .resume(let vm): line(["resume", vm.name])
+        case .discardSavedState(let vm): line(["stop", vm.name, "--yes"])
+        case .setConfiguration(let vm, let assignments):
+            line(["set", vm.name] + assignments.map { "\($0.key)=\($0.value)" })
+        }
     }
 
     /// The command line that takes `ending`, `nil` for the refused one asked
@@ -29,7 +32,22 @@ enum CommandLineSpelling {
     static func line(for ending: StepRoute.Ending) -> String? {
         switch ending {
         case .refusedVerb: nil
-        case .start(let vm): "kernova " + ["start", vm.name].map(word).joined(separator: " ")
+        case .start(let vm): line(["start", vm.name])
+        }
+    }
+
+    /// What the tool prints for `notice`.
+    ///
+    /// The baseline's command line ends in a placeholder for the snapshot the
+    /// user has yet to take; `ephemeral.baseline` takes its name or
+    /// identifier.
+    static func message(for notice: VMCommandNotice) -> String {
+        switch notice {
+        case .ephemeralRevert(let vm, let baseline):
+            "Ephemeral Mode is on for \u{201C}\(vm.name)\u{201D}: this change goes back to "
+                + "\u{201C}\(baseline.name)\u{201D} at the next shutdown. To keep it, take a "
+                + "snapshot (\(line(["snapshot", "take", vm.name]))) and choose it as the baseline "
+                + "(\(line(["set", vm.name])) ephemeral.baseline=<snapshot>)."
         }
     }
 

@@ -93,29 +93,35 @@ package struct VMCommandEnvelopeRouter {
     ///
     /// A ``CommandError`` becomes a `.failure` result rather than a thrown
     /// error: a refusal is an answer, and every transport has to deliver it.
-    /// A settings edit answers with the Ephemeral revert notices its changes
-    /// are owed (``VMCommandCore/noticingEphemeralReverts(_:)``).
+    /// A settings edit answers with the Ephemeral revert notices its own
+    /// commits are owed (``VMConfigurationCommitRecord``), whether or not it
+    /// failed after one landed.
     func respond(to request: VMCommandRequest) async -> VMCommandResponse {
+        guard request.verb.editsSettings else {
+            return VMCommandResponse(result: await result(of: request))
+        }
+        let record = VMConfigurationCommitRecord()
+        let result = await VMConfigurationCommitRecord.$current.withValue(record) {
+            await self.result(of: request)
+        }
+        return VMCommandResponse(result: result, notices: commands.ephemeralRevertNotices(record))
+    }
+
+    /// What `request`'s verb answers, its refusal included.
+    private func result(of request: VMCommandRequest) async -> VMCommandResponse.Result {
         do {
-            guard request.verb.editsSettings else {
-                return VMCommandResponse(result: try await dispatch(request.verb))
-            }
-            let (result, notices) = try await commands.noticingEphemeralReverts {
-                try await dispatch(request.verb)
-            }
-            return VMCommandResponse(result: result, notices: notices)
+            return try await dispatch(request.verb)
         } catch let error as CommandError {
-            return VMCommandResponse(result: .failure(error.dto))
+            return .failure(error.dto)
         } catch {
             Self.logger.log(
                 .error,
                 "\(String(describing: request.verb), privacy: .public) failed outside the command vocabulary: \(error.localizedDescription, privacy: .public)"
             )
-            return VMCommandResponse(
-                result: .failure(
-                    .operationFailed(
-                        verb: request.verb.verb, title: nil,
-                        message: error.localizedDescription, recovery: nil)))
+            return .failure(
+                .operationFailed(
+                    verb: request.verb.verb, title: nil,
+                    message: error.localizedDescription, recovery: nil))
         }
     }
 
@@ -353,19 +359,20 @@ package struct VMCommandEnvelopeRouter {
 extension VMCommandRequest.Verb {
     /// Whether this verb is an edit of settings — the verbs whose answer
     /// carries an Ephemeral revert notice. Running, snapshotting and copying a
-    /// VM are not: what they write to its configuration is no setting the
-    /// user changed.
+    /// VM are not, nor is mounting the agent installer, an item that ejects
+    /// itself: what they write to its configuration is no setting the user
+    /// changed.
     fileprivate var editsSettings: Bool {
         switch self {
         case .setConfiguration, .editStorageDisk, .editRemovableMedia, .editSharedDirectory,
-            .editUSBAccessory, .guestAgentDisk, .forgetUSBPairing, .rename,
+            .editUSBAccessory, .forgetUSBPairing, .rename,
             .createNetwork, .renameNetwork, .deleteNetwork:
             true
         case .list, .groups, .info, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories,
             .storageDisks, .usbAccessories, .availableUSBAccessories, .usbPairings, .networks,
             .events, .configurationKeys, .configuration,
             .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .groupAction,
-            .open, .reveal, .showInFinder,
+            .guestAgentDisk, .open, .reveal, .showInFinder,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
             .clone, .delete, .importVM, .cancelPreparing, .quit:
             false

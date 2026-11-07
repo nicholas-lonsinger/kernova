@@ -562,6 +562,23 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Whether the user silenced the "still running in the menu bar" reminder
+    /// a soft quit shows — with its own button, or its Reminders switch.
+    ///
+    /// The single write path for `AppPreferences.menuBarQuitReminderDismissed`,
+    /// mirrored here because the Reminders pane refreshes from
+    /// `withObservationTracking`, which a bare `UserDefaults` read never wakes.
+    package var menuBarQuitReminderDismissed: Bool {
+        didSet {
+            guard menuBarQuitReminderDismissed != oldValue else { return }
+            Self.logger.log(
+                .notice,
+                "Setting menu bar quit reminder dismissed=\(self.menuBarQuitReminderDismissed, privacy: .public)"
+            )
+            preferences.menuBarQuitReminderDismissed = menuBarQuitReminderDismissed
+        }
+    }
+
     /// Whether the user turned off the Ephemeral Mode settings notice — with
     /// Don't show again on the banner, or its Reminders switch.
     ///
@@ -802,6 +819,7 @@ package final class VMLibraryViewModel {
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
         self.disabledReservedShortcuts = preferences.disabledReservedShortcuts
         self.duplicateMachineIDQuestionDismissed = preferences.duplicateMachineIDQuestionDismissed
+        self.menuBarQuitReminderDismissed = preferences.menuBarQuitReminderDismissed
         self.ephemeralSettingsBannerDismissed = preferences.ephemeralSettingsBannerDismissed
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
@@ -1747,7 +1765,7 @@ package final class VMLibraryViewModel {
     /// Each VM's flag lives in its own bundle and is persisted individually;
     /// VMs already armed make no edit.
     package func resetAllReminders() {
-        preferences.menuBarQuitReminderDismissed = false
+        menuBarQuitReminderDismissed = false
         duplicateMachineIDQuestionDismissed = false
         ephemeralSettingsBannerDismissed = false
         agentInstallPromptDisabled = false

@@ -12,7 +12,7 @@ final class VMCommandClient {
     private var decoder = StreamFrameDecoder()
     private var isClosed = false
     /// The notices the answers read so far carried, written at ``close()``.
-    private var notices: [String] = []
+    private var notices: [VMCommandNotice] = []
     /// Brings forward the process with the given pid, for an
     /// ``VMCommandResponse/Result/activate`` frame.
     private let activate: (pid_t) -> Void
@@ -124,7 +124,7 @@ final class VMCommandClient {
         guard !isClosed else { return }
         isClosed = true
         Darwin.close(fd)
-        notices.forEach(Console.notice)
+        for notice in notices { Console.notice(CommandLineSpelling.message(for: notice)) }
     }
 
     // MARK: - Frames

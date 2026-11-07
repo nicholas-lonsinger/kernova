@@ -1217,14 +1217,21 @@ struct VMCommandEnvelopeRouterTests {
     @discardableResult
     private func makeEphemeralInstance(
         in harness: Harness, name: String = "Alpha", baseline: VMSnapshot,
+        phase: VMLifecyclePhase = .stopped, guestOS: VMGuestOS = .linux,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         harness.wired.register(
-            name: name, snapshots: [baseline], hostState: .ephemeral(baseline: baseline.id), mutate: mutate)
+            name: name, phase: phase, guestOS: guestOS, snapshots: [baseline],
+            hostState: .ephemeral(baseline: baseline.id), mutate: mutate)
     }
 
-    private var revertNotice: String {
-        EphemeralModeCopy.settingsRevertNotice(vm: "Alpha", baseline: "Clean install")
+    /// Each of `notices` as the VM it names and its baseline.
+    private func named(_ notices: [VMCommandNotice]) -> [String] {
+        notices.map { notice in
+            switch notice {
+            case .ephemeralRevert(let vm, let baseline): "\(vm.name) → \(baseline.name)"
+            }
+        }
     }
 
     @Test("A set that moves a setting a revert restores answers with the notice beside the values")
@@ -1238,7 +1245,7 @@ struct VMCommandEnvelopeRouterTests {
                 .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
 
         #expect(response.result == .configuration([ConfigurationEntry(key: "cpus", value: "3")]))
-        #expect(response.notices == [revertNotice])
+        #expect(named(response.notices) == ["Alpha → Clean install"])
     }
 
     @Test("A host-state key, a VM with no baseline and a turned-off reminder carry no notice")
@@ -1291,7 +1298,7 @@ struct VMCommandEnvelopeRouterTests {
             .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites")))
 
         #expect(response.result == .ok)
-        #expect(response.notices == [revertNotice])
+        #expect(named(response.notices) == ["Alpha → Clean install"])
     }
 
     @Test("A verb that is no settings edit carries no notice")
@@ -1302,6 +1309,49 @@ struct VMCommandEnvelopeRouterTests {
         let response = try await harness.transport.send(.info(.name("Alpha")))
 
         #expect(response.failure == nil)
+        #expect(response.notices.isEmpty)
+    }
+
+    @Test("Mounting the agent installer adds an item that ejects itself, so it carries no notice")
+    func agentDiskMountCarriesNoNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(
+            in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil),
+            phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+
+        let response = try await harness.transport.send(
+            .guestAgentDisk(.name("Alpha"), .mount(awaiting: nil)))
+
+        #expect(response.failure == nil)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(response.notices.isEmpty)
+    }
+
+    @Test("A commit made outside a request while it awaits is no change of that request's")
+    func concurrentCommitIsNotTheRequestsChange() async throws {
+        let harness = makeHarness()
+        let park = CancellationPark()
+        harness.authority.parkUntilCancelled = park
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        makeEphemeralInstance(in: harness, name: "PoolA", baseline: baseline)
+        let other = makeEphemeralInstance(in: harness, name: "PoolB", baseline: baseline)
+        let folder = externalPath("Asked")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+
+        let request = Task {
+            try await harness.transport.send(
+                .editSharedDirectory(.name("PoolA"), .add(path: folder, readOnly: false)))
+        }
+        try await harness.authority.requested.wait { harness.authority.requests.count == 1 }
+        // Another door's edit, landing while the share add waits on its panel.
+        try harness.core.setConfiguration(
+            .id(other.id), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none)
+        #expect(other.configuration.cpuCount == 3)
+        request.cancel()
+
+        let response = try await request.value
+        #expect(response.failure != nil)
         #expect(response.notices.isEmpty)
     }
 }

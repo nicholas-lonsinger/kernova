@@ -146,7 +146,10 @@ package struct AppPreferences: @unchecked Sendable {
 
     /// Whether the user dismissed the "still running in the menu bar" reminder
     /// popover shown on a soft quit.
-    package var menuBarQuitReminderDismissed: Bool {
+    ///
+    /// Written through `VMLibraryViewModel.menuBarQuitReminderDismissed`, whose
+    /// `@Observable` mirror is what wakes the Reminders pane.
+    var menuBarQuitReminderDismissed: Bool {
         get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }

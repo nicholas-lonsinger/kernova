@@ -41,7 +41,7 @@ final class GuestAgentStatusViewController: NSViewController {
     var onDiskControl: (() -> Void)?
     /// Fires when the user clicks the trailing button while it reads "Done".
     var onDone: (() -> Void)?
-    /// Fires when the user clicks the "Don't show again" link, which only
+    /// Fires when the user clicks the "Don\u{2019}t show again" link, which only
     /// `hasDismissAction` surfaces.
     var onDismiss: (() -> Void)?
 
@@ -54,7 +54,7 @@ final class GuestAgentStatusViewController: NSViewController {
     /// How the user installs from the attached disk: a step, or a command
     /// shown with a Copy button; `nil` hides the row.
     private(set) var installGuidance: GuestAgentDiskControl.InstallGuidance?
-    /// When `true`, surfaces the "Don't show again" link in the action row.
+    /// When `true`, surfaces the "Don\u{2019}t show again" link in the action row.
     private(set) var hasDismissAction: Bool = false
 
     // MARK: - Layout constants
@@ -210,9 +210,9 @@ final class GuestAgentStatusViewController: NSViewController {
         dismissButton.isBordered = false
         dismissButton.target = self
         dismissButton.action = #selector(dismissTapped(_:))
-        dismissButton.title = "Don't show again"
+        dismissButton.title = "Don\u{2019}t show again"
         dismissButton.contentTintColor = .linkColor
-        dismissButton.setAccessibilityLabel("Don't show again")
+        dismissButton.setAccessibilityLabel("Don\u{2019}t show again")
     }
 
     private func applyContent() {

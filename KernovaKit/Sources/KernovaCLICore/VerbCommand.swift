@@ -25,12 +25,20 @@ extension VerbCommand {
     }
 
     /// Sends the request and hands the payload it was answered with to
-    /// `write`, inside the connection, so the notices the connection writes as
-    /// it closes follow the answer.
+    /// `write` (``VMCommandClient/answer(_:_:)``).
     func answer(_ write: (VMCommandResponse.Result) throws -> Void) throws {
         let request = try verb()
-        let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-        defer { client.close() }
-        try write(try client.send(request).payload())
+        try CommandConnection.open(launchIfNeeded: !options.noLaunch).answer(request, write)
+    }
+}
+
+extension VMCommandClient {
+    /// Sends `verb`, hands the payload it was answered with to `write`, then
+    /// closes — so the notices the close writes follow the answer.
+    func answer(
+        _ verb: VMCommandRequest.Verb, _ write: (VMCommandResponse.Result) throws -> Void
+    ) throws {
+        defer { close() }
+        try write(try send(verb).payload())
     }
 }

@@ -78,7 +78,7 @@ package enum EphemeralModeCopy {
     package static let settingsBannerLead = "Ephemeral Mode"
     package static let settingsBannerMessage = " \u{2014} settings revert."
     /// The banner's link that turns it off, in the guest agent popover's words.
-    package static let settingsBannerDismissTitle = "Don't show again"
+    package static let settingsBannerDismissTitle = "Don\u{2019}t show again"
 
     /// What the banner's info says while `baseline` is the VM's baseline;
     /// `keptRows` names the open category's rows a revert leaves as set.
@@ -112,19 +112,11 @@ package enum EphemeralModeCopy {
             title: settingsBannerLead + settingsBannerMessage, text: nil)
             + [
                 .body(
-                    "While a virtual machine\u{2019}s Ephemeral Mode is on, changes to its \(named) "
-                        + "settings go back to its baseline snapshot at the next shutdown. The same "
-                        + "note follows a `kernova` command that changes one of them."),
-                .body("Choosing Don\u{2019}t show again on the banner turns this off."),
+                    "While a virtual machine\u{2019}s Ephemeral Mode is on, changes to most settings "
+                        + "on its \(named) panels go back to its baseline snapshot at the next "
+                        + "shutdown; the banner\u{2019}s info names any that stay. The same note "
+                        + "follows a `kernova` command that changes one that goes back."),
+                .body("Choosing \(settingsBannerDismissTitle) on the banner turns this off."),
             ]
-    }
-
-    /// What `kernova` prints after a command changed settings of `vm` that go
-    /// back to `baseline` at its next shutdown.
-    package static func settingsRevertNotice(vm: String, baseline: String) -> String {
-        "Ephemeral Mode is on for \u{201C}\(vm)\u{201D}: this change goes back to "
-            + "\u{201C}\(baseline)\u{201D} at the next shutdown. To keep it, take a snapshot "
-            + "(kernova snapshot take) and choose it as the baseline "
-            + "(\(VMConfigurationKeyRegistry.ephemeralBaseline.name))."
     }
 }
