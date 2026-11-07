@@ -196,31 +196,84 @@ func createCompressedDirectly(_ path: String, _ sample: CompressedSample) throws
 }
 
 /// A 64 MB exFAT disk image attached under a scratch directory, detached and deleted when this goes.
+///
+/// A detach that fails records an issue with hdiutil's message and the processes then holding the image's
+/// device nodes: a forced detach unmounts past descriptors open on the volume, and fails only while a process
+/// holds a device node, which no test opens.
 final class ExFATVolume {
     let scratch: PortableScratchDirectory
     var mountPoint: String { scratch.path + "/mount" }
-    private var image: String { scratch.path + "/volume.dmg" }
+    /// The device nodes the image attached as, from `hdiutil attach -plist`'s `dev-entry` keys.
+    private let devices: [String]
 
     init() throws {
         scratch = try PortableScratchDirectory(prefix: "exfat")
-        try Self.hdiutil(["create", "-size", "64m", "-fs", "ExFAT", "-volname", "KTEST", image])
+        let image = scratch.path + "/volume.dmg"
+        let mountPoint = scratch.path + "/mount"
+        try Self.hdiutil(["create", "-size", "64m", "-fs", "ExFAT", "-volname", "KTEST", image]).require()
         try #require(mkdir(mountPoint, 0o755) == 0)
-        try Self.hdiutil(["attach", "-nobrowse", "-noverify", "-mountpoint", mountPoint, image])
+        let attached = try Self.hdiutil([
+            "attach", "-plist", "-nobrowse", "-noverify", "-mountpoint", mountPoint, image,
+        ])
+        try attached.require()
+        let plist = try PropertyListSerialization.propertyList(from: attached.output, format: nil)
+        let entities = try #require((plist as? [String: Any])?["system-entities"] as? [[String: Any]])
+        devices = entities.compactMap { $0["dev-entry"] as? String }
+        try #require(!devices.isEmpty, "hdiutil attach named no device")
     }
 
     deinit {
-        try? Self.hdiutil(["detach", "-force", mountPoint])
+        do {
+            let detached = try Self.hdiutil(["detach", "-force", mountPoint])
+            guard detached.status != 0 else { return }
+            Issue.record("\(detached.failure); holding \(devices.joined(separator: " ")): \(Self.holders(of: devices))")
+        } catch {
+            Issue.record(error, "hdiutil detach -force \(mountPoint)")
+        }
     }
 
-    private static func hdiutil(_ arguments: [String]) throws {
+    /// What a run of a tool printed and how it ended.
+    private struct Run {
+        let command: String
+        let status: Int32
+        let output: Data
+        let errorOutput: String
+
+        var failure: String { "\(command) exited \(status): \(errorOutput)" }
+
+        func require() throws {
+            try #require(status == 0, "\(failure)")
+        }
+    }
+
+    private static func hdiutil(_ arguments: [String]) throws -> Run {
+        try run("/usr/bin/hdiutil", arguments)
+    }
+
+    /// `lsof`'s report of every process holding `devices` or their raw nodes, or that none does.
+    private static func holders(of devices: [String]) -> String {
+        let nodes = devices.flatMap { [$0, $0.replacingOccurrences(of: "/dev/disk", with: "/dev/rdisk")] }
+        guard let listed = try? run("/usr/sbin/lsof", ["-nP"] + nodes) else { return "lsof did not run" }
+        let report = String(decoding: listed.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return report.isEmpty ? "no process holds them now" : report
+    }
+
+    private static func run(_ tool: String, _ arguments: [String]) throws -> Run {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.executableURL = URL(fileURLWithPath: tool)
         process.arguments = arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let output = Pipe()
+        let errorOutput = Pipe()
+        process.standardOutput = output
+        process.standardError = errorOutput
         try process.run()
+        let printed = output.fileHandleForReading.readDataToEndOfFile()
+        let complained = errorOutput.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        try #require(process.terminationStatus == 0, "hdiutil \(arguments.joined(separator: " "))")
+        return Run(
+            command: ([URL(fileURLWithPath: tool).lastPathComponent] + arguments).joined(separator: " "),
+            status: process.terminationStatus, output: printed,
+            errorOutput: String(decoding: complained, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }
 #endif
