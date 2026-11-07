@@ -96,6 +96,9 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// test can act while the capture holds the VM.
     var takeSnapshotGate: GatedStep?
     var revertToSnapshotError: (any Error)?
+    /// Parks a revert before it reads the snapshot, so a test can act while
+    /// the revert holds the VM.
+    var revertGate: GatedStep?
 
     // MARK: - Snapshot call tracking
 
@@ -273,6 +276,7 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
         revertCallCount += 1
+        try await revertGate?.pass()
         let plan: VMSnapshotRestorePlan
         do {
             plan = try await context.bringUp.operation.bundle.planRestore(

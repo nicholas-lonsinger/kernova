@@ -367,6 +367,8 @@ struct EphemeralSessionSettlementTests {
         let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
         let session = UUID()
         let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+        let revert = GatedStep()
+        virtualization.revertGate = revert
 
         let restart = Task { @MainActor in
             try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
@@ -386,7 +388,11 @@ struct EphemeralSessionSettlementTests {
         }
 
         let error = try await #require(throws: CommandError.self) { try await restart.value }
+        // The restart reports without waiting out the revert its stop owes, so
+        // the VM it names is the one that revert holds.
+        #expect(instance.isHeldByRevert)
         #expect(error == .restartCancelledByStop(vm: harness.core.summary(instance)))
+        revert.release()
         // A waiting caller reads it as the restart that ran and did not complete.
         guard case .operationFailed(.restart, _, let message, _) = error.dto else {
             Issue.record("Expected the restart to cross as a failed restart, got \(error.dto)")
