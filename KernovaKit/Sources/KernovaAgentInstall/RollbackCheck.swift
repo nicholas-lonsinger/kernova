@@ -22,7 +22,8 @@ public struct RollbackCheck {
         case counted(runs: Int)
         /// The new version confirmed the switch as the check was about to revert it.
         case confirmedMeanwhile
-        /// It reverted the switch, and killed the unit's main process, `killed`, when there was one.
+        /// It reverted the switch, and killed `killed`, the unit's main process read before the revert, when there
+        /// was one.
         case reverted(killed: UInt32?)
     }
 
@@ -44,6 +45,10 @@ public struct RollbackCheck {
     /// `current` back at the slot the switch left, and kills the peer's process, which shares this one's
     /// uid; the service manager then starts the previous version through `current`, and that version records
     /// the reverted payload as rejected as it starts.
+    ///
+    /// It kills only the process that ran the version it reverts: it reads the peer's process while `current`
+    /// still names that version, before it claims the switch and reverts. Every peer watches `current` and
+    /// relaunches when it moves, so a process read after the revert can be the restored version's fresh launch.
     func run() throws -> Outcome {
         guard root.exists(InstallRoot.switchPendingName) else { return .nothingPending }
         let state = try root.readState()
@@ -53,9 +58,9 @@ public struct RollbackCheck {
         }
         guard let runs = try root.countRollbackRun() else { return .confirmedMeanwhile }
         guard runs >= Self.runsToRevert else { return .counted(runs: runs) }
+        let pid = try serviceManager.peerProcessID()
         guard try root.claimRollback() else { return .confirmedMeanwhile }
         try root.point(InstallRoot.currentLinkName, at: pending.from)
-        let pid = try serviceManager.peerProcessID()
         guard pid > 0 else { return .reverted(killed: nil) }
         kill(pid)
         return .reverted(killed: pid)
