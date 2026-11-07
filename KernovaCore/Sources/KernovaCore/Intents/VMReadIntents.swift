@@ -3,7 +3,7 @@ import Foundation
 import KernovaCommandModel
 
 /// Answers a VM's runtime state as the wire name every other front door
-/// reports, with the words a person reads carried in the spoken dialog.
+/// reports.
 struct GetVMStateIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Virtual Machine State"
     static let description: IntentDescription? = IntentDescription(
@@ -21,16 +21,8 @@ struct GetVMStateIntent: AppIntent {
     }
 
     @MainActor
-    func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let answer = Self.answer(for: try await gateway.info(vm.id))
-        return .result(value: answer.value, dialog: IntentDialog("\(answer.dialog)"))
-    }
-
-    /// The value this intent returns for `info`, and the sentence its dialog
-    /// speaks.
-    static func answer(for info: VMInfo) -> (value: String, dialog: String) {
-        let state = VMStatus.phrase(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)
-        return (info.status, "\(info.name) is \(state).")
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        .result(value: try await gateway.info(vm.id).status)
     }
 }
 

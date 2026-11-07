@@ -94,23 +94,6 @@ struct VMIntentGatewayTests {
                 == VMStatus.heldByAnotherCopyDisplayName)
     }
 
-    @Test("Get State answers a suspended VM's wire status and says it is suspended")
-    func getStateAnswersSuspended() {
-        let answer = GetVMStateIntent.answer(for: VMIntentFixtures.info(name: "Tahoe", status: "suspended"))
-
-        #expect(answer.value == "suspended")
-        #expect(answer.dialog == "Tahoe is suspended.")
-    }
-
-    @Test("Get State says a VM another copy holds is in use there")
-    func getStateNamesAHeldVM() {
-        let answer = GetVMStateIntent.answer(
-            for: VMIntentFixtures.info(name: "Tahoe", status: "stopped", heldByAnotherCopy: true))
-
-        #expect(answer.value == "stopped")
-        #expect(answer.dialog == "Tahoe is in use by another copy of Kernova.")
-    }
-
     @Test("A VM still copying into place reads back as preparing, which is no VMStatus")
     func entityNamesThePreparingWireStatus() {
         #expect(VMStatus(rawValue: VMStatus.preparingWireName) == nil)
