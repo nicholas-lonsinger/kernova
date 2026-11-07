@@ -160,7 +160,8 @@ Calls into an OS live in its platform layer: `KernovaPlatformDarwin` and
 
 - The app links the `KernovaAgentHost` product through `KernovaCore`.
 - `KernovaMacOSAgent` links the `KernovaPlatformDarwin` product, whose
-  `MacAgentPeer` is the session peer; it routes DROP to `DropReceiver` and the
+  `MacAgentPeer` runs both the session peer and the system peer
+  (`MacAgentTools`); the session peer routes DROP to `DropReceiver` and the
   target's `GuestClipboard` (over `ClipboardItemExchange`) and `GuestDragOut`
   through its own `ItemFeatureRouter`.
 - `kernova-agent` is the `KernovaLinuxAgent` executable, whose `AgentShell`
