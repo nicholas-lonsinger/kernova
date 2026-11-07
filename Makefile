@@ -59,8 +59,8 @@ LOCKED_TWIN   = +@$(LOCKED) $(MAKE) --no-print-directory locked-$@
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT := xcrun swift-format
 
-# The fixture suites for the skill scripts, Tools/lib, and the lint checks that
-# have one. Each drives its code through every verdict against recorded
+# The fixture suites for the skill scripts, Tools/lib, the lint checks that
+# have one, and the dead-code scan's tool. Each drives its code through every verdict against recorded
 # fixtures — no Xcode, no network, seconds to run — which is what lets `lint`
 # gate them, and the pre-push hook with it.
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
@@ -74,7 +74,8 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/check-test-waits.sh \
                  Tools/tests/check-exit-tests.sh \
                  Tools/tests/check-self-activation.sh \
-                 Tools/tests/check-portable-imports.sh
+                 Tools/tests/check-portable-imports.sh \
+                 Tools/tests/dead-code.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained
 # so a new target directory can't silently escape linting (locally and in CI,
@@ -88,7 +89,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-presence locked-dead-code-presence dead-code-targets dead-code-tool doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -302,30 +303,34 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-portable-imports.sh $(PORTABLE_TARGETS)
 	@bash Tools/check-generated-protos.sh
 
-# Unused-code scan, reading .periphery.yml, over one fixed arena per checkout.
-# Periphery's own build would go to ~/Library/Caches/com.github.peripheryapp
-# under a name hashed from its schemes in a Swift `Set`'s per-process order, a
-# new multi-gigabyte arena most runs; the GUI's arena, indexed while editing,
-# is no single build's index. The flags are Periphery 3.x's own plus the
-# compilation cache off: a compile the
-# cache serves writes no index unit, leaving the unit an earlier compile wrote
-# — after a revert, a cached scan reported 27 findings in code that no longer
-# existed (Xcode 27.1). Stdout carries Periphery's report alone —
-# .github/workflows/dead-code.yml greps it — so the builds write to stderr. The
-# built apps are unregistered from Launch Services on the way out, whatever
-# the outcome, so a scan's build never wins the version election.
+# The macOS half of the dead-code scan, reading .periphery.yml, over one fixed
+# arena per checkout. Periphery's own build would go to
+# ~/Library/Caches/com.github.peripheryapp under a name hashed from its schemes
+# in a Swift `Set`'s per-process order, a new multi-gigabyte arena most runs;
+# the GUI's arena, indexed while editing, is no single build's index. The
+# build flags are Periphery 3.x's own plus the compilation cache off: a compile
+# the cache serves writes no index unit, leaving the unit an earlier compile
+# wrote — after a revert, a cached scan reported 27 findings in code that no
+# longer existed (Xcode 27.1). Each scheme is built for testing, so the one
+# index serves both views: the full scan, and the production scan with every
+# target only tests reach excluded. The report on stdout covers macOS alone;
+# .github/workflows/dead-code.yml combines this bundle with Linux's. The built
+# apps are unregistered from Launch Services on the way out, whatever the
+# outcome, so a scan's build never wins the version election.
 PERIPHERY_DERIVED_DATA := $(DERIVED_DATA_ROOT)/Periphery
-PERIPHERY_SCHEMES       = $(shell awk '/^schemes:/ { on = 1; next } on && /^  - / { print $$2; next } on && !/^ *(\#|$$)/ { on = 0 }' .periphery.yml)
+PERIPHERY_SCHEMES      := Kernova KernovaMacOSAgent KernovaRelaunchHelper KernovaCLI
+PERIPHERY_INDEX_STORE  := $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
+DEAD_CODE_BUNDLE       := $(PERIPHERY_DERIVED_DATA)/Report/macos
+DEAD_CODE_TOOL         := Tools/DeadCode/.build/release/dead-code
 
-dead-code: ## Scan for unused code with Periphery (builds every scheme first; minutes)
+dead-code: ## Scan for unused code with Periphery: the macOS half of the combined scan CI runs (builds every scheme first; minutes)
 	$(LOCKED_TWIN)
 
-locked-dead-code:
+locked-dead-code: dead-code-tool
 	@trap "Tools/ghosts.sh --unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
 	periphery=$$(Tools/install-periphery.sh) || exit 1; \
-	schemes='$(PERIPHERY_SCHEMES)'; \
-	[ -n "$$schemes" ] || { echo 'dead-code: no schemes listed in .periphery.yml' >&2; exit 1; }; \
-	for scheme in $$schemes; do \
+	excluded=$$($(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)) || exit 1; \
+	for scheme in $(PERIPHERY_SCHEMES); do \
 		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
 			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
 			build-for-testing \
@@ -333,8 +338,32 @@ locked-dead-code:
 			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
 			COMPILATION_CACHE_ENABLE_CACHING=NO >&2 || exit 1; \
 	done; \
-	"$$periphery" scan --disable-update-check \
-		--index-store-path $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
+	raw=$(PERIPHERY_DERIVED_DATA)/Report/raw; \
+	mkdir -p "$$raw" && \
+	scan() { "$$periphery" scan --disable-update-check --quiet --format json --skip-build \
+		--project $(PROJECT) --schemes $(PERIPHERY_SCHEMES) --index-store-path $(PERIPHERY_INDEX_STORE) "$$@"; } && \
+	scan > "$$raw/full.json" && \
+	scan --exclude-targets $$excluded > "$$raw/production.json" && \
+	$(DEAD_CODE_TOOL) bundle --root '$(CURDIR)' --base '$(CURDIR)' \
+		--full "$$raw/full.json" --production "$$raw/production.json" --output $(DEAD_CODE_BUNDLE) && \
+	$(DEAD_CODE_TOOL) report --platform macos=$(DEAD_CODE_BUNDLE)
+
+# The macOS index's declaration sites, beside `dead-code`'s bundle, which the
+# combined scan needs to tell code another platform compiles but leaves
+# unreported (used there) from code it never compiles.
+dead-code-presence: ## Export the macOS index's declaration sites into make dead-code's bundle, for the combined scan
+	$(LOCKED_TWIN)
+
+locked-dead-code-presence: dead-code-tool
+	@indexutil=$$(Tools/install-periphery.sh --indexutil-export) || exit 1; \
+	$(DEAD_CODE_TOOL) presence --indexutil-export "$$indexutil" --store $(PERIPHERY_INDEX_STORE) \
+		--root '$(CURDIR)' --output $(DEAD_CODE_BUNDLE)/presence.tsv
+
+dead-code-targets: dead-code-tool ## Print the targets only tests reach, which the dead-code scan's production view excludes
+	@$(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)
+
+dead-code-tool:
+	@swift build -c release --quiet --package-path Tools/DeadCode >&2
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format), signing, optional tooling, and repo setup (git hooks,

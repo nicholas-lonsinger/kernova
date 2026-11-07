@@ -1,18 +1,10 @@
 # Periphery dead-code scan configuration.
 # https://github.com/peripheryapp/periphery
 #
-# Consumed by `make dead-code`, run locally and by the
-# `.github/workflows/dead-code.yml` job.
-
-project: Kernova.xcodeproj
-
-# `make dead-code` builds each scheme with `build-for-testing`, so test targets
-# are indexed and a production symbol only tests reach is never reported.
-schemes:
-  - Kernova
-  - KernovaMacOSAgent
-  - KernovaRelaunchHelper
-  - KernovaCLI
+# The analysis every platform's scan shares. What each platform builds and
+# scans is its runner's: the Makefile's `dead-code` for macOS (the project and
+# its schemes), Tools/dead-code-linux.sh for Linux (KernovaKit, scanned from
+# its own directory).
 
 # `KernovaKit` is a closed monorepo package — every consumer (the
 # `Kernova` app and `KernovaMacOSAgent`) lives in this same project, so
