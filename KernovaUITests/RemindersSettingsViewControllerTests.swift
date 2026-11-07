@@ -175,6 +175,68 @@ struct RemindersSettingsViewControllerTests {
         #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
     }
 
+    // MARK: - Each switch's message
+
+    private func info(about row: String, in controller: RemindersSettingsViewController) throws
+        -> [InfoPopoverParagraph]
+    {
+        try #require(infoButton(about: row, in: controller.view)).paragraphs
+    }
+
+    @Test("The quit reminder's info opens with the title and text the reminder shows")
+    func quitReminderInfoShowsTheReminder() throws {
+        let controller = makeLaidOutController(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        let reminder = MenuBarQuitReminderViewController(onStopReminding: {})
+        reminder.loadViewIfNeeded()
+
+        let info = try info(about: "Menu bar quit reminder", in: controller)
+
+        #expect(
+            info.prefix(2) == [
+                .headline("Kernova is still running in the menu bar."),
+                .body("Your virtual machines keep running. Quit Kernova fully from this menu bar item."),
+            ])
+        #expect(findLabel(withText: MenuBarQuitReminderViewController.title, in: reminder.view) != nil)
+        #expect(findLabel(withText: MenuBarQuitReminderViewController.text, in: reminder.view) != nil)
+    }
+
+    @Test("The question's info opens with the question naming no virtual machine, Apple's claim included")
+    func questionInfoShowsTheQuestion() throws {
+        let controller = makeLaidOutController(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+
+        let info = try info(about: "Duplicate machine ID question", in: controller)
+
+        let question = DuplicateMachineIDQuestion.prompt(verb: nil, names: nil)
+        #expect(info.prefix(2) == [.headline(question.title), .body(question.message)])
+        #expect(question.message.hasSuffix(DuplicateMachineIDQuestion.vendorClaim))
+    }
+
+    @Test("Advanced states Apple's claim in the words the question quotes")
+    func advancedQuotesTheQuestionsClaim() throws {
+        let advanced = AdvancedSettingsViewController(
+            preferences: preferences, commandLineTool: AppBundleProducts.testing.commandLineTool)
+        advanced.loadViewIfNeeded()
+
+        let info = try #require(
+            infoButton(about: "Offer to start duplicate machine IDs anyway", in: advanced.view)
+        ).paragraphs
+
+        #expect(info.contains(.body(DuplicateMachineIDQuestion.vendorClaim)))
+    }
+
+    @Test("The install reminder's info opens with the title the sidebar prompt shows")
+    func installReminderInfoShowsThePrompt() throws {
+        let controller = makeLaidOutController(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+
+        let info = try info(about: "Guest agent install reminder", in: controller)
+
+        #expect(info.first == .headline("Set up the Kernova guest agent"))
+        #expect(info.first == .headline(GuestAgentStatusViewController.title(for: .waiting)))
+    }
+
     // MARK: - The duplicate machine ID question
 
     private func questionSwitch(in controller: RemindersSettingsViewController) throws -> NSSwitch {
@@ -294,7 +356,11 @@ struct RemindersSettingsViewControllerTests {
         presenter.confirmationAnswer = .answered(.decline)
         await viewModel.restart(restarting)
 
-        #expect(presenter.confirmationRequests.map(\.prompt.kind) == [.startBesideSharedMachineIdentity])
+        #expect(
+            presenter.confirmationRequests.map(\.prompt) == [
+                DuplicateMachineIDQuestion.prompt(
+                    verb: .restart, names: (vm: "Restarting", other: "Twin", otherHeldByAnotherCopy: false))
+            ])
         // Declined before the guest went down.
         #expect(virtualization.stopCallCount == 1)
         #expect(virtualization.startCallCount == 1)

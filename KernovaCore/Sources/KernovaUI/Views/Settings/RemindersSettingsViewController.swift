@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
 import KernovaLogging
 
@@ -98,17 +99,10 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             rows: [
                 makeGroupedFormCardRow(
                     "Menu bar quit reminder", control: menuBarQuitSwitch,
-                    info: [.body("Shown when you quit (⌘Q) and Kernova keeps running in the menu bar.")]),
+                    info: Self.menuBarQuitReminderInfo),
                 makeGroupedFormCardRow(
                     "Duplicate machine ID question", control: duplicateIDQuestionSwitch,
-                    info: [
-                        .body(
-                            "With Offer to start duplicate machine IDs anyway on in Advanced, Kernova "
-                                + "asks before it starts a virtual machine while another with the same "
-                                + "machine ID is active. With this off, or once you choose Don\u{2019}t "
-                                + "ask again on that question, Kernova starts it without asking."),
-                        .duplicateMachineIDVendorClaim,
-                    ]),
+                    info: Self.duplicateMachineIDQuestionInfo),
             ],
             notes: [duplicateIDQuestionNote])
 
@@ -117,13 +111,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         let agentInstallCard = makeGroupedFormCard(rows: [
             makeGroupedFormCardRow(
                 "Guest agent install reminder", control: agentInstallSwitch,
-                info: [
-                    .body(
-                        "The sidebar prompt to install the Kernova guest agent on a running macOS "
-                            + "virtual machine. Turn a virtual machine off below to stop only its "
-                            + "reminder. A virtual machine's reminder stops on its own once its "
-                            + "agent is installed.")
-                ])
+                info: Self.agentInstallReminderInfo)
         ])
 
         // Per-VM reminders: rebuilt on every appear (VMs may be added or removed).
@@ -334,6 +322,34 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // The override caption is a note of the per-VM card, so it changes the
         // pane's height only while that card exists.
         if hasVMs, wasShowingOverrideCaption != overridden { rearmScrollFlash() }
+    }
+
+    // MARK: - Info
+
+    private static var menuBarQuitReminderInfo: [InfoPopoverParagraph] {
+        InfoPopoverParagraph.message(
+            title: MenuBarQuitReminderViewController.title, text: MenuBarQuitReminderViewController.text)
+            + [.body("Shown when you quit (⌘Q).")]
+    }
+
+    private static var duplicateMachineIDQuestionInfo: [InfoPopoverParagraph] {
+        let question = DuplicateMachineIDQuestion.prompt(verb: nil, names: nil)
+        return InfoPopoverParagraph.message(title: question.title, text: question.message) + [
+            .body(
+                "Asked while Offer to start duplicate machine IDs anyway is on in Advanced. With this "
+                    + "off, or once you choose Don\u{2019}t ask again on the question, Kernova starts "
+                    + "the virtual machine without asking.")
+        ]
+    }
+
+    private static var agentInstallReminderInfo: [InfoPopoverParagraph] {
+        InfoPopoverParagraph.message(title: GuestAgentStatusViewController.title(for: .waiting), text: nil) + [
+            .body(
+                "The sidebar prompt to install the Kernova guest agent on a running macOS "
+                    + "virtual machine. Turn a virtual machine off below to stop only its "
+                    + "reminder. A virtual machine's reminder stops on its own once its "
+                    + "agent is installed.")
+        ]
     }
 
     @objc private func menuBarQuitToggled() {

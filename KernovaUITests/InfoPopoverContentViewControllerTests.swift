@@ -2,6 +2,7 @@ import AppKit
 import KernovaAppKitShared
 import Testing
 
+@testable import KernovaCore
 @testable import KernovaUI
 
 @Suite("InfoPopoverContentViewController Tests", .caseScoped)
@@ -56,6 +57,19 @@ struct InfoPopoverContentViewControllerTests {
         // Verify monospaced — derived from `monospacedSystemFont`, the
         // resulting NSFont's `isFixedPitch` flag is set.
         #expect(label.font?.isFixedPitch == true)
+    }
+
+    @Test("A message renders its title in the headline font above its text")
+    func messageRendersHeadlineThenBody() throws {
+        let vc = InfoPopoverContentViewController(
+            paragraphs: InfoPopoverParagraph.message(title: "A title.", text: "Its text."))
+        vc.loadViewIfNeeded()
+
+        let labels = try #require((vc.view.subviews.first as? NSStackView)?.arrangedSubviews)
+            .compactMap { $0 as? NSTextField }
+        #expect(labels.map(\.stringValue) == ["A title.", "Its text."])
+        #expect(labels.first?.font == CalloutStyle.headlineFont)
+        #expect(labels.last?.font == CalloutStyle.bodyFont)
     }
 
     @Test("A body's code span renders monospaced without its backticks")

@@ -1110,6 +1110,20 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 1)
     }
 
+    @Test("Naming no virtual machine, the question reads as a start's does")
+    func duplicateMachineIDQuestionNamingNoVM() {
+        let prompt = DuplicateMachineIDQuestion.prompt(verb: nil, names: nil)
+
+        #expect(prompt.title == "Start with a Duplicate Machine ID?")
+        #expect(
+            prompt.message
+                == "This virtual machine has the same machine ID as another, which is active. "
+                + "Apple: \u{201C}Running two virtual machines concurrently with the same identifier "
+                + "results in undefined behavior in the guest operating system.\u{201D}")
+        #expect(prompt.message.hasSuffix(DuplicateMachineIDQuestion.vendorClaim))
+        #expect(prompt.kind == .startBesideSharedMachineIdentity)
+    }
+
     @Test("With the question dismissed, a start and a restart beside a shared machine ID go ahead without consent")
     func dismissedQuestionStartsWithoutConsent() async throws {
         let harness = makeHarness()

@@ -77,7 +77,7 @@ final class AdvancedSettingsViewController: NSViewController {
                             + "anyway. Choosing Don\u{2019}t ask again on that question, or turning "
                             + "the question off in Settings \u{25B8} Reminders, starts it without "
                             + "asking from then on."),
-                    .duplicateMachineIDVendorClaim,
+                    .body(DuplicateMachineIDQuestion.vendorClaim),
                 ]),
             makeGroupedFormCardRow(
                 "Clone as", control: cloneOutcomePopUp,
@@ -356,14 +356,4 @@ final class AdvancedSettingsViewController: NSViewController {
 
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "AdvancedSettingsViewController")
-}
-
-extension InfoPopoverParagraph {
-    /// Apple's statement on running two virtual machines with one identifier,
-    /// beside every switch that decides whether Kernova starts one anyway.
-    static var duplicateMachineIDVendorClaim: InfoPopoverParagraph {
-        .body(
-            "Apple documents running two virtual machines at once with the same "
-                + "identifier as undefined behavior in the guest operating system.")
-    }
 }
