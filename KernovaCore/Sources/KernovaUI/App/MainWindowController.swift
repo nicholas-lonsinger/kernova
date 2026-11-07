@@ -297,11 +297,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
 
     static func windowTitle(for entry: LibraryEntry?) -> String {
         guard let entry else { return "Kernova" }
-        let name =
-            entry.vm.map {
-                EphemeralModeCopy.titleName($0.name, ephemeralSessionRunning: $0.hasLiveEphemeralSession)
-            } ?? entry.name
-        return "Kernova — \(name)"
+        return entry.vm.map {
+            EphemeralModeCopy.titleName($0.name, ephemeralSessionRunning: $0.hasLiveEphemeralSession)
+        } ?? entry.name
     }
 
     private func updateToolbarItems() {
