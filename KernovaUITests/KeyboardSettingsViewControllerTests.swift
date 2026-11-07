@@ -48,11 +48,7 @@ struct KeyboardSettingsViewControllerTests {
 
     @Test("Each row's info says what on and off do with its keys", arguments: ReservedShortcut.allCases)
     func infoNamesOnAndOff(_ shortcut: ReservedShortcut) {
-        let text = KeyboardSettingsViewController.infoParagraphs(for: shortcut).map { paragraph in
-            switch paragraph {
-            case .body(let text), .code(let text): text
-            }
-        }
+        let text = KeyboardSettingsViewController.infoParagraphs(for: shortcut).map(\.text)
 
         #expect(text.count == 2)
         #expect(text[0].hasPrefix("On: \(shortcut.displayString) chooses Edit › \(shortcut.commandTitle)"))

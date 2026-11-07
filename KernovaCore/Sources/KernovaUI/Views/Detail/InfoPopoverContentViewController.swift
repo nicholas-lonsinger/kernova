@@ -4,8 +4,9 @@ import KernovaCore
 
 /// Popover content for an ``InfoButtonView``.
 ///
-/// No headline is shown — the surrounding button carries the section or control
-/// name as its hover tooltip and VoiceOver label.
+/// The popover has no title of its own — the surrounding button carries the
+/// section or control name as its hover tooltip and VoiceOver label; a
+/// ``InfoPopoverParagraph/headline(_:)`` is a message's title.
 @MainActor
 final class InfoPopoverContentViewController: NSViewController {
     /// Paragraphs rendered, in order.
@@ -32,6 +33,8 @@ final class InfoPopoverContentViewController: NSViewController {
 
         for paragraph in paragraphs {
             switch paragraph {
+            case .headline(let text):
+                stack.addArrangedSubview(makeCalloutHeadline(text))
             case .body(let text):
                 let label = makeCalloutBody(text)
                 label.attributedStringValue = Self.renderedBody(text)

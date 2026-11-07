@@ -108,11 +108,7 @@ struct ClipboardSettingsViewControllerTests {
     /// The row's info paragraphs, as its popover would render them.
     private func sizeInfo(in controller: ClipboardSettingsViewController) throws -> [String] {
         let info = try #require(firstSubview(InfoButtonView.self, in: controller.view))
-        return info.paragraphs.map {
-            switch $0 {
-            case .body(let text), .code(let text): text
-            }
-        }
+        return info.paragraphs.map(\.text)
     }
 
     @Test("the row's info states what the ceiling protects against, not just its size")

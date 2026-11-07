@@ -390,8 +390,9 @@ package final class VMCommandCore {
             .stepRequired(duplicateMACAddressRequirement(conflict, on: instance, verb: verb))
         case .identityConflict(let conflict) where conflict.asks:
             .confirmationRequired(
-                Self.startBesideSharedMachineIdentityPrompt(
-                    instance, sharingWith: conflict.other, verb: verb))
+                DuplicateMachineIDQuestion.prompt(
+                    verb: verb,
+                    names: (instance.name, conflict.other.name, conflict.other.heldByAnotherCopy)))
         case .identityConflict(let conflict):
             .conflict(
                 vm: summary(instance), with: summary(conflict.other),
@@ -425,27 +426,9 @@ package final class VMCommandCore {
         + "so it can\u{2019}t undo this session\u{2019}s changes. "
         + "Choose File > Check Config Files\u{2026} to review it."
 
-    /// The confirmation that starts `instance` beside `other`, which shares its
-    /// machine identity — worded for the bring-up `verb` performs.
-    static func startBesideSharedMachineIdentityPrompt(
-        _ instance: VMInstance, sharingWith other: VMInstance, verb: VMVerb?
-    ) -> ConfirmationPrompt {
-        let verb = bringUpTitle(verb)
-        return ConfirmationPrompt(
-            kind: .startBesideSharedMachineIdentity,
-            title: "\(verb) \u{201C}\(instance.name)\u{201D} with a Duplicate Machine ID?",
-            message: CommandErrorDTO.sharedMachineIdentitySentence(
-                vm: instance.name, other: other.name,
-                otherHeldByAnotherCopy: other.heldByAnotherCopy)
-                + " Apple: \u{201C}Running two virtual machines concurrently with the same "
-                + "identifier results in undefined behavior in the guest operating system.\u{201D}",
-            confirmTitle: verb,
-            dismissTitle: "Cancel")
-    }
-
     /// The control a bring-up `verb` performs is named by: the Resume a
     /// restore performs, the Restart, or the Start.
-    static func bringUpTitle(_ verb: VMVerb?) -> String {
+    nonisolated static func bringUpTitle(_ verb: VMVerb?) -> String {
         switch verb {
         case .resume, .revertToSnapshot: "Resume"
         case .restart: "Restart"

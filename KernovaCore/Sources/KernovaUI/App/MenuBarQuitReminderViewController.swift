@@ -21,11 +21,15 @@ final class MenuBarQuitReminderViewController: NSViewController {
         fatalError("MenuBarQuitReminderViewController does not support NSCoder")
     }
 
+    /// The reminder's title, which Settings ▸ Reminders shows beside its switch.
+    static let title = "Kernova is still running in the menu bar."
+    /// The reminder's text, which Settings ▸ Reminders shows beside its switch.
+    static let text = "Your virtual machines keep running. Quit Kernova fully from this menu bar item."
+
     override func loadView() {
         installCalloutStack(rows: [
-            makeCalloutHeadline("Kernova is still running in the menu bar."),
-            makeCalloutBody(
-                "Your virtual machines keep running. Quit Kernova fully from this menu bar item."),
+            makeCalloutHeadline(Self.title),
+            makeCalloutBody(Self.text),
             makeLinkButton(
                 "Stop Reminding Me", target: self, action: #selector(stopRemindingTapped)),
         ])

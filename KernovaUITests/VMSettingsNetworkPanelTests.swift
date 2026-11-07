@@ -732,11 +732,7 @@ struct VMSettingsNetworkPanelTests {
     }
 
     private func paragraphText(_ paragraphs: [InfoPopoverParagraph]) -> [String] {
-        paragraphs.map {
-            switch $0 {
-            case .body(let body), .code(let body): body
-            }
-        }
+        paragraphs.map(\.text)
     }
 
     @Test("A build without app-managed networking describes only NAT in the Mode info")

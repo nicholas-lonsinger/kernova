@@ -1003,8 +1003,7 @@ extension CommandErrorDTO {
             macAddressInUseMessage(
                 address, vm: vm, holder: other, holding: holding, otherHolders: otherHolders)
         case .machineIdentity(let overrideSettingOn):
-            sharedMachineIdentitySentence(
-                vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy)
+            sharedMachineIdentitySentence((vm, other), otherHeldByAnotherCopy: otherHeldByAnotherCopy)
                 + " Two virtual machines with the same machine ID must not run at once."
                 + (otherHeldByAnotherCopy ? "" : " Stop \u{201C}\(other)\u{201D} first.")
                 + (overrideSettingOn ? "" : " You can change this in Settings \u{25B8} Advanced.")
@@ -1029,13 +1028,17 @@ extension CommandErrorDTO {
             + "Two virtual machines with the same MAC address must not run on the same network at once."
     }
 
-    /// The sentence naming the VM `vm` shares its machine identity with, and
-    /// who is running it — public so the confirmation that offers starting
-    /// `vm` anyway opens with the words its refusal does.
+    /// The sentence naming the VM `names.vm` shares its machine identity
+    /// with, `names.other`, and who is running it; with `names` nil, the same
+    /// sentence naming neither — public so the confirmation that offers
+    /// starting the VM anyway opens with the words its refusal does.
     public static func sharedMachineIdentitySentence(
-        vm: String, other: String, otherHeldByAnotherCopy: Bool
+        _ names: (vm: String, other: String)?, otherHeldByAnotherCopy: Bool
     ) -> String {
-        "\u{201C}\(vm)\u{201D} has the same machine ID as \u{201C}\(other)\u{201D}, "
+        let (vm, other) =
+            names.map { ("\u{201C}\($0.vm)\u{201D}", "\u{201C}\($0.other)\u{201D}") }
+            ?? ("This virtual machine", "another")
+        return "\(vm) has the same machine ID as \(other), "
             + (otherHeldByAnotherCopy ? "which another copy of Kernova is using." : "which is active.")
     }
 

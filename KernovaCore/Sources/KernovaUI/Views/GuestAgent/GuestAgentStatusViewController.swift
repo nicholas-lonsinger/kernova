@@ -279,6 +279,8 @@ final class GuestAgentStatusViewController: NSViewController {
 
     // MARK: - Per-status strings
 
+    /// The panel's title for `status`; Settings ▸ Reminders shows the
+    /// `.waiting` one beside the install reminder's switch.
     static func title(for status: AgentStatus) -> String {
         switch status {
         case .waiting: "Set up the Kernova guest agent"

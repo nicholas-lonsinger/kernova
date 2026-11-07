@@ -200,6 +200,15 @@ func visibleLabel(_ text: String, in view: NSView) -> Bool {
     } != nil
 }
 
+extension InfoPopoverParagraph {
+    /// The paragraph's text, whatever style the popover renders it in.
+    var text: String {
+        switch self {
+        case .headline(let text), .body(let text), .code(let text): text
+        }
+    }
+}
+
 /// The info button whose popover is about `label` — a row's title, a section
 /// header, or a banner's subject.
 @MainActor
