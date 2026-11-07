@@ -357,47 +357,35 @@ struct PipelineTests {
         #expect(throws: refusal) { try pipeline.next() }
     }
 
-    @Test("with lanes, encoding and decoding compressible bytes is no slower than in the caller")
-    func parallelIsNotSlower() throws {
+    @Test("the lanes compress as many chunks at once as there are lanes, and decompress as many")
+    func lanesWorkAtOnce() {
+        let lanes = 4
         let size = ContainerEncoder.chunkByteCount
-        // Text of words drawn one at a time, so each chunk costs the encoder real work, and enough chunks that a
-        // lane's scheduling latency on a busy runner is small beside them.
+        // Two windows of chunks that shrink, so every lane is handed work and the caller fills the window.
+        let chunks = 2 * 2 * lanes
         var random = SplitMix64(seed: 11)
         let words = (0..<512).map { Data("word\($0) ".utf8) }
         var text = Data()
-        text.reserveCapacity(size * 32 + 16)
-        while text.count < size * 32 { text.append(words[Int(random.next() % 512)]) }
-        text = text.prefix(size * 32)
+        text.reserveCapacity(size * chunks + 16)
+        while text.count < size * chunks { text.append(words[Int(random.next() % 512)]) }
+        text = text.prefix(size * chunks)
         let tree: [TreeEvent] = [
             .beginFile(lz4File(depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
         ]
         let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
-        let workers = 2
-        /// The fastest of three runs, in nanoseconds.
-        func best(_ body: () -> Void) -> UInt64 {
-            var best = UInt64.max
-            for _ in 0..<3 {
-                let start = DispatchTime.now().uptimeNanoseconds
-                body()
-                best = min(best, DispatchTime.now().uptimeNanoseconds - start)
-            }
-            return best
-        }
-        let container = sequentiallyEncoded(tree, accepting: generous(.file), policy: policy).container
-        let sequentialEncode = best { _ = sequentiallyEncoded(tree, accepting: generous(.file), policy: policy) }
-        let parallelEncode = best {
-            let pipeline = ContainerEncodePipeline(accepting: generous(.file), policy: policy, workers: workers)
-            _ = pipelined(tree, through: pipeline)
-        }
-        let pieces = pieces(of: container, sizes: [1 << 20])
-        let sequentialDecode = best { _ = sequentiallyDecoded(pieces, accepting: generous(.file)) }
-        let parallelDecode = best {
-            let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
-            _ = pipelined(pieces, through: pipeline)
-        }
-        // Loose, so a runner whose cores other suites are using does not fail it: the lanes must not lose half
-        // again, not win.
-        #expect(parallelEncode <= sequentialEncode * 3 / 2, "\(parallelEncode) ns against \(sequentialEncode) ns")
-        #expect(parallelDecode <= sequentialDecode * 3 / 2, "\(parallelDecode) ns against \(sequentialDecode) ns")
+        let expected = sequentiallyEncoded(tree, accepting: generous(.file), policy: policy)
+        #expect(recordOffsets(expected.container).filter { $0.kind == .lz4Chunk }.count == chunks)
+
+        let encodeLanes = MeetingLanes(count: lanes)
+        let encoder = ContainerEncodePipeline(
+            accepting: generous(.file), policy: policy, workers: encodeLanes.workers())
+        #expect(pipelined(tree, through: encoder) == expected)
+        #expect(encodeLanes.met, "\(encodeLanes.startedAtOnce) of \(lanes) attempts ran at once")
+
+        let decodeLanes = MeetingLanes(count: lanes)
+        let decoder = ContainerDecodePipeline(accepting: generous(.file), workers: decodeLanes.workers())
+        let decoded = pipelined([expected.container], through: decoder)
+        #expect(decoded == sequentiallyDecoded([expected.container], accepting: generous(.file)))
+        #expect(decodeLanes.met, "\(decodeLanes.startedAtOnce) of \(lanes) decompressions ran at once")
     }
 }
