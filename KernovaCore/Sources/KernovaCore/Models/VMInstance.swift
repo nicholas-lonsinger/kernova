@@ -208,8 +208,10 @@ package final class VMInstance {
             ) -> VMLibrary.SettingsWrite
         )?
 
-    /// Fired with the scopes of the agents that just connected current: new
-    /// agent hub peers whose payload is the bundled one.
+    /// Fired with the scopes of the agents that just connected current: agent
+    /// hub peers now running the payload bundled for their install that were
+    /// not before (``currentPeerScopes(arriving:to:)``), whichever peer of the
+    /// install each is.
     ///
     /// What the guest-agent installer disk waits for
     /// (``VMConfiguration/recordCurrentAgents(_:of:in:)``).
@@ -352,10 +354,12 @@ package final class VMInstance {
         }
     }
 
-    /// The scopes of the peers `new` holds and `old` does not whose payload is
-    /// the one the host bundles.
+    /// The scopes of the peers that stand current in `new` and did not in
+    /// `old`: a new connection, or one the hub judged only once its bundles
+    /// loaded. A peer's claim is fixed for its connection, so each turns
+    /// current once at most.
     static func currentPeerScopes(arriving old: AgentHubSnapshot, to new: AgentHubSnapshot) -> Set<GuestAgentScope> {
-        let known = Set(old.peers.map(\.handle))
+        let known = Set(old.peers.filter { $0.standing == .current }.map(\.handle))
         return Set(
             new.peers.filter { $0.standing == .current && !known.contains($0.handle) }.map(GuestAgentScope.init(of:)))
     }

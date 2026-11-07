@@ -59,8 +59,10 @@ private final class OneShotQuestion<Answer> {
 /// raised; an alert waiting on one window never holds up another. An alert no
 /// window the user can see qualifies for is held (``held``) until one does:
 /// every event that can make one qualify re-runs the routing. One that waited
-/// is shown only while what it says is still true, and one about a session
-/// (``AlertSubject/session(_:_:)``) is taken down when that session ends.
+/// is shown only while what it says is still true, and one whose words rest on
+/// a live fact (``premise(of:)``) — a session it is about
+/// (``AlertSubject/session(_:_:)``), the installer disk it describes — is taken
+/// down when that fact lapses.
 ///
 /// A question a suspended verb waits on is never queued: it is asked now, or
 /// answered ``PresenterAnswer/unasked`` when its window is taken or there is
@@ -96,7 +98,8 @@ final class AppAlertPresenter {
         case recoveryBoot(VMInstance)
         case stopPaused(VMInstance)
         case cancelPreparing(ConfirmationPrompt, VMArrival)
-        case installerMounted(VMInstance, GuestAgentInstallerPurpose, GuestAgentDiskDelivery)
+        /// `session` is the live session the disk was put in front of.
+        case installerMounted(VMInstance, GuestAgentInstallerPurpose, GuestAgentDiskDelivery, session: UUID?)
         case linuxAgentInstallChoice(VMInstance, LinuxAgentInstallChoice)
     }
 
@@ -153,9 +156,9 @@ final class AppAlertPresenter {
         /// Shown on the same window once this alert's dismissal finishes, ahead
         /// of anything waiting — the account prompt putting itself back up.
         var followUp: (@MainActor () -> Void)?
-        /// Takes the alert down when the session it is about ends; cancelled
-        /// once it is dismissed.
-        var sessionWatch: ObservationLoop?
+        /// Takes the alert down when its premise lapses (``premise(of:)``);
+        /// cancelled once it is dismissed.
+        var premiseWatch: ObservationLoop?
 
         init(
             buttons: [AlertButton], onWindowClose: WindowCloseDisposition,
@@ -293,7 +296,7 @@ final class AppAlertPresenter {
         case .startFailedAttachment(_, let instance), .startFailure(_, _, let instance),
             .takeSnapshot(let instance, _), .revertSnapshot(_, let instance),
             .deleteSnapshot(_, let instance), .forceStop(let instance), .recoveryBoot(let instance),
-            .stopPaused(let instance), .installerMounted(let instance, _, _),
+            .stopPaused(let instance), .installerMounted(let instance, _, _, _),
             .linuxAgentInstallChoice(let instance, _):
             instance
         }
@@ -361,12 +364,10 @@ final class AppAlertPresenter {
             return capabilities.isApplicable(.startInRecovery, to: vm)
         case .stopPaused(let vm):
             return vm.isLivePaused
-        case .installerMounted(let vm, _, _):
-            return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm)
+        case .installerMounted, .error(_, _, .session, _):
+            return premise(of: request)?() ?? true
         case .linuxAgentInstallChoice(let vm, _):
             return capabilities.isApplicable(.toggleGuestAgentDisk, to: vm) && !vm.hasGuestAgentInstallerMounted
-        case .error(_, _, .session(let vm, let session), _):
-            return vm.liveSessionID == session
         case .error, .startFailedAttachment, .startFailure, .startSummary, .deleteSheet,
             .cancelPreparing:
             return true
@@ -456,8 +457,8 @@ final class AppAlertPresenter {
                     configurations.errorConfig(title: title, message: message, openingSettingsAt: $0)
                 } ?? .acknowledgement(title: title, message: message),
                 on: window, onWindowClose: .requeue(entry))
-            if case .session(let instance, let session) = subject {
-                watch(shown, on: window, until: session, of: instance)
+            if case .session = subject, let premise = premise(of: entry.request) {
+                watch(shown, on: window, while: premise)
             }
         case .startFailure(let title, let message, _):
             showAlert(
@@ -471,12 +472,13 @@ final class AppAlertPresenter {
             showAlert(
                 .acknowledgement(title: title, message: listed(undone).undoneMessage(for: .start)),
                 on: window, onWindowClose: .requeue(entry))
-        case .installerMounted(let instance, let purpose, let delivery):
-            showAlert(
+        case .installerMounted(let instance, let purpose, let delivery, _):
+            let shown = showAlert(
                 configurations.installerMountedConfig(
                     instance.name, guestOS: instance.configuration.guestOS, purpose: purpose, delivery: delivery,
                     copy: { copyToPasteboard($0) }),
                 on: window, onWindowClose: .requeue(entry))
+            if let premise = premise(of: entry.request) { watch(shown, on: window, while: premise) }
         case .linuxAgentInstallChoice(let instance, let initial):
             showAlert(
                 LinuxAgentInstallChoiceAlert.configuration(
@@ -533,7 +535,7 @@ final class AppAlertPresenter {
         shown.alert = presentSheetAlert(
             config, in: window,
             didDismiss: { [weak slot] in
-                shown.sessionWatch?.cancel()
+                shown.premiseWatch?.cancel()
                 guard let slot, slot.occupant?.alert === shown else { return }
                 slot.occupant = nil
                 slot.leavingSheet = shown.alert?.window
@@ -548,15 +550,34 @@ final class AppAlertPresenter {
         return shown
     }
 
-    /// Takes `shown`, on `window`, down once `instance`'s live session is no
-    /// longer `session`: an alert about a session that ended says nothing
-    /// true. It ends as a window closing under it would, naming no button.
-    private func watch(_ shown: ShownAlert, on window: NSWindow, until session: UUID, of instance: VMInstance) {
-        shown.sessionWatch = observeRecurring(
-            track: { [weak instance] in _ = instance?.liveSessionID },
-            apply: { [weak window, weak instance, weak shown] in
-                guard let shown, instance?.liveSessionID != session else { return }
-                shown.sessionWatch?.cancel()
+    /// The live fact `request`'s words rest on, read afresh on each call, or
+    /// `nil` for an alert that stays until it is answered: an alert about a
+    /// session, that session still live; an installer alert, the disk it
+    /// describes still in front of the session it was attached in — on virtio
+    /// for the whole session, on USB while the VM's installer entry stands.
+    private func premise(of request: Request) -> (@MainActor () -> Bool)? {
+        switch request {
+        case .error(_, _, .session(let vm, let session), _):
+            return { [weak vm] in vm?.liveSessionID == session }
+        case .installerMounted(let vm, _, let delivery, let session):
+            return { [weak vm] in
+                guard let vm, let session, vm.liveSessionID == session else { return false }
+                return delivery == .virtio || vm.hasGuestAgentInstallerMounted
+            }
+        default:
+            return nil
+        }
+    }
+
+    /// Takes `shown`, on `window`, down once `premise` no longer holds: an
+    /// alert whose premise lapsed says nothing true. It ends as a window
+    /// closing under it would, naming no button.
+    private func watch(_ shown: ShownAlert, on window: NSWindow, while premise: @escaping @MainActor () -> Bool) {
+        shown.premiseWatch = observeRecurring(
+            track: { _ = premise() },
+            apply: { [weak window, weak shown] in
+                guard let shown, !premise() else { return }
+                shown.premiseWatch?.cancel()
                 guard let window, let sheet = shown.alert?.window, window.attachedSheet === sheet else { return }
                 window.endSheet(sheet, returnCode: .cancel)
             })
@@ -763,7 +784,7 @@ final class AppAlertPresenter {
         for instance: VMInstance, purpose: GuestAgentInstallerPurpose,
         delivery: GuestAgentDiskDelivery
     ) {
-        enqueue(.installerMounted(instance, purpose, delivery))
+        enqueue(.installerMounted(instance, purpose, delivery, session: instance.liveSessionID))
     }
 
     func presentLinuxAgentInstallChoice(for instance: VMInstance, initial: LinuxAgentInstallChoice) {

@@ -101,19 +101,22 @@ public struct PeerSummary: Sendable, Equatable {
     public var payloadHash: Data
     /// The guest OS version it reports, as the OS spells it.
     public var osVersion: String
-    /// How it stands against the payload the host bundles for it.
+    /// How it stands against the payload the host bundles for its install.
     public var standing: Standing
     /// Whether the host judges it responsive.
     public var isResponsive: Bool
 
-    /// How a peer stands against the payload the host bundles for it.
+    /// How a peer stands against the payload the host bundles for its install
+    /// (`BundledPayload.installBundle(from:for:)`).
     public enum Standing: Sendable, Equatable {
-        /// The host bundles no payload for it, so says nothing of its version.
+        /// It runs no payload the host bundles for its install, and the host offers it none — its install has
+        /// no bundle, or it is a SYSTEM install's session peer, whose install its system peer updates — so the
+        /// host says nothing of its version.
         case notOffered
-        /// Its payload hash is the bundled payload's.
+        /// Its payload hash is its install's bundled payload's, whichever peer of the install it is.
         case current
-        /// The host bundles for it the payload `offeredVersionLabel` names, which it does not run; `update`
-        /// says whether it is updating itself to it.
+        /// The host offers it the payload `offeredVersionLabel` names, which it does not run; `update` says
+        /// whether it is updating itself to it.
         case outdated(offeredVersionLabel: String, update: InBandUpdate)
     }
 

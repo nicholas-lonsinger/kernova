@@ -820,18 +820,101 @@ struct AppAlertPresenterTests {
         return window.attachedSheet?.contentView.map(labels(in:)) ?? []
     }
 
+    /// A running macOS VM, wired as a load leaves it, whose session reaches
+    /// its agents and whose installer disk is attached waiting for the
+    /// session agent.
+    private func installerVM(in h: Harness) throws -> VMInstance {
+        let installer = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
+        let vm = h.viewModel.library.registerFixture(
+            name: "Guest", guestOS: .macOS, phase: .running(sessionID: UUID()), preferences: preferences
+        ) {
+            $0.removableMedia = [
+                RemovableMediaItem(
+                    path: installer.path(percentEncoded: false), readOnly: true, awaitedAgentScopes: [.login])
+            ]
+        }
+        // The disk applies to a session that reaches its agents: one the hub has a transport for.
+        vm.beginSessionContextForTesting().hasAgentTransport = true
+        #expect(vm.hasGuestAgentInstallerMounted)
+        return vm
+    }
+
     @Test("The guest agent disk notice goes up on its VM's display window")
     func agentDiskNoticeRoutesToItsDisplayWindow() throws {
         let h = makeHarness()
-        let vm = makeRunningInstance(name: "Guest", guestOS: .macOS, in: h.viewModel)
-        // The disk applies to a session that reaches its agents: one the hub has a transport for.
-        vm.beginSessionContextForTesting().hasAgentTransport = true
+        let vm = try installerVM(in: h)
         let display = try showDisplayWindow(for: vm, in: h)
 
         h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)
 
         #expect(sheetText(on: display).contains("Installer Mounted"))
         #expect(h.presenter.waitingCountForTesting == 0)
+    }
+
+    /// What takes the installer disk off a VM.
+    enum InstallerDetach: CaseIterable, Sendable {
+        /// The agents it waited for connected.
+        case agentsConnected
+        /// The user's Eject.
+        case eject
+        /// The VM stopped.
+        case stop
+    }
+
+    @Test("The installer notice closes when the disk it describes detaches", arguments: InstallerDetach.allCases)
+    func installerNoticeClosesWithItsDisk(_ detach: InstallerDetach) async throws {
+        let h = makeHarness()
+        let library = h.showLibrary()
+        let vm = try installerVM(in: h)
+        h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)
+        #expect(sheetText(on: library).contains("Installer Mounted"))
+
+        switch detach {
+        case .agentsConnected:
+            vm.onCurrentAgentsArrived?([.login])
+            #expect(!vm.hasGuestAgentInstallerMounted)
+        case .eject:
+            await h.viewModel.toggleGuestAgentDisk(on: vm)
+            try await waitForChange { !vm.hasGuestAgentInstallerMounted }
+        case .stop:
+            vm.activity.placeForTesting(.stopped)
+        }
+        // The watch applies in a main-actor task the change enqueued, ahead of this one.
+        await Task { @MainActor in }.value
+
+        #expect(!h.isShowingAlert)
+        #expect(h.presenter.waitingCountForTesting == 0)
+    }
+
+    @Test("An installer notice whose disk detached while it waited is dropped")
+    func installerNoticeForADetachedDiskIsDropped() throws {
+        let h = makeHarness()
+        h.showLibrary()
+        let vm = try installerVM(in: h)
+        h.presenter.presentError("Busy.", title: "Library Notice", about: .library)
+        h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)
+        #expect(h.presenter.waitingCountForTesting == 1)
+
+        vm.onCurrentAgentsArrived?([.login])
+        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+
+        #expect(!h.isShowingAlert)
+        #expect(h.presenter.waitingCountForTesting == 0)
+    }
+
+    @Test("A disk on virtio is there for the session, so its notice stays up until the session ends")
+    func virtioNoticeLastsTheSession() async throws {
+        let h = makeHarness()
+        let library = h.showLibrary()
+        let vm = makeRunningInstance(name: "Guest", guestOS: .macOS, in: h.viewModel)
+        vm.beginSessionContextForTesting().hasAgentTransport = true
+        h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .virtio)
+        #expect(sheetText(on: library).contains("Guest Agent Disk Attached"))
+
+        vm.activity.placeForTesting(.stopped)
+        await Task { @MainActor in }.value
+
+        #expect(!h.isShowingAlert)
     }
 
     @Test("An alert waiting on one window does not hold up one for another, and each window keeps its order")

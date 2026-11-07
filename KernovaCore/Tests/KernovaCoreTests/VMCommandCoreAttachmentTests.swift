@@ -1721,19 +1721,92 @@ struct VMCommandCoreAttachmentTests {
                 standing: .current, isResponsive: true)
         ], features: FeatureStatus.merge([]))
 
-    @Test("A macOS install waits for the agent, and a session agent of the bundled payload ejects it")
-    func macOSInstallEjectsOnACurrentSessionAgent() async throws {
+    /// A running macOS VM whose own agent hub judges each peer that says
+    /// Hello through `probe` against the payload `.testing` bundles; and that
+    /// payload's hash, which an agent installed from the disk claims.
+    private func macOSHubVM() async throws -> (Harness, VMInstance, AgentHubProbe, Data) {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS) {
-            $0.lastSeenAgentVersion = AppBundleProducts.testing.versionLabel
-        }
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login])
+        let probe = AgentHubProbe()
+        let instance = RegisteredVMInstanceFixture.register(
+            name: "Core VM", phase: .running(sessionID: UUID()), guestOS: .macOS, library: harness.library,
+            preferences: preferences, agentConnector: probe)
+        instance.beginSessionContextForTesting()
+        instance.attachAgentTransport(probe)
+        try await probe.changed.wait { probe.isStarted }
+        let hash = try #require(await AppBundleProducts.testing.guestAgents.payloadHashes()[.macOS])
+        return (harness, instance, probe, hash)
+    }
+
+    /// Says Hello through `probe` as the macOS agent in `role` of a `scope`
+    /// install, running the payload `hash`, for pbear's session at the
+    /// guest's screen; answers its connection's index.
+    private func connectMacOSAgent(
+        _ probe: AgentHubProbe, _ role: PeerRole, of scope: InstallScope, running hash: Data, process: UInt8
+    ) throws -> Int {
+        let claim = PeerClaim(
+            role: role, scope: scope, os: .macOS, architecture: .arm64, payloadHash: hash,
+            instanceID: Data(repeating: process, count: 16))
+        let state =
+            role == .systemPeer
+            ? PeerSessionState(console: .on, consoleSessionID: "2")
+            : PeerSessionState(console: .on, sessionID: "2", userName: "pbear")
+        return try #require(probe.connectPowerPeer(claim: claim, state: state))
+    }
+
+    @Test("A macOS install just for me ejects the disk once its session agent connects")
+    func macOSInstallJustForMeEjectsOnItsSessionAgent() async throws {
+        let (harness, instance, probe, hash) = try await macOSHubVM()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
         #expect(instance.guestAgentInstallerAwaits == [.login])
 
-        instance.publishAgentHubSnapshotForTesting(Self.currentSessionAgent)
+        _ = try connectMacOSAgent(probe, .sessionPeer, of: .user, running: hash, process: 1)
 
-        #expect(!instance.hasGuestAgentInstallerMounted)
+        try await waitForChange { !instance.hasGuestAgentInstallerMounted }
+        #expect(instance.agentHubSnapshot.peers.map(\.standing) == [.current])
+    }
+
+    @Test("A macOS install for everyone ejects the disk once its session agent connects, not at its system service")
+    func macOSInstallForEveryoneEjectsOnItsSessionAgent() async throws {
+        let (harness, instance, probe, hash) = try await macOSHubVM()
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
+
+        // The system service starts first; alone it is what an install with
+        // nobody logged in at the guest's screen connects until a login.
+        _ = try connectMacOSAgent(probe, .systemPeer, of: .system, running: hash, process: 1)
+        try await waitForChange { instance.agentHubSnapshot.peers.first?.standing == .current }
+        #expect(instance.guestAgentInstallerAwaits == [.login])
+
+        _ = try connectMacOSAgent(probe, .sessionPeer, of: .system, running: hash, process: 2)
+
+        try await waitForChange { !instance.hasGuestAgentInstallerMounted }
+        #expect(instance.agentHubSnapshot.peers.map(\.standing) == [.current, .current])
+    }
+
+    @Test(
+        "An agent connected before the mount ejects nothing, and the reinstalled agent's connection ejects the disk",
+        arguments: [true, false])
+    func macOSReinstallEjectsOnTheNewAgent(alreadyCurrent: Bool) async throws {
+        let (harness, instance, probe, hash) = try await macOSHubVM()
+        let installed = alreadyCurrent ? hash : Data(repeating: 0xEE, count: hash.count)
+        let old = try connectMacOSAgent(probe, .sessionPeer, of: .user, running: installed, process: 1)
+        try await waitForChange {
+            switch instance.agentHubSnapshot.peers.first?.standing {
+            case .current?: alreadyCurrent
+            case .outdated?: !alreadyCurrent
+            default: false
+            }
+        }
+
+        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
+        #expect(instance.guestAgentInstallerAwaits == [.login])
+
+        // The install stops the old agent and starts its own.
+        probe.deliver(.closed(.transportLost), fromConnection: old)
+        try await waitForChange { instance.agentHubSnapshot.peers.isEmpty }
+        #expect(instance.hasGuestAgentInstallerMounted)
+        _ = try connectMacOSAgent(probe, .sessionPeer, of: .user, running: hash, process: 2)
+
+        try await waitForChange { !instance.hasGuestAgentInstallerMounted }
     }
 
     @Test("A macOS manage mount stays through the agent's arrival")

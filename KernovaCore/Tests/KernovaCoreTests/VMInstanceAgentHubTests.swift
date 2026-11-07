@@ -160,6 +160,23 @@ struct VMInstanceAgentHubTests {
         #expect(instance.lastSeenSystemAgentVersion == "1.0 (1)")
     }
 
+    @Test("A peer arrives current when it first stands current, on its connection or once the hub judges it")
+    func peerArrivesWhenItTurnsCurrent() {
+        let instance = Self.instance(guestOS: .linux)
+        var arrived: [Set<GuestAgentScope>] = []
+        instance.onCurrentAgentsArrived = { arrived.append($0) }
+
+        // Connected before the hub's bundles loaded, so not yet judged.
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(1, standing: .notOffered)]))
+        #expect(arrived.isEmpty)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(1, standing: .current)]))
+        #expect(arrived == [[.login]])
+        // Still current, and joined by a system peer that connected current.
+        instance.publishAgentHubSnapshotForTesting(
+            Self.snapshot([Self.peer(2, role: .systemPeer, standing: .current), Self.peer(1, standing: .current)]))
+        #expect(arrived == [[.login], [.system]])
+    }
+
     @Test("Row 3, macOS: a session agent that connected this session and left reads disconnected, never warning")
     func sessionAgentGoneReadsDisconnected() async {
         let instance = Self.instance(guestOS: .macOS, session: "1.0")

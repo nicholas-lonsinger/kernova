@@ -341,6 +341,23 @@ extension CoreUnits {
             #expect(BundledPayload.offer(from: [system], for: claim(.sessionPeer, .user)) == nil)
         }
 
+        @Test("The install's bundle by role and scope: USER for its session peer, SYSTEM for either of its peers")
+        func installBundleTable() {
+            let user = SimHub.bundle(size: 10, tag: 1, scope: .user)
+            let otherOS = SimHub.bundle(size: 10, tag: 2, os: .macOS, scope: .user)
+            let system = SimHub.bundle(size: 10, tag: 3, scope: .system)
+            let bundles = [otherOS, user, system]
+            func claim(_ role: PeerRole, _ scope: InstallScope) -> PeerClaim {
+                PeerClaim(role: role, scope: scope, os: .linux, architecture: .arm64)
+            }
+            #expect(BundledPayload.installBundle(from: bundles, for: claim(.sessionPeer, .user)) == user)
+            #expect(BundledPayload.installBundle(from: bundles, for: claim(.systemPeer, .system)) == system)
+            #expect(BundledPayload.installBundle(from: bundles, for: claim(.sessionPeer, .system)) == system)
+            #expect(BundledPayload.installBundle(from: bundles, for: claim(.systemPeer, .user)) == nil)
+            #expect(BundledPayload.installBundle(from: bundles, for: claim(.sessionPeer, .unspecified)) == nil)
+            #expect(BundledPayload.installBundle(from: [user], for: claim(.sessionPeer, .system)) == nil)
+        }
+
         @Test("Right after the peer's Hello the host sends PolicyUpdate, then UpdateAvailable with the offer")
         func offerFollowsPolicy() {
             let run = Self.host()
