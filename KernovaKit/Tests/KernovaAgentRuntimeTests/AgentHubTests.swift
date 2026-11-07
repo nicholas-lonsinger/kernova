@@ -561,6 +561,7 @@ struct AgentHubTests {
         _ = await harness.snapshot { $0.peers.count == 1 && $0.peers[0].handle.rawValue == 2 }
         await flush(harness.hub.queue)
         #expect(harness.connector.closures == [1: 1])
+        await harness.transport.released(1)
         #expect(firstAcceptor?.liveConnectionCount == 0)
         #expect(harness.connector.policies.elements.last?.connection == 2)
         #expect(harness.connector.policies.elements.last?.policy == Fixture.logsEnabled)
@@ -624,6 +625,7 @@ struct AgentHubTests {
         for _ in 1...2 { _ = await events.next { if case .closed = $0.event { true } else { false } } }
         await flush(harness.hub.queue)
         #expect(harness.connector.closures == [1: 1, 2: 1])
+        await harness.transport.released(2)
         #expect(harness.transport.acceptor?.liveConnectionCount == 0)
         #expect(harness.connect() == nil)
         harness.hub.close()

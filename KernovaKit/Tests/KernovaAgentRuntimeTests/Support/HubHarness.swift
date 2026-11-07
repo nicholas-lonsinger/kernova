@@ -123,6 +123,8 @@ final class TestTransport: GuestStreamTransport {
     private let acceptors = Locked<[GuestStreamAcceptor]>([])
     /// How many times the hub stopped it.
     let stops = Locked(0)
+    /// One entry per connection whose stream released, recorded once the acceptor has freed its slot.
+    private let releases = Recorder<Void>()
 
     func start(admitting acceptor: GuestStreamAcceptor) {
         acceptors.withLock { $0.append(acceptor) }
@@ -138,12 +140,23 @@ final class TestTransport: GuestStreamTransport {
     /// Opens a connection through the acceptor, answering its peer end, or `nil` when refused.
     func connect() -> MemoryStream? {
         let (host, peer) = MemoryStream.pair()
+        let releases = releases
         let accepted =
             acceptor?.offer { released in
-                host.onRelease(released)
+                host.onRelease {
+                    released()
+                    releases.record(())
+                }
                 return host
             } ?? false
         return accepted ? peer : nil
+    }
+
+    /// Waits until `count` of its connections' streams have released their slots. A stream releases after
+    /// the driver's final turn, so a connection's `.closed` orders nothing about its slot.
+    func released(_ count: Int) async {
+        var waiter = releases.waiter()
+        for _ in 0..<count { _ = await waiter.next { _ in true } }
     }
 }
 
