@@ -31,14 +31,15 @@ enum AgentShell {
     /// What the process holds for as long as it runs.
     private static let held = Locked<Held>(Held())
 
-    /// The fault `Tools/build-linux-guest-agent.sh` builds in, from `KERNOVA_AGENT_FAULT`, Debug only.
-    private static let fault: AgentFault? = {
+    /// The peer's dialer: `UnansweredDialer` in a build `Tools/build-linux-guest-agent.sh` gives the
+    /// hang-before-Hello fault, from `KERNOVA_AGENT_FAULT`, Debug only.
+    private static var dialer: any TransportDialer {
         #if KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
-        .hangBeforeHello
+        UnansweredDialer(logger: logger)
         #else
-        nil
+        LinuxVsockDialer()
         #endif
-    }()
+    }
 
     private struct Held: Sendable {
         var runtime: PeerAgentRuntime?
@@ -124,8 +125,8 @@ enum AgentShell {
         // Dials nothing until the watcher's first state.
         let runtime = PeerAgentRuntime(
             claim: claim, state: nil, registry: PeerFeatureRegistry(logs: logs, update: update),
-            dialer: LinuxVsockDialer(),
-            scheduler: SystemScheduler(), logger: logger, fault: fault,
+            dialer: dialer,
+            scheduler: SystemScheduler(), logger: logger,
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.

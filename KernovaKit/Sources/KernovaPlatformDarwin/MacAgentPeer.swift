@@ -46,9 +46,9 @@ public final class MacAgentPeer: Sendable {
     /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`, and serves the
     /// other item features `owners` builds owners for, each calling into the connection through the calls it
     /// is handed. Each change of ``hostConnection`` reaches `hostConnectionChanged`, on the runtime's queue.
-    /// A `fault` reaches the runtime: see ``AgentFault``.
+    /// It reaches the host through `dialer`.
     public init(
-        role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?, fault: AgentFault? = nil,
+        role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?, dialer: any TransportDialer,
         hostConnectionChanged: @escaping @Sendable (HostConnectionState) -> Void = { _ in },
         revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in },
         owners: (PeerItemCalls) -> ItemFeatureOwners = { _ in ItemFeatureOwners() }
@@ -81,7 +81,7 @@ public final class MacAgentPeer: Sendable {
         runtime = PeerAgentRuntime(
             claim: claim, state: state,
             registry: PeerFeatureRegistry(power: power, logs: logs, update: adapter, items: items),
-            dialer: DarwinVsockDialer(), scheduler: SystemScheduler(), logger: Self.logger, fault: fault,
+            dialer: dialer, scheduler: SystemScheduler(), logger: Self.logger,
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.

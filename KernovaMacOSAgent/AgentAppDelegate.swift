@@ -48,17 +48,18 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     /// payloads with.
     private static var versionLabel: String { "\(version) (\(buildNumber))" }
 
-    /// The fault `Config/Targets/KernovaMacOSAgent.xcconfig` builds in, from `KERNOVA_AGENT_FAULT`.
-    private static let fault: AgentFault? = {
+    /// The peers' dialer: `UnansweredDialer` in a build `Config/Targets/KernovaMacOSAgent.xcconfig` gives the
+    /// hang-before-Hello fault, from `KERNOVA_AGENT_FAULT`.
+    nonisolated private static var dialer: any TransportDialer {
         #if KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
         #if !DEBUG
         #error("KERNOVA_AGENT_FAULT is set in a non-Debug build; only Debug builds carry it")
         #endif
-        .hangBeforeHello
+        UnansweredDialer(logger: logger)
         #else
-        nil
+        DarwinVsockDialer()
         #endif
-    }()
+    }
 
     // MARK: - Services
 
@@ -97,7 +98,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         // Everything but the session peer runs headless, before any
         // NSApplication or window-server setup: the system peer is a daemon
         // with no window server (TN2083).
-        guard command == .session else { MacAgentTools.run(command, label: versionLabel, fault: fault) }
+        guard command == .session else { MacAgentTools.run(command, label: versionLabel, dialer: dialer) }
 
         let app = NSApplication.shared
         // `LSUIElement` in Info.plist is the primary mechanism for this; the call
@@ -135,7 +136,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let dragPeer = GuestDragOutRuntimePeer()
         let dragOut = GuestDragOut(peer: dragPeer, system: .live, stagingRoot: stagingRoot)
         let peer = MacAgentPeer(
-            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: state, fault: Self.fault,
+            role: .sessionPeer, label: Self.versionLabel, logs: logs, state: state, dialer: Self.dialer,
             hostConnectionChanged: { [weak self] _ in
                 // The controller re-reads the state, so the hops' order doesn't matter.
                 Task { @MainActor in self?.statusItemController?.connectionStateChanged() }
