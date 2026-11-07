@@ -106,6 +106,31 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
+    @Test(
+        "A SYSTEM install's session peer stands current on its install's payload, and on another one is offered nothing",
+        arguments: [
+            (hash: UInt8(0xA1), standing: PeerSummary.Standing.current),
+            (hash: UInt8(0xA2), standing: .notOffered),
+        ])
+    func systemInstallSessionPeerStanding(_ expected: (hash: UInt8, standing: PeerSummary.Standing)) async {
+        // One payload serves both scopes, as `BundledGuestAgents` bundles it.
+        let manifest = UpdateManifestValue(
+            payloadHash: Data(repeating: 0xA1, count: 32), payloadSize: 1, format: .executable, versionLabel: "next")
+        let harness = HubHarness(
+            bundles: [InstallScope.user, .system].map {
+                BundledPayload(os: .linux, architecture: .arm64, scope: $0, manifest: manifest, updatesInBand: true)
+            })
+        await harness.attached()
+        var claim = PeerClaim.session(.system, instance: 1)
+        claim.payloadHash = Data(repeating: expected.hash, count: 32)
+        let peer = HubPeer(harness, claim: claim)
+        let snapshot = await harness.snapshot { $0.peers.count == 1 }
+        #expect(snapshot.peers[0].standing == expected.standing)
+        #expect(!snapshot.inBandUpdatesWithheld)
+        peer.driver.close(.shuttingDown)
+        harness.hub.close()
+    }
+
     // MARK: In-band update
 
     static let offered = BundledPayload(

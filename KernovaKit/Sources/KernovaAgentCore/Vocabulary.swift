@@ -369,16 +369,25 @@ public struct BundledPayload: Sendable, Equatable {
         self.updatesInBand = updatesInBand
     }
 
-    /// The bundle for a peer claiming `claim`: a session peer of USER scope its os and architecture's USER
-    /// bundle, a system peer the SYSTEM bundle, anything else none. The first matching bundle wins.
+    /// The bundle the host offers a peer claiming `claim`: its ``installBundle(from:for:)`` when it is the peer
+    /// that updates its install — a USER install's session peer, a SYSTEM install's system peer — and none for
+    /// any other.
     public static func bundle(from bundles: [BundledPayload], for claim: PeerClaim) -> BundledPayload? {
-        let scope: InstallScope
         switch (claim.role, claim.scope) {
-        case (.sessionPeer, .user): scope = .user
-        case (.systemPeer, .system): scope = .system
-        default: return nil
+        case (.sessionPeer, .user), (.systemPeer, .system): installBundle(from: bundles, for: claim)
+        default: nil
         }
-        return bundles.first { $0.scope == scope && $0.os == claim.os && $0.architecture == claim.architecture }
+    }
+
+    /// The bundle of the install a peer claiming `claim` runs from, whichever of its peers it is: its os and
+    /// architecture's USER bundle for a USER install's session peer, the SYSTEM bundle for either peer of a
+    /// SYSTEM install, none for a peer of no install. The first matching bundle wins.
+    public static func installBundle(from bundles: [BundledPayload], for claim: PeerClaim) -> BundledPayload? {
+        switch (claim.role, claim.scope) {
+        case (.sessionPeer, .user), (.sessionPeer, .system), (.systemPeer, .system):
+            bundles.first { $0.scope == claim.scope && $0.os == claim.os && $0.architecture == claim.architecture }
+        default: nil
+        }
     }
 
     /// What the host offers a peer claiming `claim`: its ``bundle(from:for:)``'s ``offered`` manifest.
