@@ -32,16 +32,15 @@ public enum DarwinSessionState {
     }
 
     /// The system peer's state when `consoleUser` is the console's user, as `SCDynamicStoreCopyConsoleUser`
-    /// names it: off at the login window or with no user at all, unknown while a user has it.
+    /// names it: off at the login window or with no user at all, on while a user has it.
     ///
-    /// Unknown rather than on: the console's audit session id, which the session peers report as theirs, is not
-    /// among what `SCDynamicStoreCopyConsoleUser` returns (a user name, uid and gid), so with a user at the console
-    /// the system peer leaves the console to the session peers' own reports.
+    /// On names no session: the console's audit session id, which the session peers report as theirs, is not
+    /// among what `SCDynamicStoreCopyConsoleUser` returns (a user name, uid and gid).
     public static func systemPeer(consoleUser: String?) -> PeerSessionState {
         guard let consoleUser, !consoleUser.isEmpty, consoleUser != loginWindowUser else {
             return PeerSessionState(console: .off)
         }
-        return PeerSessionState(console: .unknown)
+        return PeerSessionState(console: .on)
     }
 
     /// The name `SCDynamicStoreCopyConsoleUser` gives the console at the login window.

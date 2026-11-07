@@ -205,6 +205,34 @@ struct AgentHubPowerTests {
         await close([session, system], harness)
     }
 
+    @Test(
+        "A macOS system peer reporting the console on without naming a session leaves the console to the session peers' reports"
+    )
+    func macOSSystemPeerConsoleOnUnnamed() async {
+        let harness = HubHarness()
+        await harness.attached()
+        let systemClaim = PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64)
+        let systemPower = FakePowerAdapter(initial: .available(PowerOffer(actions: [], ignoringApps: [.shutdown])))
+        let system = await connect(
+            harness, systemPower, claim: systemClaim, state: PeerSessionState(console: .on), peers: 1)
+        // Beside no session peer: nothing takes a graceful shutdown, and the system peer takes the one ignoring apps.
+        let alone = await harness.snapshot { $0.shutsDownIgnoringApps }
+        #expect(alone.power == .absent(.notOnConsole))
+        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
+        #expect(systemPower.performed.elements.isEmpty)
+
+        // Beside the console session's peer: it takes the graceful shutdown; the system peer, the one ignoring apps.
+        let sessionPower = FakePowerAdapter()
+        let session = await connect(harness, sessionPower, peers: 2)
+        let ready = await harness.snapshot { $0.power == .agent(.sessionPeer) }
+        #expect(ready.shutsDownIgnoringApps)
+        #expect(await harness.hub.requestPower(.shutdown) == .handedOff)
+        #expect(sessionPower.performed.elements.count == 1)
+        #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .handedOff)
+        #expect(systemPower.performedIgnoringApps.elements.count == 1)
+        await close([session, system], harness)
+    }
+
     @Test("A system peer that says the console is off keeps the session peer out of the merged entry")
     func systemConsoleAuthority() async {
         let harness = HubHarness()

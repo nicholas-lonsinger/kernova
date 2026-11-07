@@ -146,21 +146,21 @@ public protocol ConsolePeer {
     var connectedOrder: UInt64 { get }
 }
 
-/// Which session peers speak for the guest's console. A system peer that knows the console names the
-/// session that owns it; without one, or with one that does not know, each session peer's own report
-/// decides.
+/// Which session peers speak for the guest's console. A system peer that names the session owning the console
+/// decides; without one, or with one that names none while a user session owns it, each session peer's own
+/// report decides.
 public enum ConsoleAuthority {
     /// The session peers of the session that owns the console, newest first; none while the system peer
-    /// reports the console off.
+    /// reports no user session owns it.
     public static func consolePeers<Peer: ConsolePeer>(_ peers: [Peer]) -> [Peer] {
         let sessions = peers.filter { $0.role == .sessionPeer }
         let owners: [Peer]
-        switch peers.first(where: { $0.role == .systemPeer })?.state {
-        case let system? where system.console == .on:
-            owners = sessions.filter { $0.state.sessionID == system.consoleSessionID }
-        case let system? where system.console == .off:
+        switch peers.first(where: { $0.role == .systemPeer })?.state.consoleOwner {
+        case .session(let id):
+            owners = sessions.filter { $0.state.sessionID == id }
+        case .noUserSession:
             owners = []
-        default:
+        case .unnamed, nil:
             owners = sessions.filter { $0.state.console == .on }
         }
         return owners.sorted { $0.connectedOrder > $1.connectedOrder }
