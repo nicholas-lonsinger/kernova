@@ -456,6 +456,31 @@ struct RollbackCheckTests {
         #expect(!fixture.exists("switch-rejected"))
     }
 
+    /// A service manager whose job runs the unconfirmed version as `unconfirmed` while `current` names slot `b`,
+    /// and the restored version's fresh launch as `respawned` the moment `current` names anything else.
+    struct RespawningManager: ServiceManager {
+        let fixture: SlotFixture
+        let unconfirmed: UInt32
+        let respawned: UInt32
+        func peerProcessID() -> UInt32 { fixture.link("current") == "slots/b" ? unconfirmed : respawned }
+    }
+
+    @Test("It kills the process that ran the version it reverts, never the restored version's fresh launch")
+    func killsTheRevertedVersion() throws {
+        let fixture = try SlotFixture()
+        try SlotUpdateInstallerTests.switchToB(fixture)
+        let kills = Kills()
+        let check = RollbackCheck(
+            root: try fixture.slotRoot(),
+            serviceManager: RespawningManager(fixture: fixture, unconfirmed: 776, respawned: 904),
+            kill: { kills.pids.append($0) })
+        for _ in 1..<RollbackCheck.runsToRevert { _ = try check.run() }
+        #expect(try check.run() == .reverted(killed: 776))
+        #expect(kills.pids == [776])
+        #expect(!kills.pids.contains(904))
+        #expect(fixture.link("current") == "slots/a")
+    }
+
     @Test("A unit with no main process — waiting to restart — is reverted and nothing is killed")
     func revertsWithoutProcess() throws {
         let fixture = try SlotFixture()
