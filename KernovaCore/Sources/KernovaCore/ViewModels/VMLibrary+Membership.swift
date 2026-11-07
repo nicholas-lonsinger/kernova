@@ -434,16 +434,18 @@ extension VMLibrary {
     ///
     /// `whenAdopted` answers the follow-ups the VM the arrival becomes owes,
     /// which its adoption step follows — so the first request decided against
-    /// the new VM is theirs.
+    /// the new VM is theirs. `awaited` is ``VMArrival/isAwaited``.
     func beginArrival(
         kind: VMArrival.Kind, configuration: VMConfiguration, destination: URL,
         staged: VMStagedBundle, source: VMArrival.Source?, starting: VMArrival.Starting = VMArrival.Starting(),
+        awaited: Bool,
         write: @escaping (VMStagedBundle) async throws -> Void,
         whenAdopted: (@MainActor (VMInstance) -> [VMFollowUp])? = nil
     ) -> VMArrival {
         let arrival = VMArrival(
             id: configuration.id, kind: kind, configuration: configuration,
-            destinationURL: destination, staged: staged, source: source, starting: starting
+            destinationURL: destination, staged: staged, source: source, starting: starting,
+            isAwaited: awaited
         ) { [weak self] arrival in
             guard let self else { throw CancellationError() }
             return try await self.settle(arrival, writtenBy: write, whenAdopted: whenAdopted)

@@ -10,7 +10,8 @@ import KernovaTestSupport
 extension VMLibrary {
     /// Begins a real arrival for `configuration` whose write waits on `gate`
     /// and then writes the configuration into its staged bundle, so a release
-    /// publishes and adopts a readable bundle.
+    /// publishes and adopts a readable bundle. Its outcome is the test's to
+    /// await, so a failure is reported nowhere.
     @discardableResult
     func beginGatedArrival(
         _ kind: VMArrival.Kind = .importing, configuration: VMConfiguration,
@@ -27,7 +28,7 @@ extension VMLibrary {
         }
         let arrival = beginArrival(
             kind: kind, configuration: configuration, destination: destination, staged: staged,
-            source: nil
+            source: nil, awaited: true
         ) { staged in
             try await gate.pass()
             try storage.createVMBundle(at: staged.url)
@@ -65,7 +66,7 @@ extension VMArrival {
             destinationURL: VMInstanceFixture.bundleURL(for: configuration.id),
             staged: VMStagedBundle.fixtureForTesting(
                 at: VMInstanceFixture.bundleURL(for: UUID()), access: InMemoryVMBundleFiles()),
-            source: nil
+            source: nil, isAwaited: true
         ) { _ in throw CancellationError() }
     }
 

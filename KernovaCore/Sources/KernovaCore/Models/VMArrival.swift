@@ -163,6 +163,13 @@ package final class VMArrival {
     /// configuration, as far as it is known before the write.
     let starting: Starting
 
+    /// Whether the call that began the arrival awaits its outcome, which then
+    /// throws the failure to that caller alone. A failure nobody awaits is
+    /// reported in the step the arrival settles in
+    /// (``VMLibrary/onArrivalFailed``), so it has landed by the time
+    /// anything awaiting ``settled`` resumes.
+    let isAwaited: Bool
+
     /// The host state the VM arrives with and whether it carries snapshots: a
     /// clone's, the values its copy writes; an import's, its source's as read
     /// when the import registered, as the copy will leave them; a create's,
@@ -196,7 +203,7 @@ package final class VMArrival {
     /// arrival in the same synchronous segment does so before it.
     init(
         id: UUID, kind: Kind, configuration: VMConfiguration, destinationURL: URL,
-        staged: VMStagedBundle, source: Source?, starting: Starting = Starting(),
+        staged: VMStagedBundle, source: Source?, starting: Starting = Starting(), isAwaited: Bool,
         run: @escaping @MainActor (VMArrival) async throws -> VMInstance
     ) {
         self.id = id
@@ -206,6 +213,7 @@ package final class VMArrival {
         self.staged = staged
         self.source = source
         self.starting = starting
+        self.isAwaited = isAwaited
         self.run = run
         _ = settled
     }
