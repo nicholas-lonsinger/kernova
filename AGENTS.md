@@ -55,7 +55,7 @@ No guest agent has a version to bump: the host identifies each agent by the SHA-
 
 ## Dependencies
 
-Apple-published Swift packages only; a non-Apple package takes explicit sign-off.
+Swift packages from the `apple`, `swiftlang` and `swift-server` GitHub organizations only; a package from anywhere else takes explicit sign-off.
 
 ## App Sandbox rules
 
