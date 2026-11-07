@@ -71,8 +71,8 @@ final class TestWindowScope {
 
     /// Ends every sheet on `window`, each one's own sheets first.
     ///
-    /// Ending the attached sheet attaches the next one queued behind it, so
-    /// this runs until none is left.
+    /// Ending the attached sheet can attach one queued behind it, so this runs
+    /// until none is attached.
     private static func endSheets(on window: NSWindow) {
         while let sheet = window.attachedSheet {
             endSheets(on: sheet)

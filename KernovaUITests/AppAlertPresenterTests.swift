@@ -323,10 +323,10 @@ struct AppAlertPresenterTests {
     }
 
     @Test("Answering one pairing prompt leaves the next one able to be shown")
-    func answeringAPairingPromptFreesTheSlot() throws {
+    func answeringAPairingPromptFreesTheSlot() async throws {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
-        h.showLibrary()
+        let library = h.showLibrary()
         let instance = makeInstance(name: "Work", in: viewModel)
         let answers = PairingAnswers()
 
@@ -345,14 +345,11 @@ struct AppAlertPresenterTests {
         presenter.presentUSBAccessoryPairing(first)
         #expect(h.isShowingAlert)
 
-        // "Keep on Mac", delivered the way the sheet handler delivers it.
-        #expect(h.dismissShownAlert(.alertSecondButtonReturn))
-
-        // The flag says "a sheet is up", and the sheet is down by the time the
-        // action runs — so the second prompt is shown rather than auto-answered
-        // as a hold.
+        // "Keep on Mac", delivered the way the sheet handler delivers it. The
+        // window is released before the action runs, so the second prompt is
+        // asked rather than auto-answered as a hold.
+        try await endSheetAwaitingTheNext(on: library, .alertSecondButtonReturn)
         #expect(answers.answered == ["first"])
-        #expect(h.isShowingAlert)
 
         #expect(h.dismissShownAlert(.alertSecondButtonReturn))
         #expect(answers.answered == ["first", "second"])
@@ -776,18 +773,17 @@ struct AppAlertPresenterTests {
     }
 
     @Test("A refused password puts the sheet back up instead of answering the start")
-    func aRefusedPasswordReturnsToTheSheet() {
+    func aRefusedPasswordReturnsToTheSheet() async throws {
         let h = makeHarness()
         let presenter = h.presenter
-        h.showLibrary()
+        let library = h.showLibrary()
         let answers = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: answers))
 
         // "Set Up Account" with both fields untouched: the refusal is the
         // form's own, and the start hears nothing about it.
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+        try await endSheetAwaitingTheNext(on: library, .alertFirstButtonReturn)
         #expect(answers.answered.isEmpty)
-        #expect(h.isShowingAlert)
 
         #expect(h.dismissShownAlert(.alertThirdButtonReturn))
         #expect(answers.answered == [.answered(.cancelled)])
@@ -818,6 +814,28 @@ struct AppAlertPresenterTests {
             return own + view.subviews.flatMap(labels(in:))
         }
         return window.attachedSheet?.contentView.map(labels(in:)) ?? []
+    }
+
+    /// Ends `window`'s sheet with `response`, as a click on that button would,
+    /// and returns once the sheet the presenter put up behind it is attached.
+    ///
+    /// The presenter begins that sheet from the ending alert's handler, while
+    /// the alert is still attached, so AppKit queues it:
+    /// `beginSheet(_:completionHandler:)` "presents—or queues for
+    /// presentation—a sheet", and nothing promises a queued sheet is attached
+    /// by the time `endSheet(_:returnCode:)` returns. AppKit posts
+    /// `willBeginSheetNotification` as it attaches one.
+    private func endSheetAwaitingTheNext(
+        on window: NSWindow, _ response: NSApplication.ModalResponse
+    ) async throws {
+        let ending = try #require(window.attachedSheet)
+        let gate = AsyncGate()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSWindow.willBeginSheetNotification, object: window, queue: nil
+        ) { _ in gate.notify() }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        window.endSheet(ending, returnCode: response)
+        try await gate.wait { window.attachedSheet.map { $0 !== ending } ?? false }
     }
 
     /// A running macOS VM, wired as a load leaves it, whose session reaches
@@ -918,7 +936,7 @@ struct AppAlertPresenterTests {
     }
 
     @Test("An alert waiting on one window does not hold up one for another, and each window keeps its order")
-    func windowsQueueIndependently() throws {
+    func windowsQueueIndependently() async throws {
         let h = makeHarness()
         let vmA = makeRunningInstance(name: "A", in: h.viewModel)
         let vmB = makeRunningInstance(name: "B", in: h.viewModel)
@@ -933,15 +951,14 @@ struct AppAlertPresenterTests {
         #expect(sheetText(on: displayB).contains("Other Notice"))
         #expect(h.presenter.waitingCountForTesting == 1)
 
-        let shown = try #require(displayA.attachedSheet)
-        displayA.endSheet(shown, returnCode: .alertFirstButtonReturn)
+        try await endSheetAwaitingTheNext(on: displayA, .alertFirstButtonReturn)
 
         #expect(sheetText(on: displayA).contains("Second Notice"))
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
     @Test("A display window closing sends its alert and those waiting for it to the library window")
-    func closingADisplayWindowReroutesItsAlerts() throws {
+    func closingADisplayWindowReroutesItsAlerts() async throws {
         let h = makeHarness()
         let vm = makeRunningInstance(name: "Work", in: h.viewModel)
         let display = try showDisplayWindow(for: vm, in: h)
@@ -962,7 +979,7 @@ struct AppAlertPresenterTests {
         // it was raised, and the one waiting behind it follows it there.
         #expect(sheetText(on: library).contains("Shown Notice"))
         #expect(h.presenter.waitingCountForTesting == 1)
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
+        try await endSheetAwaitingTheNext(on: library, .alertFirstButtonReturn)
         #expect(sheetText(on: library).contains("Waiting Notice"))
     }
 
