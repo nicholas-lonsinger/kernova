@@ -67,8 +67,10 @@ extension VMCommandCore {
 
     /// The outcome of `arrival` for the caller that waits on it: the VM its
     /// bundle became, or the failure thrown here — and reported nowhere else,
-    /// unless the waiter has gone by the time it settles. The event stream
-    /// already carries the failure (``arrivalFailed(_:with:)``).
+    /// unless the waiter has gone by the time it settles or the arrival was
+    /// begun unawaited (``VMArrival/isAwaited``), whose failure is reported as
+    /// it settles. The event stream already carries the failure
+    /// (``arrivalFailed(_:with:)``).
     ///
     /// Awaiting ``VMArrival/settled`` does not return early when the waiting
     /// task is cancelled, so whether the waiter is still there is read after
@@ -82,24 +84,8 @@ extension VMCommandCore {
                     verb: arrival.kind.verb,
                     message: "The \(arrival.kind.displayNoun.lowercased()) was cancelled.")
             }
-            if Task.isCancelled { report(failure, on: nil) }
+            if Task.isCancelled, arrival.isAwaited { report(failure, on: nil) }
             throw failure
-        }
-    }
-
-    /// Routes the outcome of an arrival nobody waits on: a failure is
-    /// reported, and a VM is handed to `onSettled`.
-    func followUnwaited(
-        _ arrival: VMArrival, onSettled: (@MainActor (VMInstance) async -> Void)? = nil
-    ) {
-        Task { [weak self] in
-            do {
-                let instance = try await arrival.settled.value
-                await onSettled?(instance)
-            } catch {
-                guard let self, let failure = arrival.failure(for: error) else { return }
-                self.report(failure, on: nil)
-            }
         }
     }
 
@@ -158,7 +144,7 @@ extension VMCommandCore {
         }
         let arrival = library.beginArrival(
             kind: .creating, configuration: configuration, destination: bundleURL,
-            staged: staged, source: nil,
+            staged: staged, source: nil, awaited: false,
             write: { staged in
                 // Off the bounded `copyQueue`, which exists to serialize the
                 // multi-gigabyte `copyItem` calls import makes: this write is
@@ -174,12 +160,6 @@ extension VMCommandCore {
             },
             whenAdopted: startAfterCreate ? autoStart : nil)
         library.selectArrival(arrival.id)
-        followUnwaited(arrival) { [logger] instance in
-            logger.log(
-                .notice,
-                "Created VM '\(name, privacy: .public)' (status: \(instance.status.displayName, privacy: .public))"
-            )
-        }
         return summary(arrival)
     }
 
@@ -200,7 +180,7 @@ extension VMCommandCore {
     ) async throws -> VMSummary {
         guard waitForOutcome else { return try beginClone(selector, outcome: outcome) }
         return summary(
-            try await awaitOutcome(of: registerClone(selector, outcome: outcome)))
+            try await awaitOutcome(of: registerClone(selector, outcome: outcome, awaited: true)))
     }
 
     /// The clone nobody waits on, which never suspends: the arrival is
@@ -211,9 +191,7 @@ extension VMCommandCore {
     func beginClone(
         _ selector: VMSelector, outcome: CloneOutcome?
     ) throws -> VMSummary {
-        let arrival = try registerClone(selector, outcome: outcome)
-        followUnwaited(arrival)
-        return summary(arrival)
+        summary(try registerClone(selector, outcome: outcome, awaited: false))
     }
 
     /// Holds the source for a clone's copy and registers the clone's arrival,
@@ -226,7 +204,7 @@ extension VMCommandCore {
     /// suspended or live source arrives suspended on the source's saved
     /// state, and every other clone arrives stopped.
     private func registerClone(
-        _ selector: VMSelector, outcome: CloneOutcome?
+        _ selector: VMSelector, outcome: CloneOutcome?, awaited: Bool
     ) throws -> VMArrival {
         let instance = try resolve(selector)
 
@@ -314,7 +292,8 @@ extension VMCommandCore {
             kind: .cloning, configuration: clonedConfig, destination: bundleURL, staged: staged,
             source: VMArrival.Source(bundleURL: instance.bundleURL, label: instance.name),
             starting: VMArrival.Starting(
-                hostState: starting.hostState, hasSnapshots: !starting.snapshotManifest.isEmpty)
+                hostState: starting.hostState, hasSnapshots: !starting.snapshotManifest.isEmpty),
+            awaited: awaited
         ) { _ in
             // The copy's failure is the clone's.
             try await copied.value()
@@ -546,7 +525,9 @@ extension VMCommandCore {
     /// `waitForOutcome` is ``clone(_:outcome:waitForOutcome:)``'s.
     @discardableResult
     func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
-        let start = try registerImports(from: [sourceURL], intoFolder: nil).starts[0].get()
+        let start = try registerImports(
+            from: [sourceURL], intoFolder: nil, awaited: waitForOutcome
+        ).starts[0].get()
         switch start {
         case .existing(let instance):
             return summary(instance)
@@ -554,11 +535,7 @@ extension VMCommandCore {
             // Its own initiating call already routes an unwaited outcome.
             return waitForOutcome ? summary(try await awaitOutcome(of: arrival)) : summary(arrival)
         case .started(let arrival):
-            guard waitForOutcome else {
-                followUnwaited(arrival)
-                return summary(arrival)
-            }
-            return summary(try await awaitOutcome(of: arrival))
+            return waitForOutcome ? summary(try await awaitOutcome(of: arrival)) : summary(arrival)
         }
     }
 
@@ -569,9 +546,7 @@ extension VMCommandCore {
     /// there. ``importVM(from:waitForOutcome:)`` without `waitForOutcome` is
     /// this for one bundle and no folder.
     func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch {
-        let registered = registerImports(from: urls, intoFolder: folder)
-        // A joined import's own initiating call already routes its outcome.
-        for case .success(.started(let arrival)) in registered.starts { followUnwaited(arrival) }
+        let registered = registerImports(from: urls, intoFolder: folder, awaited: false)
         return VMImportBatch(
             imports: registered.starts.map { $0.map(summary(of:)) },
             membershipFailure: registered.membershipFailure)
@@ -612,9 +587,11 @@ extension VMCommandCore {
     /// nothing. A folder write that fails fails no import: the imports run
     /// on, and the failure is answered beside them.
     private func registerImports(
-        from urls: [URL], intoFolder folder: UUID?
+        from urls: [URL], intoFolder folder: UUID?, awaited: Bool
     ) -> (starts: [Result<ImportStart, any Error>], membershipFailure: (any Error)?) {
-        let starts = urls.map { url in Result<ImportStart, any Error> { try registerImport(from: url) } }
+        let starts = urls.map { url in
+            Result<ImportStart, any Error> { try registerImport(from: url, awaited: awaited) }
+        }
         let registered = starts.compactMap { try? $0.get() }
         var section: SidebarSectionID?
         var membershipFailure: (any Error)?
@@ -646,7 +623,7 @@ extension VMCommandCore {
     /// and two overlapping triggers' — run atomically on the main actor and see
     /// each other's arrivals, which one suspension point between them would
     /// break. The copies then run concurrently.
-    private func registerImport(from sourceURL: URL) throws -> ImportStart {
+    private func registerImport(from sourceURL: URL, awaited: Bool) throws -> ImportStart {
         do {
             let vmsDir = try storageService.vmsDirectory
             // A host state or manifest that doesn't read is the library's to
@@ -679,6 +656,7 @@ extension VMCommandCore {
                     source: .importing(sourceURL),
                     starting: VMArrival.Starting(
                         hostState: hostState, hasSnapshots: read.hasSnapshots ?? false),
+                    awaited: awaited,
                     write: { staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)

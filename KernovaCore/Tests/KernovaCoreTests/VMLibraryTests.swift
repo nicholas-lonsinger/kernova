@@ -543,7 +543,7 @@ struct VMLibraryTests {
         let arrival = library.beginArrival(
             kind: .creating, configuration: requested,
             destination: try storage.bundleURL(for: requested),
-            staged: try VMStagedBundle.mint(in: storage), source: nil
+            staged: try VMStagedBundle.mint(in: storage), source: nil, awaited: true
         ) { staged in
             try storage.createVMBundle(at: staged.url)
             try staged.writeInitial(published)
@@ -1102,7 +1102,7 @@ struct VMLibraryTests {
         let arrival = library.beginArrival(
             kind: .importing, configuration: written,
             destination: try storage.bundleURL(for: written),
-            staged: try VMStagedBundle.mint(in: storage), source: nil
+            staged: try VMStagedBundle.mint(in: storage), source: nil, awaited: true
         ) { staged in
             try await gate.pass()
             try storage.createVMBundle(at: staged.url)

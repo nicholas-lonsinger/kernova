@@ -565,13 +565,12 @@ extension VMInstance {
 
 extension VMLibraryViewModel {
     /// Awaits every arrival in the library, including any registered while an
-    /// earlier one is awaited.
+    /// earlier one is awaited, returning once each has left its row and
+    /// reported a failure nobody awaited (``VMArrival/isAwaited``) — both land
+    /// in the step its outcome settles in.
     func awaitArrivals() async {
         while let arrival = library.arrivals.first {
             _ = try? await arrival.settled.value
-            // The row leaves in the same main-actor turn the outcome settles
-            // in; a later turn lets that removal land before looking again.
-            await Task.yield()
         }
     }
 }

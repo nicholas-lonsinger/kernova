@@ -140,10 +140,10 @@ struct VMCommandCoreArrivalTests {
         await arrival.settle()
         // The failed copy let go of its source where it found it.
         #expect(source.phase == .stopped)
-
-        try await harness.failureReported.wait { !harness.failures.isEmpty }
-        try await events.changed.wait { !events.failures.isEmpty }
+        // Reported in the step the arrival settled in.
         #expect(harness.failures.count == 1)
+
+        try await events.changed.wait { !events.failures.isEmpty }
         #expect(events.failures.map(\.id) == [row.id])
     }
 
@@ -419,7 +419,7 @@ struct VMCommandCoreArrivalTests {
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(Set(harness.library.instances.map(\.id)) == [source.id, row.id])
         #expect(harness.library.arrivals.isEmpty)
-        try await harness.failureReported.wait { harness.failures.count == 1 }
+        #expect(harness.failures.count == 1)
     }
 
     @Test("A cancel that arrives after adoption is refused and deletes nothing")
