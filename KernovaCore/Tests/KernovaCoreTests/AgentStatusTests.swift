@@ -15,7 +15,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .current(version: "0.9.2"),
             lastSeenAgentVersion: "0.9.2",
-            agentExpectedButMissing: false
+            agentExpectedButMissing: false,
+            departedVersion: nil
         )
         #expect(result == .current(version: "0.9.2"))
     }
@@ -32,7 +33,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "0.9.2",
-            agentExpectedButMissing: false
+            agentExpectedButMissing: false,
+            departedVersion: nil
         )
         #expect(result == .connecting(expected: "0.9.2"))
     }
@@ -44,7 +46,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: nil,
-            agentExpectedButMissing: false
+            agentExpectedButMissing: false,
+            departedVersion: nil
         )
         #expect(result == .waiting)
     }
@@ -61,7 +64,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .current(version: "0.9.2"),
             lastSeenAgentVersion: "0.9.2",
-            agentExpectedButMissing: true
+            agentExpectedButMissing: true,
+            departedVersion: nil
         )
         #expect(result == .expectedMissing(expected: "0.9.2"))
     }
@@ -76,7 +80,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: nil,
-            agentExpectedButMissing: true
+            agentExpectedButMissing: true,
+            departedVersion: nil
         )
         #expect(result == .waiting)
     }
@@ -89,9 +94,56 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "0.9.2",
-            agentExpectedButMissing: true
+            agentExpectedButMissing: true,
+            departedVersion: nil
         )
         #expect(result == .expectedMissing(expected: "0.9.2"))
+    }
+
+    // MARK: - .disconnected
+
+    @Test(".waiting + a departed scope with nothing awaited → .disconnected, over .connecting")
+    func departedBecomesDisconnected() {
+        let result = AgentStatus.synthesize(
+            upstream: .waiting,
+            lastSeenAgentVersion: "0.9.2",
+            agentExpectedButMissing: false,
+            departedVersion: "0.9.1"
+        )
+        #expect(result == .disconnected(last: "0.9.1"))
+    }
+
+    @Test("A connected agent's status beats a departed scope")
+    func upstreamBeatsDeparted() {
+        let result = AgentStatus.synthesize(
+            upstream: .current(version: "1.0"),
+            lastSeenAgentVersion: "1.0",
+            agentExpectedButMissing: false,
+            departedVersion: "1.0"
+        )
+        #expect(result == .current(version: "1.0"))
+    }
+
+    @Test("The missing flag beats a departed scope")
+    func missingBeatsDeparted() {
+        let result = AgentStatus.synthesize(
+            upstream: .waiting,
+            lastSeenAgentVersion: "1.0",
+            agentExpectedButMissing: true,
+            departedVersion: "0.9"
+        )
+        #expect(result == .expectedMissing(expected: "1.0"))
+    }
+
+    @Test("An empty departed version falls through to .connecting")
+    func emptyDepartedFallsThrough() {
+        let result = AgentStatus.synthesize(
+            upstream: .waiting,
+            lastSeenAgentVersion: "1.0",
+            agentExpectedButMissing: false,
+            departedVersion: ""
+        )
+        #expect(result == .connecting(expected: "1.0"))
     }
 
     // MARK: - Empty-version defensive fall-through
@@ -106,7 +158,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "",
-            agentExpectedButMissing: true
+            agentExpectedButMissing: true,
+            departedVersion: nil
         )
         #expect(result == .waiting)
     }
@@ -120,7 +173,8 @@ struct AgentStatusTests {
         let result = AgentStatus.synthesize(
             upstream: .waiting,
             lastSeenAgentVersion: "",
-            agentExpectedButMissing: false
+            agentExpectedButMissing: false,
+            departedVersion: nil
         )
         #expect(result == .waiting)
     }

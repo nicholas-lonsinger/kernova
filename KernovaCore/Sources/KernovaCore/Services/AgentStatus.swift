@@ -35,17 +35,30 @@ package enum AgentStatus: Equatable, Sendable {
     /// elapsed with none connected — after the VM started or resumed, or after
     /// the agent went away mid-session (``MissingAgentRule``).
     ///
-    /// Synthesized only by ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``.
+    /// Synthesized only by
+    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
     case expectedMissing(expected: String)
 
     /// A VM that has had an agent connect before
     /// (`VMConfiguration.lastSeenAgentVersion` is set), with none connected
-    /// right now — the agent has yet to arrive, or arrived and then went away.
+    /// right now and one still awaited — an agent that has yet to arrive, or
+    /// one that went away within its grace.
     ///
-    /// Resolves once an agent connects, or to `.expectedMissing` if the agent
-    /// absence watchdog fires. Synthesized only by
-    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``.
+    /// Resolves once an agent connects; to `.expectedMissing` when the agent
+    /// absence watchdog warns; or to `.disconnected` once nothing is awaited
+    /// and only a scope that left this session remains. Synthesized only by
+    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
     case connecting(expected: String)
+
+    /// A VM whose session agent connected during this session and left, its
+    /// grace passed, with no agent connected now and none awaited: the
+    /// absence ``MissingAgentRule`` never warns about, since a logout looks
+    /// the same to the host as an uninstall. `last` is the version it last
+    /// reported.
+    ///
+    /// Resolves once an agent connects. Synthesized only by
+    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
+    case disconnected(last: String)
 
     /// Why an agent can't take the bundled payload in place.
     package enum ReinstallReason: Equatable, Sendable {
@@ -66,14 +79,16 @@ package enum AgentStatus: Equatable, Sendable {
     /// the final status the UI should render.
     ///
     /// Called only inside a session. Precedence: `.expectedMissing` (the
-    /// watchdog fired) beats `.connecting` (agent seen before, none connected)
-    /// beats `upstream` unchanged. Both synthesized cases require a non-empty
-    /// `lastSeenAgentVersion` — with an empty one the UI renders "guest agent
-    /// didn't reconnect", so upstream wins instead.
+    /// watchdog warned) beats `upstream` unless it is `.waiting`, which
+    /// becomes `.disconnected` when `departedVersion` names a scope that left
+    /// with nothing awaited, else `.connecting` (agent seen before, none
+    /// connected). Each synthesized case requires a non-empty version, which
+    /// the UI renders beside it; with an empty one the next rule wins.
     static func synthesize(
         upstream: AgentStatus,
         lastSeenAgentVersion: String?,
-        agentExpectedButMissing: Bool
+        agentExpectedButMissing: Bool,
+        departedVersion: String?
     ) -> AgentStatus {
         if agentExpectedButMissing,
             let expected = lastSeenAgentVersion,
@@ -81,10 +96,11 @@ package enum AgentStatus: Equatable, Sendable {
         {
             return .expectedMissing(expected: expected)
         }
-        if case .waiting = upstream,
-            let lastSeen = lastSeenAgentVersion,
-            !lastSeen.isEmpty
-        {
+        guard case .waiting = upstream else { return upstream }
+        if let departed = departedVersion, !departed.isEmpty {
+            return .disconnected(last: departed)
+        }
+        if let lastSeen = lastSeenAgentVersion, !lastSeen.isEmpty {
             return .connecting(expected: lastSeen)
         }
         return upstream
@@ -103,6 +119,7 @@ package enum AgentStatus: Equatable, Sendable {
         case .unresponsive: "unresponsive"
         case .expectedMissing: "expectedMissing"
         case .connecting: "connecting"
+        case .disconnected: "disconnected"
         }
     }
 }

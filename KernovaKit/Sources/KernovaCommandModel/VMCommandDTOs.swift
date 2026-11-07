@@ -211,7 +211,8 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated`,
     /// `updating` or `unresponsive` for a connected agent; `updating` for one away relaunching into an
     /// update and `connecting` for any other away agent; `expectedMissing` for one the session warns
-    /// didn't reconnect, at the version it last reported.
+    /// didn't reconnect, and `disconnected` for one that left this session and whose grace passed, each
+    /// at the version it last reported.
     public let status: String
 
     /// Describes one agent.

@@ -440,6 +440,46 @@ struct SidebarViewControllerTests {
         #expect(!visibleTexts(in: popover.view).contains(explanation))
     }
 
+    /// A session agent that left this session, its grace passed, is the gray
+    /// badge offering an install, which a dismissed install nudge doesn't hide.
+    @Test("A macOS guest's badge for a session agent that disconnected offers an install and says what's known")
+    func badgeOffersInstallForADisconnectedAgent() throws {
+        _ = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
+        let viewModel = makeViewModel()
+        let instance = viewModel.library.admitFixture(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [Self.peer(1)], features: FeatureStatus.merge([])))
+        // Its away line already expired: the hub lists nothing.
+        instance.publishAgentHubSnapshotForTesting(.empty)
+        viewModel.library.editHostState(of: instance) { $0.agentInstallNudgeDismissed = true }
+        let cell = makeRow(instance: instance, isBusy: false) {
+            GuestAgentDiskControl.model(for: instance, in: viewModel.capabilities)
+        }
+
+        let badge = try #require(firstSubview(SidebarAgentStatusButtonView.self, in: cell))
+        #expect(!badge.isHidden)
+        #expect(badge.status == .disconnected(last: "1.0"))
+        #expect(SidebarAgentStatusButtonView.symbolName(for: badge.status) == "exclamationmark.circle.fill")
+        #expect(badge.toolTip == "Guest agent disconnected (was 1.0)")
+        let control = try #require(badge.diskControl)
+        #expect(control == .init(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install)))
+
+        let popover = GuestAgentStatusViewController()
+        popover.update(
+            presentation: badge.presentation, diskControl: control, hasDismissAction: badge.hasDismissAction)
+        popover.loadViewIfNeeded()
+        let texts = visibleTexts(in: popover.view)
+        #expect(texts.first == "Guest agent disconnected")
+        #expect(
+            texts.dropFirst().first
+                == "The session agent disconnected and hasn\u{2019}t come back. An installed session agent "
+                + "connects again when its user logs in to the guest.")
+        #expect(texts.contains("Disconnected"))
+        #expect(
+            firstSubview(NSButton.self, in: popover.view) { $0.title == "Install Guest Agent…" }?.isHidden == false)
+    }
+
     /// The text of every label on screen, in document order: none under a hidden view.
     private func visibleTexts(in view: NSView) -> [String] {
         guard !view.isHidden else { return [] }

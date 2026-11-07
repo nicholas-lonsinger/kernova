@@ -46,13 +46,14 @@ struct GuestAgentStatusViewControllerTests {
             (.unresponsive(version: "0.9.2"), "Guest agent unresponsive"),
             (.connecting(expected: "0.9.2"), "Connecting to guest agent"),
             (.expectedMissing(expected: "0.9.2"), "Guest agent didn't reconnect"),
+            (.disconnected(last: "0.9.2"), "Guest agent disconnected"),
         ]
         for testCase in cases {
             #expect(GuestAgentStatusViewController.title(for: testCase.status) == testCase.title)
         }
     }
 
-    @Test("Only a reinstall-needed status explains itself, by its reason")
+    @Test("Only a reinstall-needed status, by its reason, and a disconnected one explain themselves")
     func explanationPerStatus() {
         let cases: [(status: AgentStatus, explanation: String?)] = [
             (
@@ -66,8 +67,14 @@ struct GuestAgentStatusViewControllerTests {
                     + "in place. Reinstall it from the installer disk. A build signed with a development team "
                     + "updates agents in place."
             ),
+            (
+                .disconnected(last: "0.9.2"),
+                "The session agent disconnected and hasn\u{2019}t come back. An installed session agent connects "
+                    + "again when its user logs in to the guest."
+            ),
             (.outdated(installed: "0.9.1", bundled: "0.9.2"), nil),
             (.connected(version: "0.9.2"), nil),
+            (.connecting(expected: "0.9.2"), nil),
         ]
         for testCase in cases {
             #expect(GuestAgentStatusViewController.explanation(for: testCase.status) == testCase.explanation)

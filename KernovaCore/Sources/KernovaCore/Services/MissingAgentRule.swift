@@ -28,7 +28,7 @@ package struct AgentScopePresence: Equatable, Sendable {
 /// |---|---|
 /// | never seen on this VM | no warning |
 /// | login, seen before but not yet this session | warns |
-/// | login, connected earlier this session | never warns: a logout or crash is not a missing install |
+/// | login, connected earlier this session | never warns: a logout or crash is not a missing install; reads disconnected |
 /// | system, seen before | warns |
 package enum MissingAgentRule {
     /// Whether `presence`'s absence warns once the grace has passed.
@@ -43,5 +43,13 @@ package enum MissingAgentRule {
     /// The scopes of `presences` whose absence warns once the grace has passed.
     package static func missing(_ presences: [AgentScopePresence]) -> [AgentScopePresence] {
         presences.filter(warnsAfterGrace)
+    }
+
+    /// Whether `presence`'s agent left during this session and its absence
+    /// never warns: the row a logout and an uninstall share, which the host
+    /// can't tell apart.
+    package static func departed(_ presence: AgentScopePresence) -> Bool {
+        presence.lastSeenVersion != nil && presence.seenThisSession && !presence.isConnected
+            && !warnsAfterGrace(presence)
     }
 }
