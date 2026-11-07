@@ -575,6 +575,27 @@ struct RemindersSettingsViewControllerTests {
         #expect(switches[1].state == .on)
     }
 
+    /// The row reads the key's gate, as VM Settings' switch does, so it doesn't
+    /// offer a flip the configuration verb would refuse.
+    @Test("A per-VM row is disabled while its VM's state takes no live edit, and follows it")
+    func perVMRowFollowsTheLiveGate() async throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        let instance = viewModel.instances[0]
+        #expect(try #require(vmSwitches(in: controller).first).isEnabled)
+
+        instance.activity.placeForTesting(.operating(.saving, from: .running(sessionID: UUID())))
+        #expect(
+            !viewModel.capabilities.isAvailable(
+                VMConfigurationKeyRegistry.agentInstallReminder, writing: "false", on: instance))
+
+        // The pane's observation loop applies on a later turn.
+        try await waitUntil { vmSwitches(in: controller).first?.isEnabled == false }
+
+        instance.activity.placeForTesting(.stopped)
+        try await waitUntil { vmSwitches(in: controller).first?.isEnabled == true }
+    }
+
     @Test("Only a VM the install reminder applies to gets a per-VM row")
     func onlyMacOSVMsGetARow() throws {
         let viewModel = makeViewModel()

@@ -39,7 +39,8 @@ struct VMConfigurationKeyRegistryTests {
     ) -> VMConfigurationWriteContext {
         VMConfigurationWriteContext(
             snapshots: manifest ?? makeManifest(), entitlements: entitlements, networks: .listed(networks),
-            resourceLimits: FakeVirtualizationHost.resourceLimits)
+            resourceLimits: FakeVirtualizationHost.resourceLimits,
+            agentInstallReminder: AgentInstallReminder(isOffForAllVMs: false))
     }
 
     /// Writes `key` into whichever half of `settings` holds it.

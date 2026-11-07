@@ -340,10 +340,7 @@ package struct VMCapabilityCatalog {
     ) -> Bool {
         isAvailable(
             key.capability(writing: value, for: instance.configuration.guestOS), on: instance)
-            && key.accepts(
-                value, for: instance, entitlements: library.entitlements,
-                networks: library.networks.state,
-                resourceLimits: library.virtualizationHost.resourceLimits)
+            && key.accepts(value, for: instance, in: library)
     }
 
     /// How turning Ephemeral Mode on is taken.

@@ -228,12 +228,23 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
                     _ = instance.id
                     _ = instance.name
                     _ = instance.hostState.agentInstallNudgeDismissed
+                    // Registers the VM state the key's gate reads, so a row
+                    // follows a bring-up, suspend or capture.
+                    _ = takesReminderChange(instance)
                 }
             },
             apply: { [weak self] in
                 self?.refreshVMRows()
             }
         )
+    }
+
+    /// Whether `instance`'s row takes a flip: the key's own refusal and the
+    /// VM-state gate, as the VM Settings pane's switch reads them.
+    private func takesReminderChange(_ instance: VMInstance) -> Bool {
+        viewModel.capabilities.isAvailable(
+            VMConfigurationKeyRegistry.agentInstallReminder,
+            writing: String(instance.hostState.agentInstallNudgeDismissed), on: instance)
     }
 
     /// Rebuilds the per-VM rows and mirrors every switch to current state.
@@ -315,6 +326,8 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     ///
     /// A per-VM row keeps showing what its VM reverts to while the app-wide
     /// install reminder is off; it just can't be changed until that goes back on.
+    /// A row is enabled exactly when the `agent.installReminder` key would take
+    /// its flip (``takesReminderChange(_:)``).
     private func refreshSwitches() {
         menuBarQuitSwitch.state = viewModel.menuBarQuitReminderDismissed ? .off : .on
         duplicateIDQuestionSwitch.state = viewModel.duplicateMachineIDQuestionDismissed ? .off : .on
@@ -331,7 +344,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
-            applyGroupedFormRowEnabled(!overridden, control: toggle)
+            applyGroupedFormRowEnabled(takesReminderChange(instance), control: toggle)
         }
         publishSize()
 

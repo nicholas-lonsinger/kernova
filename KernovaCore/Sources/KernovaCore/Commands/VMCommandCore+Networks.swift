@@ -85,10 +85,7 @@ extension VMCommandCore {
             var settings = instance.settings
             try key.apply(
                 isolated, to: &settings,
-                context: VMConfigurationWriteContext(
-                    instance, entitlements: library.entitlements,
-                    networks: library.networks.state,
-                    resourceLimits: library.virtualizationHost.resourceLimits))
+                context: VMConfigurationWriteContext(instance, in: library))
         }
         let joining = naming.filter { instance in
             members.contains { $0 === instance }

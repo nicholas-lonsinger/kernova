@@ -173,7 +173,8 @@ struct VMStateFieldClassesTests {
         let snapshot = VMSnapshot(name: "Baseline", macAddress: nil)
         let context = VMConfigurationWriteContext(
             snapshots: VMSnapshotManifest(snapshots: [snapshot]), entitlements: .entitled, networks: .listed([]),
-            resourceLimits: FakeVirtualizationHost.resourceLimits)
+            resourceLimits: FakeVirtualizationHost.resourceLimits,
+            agentInstallReminder: AgentInstallReminder(isOffForAllVMs: false))
         var networked = VMConfiguration(
             name: "VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
             memorySizeInGB: VMGuestOS.macOS.hostMemorySize)

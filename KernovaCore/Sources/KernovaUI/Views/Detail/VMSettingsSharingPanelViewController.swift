@@ -420,15 +420,12 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     isAvailable(VMConfigurationKeyRegistry.dropFiles, writing: String(!dropsFiles)),
                     control: dropFilesSwitch)
             case .installReminder:
-                // The per-VM flag keeps its value while the app-wide preference overrides
-                // it, so the switch still shows what this VM reverts to when the
-                // preference is turned back on — it just can't be changed from here.
+                // The switch shows this VM's own choice, which the key refuses to
+                // move while the reminder is off for every VM.
                 let reminds = !instance.hostState.agentInstallNudgeDismissed
                 installReminderSwitch.state = reminds ? .on : .off
-                let overridden = viewModel.agentInstallPromptDisabled
                 applyGroupedFormRowEnabled(
-                    !overridden
-                        && isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
+                    isAvailable(VMConfigurationKeyRegistry.agentInstallReminder, writing: String(!reminds)),
                     control: installReminderSwitch)
                 installReminderOverrideCaption?.refresh()
             }
