@@ -2,6 +2,7 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 import KernovaCommandModel
+import KernovaLogging
 import KernovaTestSupport
 import Testing
 
@@ -25,11 +26,13 @@ struct VMIntentGatewayTests {
     private func makeGateway(
         over harness: WiredCommandCore,
         record: VMIndexRecord = makeTestIndexRecord(),
-        index: MockVMEntityIndex = MockVMEntityIndex()
+        index: MockVMEntityIndex = MockVMEntityIndex(),
+        log: LogCapture = LogCapture()
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: harness.core, readiness: LibraryReadiness(awaitReady: {}), index: index,
-            record: record)
+            record: record,
+            logger: KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway", sink: log.sink))
     }
 
     /// A readiness that parks until `release` yields, telling `entered` once
@@ -603,11 +606,17 @@ struct VMIntentGatewayTests {
     /// order, so the gateway's own subscription holds that batch too, ahead of
     /// anything changed after this returns.
     private func readUntilRunning(_ vm: VMInstance, on events: AsyncStream<[VMLibraryEvent]>) async {
-        for await batch in events {
-            for event in batch {
-                if case .statusChanged(let id, _, _, let to) = event, id == vm.id, to == "running" { return }
-            }
+        await readUntil(on: events) {
+            if case .statusChanged(let id, _, _, "running") = $0 { id == vm.id } else { false }
         }
+    }
+
+    /// Reads `events` up to the batch holding an event `matches` admits, on
+    /// the same ordering ``readUntilRunning(_:on:)`` states.
+    private func readUntil(
+        on events: AsyncStream<[VMLibraryEvent]>, _ matches: (VMLibraryEvent) -> Bool
+    ) async {
+        for await batch in events where batch.contains(where: matches) { return }
     }
 
     @Test("Readiness writes the whole library, emptying nothing")
@@ -644,8 +653,8 @@ struct VMIntentGatewayTests {
         withExtendedLifetime(gateway) {}
     }
 
-    @Test("A refused whole-library write keeps the recorded VMs, and the next batch re-attempts it")
-    func refusedSyncIsRetriedOnTheNextBatch() async throws {
+    @Test("A refused whole-library write keeps the recorded VMs, and an addition re-attempts it")
+    func refusedSyncIsRetriedWithTheNextAddition() async throws {
         let harness = WiredCommandCore()
         let vm = harness.register(name: "Wired")
         let stale = UUID()
@@ -659,18 +668,17 @@ struct VMIntentGatewayTests {
         #expect(record.indexedVMIDs == [stale])
 
         index.indexError = nil
-        // A status change shows neither surface anything new, and is still the
-        // moment the refused write is re-attempted.
-        try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+        let added = harness.register(name: "Added")
 
         try await index.awaitOperations(Self.syncedOperations + 1)
-        #expect(index.operations == [.index([vm.id]), .index([vm.id])])
-        #expect(record.indexedVMIDs == [stale, vm.id])
+        // The refused VM joins the new one's write, in library order.
+        #expect(index.operations == [.index([vm.id]), .index([vm.id, added.id])])
+        #expect(record.indexedVMIDs == [stale, vm.id, added.id])
         withExtendedLifetime(gateway) {}
     }
 
-    @Test("A refused removal is retried on the next batch, and forgotten only once it lands")
-    func refusedRemovalIsRetriedOnTheNextBatch() async throws {
+    @Test("A refused removal joins the next write, and is forgotten only once it lands")
+    func refusedRemovalIsRetriedWithTheNextWrite() async throws {
         let harness = WiredCommandCore()
         let gone = harness.register(name: "Gone")
         let kept = harness.register(name: "Kept")
@@ -691,14 +699,72 @@ struct VMIntentGatewayTests {
         #expect(record.indexedVMIDs == [gone.id, kept.id])
 
         index.removeError = nil
-        try await harness.core.start(.id(kept.id), recovery: false, consent: .none)
+        let added = harness.register(name: "Added")
 
-        try await index.awaitOperations(Self.syncedOperations + 2)
+        try await index.awaitOperations(Self.syncedOperations + 3)
         #expect(
             index.operations == [
-                .index([gone.id, kept.id]), .remove([gone.id]), .remove([gone.id]),
+                .index([gone.id, kept.id]), .remove([gone.id]), .remove([gone.id]), .index([added.id]),
             ])
-        #expect(record.indexedVMIDs == [kept.id])
+        #expect(record.indexedVMIDs == [kept.id, added.id])
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("A status or agent change writes nothing, even with a refused write pending")
+    func statusAndAgentChangesLeavePendingWritesAlone() async throws {
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
+        let index = MockVMEntityIndex()
+        index.indexError = CocoaError(.fileWriteUnknown)
+        let gateway = makeGateway(over: harness, index: index)
+        let events = harness.core.events()
+
+        try await index.awaitOperations(Self.syncedOperations)
+        index.indexError = nil
+
+        // Each drained through one stream ahead of the addition whose write is
+        // awaited, so the count proves neither batch wrote.
+        try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+        await readUntilRunning(vm, on: events)
+        vm.beginSessionContextForTesting().hasAgentTransport = true
+        await readUntil(on: events) {
+            if case .agentStatusChanged(let id, _, _) = $0 { id == vm.id } else { false }
+        }
+        let added = harness.register(name: "Added")
+
+        try await index.awaitOperations(Self.syncedOperations + 1)
+        #expect(index.operations == [.index([vm.id]), .index([vm.id, added.id])])
+        withExtendedLifetime(gateway) {}
+    }
+
+    @Test("Refusals log one warning when they start and one notice when a write lands again")
+    func refusalsLogTheirTransitionsOnly() async throws {
+        let harness = WiredCommandCore()
+        let vm = harness.register(name: "Wired")
+        let index = MockVMEntityIndex()
+        index.indexError = CocoaError(.fileWriteUnknown)
+        let log = LogCapture()
+        let gateway = makeGateway(over: harness, index: index, log: log)
+
+        try await index.awaitOperations(Self.syncedOperations)
+        #expect(gateway.indexAcceptsWrites == false)
+        try harness.core.rename(.id(vm.id), to: "Renamed")
+        try await index.awaitOperations(Self.syncedOperations + 1)
+        _ = harness.register(name: "Second")
+        try await index.awaitOperations(Self.syncedOperations + 2)
+        #expect(gateway.indexAcceptsWrites == false)
+
+        index.indexError = nil
+        _ = harness.register(name: "Third")
+        try await index.awaitOperations(Self.syncedOperations + 3)
+        try harness.core.rename(.id(vm.id), to: "Renamed Again")
+        try await index.awaitOperations(Self.syncedOperations + 4)
+
+        #expect(gateway.indexAcceptsWrites)
+        let above = log.records.filter { $0.level != .debug }
+        #expect(above.map(\.level) == [.warning, .notice], "\(log.records)")
+        #expect(above.first?.message.hasPrefix("Spotlight failed indexing every VM") == true)
+        #expect(above.last?.message.hasPrefix("Spotlight took an index write again") == true)
         withExtendedLifetime(gateway) {}
     }
 

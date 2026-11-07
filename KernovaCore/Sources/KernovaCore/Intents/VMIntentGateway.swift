@@ -18,8 +18,6 @@ import KernovaLogging
 /// which each intent renders in the framework's idiom.
 @MainActor
 package final class VMIntentGateway {
-    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
-
     private let commands: VMCommandCore
     /// The app's first library read, shared with every other front door.
     private let readiness: LibraryReadiness
@@ -30,27 +28,35 @@ package final class VMIntentGateway {
     /// Fills the library's search with a term and puts the library window in
     /// front of the user.
     private let showSearchResults: @MainActor (String) -> Void
+    private let logger: KernovaLogger
 
     /// The library subscription that keeps the Spotlight index current.
     private var libraryEvents: Task<Void, Never>?
 
-    /// VMs a refused write left unindexed, re-attempted on the next batch.
+    /// VMs a refused write left unindexed, joining the next index write.
     private var pendingIndex: Set<UUID> = []
-    /// VMs a refused write left in the index, re-attempted on the next batch.
+    /// VMs a refused write left in the index, joining the next index write.
     private var pendingRemove: Set<UUID> = []
+
+    /// Whether Spotlight took the most recent index write; `true` until one is
+    /// refused. Only ``write(_:_:)`` changes it, and only its transitions are
+    /// logged above debug.
+    private(set) var indexAcceptsWrites = true
 
     package init(
         commands: VMCommandCore,
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         record: VMIndexRecord = VMIndexRecord(),
-        showSearchResults: @escaping @MainActor (String) -> Void = { _ in }
+        showSearchResults: @escaping @MainActor (String) -> Void = { _ in },
+        logger: KernovaLogger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
     ) {
         self.commands = commands
         self.readiness = readiness
         self.index = index
         self.record = record
         self.showSearchResults = showSearchResults
+        self.logger = logger
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
         libraryEvents = Task { [weak self] in
@@ -105,7 +111,7 @@ package final class VMIntentGateway {
         } catch CommandError.notFound where named == .beforeSuspension {
             return nil
         } catch {
-            Self.logger.log(
+            logger.log(
                 .fault,
                 "Listed VM \(id.uuidString, privacy: .public) has no info read: \(error.localizedDescription, privacy: .public)"
             )
@@ -506,7 +512,7 @@ package final class VMIntentGateway {
             return try await body()
         } catch let failure as CommandError {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
-            Self.logger.log(
+            logger.log(
                 .notice,
                 "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message, privacy: .public)"
             )
@@ -549,11 +555,12 @@ package final class VMIntentGateway {
         if !stale.isEmpty { await removeFromIndex(Array(stale)) }
     }
 
-    /// Brings the index up to what one pass over the library found,
-    /// re-attempting whatever an earlier write was refused.
+    /// Brings the index up to what one pass over the library found, with
+    /// whatever an earlier write was refused joining the write it makes.
     ///
-    /// One batch is at most one write of each kind, and a batch showing the
-    /// index nothing new is still a moment to retry.
+    /// One batch is at most one write of each kind. A batch that changes no
+    /// VM's name or membership writes nothing, pending or not: a status or an
+    /// agent change is nothing the index holds.
     private func apply(_ batch: [VMLibraryEvent]) async {
         var present: [UUID] = []
         var absent: [UUID] = []
@@ -565,8 +572,7 @@ package final class VMIntentGateway {
             case .statusChanged, .agentStatusChanged, .failure: break
             }
         }
-        let changed = !present.isEmpty || !absent.isEmpty
-        guard changed || !pendingIndex.isEmpty || !pendingRemove.isEmpty else { return }
+        guard !present.isEmpty || !absent.isEmpty else { return }
         let removing = absent.appending(pendingRemove)
         if !removing.isEmpty { await removeFromIndex(removing) }
         let indexing = present.appending(pendingIndex)
@@ -605,20 +611,28 @@ package final class VMIntentGateway {
         record.indexedVMIDs.subtract(ids)
     }
 
-    /// Runs one index write, logging a refusal and answering whether it landed.
+    /// Runs one index write, answering whether it landed, and logs the index
+    /// starting to refuse writes or taking them again.
     ///
     /// Spotlight is how a searched name is matched, never how a verb runs: a
     /// refusal must neither fail an intent nor end the subscription that would
     /// carry the next write. The caller keeps the identifiers a refused write
-    /// covered and the next batch re-attempts them, since this process stays up
-    /// for days and a relaunch is far too long to leave a name unmatchable.
+    /// covered, and they join the next write the library's content calls for,
+    /// or the next launch's.
     private func write(_ operation: String, _ body: () async throws -> Void) async -> Bool {
         do {
             try await body()
+            if !indexAcceptsWrites {
+                indexAcceptsWrites = true
+                logger.log(
+                    .notice, "Spotlight took an index write again, \(operation, privacy: .public)")
+            }
             return true
         } catch {
-            Self.logger.log(
-                .warning,
+            let level: KernovaLogLevel = indexAcceptsWrites ? .warning : .debug
+            indexAcceptsWrites = false
+            logger.log(
+                level,
                 "Spotlight failed \(operation, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             return false
