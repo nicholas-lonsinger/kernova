@@ -28,10 +28,6 @@ A run reaches past a guest's login screen without its password by setting the gu
 
 Spotlight and Siri see Kernova's intents only from a build installed in `/Applications` and launched once. A build running from DerivedData shows only its app row in Spotlight while Shortcuts still lists and runs every intent, which reads like broken intent metadata. `ditto` the build to `/Applications/Kernova.app`, confirm no other on-disk copy outranks it, and launch that copy.
 
-Spotlight indexing of VMs (`CSSearchableIndex.indexAppEntities`) also refuses an Apple Development or ad-hoc build while LaunchServices holds a higher-signed `app.kernova` copy, such as a Developer ID build in an Xcode archive, or more `app.kernova` copies than `corespotlightd` scans.
-Observed on macOS 27.2 (26B123), 2026-11-06, with 33 registered copies: `corespotlightd` logged `Rejecting bundle ID … from development client … cannot rule out a higher-provenance claimant (claimant list may be truncated)`, and Kernova logged `Spotlight failed indexing … (CSIndexErrorDomain error -1003.)`.
-Before checking Spotlight by VM name, unregister the archive's copies and stale DerivedData builds with `lsregister -u`.
-
 When the check is done, quit that copy with its own `kernova quit`, unregister it with `/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u /Applications/Kernova.app`, and delete it with `rm -rf`, then confirm with `make ghosts` that no `/Applications` copy remains. Not the Trash: a bundle there stays registered and can win the election until the Trash is emptied.
 
 Start the log stream before acting, over `processIdentifier == <that copy's PID> OR process == "linkd" OR process == "searchtoold" OR process == "assistantd"`. The framework's `com.apple.appintents:Execution` lines are debug-level, so `log show` afterwards never has them, and a narrower capture cannot tell whether a request reached Kernova.
