@@ -6,13 +6,18 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
     public var protocolVersion: Int
     /// What the verb answered with.
     public var result: Result
+    /// Sentences for the requester to show beside the answer, which is
+    /// complete without them.
+    public var notices: [String]
 
     /// Wraps one answer for the wire.
     public init(
-        result: Result, protocolVersion: Int = VMCommandRequest.currentProtocolVersion
+        result: Result, notices: [String] = [],
+        protocolVersion: Int = VMCommandRequest.currentProtocolVersion
     ) {
         self.protocolVersion = protocolVersion
         self.result = result
+        self.notices = notices
     }
 
     /// What a verb can answer with — one payload shape per return type in the

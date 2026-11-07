@@ -24,11 +24,13 @@ extension VerbCommand {
         try CommandConnection.perform(try verb(), launchIfNeeded: !options.noLaunch)
     }
 
-    /// Sends the request and hands back the payload it was answered with.
-    func answer() throws -> VMCommandResponse.Result {
+    /// Sends the request and hands the payload it was answered with to
+    /// `write`, inside the connection, so the notices the connection writes as
+    /// it closes follow the answer.
+    func answer(_ write: (VMCommandResponse.Result) throws -> Void) throws {
         let request = try verb()
         let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
         defer { client.close() }
-        return try client.send(request).payload()
+        try write(try client.send(request).payload())
     }
 }

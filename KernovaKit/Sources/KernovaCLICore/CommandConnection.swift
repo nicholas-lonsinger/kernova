@@ -122,6 +122,12 @@ enum Console {
         guard !text.isEmpty else { return }
         FileHandle.standardOutput.write(Data((text + "\n").utf8))
     }
+
+    /// Writes `text` and a newline to standard error, where what is not the
+    /// answer goes — so neither `--quiet` nor `--format` takes it out.
+    static func notice(_ text: String) {
+        FileHandle.standardError.write(Data((text + "\n").utf8))
+    }
 }
 
 extension VMCommandResponse.Result {

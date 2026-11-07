@@ -64,9 +64,10 @@ extension VerbCommand {
     /// Sends a group action, prints what it did to each virtual machine, and
     /// exits as ``GroupActionOutput/failure(_:)`` says.
     func performGroupAction() throws {
-        let answered = try answer()
-        guard case .groupAction(let report) = answered else { throw answered.unexpectedAnswer }
-        Console.out(try GroupActionOutput.render(report, format: options.format, quiet: options.quiet))
-        if let failure = GroupActionOutput.failure(report) { throw failure }
+        try answer { answered in
+            guard case .groupAction(let report) = answered else { throw answered.unexpectedAnswer }
+            Console.out(try GroupActionOutput.render(report, format: options.format, quiet: options.quiet))
+            if let failure = GroupActionOutput.failure(report) { throw failure }
+        }
     }
 }

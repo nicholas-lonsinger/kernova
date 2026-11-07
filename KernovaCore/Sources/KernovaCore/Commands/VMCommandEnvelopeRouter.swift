@@ -93,9 +93,17 @@ package struct VMCommandEnvelopeRouter {
     ///
     /// A ``CommandError`` becomes a `.failure` result rather than a thrown
     /// error: a refusal is an answer, and every transport has to deliver it.
+    /// A settings edit answers with the Ephemeral revert notices its changes
+    /// are owed (``VMCommandCore/noticingEphemeralReverts(_:)``).
     func respond(to request: VMCommandRequest) async -> VMCommandResponse {
         do {
-            return VMCommandResponse(result: try await dispatch(request.verb))
+            guard request.verb.editsSettings else {
+                return VMCommandResponse(result: try await dispatch(request.verb))
+            }
+            let (result, notices) = try await commands.noticingEphemeralReverts {
+                try await dispatch(request.verb)
+            }
+            return VMCommandResponse(result: result, notices: notices)
         } catch let error as CommandError {
             return VMCommandResponse(result: .failure(error.dto))
         } catch {
@@ -338,6 +346,29 @@ package struct VMCommandEnvelopeRouter {
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+extension VMCommandRequest.Verb {
+    /// Whether this verb is an edit of settings — the verbs whose answer
+    /// carries an Ephemeral revert notice. Running, snapshotting and copying a
+    /// VM are not: what they write to its configuration is no setting the
+    /// user changed.
+    fileprivate var editsSettings: Bool {
+        switch self {
+        case .setConfiguration, .editStorageDisk, .editRemovableMedia, .editSharedDirectory,
+            .editUSBAccessory, .guestAgentDisk, .forgetUSBPairing, .rename,
+            .createNetwork, .renameNetwork, .deleteNetwork:
+            true
+        case .list, .groups, .info, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories,
+            .storageDisks, .usbAccessories, .availableUSBAccessories, .usbPairings, .networks,
+            .events, .configurationKeys, .configuration,
+            .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .groupAction,
+            .open, .reveal, .showInFinder,
+            .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
+            .clone, .delete, .importVM, .cancelPreparing, .quit:
+            false
         }
     }
 }

@@ -48,14 +48,15 @@ extension KernovaCommand.USB {
 
         /// Reads the accessories and writes them.
         func run() throws {
-            let answered = try answer()
-            guard case .usbAccessories(let accessories) = answered else {
-                throw answered.unexpectedAnswer
+            try answer { answered in
+                guard case .usbAccessories(let accessories) = answered else {
+                    throw answered.unexpectedAnswer
+                }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(accessories)
+                        : TableRenderer.render(accessories, quiet: options.quiet))
             }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(accessories)
-                    : TableRenderer.render(accessories, quiet: options.quiet))
         }
     }
 
@@ -169,14 +170,15 @@ extension KernovaCommand.USB {
 
         /// Reads the rules and writes them.
         func run() throws {
-            let answered = try answer()
-            guard case .usbPairings(let pairings) = answered else {
-                throw answered.unexpectedAnswer
+            try answer { answered in
+                guard case .usbPairings(let pairings) = answered else {
+                    throw answered.unexpectedAnswer
+                }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(pairings)
+                        : TableRenderer.render(pairings, quiet: options.quiet))
             }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(pairings)
-                    : TableRenderer.render(pairings, quiet: options.quiet))
         }
     }
 

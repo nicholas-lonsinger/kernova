@@ -562,6 +562,24 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Whether the user turned off the Ephemeral Mode settings notice — with
+    /// Don't show again on the banner, or its Reminders switch.
+    ///
+    /// The single write path for
+    /// `AppPreferences.ephemeralSettingsBannerDismissed`, mirrored here because
+    /// the VM Settings pane and the Reminders pane refresh from
+    /// `withObservationTracking`, which a bare `UserDefaults` read never wakes.
+    package var ephemeralSettingsBannerDismissed: Bool {
+        didSet {
+            guard ephemeralSettingsBannerDismissed != oldValue else { return }
+            Self.logger.log(
+                .notice,
+                "Setting Ephemeral Mode settings banner dismissed=\(self.ephemeralSettingsBannerDismissed, privacy: .public)"
+            )
+            preferences.ephemeralSettingsBannerDismissed = ephemeralSettingsBannerDismissed
+        }
+    }
+
     /// Where the alerts and sheets this view model raises are shown.
     ///
     /// Set by the composition root before the library's first read starts, so
@@ -784,6 +802,7 @@ package final class VMLibraryViewModel {
         self.keepInMenuBarOnQuit = preferences.keepInMenuBarOnQuit
         self.disabledReservedShortcuts = preferences.disabledReservedShortcuts
         self.duplicateMachineIDQuestionDismissed = preferences.duplicateMachineIDQuestionDismissed
+        self.ephemeralSettingsBannerDismissed = preferences.ephemeralSettingsBannerDismissed
         let lifecycle = VMLifecycleCoordinator(
             virtualizationService: virtualizationService,
             installService: installService,
@@ -1721,14 +1740,16 @@ package final class VMLibraryViewModel {
 
     /// Re-arms every reminder the Reminders pane lists, so each shows again
     /// the next time its condition is met: the menu bar quit reminder, the
-    /// duplicate machine ID question, and the agent-install nudge — its
-    /// app-wide suppression and every VM's dismissed flag.
+    /// duplicate machine ID question, the Ephemeral Mode settings notice, and
+    /// the agent-install nudge — its app-wide suppression and every VM's
+    /// dismissed flag.
     ///
     /// Each VM's flag lives in its own bundle and is persisted individually;
     /// VMs already armed make no edit.
     package func resetAllReminders() {
         preferences.menuBarQuitReminderDismissed = false
         duplicateMachineIDQuestionDismissed = false
+        ephemeralSettingsBannerDismissed = false
         agentInstallPromptDisabled = false
         let key = VMConfigurationKeyRegistry.agentInstallReminder
         for instance in instances where key.applies(instance.configuration) {

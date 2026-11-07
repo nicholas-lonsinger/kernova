@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 18)
+        #expect(VMCommandRequest.currentProtocolVersion == 19)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -1209,5 +1209,99 @@ struct VMCommandEnvelopeRouterTests {
             ).result == .ok)
 
         #expect(instance.configuration.sharedDirectories == nil)
+    }
+
+    // MARK: - Ephemeral revert notices
+
+    /// A stopped VM in Ephemeral Mode with `baseline` as its baseline.
+    @discardableResult
+    private func makeEphemeralInstance(
+        in harness: Harness, name: String = "Alpha", baseline: VMSnapshot,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        harness.wired.register(
+            name: name, snapshots: [baseline], hostState: .ephemeral(baseline: baseline.id), mutate: mutate)
+    }
+
+    private var revertNotice: String {
+        EphemeralModeCopy.settingsRevertNotice(vm: "Alpha", baseline: "Clean install")
+    }
+
+    @Test("A set that moves a setting a revert restores answers with the notice beside the values")
+    func setOfARevertingKeyCarriesTheNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+        #expect(instance.ephemeralBaselineSnapshot != nil)
+
+        let response = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
+
+        #expect(response.result == .configuration([ConfigurationEntry(key: "cpus", value: "3")]))
+        #expect(response.notices == [revertNotice])
+    }
+
+    @Test("A host-state key, a VM with no baseline and a turned-off reminder carry no notice")
+    func settingsTheRevertLeavesCarryNoNotice() async throws {
+        let harness = makeHarness()
+        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+        makeInstance(in: harness, name: "Plain")
+
+        let hostState = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "autoStart", value: "true")],
+                consent: .none))
+        #expect(hostState.failure == nil)
+        #expect(hostState.notices.isEmpty)
+
+        let plain = try await harness.transport.send(
+            .setConfiguration(
+                .name("Plain"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
+        #expect(plain.failure == nil)
+        #expect(plain.notices.isEmpty)
+
+        preferences.ephemeralSettingsBannerDismissed = true
+        let dismissed = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
+        #expect(dismissed.failure == nil)
+        #expect(dismissed.notices.isEmpty)
+    }
+
+    @Test("A rename keeps the VM's name through a revert, so it carries no notice")
+    func renameCarriesNoNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+
+        let response = try await harness.transport.send(.rename(.name("Alpha"), newName: "Beta"))
+
+        #expect(response.result == .ok)
+        #expect(instance.name == "Beta")
+        #expect(response.notices.isEmpty)
+    }
+
+    @Test("A share removal on an Ephemeral VM carries the notice through the same answer")
+    func shareRemovalCarriesTheNotice() async throws {
+        let harness = makeHarness()
+        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil)) {
+            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites")]
+        }
+
+        let response = try await harness.transport.send(
+            .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites")))
+
+        #expect(response.result == .ok)
+        #expect(response.notices == [revertNotice])
+    }
+
+    @Test("A verb that is no settings edit carries no notice")
+    func readCarriesNoNotice() async throws {
+        let harness = makeHarness()
+        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+
+        let response = try await harness.transport.send(.info(.name("Alpha")))
+
+        #expect(response.failure == nil)
+        #expect(response.notices.isEmpty)
     }
 }

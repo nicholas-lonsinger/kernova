@@ -700,6 +700,13 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         return restored
     }
 
+    /// Whether the move from this configuration to `changed` touched a field a
+    /// revert installs from the snapshot — anything ``adoptingSnapshotState(_:)``
+    /// does not carry across.
+    func movesFieldARevertRestores(to changed: VMConfiguration) -> Bool {
+        adoptingSnapshotState(changed) != self
+    }
+
     // MARK: - Cloning
 
     /// Returns a new configuration suitable for a cloned VM instance: a new
