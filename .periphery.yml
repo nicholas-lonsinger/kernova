@@ -1,23 +1,14 @@
 # Periphery dead-code scan configuration.
 # https://github.com/peripheryapp/periphery
 #
-# Consumed by `make dead-code`, run locally and by the
-# `.github/workflows/dead-code.yml` job.
+# The analysis every platform's scan shares. What each platform builds and
+# scans is its runner's: the Makefile's `dead-code` for macOS (the project and
+# its schemes), Tools/dead-code-linux.sh for Linux (KernovaKit, scanned from
+# its own directory).
 
-project: Kernova.xcodeproj
-
-# `make dead-code` builds each scheme with `build-for-testing`, so test targets
-# are indexed and a production symbol only tests reach is never reported.
-schemes:
-  - Kernova
-  - KernovaMacOSAgent
-  - KernovaRelaunchHelper
-  - KernovaCLI
-
-# `KernovaKit` is a closed monorepo package — every consumer (the
-# `Kernova` app and `KernovaMacOSAgent`) lives in this same project, so
-# Periphery's cross-target index resolves real usage of public symbols, and
-# an unused public declaration is dead code. A public symbol with a use
+# `KernovaKit` is a closed monorepo package — every consumer lives in this
+# repository, and the combined scan indexes all of them, so an unused public
+# declaration is dead code. A public symbol with a use
 # outside the repo takes a per-symbol `// periphery:ignore`.
 retain_public: false
 

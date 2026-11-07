@@ -1,12 +1,14 @@
 name: Dead Code Scan
 
+# Each platform scans its own build natively, and a finding is reported only
+# when no platform uses it: `make dead-code` on macOS, Tools/dead-code-linux.sh
+# on Linux, then Tools/DeadCode combines the two bundles.
 on:
   schedule:
     - cron: '0 13 * * 0'  # Sundays 13:00 UTC
   workflow_dispatch:
 
 permissions:
-  issues: write
   contents: read
 
 concurrency:
@@ -14,9 +16,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scan:
+  swift-version:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: .swift-version
+          sparse-checkout-cone-mode: false
+
+      - name: Read .swift-version
+        id: read
+        run: echo "version=$(tr -d '[:space:]' < .swift-version)" >> "$GITHUB_OUTPUT"
+
+  # The Linux scan's production view needs the targets only tests reach, and
+  # only the Xcode project and the macOS manifest show what the app links.
+  targets:
     runs-on: xcode-27
-    timeout-minutes: 45
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Select Xcode
+        uses: ./.github/actions/select-xcode
+
+      - name: List the targets only tests reach
+        run: make dead-code-targets > test-only-targets.txt
+
+      - name: Upload the list
+        uses: actions/upload-artifact@v6
+        with:
+          name: dead-code-targets
+          path: test-only-targets.txt
+          retention-days: 14
+
+  macos:
+    runs-on: xcode-27
+    timeout-minutes: 60
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -29,70 +72,154 @@ jobs:
       - name: Install the swift.org toolchain
         uses: ./.github/actions/swift-toolchain
 
-      - name: Install Periphery
-        run: Tools/install-periphery.sh
+      - name: Install Periphery and indexutil-export
+        run: Tools/install-periphery.sh && Tools/install-periphery.sh --indexutil-export
 
-      - name: Run Periphery scan
-        id: scan
-        run: |
-          set +e
-          # The same target a developer runs; the Makefile owns the flags.
-          make dead-code > scan-output.txt 2> scan-stderr.txt
-          PERIPHERY_EXIT=$?
-          set -e
+      # The same target a developer runs; the Makefile owns the flags.
+      - name: Scan
+        run: make dead-code
 
-          if [ "$PERIPHERY_EXIT" -ne 0 ]; then
-            echo "::error::Periphery exited with code $PERIPHERY_EXIT"
-            echo "--- stderr ---"
-            cat scan-stderr.txt
-            echo "--- stdout (first 200 lines) ---"
-            head -200 scan-output.txt
-            exit "$PERIPHERY_EXIT"
-          fi
-
-          findings=$(grep -cE ":[0-9]+:[0-9]+: warning:" scan-output.txt || true)
-
-          # This parse is the tracking issue's only input, so a zero count is
-          # trusted only alongside the explicit clean verdict; otherwise the
-          # job fails rather than closing the tracker on a scan nobody could
-          # parse.
-          if [ "$findings" -eq 0 ] && ! grep -q "No unused code detected" scan-output.txt; then
-            echo "::error::Periphery reported no findings and no clean verdict — output format unrecognised"
-            cat scan-output.txt
-            exit 1
-          fi
-
-          echo "findings=$findings" >> "$GITHUB_OUTPUT"
-          echo "Periphery surfaced $findings finding(s)"
-
-          if [ "$findings" -gt 0 ]; then
-            echo "--- Findings ---"
-            cat scan-output.txt
-          fi
-
-      - name: Upload scan output
-        if: always()
+      - name: Upload the macOS bundle
         uses: actions/upload-artifact@v6
         with:
-          name: periphery-scan
-          path: |
-            scan-output.txt
-            scan-stderr.txt
+          name: dead-code-macos
+          path: DerivedData/Periphery/Report/macos
           retention-days: 14
 
+  linux:
+    needs: [swift-version, targets]
+    runs-on: ubuntu-24.04-arm
+    container: swift:${{ needs.swift-version.outputs.version }}-noble
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Locate Periphery
+        id: periphery
+        run: echo "dir=$(dirname "$(Tools/install-periphery.sh --path)")" >> "$GITHUB_OUTPUT"
+
+      # Built from source against this toolchain's libIndexStore.so (minutes).
+      - name: Restore Periphery and indexutil-export
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.periphery.outputs.dir }}
+          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift-${{ needs.swift-version.outputs.version }}-${{ hashFiles('Tools/install-periphery.sh') }}
+
+      - name: Download the test-only targets
+        uses: actions/download-artifact@v6
+        with:
+          name: dead-code-targets
+          path: ${{ runner.temp }}/targets
+
+      - name: Scan
+        run: Tools/dead-code-linux.sh "$RUNNER_TEMP/targets/test-only-targets.txt" "$RUNNER_TEMP/linux"
+
+      - name: Upload the Linux bundle
+        uses: actions/upload-artifact@v6
+        with:
+          name: dead-code-linux
+          path: ${{ runner.temp }}/linux
+          retention-days: 14
+
+  report:
+    needs: [swift-version, macos, linux]
+    runs-on: ubuntu-24.04-arm
+    container: swift:${{ needs.swift-version.outputs.version }}-noble
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      dead: ${{ steps.combine.outputs.dead }}
+      test_only: ${{ steps.combine.outputs.test_only }}
+      verdict: ${{ steps.combine.outputs.verdict }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: Tools/DeadCode
+
+      - name: Download the macOS bundle
+        uses: actions/download-artifact@v6
+        with:
+          name: dead-code-macos
+          path: ${{ runner.temp }}/macos
+
+      - name: Download the Linux bundle
+        uses: actions/download-artifact@v6
+        with:
+          name: dead-code-linux
+          path: ${{ runner.temp }}/linux
+
+      - name: Combine
+        id: combine
+        run: |
+          swift build -c release --quiet --package-path Tools/DeadCode
+          mkdir -p "$RUNNER_TEMP/report"
+          Tools/DeadCode/.build/release/dead-code report \
+            --platform macos="$RUNNER_TEMP/macos" \
+            --platform linux="$RUNNER_TEMP/linux" \
+            --markdown "$RUNNER_TEMP/report/sections.md" \
+            --rest "the dead-code-report artifact of ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --json "$RUNNER_TEMP/report/combined.json" \
+            --summary "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/report/report.txt"
+
+      - name: Upload the combined report
+        uses: actions/upload-artifact@v6
+        with:
+          name: dead-code-report
+          path: ${{ runner.temp }}/report
+          retention-days: 14
+
+  tracker:
+    # Only the canonical scan of the default branch owns the tracking issue.
+    # Branch / PR `workflow_dispatch` runs still scan and upload their
+    # artifacts, but must never edit, close, or open the shared tracker —
+    # otherwise a clean branch would wrongly close the issue that reflects
+    # `main`.
+    if: github.ref == 'refs/heads/main'
+    needs: report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Download the combined report
+        uses: actions/download-artifact@v6
+        with:
+          name: dead-code-report
+          path: report
+
       - name: Manage tracking issue
-        # Only the canonical scan of the default branch owns the tracking
-        # issue. Branch / PR `workflow_dispatch` runs still scan and upload
-        # their artifacts, but must never edit, close, or open the shared
-        # tracker — otherwise a clean branch would wrongly close the issue
-        # that reflects `main`.
-        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FINDINGS: ${{ steps.scan.outputs.findings }}
+          GH_REPO: ${{ github.repository }}
+          DEAD: ${{ needs.report.outputs.dead }}
+          TEST_ONLY: ${{ needs.report.outputs.test_only }}
+          VERDICT: ${{ needs.report.outputs.verdict }}
           TRACKER_LABEL: "Dead Code"
         run: |
           set -euo pipefail
+
+          # The combined report's verdict is the tracking issue's only input:
+          # the tracker closes on an explicit clean verdict alone, and a
+          # verdict that disagrees with its counts fails the job rather than
+          # closing the tracker on a report nobody could read.
+          case "$VERDICT" in
+            clean) [ "$DEAD" -eq 0 ] && [ "$TEST_ONLY" -eq 0 ] ;;
+            findings) [ $((DEAD + TEST_ONLY)) -gt 0 ] ;;
+            *) false ;;
+          esac || {
+            echo "::error::The combined report's verdict '$VERDICT' does not match its counts ($DEAD dead, $TEST_ONLY reached only by tests)"
+            exit 1
+          }
 
           # The live tracker is the single OPEN issue, if any. Each scan writes
           # a complete snapshot — findings are never merged across runs — and
@@ -104,7 +231,7 @@ jobs:
             --json number,title \
             --jq 'map(select(.title | startswith("Dead-code scan"))) | .[0].number // empty')
 
-          if [ "$FINDINGS" -eq 0 ]; then
+          if [ "$VERDICT" = clean ]; then
             if [ -n "$OPEN_ISSUE" ]; then
               gh issue comment "$OPEN_ISSUE" \
                 --body "Scan ran clean on $(date -u +%Y-%m-%dT%H:%MZ) — closing. A new issue is opened automatically if findings reappear."
@@ -113,27 +240,22 @@ jobs:
             exit 0
           fi
 
+          TITLE="Dead-code scan: $DEAD dead, $TEST_ONLY reached only by tests"
           BODY_FILE=$(mktemp)
           {
-            echo "Last scan: $(date -u +%Y-%m-%dT%H:%MZ) — **$FINDINGS finding(s)**"
+            echo "Last scan: $(date -u +%Y-%m-%dT%H:%MZ) — **$DEAD dead on every platform, $TEST_ONLY reached only by tests**"
             echo
-            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly and on \`workflow_dispatch\` against \`main\`. Each scan fully replaces the list below — findings are never combined across runs. The next clean scan closes this issue if a PR hasn't already; a brand-new issue is opened if findings reappear later."
+            echo "Auto-managed by [\`.github/workflows/dead-code.yml\`](.github/workflows/dead-code.yml). Runs weekly and on \`workflow_dispatch\` against \`main\`. Each scan fully replaces the lists below — findings are never combined across runs. The next clean scan closes this issue if a PR hasn't already; a brand-new issue is opened if findings reappear later."
             echo
-            echo "<details><summary>Periphery output</summary>"
+            echo "macOS scans the Xcode schemes and the packages they build; Linux scans KernovaKit, the Linux agent's sources included. A finding is listed only when no platform uses it, and \`[macOS only]\` or \`[Linux only]\` marks one only that platform compiles. *Reached only by tests* lists what the scan reports with every target only tests reach left out of the build."
             echo
-            echo '```'
-            cat scan-output.txt
-            echo '```'
-            echo
-            echo "</details>"
+            cat report/sections.md
           } > "$BODY_FILE"
 
           if [ -n "$OPEN_ISSUE" ]; then
             # Low churn: refresh the live issue in place. The body is replaced
             # wholesale, so the new findings supersede the old — never appended.
-            gh issue edit "$OPEN_ISSUE" \
-              --title "Dead-code scan: $FINDINGS finding(s)" \
-              --body-file "$BODY_FILE"
+            gh issue edit "$OPEN_ISSUE" --title "$TITLE" --body-file "$BODY_FILE"
           else
             # No live issue — open a fresh one. If a prior (closed) tracker
             # exists, cross-link it so it is unambiguous that this new set
@@ -151,7 +273,7 @@ jobs:
             fi
 
             NEW_URL=$(gh issue create \
-              --title "Dead-code scan: $FINDINGS finding(s)" \
+              --title "$TITLE" \
               --label "$TRACKER_LABEL" \
               --body-file "$BODY_FILE")
             echo "Opened $NEW_URL"
