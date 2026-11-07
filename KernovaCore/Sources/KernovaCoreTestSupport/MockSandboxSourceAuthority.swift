@@ -29,6 +29,12 @@ final class MockSandboxSourceAuthority: SandboxSourceAuthorizing {
     /// task asking is cancelled, then throws `CancellationError`.
     var parkUntilCancelled: CancellationPark?
 
+    /// A panel the test answers when it chooses: set, each request waits
+    /// until ``releasePanel()`` and then answers as usual. What the test does
+    /// meanwhile runs in its own task, not the request's.
+    var holdsPanel = false
+    private var heldPanels: [CheckedContinuation<Void, Never>] = []
+
     /// Fires when a request arrives, so a test awaits the verb reaching the
     /// panel.
     let requested = AsyncGate()
@@ -37,12 +43,22 @@ final class MockSandboxSourceAuthority: SandboxSourceAuthorizing {
 
     var requestedURLs: [URL] { requests.map(\.url) }
 
+    /// Lets every request ``holdsPanel`` is holding answer.
+    func releasePanel() {
+        let held = heldPanels
+        heldPanels.removeAll()
+        held.forEach { $0.resume() }
+    }
+
     func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL {
         requests.append((url, source))
         requested.notify()
         if let parkUntilCancelled {
             await parkUntilCancelled.park()
             throw CancellationError()
+        }
+        if holdsPanel {
+            await withCheckedContinuation { heldPanels.append($0) }
         }
         whilePanelStands?()
         if let error { throw error }

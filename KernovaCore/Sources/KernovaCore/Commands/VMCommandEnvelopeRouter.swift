@@ -93,9 +93,10 @@ package struct VMCommandEnvelopeRouter {
     ///
     /// A ``CommandError`` becomes a `.failure` result rather than a thrown
     /// error: a refusal is an answer, and every transport has to deliver it.
-    /// A settings edit answers with the Ephemeral revert notices its own
-    /// commits are owed (``VMConfigurationCommitRecord``), whether or not it
-    /// failed after one landed.
+    /// A settings edit answers with the Ephemeral revert notices owed for the
+    /// commits made in its task, and any child task it spawns, before this
+    /// response is built (``VMConfigurationCommitRecord``) — a failure after
+    /// one landed included.
     func respond(to request: VMCommandRequest) async -> VMCommandResponse {
         guard request.verb.editsSettings else {
             return VMCommandResponse(result: await result(of: request))

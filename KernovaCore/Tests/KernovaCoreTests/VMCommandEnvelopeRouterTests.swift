@@ -1331,8 +1331,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("A commit made outside a request while it awaits is no change of that request's")
     func concurrentCommitIsNotTheRequestsChange() async throws {
         let harness = makeHarness()
-        let park = CancellationPark()
-        harness.authority.parkUntilCancelled = park
+        harness.authority.holdsPanel = true
         let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
         makeEphemeralInstance(in: harness, name: "PoolA", baseline: baseline)
         let other = makeEphemeralInstance(in: harness, name: "PoolB", baseline: baseline)
@@ -1344,14 +1343,36 @@ struct VMCommandEnvelopeRouterTests {
                 .editSharedDirectory(.name("PoolA"), .add(path: folder, readOnly: false)))
         }
         try await harness.authority.requested.wait { harness.authority.requests.count == 1 }
-        // Another door's edit, landing while the share add waits on its panel.
+        // Another door's edit, landing from this task while the share add
+        // waits on its panel.
         try harness.core.setConfiguration(
             .id(other.id), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none)
         #expect(other.configuration.cpuCount == 3)
-        request.cancel()
+        harness.authority.releasePanel()
 
         let response = try await request.value
+        #expect(response.failure == nil)
+        #expect(named(response.notices) == ["PoolA → Clean install"])
+    }
+
+    @Test("A configuration commit the verb then fails after still carries its notice")
+    func failureAfterACommitCarriesTheNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+        harness.storage.setSaveHostStateError(CocoaError(.fileWriteNoPermission))
+
+        // The configuration commits first; the host-state half then fails.
+        let response = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"),
+                assignments: [
+                    ConfigurationEntry(key: "cpus", value: "3"),
+                    ConfigurationEntry(key: "autoStart", value: "true"),
+                ],
+                consent: .none))
+
         #expect(response.failure != nil)
-        #expect(response.notices.isEmpty)
+        #expect(instance.configuration.cpuCount == 3)
+        #expect(named(response.notices) == ["Alpha → Clean install"])
     }
 }

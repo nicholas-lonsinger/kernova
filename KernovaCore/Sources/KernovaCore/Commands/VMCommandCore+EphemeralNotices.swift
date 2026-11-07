@@ -1,11 +1,13 @@
 import Foundation
 import KernovaCommandModel
 
-/// The configuration moves one request's own commits made, by VM.
+/// The configuration moves committed in one request's task, and any child
+/// task it spawns, by VM.
 ///
-/// ``VMLibrary`` records each commit into ``current`` as it lands, so what a
-/// request is told reflects only its own writes — never a concurrent edit,
-/// another request, or a guest's report landing while it awaited.
+/// ``VMLibrary`` records each commit into ``current`` as it lands. A commit
+/// from another task — a concurrent edit, another request, a guest's report
+/// landing while it awaited — is never recorded; one a spawned task makes
+/// after the response is built is recorded but never read.
 @MainActor
 final class VMConfigurationCommitRecord {
     /// The record of the request the current task is answering, `nil` outside
