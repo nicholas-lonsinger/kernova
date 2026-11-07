@@ -15,6 +15,23 @@ import Testing
 /// every OS.
 @Suite("Peer agent runtime")
 struct PeerAgentRuntimeTests {
+    @Test("A runtime dialing through UnansweredDialer gets no transport, through a session's loss and return")
+    func unansweredDialerGivesNoTransport() async {
+        let dialer = WatchedDialer(UnansweredDialer(logger: Fixture.logger))
+        let harness = PeerRuntimeHarness(dialer: dialer)
+        harness.runtime.start()
+        await harness.settle()
+        harness.runtime.setPeerState(nil)
+        await harness.settle()
+        harness.runtime.setPeerState(Fixture.peerState)
+        await harness.settle()
+        #expect(dialer.dials.withLock { $0 } == 1)
+        #expect(dialer.answers.withLock { $0 } == 0)
+        #expect(harness.scheduler.armed.isEmpty)
+        #expect(harness.stops.elements.isEmpty)
+        #expect(harness.runtime.hostConnection == .connecting)
+    }
+
     @Test("A transient dial failure is redialed after its backoff, not before")
     func transientRedial() async {
         let harness = PeerRuntimeHarness()
@@ -454,6 +471,25 @@ struct SystemSchedulerTests {
             let now = scheduler.now
             #expect(now >= last)
             last = now
+        }
+    }
+}
+
+/// Counts the dials it passes to `inner` and the answers that come back.
+private final class WatchedDialer: TransportDialer {
+    let dials = Locked(0)
+    let answers = Locked(0)
+    private let inner: any TransportDialer
+
+    init(_ inner: any TransportDialer) {
+        self.inner = inner
+    }
+
+    func dial(_ completion: @escaping @Sendable (Result<any ByteStream, DialFailure>) -> Void) {
+        dials.withLock { $0 += 1 }
+        inner.dial { [answers] result in
+            answers.withLock { $0 += 1 }
+            completion(result)
         }
     }
 }

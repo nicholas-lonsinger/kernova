@@ -29,7 +29,7 @@
 # embed, the frontend embeds no IR hash, and stripping takes out the rest of
 # the debug info.
 #
-# KERNOVA_LINUX_AGENT_FAULT=hang-before-hello builds an agent that never dials,
+# KERNOVA_AGENT_FAULT=hang-before-hello builds an agent that never dials,
 # for the update rollback gate, and only in a Debug build.
 
 set -euo pipefail
@@ -83,16 +83,16 @@ flags=(
     -Xlinker --strip-all
 )
 
-case "${KERNOVA_LINUX_AGENT_FAULT:-}" in
+case "${KERNOVA_AGENT_FAULT:-}" in
     '') ;;
     hang-before-hello)
         if [ -n "${CONFIGURATION:-}" ] && [ "$CONFIGURATION" != Debug ]; then
-            echo "error: KERNOVA_LINUX_AGENT_FAULT is set in a $CONFIGURATION build; only Debug builds carry it" >&2
+            echo "error: KERNOVA_AGENT_FAULT is set in a $CONFIGURATION build; only Debug builds carry it" >&2
             exit 1
         fi
         flags+=(-Xswiftc -DKERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO)
         ;;
-    *) echo "error: KERNOVA_LINUX_AGENT_FAULT=$KERNOVA_LINUX_AGENT_FAULT is not a fault this build knows" >&2; exit 1 ;;
+    *) echo "error: KERNOVA_AGENT_FAULT=$KERNOVA_AGENT_FAULT is not a fault this build knows" >&2; exit 1 ;;
 esac
 
 # SwiftPM reads a package's pins from beside its manifest, so the tracked pin
