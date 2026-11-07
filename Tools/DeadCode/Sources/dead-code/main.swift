@@ -5,13 +5,12 @@ let usage = """
     Usage:
       dead-code test-only-targets --project <Kernova.xcodeproj>
           Prints every target of the project and of the repository's top-level packages that only tests reach.
-      dead-code bundle --root <repo> --base <dir Periphery ran in> --full <json> --production <json> --output <dir>
-          Writes one platform's two Periphery JSON reports into <dir>, locations repo-relative.
-      dead-code presence --indexutil-export <path> --store <index store> --root <repo> --output <tsv>
-          Writes the declaration sites and import lines the index store holds under <repo>.
+      dead-code bundle --root <repo> --base <dir Periphery ran in> --full <json> --production <json>
+                       --store <index store> --indexutil-export <path> --output <dir>
+          Replaces <dir> with one platform's bundle: the two Periphery JSON reports, locations repo-relative,
+          and the declaration sites and import lines the index store they read holds under <repo>.
       dead-code report --platform <name>=<dir>... [--markdown <file> --rest <text>] [--json <file>] [--summary <file>]
-          Combines platform bundles (macos, linux) and prints the report; a bundle's presence.tsv is needed
-          when there are two or more.
+          Combines platform bundles (macos, linux) and prints the report.
     """
 
 struct Failure: Error, CustomStringConvertible {
@@ -102,24 +101,23 @@ func testOnlyTargets(_ options: Options) throws {
 func bundle(_ options: Options) throws {
     let root = try options.required("root")
     let base = try options.required("base")
-    let output = URL(fileURLWithPath: try options.required("output"))
-    for view in ["full", "production"] {
-        let findings = try JSONDecoder().decode([Finding].self, from: read(try options.required(view)))
-        let normalized = try findings.map { try $0.normalized(root: root, base: base) }
-            .sorted { ($0.key, $0.name, $0.hints.description) < ($1.key, $1.name, $1.hints.description) }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        try write(encoder.encode(normalized), to: output.appendingPathComponent("\(view).json").path)
+    func view(_ name: String) throws -> [Finding] {
+        try JSONDecoder().decode([Finding].self, from: read(try options.required(name)))
+            .map { try $0.normalized(root: root, base: base) }
     }
+    let bundle = PlatformBundle(
+        full: try view("full"), production: try view("production"),
+        presence: try presence(
+            exporter: try options.required("indexutil-export"), store: try options.required("store"), root: root))
+    try bundle.write(to: URL(fileURLWithPath: try options.required("output")))
 }
 
+/// What `store` holds under `root`.
+///
 /// `indexutil-export tsv <store> <dir>` writes three files into `<dir>`; only the occurrences are read, streamed
 /// from its standard output through a symlink, and the other two go to `/dev/null`.
-func presence(_ options: Options) throws {
-    let exporter = try options.required("indexutil-export")
-    let store = try options.required("store")
-    var filter = PresenceFilter(root: try options.required("root"))
-
+func presence(exporter: String, store: String, root: String) throws -> Presence {
+    var filter = PresenceFilter(root: root)
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("dead-code-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -146,9 +144,9 @@ func presence(_ options: Options) throws {
         throw Failure(description: "\(exporter) exited \(process.terminationStatus) exporting \(store)")
     }
     guard !filter.presence.keys.isEmpty else {
-        throw Failure(description: "\(store) holds no declaration under \(try options.required("root"))")
+        throw Failure(description: "\(store) holds no declaration under \(root)")
     }
-    try write(Data(filter.presence.tsv.utf8), to: try options.required("output"))
+    return filter.presence
 }
 
 func report(_ options: Options) throws {
@@ -160,18 +158,9 @@ func report(_ options: Options) throws {
             let names = Platform.allCases.map(\.rawValue).joined(separator: ", ")
             throw Failure(description: "--platform takes <name>=<dir>, the name one of \(names): \(spec)")
         }
-        let directory = URL(fileURLWithPath: parts[1])
-        let presencePath = directory.appendingPathComponent("presence.tsv").path
-        let presence =
-            FileManager.default.fileExists(atPath: presencePath)
-            ? try Presence(tsv: String(decoding: read(presencePath), as: UTF8.self)) : nil
-        func scan(_ view: String) throws -> PlatformScan {
-            let findings = try JSONDecoder().decode(
-                [Finding].self, from: read(directory.appendingPathComponent("\(view).json").path))
-            return PlatformScan(platform: platform, findings: findings, presence: presence)
-        }
-        full.append(try scan("full"))
-        production.append(try scan("production"))
+        let bundle = try PlatformBundle(contentsOf: URL(fileURLWithPath: parts[1]))
+        full.append(PlatformScan(platform: platform, findings: bundle.full, presence: bundle.presence))
+        production.append(PlatformScan(platform: platform, findings: bundle.production, presence: bundle.presence))
     }
     guard !full.isEmpty else { throw Failure(description: "no --platform given\n\n\(usage)") }
 
@@ -203,7 +192,6 @@ do {
     switch command {
     case "test-only-targets": try testOnlyTargets(options)
     case "bundle": try bundle(options)
-    case "presence": try presence(options)
     case "report": try report(options)
     default: throw Failure(description: "unknown command \(command)\n\n\(usage)")
     }

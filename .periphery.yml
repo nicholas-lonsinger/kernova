@@ -6,10 +6,9 @@
 # its schemes), Tools/dead-code-linux.sh for Linux (KernovaKit, scanned from
 # its own directory).
 
-# `KernovaKit` is a closed monorepo package — every consumer (the
-# `Kernova` app and `KernovaMacOSAgent`) lives in this same project, so
-# Periphery's cross-target index resolves real usage of public symbols, and
-# an unused public declaration is dead code. A public symbol with a use
+# `KernovaKit` is a closed monorepo package — every consumer lives in this
+# repository, and the combined scan indexes all of them, so an unused public
+# declaration is dead code. A public symbol with a use
 # outside the repo takes a per-symbol `// periphery:ignore`.
 retain_public: false
 

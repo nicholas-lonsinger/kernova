@@ -89,7 +89,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-presence locked-dead-code-presence dead-code-targets dead-code-tool doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets dead-code-tool doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -312,13 +312,14 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 # the cache serves writes no index unit, leaving the unit an earlier compile
 # wrote — after a revert, a cached scan reported 27 findings in code that no
 # longer existed (Xcode 27.1). Each scheme is built for testing, so the one
-# index serves both views: the full scan, and the production scan with every
-# target only tests reach excluded. The report on stdout covers macOS alone;
+# index serves both views — the full scan, and the production scan with every
+# target only tests reach excluded — and the bundle written from it holds both
+# and that index's declaration sites. The report on stdout covers macOS alone;
 # .github/workflows/dead-code.yml combines this bundle with Linux's. The built
 # apps are unregistered from Launch Services on the way out, whatever the
 # outcome, so a scan's build never wins the version election.
 PERIPHERY_DERIVED_DATA := $(DERIVED_DATA_ROOT)/Periphery
-PERIPHERY_SCHEMES      := Kernova KernovaMacOSAgent KernovaRelaunchHelper KernovaCLI
+PERIPHERY_SCHEMES      := Kernova KernovaMacOSAgent KernovaRelaunchHelper KernovaCLI KernovaBench
 PERIPHERY_INDEX_STORE  := $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
 DEAD_CODE_BUNDLE       := $(PERIPHERY_DERIVED_DATA)/Report/macos
 DEAD_CODE_TOOL         := Tools/DeadCode/.build/release/dead-code
@@ -329,6 +330,7 @@ dead-code: ## Scan for unused code with Periphery: the macOS half of the combine
 locked-dead-code: dead-code-tool
 	@trap "Tools/ghosts.sh --unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
 	periphery=$$(Tools/install-periphery.sh) || exit 1; \
+	indexutil=$$(Tools/install-periphery.sh --indexutil-export) || exit 1; \
 	excluded=$$($(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)) || exit 1; \
 	for scheme in $(PERIPHERY_SCHEMES); do \
 		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
@@ -345,19 +347,9 @@ locked-dead-code: dead-code-tool
 	scan > "$$raw/full.json" && \
 	scan --exclude-targets $$excluded > "$$raw/production.json" && \
 	$(DEAD_CODE_TOOL) bundle --root '$(CURDIR)' --base '$(CURDIR)' \
-		--full "$$raw/full.json" --production "$$raw/production.json" --output $(DEAD_CODE_BUNDLE) && \
+		--full "$$raw/full.json" --production "$$raw/production.json" \
+		--store $(PERIPHERY_INDEX_STORE) --indexutil-export "$$indexutil" --output $(DEAD_CODE_BUNDLE) && \
 	$(DEAD_CODE_TOOL) report --platform macos=$(DEAD_CODE_BUNDLE)
-
-# The macOS index's declaration sites, beside `dead-code`'s bundle, which the
-# combined scan needs to tell code another platform compiles but leaves
-# unreported (used there) from code it never compiles.
-dead-code-presence: ## Export the macOS index's declaration sites into make dead-code's bundle, for the combined scan
-	$(LOCKED_TWIN)
-
-locked-dead-code-presence: dead-code-tool
-	@indexutil=$$(Tools/install-periphery.sh --indexutil-export) || exit 1; \
-	$(DEAD_CODE_TOOL) presence --indexutil-export "$$indexutil" --store $(PERIPHERY_INDEX_STORE) \
-		--root '$(CURDIR)' --output $(DEAD_CODE_BUNDLE)/presence.tsv
 
 dead-code-targets: dead-code-tool ## Print the targets only tests reach, which the dead-code scan's production view excludes
 	@$(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)

@@ -79,9 +79,6 @@ jobs:
       - name: Scan
         run: make dead-code
 
-      - name: Export the index's declaration sites
-        run: make dead-code-presence
-
       - name: Upload the macOS bundle
         uses: actions/upload-artifact@v6
         with:
