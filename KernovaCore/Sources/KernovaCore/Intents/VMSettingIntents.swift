@@ -9,7 +9,7 @@ import KernovaKit
 struct SetVMSettingIntent: AppIntent {
     static let title: LocalizedStringResource = "Change Virtual Machine Setting"
     static let description: IntentDescription? = IntentDescription(
-        "Changes one of a virtual machine's settings, the value written as the setting's description names it. Returns the value the setting ends up holding.",
+        "Changes one of a virtual machine's settings, the value written as the setting's description names it. Returns the value the setting ends up holding. On a virtual machine in Ephemeral Mode, changes to most of its System, Storage, Network and Sharing settings go back to its baseline snapshot at the next shutdown.",
         categoryName: "Virtual Machines",
         resultValueName: "Value")
 
