@@ -5,7 +5,8 @@ import Foundation
 /// (`VMHostState.agentInstallNudgeDismissed`).
 ///
 /// While the reminder is off for every VM, each VM keeps its own choice — what
-/// it returns to once the reminder is back on — and that choice takes no change.
+/// it returns to once the reminder is back on — and a write through
+/// `agent.installReminder` that would change it is refused.
 package struct AgentInstallReminder: Sendable, Equatable {
     /// Whether the reminder is turned off for every VM
     /// (`AppPreferences.agentInstallPromptDisabled`).
@@ -20,7 +21,4 @@ package struct AgentInstallReminder: Sendable, Equatable {
     package func shows(for hostState: VMHostState) -> Bool {
         !isOffForAllVMs && !hostState.agentInstallNudgeDismissed
     }
-
-    /// Whether a VM's own choice takes a change.
-    package var takesPerVMChoice: Bool { !isOffForAllVMs }
 }

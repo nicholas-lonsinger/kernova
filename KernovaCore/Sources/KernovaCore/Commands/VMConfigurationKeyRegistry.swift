@@ -790,7 +790,7 @@ package enum VMConfigurationKeyRegistry {
             return { $0.agentInstallNudgeDismissed = !reminds }
         },
         refusalOnResult: { _, context in
-            context.agentInstallReminder.takesPerVMChoice ? nil : agentInstallReminderOffForAllVMsRefusal
+            context.agentInstallReminder.isOffForAllVMs ? agentInstallReminderOffForAllVMsRefusal : nil
         })
 
     /// What a write moving ``agentInstallReminder`` answers while the reminder

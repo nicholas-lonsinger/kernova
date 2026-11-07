@@ -909,6 +909,28 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState.agentInstallNudgeDismissed == !dismissed)
     }
 
+    @Test("An install reminder move refused while it is off for every VM writes nothing of its batch")
+    func aRefusedInstallReminderMoveWritesNothing() throws {
+        let harness = makeHarness()
+        preferences.agentInstallPromptDisabled = true
+        let instance = makeInstance(in: harness, guestOS: .macOS)
+        let before = instance.settings
+        let cpus = before.configuration.cpuCount == 2 ? 3 : 2
+
+        #expect(throws: CommandError.self) {
+            try harness.core.setConfiguration(
+                .name("Alpha"),
+                assignments: [
+                    ConfigurationEntry(key: "cpus", value: String(cpus)),
+                    VMConfigurationKeyRegistry.agentInstallReminder.assigning(false),
+                ],
+                consent: .none)
+        }
+
+        #expect(instance.settings == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == before.configuration)
+    }
+
     @Test("The install reminder shows only where neither the app-wide switch nor the VM's own choice turns it off")
     func installReminderTruthTable() {
         for isOffForAllVMs in [false, true] {
@@ -918,7 +940,6 @@ struct VMCommandCoreConfigurationTests {
                     reminder.shows(for: VMHostState(agentInstallNudgeDismissed: dismissed))
                         == (!isOffForAllVMs && !dismissed),
                     "off=\(isOffForAllVMs) dismissed=\(dismissed)")
-                #expect(reminder.takesPerVMChoice == !isOffForAllVMs)
             }
         }
     }
