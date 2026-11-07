@@ -4,6 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
+import Dispatch
 import KernovaContainer
 import KernovaContainerPipeline
 import KernovaPortableTestSupport
@@ -46,6 +47,53 @@ final class SpinningLanes: Sendable {
                 state.finished += 1
                 state.sink &+= spun
             }
+        }
+    }
+}
+
+/// Lanes whose first `count` pieces of work each wait, before running, until all `count` have started: they meet
+/// only when that many pieces run at once.
+///
+/// A piece still waiting at `testWaitBackstop` gives up and runs, and so does every piece after it, so a pipeline
+/// that never runs `count` pieces at once finishes, with `met` false, rather than hanging.
+final class MeetingLanes: Sendable {
+    private struct State {
+        var started = 0
+        /// The pieces started when one gave up waiting.
+        var startedWhenMissed: Int?
+    }
+
+    /// The lanes, and the pieces of work that must run at once.
+    let count: Int
+    private let state = Locked(State())
+    private let everyoneStarted = DispatchSemaphore(value: 0)
+
+    init(count: Int) {
+        precondition(count > 1, "a meeting of one proves nothing")
+        self.count = count
+    }
+
+    /// Whether the first `count` pieces of work all started before any of them ran.
+    var met: Bool { state.withLock { $0.startedWhenMissed == nil && $0.started >= count } }
+    /// The most of the first `count` pieces seen started at once: those started when one gave up waiting, or
+    /// every piece started.
+    var startedAtOnce: Int { state.withLock { $0.startedWhenMissed ?? min($0.started, count) } }
+
+    /// `count` lanes of these.
+    func workers() -> ChunkWorkers {
+        ChunkWorkers(count: count) { _, work in
+            let (ordinal, missed) = self.state.withLock { state in
+                state.started += 1
+                return (state.started, state.startedWhenMissed != nil)
+            }
+            if ordinal == self.count {
+                for _ in 1..<self.count { self.everyoneStarted.signal() }
+            } else if ordinal < self.count, !missed,
+                self.everyoneStarted.wait(timeout: .now() + testWaitBackstop) == .timedOut
+            {
+                self.state.withLock { state in state.startedWhenMissed = state.startedWhenMissed ?? state.started }
+            }
+            work()
         }
     }
 }

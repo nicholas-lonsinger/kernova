@@ -17,7 +17,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$lib_dir/lib/output.sh"
 
 plan="Kernova.xcodeproj/xcshareddata/xctestplans/Kernova.xctestplan"
-waits="KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift"
+waits="KernovaKit/Sources/KernovaPortableTestSupport/TestWaitBackstop.swift"
 
 status=0
 

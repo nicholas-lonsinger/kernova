@@ -102,8 +102,8 @@ var targets: [Target] = [
         name: "KernovaISO9660",
         swiftSettings: sharedSwiftSettings
     ),
-    // The scratch directory of the test targets that cannot reach `KernovaTestSupport`
-    // (Tools/check-test-seams.sh).
+    // The scratch directory and wait backstop of the test targets that cannot reach
+    // `KernovaTestSupport` (Tools/check-test-seams.sh), which re-exports it.
     .target(
         name: "KernovaPortableTestSupport",
         swiftSettings: sharedSwiftSettings
@@ -469,7 +469,7 @@ targets += [
     ),
     .target(
         name: "KernovaTestSupport",
-        dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
+        dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization", "KernovaPortableTestSupport"],
         swiftSettings: sharedSwiftSettings
     ),
     .testTarget(
