@@ -652,10 +652,7 @@ struct VMCommandCoreConfigurationTests {
         #expect(
             try value(try harness.core.configuration(.name("Alpha"), keys: [key.name]), key.name) == minted)
         #expect(
-            key.accepts(
-                VMConfigurationKeyRegistry.newMACAddressValue, for: instance,
-                entitlements: harness.library.entitlements, networks: harness.library.networks.state,
-                resourceLimits: harness.library.virtualizationHost.resourceLimits))
+            key.accepts(VMConfigurationKeyRegistry.newMACAddressValue, for: instance, in: harness.library))
     }
 
     @Test("network.mac=new is refused on a suspended VM, as any address is")
@@ -862,6 +859,68 @@ struct VMCommandCoreConfigurationTests {
 
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.clipboardPassthroughIsEffective)
+    }
+
+    // MARK: - Install reminder
+
+    @Test(
+        "While the install reminder is off for every VM, agent.installReminder refuses a move and takes its own value",
+        arguments: [false, true])
+    func installReminderRefusesAMoveWhileOffForAllVMs(dismissed: Bool) throws {
+        let harness = makeHarness()
+        preferences.agentInstallPromptDisabled = true
+        let instance = makeInstance(in: harness, guestOS: .macOS)
+        harness.library.editHostState(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
+        let key = VMConfigurationKeyRegistry.agentInstallReminder
+        let held = String(!dismissed)
+        let moved = String(dismissed)
+
+        #expect(
+            throws: CommandError.invalidArgument(
+                "The guest agent install reminder is turned off for all virtual machines in Settings → Reminders. "
+                    + "Turn it on there to change agent.installReminder.")
+        ) {
+            try harness.core.setConfiguration(
+                .name("Alpha"), assignments: [key.assigning(moved)], consent: .none)
+        }
+        #expect(instance.hostState.agentInstallNudgeDismissed == dismissed)
+        #expect(!harness.core.capabilities.isAvailable(key, writing: moved, on: instance))
+
+        // `get` output stays valid `set` input.
+        let read = try harness.core.configuration(.name("Alpha"), keys: [key.name])
+        #expect(try value(read, key.name) == held)
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, consent: .none)
+        #expect(instance.hostState.agentInstallNudgeDismissed == dismissed)
+        #expect(harness.core.capabilities.isAvailable(key, writing: held, on: instance))
+    }
+
+    @Test("With the install reminder on for every VM, agent.installReminder takes a move", arguments: [false, true])
+    func installReminderTakesAMoveWhileOn(dismissed: Bool) throws {
+        let harness = makeHarness()
+        preferences.agentInstallPromptDisabled = false
+        let instance = makeInstance(in: harness, guestOS: .macOS)
+        harness.library.editHostState(of: instance) { $0.agentInstallNudgeDismissed = dismissed }
+        let key = VMConfigurationKeyRegistry.agentInstallReminder
+        #expect(harness.core.capabilities.isAvailable(key, writing: String(dismissed), on: instance))
+
+        try harness.core.setConfiguration(
+            .name("Alpha"), assignments: [key.assigning(dismissed)], consent: .none)
+
+        #expect(instance.hostState.agentInstallNudgeDismissed == !dismissed)
+    }
+
+    @Test("The install reminder shows only where neither the app-wide switch nor the VM's own choice turns it off")
+    func installReminderTruthTable() {
+        for isOffForAllVMs in [false, true] {
+            for dismissed in [false, true] {
+                let reminder = AgentInstallReminder(isOffForAllVMs: isOffForAllVMs)
+                #expect(
+                    reminder.shows(for: VMHostState(agentInstallNudgeDismissed: dismissed))
+                        == (!isOffForAllVMs && !dismissed),
+                    "off=\(isOffForAllVMs) dismissed=\(dismissed)")
+                #expect(reminder.takesPerVMChoice == !isOffForAllVMs)
+            }
+        }
     }
 
     // MARK: - Display size

@@ -331,7 +331,8 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
         for (instance, toggle) in vmSwitches {
             toggle.state = instance.hostState.agentInstallNudgeDismissed ? .off : .on
-            applyGroupedFormRowEnabled(!overridden, control: toggle)
+            applyGroupedFormRowEnabled(
+                AgentInstallReminder(isOffForAllVMs: overridden).takesPerVMChoice, control: toggle)
         }
         publishSize()
 

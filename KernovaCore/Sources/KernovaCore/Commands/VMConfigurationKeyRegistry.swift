@@ -46,28 +46,30 @@ struct VMConfigurationWriteContext: Sendable {
     let networks: VMNetworkDirectory.State
     /// The CPU and memory bounds this Mac holds a guest to.
     let resourceLimits: VMResourceLimits
+    /// The app-wide install reminder, which decides whether a VM's own choice
+    /// takes a change.
+    let agentInstallReminder: AgentInstallReminder
 
     init(
         snapshots: VMSnapshotManifest, entitlements: EntitlementService, networks: VMNetworkDirectory.State,
-        resourceLimits: VMResourceLimits
+        resourceLimits: VMResourceLimits, agentInstallReminder: AgentInstallReminder
     ) {
         self.snapshots = snapshots
         self.entitlements = entitlements
         self.networks = networks
         self.resourceLimits = resourceLimits
+        self.agentInstallReminder = agentInstallReminder
     }
 
-    /// What `instance` holds, in a build authorizing `entitlements` whose
-    /// library lists `networks`, on a Mac bounding guests by `resourceLimits`,
-    /// for a key's write to read.
+    /// What `instance`, and the `library` holding it, hold for a key's write
+    /// to read.
     @MainActor
-    init(
-        _ instance: VMInstance, entitlements: EntitlementService, networks: VMNetworkDirectory.State,
-        resourceLimits: VMResourceLimits
-    ) {
+    init(_ instance: VMInstance, in library: VMLibrary) {
         self.init(
-            snapshots: instance.snapshotManifest, entitlements: entitlements, networks: networks,
-            resourceLimits: resourceLimits)
+            snapshots: instance.snapshotManifest, entitlements: library.entitlements,
+            networks: library.networks.state, resourceLimits: library.virtualizationHost.resourceLimits,
+            agentInstallReminder: AgentInstallReminder(
+                isOffForAllVMs: library.preferences.agentInstallPromptDisabled))
     }
 }
 
@@ -102,10 +104,16 @@ package struct VMConfigurationKey: Sendable {
         /// Parses a value into the change it makes, refusing with
         /// ``CommandError/invalidArgument(_:)`` one this key cannot take.
         ///
-        /// Every refusal is made here, before any file is touched: the change
-        /// itself cannot fail, so a batch's host-state half never refuses after
-        /// its configuration half has landed.
+        /// Every refusal is made here or by ``refusalOnResult``, before any
+        /// file is touched: the change itself cannot fail, so a batch's
+        /// host-state half never refuses after its configuration half has
+        /// landed.
         let change: @Sendable (String, VMConfigurationWriteContext) throws -> (inout VMHostState) -> Void
+        /// Why the value this key ended up holding cannot stand — `nil` when it
+        /// can — read off the host state every host-state assignment in the
+        /// batch produced from what the VM holds. Asked only of a key the call
+        /// actually moved, so writing back what a read answered stays a no-op.
+        let refusalOnResult: @Sendable (VMHostState, VMConfigurationWriteContext) -> String?
     }
 
     /// Which file holds the value, and how a written value lands there.
@@ -182,13 +190,17 @@ package struct VMConfigurationKey: Sendable {
         readHostState: @escaping @Sendable (VMHostState) -> String,
         changeHostState:
             @escaping @Sendable (String, VMConfigurationWriteContext) throws
-            -> (inout VMHostState) -> Void
+            -> (inout VMHostState) -> Void,
+        refusalOnResult: @escaping @Sendable (VMHostState, VMConfigurationWriteContext) -> String? = {
+            _, _ in nil
+        }
     ) {
         self.name = name
         self.summary = summary
         self.gate = { _ in gate }
         self.appliesToGuest = applies
-        field = .hostState(HostStateField(read: readHostState, change: changeHostState))
+        field = .hostState(
+            HostStateField(read: readHostState, change: changeHostState, refusalOnResult: refusalOnResult))
     }
 
     /// Whether the key means anything for a `guestOS` guest.
@@ -235,25 +247,24 @@ package struct VMConfigurationKey: Sendable {
         } catch {
             return false
         }
-        guard case .configuration(let field) = field,
-            field.read(candidate.configuration) != field.read(settings.configuration)
-        else { return true }
-        return field.refusalOnResult(candidate.configuration, context) == nil
+        guard read(candidate) != read(settings) else { return true }
+        return refusalOnResult(candidate, context: context) == nil
     }
 
-    /// ``accepts(_:settings:context:)`` against what `instance` holds, in a
-    /// build authorizing `entitlements` whose library lists `networks`, on a
-    /// Mac bounding guests by `resourceLimits`.
+    /// Why the value this key holds in `settings` cannot stand — `nil` when it
+    /// can.
+    func refusalOnResult(_ settings: VMSettings, context: VMConfigurationWriteContext) -> String? {
+        switch field {
+        case .configuration(let field): field.refusalOnResult(settings.configuration, context)
+        case .hostState(let field): field.refusalOnResult(settings.hostState, context)
+        }
+    }
+
+    /// ``accepts(_:settings:context:)`` against what `instance`, and the
+    /// `library` holding it, hold.
     @MainActor
-    func accepts(
-        _ value: String, for instance: VMInstance, entitlements: EntitlementService,
-        networks: VMNetworkDirectory.State, resourceLimits: VMResourceLimits
-    ) -> Bool {
-        accepts(
-            value, settings: instance.settings,
-            context: VMConfigurationWriteContext(
-                instance, entitlements: entitlements, networks: networks,
-                resourceLimits: resourceLimits))
+    func accepts(_ value: String, for instance: VMInstance, in library: VMLibrary) -> Bool {
+        accepts(value, settings: instance.settings, context: VMConfigurationWriteContext(instance, in: library))
     }
 
     /// An assignment of `value` to this key.
@@ -777,7 +788,16 @@ package enum VMConfigurationKeyRegistry {
         changeHostState: { value, _ in
             let reminds = try ConfigurationValue.boolean(value, key: "agent.installReminder")
             return { $0.agentInstallNudgeDismissed = !reminds }
+        },
+        refusalOnResult: { _, context in
+            context.agentInstallReminder.takesPerVMChoice ? nil : agentInstallReminderOffForAllVMsRefusal
         })
+
+    /// What a write moving ``agentInstallReminder`` answers while the reminder
+    /// is off for every VM.
+    private static let agentInstallReminderOffForAllVMsRefusal =
+        "The guest agent install reminder is turned off for all virtual machines in Settings → Reminders. "
+        + "Turn it on there to change agent.installReminder."
 
     /// The refusal a size key owes while the display is sized to its window:
     /// every cold start recomputes the trio from the window, so a size written

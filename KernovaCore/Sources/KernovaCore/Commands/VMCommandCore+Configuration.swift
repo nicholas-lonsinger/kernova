@@ -73,17 +73,17 @@ extension VMCommandCore {
     /// survives — and whether an assignment moves a value is judged there too.
     /// The configuration's refusals are judged on its result, so turning
     /// clipboard sharing on in the same call as passthrough works whichever
-    /// order they arrive in. A key whose write derives another key's value —
-    /// `network.mode` minting a MAC address — sees the batch in the order
-    /// given.
+    /// order they arrive in; a host-state key's own refusal is judged before
+    /// either file is touched, on the host state the batch makes of what the
+    /// VM holds, and only when its value moves. A key whose write derives
+    /// another key's value — `network.mode` minting a MAC address — sees the
+    /// batch in the order given.
     @discardableResult
     package func setConfiguration(
         _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
-        let context = VMConfigurationWriteContext(
-            instance, entitlements: library.entitlements, networks: library.networks.state,
-            resourceLimits: library.virtualizationHost.resourceLimits)
+        let context = VMConfigurationWriteContext(instance, in: library)
         let guestOS = instance.configuration.guestOS
 
         var answered: [VMConfigurationKey] = []
@@ -108,8 +108,15 @@ extension VMCommandCore {
             HostStateChange(
                 key: write.key, field: write.field, change: try write.field.change(write.value, context))
         }
-        try requireEphemeralBaselineConsent(
-            on: instance, applying: hostStateChanges, consent: consent)
+        var hostStateCandidate = instance.hostState
+        for change in hostStateChanges { change.change(&hostStateCandidate) }
+        for change in hostStateChanges
+        where change.field.read(hostStateCandidate) != change.field.read(instance.hostState) {
+            // Only a key this call moves is judged, as the configuration's are.
+            guard let message = change.field.refusalOnResult(hostStateCandidate, context) else { continue }
+            throw CommandError.invalidArgument(message)
+        }
+        try requireEphemeralBaselineConsent(on: instance, becoming: hostStateCandidate, consent: consent)
         // The configuration's gates are judged on what `config.json` holds,
         // inside the write: the permit covers every key the VM takes now, and
         // one that moves a field outside it is refused there.
@@ -302,13 +309,12 @@ extension VMCommandCore {
     }
 
     /// Refuses, without the user's consent, a change that turns Ephemeral Mode
-    /// on or points it at another snapshot, in whatever state the VM is: from
-    /// then on every shutdown discards what the VM holds.
+    /// on or points it at another snapshot — the host state becoming
+    /// `candidate` — in whatever state the VM is: from then on every shutdown
+    /// discards what the VM holds.
     private func requireEphemeralBaselineConsent(
-        on instance: VMInstance, applying changes: [HostStateChange], consent: Consent
+        on instance: VMInstance, becoming candidate: VMHostState, consent: Consent
     ) throws {
-        var candidate = instance.hostState
-        for change in changes { change.change(&candidate) }
         guard candidate.ephemeralModeEnabled,
             let id = candidate.ephemeralBaselineSnapshotID,
             id != instance.ephemeralBaselineSnapshot?.id,

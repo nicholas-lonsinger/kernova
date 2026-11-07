@@ -177,10 +177,7 @@ extension VMCommandCore {
                     continue
                 }
                 guard capabilities.accepts(.discardSavedState, on: instance),
-                    change.key.accepts(
-                        value, for: instance, entitlements: library.entitlements,
-                        networks: library.networks.state,
-                        resourceLimits: library.virtualizationHost.resourceLimits)
+                    change.key.accepts(value, for: instance, in: library)
                 else { continue }
                 let capability = change.key.capability(
                     writing: value, for: instance.configuration.guestOS)

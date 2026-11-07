@@ -551,7 +551,7 @@ final class SidebarVMRowCellView: NSTableCellView {
             break
         }
         if case .waiting = presentation.status,
-            installPromptDisabled || instance.hostState.agentInstallNudgeDismissed
+            !AgentInstallReminder(isOffForAllVMs: installPromptDisabled).shows(for: instance.hostState)
         {
             return nil
         }
