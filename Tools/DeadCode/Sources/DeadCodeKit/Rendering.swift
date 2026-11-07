@@ -1,15 +1,18 @@
 import Foundation
 
 extension DeadCodeReport {
-    /// What a terminal shows: a partial report opens by saying which platforms' uses it lacks.
-    package var text: String {
+    /// What a terminal shows: a partial report opens by saying which platforms' uses it lacks, then `remedy`, what
+    /// supplies them here, when there is one.
+    package func text(remedy: String? = nil) -> String {
         var lines: [String] = []
         if !missingPlatforms.isEmpty {
             let scanned = platforms.map(\.displayName).joined(separator: " and ")
             let missing = missingPlatforms.map(\.displayName).joined(separator: " and ")
-            lines += [
+            lines.append(
                 "This scan covers \(scanned) uses only. \(missing) was not scanned, so a symbol only \(missing) code "
-                    + "uses is listed here as dead.",
+                    + "uses is listed here as dead.")
+            if let remedy { lines.append(remedy) }
+            lines += [
                 "The combined scan runs in CI: push the branch, run `gh workflow run dead-code.yml --ref <branch>`, "
                     + "and read the run's dead-code-report artifact.",
                 "",

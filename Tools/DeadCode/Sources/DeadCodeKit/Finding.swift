@@ -151,7 +151,7 @@ package enum FindingKey: Hashable, Comparable, Sendable {
 }
 
 extension String {
-    fileprivate var trimmingSlash: String {
+    var trimmingSlash: String {
         var copy = self
         while copy.count > 1, copy.hasSuffix("/") { copy.removeLast() }
         return copy

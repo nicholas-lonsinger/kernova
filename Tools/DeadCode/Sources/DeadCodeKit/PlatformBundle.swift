@@ -73,10 +73,19 @@ package struct PlatformBundle: Equatable, Sendable {
 package enum BundleError: Error, Equatable, CustomStringConvertible {
     case missingFile(String)
     case foreignFiles(String, [String])
+    case noTestOnlyTargets
+    case emptyStore(store: String, root: String)
+    case unindexedTargets(store: String, targets: [String])
 
     package var description: String {
         switch self {
         case .missingFile(let path): "the bundle lacks \(path)"
+        case .noTestOnlyTargets:
+            "no target is listed as reached only by tests, so the production view would be the full one"
+        case .emptyStore(let store, let root): "\(store) holds no declaration under \(root)"
+        case .unindexedTargets(let store, let targets):
+            "\(store) holds no declaration from " + targets.joined(separator: ", ")
+                + ", so it is not the build of the package the scan reads"
         case .foreignFiles(let directory, let files):
             "\(directory) holds files no bundle writes, so it is not replaced: " + files.joined(separator: ", ")
         }

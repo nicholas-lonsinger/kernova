@@ -10,10 +10,17 @@ let sharedSwiftSettings: [SwiftSetting] = [
 
 // The portable targets build wherever Swift does — macOS, Linux, Windows — and
 // are the code that builds off Apple platforms. Everything else is Apple-only
-// and is declared only where the manifest is evaluated on macOS, so
-// `swift build` and `swift test` on Linux or Windows build exactly the portable
-// targets. A cross build from a Mac evaluates the manifest for macOS, so it
-// names its targets (the Makefile's `PORTABLE_TARGETS`).
+// and is declared only on macOS, so `swift build` and `swift test` on Linux or
+// Windows build exactly the portable targets. SwiftPM evaluates a manifest for
+// the machine it runs on, never for the destination a cross build names, so a
+// build for Linux from a Mac sets KERNOVA_PORTABLE_ONLY and gets the manifest
+// Linux evaluates.
+#if os(macOS)
+let declaresAppleTargets = Context.environment["KERNOVA_PORTABLE_ONLY"] == nil
+#else
+let declaresAppleTargets = false
+#endif
+
 var products: [Product] = [
     // Static, and it has to stay static: Xcode gives every target that links a
     // *dynamic* package product a command copying that framework into the
@@ -350,146 +357,146 @@ var targets: [Target] = [
     ),
 ]
 
-#if os(macOS)
-products += [
-    .library(name: "KernovaKit", targets: ["KernovaKit"]),
-    .library(name: "KernovaCommandModel", targets: ["KernovaCommandModel"]),
-    .library(name: "KernovaAppKitShared", targets: ["KernovaAppKitShared"]),
-    // Static for the reasons `KernovaLogging`'s comment gives, so read it
-    // before changing this one.
-    //
-    // A dynamic product that linked this one would carry its own copy, and a
-    // binary loading both — a test bundle linking `KernovaCLICore` and this
-    // together — would hold the registry's type metadata twice, so a cast or a
-    // protocol conformance could resolve against the wrong one.
-    // `KernovaCLICore` therefore has to stay the only library depending on it,
-    // and anything else that needs it takes it directly.
-    .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
-    .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
-    .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
-    // The app's agent hub, the protocol types and stream it is driven
-    // with, and the item adapters it serves and lands through, for KernovaCore.
-    .library(
-        name: "KernovaAgentHost",
-        targets: [
-            "KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX",
-            "KernovaItemTransfer", "KernovaFileTree", "KernovaClipboardItems",
-        ]),
-    // The writer the app makes the Linux agent's disk with, for KernovaCore.
-    .library(name: "KernovaISO9660", targets: ["KernovaISO9660"]),
-    // The macOS guest agent's peer, install and update, and the core it runs on. Static for the reasons
-    // `KernovaLogging`'s comment gives.
-    .library(
-        name: "KernovaPlatformDarwin", type: .static,
-        targets: [
-            "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire",
-            "KernovaPlatformPOSIX", "KernovaDigest", "KernovaClipboardItems",
-        ]),
-]
+if declaresAppleTargets {
+    products += [
+        .library(name: "KernovaKit", targets: ["KernovaKit"]),
+        .library(name: "KernovaCommandModel", targets: ["KernovaCommandModel"]),
+        .library(name: "KernovaAppKitShared", targets: ["KernovaAppKitShared"]),
+        // Static for the reasons `KernovaLogging`'s comment gives, so read it
+        // before changing this one.
+        //
+        // A dynamic product that linked this one would carry its own copy, and a
+        // binary loading both — a test bundle linking `KernovaCLICore` and this
+        // together — would hold the registry's type metadata twice, so a cast or a
+        // protocol conformance could resolve against the wrong one.
+        // `KernovaCLICore` therefore has to stay the only library depending on it,
+        // and anything else that needs it takes it directly.
+        .library(name: "KernovaAppRegistry", type: .static, targets: ["KernovaAppRegistry"]),
+        .library(name: "KernovaCLICore", targets: ["KernovaCLICore"]),
+        .library(name: "KernovaTestSupport", targets: ["KernovaTestSupport"]),
+        // The app's agent hub, the protocol types and stream it is driven
+        // with, and the item adapters it serves and lands through, for KernovaCore.
+        .library(
+            name: "KernovaAgentHost",
+            targets: [
+                "KernovaAgentHost", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaWire", "KernovaPlatformPOSIX",
+                "KernovaItemTransfer", "KernovaFileTree", "KernovaClipboardItems",
+            ]),
+        // The writer the app makes the Linux agent's disk with, for KernovaCore.
+        .library(name: "KernovaISO9660", targets: ["KernovaISO9660"]),
+        // The macOS guest agent's peer, install and update, and the core it runs on. Static for the reasons
+        // `KernovaLogging`'s comment gives.
+        .library(
+            name: "KernovaPlatformDarwin", type: .static,
+            targets: [
+                "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore",
+                "KernovaWire", "KernovaPlatformPOSIX", "KernovaDigest", "KernovaClipboardItems",
+            ]),
+    ]
 
-dependencies += [
-    // Linked by KernovaCLICore alone — neither the app nor the guest agent
-    // gains a dependency.
-    .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
-]
+    dependencies += [
+        // Linked by KernovaCLICore alone — neither the app nor the guest agent
+        // gains a dependency.
+        .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0")
+    ]
 
-targets += [
-    .target(
-        name: "KernovaKit",
-        dependencies: [
-            "KernovaLogging",
-            "KernovaSynchronization",
-            "KernovaFileTree",
-            "KernovaWire",
-        ],
-        swiftSettings: sharedSwiftSettings
-    ),
-    // What the app and the `kernova` tool share and no guest agent links:
-    // the command wire, the library's queries, config-file decoding.
-    .target(
-        name: "KernovaCommandModel",
-        dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
-        swiftSettings: sharedSwiftSettings
-    ),
-    // The clipboard over the agent connection's items, the same at the host and the macOS guest agent: a
-    // pasteboard's offers, the far side's offers published lazily, and the pulls that land them.
-    .target(
-        name: "KernovaClipboardItems",
-        dependencies: [
-            "KernovaKit", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire", "KernovaLogging",
-            "KernovaSynchronization",
-        ],
-        swiftSettings: sharedSwiftSettings
-    ),
-    // The AppKit UI the app and the macOS guest agent share.
-    .target(
-        name: "KernovaAppKitShared",
-        dependencies: ["KernovaKit", "KernovaLogging"],
-        swiftSettings: sharedSwiftSettings
-    ),
-    // What the macOS guest agent calls into macOS for: the vsock dial, its identity and session state, and
-    // launchd, which runs and updates it.
-    .target(
-        name: "KernovaPlatformDarwin",
-        dependencies: [
-            "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
-            "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaItemTransfer", "KernovaFileTree",
-        ],
-        swiftSettings: sharedSwiftSettings
-    ),
-    .testTarget(
-        name: "KernovaPlatformDarwinTests",
-        dependencies: [
-            "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire",
-            "KernovaSynchronization", "KernovaTestSupport",
-        ],
-        swiftSettings: sharedSwiftSettings
-    ),
-    // Reading Launch Services' registry and waiting for it to let an app
-    // go. Its own target rather than part of `KernovaKit` so the relaunch
-    // helper can link it without linking everything else.
-    .target(
-        name: "KernovaAppRegistry",
-        swiftSettings: sharedSwiftSettings
-    ),
-    // The `kernova` tool's whole vocabulary: parsing, rendering, exit
-    // codes, and the client that speaks to the app. It lives in this
-    // package so its tests ride `KernovaKitTests` — which is already in
-    // Kernova.xctestplan — rather than needing a test target of their own.
-    .target(
-        name: "KernovaCLICore",
-        dependencies: [
-            "KernovaKit",
-            "KernovaCommandModel",
-            "KernovaAppRegistry",
-            "KernovaSynchronization",
-            .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        ],
-        swiftSettings: sharedSwiftSettings
-    ),
-    .target(
-        name: "KernovaTestSupport",
-        dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization", "KernovaPortableTestSupport"],
-        swiftSettings: sharedSwiftSettings
-    ),
-    .testTarget(
-        name: "KernovaKitTests",
-        dependencies: [
-            "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
-            "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-            "KernovaFileTree", "KernovaWire", "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime",
-        ],
-        swiftSettings: sharedSwiftSettings
-    ),
-    // Every exit test, and nothing else: a test target runs in a process
-    // of its own (Tools/check-exit-tests.sh).
-    .testTarget(
-        name: "KernovaKitExitTests",
-        dependencies: ["KernovaLogging", "KernovaTestSupport"],
-        swiftSettings: sharedSwiftSettings
-    ),
-]
-#endif
+    targets += [
+        .target(
+            name: "KernovaKit",
+            dependencies: [
+                "KernovaLogging",
+                "KernovaSynchronization",
+                "KernovaFileTree",
+                "KernovaWire",
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // What the app and the `kernova` tool share and no guest agent links:
+        // the command wire, the library's queries, config-file decoding.
+        .target(
+            name: "KernovaCommandModel",
+            dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization"],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The clipboard over the agent connection's items, the same at the host and the macOS guest agent: a
+        // pasteboard's offers, the far side's offers published lazily, and the pulls that land them.
+        .target(
+            name: "KernovaClipboardItems",
+            dependencies: [
+                "KernovaKit", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire", "KernovaLogging",
+                "KernovaSynchronization",
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The AppKit UI the app and the macOS guest agent share.
+        .target(
+            name: "KernovaAppKitShared",
+            dependencies: ["KernovaKit", "KernovaLogging"],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // What the macOS guest agent calls into macOS for: the vsock dial, its identity and session state, and
+        // launchd, which runs and updates it.
+        .target(
+            name: "KernovaPlatformDarwin",
+            dependencies: [
+                "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
+                "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaItemTransfer", "KernovaFileTree",
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        .testTarget(
+            name: "KernovaPlatformDarwinTests",
+            dependencies: [
+                "KernovaPlatformDarwin", "KernovaAgentInstall", "KernovaAgentCore", "KernovaAgentRuntime",
+                "KernovaWire", "KernovaSynchronization", "KernovaTestSupport",
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // Reading Launch Services' registry and waiting for it to let an app
+        // go. Its own target rather than part of `KernovaKit` so the relaunch
+        // helper can link it without linking everything else.
+        .target(
+            name: "KernovaAppRegistry",
+            swiftSettings: sharedSwiftSettings
+        ),
+        // The `kernova` tool's whole vocabulary: parsing, rendering, exit
+        // codes, and the client that speaks to the app. It lives in this
+        // package so its tests ride `KernovaKitTests` — which is already in
+        // Kernova.xctestplan — rather than needing a test target of their own.
+        .target(
+            name: "KernovaCLICore",
+            dependencies: [
+                "KernovaKit",
+                "KernovaCommandModel",
+                "KernovaAppRegistry",
+                "KernovaSynchronization",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        .target(
+            name: "KernovaTestSupport",
+            dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization", "KernovaPortableTestSupport"],
+            swiftSettings: sharedSwiftSettings
+        ),
+        .testTarget(
+            name: "KernovaKitTests",
+            dependencies: [
+                "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
+                "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
+                "KernovaFileTree", "KernovaWire", "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime",
+            ],
+            swiftSettings: sharedSwiftSettings
+        ),
+        // Every exit test, and nothing else: a test target runs in a process
+        // of its own (Tools/check-exit-tests.sh).
+        .testTarget(
+            name: "KernovaKitExitTests",
+            dependencies: ["KernovaLogging", "KernovaTestSupport"],
+            swiftSettings: sharedSwiftSettings
+        ),
+    ]
+}
 
 let package = Package(
     name: "KernovaKit",

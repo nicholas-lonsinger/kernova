@@ -12,6 +12,7 @@ on:
       - 'Tools/build-linux-guest-agent.sh'
       - 'Tools/check-linux-guest-agent.sh'
       - 'Tools/lib/static-linux-sdk.sh'
+      - 'Tools/lib/linux-swift.sh'
       - 'Tools/lib/linux-agent.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   pull_request:
@@ -22,6 +23,7 @@ on:
       - 'Tools/build-linux-guest-agent.sh'
       - 'Tools/check-linux-guest-agent.sh'
       - 'Tools/lib/static-linux-sdk.sh'
+      - 'Tools/lib/linux-swift.sh'
       - 'Tools/lib/linux-agent.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   workflow_dispatch:

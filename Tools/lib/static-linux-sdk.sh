@@ -14,6 +14,11 @@ STATIC_SDK_VERSION=0.1.0
 # shellcheck disable=SC2034
 STATIC_SDK_CHECKSUM=cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
 
+# pinned_swift_version: the swift.org release .swift-version pins.
+pinned_swift_version() {
+    tr -d '[:space:]' <"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.swift-version"
+}
+
 # static_sdk_id <swift version>: the SDK's id, which is also its bundle's name.
 static_sdk_id() {
     printf 'swift-%s-RELEASE_static-linux-%s\n' "$1" "$STATIC_SDK_VERSION"
@@ -30,19 +35,35 @@ swiftly_binary() {
     printf '%s/bin/swiftly\n' "${SWIFTLY_HOME_DIR:-$HOME/.swiftly}"
 }
 
+# swift_sdks_dir: where SDKs for the toolchain are installed and looked up on
+# macOS. KERNOVA_SWIFT_SDKS_PATH moves it; every install, check and build
+# through these libraries passes it to SwiftPM as `--swift-sdks-path`.
+swift_sdks_dir() {
+    printf '%s\n' "${KERNOVA_SWIFT_SDKS_PATH:-$HOME/Library/org.swift.swiftpm/swift-sdks}"
+}
+
+# swiftly_toolchain_missing <swift version>: on macOS, prints swiftly or the
+# toolchain when either is not installed, and nothing when both are.
+swiftly_toolchain_missing() {
+    if [ ! -x "$(swiftly_binary)" ]; then
+        echo swiftly
+    elif [ ! -d "$HOME/Library/Developer/Toolchains/swift-$1-RELEASE.xctoolchain" ]; then
+        echo "Swift $1"
+    fi
+}
+
 # swift_toolchain_missing <swift version>: prints the first piece of what the
 # agent builds with that is not installed, and nothing when all of it is. On
 # macOS that is swiftly, the toolchain and the SDK; on Linux the toolchain is
 # the `swift` on PATH, so only the SDK is looked for.
 swift_toolchain_missing() {
-    local version=$1 id
+    local version=$1 id missing
     id="$(static_sdk_id "$version")"
     if [ "$(uname -s)" = Darwin ]; then
-        if [ ! -x "$(swiftly_binary)" ]; then
-            echo swiftly
-        elif [ ! -d "$HOME/Library/Developer/Toolchains/swift-${version}-RELEASE.xctoolchain" ]; then
-            echo "Swift $version"
-        elif [ ! -d "$HOME/Library/org.swift.swiftpm/swift-sdks/${id}.artifactbundle" ]; then
+        missing="$(swiftly_toolchain_missing "$version")"
+        if [ -n "$missing" ]; then
+            echo "$missing"
+        elif [ ! -d "$(swift_sdks_dir)/$id.artifactbundle" ]; then
             echo "$id"
         fi
     elif ! swift sdk list 2>/dev/null | grep -qxF "$id"; then

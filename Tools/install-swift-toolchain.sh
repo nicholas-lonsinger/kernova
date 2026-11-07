@@ -26,7 +26,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/static-linux-sdk.sh
 . "$lib_dir/lib/static-linux-sdk.sh"
 
-swift_version="$(tr -d '[:space:]' <.swift-version)"
+swift_version="$(pinned_swift_version)"
 swiftly="$(swiftly_binary)"
 
 if [ ! -x "$swiftly" ]; then
@@ -41,10 +41,10 @@ fi
 "$swiftly" install "$swift_version" --assume-yes >&2
 
 sdk_id="$(static_sdk_id "$swift_version")"
-installed_sdks="$("$swiftly" run swift sdk list "+$swift_version")"
+installed_sdks="$("$swiftly" run swift sdk list "+$swift_version" --swift-sdks-path "$(swift_sdks_dir)")"
 if ! grep -qxF "$sdk_id" <<<"$installed_sdks"; then
     "$swiftly" run swift sdk install "$(static_sdk_url "$swift_version")" \
-        --checksum "$STATIC_SDK_CHECKSUM" "+$swift_version" >&2
+        --checksum "$STATIC_SDK_CHECKSUM" "+$swift_version" --swift-sdks-path "$(swift_sdks_dir)" >&2
 fi
 
 pass "Swift $swift_version and $sdk_id installed" >&2
