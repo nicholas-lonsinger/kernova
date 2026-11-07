@@ -428,7 +428,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                     symbolName: "exclamationmark.triangle.fill",
                     tint: Caution.color,
                     message: subject.map { "\($0) is already downloaded." } ?? "A file is already at this location.",
-                    trailingButtons: [useExisting, replace]
+                    trailing: [.button(useExisting), .button(replace)]
                 ),
                 to: conditionalContainer)
         } else if creationVM.hasResumableDownload {
@@ -465,7 +465,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                     tint: Caution.color,
                     message:
                         "The file already here is \(found.summary), not build \(expected). Using it installs \(found.summary).",
-                    trailingButtons: [anyway, replace]
+                    trailing: [.button(anyway), .button(replace)]
                 ),
                 to: conditionalContainer)
         case .unusable(let message):
@@ -476,7 +476,7 @@ final class IPSWSelectionContentViewController: NSViewController {
                     symbolName: "exclamationmark.triangle.fill",
                     tint: Caution.color,
                     message: message,
-                    trailingButtons: [replace]
+                    trailing: [.button(replace)]
                 ),
                 to: conditionalContainer)
         }

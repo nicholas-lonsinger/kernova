@@ -132,7 +132,7 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 18)
+        #expect(VMCommandRequest.currentProtocolVersion == 19)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
@@ -1209,5 +1209,170 @@ struct VMCommandEnvelopeRouterTests {
             ).result == .ok)
 
         #expect(instance.configuration.sharedDirectories == nil)
+    }
+
+    // MARK: - Ephemeral revert notices
+
+    /// A stopped VM in Ephemeral Mode with `baseline` as its baseline.
+    @discardableResult
+    private func makeEphemeralInstance(
+        in harness: Harness, name: String = "Alpha", baseline: VMSnapshot,
+        phase: VMLifecyclePhase = .stopped, guestOS: VMGuestOS = .linux,
+        mutate: (inout VMConfiguration) -> Void = { _ in }
+    ) -> VMInstance {
+        harness.wired.register(
+            name: name, phase: phase, guestOS: guestOS, snapshots: [baseline],
+            hostState: .ephemeral(baseline: baseline.id), mutate: mutate)
+    }
+
+    /// Each of `notices` as the VM it names and its baseline.
+    private func named(_ notices: [VMCommandNotice]) -> [String] {
+        notices.map { notice in
+            switch notice {
+            case .ephemeralRevert(let vm, let baseline): "\(vm.name) → \(baseline.name)"
+            }
+        }
+    }
+
+    @Test("A set that moves a setting a revert restores answers with the notice beside the values")
+    func setOfARevertingKeyCarriesTheNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+        #expect(instance.ephemeralBaselineSnapshot != nil)
+
+        let response = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
+
+        #expect(response.result == .configuration([ConfigurationEntry(key: "cpus", value: "3")]))
+        #expect(named(response.notices) == ["Alpha → Clean install"])
+    }
+
+    @Test("A host-state key, a VM with no baseline and a turned-off reminder carry no notice")
+    func settingsTheRevertLeavesCarryNoNotice() async throws {
+        let harness = makeHarness()
+        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+        makeInstance(in: harness, name: "Plain")
+
+        let hostState = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "autoStart", value: "true")],
+                consent: .none))
+        #expect(hostState.failure == nil)
+        #expect(hostState.notices.isEmpty)
+
+        let plain = try await harness.transport.send(
+            .setConfiguration(
+                .name("Plain"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
+        #expect(plain.failure == nil)
+        #expect(plain.notices.isEmpty)
+
+        preferences.ephemeralSettingsBannerDismissed = true
+        let dismissed = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
+        #expect(dismissed.failure == nil)
+        #expect(dismissed.notices.isEmpty)
+    }
+
+    @Test("A rename keeps the VM's name through a revert, so it carries no notice")
+    func renameCarriesNoNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+
+        let response = try await harness.transport.send(.rename(.name("Alpha"), newName: "Beta"))
+
+        #expect(response.result == .ok)
+        #expect(instance.name == "Beta")
+        #expect(response.notices.isEmpty)
+    }
+
+    @Test("A share removal on an Ephemeral VM carries the notice through the same answer")
+    func shareRemovalCarriesTheNotice() async throws {
+        let harness = makeHarness()
+        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil)) {
+            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites")]
+        }
+
+        let response = try await harness.transport.send(
+            .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites")))
+
+        #expect(response.result == .ok)
+        #expect(named(response.notices) == ["Alpha → Clean install"])
+    }
+
+    @Test("A verb that is no settings edit carries no notice")
+    func readCarriesNoNotice() async throws {
+        let harness = makeHarness()
+        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+
+        let response = try await harness.transport.send(.info(.name("Alpha")))
+
+        #expect(response.failure == nil)
+        #expect(response.notices.isEmpty)
+    }
+
+    @Test("Mounting the agent installer adds an item that ejects itself, so it carries no notice")
+    func agentDiskMountCarriesNoNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(
+            in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil),
+            phase: .running(sessionID: UUID()), guestOS: .macOS)
+        instance.beginSessionContextForTesting().hasAgentTransport = true
+
+        let response = try await harness.transport.send(
+            .guestAgentDisk(.name("Alpha"), .mount(awaiting: nil)))
+
+        #expect(response.failure == nil)
+        #expect(instance.configuration.removableMedia?.count == 1)
+        #expect(response.notices.isEmpty)
+    }
+
+    @Test("A commit made outside a request while it awaits is no change of that request's")
+    func concurrentCommitIsNotTheRequestsChange() async throws {
+        let harness = makeHarness()
+        harness.authority.holdsPanel = true
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        makeEphemeralInstance(in: harness, name: "PoolA", baseline: baseline)
+        let other = makeEphemeralInstance(in: harness, name: "PoolB", baseline: baseline)
+        let folder = externalPath("Asked")
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+
+        let request = Task {
+            try await harness.transport.send(
+                .editSharedDirectory(.name("PoolA"), .add(path: folder, readOnly: false)))
+        }
+        try await harness.authority.requested.wait { harness.authority.requests.count == 1 }
+        // Another door's edit, landing from this task while the share add
+        // waits on its panel.
+        try harness.core.setConfiguration(
+            .id(other.id), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none)
+        #expect(other.configuration.cpuCount == 3)
+        harness.authority.releasePanel()
+
+        let response = try await request.value
+        #expect(response.failure == nil)
+        #expect(named(response.notices) == ["PoolA → Clean install"])
+    }
+
+    @Test("A configuration commit the verb then fails after still carries its notice")
+    func failureAfterACommitCarriesTheNotice() async throws {
+        let harness = makeHarness()
+        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
+        harness.storage.setSaveHostStateError(CocoaError(.fileWriteNoPermission))
+
+        // The configuration commits first; the host-state half then fails.
+        let response = try await harness.transport.send(
+            .setConfiguration(
+                .name("Alpha"),
+                assignments: [
+                    ConfigurationEntry(key: "cpus", value: "3"),
+                    ConfigurationEntry(key: "autoStart", value: "true"),
+                ],
+                consent: .none))
+
+        #expect(response.failure != nil)
+        #expect(instance.configuration.cpuCount == 3)
+        #expect(named(response.notices) == ["Alpha → Clean install"])
     }
 }

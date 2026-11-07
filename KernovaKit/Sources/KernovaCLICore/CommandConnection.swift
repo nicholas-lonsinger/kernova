@@ -116,11 +116,32 @@ enum CommandConnection {
 
 /// Where the tool writes.
 enum Console {
+    /// The two streams the tool writes to, each handed whole lines.
+    struct Streams: Sendable {
+        let out: @Sendable (String) -> Void
+        let err: @Sendable (String) -> Void
+
+        /// The process's standard output and standard error.
+        static let standard = Streams(
+            out: { FileHandle.standardOutput.write(Data($0.utf8)) },
+            err: { FileHandle.standardError.write(Data($0.utf8)) })
+    }
+
+    /// Where this task's writes go: the process's own streams, unless a
+    /// caller bound others.
+    @TaskLocal static var streams = Streams.standard
+
     /// Writes `text` and a newline to standard output; an empty string writes
     /// nothing, so a listing with no rows produces no blank line.
     static func out(_ text: String) {
         guard !text.isEmpty else { return }
-        FileHandle.standardOutput.write(Data((text + "\n").utf8))
+        streams.out(text + "\n")
+    }
+
+    /// Writes `text` and a newline to standard error, where what is not the
+    /// answer goes — so neither `--quiet` nor `--format` takes it out.
+    static func notice(_ text: String) {
+        streams.err(text + "\n")
     }
 }
 

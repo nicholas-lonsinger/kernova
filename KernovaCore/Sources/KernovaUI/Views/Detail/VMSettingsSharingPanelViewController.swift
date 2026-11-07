@@ -22,6 +22,20 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         instance.configuration.sharedDirectories ?? []
     }
 
+    private static let installReminderTitle = "Show install reminder"
+    private static let usbPairingsTitle = "Remembered USB Accessories"
+
+    /// The install reminder lives in host state and the remembered accessories
+    /// in `usb-accessories.json`, neither of which a snapshot holds.
+    var keptThroughEphemeralRevert: [String] {
+        var kept: [String] = []
+        if agentSettings.contains(.installReminder) { kept.append(Self.installReminderTitle) }
+        if viewModel.supportsUSBAccessories, !instance.usbPairings.isEmpty {
+            kept.append(Self.usbPairingsTitle)
+        }
+        return kept
+    }
+
     init(context: VMSettingsPanelContext) {
         self.context = context
         super.init(nibName: nil, bundle: nil)
@@ -197,7 +211,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         // attach, so it takes an edit whatever the VM is doing.
         return makeGroupedFormSection([
             lockRegistry.makeHeader(
-                "Remembered USB Accessories",
+                Self.usbPairingsTitle,
                 paragraphs: [
                     .body(
                         "Passing a USB accessory through to this virtual machine remembers it. Kernova hands it back whenever both the accessory and this virtual machine are available — when you plug it in, and when the virtual machine starts."
@@ -347,7 +361,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 installReminderOverrideCaption = overrideCaption
                 return GroupedFormNotedRow(
                     makeGroupedFormCardRow(
-                        "Show install reminder", control: installReminderSwitch,
+                        Self.installReminderTitle, control: installReminderSwitch,
                         info: [
                             .body(
                                 "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."

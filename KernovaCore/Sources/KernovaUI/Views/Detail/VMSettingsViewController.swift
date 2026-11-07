@@ -64,6 +64,12 @@ final class VMSettingsViewController: NSViewController {
     /// The open category, or `nil` for the overview.
     private(set) var selectedCategory: VMSettingsCategory?
 
+    /// Holds the Ephemeral Mode banner above the open panel, while one shows.
+    private let ephemeralBannerContainer = NSStackView()
+    /// What the Ephemeral Mode banner was last built from, `nil` while none
+    /// shows.
+    private var renderedEphemeralBanner: RenderedEphemeralBanner?
+
     /// App activation, observed while the pane is on screen.
     private var activationObservation: HostNotification.Observation?
 
@@ -194,6 +200,11 @@ final class VMSettingsViewController: NSViewController {
         overviewVC.onAction = { [weak self] action in self?.run(action) }
         addChild(overviewVC)
         addPanelContent(overviewVC.view)
+        // Between the overview and the panel `installPanel` appends, so the
+        // banner heads the open panel's form.
+        ephemeralBannerContainer.orientation = .vertical
+        ephemeralBannerContainer.isHidden = true
+        addPanelContent(ephemeralBannerContainer)
         addGroupedFormFullWidth(identityHeader, to: headerContent)
         identityHeader.setBackAction(target: self, action: #selector(backToOverview))
         installPanels()
@@ -241,6 +252,10 @@ final class VMSettingsViewController: NSViewController {
                 _ = self.panelContext.fileMonitor.existsByPath
                 _ = self.viewModel.activeRename
                 _ = self.viewModel.agentInstallPromptDisabled
+                // The Ephemeral Mode banner, and the Sharing rows its info
+                // names as kept.
+                _ = self.viewModel.ephemeralSettingsBannerDismissed
+                _ = self.instance.usbPairings.isEmpty
                 // Registers every instance's configuration, so the
                 // duplicate-MAC banner follows a change made on the *other*
                 // holder, and library membership changing under it.
@@ -461,9 +476,48 @@ extension VMSettingsViewController {
         if let selectedCategory, builtPanels.contains(selectedCategory) {
             panelControllers[selectedCategory]?.refresh()
         }
+        refreshEphemeralBanner()
         // After the panel, so the header states what its chrome just resolved.
         refreshHeader()
         if selectedCategory == nil { refreshOverview() }
+    }
+
+    /// Shows the Ephemeral Mode banner over the open panel when
+    /// ``EphemeralSettingsBanner`` says one shows there, rebuilt only when what
+    /// it says changed.
+    private func refreshEphemeralBanner() {
+        let rendered = EphemeralSettingsBanner(
+            category: selectedCategory, baseline: instance.ephemeralBaselineSnapshot,
+            dismissed: viewModel.ephemeralSettingsBannerDismissed
+        ).map { banner in
+            RenderedEphemeralBanner(
+                banner: banner,
+                keptRows: selectedCategory.flatMap { panelControllers[$0]?.keptThroughEphemeralRevert } ?? [])
+        }
+        guard rendered != renderedEphemeralBanner else { return }
+        renderedEphemeralBanner = rendered
+        ephemeralBannerContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        ephemeralBannerContainer.isHidden = rendered == nil
+        guard let rendered else { return }
+        let dismiss = makeLinkButton(
+            EphemeralModeCopy.settingsBannerDismissTitle, target: self,
+            action: #selector(dismissEphemeralBanner))
+        let banner = makeGroupedFormBanner(
+            symbolName: "exclamationmark.triangle.fill", tint: Caution.color,
+            boldLead: EphemeralModeCopy.settingsBannerLead,
+            message: EphemeralModeCopy.settingsBannerMessage,
+            trailing: [
+                .info(
+                    label: EphemeralModeCopy.settingsBannerLead,
+                    paragraphs: EphemeralModeCopy.settingsBannerParagraphs(
+                        baseline: rendered.banner.baselineName, keptRows: rendered.keptRows)),
+                .button(dismiss),
+            ])
+        addGroupedFormFullWidth(banner, to: ephemeralBannerContainer)
+    }
+
+    @objc private func dismissEphemeralBanner() {
+        viewModel.ephemeralSettingsBannerDismissed = true
     }
 
     private func refreshOverview() {
@@ -568,4 +622,10 @@ extension VMSettingsViewController {
         case .dropFiles: setDropFiles(isOn)
         }
     }
+}
+
+/// What one build of the Ephemeral Mode banner showed.
+private struct RenderedEphemeralBanner: Equatable {
+    let banner: EphemeralSettingsBanner
+    let keptRows: [String]
 }

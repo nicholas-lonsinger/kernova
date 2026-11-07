@@ -763,38 +763,57 @@ func makeGroupedFormBox(
     return container
 }
 
-/// A tinted banner: a symbol, `message`, then `trailingButtons` and, when
-/// `info` is given, an info button labeled `info.label` opening its paragraphs.
+/// What follows a banner's message.
+enum GroupedFormBannerAccessory {
+    case button(NSButton)
+    /// An info button labeled `label`, opening `paragraphs`.
+    case info(label: String, paragraphs: [InfoPopoverParagraph])
+}
+
+/// A tinted banner: a symbol, `message` led by `boldLead` when one is given,
+/// then `trailing` in the order given.
 @MainActor
 func makeGroupedFormBanner(
     symbolName: String,
     tint: NSColor,
+    boldLead: String? = nil,
     message: String,
-    trailingButtons: [NSButton] = [],
-    info: (label: String, paragraphs: [InfoPopoverParagraph])? = nil
+    trailing: [GroupedFormBannerAccessory] = []
 ) -> NSView {
     let icon = NSImageView(image: .systemSymbol(symbolName, accessibilityDescription: ""))
     icon.contentTintColor = tint
     icon.setContentHuggingPriority(.required, for: .horizontal)
     icon.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+    let font = NSFont.preferredFont(forTextStyle: .callout)
     let label = NSTextField(wrappingLabelWithString: message)
-    label.font = .preferredFont(forTextStyle: .callout)
+    label.font = font
     label.maximumNumberOfLines = 0
     label.isSelectable = false
+    if let boldLead {
+        let bold = NSFont(descriptor: font.fontDescriptor.withSymbolicTraits(.bold), size: 0) ?? font
+        let text = NSMutableAttributedString(
+            string: boldLead, attributes: [.font: bold, .foregroundColor: NSColor.labelColor])
+        text.append(
+            NSAttributedString(
+                string: message, attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
+        label.attributedStringValue = text
+    }
 
     let spacer = NSView()
     spacer.translatesAutoresizingMaskIntoConstraints = false
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
     var views: [NSView] = [icon, label, spacer]
-    for button in trailingButtons {
-        button.controlSize = .small
-        button.setContentHuggingPriority(.required, for: .horizontal)
-        views.append(button)
-    }
-    if let info {
-        views.append(makeGroupedFormInfoButton(label: info.label, paragraphs: info.paragraphs))
+    for accessory in trailing {
+        switch accessory {
+        case .button(let button):
+            button.controlSize = .small
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            views.append(button)
+        case .info(let label, let paragraphs):
+            views.append(makeGroupedFormInfoButton(label: label, paragraphs: paragraphs))
+        }
     }
 
     let row = NSStackView(views: views)

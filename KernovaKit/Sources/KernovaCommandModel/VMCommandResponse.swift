@@ -1,18 +1,30 @@
 import Foundation
 
+/// Something a requester is told beside an answer, for it to word.
+public enum VMCommandNotice: Codable, Sendable, Hashable {
+    /// The request changed settings of `vm` that go back to `baseline`, its
+    /// Ephemeral baseline, at the next shutdown.
+    case ephemeralRevert(vm: VMSummary, baseline: SnapshotSummary)
+}
+
 /// What one ``VMCommandRequest`` answered with.
 public struct VMCommandResponse: Codable, Sendable, Hashable {
     /// The vocabulary this response is written in.
     public var protocolVersion: Int
     /// What the verb answered with.
     public var result: Result
+    /// What the requester is told beside the answer, which is complete
+    /// without them.
+    public var notices: [VMCommandNotice]
 
     /// Wraps one answer for the wire.
     public init(
-        result: Result, protocolVersion: Int = VMCommandRequest.currentProtocolVersion
+        result: Result, notices: [VMCommandNotice] = [],
+        protocolVersion: Int = VMCommandRequest.currentProtocolVersion
     ) {
         self.protocolVersion = protocolVersion
         self.result = result
+        self.notices = notices
     }
 
     /// What a verb can answer with — one payload shape per return type in the

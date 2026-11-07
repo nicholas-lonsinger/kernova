@@ -36,12 +36,13 @@ extension KernovaCommand {
 
         /// Reads the library and writes it.
         func run() throws {
-            let result = try answer()
-            guard case .summaries(let rows) = result else { throw result.unexpectedAnswer }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(rows)
-                    : TableRenderer.render(rows, quiet: options.quiet))
+            try answer { result in
+                guard case .summaries(let rows) = result else { throw result.unexpectedAnswer }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(rows)
+                        : TableRenderer.render(rows, quiet: options.quiet))
+            }
         }
     }
 
@@ -63,12 +64,13 @@ extension KernovaCommand {
 
         /// Reads the groups and writes them.
         func run() throws {
-            let answered = try answer()
-            guard case .groups(let groups) = answered else { throw answered.unexpectedAnswer }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(groups)
-                    : TableRenderer.render(groups, quiet: options.quiet))
+            try answer { answered in
+                guard case .groups(let groups) = answered else { throw answered.unexpectedAnswer }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(groups)
+                        : TableRenderer.render(groups, quiet: options.quiet))
+            }
         }
     }
 

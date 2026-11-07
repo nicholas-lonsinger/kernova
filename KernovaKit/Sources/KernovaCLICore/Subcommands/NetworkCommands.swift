@@ -35,12 +35,13 @@ extension KernovaCommand.Network {
 
         /// Reads the networks and writes them.
         func run() throws {
-            let answered = try answer()
-            guard case .networks(let networks) = answered else { throw answered.unexpectedAnswer }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(networks)
-                    : TableRenderer.render(networks, quiet: options.quiet))
+            try answer { answered in
+                guard case .networks(let networks) = answered else { throw answered.unexpectedAnswer }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(networks)
+                        : TableRenderer.render(networks, quiet: options.quiet))
+            }
         }
     }
 
@@ -70,12 +71,13 @@ extension KernovaCommand.Network {
 
         /// Creates the network and writes the row it produced.
         func run() throws {
-            let answered = try answer()
-            guard case .network(let created) = answered else { throw answered.unexpectedAnswer }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(created)
-                    : TableRenderer.render([created], quiet: options.quiet))
+            try answer { answered in
+                guard case .network(let created) = answered else { throw answered.unexpectedAnswer }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(created)
+                        : TableRenderer.render([created], quiet: options.quiet))
+            }
         }
     }
 

@@ -157,6 +157,99 @@ struct VMSettingsViewControllerTests {
         #expect(toggle.state == .off)
     }
 
+    // MARK: - Ephemeral Mode settings banner
+
+    private static let bannerText =
+        EphemeralModeCopy.settingsBannerLead + EphemeralModeCopy.settingsBannerMessage
+
+    /// A pane over a stopped macOS VM in Ephemeral Mode whose baseline is
+    /// "Clean install" — or, with `listsBaseline` false, names one the
+    /// manifest no longer lists.
+    private func makeEphemeralController(
+        listsBaseline: Bool = true
+    ) -> (VMSettingsViewController, VMInstance, VMLibraryViewModel) {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let instance = viewModel.library.registerFixture(
+            guestOS: .macOS, hostState: .ephemeral(baseline: baseline.id),
+            snapshots: VMSnapshotManifest(snapshots: listsBaseline ? [baseline] : []))
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        return (vc, instance, viewModel)
+    }
+
+    private func showsBanner(_ vc: VMSettingsViewController) -> Bool {
+        visibleLabel(Self.bannerText, in: vc.view)
+    }
+
+    @Test(
+        "The banner heads exactly the panels whose settings a revert puts back",
+        arguments: VMSettingsCategory.allCases)
+    func bannerShowsOnRevertingPanels(_ category: VMSettingsCategory) {
+        let (vc, _, _) = makeEphemeralController()
+        #expect(!showsBanner(vc))
+
+        vc.showCategory(category)
+
+        #expect(showsBanner(vc) == category.revertsToEphemeralBaseline)
+    }
+
+    @Test("A baseline the manifest no longer lists shows no banner")
+    func unlistedBaselineShowsNoBanner() {
+        let (vc, _, _) = makeEphemeralController(listsBaseline: false)
+        vc.showCategory(.network)
+
+        #expect(!showsBanner(vc))
+    }
+
+    @Test("Don't show again hides the banner at once and turns its reminder off")
+    func dontShowAgainHidesTheBannerLive() async throws {
+        let (vc, _, viewModel) = makeEphemeralController()
+        vc.showCategory(.system)
+        #expect(showsBanner(vc))
+
+        let link = try #require(
+            allSubviews(NSButton.self, in: vc.view) {
+                $0.title == EphemeralModeCopy.settingsBannerDismissTitle
+            }.first)
+        #expect(NSApp.sendAction(try #require(link.action), to: link.target, from: link))
+
+        #expect(viewModel.ephemeralSettingsBannerDismissed)
+        try await waitUntil { !self.showsBanner(vc) }
+
+        viewModel.ephemeralSettingsBannerDismissed = false
+        try await waitUntil { self.showsBanner(vc) }
+    }
+
+    @Test("Turning Ephemeral Mode off takes the banner away")
+    func turningTheModeOffHidesTheBanner() async throws {
+        let (vc, instance, viewModel) = makeEphemeralController()
+        vc.showCategory(.storage)
+        #expect(showsBanner(vc))
+
+        #expect(
+            viewModel.setConfiguration(
+                [VMConfigurationKeyRegistry.ephemeral.assigning(false)], on: instance) == .applied)
+
+        try await waitUntil { !self.showsBanner(vc) }
+    }
+
+    @Test("Sharing's banner info names the rows a revert keeps")
+    func sharingBannerInfoNamesKeptRows() throws {
+        let (vc, _, _) = makeEphemeralController()
+        vc.showCategory(.sharing)
+
+        let info = try #require(infoButton(about: EphemeralModeCopy.settingsBannerLead, in: vc.view))
+        #expect(info.paragraphs.first?.text.contains("\u{201C}Clean install\u{201D}") == true)
+        #expect(info.paragraphs.last == .body("Show install reminder stays as you set it."))
+
+        vc.showCategory(.network)
+        let networkInfo = try #require(
+            infoButton(about: EphemeralModeCopy.settingsBannerLead, in: vc.view))
+        #expect(networkInfo.paragraphs.count == 1)
+    }
+
     // MARK: - App activation
 
     /// Carries a microphone status the test moves between activations, which is

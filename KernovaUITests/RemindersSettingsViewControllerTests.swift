@@ -158,8 +158,9 @@ struct RemindersSettingsViewControllerTests {
         #expect(findLabel(withText: "Menu bar quit reminder", in: controller.view) != nil)
         #expect(findLabel(withText: "Duplicate machine ID question", in: controller.view) != nil)
         #expect(findLabel(withText: "Guest agent install reminder", in: controller.view) != nil)
-        // Three app-wide switches plus one per VM.
-        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 5)
+        #expect(findLabel(withText: "Ephemeral Mode settings banner", in: controller.view) != nil)
+        // Four app-wide switches plus one per VM.
+        #expect(allSubviews(NSSwitch.self, in: controller.view).count == 6)
 
         let menuBarToggle = try #require(
             switches(action: "menuBarQuitToggled", in: controller).first)
@@ -171,7 +172,10 @@ struct RemindersSettingsViewControllerTests {
             switches(action: "duplicateIDQuestionToggled", in: controller).first)
         #expect(menuBarCard !== agentCard)
         #expect(enclosingGroupedFormCard(of: questionToggle) === menuBarCard)
-        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 2)
+        let ephemeralToggle = try #require(
+            switches(action: "ephemeralSettingsBannerToggled", in: controller).first)
+        #expect(enclosingGroupedFormCard(of: ephemeralToggle) === menuBarCard)
+        #expect(allSubviews(NSSwitch.self, in: menuBarCard).count == 3)
         #expect(allSubviews(NSSwitch.self, in: agentCard).count == 1)
     }
 
@@ -379,6 +383,25 @@ struct RemindersSettingsViewControllerTests {
         // The pane's observation loop applies on a later turn; the switch
         // itself is not observable.
         try await waitUntil { toggle.state == .off }
+    }
+
+    @Test("The Ephemeral banner's switch follows the view model both ways, and reset turns it back on")
+    func ephemeralBannerSwitchWorksBothWays() throws {
+        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
+        defer { controller.viewDidDisappear() }
+        let toggle = try #require(switches(action: "ephemeralSettingsBannerToggled", in: controller).first)
+        #expect(toggle.state == .on)
+
+        toggle.state = .off
+        #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
+        #expect(viewModel.ephemeralSettingsBannerDismissed)
+        #expect(preferences.ephemeralSettingsBannerDismissed)
+
+        let reset = try #require(
+            allSubviews(NSButton.self, in: controller.view) { $0.title == "Reset All Reminders" }.first)
+        #expect(NSApp.sendAction(try #require(reset.action), to: reset.target, from: reset))
+        #expect(viewModel.ephemeralSettingsBannerDismissed == false)
+        #expect(toggle.state == .on)
     }
 
     @Test("Reset All Reminders clears the choice not to be asked")

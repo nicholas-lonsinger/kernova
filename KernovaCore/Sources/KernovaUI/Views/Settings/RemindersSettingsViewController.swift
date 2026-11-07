@@ -10,10 +10,13 @@ import KernovaLogging
 /// **ON = the reminder is shown** (its dismissed flag is `false`), matching the
 /// VM Settings pane's "Show install reminder" toggle.
 ///
-/// The app-wide *Menu Bar Quit Reminder* is backed by `AppPreferences`; the
+/// The app-wide *Menu Bar Quit Reminder* is backed by
+/// `VMLibraryViewModel.menuBarQuitReminderDismissed`; the
 /// *Duplicate machine ID question* by
 /// `VMLibraryViewModel.duplicateMachineIDQuestionDismissed`, which Don't ask
-/// again on the question itself also turns off; the app-wide *Guest Agent
+/// again on the question itself also turns off; the *Ephemeral Mode settings
+/// banner* by `VMLibraryViewModel.ephemeralSettingsBannerDismissed`, which
+/// Don't show again on the banner also turns off; the app-wide *Guest Agent
 /// Install Reminder* by `VMLibraryViewModel.agentInstallPromptDisabled`, which
 /// overrides every per-VM row below it; the per-VM *guest-agent install nudge* rows, one per
 /// macOS VM, are backed by each VM's host state and written through
@@ -41,6 +44,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
     private let menuBarQuitSwitch = NSSwitch()
     private let duplicateIDQuestionSwitch = NSSwitch()
+    private let ephemeralSettingsBannerSwitch = NSSwitch()
     /// Explains the duplicate machine ID question's disabled row while the
     /// setting that asks it is off.
     private lazy var duplicateIDQuestionNote = GroupedFormStateNote(
@@ -94,17 +98,26 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         duplicateIDQuestionSwitch.controlSize = .small
         duplicateIDQuestionSwitch.target = self
         duplicateIDQuestionSwitch.action = #selector(duplicateIDQuestionToggled)
+        ephemeralSettingsBannerSwitch.controlSize = .small
+        ephemeralSettingsBannerSwitch.target = self
+        ephemeralSettingsBannerSwitch.action = #selector(ephemeralSettingsBannerToggled)
 
         let menuBarCard = makeGroupedFormCard(
             rows: [
                 makeGroupedFormCardRow(
                     "Menu bar quit reminder", control: menuBarQuitSwitch,
                     info: Self.menuBarQuitReminderInfo),
+                // The note explains this row alone, so it rides under it
+                // rather than under the card.
+                GroupedFormNotedRow(
+                    makeGroupedFormCardRow(
+                        "Duplicate machine ID question", control: duplicateIDQuestionSwitch,
+                        info: Self.duplicateMachineIDQuestionInfo),
+                    notes: [duplicateIDQuestionNote]),
                 makeGroupedFormCardRow(
-                    "Duplicate machine ID question", control: duplicateIDQuestionSwitch,
-                    info: Self.duplicateMachineIDQuestionInfo),
-            ],
-            notes: [duplicateIDQuestionNote])
+                    EphemeralModeCopy.settingsReminderLabel, control: ephemeralSettingsBannerSwitch,
+                    info: EphemeralModeCopy.settingsReminderParagraphs),
+            ])
 
         // The governing control of the Virtual Machine Reminders section, so it
         // heads that section rather than sitting with the app reminders above.
@@ -208,7 +221,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             track: { [weak self] in
                 guard let self else { return }
                 _ = viewModel.agentInstallPromptDisabled
+                _ = viewModel.menuBarQuitReminderDismissed
                 _ = viewModel.duplicateMachineIDQuestionDismissed
+                _ = viewModel.ephemeralSettingsBannerDismissed
                 for instance in viewModel.instances {
                     _ = instance.id
                     _ = instance.name
@@ -301,11 +316,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// A per-VM row keeps showing what its VM reverts to while the app-wide
     /// install reminder is off; it just can't be changed until that goes back on.
     private func refreshSwitches() {
-        menuBarQuitSwitch.state = preferences.menuBarQuitReminderDismissed ? .off : .on
+        menuBarQuitSwitch.state = viewModel.menuBarQuitReminderDismissed ? .off : .on
         duplicateIDQuestionSwitch.state = viewModel.duplicateMachineIDQuestionDismissed ? .off : .on
         applyGroupedFormRowEnabled(
             preferences.allowsDuplicateMachineIDOverride, control: duplicateIDQuestionSwitch)
         duplicateIDQuestionNote.refresh()
+        ephemeralSettingsBannerSwitch.state = viewModel.ephemeralSettingsBannerDismissed ? .off : .on
         let overridden = viewModel.agentInstallPromptDisabled
         agentInstallSwitch.state = overridden ? .off : .on
 
@@ -353,11 +369,15 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     }
 
     @objc private func menuBarQuitToggled() {
-        preferences.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
+        viewModel.menuBarQuitReminderDismissed = (menuBarQuitSwitch.state == .off)
     }
 
     @objc private func duplicateIDQuestionToggled() {
         viewModel.duplicateMachineIDQuestionDismissed = (duplicateIDQuestionSwitch.state == .off)
+    }
+
+    @objc private func ephemeralSettingsBannerToggled() {
+        viewModel.ephemeralSettingsBannerDismissed = (ephemeralSettingsBannerSwitch.state == .off)
     }
 
     @objc private func agentInstallToggled() {

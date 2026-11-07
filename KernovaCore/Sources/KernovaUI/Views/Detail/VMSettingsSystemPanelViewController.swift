@@ -521,8 +521,10 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
                 symbolName: "exclamationmark.triangle.fill",
                 tint: .systemRed,
                 message: VMOverviewResolver.micPermissionDeniedWarning,
-                trailingButtons: [openSettings],
-                info: (label: "Microphone Permission", paragraphs: Self.micPermissionInfo))
+                trailing: [
+                    .button(openSettings),
+                    .info(label: "Microphone Permission", paragraphs: Self.micPermissionInfo),
+                ])
             addGroupedFormFullWidth(banner, to: audioWarningContainer)
         }
     }

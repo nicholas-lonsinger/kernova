@@ -52,7 +52,6 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private let viewModel: VMLibraryViewModel
     /// The alerts waiting for a window to show them on.
     private let heldAlerts: HeldAlerts
-    private var preferences: AppPreferences { viewModel.preferences }
     /// Summons the GUI — `nil` opens the library, a VM id opens just that VM.
     private let onOpen: (UUID?) -> Void
     private let onQuit: () -> Void
@@ -244,11 +243,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Shows a transient reminder popover anchored to the status item after a soft
     /// quit — unless the user has silenced it.
     func showSoftQuitReminder() {
-        guard !preferences.menuBarQuitReminderDismissed else { return }
+        guard !viewModel.menuBarQuitReminderDismissed else { return }
 
         let content = MenuBarQuitReminderViewController(onStopReminding: { [weak self] in
             guard let self else { return }
-            self.preferences.menuBarQuitReminderDismissed = true
+            self.viewModel.menuBarQuitReminderDismissed = true
             Self.logger.log(.info, "Soft-quit menu-bar reminder silenced by the user")
             self.transientPopover.dismiss()
         })

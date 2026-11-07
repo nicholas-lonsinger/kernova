@@ -39,6 +39,7 @@ package struct AppPreferences: @unchecked Sendable {
         static let mainToolbarNewVMCollapseIndex = "KernovaMainToolbarNewVMCollapseIndex"
         static let allowDuplicateMachineIDBoot = "allowDuplicateMachineIDBoot"
         static let duplicateMachineIDQuestionDismissed = "duplicateMachineIDQuestionDismissed"
+        static let ephemeralSettingsBannerDismissed = "ephemeralSettingsBannerDismissed"
         static let cloneKeepsMachineID = "cloneKeepsMachineID"
         static let clipboardMaxPasteBytes = "clipboardMaxPasteBytes"
         static let disabledReservedShortcuts = "disabledReservedShortcuts"
@@ -145,7 +146,10 @@ package struct AppPreferences: @unchecked Sendable {
 
     /// Whether the user dismissed the "still running in the menu bar" reminder
     /// popover shown on a soft quit.
-    package var menuBarQuitReminderDismissed: Bool {
+    ///
+    /// Written through `VMLibraryViewModel.menuBarQuitReminderDismissed`, whose
+    /// `@Observable` mirror is what wakes the Reminders pane.
+    var menuBarQuitReminderDismissed: Bool {
         get { defaults.bool(forKey: Keys.menuBarQuitReminderDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.menuBarQuitReminderDismissed) }
     }
@@ -191,6 +195,17 @@ package struct AppPreferences: @unchecked Sendable {
     var duplicateMachineIDQuestionDismissed: Bool {
         get { defaults.bool(forKey: Keys.duplicateMachineIDQuestionDismissed) }
         nonmutating set { defaults.set(newValue, forKey: Keys.duplicateMachineIDQuestionDismissed) }
+    }
+
+    /// Whether the user turned off the Ephemeral Mode notice that the settings
+    /// a revert restores go back at the next shutdown — the VM Settings banner
+    /// and the `kernova` notice alike.
+    ///
+    /// Written through `VMLibraryViewModel.ephemeralSettingsBannerDismissed`,
+    /// whose `@Observable` mirror is what wakes the panes that render it.
+    var ephemeralSettingsBannerDismissed: Bool {
+        get { defaults.bool(forKey: Keys.ephemeralSettingsBannerDismissed) }
+        nonmutating set { defaults.set(newValue, forKey: Keys.ephemeralSettingsBannerDismissed) }
     }
 
     /// What Clone makes of a VM that offers both outcomes, defaulting to New

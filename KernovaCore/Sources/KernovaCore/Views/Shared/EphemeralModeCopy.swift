@@ -71,4 +71,52 @@ package enum EphemeralModeCopy {
     }
 
     package static let badgeHelpText = "Ephemeral: reverts to its baseline snapshot at every shutdown"
+
+    // MARK: - Settings that revert
+
+    /// The VM Settings banner's bold lead; ``settingsBannerMessage`` follows it.
+    package static let settingsBannerLead = "Ephemeral Mode"
+    package static let settingsBannerMessage = " \u{2014} settings revert."
+    /// The banner's link that turns it off, in the guest agent popover's words.
+    package static let settingsBannerDismissTitle = "Don\u{2019}t show again"
+
+    /// What the banner's info says while `baseline` is the VM's baseline;
+    /// `keptRows` names the open category's rows a revert leaves as set.
+    package static func settingsBannerParagraphs(
+        baseline: String, keptRows: [String]
+    ) -> [InfoPopoverParagraph] {
+        let reverts = InfoPopoverParagraph.body(
+            "While Ephemeral Mode is on, settings changed here go back to \u{201C}\(baseline)\u{201D} "
+                + "at the next shutdown. To keep a change, take a snapshot and choose it as the "
+                + "baseline under General \u{25B8} Startup.")
+        guard let last = keptRows.last else { return [reverts] }
+        let kept =
+            keptRows.count == 1
+            ? "\(last) stays as you set it."
+            : "\(keptRows.dropLast().joined(separator: ", ")) and \(last) stay as you set them."
+        return [reverts, .body(kept)]
+    }
+
+    /// The Reminders row that turns the banner, and the `kernova` notice, off.
+    package static let settingsReminderLabel = "Ephemeral Mode settings banner"
+
+    /// The Reminders row's info: the banner as the user meets it, then where
+    /// it appears.
+    package static var settingsReminderParagraphs: [InfoPopoverParagraph] {
+        let categories = VMSettingsCategory.allCases.filter(\.revertsToEphemeralBaseline).map(\.title)
+        let named =
+            categories.count > 1
+            ? "\(categories.dropLast().joined(separator: ", ")) and \(categories.last ?? "")"
+            : categories.joined()
+        return InfoPopoverParagraph.message(
+            title: settingsBannerLead + settingsBannerMessage, text: nil)
+            + [
+                .body(
+                    "While a virtual machine\u{2019}s Ephemeral Mode is on, changes to most settings "
+                        + "on its \(named) panels go back to its baseline snapshot at the next "
+                        + "shutdown; the banner\u{2019}s info names any that stay. The same note "
+                        + "follows a `kernova` command that changes one that goes back."),
+                .body("Choosing \(settingsBannerDismissTitle) on the banner turns this off."),
+            ]
+    }
 }

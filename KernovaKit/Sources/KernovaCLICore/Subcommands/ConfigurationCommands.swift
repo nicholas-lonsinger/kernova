@@ -67,7 +67,7 @@ extension KernovaCommand {
 
         /// Reads the settings and writes them.
         func run() throws {
-            try ConfigurationOutput.write(try answer(), options: options)
+            try answer { try ConfigurationOutput.write($0, options: options) }
         }
     }
 
@@ -107,7 +107,7 @@ extension KernovaCommand {
         /// Applies the assignments and writes what the settings ended up
         /// holding.
         func run() throws {
-            try ConfigurationOutput.write(try answer(), options: options)
+            try answer { try ConfigurationOutput.write($0, options: options) }
         }
 
         /// The assignments `arguments` spell out.

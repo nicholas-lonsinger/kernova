@@ -40,14 +40,15 @@ extension KernovaCommand.Share {
 
         /// Reads the shares and writes them.
         func run() throws {
-            let answered = try answer()
-            guard case .sharedDirectories(let shares) = answered else {
-                throw answered.unexpectedAnswer
+            try answer { answered in
+                guard case .sharedDirectories(let shares) = answered else {
+                    throw answered.unexpectedAnswer
+                }
+                Console.out(
+                    options.format == .json
+                        ? try JSONRenderer.render(shares)
+                        : TableRenderer.render(shares, quiet: options.quiet))
             }
-            Console.out(
-                options.format == .json
-                    ? try JSONRenderer.render(shares)
-                    : TableRenderer.render(shares, quiet: options.quiet))
         }
     }
 

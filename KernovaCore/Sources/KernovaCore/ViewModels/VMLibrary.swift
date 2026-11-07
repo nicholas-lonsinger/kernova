@@ -1043,7 +1043,7 @@ package final class VMLibrary: VMAdmissionPeers {
         mutate: (inout VMConfiguration) throws(Failure) -> Void
     ) throws(Failure) -> ConfigurationCommit {
         let instance = permit.instance
-        var wrote = false
+        var moved: (from: VMConfiguration, to: VMConfiguration)?
         var mutateFailure: Failure?
         do {
             try permit.bundle.commitConfiguration { config in
@@ -1054,7 +1054,7 @@ package final class VMLibrary: VMAdmissionPeers {
                     mutateFailure = error
                     throw MutateThrew()
                 }
-                wrote = config != onDisk
+                moved = config != onDisk ? (onDisk, config) : nil
             }
         } catch let refusal as SettingsRefusal {
             return .stopped(.refused(refusal))
@@ -1073,7 +1073,9 @@ package final class VMLibrary: VMAdmissionPeers {
             presentError(failure, about: .vm(instance))
             return .stopped(.notSaved(failure))
         }
-        return .committed(wrote: wrote)
+        guard let moved else { return .committed(wrote: false) }
+        VMConfigurationCommitRecord.current?.record(instance.id, from: moved.from, to: moved.to)
+        return .committed(wrote: true)
     }
 
     /// `refused` as the refusal a settings write answers, logged: a write that

@@ -85,6 +85,9 @@ protocol VMSettingsPanel: NSViewController {
     var category: VMSettingsCategory { get }
     /// Header pieces a single-section category hands to the panel header.
     var chrome: VMSettingsPanelChrome { get }
+    /// The titles of this panel's rows and sections whose settings a revert to
+    /// the Ephemeral baseline leaves as set, for the banner to name.
+    var keptThroughEphemeralRevert: [String] { get }
 
     /// Builds this panel's per-instance structure; called on load and on every
     /// switch to a different VM.
@@ -107,6 +110,7 @@ extension VMSettingsPanel {
     func prepareForDisappearance() {}
 
     var chrome: VMSettingsPanelChrome { VMSettingsPanelChrome() }
+    var keptThroughEphemeralRevert: [String] { [] }
 
     var instance: VMInstance { context.instance }
     var viewModel: VMLibraryViewModel { context.viewModel }
