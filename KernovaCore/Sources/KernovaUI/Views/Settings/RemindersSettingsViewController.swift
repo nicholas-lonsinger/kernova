@@ -347,7 +347,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             .body(
                 "The sidebar prompt to install the Kernova guest agent on a running macOS "
                     + "virtual machine. Turn a virtual machine off below to stop only its "
-                    + "reminder. A virtual machine's reminder stops on its own once its "
+                    + "reminder. A virtual machine\u{2019}s reminder stops on its own once its "
                     + "agent is installed.")
         ]
     }
