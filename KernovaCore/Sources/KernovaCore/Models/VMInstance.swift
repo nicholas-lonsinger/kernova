@@ -270,8 +270,7 @@ package final class VMInstance {
     package var agentPresentation: GuestAgentPresentation? {
         guard reachesGuestAgent else { return nil }
         return GuestAgentPresentation(
-            hub: agentHubSnapshot, lastSeenAgentVersion: lastSeenSystemAgentVersion ?? lastSeenAgentVersion,
-            missing: warnedMissingAgents)
+            hub: agentHubSnapshot, presences: agentScopePresences, missing: warnedMissingAgents)
     }
 
     /// Whether this VM's session has a channel to the guest agents: once the

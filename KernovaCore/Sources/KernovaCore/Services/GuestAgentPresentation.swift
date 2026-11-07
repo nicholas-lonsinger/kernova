@@ -11,7 +11,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
     /// The agents' state as one value.
     package var status: AgentStatus
     /// One line per agent: the connected ones newest first, then the away ones
-    /// most recently gone first, then each scope that didn't reconnect.
+    /// most recently gone first, then each scope that didn't reconnect, then
+    /// each scope that disconnected.
     package var agents: [AgentLine]
     /// One row per capability, in the order shown.
     package var capabilities: [CapabilityRow]
@@ -37,14 +38,16 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             case reconnecting
             /// A scope ``MissingAgentRule`` warns about: it didn't reconnect.
             case missing
+            /// A scope ``MissingAgentRule`` finds departed, its away line gone.
+            case disconnected
         }
 
         package var role: Role
         /// The user a session agent runs for; `nil` for the system agent, one
         /// that names none, or a scope that didn't reconnect.
         package var user: String?
-        /// The version it reports — for a scope that didn't reconnect, the one
-        /// last seen — empty when there is none.
+        /// The version it reports — for a scope that didn't reconnect or
+        /// disconnected, the one last seen — empty when there is none.
         package var version: String
         package var standing: Standing
 
@@ -63,11 +66,12 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 version: peer.versionLabel, standing: standing)
         }
 
-        /// The line of a scope ``MissingAgentRule`` warns about.
-        init(missing presence: AgentScopePresence) {
+        /// The line of a scope with no agent connected, as `standing` says:
+        /// ``Standing/missing`` or ``Standing/disconnected``.
+        init(_ presence: AgentScopePresence, standing: Standing) {
             self.init(
                 role: presence.scope == .system ? .system : .session, user: nil,
-                version: presence.lastSeenVersion ?? "", standing: .missing)
+                version: presence.lastSeenVersion ?? "", standing: standing)
         }
 
         /// Which agent: "Session agent — pbear", "System service".
@@ -100,13 +104,16 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 case .system: return "Didn\u{2019}t reconnect"
                 case .session: return "Didn\u{2019}t reconnect; it starts when a user logs in"
                 }
+            case .disconnected:
+                return "Disconnected"
             }
         }
 
         /// The agent's state alone: what the presentation's status would be
         /// with it the only agent for a connected one, updating for one relaunching into an update,
-        /// connecting for any other away one, and expected-missing at its
-        /// last-seen version for a scope that didn't reconnect.
+        /// connecting for any other away one, and at its last-seen version
+        /// expected-missing for a scope that didn't reconnect and disconnected
+        /// for one that disconnected.
         package var status: AgentStatus {
             switch standing {
             case .connected(let standing, let isResponsive):
@@ -120,6 +127,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 return .connecting(expected: version)
             case .missing:
                 return .expectedMissing(expected: version)
+            case .disconnected:
+                return .disconnected(last: version)
             }
         }
     }
@@ -134,27 +143,41 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         package var detail: String
     }
 
-    /// The presentation of the agents in `snapshot`
-    /// (``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:)``):
-    /// with no agent connected, a VM that has had one — `lastSeenAgentVersion`
-    /// — is connecting to it; never waiting for an install. With `missing` —
-    /// the scopes ``MissingAgentRule`` warns about — it didn't reconnect,
-    /// naming the first missing scope's version, and each missing scope has a
-    /// line of its own in place of any away line of that scope. An away peer
-    /// otherwise keeps its line: one relaunching into an update keeps the
-    /// standing it left with, counted in the status as though connected; any
-    /// other reads as reconnecting.
+    /// The presentation of the agents in `snapshot`, with `presences` — the
+    /// session's scopes as ``MissingAgentRule`` reads them — and `missing`,
+    /// the scopes it warns about
+    /// (``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``).
+    ///
+    /// With no agent connected, a VM that has had one is connecting to it
+    /// while one is awaited — an away line shown, or a scope the rule will
+    /// warn about once its grace passes — and never waiting for an install.
+    /// With `missing` it didn't reconnect, naming the first missing scope's
+    /// version, and each missing scope has a line of its own in place of any
+    /// away line of that scope. With nothing awaited, a scope the rule finds
+    /// departed reads disconnected, on a line of its own once its away line
+    /// is gone. An away peer otherwise keeps its line: one relaunching into an
+    /// update keeps the standing it left with, counted in the status as
+    /// though connected; any other reads as reconnecting.
     package init(
-        hub snapshot: AgentHubSnapshot, lastSeenAgentVersion: String? = nil, missing: [AgentScopePresence] = []
+        hub snapshot: AgentHubSnapshot, presences: [AgentScopePresence] = [], missing: [AgentScopePresence] = []
     ) {
         let relaunching = snapshot.away.filter(\.relaunching).map(\.summary)
+        let missingScopes = missing.map(\.scope)
+        let awayPeers = snapshot.away.filter { !missingScopes.contains(GuestAgentScope(of: $0.summary)) }
+        let awayScopes = awayPeers.map { GuestAgentScope(of: $0.summary) }
+        let departed = presences.filter { MissingAgentRule.departed($0) && !awayScopes.contains($0.scope) }
+        let awaited =
+            !awayPeers.isEmpty
+            || MissingAgentRule.missing(presences).contains { !missingScopes.contains($0.scope) }
+        let lastSeen =
+            presences.first { $0.scope == .system }?.lastSeenVersion
+            ?? presences.first { $0.scope == .login }?.lastSeenVersion
         status = AgentStatus.synthesize(
             upstream: Self.status(of: snapshot.peers + relaunching),
-            lastSeenAgentVersion: missing.first?.lastSeenVersion ?? lastSeenAgentVersion,
-            agentExpectedButMissing: !missing.isEmpty)
-        let missingScopes = missing.map(\.scope)
-        let away = snapshot.away.filter { !missingScopes.contains(GuestAgentScope(of: $0.summary)) }.map {
-            away in
+            lastSeenAgentVersion: missing.first?.lastSeenVersion ?? lastSeen,
+            agentExpectedButMissing: !missing.isEmpty,
+            departedVersion: awaited ? nil : departed.first?.lastSeenVersion)
+        let away = awayPeers.map { away in
             AgentLine(
                 away.summary,
                 standing: away.relaunching
@@ -162,7 +185,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         }
         agents =
             snapshot.peers.map { AgentLine($0, standing: .connected($0.standing, isResponsive: $0.isResponsive)) }
-            + away + missing.map(AgentLine.init(missing:))
+            + away + missing.map { AgentLine($0, standing: .missing) }
+            + departed.map { AgentLine($0, standing: .disconnected) }
         capabilities = [
             snapshot.peers.isEmpty
                 ? CapabilityRow(title: "Status", isAvailable: false, detail: Self.reason(.noAgent))

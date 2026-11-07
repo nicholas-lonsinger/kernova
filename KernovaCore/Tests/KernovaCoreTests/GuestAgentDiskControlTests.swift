@@ -68,6 +68,7 @@ struct GuestAgentDiskControlTests {
             .current(version: "0.9.2"),
             .unresponsive(version: "0.9.2"),
             .connecting(expected: "0.9.2"),
+            .disconnected(last: "0.9.2"),
         ]
         for status in statuses {
             #expect(
@@ -86,6 +87,13 @@ struct GuestAgentDiskControlTests {
     func waiting() {
         #expect(
             GuestAgentDiskControl.model(status: .waiting, isInstallerMounted: false)
+                == .init(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install)))
+    }
+
+    @Test(".disconnected → Install / enabled / mount(.install): whether it was uninstalled is unknown")
+    func disconnected() {
+        #expect(
+            GuestAgentDiskControl.model(status: .disconnected(last: "0.9.2"), isInstallerMounted: false)
                 == .init(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install)))
     }
 

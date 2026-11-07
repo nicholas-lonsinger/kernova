@@ -160,18 +160,32 @@ struct VMInstanceAgentHubTests {
         #expect(instance.lastSeenSystemAgentVersion == "1.0 (1)")
     }
 
-    @Test("Row 3, macOS: a session agent that connected this session never warns once its user logs out")
-    func macOSSessionAgentLogoutNeverWarns() async {
-        let instance = Self.instance(guestOS: .macOS, session: "1.0 (1)")
-        let session = Self.peer(1, version: "1.0 (1)", standing: .current)
+    @Test("Row 3, macOS: a session agent that connected this session and left reads disconnected, never warning")
+    func sessionAgentGoneReadsDisconnected() async {
+        let instance = Self.instance(guestOS: .macOS, session: "1.0")
+        var session = Self.peer(1, standing: .current)
+        session.os = .macOS
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([session]))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(session, false)]))
+        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
         await instance.agentAbsenceTimerForTesting?.value
-        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0 (1)"))
+        #expect(instance.agentPresentation?.status == .disconnected(last: "1.0"))
+        #expect(instance.agentPresentation?.status.wireName == "disconnected")
+        #expect(instance.agentPresentation?.windowLines == [.init(title: "Session agent", state: "Disconnected")])
+        #expect(
+            VMCommandCore.agentLines(of: instance) == [
+                VMAgentLine(role: "session", user: nil, version: "1.0", status: "disconnected")
+            ])
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.agentExpectedButMissing == false)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+        // It comes back: connected again, and the line goes.
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(2, standing: .current)]))
+        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        #expect(
+            instance.agentPresentation?.windowLines == [.init(title: "Session agent — pbear", state: "Up to date")])
     }
 
     @Test("Row 2, macOS: a session agent seen before but not this session warns past the grace")
@@ -418,8 +432,33 @@ struct VMInstanceAgentHubTests {
         instance.startAgentAbsenceWatch()
         await instance.agentAbsenceTimerForTesting?.value
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        #expect(
+            instance.agentPresentation?.windowLines == [
+                .init(title: "System service", state: "Up to date"),
+                .init(title: "Session agent", state: "Disconnected"),
+            ])
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.agentExpectedButMissing == false)
+    }
+
+    @Test("Uninstalled for everyone: past the grace the system service warns, the session agent disconnected beside it")
+    func everyoneUninstallWarns() async {
+        let instance = Self.instance(guestOS: .macOS)
+        let session = Self.peer(1, standing: .current)
+        let system = Self.peer(2, role: .systemPeer, standing: .current)
+        instance.publishAgentHubSnapshotForTesting(Self.snapshot([session, system]))
+        instance.publishAgentHubSnapshotForTesting(
+            Self.snapshot([], away: [(system, relaunching: false), (session, relaunching: false)]))
+        instance.agentAbsenceGrace = .milliseconds(10)
+        instance.startAgentAbsenceWatch()
+        await instance.agentAbsenceTimerForTesting?.value
+        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
+        #expect(
+            instance.agentPresentation?.windowLines == [
+                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
+                .init(title: "Session agent", state: "Disconnected"),
+            ])
+        #expect(instance.missingAgentNoticesForTesting.count == 1)
     }
 
     @Test("Each scope's connected peer is remembered as the session sees it")

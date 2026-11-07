@@ -113,7 +113,7 @@ package enum GuestAgentDiskControl {
         }
         guard let status else { return withheld }
         switch status {
-        case .waiting:
+        case .waiting, .disconnected:
             return Model(title: "Install Guest Agent…", isEnabled: true, action: .mount(.install))
         case .outdated:
             return Model(title: "Update Guest Agent…", isEnabled: true, action: .mount(.install))

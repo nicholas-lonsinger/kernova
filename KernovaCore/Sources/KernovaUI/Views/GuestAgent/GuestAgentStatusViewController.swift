@@ -289,6 +289,7 @@ final class GuestAgentStatusViewController: NSViewController {
         case .current, .connected: "Guest agent connected"
         case .unresponsive: "Guest agent unresponsive"
         case .expectedMissing: "Guest agent didn't reconnect"
+        case .disconnected: "Guest agent disconnected"
         }
     }
 
@@ -302,6 +303,9 @@ final class GuestAgentStatusViewController: NSViewController {
             "This build of Kernova bundles a guest agent signed without a team, so agents can\u{2019}t update "
                 + "in place. Reinstall it from the installer disk. A build signed with a development team "
                 + "updates agents in place."
+        case .disconnected:
+            "The session agent disconnected and hasn\u{2019}t come back. An installed session agent connects "
+                + "again when its user logs in to the guest."
         case .waiting, .current, .connected, .outdated, .updating, .unresponsive, .expectedMissing, .connecting:
             nil
         }

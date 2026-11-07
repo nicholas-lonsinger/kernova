@@ -218,21 +218,74 @@ struct GuestAgentPresentationTests {
         AwayPeer(summary: peer, relaunching: relaunching, order: order, since: SystemScheduler().now)
     }
 
+    /// `scope` as the session reads it, its agent last seen at `version`: by default connected earlier this
+    /// session and gone now.
+    private static func presence(
+        _ scope: GuestAgentScope, _ version: String = "1.0", seen: Bool = true, connected: Bool = false
+    ) -> AgentScopePresence {
+        AgentScopePresence(scope: scope, lastSeenVersion: version, seenThisSession: seen, isConnected: connected)
+    }
+
     @Test("With only away peers the session is connecting to the agent it saw, never waiting for an install")
     func awayIsConnecting() {
         let presentation = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [], features: FeatureStatus.merge([]), away: [Self.away(Self.peer(1))]),
-            lastSeenAgentVersion: "1.0")
+            presences: [Self.presence(.login)])
         #expect(presentation.status == .connecting(expected: "1.0"))
         #expect(presentation.windowLines == [.init(title: "Session agent — pbear", state: "Reconnecting\u{2026}")])
     }
 
     @Test("A VM that has had an agent and has none connected yet — a cold boot — is connecting to it")
     func coldBootIsConnecting() {
-        let presentation = GuestAgentPresentation(hub: .empty, lastSeenAgentVersion: "1.0")
+        let presentation = GuestAgentPresentation(hub: .empty, presences: [Self.presence(.login, seen: false)])
         #expect(presentation.status == .connecting(expected: "1.0"))
+        #expect(presentation.windowLines == [])
         #expect(GuestAgentPresentation(hub: .empty).status == .waiting)
+    }
+
+    // MARK: Disconnected agents
+
+    @Test("A session agent that left this session, its away line gone and nothing awaited, reads disconnected")
+    func departedIsDisconnected() {
+        let presentation = GuestAgentPresentation(hub: .empty, presences: [Self.presence(.login, "0.9")])
+        #expect(presentation.status == .disconnected(last: "0.9"))
+        #expect(presentation.windowLines == [.init(title: "Session agent", state: "Disconnected")])
+        #expect(presentation.agents.map(\.status) == [.disconnected(last: "0.9")])
+    }
+
+    @Test("Beside a connected system service, a disconnected session agent keeps its line and the status current")
+    func departedBesideConnected() {
+        let presentation = GuestAgentPresentation(
+            hub: Self.snapshot([Self.peer(2, role: .systemPeer)]),
+            presences: [Self.presence(.login), Self.presence(.system, connected: true)])
+        #expect(presentation.status == .current(version: "1.0"))
+        #expect(
+            presentation.windowLines == [
+                .init(title: "System service", state: "Up to date"),
+                .init(title: "Session agent", state: "Disconnected"),
+            ])
+    }
+
+    @Test("While another scope is still awaited, a departed one leaves the status connecting")
+    func departedWhileAwaited() {
+        let presentation = GuestAgentPresentation(
+            hub: .empty, presences: [Self.presence(.login, "0.9"), Self.presence(.system, "1.0", seen: false)])
+        #expect(presentation.status == .connecting(expected: "1.0"))
+        #expect(presentation.windowLines == [.init(title: "Session agent", state: "Disconnected")])
+    }
+
+    @Test("A warned scope beats a departed one, and each keeps its line")
+    func missingBeatsDeparted() {
+        let presentation = GuestAgentPresentation(
+            hub: .empty, presences: [Self.presence(.login, "0.9"), Self.missingSystem],
+            missing: [Self.missingSystem])
+        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
+        #expect(
+            presentation.windowLines == [
+                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
+                .init(title: "Session agent", state: "Disconnected"),
+            ])
     }
 
     // MARK: Missing agents
@@ -247,7 +300,8 @@ struct GuestAgentPresentationTests {
         let presentation = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(2, role: .systemPeer, version: "0.10.0 (1147)")], features: FeatureStatus.merge([])),
-            lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSession])
+            presences: [Self.missingSession, Self.presence(.system, "0.10.0 (1147)", connected: true)],
+            missing: [Self.missingSession])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(
             presentation.windowLines == [
@@ -266,7 +320,8 @@ struct GuestAgentPresentationTests {
                         summary: Self.peer(2, role: .systemPeer), relaunching: false, order: 3,
                         since: SystemScheduler().now)
                 ]),
-            lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSystem])
+            presences: [Self.presence(.login, "0.10.0 (1147)", connected: true), Self.missingSystem],
+            missing: [Self.missingSystem])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(
             presentation.windowLines == [
@@ -278,7 +333,8 @@ struct GuestAgentPresentationTests {
     @Test("(c) Both missing: a line for each, and no connected agent")
     func bothMissing() {
         let presentation = GuestAgentPresentation(
-            hub: .empty, lastSeenAgentVersion: "0.10.0 (1147)", missing: [Self.missingSession, Self.missingSystem])
+            hub: .empty, presences: [Self.missingSession, Self.missingSystem],
+            missing: [Self.missingSession, Self.missingSystem])
         #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
         #expect(
             presentation.windowLines == [
@@ -294,14 +350,15 @@ struct GuestAgentPresentationTests {
         let alone = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [], features: FeatureStatus.merge([]), away: [Self.away(updating, relaunching: true)]),
-            lastSeenAgentVersion: "0.9")
+            presences: [Self.presence(.login, "0.9")])
         #expect(alone.status == .updating(installed: "0.9", bundled: "1.0"))
         #expect(alone.agents.map(\.state) == ["Updating\u{2026}"])
         // Beside a peer already current again, the relaunching one still decides the status.
         let mixed = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(2, role: .systemPeer, version: "1.0")], features: FeatureStatus.merge([]),
-                away: [Self.away(updating, relaunching: true)]), lastSeenAgentVersion: "1.0")
+                away: [Self.away(updating, relaunching: true)]),
+            presences: [Self.presence(.login, "0.9"), Self.presence(.system, connected: true)])
         #expect(mixed.status == .updating(installed: "0.9", bundled: "1.0"))
         #expect(mixed.agents.map(\.state) == ["Up to date", "Updating\u{2026}"])
     }
@@ -311,7 +368,8 @@ struct GuestAgentPresentationTests {
         let presentation = GuestAgentPresentation(
             hub: AgentHubSnapshot(
                 peers: [Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([]),
-                away: [Self.away(Self.peer(1))]), lastSeenAgentVersion: "1.0")
+                away: [Self.away(Self.peer(1))]),
+            presences: [Self.presence(.login), Self.presence(.system, connected: true)])
         #expect(presentation.status == .current(version: "1.0"))
         #expect(presentation.agents.map(\.state) == ["Up to date", "Reconnecting\u{2026}"])
     }

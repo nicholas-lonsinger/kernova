@@ -148,7 +148,7 @@ final class SidebarAgentStatusButtonView: NSView {
 
     static func symbolName(for status: AgentStatus) -> String {
         switch status {
-        case .waiting: "exclamationmark.circle.fill"
+        case .waiting, .disconnected: "exclamationmark.circle.fill"
         case .outdated: "arrow.triangle.2.circlepath.circle.fill"
         case .updating: "arrow.triangle.2.circlepath.circle.fill"
         case .connecting: "arrow.triangle.2.circlepath.circle.fill"
@@ -160,7 +160,7 @@ final class SidebarAgentStatusButtonView: NSView {
 
     static func symbolColor(for status: AgentStatus) -> NSColor {
         switch status {
-        case .waiting: StatusColor.inactive
+        case .waiting, .disconnected: StatusColor.inactive
         case .outdated: StatusColor.warning
         case .updating: StatusColor.inactive
         case .connecting: StatusColor.inactive
@@ -182,6 +182,7 @@ final class SidebarAgentStatusButtonView: NSView {
         case .current(let version), .connected(let version): "Guest agent connected (\(version))"
         case .unresponsive(let version): "Guest agent unresponsive (\(version))"
         case .expectedMissing(let expected): "Guest agent didn't reconnect (was \(expected))"
+        case .disconnected(let last): "Guest agent disconnected (was \(last))"
         }
     }
 }
