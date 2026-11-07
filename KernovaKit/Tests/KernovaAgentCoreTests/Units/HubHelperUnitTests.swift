@@ -76,6 +76,19 @@ extension CoreUnits {
             #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([1, 9]))
         }
 
+        @Test(
+            "A system peer reporting CONSOLE_ON with no session id names none: the session peers' own reports decide",
+            arguments: [true, false])
+        func systemPeerConsoleOnUnnamed(sessionOnConsole: Bool) {
+            let peers = [
+                Self.session(1, "a", console: .off), Self.session(2, "b", console: sessionOnConsole ? .on : .off),
+                Self.system(9, console: .on, consoleSessionID: ""),
+            ]
+            #expect(
+                PowerRouting.candidates(for: .shutdown, peers: peers, excluding: [])
+                    == Self.handles(sessionOnConsole ? [2, 9] : [9]))
+        }
+
         @Test("A system peer reporting CONSOLE_OFF makes no session peer a console candidate")
         func systemPeerConsoleOff() {
             let peers = [Self.session(1, "a"), Self.system(9, console: .off, consoleSessionID: "a")]
@@ -323,6 +336,24 @@ extension CoreUnits {
                 Peers.system(9, console: .on, consoleSessionID: "a"),
             ]
             #expect(ConsoleAuthority.consolePeers(peers) == [peers[1], peers[0]])
+        }
+
+        @Test("A system peer reporting the console on without a session id leaves it to the sessions' own reports")
+        func consoleOnUnnamed() {
+            let peers = [
+                Peers.session(1, "a", console: .off), Peers.session(2, "b", order: 5), Peers.session(3, "c", order: 8),
+                Peers.system(9, console: .on, consoleSessionID: ""),
+            ]
+            #expect(ConsoleAuthority.consolePeers(peers) == [peers[2], peers[1]])
+            #expect(ConsoleAuthority.consolePeers([peers[0], peers[3]]).isEmpty)
+        }
+
+        @Test("A system peer's report names the console's owner: a session only with its id")
+        func consoleOwner() {
+            #expect(PeerSessionState(console: .on, consoleSessionID: "c1").consoleOwner == .session("c1"))
+            #expect(PeerSessionState(console: .on).consoleOwner == .unnamed)
+            #expect(PeerSessionState(console: .unknown, consoleSessionID: "c1").consoleOwner == .unnamed)
+            #expect(PeerSessionState(console: .off, consoleSessionID: "c1").consoleOwner == .noUserSession)
         }
 
         @Test("A system peer reporting the console off leaves no console peer, whatever the sessions report")

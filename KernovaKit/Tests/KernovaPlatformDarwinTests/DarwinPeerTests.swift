@@ -36,11 +36,11 @@ struct DarwinPeerTests {
         #expect(scope("/Applications" + Self.executable) == .unspecified)
     }
 
-    @Test("The system peer reports the console off at the login window, and leaves a user's console unknown")
+    @Test("The system peer reports the console off at the login window or with no user, on with a user")
     func systemPeerState() {
         #expect(DarwinSessionState.systemPeer(consoleUser: nil) == PeerSessionState(console: .off))
         #expect(DarwinSessionState.systemPeer(consoleUser: "loginwindow") == PeerSessionState(console: .off))
-        #expect(DarwinSessionState.systemPeer(consoleUser: "pbear") == PeerSessionState(console: .unknown))
+        #expect(DarwinSessionState.systemPeer(consoleUser: "pbear") == PeerSessionState(console: .on))
     }
 
     @Test("The session peer reports its own audit session")

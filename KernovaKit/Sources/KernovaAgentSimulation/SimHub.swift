@@ -133,18 +133,16 @@ package final class SimHub {
     }
 
     /// The order the hub asks power providers in, restated independently of
-    /// `PowerRouting` for the checker: with a system peer that knows the console,
-    /// the session peers on its console session (newest first) when the console
-    /// is on; without one, every session peer on a console; then the system peer.
+    /// `PowerRouting` for the checker: with a system peer that names the console's
+    /// session, that session's peers (newest first); with one reporting the console
+    /// off, none; otherwise every session peer on a console; then the system peer.
     static func expectedCandidates(_ action: PowerAction, peers: [RoutingPeer], asked: [PeerHandle]) -> [PeerHandle] {
         var ordered: [RoutingPeer] = []
-        let system = peers.first { $0.role == .systemPeer }
+        let system = peers.first { $0.role == .systemPeer }?.state
         let sessions = peers.filter { $0.role == .sessionPeer }.sorted { $0.connectedOrder > $1.connectedOrder }
-        if let system, system.state.console != .unknown {
-            if system.state.console == .on {
-                ordered += sessions.filter { $0.state.sessionID == system.state.consoleSessionID }
-            }
-        } else {
+        if let system, system.console == .on, !system.consoleSessionID.isEmpty {
+            ordered += sessions.filter { $0.state.sessionID == system.consoleSessionID }
+        } else if system?.console != .off {
             ordered += sessions.filter { $0.state.console == .on }
         }
         ordered += peers.filter { $0.role == .systemPeer }

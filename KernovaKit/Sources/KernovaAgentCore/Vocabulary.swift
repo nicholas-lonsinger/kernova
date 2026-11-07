@@ -225,7 +225,8 @@ public struct PeerSessionState: Sendable, Equatable {
     public var sessionID: String
     /// Session peer: the session user's login name.
     public var userName: String
-    /// System peer: the session that owns the console when `console` is `.on`.
+    /// System peer: the session that owns the console when `console` is `.on`; empty when the peer knows a user
+    /// session owns it but not which.
     public var consoleSessionID: String
 
     /// Creates a state.
@@ -236,6 +237,25 @@ public struct PeerSessionState: Sendable, Equatable {
         self.sessionID = sessionID
         self.userName = userName
         self.consoleSessionID = consoleSessionID
+    }
+
+    /// The console's owner as a system peer's report names it.
+    public enum ConsoleOwner: Sendable, Equatable {
+        /// The session with this id.
+        case session(String)
+        /// No user session.
+        case noUserSession
+        /// No session named: the console unknown, or held by a user session the report does not identify.
+        case unnamed
+    }
+
+    /// The console's owner this state names, read as a system peer's report.
+    public var consoleOwner: ConsoleOwner {
+        switch console {
+        case .on: consoleSessionID.isEmpty ? .unnamed : .session(consoleSessionID)
+        case .off: .noUserSession
+        case .unknown: .unnamed
+        }
     }
 }
 

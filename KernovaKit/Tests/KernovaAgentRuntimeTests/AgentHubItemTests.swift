@@ -107,6 +107,26 @@ struct AgentHubItemTests {
         await close([off], harness)
     }
 
+    @Test(
+        "Beside a macOS system peer reporting the console on without naming a session, the session peers' reports name the console peer"
+    )
+    func macOSSystemPeerConsoleOnUnnamed() async {
+        let harness = await harness()
+        let systemClaim = PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64)
+        let system = runtime(harness, claim: systemClaim, state: PeerSessionState(console: .on))
+        let off = runtime(harness, claim: Self.offConsole, state: Self.offState)
+        let alone = await harness.snapshot { $0.peers.count == 2 && $0.features[.clipboard].isAvailable }
+        #expect(alone.consolePeers.isEmpty)
+
+        let on = runtime(harness)
+        let ready = await harness.snapshot { $0.peers.count == 3 && $0.consolePeers.count == 3 }
+        guard let console = ready.peers.first(where: { $0.sessionID == "1" })?.handle else {
+            Issue.record("no peer of session 1"); return
+        }
+        #expect(ready.consolePeers == [.clipboard: console, .drop: console, .drag: console])
+        await close([system, off, on], harness)
+    }
+
     @Test("The snapshot's console peer for each feature follows the console from one session to another")
     func consolePeerFollowsConsole() async {
         let harness = await harness()
