@@ -114,8 +114,7 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`
   is what every agent-status surface reads. Its item events, each item
   feature's console-peer changes and the content its pulls serve route through
-  one `ItemFeatureRouter` to that feature's owner, as the macOS session peer's
-  item events, usability changes and content do through its own.
+  one `ItemFeatureRouter` to that feature's owner.
 - Guest-agent installer disks: `BundledGuestAgents` (one of `AppBundleProducts`)
   hands `VMCommandCore.mountGuestAgentDisk` the macOS agent's bundled DMG, or the
   Linux agent's ISO, which `GuestAgentDiskCache` writes into Application Support
@@ -126,11 +125,9 @@ Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
   (Linux) behind `VMInstance.clipboardService`, which `ClipboardRoute` picks;
   `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host
   pasteboard, and `VMInstance`'s clipboard commands copy a snapshot each way
-  through the service. `HubClipboardService` and the macOS agent's `GuestClipboard` run
-  over KernovaKit's `ClipboardItemExchange` (`KernovaClipboardItems`). Drops and
-  drags out run over the hub too — `HubDropService` and `HubDragOut` on the host,
-  `KernovaItemTransfer`'s `DropReceiver` and `GuestDragOut` in the macOS agent —
-  each end routing its item features through one `ItemFeatureRouter`.
+  through the service. `HubClipboardService` runs over KernovaKit's
+  `ClipboardItemExchange` (`KernovaClipboardItems`). Drops and drags out run
+  over the hub too, through `HubDropService` and `HubDragOut`.
 - Sockets: `UnixSocketListener` under `SerialSocketRelay` and
   `VMCommandSocketListener`.
 
@@ -144,6 +141,31 @@ ways through the `VMDisplayTransferHosting` its host resolves (`VMInstance`).
 `MainWindowController` and `VMDisplayWindowController` each build their
 toolbar through a `VMToolbarManager`; the two clipboard commands' items are
 its view-backed ones, each a `ClipboardToolbarButton`.
+
+## Guest agents
+
+The host and every agent share one protocol stack in KernovaKit:
+`KernovaWire` is the wire format, `KernovaAgentCore` the state machines over
+it, and `KernovaAgentRuntime` drives them over a `ByteStream` —
+`HostConnectionRuntime` on the host, `PeerAgentRuntime` in an agent. The one
+stream is `KernovaPlatformPOSIX`'s `POSIXByteStream`, over the vsock socket an
+agent dials and the host's `AgentListenerHost` accepts. Item pulls land and
+serve through `KernovaItemTransfer` (over `KernovaTreeTransfer`,
+`KernovaContainer`, `KernovaContainerPipeline` and `KernovaFileTree`), install
+and in-band update through `KernovaAgentInstall`, and
+`KernovaAgentSimulation` runs core endpoints against each other in tests.
+
+Calls into an OS live in its platform layer: `KernovaPlatformDarwin` and
+`KernovaPlatformLinux` (over `KernovaDBus`).
+
+- The app links the `KernovaAgentHost` product through `KernovaCore`.
+- `KernovaMacOSAgent` links the `KernovaPlatformDarwin` product, whose
+  `MacAgentPeer` runs both the session peer and the system peer
+  (`MacAgentTools`); the session peer routes DROP to `DropReceiver` and the
+  target's `GuestClipboard` (over `ClipboardItemExchange`) and `GuestDragOut`
+  through its own `ItemFeatureRouter`.
+- `kernova-agent` is the `KernovaLinuxAgent` executable, whose `AgentShell`
+  runs a `PeerAgentRuntime` over `KernovaPlatformLinux`.
 
 ## Shared package and helper targets
 
