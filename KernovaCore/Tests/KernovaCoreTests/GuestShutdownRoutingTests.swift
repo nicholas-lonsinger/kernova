@@ -222,7 +222,7 @@ struct GuestShutdownRoutingTests {
         try await probe.changed.wait { probe.isStarted }
         let handsOff: @Sendable (PowerAction) -> [PowerRequestResult] = { _ in [.accepted, .finished(.handedOff)] }
         let sessionClaim = PeerClaim(role: .sessionPeer, scope: .system, os: .macOS, architecture: .arm64)
-        let graceful = PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)
+        let graceful = PowerOffer(actions: [.shutdown], asksAppsToQuit: true)
         #expect(
             probe.connectPowerPeer(
                 claim: sessionClaim, state: PeerSessionState(console: .off, sessionID: "2", userName: "pbear"),

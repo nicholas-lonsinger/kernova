@@ -42,7 +42,7 @@ struct GuestAgentPowerRowsTests {
                 probe.connectPowerPeer(
                     claim: PeerClaim(role: .sessionPeer, scope: .system, os: .macOS, architecture: .arm64),
                     state: PeerSessionState(console: session, sessionID: "2", userName: "pbear"),
-                    offer: PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)) != nil)
+                    offer: PowerOffer(actions: [.shutdown], asksAppsToQuit: true)) != nil)
             peers += 1
         }
         if system {
