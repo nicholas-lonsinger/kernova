@@ -4,8 +4,7 @@
 # cross-builds KernovaKit with on a Mac. swift.org publishes no glibc SDK, so it
 # is made with swiftlang/swift-sdk-generator at the toolchain's own release
 # tag, built with that toolchain, from swift.org's Ubuntu toolchain and
-# Ubuntu's packages (minutes, and about 850 MB installed). It installs the
-# toolchain first, through Tools/install-swift-toolchain.sh.
+# Ubuntu's packages.
 #
 # Idempotent: an installed SDK is reported, never regenerated.
 #

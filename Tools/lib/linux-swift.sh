@@ -8,11 +8,6 @@
 # shellcheck source=static-linux-sdk.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/static-linux-sdk.sh"
 
-# pinned_swift_version: the swift.org release .swift-version pins.
-pinned_swift_version() {
-    tr -d '[:space:]' <"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.swift-version"
-}
-
 # ubuntu_sdk_id <swift version>: the id of the glibc SDK for Ubuntu 24.04 on
 # aarch64 that Tools/install-ubuntu-sdk.sh generates, the system the Linux CI
 # jobs build in (the swift:<version>-noble image).
@@ -30,6 +25,20 @@ ubuntu_sdk_missing() {
     elif [ ! -d "$(swift_sdks_dir)/$(ubuntu_sdk_id "$1").artifactbundle" ]; then
         ubuntu_sdk_id "$1"
     fi
+}
+
+# stale_kernova_sdks <swift version>: on macOS, the id of every installed SDK of
+# a kind these libraries install — the Static Linux SDK and the Ubuntu SDK —
+# that is not the one for that version, one per line. Another checkout may pin
+# another version and still build with its SDK, so they are listed, never removed.
+stale_kernova_sdks() {
+    local version=$1 bundle id
+    for bundle in "$(swift_sdks_dir)"/swift-*-RELEASE_static-linux-*.artifactbundle \
+        "$(swift_sdks_dir)"/*-RELEASE_ubuntu_noble_aarch64.artifactbundle; do
+        [ -d "$bundle" ] || continue
+        id="$(basename "$bundle" .artifactbundle)"
+        [ "$id" = "$(static_sdk_id "$version")" ] || [ "$id" = "$(ubuntu_sdk_id "$version")" ] || echo "$id"
+    done
 }
 
 # linux_swift <build|package> <argument>...: runs that SwiftPM command over

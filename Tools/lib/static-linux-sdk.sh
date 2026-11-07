@@ -14,6 +14,11 @@ STATIC_SDK_VERSION=0.1.0
 # shellcheck disable=SC2034
 STATIC_SDK_CHECKSUM=cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
 
+# pinned_swift_version: the swift.org release .swift-version pins.
+pinned_swift_version() {
+    tr -d '[:space:]' <"$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.swift-version"
+}
+
 # static_sdk_id <swift version>: the SDK's id, which is also its bundle's name.
 static_sdk_id() {
     printf 'swift-%s-RELEASE_static-linux-%s\n' "$1" "$STATIC_SDK_VERSION"

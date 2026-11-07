@@ -26,7 +26,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/static-linux-sdk.sh
 . "$lib_dir/lib/static-linux-sdk.sh"
 
-swift_version="$(tr -d '[:space:]' <.swift-version)"
+swift_version="$(pinned_swift_version)"
 swiftly="$(swiftly_binary)"
 
 if [ ! -x "$swiftly" ]; then

@@ -121,7 +121,7 @@ fi
 # missing.
 # shellcheck source=lib/static-linux-sdk.sh
 . Tools/lib/static-linux-sdk.sh
-pinned_swift="$(tr -d '[:space:]' <.swift-version)"
+pinned_swift="$(pinned_swift_version)"
 missing_swift="$(swift_toolchain_missing "$pinned_swift")"
 if [ -z "$missing_swift" ]; then
     pass "Swift $pinned_swift and $(static_sdk_id "$pinned_swift") for the Linux guest agent"
@@ -302,6 +302,13 @@ else
     warn "$missing_ubuntu absent — 'make dead-code' scans macOS alone"
     detail "Install with: make ubuntu-sdk"
 fi
+
+sdks_path_flag=''
+[ -z "${KERNOVA_SWIFT_SDKS_PATH:-}" ] || sdks_path_flag=" --swift-sdks-path '$KERNOVA_SWIFT_SDKS_PATH'"
+while IFS= read -r stale; do
+    warn "$stale is not an SDK of the pinned Swift $pinned_swift — unused here, kept while another checkout pins it"
+    detail "Remove with: swift sdk remove$sdks_path_flag $stale"
+done < <(stale_kernova_sdks "$pinned_swift")
 
 # Shell static analysis for Tools/ and .githooks/ — `make lint` uses it when
 # present and CI requires it; locally it's optional, with `bash -n` still
