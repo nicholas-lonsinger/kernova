@@ -5,25 +5,34 @@ let usage = """
     Usage:
       dead-code test-only-targets --project <Kernova.xcodeproj>
           Prints every target of the project and of the repository's top-level packages that only tests reach.
-      dead-code bundle --root <repo> --base <dir Periphery ran in> --full <json> --production <json>
-                       --store <index store> --indexutil-export <path> --output <dir>
-          Replaces <dir> with one platform's bundle: the two Periphery JSON reports, locations repo-relative,
-          and the declaration sites and import lines the index store they read holds under <repo>.
-      dead-code report --platform <name>=<dir>... [--markdown <file> --rest <text>] [--json <file>] [--summary <file>]
-          Combines platform bundles (macos, linux) and prints the report.
+      dead-code bundle --root <repo> --base <dir Periphery runs in> --periphery <path> --store <index store>
+                       --indexutil-export <path> --test-only-targets <file> [--package-description <json>]
+                       --output <dir> [-- <what Periphery scans>...]
+          Scans <store> with Periphery, the full view and the production view without the targets <file> lists,
+          and replaces <dir> with one platform's bundle: the two reports, locations repo-relative, and the
+          declaration sites and import lines the store holds under <repo>. With a package's description, as
+          `swift package describe --type json` writes it, every Swift target it declares must be in the store.
+      dead-code report --platform <name>=<dir>... [--remedy <text>] [--markdown <file> --rest <text>]
+                       [--json <file>] [--summary <file>]
+          Combines platform bundles (macos, linux) and prints the report; a partial one opens with <text>.
     """
 
 struct Failure: Error, CustomStringConvertible {
     var description: String
 }
 
-/// `--name value` pairs; a name given more than once keeps every value.
+/// `--name value` pairs, then whatever follows `--`; a name given more than once keeps every value.
 struct Options {
     private var values: [String: [String]] = [:]
+    private(set) var rest: [String] = []
 
     init(_ arguments: ArraySlice<String>) throws {
         var arguments = arguments
         while let name = arguments.popFirst() {
+            if name == "--" {
+                rest = Array(arguments)
+                return
+            }
             guard name.hasPrefix("--"), let value = arguments.popFirst() else {
                 throw Failure(description: "expected --<option> <value>, got \(name)\n\n\(usage)")
             }
@@ -51,11 +60,12 @@ func write(_ data: Data, to path: String) throws {
     try data.write(to: url, options: .atomic)
 }
 
-/// Runs `executable` and returns its standard output, failing when it exits non-zero.
-func run(_ executable: String, _ arguments: [String]) throws -> Data {
+/// Runs `executable` in `directory` and returns its standard output, failing when it exits non-zero.
+func run(_ executable: String, _ arguments: [String], in directory: String? = nil) throws -> Data {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
+    if let directory { process.currentDirectoryURL = URL(fileURLWithPath: directory) }
     let output = Pipe()
     process.standardOutput = output
     try process.run()
@@ -99,16 +109,32 @@ func testOnlyTargets(_ options: Options) throws {
 }
 
 func bundle(_ options: Options) throws {
-    let root = try options.required("root")
-    let base = try options.required("base")
-    func view(_ name: String) throws -> [Finding] {
-        try JSONDecoder().decode([Finding].self, from: read(try options.required(name)))
+    let root = URL(fileURLWithPath: try options.required("root")).standardizedFileURL.path
+    let base = URL(fileURLWithPath: try options.required("base")).standardizedFileURL.path
+    let store = try options.required("store")
+    let description = options.optional("package-description")
+    let testOnly = String(decoding: try read(try options.required("test-only-targets")), as: UTF8.self)
+        .split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    let scan = try PeripheryScan(
+        configuration: root + "/.periphery.yml", store: store, packageDescription: description,
+        arguments: options.rest, testOnlyTargets: testOnly)
+
+    let presence = try presence(exporter: try options.required("indexutil-export"), store: store, root: root)
+    if let description {
+        let package = try JSONDecoder().decode(PackageDescription.self, from: read(description))
+        guard base == root || base.hasPrefix(root + "/") else {
+            throw Failure(description: "--base \(base) lies outside --root \(root)")
+        }
+        let unindexed = presence.unindexedTargets(of: package, at: String(base.dropFirst(root.count + 1)))
+        guard unindexed.isEmpty else { throw BundleError.unindexedTargets(store: store, targets: unindexed) }
+    }
+
+    let periphery = try options.required("periphery")
+    func view(_ arguments: [String]) throws -> [Finding] {
+        try JSONDecoder().decode([Finding].self, from: run(periphery, arguments, in: base))
             .map { try $0.normalized(root: root, base: base) }
     }
-    let bundle = PlatformBundle(
-        full: try view("full"), production: try view("production"),
-        presence: try presence(
-            exporter: try options.required("indexutil-export"), store: try options.required("store"), root: root))
+    let bundle = PlatformBundle(full: try view(scan.full), production: try view(scan.production), presence: presence)
     try bundle.write(to: URL(fileURLWithPath: try options.required("output")))
 }
 
@@ -143,9 +169,7 @@ func presence(exporter: String, store: String, root: String) throws -> Presence 
     guard process.terminationStatus == 0 else {
         throw Failure(description: "\(exporter) exited \(process.terminationStatus) exporting \(store)")
     }
-    guard !filter.presence.keys.isEmpty else {
-        throw Failure(description: "\(store) holds no declaration under \(root)")
-    }
+    guard !filter.presence.keys.isEmpty else { throw BundleError.emptyStore(store: store, root: root) }
     return filter.presence
 }
 
@@ -165,7 +189,7 @@ func report(_ options: Options) throws {
     guard !full.isEmpty else { throw Failure(description: "no --platform given\n\n\(usage)") }
 
     let report = try DeadCodeReport(full: full, production: production)
-    print(report.text, terminator: "")
+    print(report.text(remedy: options.optional("remedy")), terminator: "")
     if let path = options.optional("markdown") {
         let rest = try options.required("rest")
         try write(Data(report.markdown(limit: 60_000, rest: rest).utf8), to: path)

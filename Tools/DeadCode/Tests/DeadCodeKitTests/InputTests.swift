@@ -164,8 +164,9 @@ import Testing
             {"name": "KernovaKit", "products": [
                {"name": "kernova-agent", "type": {"executable": null}, "targets": ["KernovaLinuxAgent"]},
                {"name": "KernovaLogging", "type": {"library": ["static"]}, "targets": ["KernovaLogging"]}],
-             "targets": [{"name": "KernovaLinuxAgent", "type": "executable", "target_dependencies": ["KernovaDBus"]},
-               {"name": "KernovaDBus", "type": "library"}]}
+             "targets": [{"name": "KernovaLinuxAgent", "type": "executable", "module_type": "SwiftTarget",
+                 "path": "Sources/KernovaLinuxAgent", "target_dependencies": ["KernovaDBus"]},
+               {"name": "KernovaDBus", "type": "library", "module_type": "SwiftTarget", "path": "Sources/KernovaDBus"}]}
             """
         let package = try JSONDecoder().decode(PackageDescription.self, from: Data(json.utf8))
         #expect(package.products.map(\.isExecutable) == [true, false])

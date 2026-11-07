@@ -4,7 +4,7 @@ import Foundation
 import FoundationXML
 #endif
 
-/// The parts of `swift package describe --type json` the build graph reads.
+/// The parts of `swift package describe --type json` the build graph and a package's bundle read.
 package struct PackageDescription: Decodable, Sendable {
     package struct Product: Decodable, Sendable {
         package var name: String
@@ -31,15 +31,24 @@ package struct PackageDescription: Decodable, Sendable {
     /// A target; `describe` leaves out a dependency list that is empty.
     package struct Target: Decodable, Sendable {
         package var name: String
+        /// Its sources' directory, relative to the package.
+        package var path: String
+        private var module_type: String
         private var target_dependencies: [String]?
         private var product_dependencies: [String]?
 
-        package init(name: String, targetDependencies: [String] = [], productDependencies: [String] = []) {
+        package init(
+            name: String, path: String? = nil, isSwift: Bool = true, targetDependencies: [String] = [],
+            productDependencies: [String] = []
+        ) {
             self.name = name
+            self.path = path ?? "Sources/\(name)"
+            module_type = isSwift ? "SwiftTarget" : "ClangTarget"
             target_dependencies = targetDependencies
             product_dependencies = productDependencies
         }
 
+        package var isSwift: Bool { module_type == "SwiftTarget" }
         package var targetDependencies: [String] { target_dependencies ?? [] }
         package var productDependencies: [String] { product_dependencies ?? [] }
     }

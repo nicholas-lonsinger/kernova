@@ -157,7 +157,16 @@ private func declared(_ locations: String...) -> Presence {
         let only = [PlatformScan(platform: .macos, findings: [], presence: nil)]
         let report = try DeadCodeReport(full: only, production: only)
         #expect(report.verdict == .partial)
-        #expect(report.text.hasPrefix("This scan covers macOS uses only. Linux was not scanned"))
+        let lines = report.text(remedy: "Run `make ubuntu-sdk` once.").split(separator: "\n")
+        #expect(lines.first?.hasPrefix("This scan covers macOS uses only. Linux was not scanned") == true)
+        #expect(lines.dropFirst().first == "Run `make ubuntu-sdk` once.")
+    }
+
+    @Test func aCompleteReportSaysNothingOfAPartialOne() throws {
+        let report = try DeadCodeReport(full: scans([]), production: scans([]))
+        let text = report.text(remedy: "Run `make ubuntu-sdk` once.")
+        #expect(!text.contains("This scan covers"))
+        #expect(!text.contains("make ubuntu-sdk"))
     }
 
     @Test func theMarkdownFitsItsLimit() throws {

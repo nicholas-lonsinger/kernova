@@ -89,7 +89,7 @@ SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
 SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets dead-code-tool doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets dead-code-tool doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -105,9 +105,10 @@ help:
 # targets below so each piece is also runnable on its own. Every step is
 # idempotent, so rerun it whenever the environment drifts. It ends with
 # `doctor`, which reports the state the run produced.
-setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org toolchain, LSP config, Periphery, then doctor
+setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org toolchain, the Ubuntu SDK, LSP config, Periphery, then doctor
 	@Tools/brew-install.sh shellcheck gh xcode-build-server
 	@Tools/install-swift-toolchain.sh >/dev/null
+	@Tools/install-ubuntu-sdk.sh >/dev/null
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 	@Tools/install-periphery.sh >/dev/null
 	@Tools/doctor.sh
@@ -235,23 +236,18 @@ test-unhosted-tsan: ## Run the unhosted lanes under Thread Sanitizer
 swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins, and its Static Linux SDK
 	@Tools/install-swift-toolchain.sh >/dev/null
 
-# The targets KernovaKit/Package.swift declares off macOS. A cross build
-# evaluates the manifest on this Mac, where every target is declared, so it
-# names them; the Linux and Windows CI jobs build the manifest's own set. Its
-# own scratch path keeps the swift.org toolchain's build state apart from the
-# Xcode toolchain's, which `test-unhosted` uses. `swift build` keeps only the
-# last of several `--target` options, so each target is a build of its own.
-PORTABLE_TARGETS := KernovaSynchronization KernovaLogging CKernovaShims KernovaWire KernovaContainer KernovaContainerPipeline KernovaAgentCore KernovaAgentSimulation KernovaAgentRuntime KernovaAgentHost KernovaPlatformPOSIX KernovaFileTree KernovaTreeTransfer KernovaItemTransfer KernovaAgentInstall KernovaDBus KernovaDigest KernovaISO9660 KernovaPortableTestSupport KernovaPlatformLinux CKernovaAgentVersion KernovaLinuxAgent KernovaBench
+ubuntu-sdk: ## Generate and install the Ubuntu SDK the Linux half of `make dead-code` cross-builds with (once; minutes)
+	@Tools/install-ubuntu-sdk.sh >/dev/null
 
+# The targets KernovaKit/Package.swift declares off macOS, test targets aside,
+# read from the manifest as Linux evaluates it.
+PORTABLE_TARGETS = $(shell KERNOVA_PORTABLE_ONLY=1 xcrun swift package dump-package --package-path KernovaKit | jq -r '.targets[] | select(.type != "test") | .name')
+
+# Its own scratch path keeps the swift.org toolchain's build state apart from
+# the Xcode toolchain's, which `test-unhosted` uses.
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
-	@swiftly=$$(Tools/install-swift-toolchain.sh) || exit 1; \
-	version=$$(tr -d '[:space:]' <.swift-version); \
-	sdk=$$(. Tools/lib/static-linux-sdk.sh && static_sdk_id "$$version"); \
-	for target in $(PORTABLE_TARGETS); do \
-		"$$swiftly" run swift build "+$$version" --package-path KernovaKit \
-			--scratch-path KernovaKit/.build/swiftly --swift-sdk "$$sdk" --triple aarch64-swift-linux-musl \
-			--target "$$target" || exit 1; \
-	done
+	@Tools/install-swift-toolchain.sh >/dev/null && \
+	bash -c '. Tools/lib/linux-swift.sh && linux_swift build --scratch-path KernovaKit/.build/swiftly --swift-sdk "$$(static_sdk_id "$$(pinned_swift_version)")" --triple aarch64-swift-linux-musl'
 
 test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
@@ -314,24 +310,29 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 # longer existed (Xcode 27.1). Each scheme is built for testing, so the one
 # index serves both views — the full scan, and the production scan with every
 # target only tests reach excluded — and the bundle written from it holds both
-# and that index's declaration sites. The report on stdout covers macOS alone;
-# .github/workflows/dead-code.yml combines this bundle with Linux's. The built
+# and that index's declaration sites. With the Ubuntu SDK installed,
+# Tools/dead-code-linux.sh writes the Linux bundle beside it and the report on
+# stdout combines the two, as .github/workflows/dead-code.yml does; without it
+# the report covers macOS alone and names what installs the rest. The built
 # apps are unregistered from Launch Services on the way out, whatever the
 # outcome, so a scan's build never wins the version election.
 PERIPHERY_DERIVED_DATA := $(DERIVED_DATA_ROOT)/Periphery
 PERIPHERY_SCHEMES      := Kernova KernovaMacOSAgent KernovaRelaunchHelper KernovaCLI KernovaBench
 PERIPHERY_INDEX_STORE  := $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
 DEAD_CODE_BUNDLE       := $(PERIPHERY_DERIVED_DATA)/Report/macos
+DEAD_CODE_LINUX_BUNDLE := $(PERIPHERY_DERIVED_DATA)/Report/linux
 DEAD_CODE_TOOL         := Tools/DeadCode/.build/release/dead-code
 
-dead-code: ## Scan for unused code with Periphery: the macOS half of the combined scan CI runs (builds every scheme first; minutes)
+dead-code: ## Scan for unused code with Periphery on macOS and, once `make ubuntu-sdk` has run, Linux: the combined scan CI runs (builds every scheme first; minutes)
 	$(LOCKED_TWIN)
 
 locked-dead-code: dead-code-tool
 	@trap "Tools/ghosts.sh --unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
 	periphery=$$(Tools/install-periphery.sh) || exit 1; \
 	indexutil=$$(Tools/install-periphery.sh --indexutil-export) || exit 1; \
-	excluded=$$($(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)) || exit 1; \
+	raw=$(PERIPHERY_DERIVED_DATA)/Report/raw; \
+	mkdir -p "$$raw" || exit 1; \
+	$(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT) > "$$raw/test-only-targets.txt" || exit 1; \
 	for scheme in $(PERIPHERY_SCHEMES); do \
 		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
 			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
@@ -340,16 +341,18 @@ locked-dead-code: dead-code-tool
 			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
 			COMPILATION_CACHE_ENABLE_CACHING=NO >&2 || exit 1; \
 	done; \
-	raw=$(PERIPHERY_DERIVED_DATA)/Report/raw; \
-	mkdir -p "$$raw" && \
-	scan() { "$$periphery" scan --disable-update-check --quiet --format json --skip-build \
-		--project $(PROJECT) --schemes $(PERIPHERY_SCHEMES) --index-store-path $(PERIPHERY_INDEX_STORE) "$$@"; } && \
-	scan > "$$raw/full.json" && \
-	scan --exclude-targets $$excluded > "$$raw/production.json" && \
-	$(DEAD_CODE_TOOL) bundle --root '$(CURDIR)' --base '$(CURDIR)' \
-		--full "$$raw/full.json" --production "$$raw/production.json" \
-		--store $(PERIPHERY_INDEX_STORE) --indexutil-export "$$indexutil" --output $(DEAD_CODE_BUNDLE) && \
-	$(DEAD_CODE_TOOL) report --platform macos=$(DEAD_CODE_BUNDLE)
+	$(DEAD_CODE_TOOL) bundle --root '$(CURDIR)' --base '$(CURDIR)' --periphery "$$periphery" \
+		--store $(PERIPHERY_INDEX_STORE) --indexutil-export "$$indexutil" \
+		--test-only-targets "$$raw/test-only-targets.txt" --output $(DEAD_CODE_BUNDLE) \
+		-- --project $(PROJECT) --schemes $(PERIPHERY_SCHEMES) || exit 1; \
+	missing=$$(bash -c '. Tools/lib/linux-swift.sh && ubuntu_sdk_missing "$$(pinned_swift_version)"'); \
+	if [ -z "$$missing" ]; then \
+		Tools/dead-code-linux.sh "$$raw/test-only-targets.txt" $(DEAD_CODE_LINUX_BUNDLE) >&2 && \
+		$(DEAD_CODE_TOOL) report --platform macos=$(DEAD_CODE_BUNDLE) --platform linux=$(DEAD_CODE_LINUX_BUNDLE); \
+	else \
+		$(DEAD_CODE_TOOL) report --platform macos=$(DEAD_CODE_BUNDLE) \
+			--remedy "The Linux half builds with $$missing, which is not installed: run \`make ubuntu-sdk\` once, and \`make dead-code\` then scans both."; \
+	fi
 
 dead-code-targets: dead-code-tool ## Print the targets only tests reach, which the dead-code scan's production view excludes
 	@$(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)
