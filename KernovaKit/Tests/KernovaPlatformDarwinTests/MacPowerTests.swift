@@ -49,14 +49,14 @@ struct MacPowerTests {
 
     static let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 3)
 
-    /// The session peer's mechanism with its graceful call replaced by one recording each action and answering
+    /// The session peer's mechanism with its graceful call replaced by one counting its calls and answering
     /// `answer`.
-    static func mechanism(answering answer: MacPowerAnswer, calls: Locked<[PowerAction]>) -> MacPowerMechanism {
+    static func mechanism(answering answer: MacPowerAnswer, calls: Locked<Int>) -> MacPowerMechanism {
         MacPowerMechanism(
             graceful: .init(
                 absentDetail: Self.absentDetail,
-                call: .answering { action in
-                    calls.withLock { $0.append(action) }
+                call: .answering {
+                    calls.withLock { $0 += 1 }
                     return answer
                 }),
             ignoringApps: nil)
@@ -64,22 +64,22 @@ struct MacPowerTests {
 
     static let absentDetail = MacPowerMechanism.loginWindow().graceful?.absentDetail ?? ""
 
-    /// The answer `call` gives `action`, whichever kind of call it is.
-    static func answer(of call: MacPowerMechanism.Call?, _ action: PowerAction) -> String {
+    /// The answer `call` gives, whichever kind of call it is.
+    static func answer(of call: MacPowerMechanism.Call?) -> String {
         switch call {
-        case .answering(let call): String(describing: call(action))
-        case .committing(let call): call(action).map { "failed \($0)" } ?? "going down"
+        case .answering(let call): String(describing: call())
+        case .committing(let call): call().map { "failed \($0)" } ?? "going down"
         case nil: "no call"
         }
     }
 
     // MARK: - Adverts
 
-    @Test("The session peer offers shutdown and restart, asking apps to quit, only while its session owns the console")
+    @Test("The session peer offers shutdown, asking apps to quit, only while its session owns the console")
     func sessionPeerAdvertFollowsConsole() {
         let harness = Harness(.loginWindow(send: { _ in noErr }))
         let elsewhere = Availability<PowerOffer>.absent(.notOnConsole, debugDetail: Self.absentDetail)
-        let offered = Availability.available(PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true))
+        let offered = Availability.available(PowerOffer(actions: [.shutdown], asksAppsToQuit: true))
         #expect(harness.take() == [.availability(elsewhere)])
 
         harness.adapter.consoleChanged(.on)
@@ -96,7 +96,7 @@ struct MacPowerTests {
     }
 
     @Test(
-        "The system peer offers no graceful shutdown or restart in any console state, and Stop Anyway in every one"
+        "The system peer offers no graceful shutdown in any console state, and Stop Anyway in every one"
     )
     func systemPeerAdvert() {
         let harness = Harness(.shutdownCommand(run: { _ in 0 }))
@@ -110,9 +110,9 @@ struct MacPowerTests {
     }
 
     @Test(
-        "The system peer refuses a graceful shutdown or restart POWER_ACTION_UNSUPPORTED in every console state, running nothing",
-        arguments: [ConsoleState.off, .on, .unknown], [PowerAction.shutdown, .restart])
-    func systemPeerRefusesGraceful(console: ConsoleState, action: PowerAction) {
+        "The system peer refuses a graceful shutdown POWER_ACTION_UNSUPPORTED in every console state, running nothing",
+        arguments: [ConsoleState.off, .on, .unknown])
+    func systemPeerRefusesGraceful(console: ConsoleState) {
         let ran = Locked(0)
         let harness = Harness(
             .shutdownCommand(run: { _ in
@@ -121,7 +121,7 @@ struct MacPowerTests {
             }), console: console)
         _ = harness.take()
 
-        harness.adapter.perform(Self.id, action, ignoringApps: false)
+        harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
         #expect(harness.take() == [.refused(Self.id, WireError(.powerActionUnsupported))])
         #expect(ran.withLock { $0 } == 0)
     }
@@ -131,7 +131,7 @@ struct MacPowerTests {
         let harness = Harness(.loginWindow(send: { _ in noErr }), console: .on)
         #expect(
             harness.take() == [
-                .availability(.available(PowerOffer(actions: [.shutdown, .restart], asksAppsToQuit: true)))
+                .availability(.available(PowerOffer(actions: [.shutdown], asksAppsToQuit: true)))
             ])
     }
 
@@ -149,13 +149,13 @@ struct MacPowerTests {
         arguments: answers.indices)
     func requestReportsAnswer(row: Int) {
         let (answer, reports) = Self.answers[row]
-        let calls = Locked<[PowerAction]>([])
+        let calls = Locked(0)
         let harness = Harness(Self.mechanism(answering: answer, calls: calls), console: .on)
         _ = harness.take()
 
-        harness.adapter.perform(Self.id, .restart, ignoringApps: false)
+        harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
         #expect(harness.take() == reports)
-        #expect(calls.withLock { $0 } == [.restart])
+        #expect(calls.withLock { $0 } == 1)
     }
 
     @Test(
@@ -205,14 +205,14 @@ struct MacPowerTests {
         "A session peer's request while its session does not own the console is refused NOT_ON_CONSOLE without a call",
         arguments: [ConsoleState.off, .unknown])
     func requestOffConsoleRefused(console: ConsoleState) {
-        let calls = Locked<[PowerAction]>([])
+        let calls = Locked(0)
         let harness = Harness(Self.mechanism(answering: .tookIt, calls: calls), console: console)
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
         #expect(
             harness.take() == [.refused(Self.id, WireError(.powerNotOnConsole, debugDetail: Self.absentDetail))])
-        #expect(calls.withLock { $0 }.isEmpty)
+        #expect(calls.withLock { $0 } == 0)
     }
 
     @Test(
@@ -238,9 +238,12 @@ struct MacPowerTests {
     }
 
     @Test(
-        "A request without waiting for apps the mechanism does not offer is refused POWER_ACTION_UNSUPPORTED without a call",
-        arguments: [(PowerAction.shutdown, true), (.restart, false)])
-    func ignoringAppsUnofferedRefused(action: PowerAction, sessionPeer: Bool) {
+        "A request the peer does not offer — a restart either way, or the session peer's shutdown without waiting for apps — is refused POWER_ACTION_UNSUPPORTED without a call",
+        arguments: [
+            (PowerAction.shutdown, true, true), (.restart, true, true), (.restart, true, false),
+            (.restart, false, true), (.restart, false, false),
+        ])
+    func unofferedRefused(action: PowerAction, sessionPeer: Bool, ignoringApps: Bool) {
         let sent = Locked(0)
         let ran = Locked(0)
         let mechanism: MacPowerMechanism =
@@ -256,7 +259,7 @@ struct MacPowerTests {
         let harness = Harness(mechanism, console: .on)
         _ = harness.take()
 
-        harness.adapter.perform(Self.id, action, ignoringApps: true)
+        harness.adapter.perform(Self.id, action, ignoringApps: ignoringApps)
         #expect(harness.take() == [.refused(Self.id, WireError(.powerActionUnsupported))])
         #expect(sent.withLock { $0 } == 0)
         #expect(ran.withLock { $0 } == 0)
@@ -269,7 +272,7 @@ struct MacPowerTests {
         let mechanism = MacPowerMechanism(
             graceful: .init(
                 absentDetail: "",
-                call: .answering { _ in
+                call: .answering {
                     calling.signal()
                     release.wait()
                     return .tookIt
@@ -287,7 +290,7 @@ struct MacPowerTests {
 
     @Test("A cancel after the answer reports nothing more")
     func cancelAfterAnswer() {
-        let harness = Harness(Self.mechanism(answering: .tookIt, calls: Locked([])), console: .on)
+        let harness = Harness(Self.mechanism(answering: .tookIt, calls: Locked(0)), console: .on)
         _ = harness.take()
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
         #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
@@ -297,10 +300,8 @@ struct MacPowerTests {
 
     // MARK: - loginwindow
 
-    @Test(
-        "The session peer sends loginwindow kAEShutDown or kAERestart",
-        arguments: [(PowerAction.shutdown, kAEShutDown), (.restart, kAERestart)])
-    func loginWindowEvent(action: PowerAction, eventID: OSType) {
+    @Test("The session peer sends loginwindow kAEShutDown")
+    func loginWindowEvent() {
         let sent = Locked<[(eventClass: AEEventClass, eventID: AEEventID, target: String?, type: DescType?)]>([])
         let mechanism = MacPowerMechanism.loginWindow(send: { event in
             let target = event.attributeDescriptor(forKeyword: AEKeyword(keyAddressAttr))
@@ -308,11 +309,11 @@ struct MacPowerTests {
             sent.withLock { $0.append((event.eventClass, event.eventID, bundle, target?.descriptorType)) }
             return noErr
         })
-        #expect(Self.answer(of: mechanism.graceful?.call, action) == "tookIt")
+        #expect(Self.answer(of: mechanism.graceful?.call) == "tookIt")
         let event = sent.withLock { $0 }
         #expect(event.count == 1)
         #expect(event.first?.eventClass == AEEventClass(kCoreEventClass))
-        #expect(event.first?.eventID == AEEventID(eventID))
+        #expect(event.first?.eventID == AEEventID(kAEShutDown))
         #expect(event.first?.target == "com.apple.loginwindow")
         #expect(event.first?.type == DescType(typeApplicationBundleID))
     }
@@ -338,17 +339,15 @@ struct MacPowerTests {
 
     // MARK: - shutdown(8)
 
-    @Test(
-        "The system peer runs shutdown -h now or -r now",
-        arguments: [(PowerAction.shutdown, "-h"), (.restart, "-r")])
-    func shutdownArguments(action: PowerAction, flag: String) {
+    @Test("The system peer runs shutdown -h now")
+    func shutdownArguments() {
         let ran = Locked<[[String]]>([])
         let mechanism = MacPowerMechanism.shutdownCommand(run: { arguments in
             ran.withLock { $0.append(arguments) }
             return 0
         })
-        #expect(Self.answer(of: mechanism.ignoringApps?.call, action) == "going down")
-        #expect(ran.withLock { $0 } == [["/sbin/shutdown", flag, "now"]])
+        #expect(Self.answer(of: mechanism.ignoringApps) == "going down")
+        #expect(ran.withLock { $0 } == [["/sbin/shutdown", "-h", "now"]])
     }
 
     // MARK: - Quit
@@ -384,7 +383,7 @@ struct MacPowerTests {
     @Test("No event, or one that is not a quit, stops the session peer")
     func quitWithoutQuitEvent() {
         #expect(MacAgentQuit.exitStatus(for: nil) == 0)
-        let other = LoginWindowPower.event(for: .shutdown)
+        let other = LoginWindowPower.shutdownEvent()
         other.setAttribute(NSAppleEventDescriptor(enumCode: OSType(kAEShutDown)), forKeyword: AEKeyword(kAEQuitReason))
         #expect(MacAgentQuit.exitStatus(for: other) == 0)
     }

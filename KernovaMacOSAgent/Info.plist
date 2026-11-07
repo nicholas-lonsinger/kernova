@@ -25,7 +25,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>When you choose Stop or Restart for this virtual machine in Kernova, the agent asks macOS to shut it down or restart it.</string>
+	<string>When you choose Stop or Restart for this virtual machine in Kernova, the agent asks macOS to shut it down.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSHumanReadableCopyright</key>

@@ -75,14 +75,15 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         state: PeerSessionState(console: .on, sessionID: "2", userName: "pbear")
     )
 
-    /// Opens a connection that says Hello as `claim` in `state` and offers POWER as `offer` — shutdown and
-    /// restart by default — answering its index (from 0, in accept order), or `nil` when the hub refused it.
+    /// Opens a connection that says Hello as `claim` in `state` and offers POWER as `offer` — shutdown, as a
+    /// macOS peer offers, by default — answering its index (from 0, in accept order), or `nil` when the hub
+    /// refused it.
     ///
     /// Each power request the hub sends it is answered with `answering`'s results for its action, in order;
     /// with no `answering`, the test answers through ``deliver(_:fromConnection:)``.
     package func connectPowerPeer(
         claim: PeerClaim = consoleSessionPeer.claim, state peerState: PeerSessionState = consoleSessionPeer.state,
-        offer powerOffer: PowerOffer = PowerOffer(actions: [.shutdown, .restart]),
+        offer powerOffer: PowerOffer = PowerOffer(actions: [.shutdown]),
         answering: (@Sendable (PowerAction) -> [PowerRequestResult])? = nil
     ) -> Int? {
         guard connect() else { return nil }

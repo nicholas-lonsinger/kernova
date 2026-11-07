@@ -20,43 +20,36 @@ enum MacPowerAnswer: Sendable, Equatable {
     case unconfirmed
 }
 
-/// How a macOS peer asks its OS for a power action: the shutdown and restart that ask apps to quit, which only
-/// the session peer has, and what the peer performs without waiting for apps.
+/// How a macOS peer asks its OS to shut down: the shutdown that asks apps to quit, which only the session peer
+/// has, and the one that does not wait for apps, which only the system peer has. Shutdown is the only action a
+/// macOS peer offers, because the host restarts a guest by shutting it down and booting it again.
 struct MacPowerMechanism: Sendable {
-    /// The blocking call, by when it says the OS has taken the request.
+    /// The blocking shutdown call, by when it says the OS has taken the request.
     enum Call: Sendable {
         /// A call whose answer says whether the OS took the request.
-        case answering(@Sendable (PowerAction) -> MacPowerAnswer)
+        case answering(@Sendable () -> MacPowerAnswer)
         /// A call the OS has taken once it starts, because it takes the OS down before it answers: its acceptance
         /// is reported before it starts, and it answers the failure that ended it, nil when the OS is going down.
-        case committing(@Sendable (PowerAction) -> WireError?)
+        case committing(@Sendable () -> WireError?)
     }
 
-    /// Shutdown and restart through a call that asks running apps to quit, which may stop the request, offered
-    /// only while the peer's session owns the console.
+    /// Shutdown through a call that asks running apps to quit, which may stop the request, offered only while the
+    /// peer's session owns the console.
     struct Graceful: Sendable {
         /// Why it is not offered while the session does not own the console, for the host's log.
         let absentDetail: String
-        /// Asks the OS for the action, blocking until the call returns.
+        /// Asks the OS to shut down, blocking until the call returns.
         let call: Call
     }
 
-    /// Actions performed without waiting for apps, in every console state, and the call that performs them.
-    struct IgnoringApps: Sendable {
-        /// The actions offered.
-        let actions: [PowerAction]
-        /// Asks the OS for one of them, blocking until the call returns.
-        let call: Call
-    }
-
-    /// The shutdown and restart that ask apps to quit; nil for none.
+    /// The shutdown that asks apps to quit; nil for none.
     let graceful: Graceful?
-    /// What the mechanism performs without waiting for apps; nil for nothing.
-    let ignoringApps: IgnoringApps?
+    /// The shutdown performed without waiting for apps, in every console state; nil for none.
+    let ignoringApps: Call?
 
-    /// The session peer's: the Apple event loginwindow takes to shut down or restart, while the session owns the
-    /// console ([QA1134](https://developer.apple.com/library/archive/qa/qa1134/_index.html)). The sequence it
-    /// starts "can be cancelled by running applications". In macOS 27.2 guests it always took loginwindow's
+    /// The session peer's: the Apple event loginwindow takes to shut down, while the session owns the console
+    /// ([QA1134](https://developer.apple.com/library/archive/qa/qa1134/_index.html)). The sequence it starts "can
+    /// be cancelled by running applications". In macOS 27.2 guests it always took loginwindow's
     /// reopen-windows path, whatever the user's setting, so unsaved documents came back at the next start; an app
     /// holding it showed its own prompt while the send still answered taken
     /// (`docs/research/2026-11-04-macos-shutdown-request-by-session-state.md`).
@@ -66,7 +59,7 @@ struct MacPowerMechanism: Sendable {
         MacPowerMechanism(
             graceful: Graceful(
                 absentDetail: "this session does not own the console",
-                call: .answering { action in LoginWindowPower.answer(send(LoginWindowPower.event(for: action))) }),
+                call: .answering { LoginWindowPower.answer(send(LoginWindowPower.shutdownEvent())) }),
             ignoringApps: nil)
     }
 
@@ -79,14 +72,12 @@ struct MacPowerMechanism: Sendable {
     {
         MacPowerMechanism(
             graceful: nil,
-            ignoringApps: IgnoringApps(
-                actions: [.shutdown],
-                call: .committing { action in ShutdownCommand.failure(run(ShutdownCommand.arguments(for: action))) }))
+            ignoringApps: .committing { ShutdownCommand.failure(run(ShutdownCommand.arguments)) })
     }
 }
 
-/// A macOS peer's POWER: the mechanism's graceful shutdown and restart while the peer's session owns the console,
-/// and what it performs without waiting for apps in every state; absent `NOT_ON_CONSOLE` when neither is offered.
+/// A macOS peer's POWER: the mechanism's graceful shutdown while the peer's session owns the console, and its
+/// shutdown without waiting for apps in every state; absent `NOT_ON_CONSOLE` when neither is offered.
 public final class MacPowerAdapter: PowerAdapter {
     private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "Power")
 
@@ -144,18 +135,22 @@ public final class MacPowerAdapter: PowerAdapter {
     }
 
     /// Makes the mechanism's graceful call, refusing `NOT_ON_CONSOLE` while the session does not own the console;
-    /// `ignoringApps`, the call that does not wait for apps, in any console state. An action the mechanism does not
-    /// offer that way is refused `POWER_ACTION_UNSUPPORTED`.
+    /// `ignoringApps`, the call that does not wait for apps, in any console state. Any action but shutdown, and a
+    /// shutdown the mechanism does not offer that way, is refused `POWER_ACTION_UNSUPPORTED`.
     public func perform(_ id: PowerRequestID, _ action: PowerAction, ignoringApps: Bool) {
         queue.async { [self] in
             let (console, reporter) = state.withLock { ($0.console, $0.reporter) }
+            guard action == .shutdown else {
+                reporter?.report(.refused(id, WireError(.powerActionUnsupported)))
+                return
+            }
             let call: MacPowerMechanism.Call
             if ignoringApps {
-                guard let offered = mechanism.ignoringApps, offered.actions.contains(action) else {
+                guard let offered = mechanism.ignoringApps else {
                     reporter?.report(.refused(id, WireError(.powerActionUnsupported)))
                     return
                 }
-                call = offered.call
+                call = offered
             } else {
                 guard let graceful = mechanism.graceful else {
                     reporter?.report(.refused(id, WireError(.powerActionUnsupported)))
@@ -169,13 +164,12 @@ public final class MacPowerAdapter: PowerAdapter {
             }
             Self.logger.log(
                 .notice,
-                "Asking macOS to \(Self.name(action), privacy: .public)\(ignoringApps ? " without waiting for apps" : "", privacy: .public)"
-            )
+                "Asking macOS to shut down\(ignoringApps ? " without waiting for apps" : "", privacy: .public)")
             switch call {
             case .answering(let call):
                 state.withLock { $0.calling = (id, accepted: false) }
                 callQueue.async { [self] in
-                    let answer = call(action)
+                    let answer = call()
                     queue.async { [self] in answered(id, answer) }
                 }
             case .committing(let call):
@@ -184,7 +178,7 @@ public final class MacPowerAdapter: PowerAdapter {
                 // that the OS going down brings.
                 reporter?.report(.accepted(id))
                 callQueue.async { [self] in
-                    let failure = call(action)
+                    let failure = call()
                     queue.async { [self] in ended(id, failure) }
                 }
             }
@@ -206,18 +200,17 @@ public final class MacPowerAdapter: PowerAdapter {
         }
     }
 
-    /// The graceful shutdown and restart while the session owns the console, beside what the mechanism performs
-    /// without waiting for apps in every state; absent `NOT_ON_CONSOLE` when that leaves nothing.
+    /// The graceful shutdown while the session owns the console, beside the shutdown without waiting for apps in
+    /// every state; absent `NOT_ON_CONSOLE` when that leaves nothing.
     private func availability(_ console: ConsoleState) -> Availability<PowerOffer> {
         let graceful = console == .on ? mechanism.graceful : nil
-        let ignoringApps = mechanism.ignoringApps?.actions ?? []
-        guard graceful != nil || !ignoringApps.isEmpty else {
+        guard graceful != nil || mechanism.ignoringApps != nil else {
             return .absent(.notOnConsole, debugDetail: mechanism.graceful?.absentDetail ?? "")
         }
         return .available(
             PowerOffer(
-                actions: graceful == nil ? [] : [.shutdown, .restart], asksAppsToQuit: graceful != nil,
-                ignoringApps: ignoringApps))
+                actions: graceful == nil ? [] : [.shutdown], asksAppsToQuit: graceful != nil,
+                ignoringApps: mechanism.ignoringApps == nil ? [] : [.shutdown]))
     }
 
     private func answered(_ id: PowerRequestID, _ answer: MacPowerAnswer) {
@@ -249,28 +242,19 @@ public final class MacPowerAdapter: PowerAdapter {
             return state.reporter
         }
     }
-
-    private static func name(_ action: PowerAction) -> String {
-        switch action {
-        case .shutdown: "shut down"
-        case .restart: "restart"
-        case .unspecified, .UNRECOGNIZED: "act on \(action)"
-        }
-    }
 }
 
 // MARK: - loginwindow
 
-/// The Apple events loginwindow takes to shut down or restart, sent through public Apple Event API.
+/// The Apple event loginwindow takes to shut down, sent through public Apple Event API.
 enum LoginWindowPower {
     /// loginwindow's bundle identifier.
     static let bundleIdentifier = "com.apple.loginwindow"
 
-    /// The event asking loginwindow for `action`: `kAEShutDown` or `kAERestart` in `kCoreEventClass`.
-    static func event(for action: PowerAction) -> NSAppleEventDescriptor {
+    /// The event asking loginwindow to shut down: `kAEShutDown` in `kCoreEventClass`.
+    static func shutdownEvent() -> NSAppleEventDescriptor {
         NSAppleEventDescriptor(
-            eventClass: AEEventClass(kCoreEventClass),
-            eventID: AEEventID(action == .restart ? kAERestart : kAEShutDown),
+            eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEShutDown),
             targetDescriptor: NSAppleEventDescriptor(bundleIdentifier: bundleIdentifier),
             returnID: AEReturnID(kAutoGenerateReturnID), transactionID: AETransactionID(kAnyTransactionID))
     }
@@ -302,10 +286,8 @@ enum LoginWindowPower {
 
 /// `shutdown(8)`, which the system peer runs as root.
 enum ShutdownCommand {
-    /// The command line asking for `action` now: `-h` halts, which powers the machine off, and `-r` restarts.
-    static func arguments(for action: PowerAction) -> [String] {
-        ["/sbin/shutdown", action == .restart ? "-r" : "-h", "now"]
-    }
+    /// The command line asking to shut down now: `-h` halts, which powers the machine off.
+    static let arguments = ["/sbin/shutdown", "-h", "now"]
 
     /// The failure `status`, as `Installer.spawn(_:)` answers it, reports, nil for none: `shutdown` exits 0 once
     /// it has asked the system to go down.
