@@ -531,32 +531,6 @@ struct VMOtherCopyHoldTests {
 
     // MARK: - Records
 
-    /// Every record its `sink` receives — the log sink a test builds the core
-    /// and the library under test with.
-    private final class LogCapture: Sendable {
-        private let recorded = Mutex<[String]>([])
-
-        /// The sink whose records land here.
-        var sink: KernovaLogger.ForwardingSink {
-            { [self] _, _, _, segments in
-                recorded.withLock { $0.append(segments.map(\.text).joined()) }
-            }
-        }
-
-        var messages: [String] { recorded.withLock { $0 } }
-
-        /// The records a refused verb leaves.
-        var refusals: [String] { messages.filter { $0.hasPrefix("Refused ") } }
-
-        /// The records a change of another copy's hold leaves.
-        var holdTransitions: [String] {
-            messages.filter {
-                ($0.hasPrefix("Found '") && $0.hasSuffix("' held by another copy of Kernova"))
-                    || $0.hasPrefix("Another copy of Kernova no longer holds")
-            }
-        }
-    }
-
     @Test("A refused set records one refusal, naming the verb, and the hold it found once")
     func refusedSetRecordsOnce() throws {
         let capture = LogCapture()
@@ -697,5 +671,18 @@ struct VMOtherCopyHoldTests {
     /// A core whose verbs, library and VMs log to `capture`.
     private func makeCore(loggingTo capture: LogCapture) -> WiredCommandCore {
         WiredCommandCore(logSink: capture.sink)
+    }
+}
+
+extension LogCapture {
+    /// The records a refused verb leaves.
+    fileprivate var refusals: [String] { messages.filter { $0.hasPrefix("Refused ") } }
+
+    /// The records a change of another copy's hold leaves.
+    fileprivate var holdTransitions: [String] {
+        messages.filter {
+            ($0.hasPrefix("Found '") && $0.hasSuffix("' held by another copy of Kernova"))
+                || $0.hasPrefix("Another copy of Kernova no longer holds")
+        }
     }
 }
