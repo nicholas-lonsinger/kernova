@@ -1867,7 +1867,7 @@ struct VMInstanceTests {
         #expect(!instance.hasGuestAgentInstallerMounted)
     }
 
-    @Test("guestOSVersionDisplay is nil for nil and empty values, so the row hides")
+    @Test("guestOSVersionDisplay is nil for nil and empty values")
     func guestOSVersionDisplayUnknown() {
         #expect(makeMacOSInstanceWithAgentInstalled().guestOSVersionDisplay == nil)
         // "" can only come from a hand-edited config.json (the service and
