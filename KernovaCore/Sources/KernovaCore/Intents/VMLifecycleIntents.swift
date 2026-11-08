@@ -2,8 +2,7 @@ import AppIntents
 import Foundation
 import KernovaKit
 
-// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
-struct StartVMIntent: ConsentingIntent {
+struct StartVMIntent: AppIntent, ConsentingIntent {
     static let title: LocalizedStringResource = "Start Virtual Machine"
     // A machine that still owes guest setup does not boot here: `start`
     // dispatches the install or image download and returns, so this action
@@ -39,8 +38,7 @@ struct StartVMIntent: ConsentingIntent {
     }
 }
 
-// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
-struct StopVMIntent: ConsentingIntent {
+struct StopVMIntent: AppIntent, ConsentingIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
         "Stops a virtual machine. Confirm Before Stopping asks before a method that loses anything in the guest that isn’t saved to disk.",
@@ -95,8 +93,7 @@ struct PauseVMIntent: AppIntent {
     }
 }
 
-// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
-struct ResumeVMIntent: ConsentingIntent {
+struct ResumeVMIntent: AppIntent, ConsentingIntent {
     static let title: LocalizedStringResource = "Resume Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
         "Lets a paused guest run again, or reads a suspended session back. Confirm Before Resuming asks before resuming it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
@@ -147,8 +144,7 @@ struct SuspendVMIntent: AppIntent {
     }
 }
 
-// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
-struct RestartVMIntent: ConsentingIntent {
+struct RestartVMIntent: AppIntent, ConsentingIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
         "Takes the guest down and starts it again once it has powered off. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",

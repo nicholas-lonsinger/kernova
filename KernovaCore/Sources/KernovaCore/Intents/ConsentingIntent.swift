@@ -3,6 +3,10 @@ import Foundation
 import KernovaCommandModel
 
 /// An action whose verb can refuse without a consent.
+///
+/// Conformers also name `AppIntent` themselves: Shortcuts discovers them at
+/// runtime, and Periphery 3.8.0's `AppIntentsRetainer` retains only direct
+/// conformances.
 protocol ConsentingIntent: AppIntent {
     /// Whether each consent the verb refuses without is asked for as it runs;
     /// off, every one is given up front, as `--yes` gives it. A `@Parameter`

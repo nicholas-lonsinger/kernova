@@ -25,7 +25,7 @@ struct FindSnapshotsIntent: AppIntent {
 }
 
 /// Returns a VM to a snapshot.
-struct RevertToSnapshotIntent: ConsentingIntent {
+struct RevertToSnapshotIntent: AppIntent, ConsentingIntent {
     static let title: LocalizedStringResource = "Revert to Snapshot"
     static let description: IntentDescription? = IntentDescription(
         "Returns a virtual machine to a snapshot. Take a snapshot before it to keep the current state. Confirm Before Reverting asks before the revert, and before resuming it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
@@ -57,7 +57,7 @@ struct RevertToSnapshotIntent: ConsentingIntent {
     }
 }
 
-struct DeleteSnapshotIntent: ConsentingIntent {
+struct DeleteSnapshotIntent: AppIntent, ConsentingIntent {
     static let title: LocalizedStringResource = "Delete Snapshot"
     static let description: IntentDescription? = IntentDescription(
         "Moves one snapshot's saved state and disk copies to the Trash.",
