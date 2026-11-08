@@ -476,6 +476,33 @@ struct VMIntentGatewayTests {
 
     // MARK: - Consent
 
+    /// An action whose Confirm Before toggle is off.
+    private struct UnconfirmedIntent: ConsentingIntent {
+        static let title: LocalizedStringResource = "Unconfirmed"
+        let confirmsFirst = false
+        func perform() async throws -> some IntentResult { .result() }
+    }
+
+    /// With the toggle off nothing reaches `requestConfirmation`, which has no
+    /// intent session to ask in here, so a run that asked would fail.
+    @Test("An action with Confirm Before off runs once with every consent, asking nothing")
+    func confirmationOffGivesEveryConsent() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization)
+        let vm = harness.register(name: "Hung", phase: .running(sessionID: UUID()))
+        let gateway = makeGateway(over: harness)
+        var given: [Consent] = []
+
+        try await UnconfirmedIntent().runWithConsent { consent in
+            given.append(consent)
+            try await gateway.stop(vm.id, disposition: .force, consent: consent)
+        }
+
+        #expect(given == [.all])
+        #expect(virtualization.forceStopCallCount == 1)
+        #expect(vm.status == .stopped)
+    }
+
     /// A paused VM's force stop offers no alternative: its graceful stop is
     /// refused until it resumes.
     @Test("A consent refusal is asked once and the verb re-issued with it")

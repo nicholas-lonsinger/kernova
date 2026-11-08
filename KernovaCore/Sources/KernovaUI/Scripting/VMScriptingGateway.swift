@@ -478,9 +478,8 @@ final class VMScriptingGateway {
 
     func start(_ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool) async throws {
         try await perform(.start, on: selectors) { selector in
-            try await Self.consenting(confirmation) { consent in
-                try await self.commands.start(selector, recovery: recoveryMode, consent: consent)
-            }
+            try await self.commands.start(
+                selector, recovery: recoveryMode, consent: Self.consent(confirmation))
         }
     }
 
@@ -491,28 +490,15 @@ final class VMScriptingGateway {
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.stop, on: selectors) { selector in
-            try await Self.consenting(confirmation) { consent in
-                try await self.commands.stop(
-                    selector, disposition: method, consent: consent, timeout: timeout)
-            }
+            try await self.commands.stop(
+                selector, disposition: method, consent: Self.consent(confirmation), timeout: timeout)
         }
     }
 
-    /// Runs `verb` with the consent a script's `with confirmation` gives:
-    /// every confirmation it asks for, or none.
-    ///
-    /// The round trip is ``VMConsentPolicy``'s, with nothing to present: a
-    /// script has already said whether it consents, so each prompt the core
-    /// describes is either answered by the flag or thrown back as the refusal
-    /// it is.
-    private static func consenting(
-        _ confirmation: Bool, _ verb: (Consent) async throws -> Void
-    ) async throws {
-        try await VMConsentPolicy.run(
-            prompting: { prompt in
-                guard confirmation else { throw CommandError.confirmationRequired(prompt) }
-            },
-            verb)
+    /// The consent a script's `with confirmation` gives: every confirmation,
+    /// or none.
+    private static func consent(_ confirmation: Bool) -> Consent {
+        confirmation ? .all : .none
     }
 
     /// Restarts each VM, taking it down the way `method` names, with
@@ -522,10 +508,8 @@ final class VMScriptingGateway {
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.restart, on: selectors) { selector in
-            try await Self.consenting(confirmation) { consent in
-                try await self.commands.restart(
-                    selector, disposition: method, timeout: timeout, consent: consent)
-            }
+            try await self.commands.restart(
+                selector, disposition: method, timeout: timeout, consent: Self.consent(confirmation))
         }
     }
 
@@ -537,9 +521,7 @@ final class VMScriptingGateway {
 
     func resume(_ selectors: [VMSelector], confirmation: Bool) async throws {
         try await perform(.resume, on: selectors) { selector in
-            try await Self.consenting(confirmation) { consent in
-                try await self.commands.resume(selector, consent: consent)
-            }
+            try await self.commands.resume(selector, consent: Self.consent(confirmation))
         }
     }
 
