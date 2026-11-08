@@ -956,7 +956,7 @@ struct VMLibraryViewModelTests {
         // What `AppDelegate` answers with `AppTerminationController.requestFullQuit()`.
         viewModel.onRequestQuit = { quits.record() }
 
-        viewModel.commands.quit()
+        viewModel.commandsLeavingEditsOpen.quit()
 
         try await quits.gate.wait { quits.count == 1 }
         #expect(quits.count == 1)
@@ -1236,7 +1236,7 @@ struct VMLibraryViewModelTests {
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
         viewModel.selectRevealing(onScreen.id)
 
-        try viewModel.commands.open(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.open(.id(wanted.id))
 
         #expect(viewModel.selectedID == wanted.id)
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
@@ -1256,7 +1256,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.open(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.open(.id(wanted.id))
 
         #expect(libraryRequests == 1)
         #expect(presenter.focusGuestDisplayInstances.last === wanted)
@@ -1270,7 +1270,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.open(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.open(.id(wanted.id))
 
         #expect(libraryRequests == 0)
     }
@@ -1288,7 +1288,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.open(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.open(.id(wanted.id))
 
         #expect(libraryRequests == 1)
         #expect(viewModel.selectedID == wanted.id)
@@ -1308,7 +1308,7 @@ struct VMLibraryViewModelTests {
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
         // A stopped VM has no display, which is the whole difference from open.
-        try viewModel.commands.reveal(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.reveal(.id(wanted.id))
 
         #expect(viewModel.selectedID == wanted.id)
         #expect(libraryRequests == 1)
@@ -1324,7 +1324,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.reveal(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.reveal(.id(wanted.id))
 
         #expect(viewModel.selectedID == wanted.id)
         #expect(libraryRequests == 1)
@@ -1338,7 +1338,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.reveal(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.reveal(.id(wanted.id))
 
         // The library window carries the inline display, so it is asked for
         // either way; the focus is what separates this from a bare reveal.
@@ -1359,7 +1359,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.reveal(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.reveal(.id(wanted.id))
 
         #expect(displayWindows.map(\.id) == [wanted.id])
         #expect(libraryRequests == 0)
@@ -1375,7 +1375,7 @@ struct VMLibraryViewModelTests {
         var libraryRequests = 0
         viewModel.onSurfaceLibrary = { libraryRequests += 1 }
 
-        try viewModel.commands.reveal(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.reveal(.id(wanted.id))
 
         #expect(displayWindows == 0)
         #expect(libraryRequests == 1)
@@ -1391,7 +1391,7 @@ struct VMLibraryViewModelTests {
         viewModel.libraryWindowPresenter = nil
         viewModel.onSurfaceLibrary = {}
 
-        try viewModel.commands.open(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.open(.id(wanted.id))
         viewModel.library.evict(wanted)
         viewModel.libraryWindowPresenter = presenter
 
@@ -1406,7 +1406,7 @@ struct VMLibraryViewModelTests {
         wanted.activity.placeForTesting(.running(sessionID: UUID()))
         viewModel.selectRevealing(onScreen.id)
 
-        try viewModel.commands.open(.id(wanted.id))
+        try viewModel.commandsLeavingEditsOpen.open(.id(wanted.id))
 
         #expect(viewModel.selectedID == onScreen.id)
         #expect(presenter.focusGuestDisplayInstances.isEmpty)
@@ -3516,7 +3516,7 @@ struct VMLibraryViewModelTests {
         viewModel.beginTermination()
 
         await #expect(throws: CommandError.terminating) {
-            try await viewModel.commands.suspend(.id(user.id))
+            try await viewModel.commandsLeavingEditsOpen.suspend(.id(user.id))
         }
         #expect(user.status == .running)
         try await viewModel.saveForTermination(quit)
@@ -4914,7 +4914,7 @@ struct VMLibraryViewModelTests {
 
         // A stream reader is the one surface a login launch has, and a VM left
         // resting back on its saved state carries no failure in its status.
-        let events = viewModel.commands.events()
+        let events = viewModel.commandsLeavingEditsOpen.events()
 
         await viewModel.startAutomaticVMsForLaunch()
 
@@ -4928,7 +4928,7 @@ struct VMLibraryViewModelTests {
         // Read up to a rename made after the pass, so a second failure would
         // still be seen.
         let sentinel = "Read past the pass"
-        try viewModel.commands.rename(.id(suspended.id), to: sentinel)
+        try viewModel.commandsLeavingEditsOpen.rename(.id(suspended.id), to: sentinel)
         var failures: [UUID] = []
         reading: for await batch in events {
             for event in batch {

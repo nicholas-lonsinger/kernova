@@ -187,7 +187,7 @@ struct NetworksSettingsViewControllerTests {
         defer { pane.viewDidDisappear() }
         #expect(pane.networks.isEmpty)
 
-        try viewModel.commands.createNetwork(name: "Lab", kind: .nat)
+        try viewModel.commandsLeavingEditsOpen.createNetwork(name: "Lab", kind: .nat)
 
         // The list repaints from its observation loop, a main-actor task the
         // create enqueued.
@@ -231,6 +231,20 @@ struct NetworksSettingsViewControllerTests {
 
         #expect(throws: CommandError.self) { try pane.rename(id, to: "  ") }
         #expect(viewModel.networks.state.listed?.map(\.name) == ["Staging"])
+    }
+
+    @Test("Creating and renaming a network each save an edit still open in a field first")
+    func createAndRenameSavePendingEdits() throws {
+        let viewModel = makeViewModel()
+        let pane = makePane(viewModel)
+        var saves = 0
+        viewModel.savePendingEdits = { saves += 1 }
+
+        try pane.create(name: "Lab", kind: .nat)
+        #expect(saves == 1)
+
+        try pane.rename(try #require(pane.networks.first?.id), to: "Staging")
+        #expect(saves == 2)
     }
 
     @Test("Delete stops listing the network and moves each VM on it to a network of its own")

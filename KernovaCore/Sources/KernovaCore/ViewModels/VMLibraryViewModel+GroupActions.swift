@@ -8,7 +8,7 @@ extension VMLibraryViewModel {
     /// library's groups cannot be read.
     package func groupActionCounts(for group: VMGroupReference) -> [VMGroupAction: Int]? {
         do {
-            return try commands.concernedCounts(in: group)
+            return try commandsLeavingEditsOpen.concernedCounts(in: group)
         } catch {
             Self.logger.log(
                 .notice,

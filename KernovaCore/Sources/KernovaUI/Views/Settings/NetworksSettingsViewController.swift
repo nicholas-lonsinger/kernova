@@ -90,14 +90,14 @@ final class NetworksSettingsViewController: NSViewController {
 
     /// Lists a new network named `name` of `kind`, selecting it.
     func create(name: String, kind: VmnetNetworkKind) throws {
-        let created = try viewModel.commands.createNetwork(name: name, kind: NetworkKind(kind))
+        let created = try viewModel.verbs().createNetwork(name: name, kind: NetworkKind(kind))
         editor.reload()
         editor.select(created.id)
     }
 
     /// Renames the network `id` identifies.
     func rename(_ id: UUID, to name: String) throws {
-        try viewModel.commands.renameNetwork(id.uuidString, to: name)
+        try viewModel.verbs().renameNetwork(id.uuidString, to: name)
         editor.reload()
     }
 
@@ -192,7 +192,7 @@ final class NetworksSettingsViewController: NSViewController {
 
 extension NetworksSettingsViewController: SettingsNamedListSource {
     func listedIDs() -> [UUID]? {
-        guard let listed = try? viewModel.commands.networks() else {
+        guard let listed = try? viewModel.commandsLeavingEditsOpen.networks() else {
             networks = []
             return nil
         }
@@ -224,7 +224,7 @@ extension NetworksSettingsViewController: SettingsNamedListSource {
     }
 
     func readListedValues() {
-        _ = try? viewModel.commands.networks()
+        _ = try? viewModel.commandsLeavingEditsOpen.networks()
     }
 
     var canCreate: Bool {

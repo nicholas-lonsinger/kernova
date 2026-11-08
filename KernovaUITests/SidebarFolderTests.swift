@@ -781,7 +781,7 @@ struct SidebarFolderTests {
         let demo = try viewModel.library.createFolder(named: "Demo", members: [b.id, a.id])
 
         viewModel.library.evict(a)
-        try await viewModel.commands.delete(
+        try await viewModel.commandsLeavingEditsOpen.delete(
             .id(b.id), permanently: false, alsoRemoving: [], consent: Consent([.deleteVM]))
 
         #expect(viewModel.instances.isEmpty)

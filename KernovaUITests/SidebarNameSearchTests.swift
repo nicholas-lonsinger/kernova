@@ -177,7 +177,7 @@ struct SidebarNameSearchTests {
         viewModel.library.sidebarSearch = search("ubuntu")
         viewModel.selection = .library(ubuntu.id)
 
-        try viewModel.commands.rename(.id(ubuntu.id), to: "Renamed")
+        try viewModel.commandsLeavingEditsOpen.rename(.id(ubuntu.id), to: "Renamed")
 
         let library = try #require(viewModel.sidebarLayout.sections.last)
         #expect(names(in: library) == ["Renamed", "Ubuntu Two"])
