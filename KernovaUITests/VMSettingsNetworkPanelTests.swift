@@ -569,7 +569,7 @@ struct VMSettingsNetworkPanelTests {
             membership: .network(listed[0].id), viewModel: viewModel)
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
 
-        try viewModel.commands.renameNetwork("Lab", to: "Staging")
+        try viewModel.commandsLeavingEditsOpen.renameNetwork("Lab", to: "Staging")
 
         // The pane repaints from its observation loop, a main-actor task the
         // rename enqueued.

@@ -24,9 +24,11 @@ package final class VMLibraryViewModel {
     /// Which VMs exist, and everything that keeps that set in step with disk.
     package let library: VMLibrary
 
-    /// Every VM verb, headless. The one path from this adapter to a VM; a verb
-    /// somebody in the app asked for takes it through ``verbs()``.
-    package let commands: VMCommandCore
+    /// Every VM verb, headless, leaving any edit open in a control as it is:
+    /// for what nobody in the app asked for — a read, Kernova's own
+    /// bookkeeping, the launch and termination passes — and for the doors
+    /// outside the app. A verb somebody in the app asked for takes ``verbs()``.
+    package let commandsLeavingEditsOpen: VMCommandCore
 
     /// Saves every edit still open in one of the app's controls, through that
     /// control's own commit — a typed value not yet committed by Return, Tab
@@ -38,12 +40,12 @@ package final class VMLibraryViewModel {
     /// after the verb began meets the VM busy with it and is refused.
     @ObservationIgnored package var savePendingEdits: (() -> Void)?
 
-    /// ``commands`` for a verb somebody in the app asked for, once every edit
+    /// Every VM verb, for one somebody in the app asked for, once every edit
     /// still open in a control is saved (``savePendingEdits``) — so the verb
     /// acts on the configuration as the user last set it.
-    func verbs() -> VMCommandCore {
+    package func verbs() -> VMCommandCore {
         savePendingEdits?()
-        return commands
+        return commandsLeavingEditsOpen
     }
 
     package let storageService: any VMStorageProviding
@@ -251,7 +253,7 @@ package final class VMLibraryViewModel {
     ) {
         guard instance.hostState.displayPreference != preference else { return }
         do {
-            try commands.setConfiguration(
+            try commandsLeavingEditsOpen.setConfiguration(
                 .id(instance.id),
                 assignments: [VMConfigurationKeyRegistry.displayPreference.assigning(preference.rawValue)],
                 consent: .none)
@@ -300,7 +302,7 @@ package final class VMLibraryViewModel {
 
     package func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {
-            return try await commands.snapshotSizes(of: .id(instance.id))
+            return try await commandsLeavingEditsOpen.snapshotSizes(of: .id(instance.id))
         } catch {
             Self.logger.log(
                 .debug,
@@ -312,7 +314,7 @@ package final class VMLibraryViewModel {
 
     package func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
         do {
-            return try await commands.externalAttachments(of: .id(instance.id))
+            return try await commandsLeavingEditsOpen.externalAttachments(of: .id(instance.id))
         } catch {
             Self.logger.log(
                 .debug,
@@ -326,7 +328,7 @@ package final class VMLibraryViewModel {
         forPath path: String, bookmark: Data?, excluding instance: VMInstance
     ) async -> [String] {
         do {
-            return try await commands.sharingVMNames(
+            return try await commandsLeavingEditsOpen.sharingVMNames(
                 .id(instance.id), path: path, bookmark: bookmark)
         } catch {
             Self.logger.log(
@@ -439,7 +441,7 @@ package final class VMLibraryViewModel {
     /// Set rather than injected: the panel behind it has to bring the app
     /// forward, which only the residency controller can do.
     package func attachSourceAuthority(_ authority: any SandboxSourceAuthorizing) {
-        commands.sourceAuthority = authority
+        commandsLeavingEditsOpen.sourceAuthority = authority
     }
 
     package func addSharedDirectories(_ files: [PickedFile], to instance: VMInstance) {
@@ -866,7 +868,7 @@ package final class VMLibraryViewModel {
             preferences: preferences,
             logSink: nil
         )
-        self.commands = commands
+        self.commandsLeavingEditsOpen = commands
 
         library.onFailure = { [weak self] title, message, subject in
             self?.surfaceError(message, title: title, about: subject)
@@ -1317,13 +1319,13 @@ package final class VMLibraryViewModel {
 
     /// Suspends a VM for the termination save pass, throwing on failure.
     package func saveForTermination(_ instance: VMInstance) async throws {
-        try await commands.suspend(instance, origin: .terminationSave)
+        try await commandsLeavingEditsOpen.suspend(instance, origin: .terminationSave)
     }
 
     /// Force-stops a VM, throwing on failure — the termination save pass's
     /// fallback for a save that failed and left the guest live.
     package func tryForceStop(_ instance: VMInstance) async throws {
-        try await commands.stop(
+        try await commandsLeavingEditsOpen.stop(
             .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
     }
 
@@ -1800,7 +1802,7 @@ package final class VMLibraryViewModel {
     /// goes through the core rather than the in-app door, and the library is
     /// left showing whatever the user left it on.
     package func startAutomaticVMsForLaunch(_ marked: Set<UUID>) async {
-        let results = await commands.startVMsMarkedToStartAutomatically(marked)
+        let results = await commandsLeavingEditsOpen.startVMsMarkedToStartAutomatically(marked)
         guard !results.undone.isEmpty else { return }
         presenter?.presentStartSummary(title: Self.autoStartUndoneTitle, undone: results.undone)
     }

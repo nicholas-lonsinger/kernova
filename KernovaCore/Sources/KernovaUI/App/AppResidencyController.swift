@@ -113,14 +113,14 @@ final class AppResidencyController: WindowResidencyHosting {
                 await self.awaitLibraryReady()
             })
         let gateway = VMIntentGateway(
-            commands: viewModel.commands,
+            commands: viewModel.commandsLeavingEditsOpen,
             readiness: readiness,
             showSearchResults: { [weak self] term in self?.presentSearchResults(for: term) })
         AppDependencyManager.shared.add(dependency: gateway)
 
         viewModel.attachSourceAuthority(PowerboxSourceAuthority())
         let socket = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: viewModel.commands),
+            router: VMCommandEnvelopeRouter(commands: viewModel.commandsLeavingEditsOpen),
             authorizer: SameTeamPeerAuthorizer(),
             copyClaim: copyClaim,
             awaitReady: { await readiness.ready() },
@@ -129,7 +129,7 @@ final class AppResidencyController: WindowResidencyHosting {
         commandSocket = socket
 
         urlGateway = VMURLGateway(
-            commands: viewModel.commands,
+            commands: viewModel.commandsLeavingEditsOpen,
             readiness: readiness,
             prepareToSurface: { [weak self] in self?.prepareForExternalSurface() },
             summonLibrary: { [weak self] in self?.presentSummonedInterface() },
@@ -138,7 +138,7 @@ final class AppResidencyController: WindowResidencyHosting {
             })
 
         scriptingGateway = VMScriptingGateway(
-            commands: viewModel.commands, readiness: readiness,
+            commands: viewModel.commandsLeavingEditsOpen, readiness: readiness,
             prepareToSurface: { [weak self] in self?.prepareForExternalSurface() })
     }
 

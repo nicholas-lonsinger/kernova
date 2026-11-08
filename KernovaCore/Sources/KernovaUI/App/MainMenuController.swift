@@ -195,9 +195,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Both listings come from the command core, so the menu offers exactly
         // what an attach would accept — the held-accessory filter lives at the
         // enforcement point, not here.
-        let available = (try? viewModel.commands.availableUSBAccessories()) ?? []
+        let available = (try? viewModel.commandsLeavingEditsOpen.availableUSBAccessories()) ?? []
         let attached =
-            instance.flatMap { try? viewModel.commands.usbAccessories(of: .id($0.id)) } ?? []
+            instance.flatMap { try? viewModel.commandsLeavingEditsOpen.usbAccessories(of: .id($0.id)) } ?? []
         let model = USBAccessoryMenuModel(
             instanceID: instance?.id,
             attached: attached,

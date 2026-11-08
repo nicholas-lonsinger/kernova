@@ -205,7 +205,7 @@ struct AppTerminationGateTests {
         let instance = admitPeer(named: "Creating", to: viewModel)
         instance.activity.placeForTesting(.stopped)
         let creation = Task { @MainActor in
-            try await viewModel.commands.createStorageDisk(.id(instance.id), sizeInGB: 8)
+            try await viewModel.commandsLeavingEditsOpen.createStorageDisk(.id(instance.id), sizeInGB: 8)
         }
         try await diskImages.parked.wait { diskImages.isParked }
 

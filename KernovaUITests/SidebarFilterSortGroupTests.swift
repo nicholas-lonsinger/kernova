@@ -698,7 +698,7 @@ struct SidebarFilterSortGroupTests {
         viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
         viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
 
-        try viewModel.commands.reveal(.id(linux.id))
+        try viewModel.commandsLeavingEditsOpen.reveal(.id(linux.id))
 
         #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
         #expect(viewModel.selectedID == linux.id)
@@ -769,7 +769,7 @@ struct SidebarFilterSortGroupTests {
         let capturing = viewModel.library.admitFixture(name: "Capturing", phase: .stopped)
         capturing.activity.placeForTesting(.operating(.capturingSnapshot(.stopped), from: .stopped))
 
-        let info = try viewModel.commands.info(.id(capturing.id))
+        let info = try viewModel.commandsLeavingEditsOpen.info(.id(capturing.id))
 
         #expect(info.status == VMStatus.snapshotting.rawValue)
         #expect(info.stateBucket == .stopped)
