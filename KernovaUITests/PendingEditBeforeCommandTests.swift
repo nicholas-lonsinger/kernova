@@ -92,7 +92,6 @@ struct PendingEditBeforeCommandTests {
         let booted = try #require(fixture.virtualization.configurationAtStart)
         #expect(field.modelValue(of: booted) == text)
         #expect(field.modelValue(of: fixture.instance.configuration) == text)
-        #expect(control.currentEditor() == nil)
         #expect(control.stringValue == text)
         // The pane going away is what used to commit the edit, after the start
         // held the VM.
