@@ -97,6 +97,7 @@ struct RenameVMIntent: AppIntent {
     }
 }
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 /// Moves a VM's bundle to the Trash.
 ///
 /// The narrowest of the deletes the core offers: no permanent delete, because
@@ -132,6 +133,7 @@ struct DeleteVMIntent: ConsentingIntent {
     }
 }
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 struct CancelPreparingIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Cancel Virtual Machine Copy"
     static let description: IntentDescription? = IntentDescription(
@@ -161,6 +163,7 @@ struct CancelPreparingIntent: ConsentingIntent {
     }
 }
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 struct CancelGuestSetupIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Cancel Guest Setup"
     static let description: IntentDescription? = IntentDescription(

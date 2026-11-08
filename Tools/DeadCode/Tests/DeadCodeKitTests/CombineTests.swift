@@ -148,6 +148,66 @@ private func declared(_ locations: String...) -> Presence {
         #expect(report.summary == "dead=2\ntest_only=2\nverdict=findings\n")
     }
 
+    @Test func aSeamCompiledOnOnePlatformIsExempt() throws {
+        let seam = finding("A.swift:1:6", name: "resetForTesting()")
+        let elsewhere = declared("B.swift:1:6")
+        let full = [
+            PlatformScan(platform: .macos, findings: [], presence: declared("A.swift:1:6")),
+            PlatformScan(platform: .linux, findings: [], presence: elsewhere),
+        ]
+        let production = [
+            PlatformScan(platform: .macos, findings: [seam], presence: declared("A.swift:1:6")),
+            PlatformScan(platform: .linux, findings: [], presence: elsewhere),
+        ]
+        let report = try DeadCodeReport(full: full, production: production)
+        #expect(report.testOnly.isEmpty)
+        #expect(report.dead.isEmpty)
+    }
+
+    @Test func aSeamTestedOnOnePlatformIsExemptAndNotDead() throws {
+        let seam = finding("A.swift:1:6", name: "resetForTesting()")
+        let report = try DeadCodeReport(
+            full: scans([], linux: [seam]),
+            production: scans([seam], linux: [seam]))
+        #expect(report.testOnly.isEmpty)
+        #expect(report.dead.isEmpty)
+    }
+
+    @Test func aSeamNoTestUsesStaysDead() throws {
+        let seam = finding("A.swift:1:6", name: "resetForTesting()")
+        let report = try DeadCodeReport(
+            full: scans([seam], linux: [seam]),
+            production: scans([seam], linux: [seam]))
+        #expect(report.dead.map(\.name) == ["resetForTesting()"])
+        #expect(report.testOnly.isEmpty)
+    }
+
+    @Test func aRedundantlyPublicSeamStaysDeadAndIsExemptFromTestOnly() throws {
+        let unused = finding("A.swift:1:6", name: "resetForTesting()")
+        let redundantPublic = finding("A.swift:1:6", "redundantPublicAccessibility", name: "resetForTesting()")
+        let report = try DeadCodeReport(
+            full: scans([redundantPublic], linux: [redundantPublic]),
+            production: scans([unused], linux: [unused]))
+        #expect(report.dead.map(\.hints) == [["redundantPublicAccessibility"]])
+        #expect(report.testOnly.isEmpty)
+    }
+
+    @Test(arguments: ["setOnChangeForTesting(_:)", "resetForTesting()", "storeForTesting"])
+    func aNameEndingInForTestingIsExempt(name: String) throws {
+        let seam = finding("A.swift:1:6", name: name)
+        let report = try DeadCodeReport(
+            full: scans([]), production: scans([seam], linux: [seam]))
+        #expect(report.testOnly.isEmpty)
+    }
+
+    @Test(arguments: ["ForTestingHelper", "makeForTestingThing()", "forTesting", "seam(_ForTesting:)"])
+    func aNameContainingForTestingElsewhereIsNotExempt(name: String) throws {
+        let seam = finding("A.swift:1:6", name: name)
+        let report = try DeadCodeReport(
+            full: scans([]), production: scans([seam], linux: [seam]))
+        #expect(report.testOnly.map(\.name) == [name])
+    }
+
     @Test func noFindingOnEveryPlatformIsClean() throws {
         let report = try DeadCodeReport(full: scans([]), production: scans([]))
         #expect(report.verdict == .clean)

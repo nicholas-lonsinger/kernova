@@ -2,6 +2,7 @@ import AppIntents
 import Foundation
 import KernovaKit
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 struct StartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Start Virtual Machine"
     // A machine that still owes guest setup does not boot here: `start`
@@ -38,6 +39,7 @@ struct StartVMIntent: ConsentingIntent {
     }
 }
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 struct StopVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
@@ -93,6 +95,7 @@ struct PauseVMIntent: AppIntent {
     }
 }
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 struct ResumeVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Resume Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
@@ -144,6 +147,7 @@ struct SuspendVMIntent: AppIntent {
     }
 }
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 struct RestartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(

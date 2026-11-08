@@ -149,7 +149,8 @@ package struct DeadCodeReport: Sendable {
     package var platforms: [Platform]
     /// Unused even counting the test targets.
     package var dead: [CombinedFinding]
-    /// Reported with tests out of the build and not by the full scan: code whose only users are tests.
+    /// Reported with tests out of the build and not by the full scan: code whose only users are tests. A symbol whose
+    /// base name ends in `ForTesting` is left out, tests being the users it exists for.
     package var testOnly: [CombinedFinding]
 
     package enum Verdict: String, Sendable {
@@ -174,6 +175,13 @@ package struct DeadCodeReport: Sendable {
         platforms = full.map(\.platform).sorted()
         dead = try combine(full)
         let deadHints = Dictionary(dead.map { ($0.key, $0.hints) }, uniquingKeysWith: { first, _ in first })
-        testOnly = try combine(production).filter { deadHints[$0.key] != $0.hints }
+        testOnly = try combine(production).filter { deadHints[$0.key] != $0.hints && !$0.isTestSeam }
+    }
+}
+
+extension CombinedFinding {
+    /// Whether the name, signature aside, says the symbol exists for tests.
+    fileprivate var isTestSeam: Bool {
+        name.prefix { $0 != "(" }.hasSuffix("ForTesting")
     }
 }

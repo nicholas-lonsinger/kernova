@@ -2,6 +2,7 @@ import AppIntents
 import Foundation
 import KernovaKit
 
+// periphery:ignore - Shortcuts discovers it through ConsentingIntent's AppIntent conformance, which Periphery follows only when direct
 /// Writes one configuration key, the value spelled as `kernova set` takes it.
 ///
 /// One action over the whole keyspace rather than one per setting, so a key
