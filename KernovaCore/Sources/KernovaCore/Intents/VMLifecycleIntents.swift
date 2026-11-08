@@ -8,7 +8,7 @@ struct StartVMIntent: ConsentingIntent {
     // dispatches the install or image download and returns, so this action
     // reports before the setup it began has finished, and says so.
     static let description: IntentDescription? = IntentDescription(
-        "Starts a virtual machine, or begins the guest setup one still owes — which carries on after this reports.",
+        "Starts a virtual machine, or begins the guest setup one still owes — which carries on after this reports. Confirm Before Starting asks before starting it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -96,7 +96,7 @@ struct PauseVMIntent: AppIntent {
 struct ResumeVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Resume Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Lets a paused guest run again, or reads a suspended session back.",
+        "Lets a paused guest run again, or reads a suspended session back. Confirm Before Resuming asks before resuming it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -147,7 +147,7 @@ struct SuspendVMIntent: AppIntent {
 struct RestartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Takes the guest down and starts it again once it has powered off. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk.",
+        "Takes the guest down and starts it again once it has powered off. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
