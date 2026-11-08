@@ -128,20 +128,23 @@ struct VMSettingsGeneralPanelTests {
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
             lastSeenGuestOSVersion: "Version 26.6 (Build 25G12)")
 
-        #expect(visibleLabel("Installed version", in: vc.view))
+        #expect(visibleLabel("Installed from", in: vc.view))
         #expect(visibleLabel("macOS 26.5.2 (25F84)", in: vc.view))
         #expect(visibleLabel("OS version", in: vc.view))
         #expect(visibleLabel("26.6", in: vc.view))
     }
 
-    @Test("A macOS VM with no agent shows only what the install recorded")
+    /// The install record standing alone reads as the version the guest runs
+    /// today, which it stops being at the first in-guest update.
+    @Test("A macOS VM no agent has reported on says its OS version is unknown beside the install record")
     func osRowsInstallRecordOnly() {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .macOS,
             installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"))
 
-        #expect(visibleLabel("Installed version", in: vc.view))
-        #expect(!visibleLabel("OS version", in: vc.view))
+        #expect(visibleLabel("Installed from", in: vc.view))
+        #expect(visibleLabel("OS version", in: vc.view))
+        #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
     }
 
     @Test("A macOS VM Kernova did not install shows only what the agent reports")
@@ -149,19 +152,20 @@ struct VMSettingsGeneralPanelTests {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .macOS, lastSeenGuestOSVersion: "26.6")
 
-        #expect(!visibleLabel("Installed version", in: vc.view))
+        #expect(!visibleLabel("Installed from", in: vc.view))
         #expect(visibleLabel("OS version", in: vc.view))
+        #expect(visibleLabel("26.6", in: vc.view))
     }
 
-    @Test("A macOS VM that knows neither shows neither row")
+    @Test("A macOS VM that knows neither shows only the unknown OS version")
     func osRowsNeitherKnown() {
         let (vc, _, _) = makeOSRowsController(guestOS: .macOS)
 
-        #expect(!visibleLabel("Installed version", in: vc.view))
-        #expect(!visibleLabel("OS version", in: vc.view))
+        #expect(!visibleLabel("Installed from", in: vc.view))
+        #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
     }
 
-    @Test("A Linux VM names the attached media and never an OS Version row")
+    @Test("A Linux VM names the attached media beside its unknown OS version")
     func osRowsLinuxCatalogImage() {
         let (vc, _, _) = makeOSRowsController(
             guestOS: .linux,
@@ -173,17 +177,18 @@ struct VMSettingsGeneralPanelTests {
         // Booting that ISO is not installing from it — the guest's own
         // installer can write another distribution, or nothing at all — so the
         // row must never claim the install happened.
-        #expect(!containsLabel("Installed version", in: vc.view))
-        // Linux guests have no Kernova agent, so the row is never even built.
-        #expect(!containsLabel("OS version", in: vc.view))
+        #expect(!containsLabel("Installed from", in: vc.view))
+        #expect(visibleLabel("OS version", in: vc.view))
+        #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
     }
 
-    @Test("A Linux VM with no install record shows no OS rows at all")
-    func osRowsLinuxWithoutRecord() {
-        let (vc, _, _) = makeOSRowsController(guestOS: .linux)
+    @Test("A Linux VM shows the version its agent reports")
+    func osRowsLinuxAgentReport() {
+        let (vc, _, _) = makeOSRowsController(guestOS: .linux, lastSeenGuestOSVersion: "24.04")
 
         #expect(!visibleLabel("Installer image", in: vc.view))
-        #expect(!containsLabel("OS version", in: vc.view))
+        #expect(visibleLabel("OS version", in: vc.view))
+        #expect(visibleLabel("24.04", in: vc.view))
     }
 
     // MARK: - Installer image digest
@@ -277,7 +282,7 @@ struct VMSettingsGeneralPanelTests {
         let macOS = makeOSRowsController(
             guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
         ).0
-        #expect(visibleLabel("Installed version", in: macOS.view))
+        #expect(visibleLabel("Installed from", in: macOS.view))
         #expect(!visibleLabel("SHA-256", in: macOS.view))
         #expect(!visibleLabel("Verification", in: macOS.view))
     }
@@ -345,7 +350,7 @@ struct VMSettingsGeneralPanelTests {
             && zip(layout, layout.dropFirst()).allSatisfy { $0 != $1 }
     }
 
-    @Test("Hidden OS rows take their separators with them")
+    @Test("A hidden install record takes its separator with it")
     func osRowsLeaveNoStrandedSeparator() {
         // Every combination, since each leaves a different run of rows behind.
         let noRows = makeOSRowsController(guestOS: .macOS).0
@@ -364,14 +369,14 @@ struct VMSettingsGeneralPanelTests {
             lastSeenGuestOSVersion: "26.6"
         ).0
         #expect(separatesEveryRow(generalCardLayout(in: bothRows)))
-        // Both OS rows really are in the run the check passed on.
-        #expect(generalCardLayout(in: bothRows).count == generalCardLayout(in: noRows).count + 4)
+        // The install record really is in the run the check passed on.
+        #expect(generalCardLayout(in: bothRows).count == generalCardLayout(in: noRows).count + 2)
     }
 
-    @Test("A first agent report reveals the OS Version row without rebuilding the form")
+    @Test("A first agent report fills in the OS version without rebuilding the form")
     func osVersionRowAppearsOnFirstReport() {
         let (vc, instance, viewModel) = makeOSRowsController(guestOS: .macOS)
-        #expect(!visibleLabel("OS version", in: vc.view))
+        #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
 
         viewModel.library.editConfiguration(of: instance, as: .observations) { $0.lastSeenGuestOSVersion = "26.6" }
         vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)

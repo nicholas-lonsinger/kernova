@@ -91,9 +91,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     private var digestCopyButton: CopyValueButton?
     private var verificationRow: GroupedFormCollapsibleRow?
     private var verificationValueLabel: NSTextField?
-    /// The OS version row and its value label, hidden until an agent reports
-    /// one; both `nil` for Linux guests, which have no agent to report one.
-    private var guestOSVersionRow: GroupedFormCollapsibleRow?
+    /// The OS version row's value label.
     private var guestOSVersionValueLabel: NSTextField?
     /// The Machine ID row and its value label, hidden while the VM has no
     /// machine identifier.
@@ -140,14 +138,44 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
     /// What the install-record row is called for `guestOS`.
     ///
     /// A macOS install ran to completion under Kernova, so its row names the
-    /// version the VM started life at, sitting beside the "OS version" row that
-    /// names what the guest reports today. A Linux ISO is only attached for the
+    /// release the VM was installed from, worded as history beside the "OS
+    /// version" row that names what the guest reports today. A Linux ISO is
+    /// only attached for the
     /// distribution's own installer to use — which can install something else,
     /// or nothing — so that row names the media and claims nothing about the
     /// outcome.
     static func installedImageRowLabel(guestOS: VMGuestOS) -> String {
-        guestOS == .macOS ? "Installed version" : "Installer image"
+        guestOS == .macOS ? "Installed from" : "Installer image"
     }
+
+    /// The info paragraphs of the install-record row for `guestOS`.
+    static func installedImageRowInfo(guestOS: VMGuestOS) -> [InfoPopoverParagraph] {
+        switch guestOS {
+        case .macOS:
+            [
+                .body(
+                    "The macOS release this virtual machine was installed from. Updates installed in the guest don\u{2019}t change it."
+                )
+            ]
+        case .linux:
+            [
+                .body(
+                    "The installer image this virtual machine was set up with. The distribution\u{2019}s own installer decides what it installs."
+                )
+            ]
+        }
+    }
+
+    /// The OS version row's value while no agent vouches for a version.
+    static let unknownGuestOSVersion = "Unknown"
+
+    /// The info paragraphs of the OS version row.
+    static let guestOSVersionInfo: [InfoPopoverParagraph] = [
+        .body(
+            "The version the Kernova guest agent reports from inside the guest, so it includes updates installed there."
+        ),
+        .body("Unknown until the guest agent reports one while the virtual machine runs."),
+    ]
 
     /// Points the shared inline-edit machine at this pane's rename verbs.
     ///
@@ -185,25 +213,12 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
             makeGroupedFormCardRow(
                 "Type", control: makeGroupedFormValueLabel(instance.configuration.guestOS.displayName)),
             makeMachineIDRow(),
+            makeGuestOSVersionRow(),
         ]
-        // The install-record and OS rows are built whatever the VM knows today,
-        // then hidden until it knows: an install completing or a first agent Hello fills one in
-        // while this pane is on screen, and only `apply()` runs then.
+        // The install-record rows are built whatever the VM knows today, then
+        // hidden until it knows: an install completing fills them in while this
+        // pane is on screen, and only `apply()` runs then.
         rows += makeInstallRecordRows()
-
-        if instance.configuration.guestOS == .macOS {
-            let reported = instance.guestOSVersionDisplay
-            let versionLabel = makeGroupedFormValueLabel(reported ?? "")
-            guestOSVersionValueLabel = versionLabel
-            let versionRow = GroupedFormCollapsibleRow(
-                row: makeGroupedFormCardRow("OS version", control: versionLabel))
-            versionRow.isHidden = reported == nil
-            guestOSVersionRow = versionRow
-            rows.append(versionRow)
-        } else {
-            guestOSVersionValueLabel = nil
-            guestOSVersionRow = nil
-        }
         rows += [
             makeGroupedFormCardRow(
                 "Boot mode", control: makeGroupedFormValueLabel(instance.configuration.bootMode.displayName)),
@@ -229,15 +244,26 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         return row
     }
 
+    /// The OS version row, shown whatever the VM knows so the install record
+    /// never stands alone where it reads as the current version.
+    private func makeGuestOSVersionRow() -> NSView {
+        let label = makeGroupedFormValueLabel("")
+        guestOSVersionValueLabel = label
+        refreshGuestOSVersion()
+        return makeGroupedFormCardRow("OS version", control: label, info: Self.guestOSVersionInfo)
+    }
+
     /// The install-record row and the digest rows under it, empty until
     /// `refreshInstallRecord()` fills them.
     private func makeInstallRecordRows() -> [NSView] {
+        let guestOS = instance.configuration.guestOS
         let installedLabel = makeGroupedFormValueLabel("")
         installedImageValueLabel = installedLabel
         let installedRow = GroupedFormCollapsibleRow(
             row: makeGroupedFormCardRow(
-                Self.installedImageRowLabel(guestOS: instance.configuration.guestOS),
-                control: installedLabel))
+                Self.installedImageRowLabel(guestOS: guestOS),
+                control: installedLabel,
+                info: Self.installedImageRowInfo(guestOS: guestOS)))
         installedImageRow = installedRow
 
         let digestLabel = makeGroupedFormValueLabel("")
@@ -373,9 +399,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         }
         refreshInstallRecord()
         refreshMachineID()
-        let reportedOSVersion = instance.guestOSVersionDisplay
-        guestOSVersionValueLabel?.stringValue = reportedOSVersion ?? ""
-        guestOSVersionRow?.isHidden = reportedOSVersion == nil
+        refreshGuestOSVersion()
         // The label's own editing flag is the commit gate, so a rename this
         // surface lost mid-handoff — the marker has already moved to the sidebar
         // — still commits the text typed here.
@@ -393,6 +417,12 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         machineIDValueLabel?.stringValue = fingerprint?.short ?? ""
         machineIDValueLabel?.toolTip = fingerprint?.digest
         sharedMachineIDNote?.refresh()
+    }
+
+    /// Renders the version an agent reports — a first Hello lands while the
+    /// pane is open.
+    private func refreshGuestOSVersion() {
+        guestOSVersionValueLabel?.stringValue = instance.guestOSVersionDisplay ?? Self.unknownGuestOSVersion
     }
 
     /// Renders the install record — built or revised while the pane is open,
