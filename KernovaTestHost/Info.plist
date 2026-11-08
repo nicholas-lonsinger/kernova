@@ -4,6 +4,8 @@
 <dict>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
+	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
+	<true/>
 	<key>OSAScriptingDefinition</key>
 	<string>Kernova.sdef</string>
 	<key>UTExportedTypeDeclarations</key>

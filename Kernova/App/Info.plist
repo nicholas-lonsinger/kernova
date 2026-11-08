@@ -26,6 +26,8 @@
 	<string>KernovaApplication</string>
 	<key>NSAppleScriptEnabled</key>
 	<true/>
+	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
+	<true/>
 	<key>OSAScriptingDefinition</key>
 	<string>Kernova.sdef</string>
 	<key>NSHumanReadableCopyright</key>
