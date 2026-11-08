@@ -13,7 +13,7 @@ import KernovaCommandModel
 /// re-issued call and a call that never ran leaves nothing behind; an account
 /// answer is about the VM, so the door supplies it with the verb that holds it
 /// and the re-issued call simply finds it there.
-package enum VMConsentPolicy {
+enum VMConsentPolicy {
     /// Runs a verb, gathering each consent it refuses without.
     ///
     /// `body` is called with ``Consent/none`` first; a
@@ -25,7 +25,7 @@ package enum VMConsentPolicy {
     /// to ask says the consent was never given, and a refusal for a kind
     /// already given, which is the answer not having taken.
     @MainActor
-    package static func run(
+    static func run(
         prompting: (ConfirmationPrompt) async throws -> Void,
         _ body: (Consent) async throws -> Void
     ) async throws {

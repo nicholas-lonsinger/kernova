@@ -2,13 +2,13 @@ import AppIntents
 import Foundation
 import KernovaKit
 
-struct StartVMIntent: AppIntent {
+struct StartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Start Virtual Machine"
     // A machine that still owes guest setup does not boot here: `start`
     // dispatches the install or image download and returns, so this action
     // reports before the setup it began has finished, and says so.
     static let description: IntentDescription? = IntentDescription(
-        "Starts a virtual machine, or begins the guest setup one still owes — which carries on after this reports.",
+        "Starts a virtual machine, or begins the guest setup one still owes — which carries on after this reports. Confirm Before Starting asks before starting it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -17,17 +17,18 @@ struct StartVMIntent: AppIntent {
     @Parameter(title: "Start in Recovery Mode", default: false)
     var recovery: Bool
 
+    @Parameter(title: "Confirm Before Starting", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
         Summary("Start \(\.$vm)") {
             \.$recovery
+            \.$confirmsFirst
         }
     }
 
-    /// Asks, rather than taking a saved parameter, before starting beside a VM
-    /// sharing the machine identity: a shortcut's saved answer would start it
-    /// without the vendor's claim in front of the user.
     @MainActor
     func perform() async throws -> some IntentResult {
         try await runWithConsent { consent in
@@ -37,10 +38,10 @@ struct StartVMIntent: AppIntent {
     }
 }
 
-struct StopVMIntent: AppIntent {
+struct StopVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Stops a virtual machine, asking before a method that loses anything in the guest that isn’t saved to disk.",
+        "Stops a virtual machine. Confirm Before Stopping asks before a method that loses anything in the guest that isn’t saved to disk.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -49,11 +50,15 @@ struct StopVMIntent: AppIntent {
     @Parameter(title: "Stop Method", default: .graceful)
     var method: VMStopMethod
 
+    @Parameter(title: "Confirm Before Stopping", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
         Summary("Stop \(\.$vm)") {
             \.$method
+            \.$confirmsFirst
         }
     }
 
@@ -88,19 +93,24 @@ struct PauseVMIntent: AppIntent {
     }
 }
 
-struct ResumeVMIntent: AppIntent {
+struct ResumeVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Resume Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Lets a paused guest run again, or reads a suspended session back.",
+        "Lets a paused guest run again, or reads a suspended session back. Confirm Before Resuming asks before resuming it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
+    @Parameter(title: "Confirm Before Resuming", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Resume \(\.$vm)")
+        Summary("Resume \(\.$vm)") {
+            \.$confirmsFirst
+        }
     }
 
     @MainActor
@@ -134,10 +144,10 @@ struct SuspendVMIntent: AppIntent {
     }
 }
 
-struct RestartVMIntent: AppIntent {
+struct RestartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Takes the guest down and starts it again once it has powered off, asking before a method that loses anything in the guest that isn’t saved to disk.",
+        "Takes the guest down and starts it again once it has powered off. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -146,11 +156,15 @@ struct RestartVMIntent: AppIntent {
     @Parameter(title: "Restart Method", default: .graceful)
     var method: VMStopMethod
 
+    @Parameter(title: "Confirm Before Restarting", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
         Summary("Restart \(\.$vm)") {
             \.$method
+            \.$confirmsFirst
         }
     }
 

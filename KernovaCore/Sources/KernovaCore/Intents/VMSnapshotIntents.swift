@@ -25,10 +25,10 @@ struct FindSnapshotsIntent: AppIntent {
 }
 
 /// Returns a VM to a snapshot.
-struct RevertToSnapshotIntent: AppIntent {
+struct RevertToSnapshotIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Revert to Snapshot"
     static let description: IntentDescription? = IntentDescription(
-        "Returns a virtual machine to a snapshot, asking first. Take a snapshot before it to keep the current state.",
+        "Returns a virtual machine to a snapshot. Take a snapshot before it to keep the current state. Confirm Before Reverting asks before the revert, and before resuming it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -37,10 +37,15 @@ struct RevertToSnapshotIntent: AppIntent {
     @Parameter(title: "Snapshot")
     var snapshot: SnapshotEntity
 
+    @Parameter(title: "Confirm Before Reverting", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Revert \(\.$vm) to \(\.$snapshot)")
+        Summary("Revert \(\.$vm) to \(\.$snapshot)") {
+            \.$confirmsFirst
+        }
     }
 
     @MainActor
@@ -52,10 +57,10 @@ struct RevertToSnapshotIntent: AppIntent {
     }
 }
 
-struct DeleteSnapshotIntent: AppIntent {
+struct DeleteSnapshotIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Delete Snapshot"
     static let description: IntentDescription? = IntentDescription(
-        "Moves one snapshot's saved state and disk copies to the Trash, asking first.",
+        "Moves one snapshot's saved state and disk copies to the Trash.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -64,10 +69,15 @@ struct DeleteSnapshotIntent: AppIntent {
     @Parameter(title: "Snapshot")
     var snapshot: SnapshotEntity
 
+    @Parameter(title: "Confirm Before Deleting", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Delete \(\.$snapshot) from \(\.$vm)")
+        Summary("Delete \(\.$snapshot) from \(\.$vm)") {
+            \.$confirmsFirst
+        }
     }
 
     @MainActor

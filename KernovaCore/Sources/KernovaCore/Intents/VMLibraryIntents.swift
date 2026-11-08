@@ -103,19 +103,24 @@ struct RenameVMIntent: AppIntent {
 /// bypassing the Trash is a choice the user makes at a sheet that spells out
 /// what it costs, and no external files, because a Shortcut never showed the
 /// user which files those are.
-struct DeleteVMIntent: AppIntent {
+struct DeleteVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Delete Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Moves a virtual machine's bundle to the Trash, asking first. Files stored outside the bundle are left alone.",
+        "Moves a virtual machine's bundle to the Trash. Files stored outside the bundle are left alone.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
+    @Parameter(title: "Confirm Before Deleting", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Delete \(\.$vm)")
+        Summary("Delete \(\.$vm)") {
+            \.$confirmsFirst
+        }
     }
 
     @MainActor
@@ -127,7 +132,7 @@ struct DeleteVMIntent: AppIntent {
     }
 }
 
-struct CancelPreparingIntent: AppIntent {
+struct CancelPreparingIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Cancel Virtual Machine Copy"
     static let description: IntentDescription? = IntentDescription(
         "Stops a create, clone, or import that is still writing, removing what it has written.",
@@ -136,10 +141,15 @@ struct CancelPreparingIntent: AppIntent {
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
+    @Parameter(title: "Confirm Before Cancelling", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Cancel the copy of \(\.$vm)")
+        Summary("Cancel the copy of \(\.$vm)") {
+            \.$confirmsFirst
+        }
     }
 
     @MainActor
@@ -151,7 +161,7 @@ struct CancelPreparingIntent: AppIntent {
     }
 }
 
-struct CancelGuestSetupIntent: AppIntent {
+struct CancelGuestSetupIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Cancel Guest Setup"
     static let description: IntentDescription? = IntentDescription(
         "Interrupts the install, download, or verification a virtual machine's first start is running.",
@@ -160,10 +170,15 @@ struct CancelGuestSetupIntent: AppIntent {
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
+    @Parameter(title: "Confirm Before Cancelling", default: true)
+    var confirmsFirst: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Cancel the guest setup of \(\.$vm)")
+        Summary("Cancel the guest setup of \(\.$vm)") {
+            \.$confirmsFirst
+        }
     }
 
     @MainActor
