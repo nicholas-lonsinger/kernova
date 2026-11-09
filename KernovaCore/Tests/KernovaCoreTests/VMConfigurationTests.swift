@@ -823,8 +823,6 @@ struct VMConfigurationTests {
         #expect(config.agentLogForwardingEnabled == false)
     }
 
-    // MARK: - lastSeenAgentVersion Tests
-
     // MARK: - lastSeenGuestOSVersion Tests
 
     @Test("Default lastSeenGuestOSVersion is nil")
