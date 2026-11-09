@@ -62,7 +62,8 @@ A test an agent writes for its own code carries that agent's assumptions, so a t
 - **A fix adds one test per defect, seen failing against the unfixed code.** Any other new test is seen failing by breaking what it guards.
 - **A test drives the path production takes and asserts the outcome.** Fakes replace what Kernova doesn't own and gates order steps Kernova runs. A test that needs a `ForTesting` read to see a result is a sign the code should return that result as a value.
 - **The verdict rests on nothing outside the test's control:** not elapsed time, the host's displays or CPU count, or process-wide state. Those fail with no defect present.
-- **An edit that relaxes an existing assertion says why in the PR body,** so a reviewer can tell a changed spec from a test bent to reach green.
+- **The bar holds for tests already written.** A test stays when removing it would let a plausible defect through, or when it pins a contract outside the code (wire bytes, on-disk formats, scripting names, OS behavior), guards data loss, consent or the sandbox, or has caught a real defect. One that does none of these is deleted; git keeps it.
+- **An edit that relaxes or deletes an existing assertion says why in the PR body,** so a reviewer can tell a changed spec from a test bent to reach green.
 
 ## Dependencies
 
