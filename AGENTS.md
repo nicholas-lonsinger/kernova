@@ -53,6 +53,18 @@ A failing test is evidence about the design, never the target: its fix names the
 
 No guest agent has a version to bump: the host identifies each agent by the SHA-256 of the update payload it bundles, and a guest whose agent's differs is offered the update.
 
+### What earns a test
+
+A test an agent writes for its own code carries that agent's assumptions, so a test earns its place by being able to fail for a defect its author didn't see.
+
+- **The expected value comes from outside the code under test:** a published vector, bytes computed elsewhere, a hand-worked result, the real OS. A value copied from the implementation — a default, a display string, a factory's configuration, a formula, a synthesized conformance — fails only when someone changes it on purpose. What logic decides around such a value is worth asserting: a branch, an order, a role.
+- **A domain that can be enumerated is enumerated.** A property, an exhaustive sweep or a deterministic simulation reaches scenarios nobody listed; hand-picked cases reach the ones the author already handled.
+- **A fix adds one test per defect, seen failing against the unfixed code.** Any other new test is seen failing by breaking what it guards.
+- **A test drives the path production takes and asserts the outcome.** Fakes replace what Kernova doesn't own and gates order steps Kernova runs. A test that needs a `ForTesting` read to see a result is a sign the code should return that result as a value.
+- **The verdict rests on nothing outside the test's control:** not elapsed time, the host's displays or CPU count, or process-wide state. Those fail with no defect present.
+- **The bar holds for tests already written.** A test stays when removing it would let a plausible defect through, or when it pins a contract outside the code (wire bytes, on-disk formats, scripting names, OS behavior), guards data loss, consent or the sandbox, or has caught a real defect. One that does none of these is deleted; git keeps it.
+- **An edit that relaxes or deletes an existing assertion says why in the PR body,** so a reviewer can tell a changed spec from a test bent to reach green.
+
 ## Dependencies
 
 Swift packages from the `apple`, `swiftlang` and `swift-server` GitHub organizations only; a package from anywhere else takes explicit sign-off.
@@ -110,7 +122,7 @@ Every review finding — your own reading of adjacent code included — gets one
 | **Dismiss** | Everything else; a dead-code-scan false positive is dismissed with `// periphery:ignore - <reason>` on the symbol |
 
 **The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action).
-A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins; a documentation finding, only by naming the Documentation and Comments rule the text breaks. The general cost of debt clears nothing.
+A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins, and for a test *What earns a test* admits; a documentation finding, only by naming the Documentation and Comments rule the text breaks. The general cost of debt clears nothing.
 
 **An improbable defect is fixed by design or not at all.** A defect a user would almost never hit earns no added check, gate, or flag — only a redesign that removes it by construction, as **Fix now** or **Fix later**. When a search for that redesign finds none, it is **Dismiss**, unless it can lose user data — a disk image, a save file, a user's file — which is **Fix later** with its traced path.
 
