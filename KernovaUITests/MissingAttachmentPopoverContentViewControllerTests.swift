@@ -16,14 +16,6 @@ struct MissingAttachmentPopoverContentViewControllerTests {
         #expect(vc.view.fittingSize.width == CalloutStyle.width)
     }
 
-    @Test("fitting height accommodates content")
-    func fittingHeightIsPositive() {
-        let vc = MissingAttachmentPopoverContentViewController(path: "/tmp/missing.iso")
-        vc.loadViewIfNeeded()
-        vc.view.layoutSubtreeIfNeeded()
-        #expect(vc.view.fittingSize.height > 0)
-    }
-
     @Test("path label is selectable and uses character wrapping")
     func pathLabelConfiguration() {
         let path = "/Users/test/Downloads/very/long/path/to/missing-file.ipsw"

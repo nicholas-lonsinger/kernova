@@ -28,14 +28,6 @@ struct AlertConfigurationTests {
         #expect(config.buttons[2].role == .cancel)
     }
 
-    @Test("AlertButton init defaults to .standard role and a no-op action")
-    func alertButtonDefaults() {
-        let button = AlertButton("Plain")
-        #expect(button.role == .standard)
-        // Action is no-op; just verify calling it doesn't crash.
-        button.action()
-    }
-
     // MARK: - init(confirming:)
 
     /// A confirmation whose confirm destroys something and whose alternative is

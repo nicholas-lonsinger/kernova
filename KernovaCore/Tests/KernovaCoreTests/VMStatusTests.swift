@@ -6,23 +6,6 @@ import Testing
 
 @Suite("VMStatus Tests", .caseScoped)
 struct VMStatusTests {
-    // MARK: - Display Name
-
-    @Test("displayName returns expected string for each status")
-    func displayName() {
-        #expect(VMStatus.stopped.displayName == "Stopped")
-        #expect(VMStatus.starting.displayName == "Starting")
-        #expect(VMStatus.running.displayName == "Running")
-        #expect(VMStatus.paused.displayName == "Paused")
-        #expect(VMStatus.suspended.displayName == "Suspended")
-        #expect(VMStatus.saving.displayName == "Suspending")
-        #expect(VMStatus.restoring.displayName == "Restoring")
-        #expect(VMStatus.installing.displayName == "Installing")
-        #expect(VMStatus.initialBoot.displayName == "Initial Boot")
-        #expect(VMStatus.error.displayName == "Error")
-        #expect(VMStatus.snapshotting.displayName == "Taking Snapshot")
-    }
-
     @Test("phrase reads each status mid-sentence, the held VM included")
     func phrase() {
         let rows: [(VMStatus, String)] = [

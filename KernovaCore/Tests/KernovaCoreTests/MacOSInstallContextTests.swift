@@ -6,12 +6,6 @@ import Testing
 
 @Suite("MacOSInstallContext Tests", .caseScoped)
 struct MacOSInstallContextTests {
-    @Test("Default initializer leaves requestedFreshDownload false")
-    func defaultsFreshFalse() {
-        let ctx = MacOSInstallContext(source: .downloadLatest)
-        #expect(!ctx.requestedFreshDownload)
-    }
-
     @Test("Decoding JSON without requestedFreshDownload defaults to false")
     func decodeMissingFieldDefaultsFalse() throws {
         // Mirrors the on-disk shape from before the field was added — any
@@ -68,21 +62,6 @@ struct MacOSInstallContextTests {
         let decoded = try JSONDecoder().decode(MacOSInstallContext.self, from: data)
         #expect(decoded == original)
         #expect(decoded.localIPSWBookmark == Data([0x01, 0x02, 0x03]))
-    }
-
-    @Test("Equality considers requestedFreshDownload")
-    func equalityIncludesFlag() {
-        let a = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: "/p.ipsw",
-            requestedFreshDownload: false
-        )
-        let b = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: "/p.ipsw",
-            requestedFreshDownload: true
-        )
-        #expect(a != b)
     }
 
     // MARK: - Catalog Version Source

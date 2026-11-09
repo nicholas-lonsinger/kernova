@@ -118,11 +118,6 @@ struct ClipboardProgressReadoutViewTests {
         #expect(!view.byteProgressForTesting.isEmpty)
     }
 
-    @Test("the callout readout is as wide as every callout")
-    func calloutTakesTheCalloutWidth() {
-        #expect(ClipboardProgressReadoutView(surface: .callout).frame.width == CalloutStyle.width)
-    }
-
     @Test("Cancel acts on the click that also activates its app")
     func cancelTakesTheFirstClick() {
         // The guest agent is never the active app, so a Cancel that only

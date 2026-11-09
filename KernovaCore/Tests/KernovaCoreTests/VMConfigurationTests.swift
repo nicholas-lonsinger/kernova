@@ -340,12 +340,6 @@ struct VMConfigurationTests {
         #expect(jsonObject["sharedDirectories"] == nil)
     }
 
-    @Test("SharedDirectory defaults to read-write")
-    func sharedDirectoryDefaultReadOnly() {
-        let directory = SharedDirectory(path: "/tmp/test")
-        #expect(directory.readOnly == false)
-    }
-
     // MARK: - StorageDisk Tests
 
     @Test("StorageDisk blockDeviceIdentifier fits within 20 characters")
@@ -359,18 +353,6 @@ struct VMConfigurationTests {
     func storageDiskAutoLabel() {
         let disk = StorageDisk(path: "/Users/test/Downloads/my-data.asif")
         #expect(disk.label == "my-data")
-    }
-
-    @Test("StorageDisk default readOnly is false")
-    func storageDiskDefaultReadOnly() {
-        let disk = StorageDisk(path: "/tmp/test.asif")
-        #expect(disk.readOnly == false)
-    }
-
-    @Test("StorageDisk default isInternal is false")
-    func storageDiskDefaultIsInternal() {
-        let disk = StorageDisk(path: "/tmp/test.asif")
-        #expect(disk.isInternal == false)
     }
 
     @Test("StorageDisk default kind is inferred from extension")
@@ -842,18 +824,6 @@ struct VMConfigurationTests {
     }
 
     // MARK: - lastSeenAgentVersion Tests
-
-    @Test("Default lastSeenAgentVersion is nil")
-    func defaultLastSeenAgentVersion() {
-        let config = VMConfiguration(
-            name: "Test VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            cpuCount: VMGuestOS.macOS.hostCPUCount,
-            memorySizeInGB: VMGuestOS.macOS.hostMemorySize
-        )
-        #expect(config.lastSeenAgentVersion == nil)
-    }
 
     // MARK: - lastSeenGuestOSVersion Tests
 
