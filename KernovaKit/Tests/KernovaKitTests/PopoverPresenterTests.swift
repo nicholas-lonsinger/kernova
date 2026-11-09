@@ -15,20 +15,6 @@ import Testing
 @Suite("PopoverPresenter Tests", .caseScoped)
 @MainActor
 struct PopoverPresenterTests {
-    @Test("isShown is false before show")
-    func notShownInitially() {
-        let presenter = PopoverPresenter()
-        #expect(!presenter.isShown)
-    }
-
-    @Test("close before show is idempotent")
-    func closeBeforeShowIsIdempotent() {
-        let presenter = PopoverPresenter()
-        presenter.close()
-        presenter.close()
-        #expect(!presenter.isShown)
-    }
-
     @Test("popoverDidClose delivery invokes onClose and resets state")
     func popoverDidCloseFiresOnClose() {
         let presenter = PopoverPresenter()

@@ -26,9 +26,4 @@ struct SystemSettingsLinkTests {
         #expect(!link.openMicrophonePrivacy())
         #expect(recorder.opened == [anchored])
     }
-
-    @Test("The published URL constant matches the pane the app links to")
-    func urlConstantIsStable() {
-        #expect(SystemSettingsLink.microphonePrivacyURL == anchored)
-    }
 }

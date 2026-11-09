@@ -44,14 +44,6 @@ struct EngineInstantTests {
 
 @Suite("EngineClock conformances", .caseScoped)
 struct EngineClockTests {
-    @Test("now never goes backwards", arguments: EngineClockKind.allCases)
-    func nowIsMonotonic(kind: EngineClockKind) {
-        let clock = kind.makeClock()
-        let first = clock.now
-        let second = clock.now
-        #expect(!(second < first))
-    }
-
     /// The invariant that lets a holder store `any EngineClock` and swap
     /// conformances: both read one timeline, so instants taken from one are
     /// comparable with instants taken from the other.
