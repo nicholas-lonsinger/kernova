@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Installs the optional Homebrew tools a make target asks for, skipping the
-# ones already on PATH. `make setup` and `make install-lsp` both go through it,
-# so there is one answer to "is this tool installed" and one brew invocation
-# per run.
+# Installs the optional Homebrew tools a make target or Tools/ script asks for,
+# skipping the ones already on PATH. Every such caller goes through it, so
+# there is one answer to "is this tool installed" and one brew invocation per
+# run.
 #
 # Usage: Tools/brew-install.sh <command>...
 #   e.g. Tools/brew-install.sh shellcheck gh xcode-build-server

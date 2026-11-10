@@ -34,6 +34,10 @@ if [ -z "$(ubuntu_sdk_missing "$version")" ]; then
     exit 0
 fi
 
+# Ubuntu's packages carry zstd-compressed payloads, and the generator unpacks
+# them with tar, which runs the zstd program to decompress them.
+"$lib_dir/brew-install.sh" zstd >&2
+
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 generator="$tmp_dir/swift-sdk-generator"
