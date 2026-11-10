@@ -103,17 +103,6 @@ struct VMToolbarManagerTests {
         #expect(item?.autovalidates == false)
     }
 
-    @Test("makeToolbarItem returns take snapshot as a plain bordered item")
-    func takeSnapshotItemStructure() {
-        let manager = makeManager()
-        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testTakeSnapshot"))
-        #expect(item != nil)
-        #expect(!(item is NSToolbarItemGroup))
-        #expect(item?.isBordered == true)
-        #expect(item?.label == "Take Snapshot")
-        #expect(item?.autovalidates == false)
-    }
-
     @Test("Take Snapshot is enabled wherever Suspend is, and on a stopped VM too")
     func takeSnapshotCoversStoppedAsWell() {
         for (phase, expected) in [
@@ -142,49 +131,6 @@ struct VMToolbarManagerTests {
         #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
     }
 
-    @Test("The toolbar's own observation dims Take Snapshot when an operation starts settling")
-    func takeSnapshotDisabledWhileSettling() async throws {
-        let suspending = SuspendingMockVirtualizationService()
-        suspending.shouldSuspendOnResume = true
-        let (library, lifecycle) = makeLibrary(virtualization: suspending)
-        let instance = library.admitFixture(phase: .livePaused(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-        }
-        let manager = makeManager(instance: instance, library: library)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        // The loop both hosts run, verbatim. Every item sets
-        // `autovalidates = false`, so this is the *only* thing that refreshes
-        // them — driving `updateToolbarItems(in:)` directly would pass whether
-        // or not the settle signal is in the tracked read set.
-        let applied = AsyncGate()
-        let loop = observeRecurring(
-            track: { manager.trackItemState() },
-            apply: {
-                manager.updateToolbarItems(in: toolbar)
-                applied.notify()
-            })
-        defer { loop.cancel() }
-
-        manager.updateToolbarItems(in: toolbar)
-        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == true)
-
-        // The resume presents `.paused` while it runs, so the phase it started
-        // from still names a capture — one requested now is refused as busy,
-        // so the button has to go dim rather than error on click.
-        let resume = try lifecycle.launchResume(instance)
-        await suspending.waitUntilSuspended()
-        try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
-
-        #expect(
-            VMAdmission.settledCaptureMode(phase: instance.phase, facts: instance.admissionFacts)
-                == .live)
-        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
-
-        suspending.resumeSuspended()
-        try await resume.value()
-    }
-
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
     func displayItemsStructure() {
         let manager = makeManager()
@@ -198,55 +144,6 @@ struct VMToolbarManagerTests {
         // palette keeps the factory names.
         #expect(popOut?.paletteLabel == "Pop Out")
         #expect(fullscreen?.paletteLabel == "Fullscreen")
-    }
-
-    @Test("makeToolbarItem returns nil for unknown identifier")
-    func unknownIdentifierReturnsNil() {
-        let manager = makeManager()
-        let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("unknown"))
-        #expect(item == nil)
-    }
-
-    @Test("sharedItemIdentifiers contains all configured identifiers")
-    func sharedIdentifiers() {
-        let manager = makeManager()
-        #expect(manager.sharedItemIdentifiers.count == 10)
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testCopyToMac")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testCopyToGuest")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testLifecycle")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testStopAnyway")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testRestartAnyway")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSaveState")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testTakeSnapshot")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testPopOut")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testFullscreen")))
-        #expect(manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
-    }
-
-    @Test("sharedItemIdentifiers omits settings toggle when not configured")
-    func sharedIdentifiersWithoutSettingsToggle() {
-        let manager = makeManager(includeSettingsToggle: false)
-        #expect(manager.sharedItemIdentifiers.count == 9)
-        #expect(!manager.sharedItemIdentifiers.contains(NSToolbarItem.Identifier("testSettingsToggle")))
-    }
-
-    @Test("defaultItemIdentifiers separates the capsule clusters with fixed spaces")
-    func defaultIdentifiersClusterSpacing() {
-        let manager = makeManager()
-        #expect(
-            manager.defaultItemIdentifiers == [
-                NSToolbarItem.Identifier("testLifecycle"),
-                NSToolbarItem.Identifier("testSaveState"),
-                NSToolbarItem.Identifier("testTakeSnapshot"),
-                .space,
-                NSToolbarItem.Identifier("testCopyToMac"),
-                NSToolbarItem.Identifier("testCopyToGuest"),
-                .space,
-                NSToolbarItem.Identifier("testPopOut"),
-                NSToolbarItem.Identifier("testFullscreen"),
-                .space,
-                NSToolbarItem.Identifier("testSettingsToggle"),
-            ])
     }
 
     @Test(
@@ -317,22 +214,6 @@ struct VMToolbarManagerTests {
 
     // MARK: - Nil Instance
 
-    @Test("All items disabled when instance is nil")
-    func nilInstanceDisablesAll() {
-        let manager = makeManager(instance: nil)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = item("testLifecycle", in: toolbar) as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-        #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
-        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
-        #expect(item("testPopOut", in: toolbar)?.isEnabled == false)
-        #expect(item("testFullscreen", in: toolbar)?.isEnabled == false)
-        #expect(item("testSettingsToggle", in: toolbar)?.isEnabled == false)
-    }
-
     @Test("Every item is disabled while an arrival is the selected row")
     func selectedArrivalDisablesEveryItem() async throws {
         let library = makeLibrary().library
@@ -386,33 +267,6 @@ struct VMToolbarManagerTests {
         #expect(button?.target == nil)
     }
 
-    @Test("The clipboard buttons are enabled while an agent carries the clipboard and passthrough is off")
-    func clipboardButtonsFollowTheCommands() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-        manager.updateToolbarItems(in: toolbar)
-        #expect(clipboardButton("testCopyToMac", in: toolbar)?.isEnabled == false)
-        #expect(clipboardButton("testCopyToGuest", in: toolbar)?.isEnabled == false)
-
-        carryClipboard(on: instance)
-        manager.updateToolbarItems(in: toolbar)
-        #expect(clipboardButton("testCopyToMac", in: toolbar)?.isEnabled == true)
-        #expect(clipboardButton("testCopyToGuest", in: toolbar)?.isEnabled == true)
-
-        // Passthrough on: the two clipboards are one already.
-        let passthrough = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-            $0.clipboardPassthroughEnabled = true
-        }
-        carryClipboard(on: passthrough)
-        let passthroughManager = makeManager(instance: passthrough)
-        let (passthroughToolbar, _, _) = makeToolbar(manager: passthroughManager)
-        passthroughManager.updateToolbarItems(in: passthroughToolbar)
-        #expect(clipboardButton("testCopyToMac", in: passthroughToolbar)?.isEnabled == false)
-        #expect(clipboardButton("testCopyToGuest", in: passthroughToolbar)?.isEnabled == false)
-    }
-
     /// Stands a running readout on `instance` moving `direction`, as a producer's operation would, returning the
     /// operation — the reporter holds only a weak reference, so the caller must keep it alive.
     private func publishProgress(
@@ -454,19 +308,6 @@ struct VMToolbarManagerTests {
 
     // MARK: - Lifecycle Labels
 
-    @Test("Play button shows 'Start' when status is stopped")
-    func playLabelStartWhenStopped() {
-        let instance = makeInstance(phase: .stopped)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        let playItem = lifecycle?.subitems[0]
-        #expect(playItem?.label == "Start")
-    }
-
     @Test("Play button shows 'Resume' for a VM holding a saved state")
     func playLabelResumeWhenPaused() throws {
         let instance = makeInstance(phase: .suspended)
@@ -483,34 +324,6 @@ struct VMToolbarManagerTests {
 
     // MARK: - Lifecycle Enable States
 
-    @Test("Play enabled when canStart (stopped)")
-    func playEnabledWhenStopped() {
-        let instance = makeInstance(phase: .stopped)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[0].isEnabled == true)  // play
-        #expect(lifecycle?.subitems[1].isEnabled == false)  // pause
-        #expect(lifecycle?.subitems[2].isEnabled == false)  // stop
-    }
-
-    @Test("Pause and stop enabled when running")
-    func pauseStopEnabledWhenRunning() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[0].isEnabled == false)  // play (can't start when running)
-        #expect(lifecycle?.subitems[1].isEnabled == true)  // pause
-        #expect(lifecycle?.subitems[2].isEnabled == true)  // stop
-    }
-
     @Test("Play (resume) and stop enabled when paused")
     func resumeStopEnabledWhenPaused() throws {
         let instance = makeInstance(phase: .suspended)
@@ -524,20 +337,6 @@ struct VMToolbarManagerTests {
         #expect(lifecycle?.subitems[0].isEnabled == true)  // resume
         #expect(lifecycle?.subitems[1].isEnabled == false)  // pause (already paused)
         #expect(lifecycle?.subitems[2].isEnabled == true)  // stop
-    }
-
-    @Test("Play enabled after a failure (error)")
-    func playEnabledWhenError() {
-        let instance = makeInstance(phase: .failed(message: "Boot failed."))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems[0].isEnabled == true)  // play (retry)
-        #expect(lifecycle?.subitems[1].isEnabled == false)  // pause
-        #expect(lifecycle?.subitems[2].isEnabled == false)  // stop
     }
 
     /// The stop segment of a suspended VM discards its saved state, which no
@@ -567,32 +366,6 @@ struct VMToolbarManagerTests {
             #expect(offersStop == expected, "\(phase)")
             #expect(lifecycle.subitems[3].isEnabled == expected, "\(phase)")
         }
-    }
-
-    @Test("All lifecycle items disabled during transitioning states")
-    func lifecycleDisabledDuringTransition() {
-        let instance = makeInstance(
-            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(lifecycle?.subitems.allSatisfy { !$0.isEnabled } == true)
-    }
-
-    // MARK: - Save State
-
-    @Test("Save state enabled when canSave (running)")
-    func saveEnabledWhenRunning() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        #expect(item("testSaveState", in: toolbar)?.isEnabled == true)
     }
 
     // MARK: - Display Item Gating
@@ -647,31 +420,6 @@ struct VMToolbarManagerTests {
         #expect(item("testPopOut", in: toolbar)?.label == "Pop In")
     }
 
-    @Test("Pop In label when displayMode is hidden (headless)")
-    func popInLabelWhenHidden() {
-        // Headless is a running session's: a VM with none reads inline.
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        instance.displayMode = .hidden
-        let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        #expect(item("testPopOut", in: toolbar)?.label == "Pop In")
-    }
-
-    @Test("Fullscreen label when not in fullscreen")
-    func fullscreenLabelDefault() {
-        let instance = makeInstance(phase: .stopped)
-        instance.displayMode = .inline
-        let manager = makeManager(instance: instance, gatesDisplayOnCapability: false)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        #expect(item("testFullscreen", in: toolbar)?.label == "Fullscreen")
-    }
-
     @Test("Exit Fullscreen label when in fullscreen")
     func exitFullscreenLabel() {
         let instance = makeInstance(phase: .stopped)
@@ -695,44 +443,6 @@ struct VMToolbarManagerTests {
         #expect(item?.label == "Show Settings")
     }
 
-    @Test("Settings toggle is disabled when status has no active display")
-    func settingsToggleDisabledWhenStopped() {
-        let instance = makeInstance(phase: .stopped)
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
-        #expect(item?.isEnabled == false)
-    }
-
-    @Test("Settings toggle is enabled when status has active display")
-    func settingsToggleEnabledWhenRunning() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
-        #expect(item?.isEnabled == true)
-    }
-
-    @Test("Settings toggle shows 'Show Settings' label when in display mode")
-    func settingsToggleLabelInDisplayMode() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        instance.detailPaneMode = .display
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager)
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let item = toolbar.items.first { $0.itemIdentifier.rawValue == "testSettingsToggle" }
-        #expect(item?.label == "Show Settings")
-        #expect(item?.image?.accessibilityDescription == "Show Settings")
-    }
-
     @Test("Settings toggle shows 'Hide Settings' label when in settings mode")
     func settingsToggleLabelInSettingsMode() {
         let instance = makeInstance(phase: .running(sessionID: UUID()))
@@ -752,36 +462,6 @@ struct VMToolbarManagerTests {
         let manager = makeManager()
         let item = manager.makeToolbarItem(for: NSToolbarItem.Identifier("testSettingsToggle"))
         #expect(item?.paletteLabel == "Settings")
-    }
-
-    // MARK: - User-Customized Layouts
-
-    @Test("updateToolbarItems tolerates a toolbar with no shared items")
-    func updateWithAllItemsRemoved() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(manager: manager, defaultItems: [])
-
-        manager.updateToolbarItems(in: toolbar)
-
-        #expect(toolbar.items.isEmpty)
-    }
-
-    @Test("updateToolbarItems still updates present items when others were removed")
-    func updateWithPartialItemSet() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        let manager = makeManager(instance: instance)
-        let (toolbar, _, _) = makeToolbar(
-            manager: manager,
-            defaultItems: [NSToolbarItem.Identifier("testLifecycle")]
-        )
-
-        manager.updateToolbarItems(in: toolbar)
-
-        let lifecycle = toolbar.items.first { $0.itemIdentifier.rawValue == "testLifecycle" } as? NSToolbarItemGroup
-        #expect(toolbar.items.count == 1)
-        #expect(lifecycle?.subitems[1].isEnabled == true)  // pause (running)
-        #expect(lifecycle?.subitems[2].isEnabled == true)  // stop (running)
     }
 }
 

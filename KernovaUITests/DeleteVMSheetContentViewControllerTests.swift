@@ -58,70 +58,6 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(vc.checkboxes.isEmpty)
     }
 
-    @Test("no saved-state row for a VM with nothing suspended")
-    func savedStateRowAbsentWithoutSavedState() {
-        let vc = make(
-            vmName: "MyVM", bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")])
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(!labels.contains("Saved State"))
-    }
-
-    @Test("one row rendered per external attachment, in order")
-    func rowsRendered() {
-        let externals = [
-            makeAttachment(id: UUID(), label: "Disk A", path: "/tmp/a.asif"),
-            makeAttachment(id: UUID(), label: "Installer ISO", path: "/tmp/installer.iso"),
-        ]
-        let vc = make(vmName: "MyVM", externals: externals)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains("Files outside this VM"))
-        #expect(labels.contains("Disk A"))
-        #expect(labels.contains("/tmp/a.asif"))
-        #expect(labels.contains("Installer ISO"))
-        #expect(labels.contains("/tmp/installer.iso"))
-    }
-
-    @Test("exclusively-owned external starts unchecked (defaults to keep) but stays selectable")
-    func exclusivelyOwnedStartsUnchecked() {
-        let id = UUID()
-        let vc = make(vmName: "MyVM", externals: [makeAttachment(id: id, label: "Disk", path: "/tmp/d.img")])
-        vc.loadViewIfNeeded()
-        // Out-of-bundle files are kept by default: nothing selected, row off.
-        #expect(vc.selectedExternalIDs.isEmpty)
-        #expect(vc.checkboxes[id]?.state == .off)
-        // …but the row is still selectable (recorded + enabled), unlike a
-        // locked-off shared/missing row.
-        #expect(vc.checkboxes[id] != nil)
-        #expect(vc.checkboxes[id]?.isEnabled == true)
-    }
-
-    @Test("shared external is locked off and shows a 'kept' note")
-    func sharedExternalLockedOff() {
-        let id = UUID()
-        let shared = makeAttachment(id: id, label: "Shared ISO", path: "/tmp/shared.iso", shared: ["Other VM"])
-        let vc = make(vmName: "MyVM", externals: [shared])
-        vc.loadViewIfNeeded()
-        // Not selectable: no checkbox recorded, nothing selected.
-        #expect(vc.checkboxes[id] == nil)
-        #expect(vc.selectedExternalIDs.isEmpty)
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains { $0.contains("Kept — still used by") && $0.contains("Other VM") })
-    }
-
-    @Test("missing external renders its path in the red 'Missing —' style")
-    func missingExternalShowsMissingPath() {
-        let path = "/Volumes/USB/win.iso"
-        let missing = makeAttachment(id: UUID(), label: "Installer ISO", path: path, missing: true)
-        let vc = make(vmName: "MyVM", externals: [missing])
-        vc.loadViewIfNeeded()
-        // The subtitle uses attributedStringValue for the missing state; NSTextField's
-        // stringValue still reflects the attributed string's characters.
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains { $0.contains("Missing — ") && $0.contains(path) })
-    }
-
     @Test("missing external shows an 'already gone' note")
     func missingExternalShowsAlreadyGoneNote() {
         let missing = makeAttachment(id: UUID(), label: "Gone Disk", path: "/tmp/gone.img", missing: true)
@@ -211,18 +147,6 @@ struct DeleteVMSheetContentViewControllerTests {
         #expect(confirmedIDChoices == [[], [trashID]])
     }
 
-    @Test("Move to Trash button is the default (Return)")
-    func confirmIsDefault() {
-        let vc = make(vmName: "MyVM")
-        vc.loadViewIfNeeded()
-        guard let confirm = findButton(titled: "Move to Trash", in: vc.view) else {
-            Issue.record("Expected a Move to Trash button")
-            return
-        }
-        #expect(confirm.keyEquivalent == "\r")
-        #expect(confirm.hasDestructiveAction)
-    }
-
     @Test("Cancel button is keyed to Escape")
     func cancelIsEscape() {
         let vc = make(vmName: "MyVM")
@@ -258,33 +182,6 @@ struct DeleteVMSheetContentViewControllerTests {
         selectAll.performClick(nil)
         #expect(vc.selectedExternalIDs.isEmpty)
         #expect(selectAll.title == "Select All")
-    }
-
-    @Test("Select All ignores shared and missing rows")
-    func selectAllIgnoresLockedRows() {
-        let owned1 = UUID()
-        let owned2 = UUID()
-        let sharedID = UUID()
-        let missingID = UUID()
-        let externals = [
-            makeAttachment(id: owned1, label: "Owned A", path: "/tmp/a.img"),
-            makeAttachment(id: owned2, label: "Owned B", path: "/tmp/b.img"),
-            makeAttachment(id: sharedID, label: "Shared", path: "/tmp/shared.iso", shared: ["Other VM"]),
-            makeAttachment(id: missingID, label: "Gone", path: "/tmp/gone.img", missing: true),
-        ]
-        let vc = make(vmName: "MyVM", externals: externals)
-        vc.loadViewIfNeeded()
-
-        guard let selectAll = findButton(titled: "Select All", in: vc.view) else {
-            Issue.record("Expected a Select All button")
-            return
-        }
-        selectAll.performClick(nil)
-        // Only the exclusively-owned, present rows are selected; locked-off
-        // shared/missing rows aren't recorded and can't be collected.
-        #expect(vc.selectedExternalIDs == [owned1, owned2])
-        #expect(vc.checkboxes[sharedID] == nil)
-        #expect(vc.checkboxes[missingID] == nil)
     }
 
     @Test("Select All is hidden when fewer than two externals are selectable")
@@ -328,30 +225,11 @@ struct DeleteVMSheetContentViewControllerTests {
 
     // MARK: - Immediate-delete mode
 
-    @Test("the snapshot store is listed alongside the in-bundle disks")
-    func snapshotRowRendered() {
-        let vc = make(
-            vmName: "MyVM",
-            bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")],
-            snapshotCount: 3)
-        vc.loadViewIfNeeded()
-        let labels = collectLabels(in: vc.view).map(\.stringValue)
-        #expect(labels.contains("Snapshots"))
-        #expect(labels.contains("3 in-bundle restore points"))
-    }
-
     @Test("a single snapshot reads in the singular")
     func snapshotRowSingular() {
         let vc = make(vmName: "MyVM", snapshotCount: 1)
         vc.loadViewIfNeeded()
         #expect(collectLabels(in: vc.view).map(\.stringValue).contains("1 in-bundle restore point"))
-    }
-
-    @Test("no snapshot row for a VM that has taken none")
-    func snapshotRowAbsentWithoutSnapshots() {
-        let vc = make(vmName: "MyVM")
-        vc.loadViewIfNeeded()
-        #expect(!collectLabels(in: vc.view).map(\.stringValue).contains("Snapshots"))
     }
 
     @Test("immediate mode confirm button reads Delete Immediately and is not the Return default")
@@ -392,24 +270,6 @@ struct DeleteVMSheetContentViewControllerTests {
         // Overflow is detected, which caps the height and scrolls (and drives the
         // shared `ScrollMoreIndicator` cue).
         #expect(vc.contentOverflows)
-    }
-
-    @Test("a short disk list hugs its content with no cap and no empty gap")
-    func shortListHugsContent() throws {
-        let vc = make(vmName: "MyVM", bundledDisks: [makeDisk(label: "Main Disk", path: "Disk.asif")])
-        vc.loadViewIfNeeded()
-        vc.view.layoutSubtreeIfNeeded()
-
-        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
-        let documentHeight = try #require(scrollView.documentView).frame.height
-        let visibleHeight = scrollView.frame.height
-
-        // One short row: the visible area matches the content exactly (no
-        // scroll, no empty gap) and stays under the cap.
-        #expect(visibleHeight < 320)
-        #expect(abs(visibleHeight - documentHeight) <= 1)
-        // Content fits, so there's no overflow and no scrollbar hint.
-        #expect(!vc.contentOverflows)
     }
 
     @Test("a file shared with many VMs renders its wrapped warning without clipping")

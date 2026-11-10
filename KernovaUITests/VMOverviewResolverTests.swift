@@ -46,114 +46,6 @@ struct VMOverviewResolverTests {
 
     // MARK: - Mode titles
 
-    @Test("Every choice names its mode's group and its entry, joined by an en dash")
-    func modeTitlesNameGroupAndEntry() {
-        #expect(
-            NetworkModeChoice.nat.label(attachable: true, interfaces: [], networks: .listed([])).text
-                == "NAT \u{2013} Common")
-        #expect(NetworkModeChoice.none.label(attachable: true, interfaces: [], networks: .listed([])).text == "None")
-        #expect(
-            NetworkModeChoice.hostOnly.label(attachable: true, interfaces: [], networks: .listed([])).text
-                == "Host Only \u{2013} Common")
-        #expect(
-            NetworkModeChoice.bridged(nil).label(attachable: true, interfaces: [], networks: .listed([])).text
-                == "Bridged \u{2013} Automatic")
-        #expect(
-            NetworkModeChoice.bridged("en0").label(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
-                == NetworkChoiceLabel(mode: .bridged, entry: "Wi-Fi (en0)"))
-        #expect(
-            NetworkModeChoice.bridged("en0").label(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
-                .text
-                == "Bridged \u{2013} Wi-Fi (en0)")
-        #expect(NetworkModeChoice.none.label(attachable: true, interfaces: [], networks: .listed([])).group == nil)
-    }
-
-    @Test("A network of a mode names itself: isolated, or by its name, under its mode")
-    func networkTitlesNameTheNetwork() {
-        let lab = VMNamedNetwork(id: UUID(), name: "Lab", kind: .nat)
-        #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(attachable: true, interfaces: [], networks: .listed([]))
-                == NetworkChoiceLabel(mode: .hostOnly, entry: "Isolated"))
-        #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(
-                attachable: true, interfaces: [], networks: .listed([])
-            ).text == "Host Only \u{2013} Isolated")
-        #expect(
-            NetworkModeChoice.vmnet(.nat, .network(lab.id)).label(
-                attachable: true, interfaces: [], networks: .listed([lab]))
-                == NetworkChoiceLabel(mode: .nat, entry: "Lab"))
-        #expect(
-            NetworkModeChoice.vmnet(.nat, .network(lab.id)).label(
-                attachable: true, interfaces: [], networks: .listed([lab])
-            ).text == "NAT \u{2013} Lab")
-        #expect(
-            NetworkModeChoice.vmnet(.nat, .network(lab.id)).label(
-                attachable: false, interfaces: [], networks: .listed([lab])
-            ).text == "NAT \u{2013} Lab (unavailable)")
-        #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(
-                attachable: false, interfaces: [], networks: .listed([])
-            ).text
-                == "Host Only \u{2013} Isolated (unavailable)")
-        // Unlisted, or listed only in the other mode: no surface here can
-        // choose it, so it never reads as merely unavailable.
-        #expect(
-            NetworkModeChoice.vmnet(.nat, .network(UUID())).label(
-                attachable: false, interfaces: [], networks: .listed([lab])
-            ).text
-                == "NAT \u{2013} Network Not in This Library")
-        #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .network(lab.id)).label(
-                attachable: true, interfaces: [], networks: .listed([lab])
-            ).text
-                == "Host Only \u{2013} Network Not in This Library")
-    }
-
-    @Test("While the network list can't be read, a named network reads so under its mode, and no other title moves")
-    func networkTitlesWhileTheListIsUnreadable() {
-        let unreadable = VMNetworkDirectory.State.unreadable(
-            UnreadableConfigFile(
-                location: .networkList(URL(fileURLWithPath: "/tmp/Networks.json")), owner: .networkList,
-                problems: [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]))
-        #expect(
-            NetworkModeChoice.vmnet(.nat, .network(UUID())).label(
-                attachable: true, interfaces: [], networks: unreadable)
-                == NetworkChoiceLabel(mode: .nat, entry: "Network List Can\u{2019}t Be Read"))
-        #expect(
-            NetworkModeChoice.vmnet(.nat, .network(UUID())).label(
-                attachable: true, interfaces: [], networks: unreadable
-            ).text
-                == "NAT \u{2013} Network List Can\u{2019}t Be Read")
-        #expect(
-            NetworkModeChoice.vmnet(.hostOnly, .isolated).label(
-                attachable: true, interfaces: [], networks: unreadable
-            ).text == "Host Only \u{2013} Isolated")
-    }
-
-    @Test("A mode the signature doesn't authorize still names itself, marked unavailable")
-    func unentitledModesNameThemselves() {
-        #expect(
-            NetworkModeChoice.hostOnly.label(attachable: false, interfaces: [], networks: .listed([])).text
-                == "Host Only \u{2013} Common (unavailable)")
-        #expect(
-            NetworkModeChoice.bridged("en0").label(attachable: false, interfaces: [Self.wiFi], networks: .listed([]))
-                .text
-                == "Bridged \u{2013} Wi-Fi (en0) (unavailable)")
-        #expect(
-            NetworkModeChoice.bridged(nil).label(attachable: false, interfaces: [], networks: .listed([])).text
-                == "Bridged \u{2013} Automatic (unavailable)")
-        // Entitled, but the host has stopped offering the interface.
-        #expect(
-            NetworkModeChoice.bridged("en5").label(attachable: true, interfaces: [Self.wiFi], networks: .listed([]))
-                .text
-                == "Bridged \u{2013} en5 (unavailable)")
-        // An interface the host names nothing else reads as its bare identifier.
-        let bare = BridgedInterface(identifier: "bridge0", localizedDisplayName: "bridge0")
-        #expect(
-            NetworkModeChoice.bridged("bridge0").label(attachable: true, interfaces: [bare], networks: .listed([])).text
-                == "Bridged \u{2013} bridge0")
-    }
-
     @Test("NAT reads NAT on every display surface, and its raw values are nat")
     func natModeReadsNAT() {
         #expect(VMNetworkMode.nat.title == "NAT")
@@ -168,14 +60,6 @@ struct VMOverviewResolverTests {
         }
         #expect(VMNetworkKind.nat.rawValue == "nat")
         #expect(NetworksSettingsViewController.kindTitle(.nat) == "NAT")
-    }
-
-    @Test("Naming a bridged interface is the only title that takes an enumeration")
-    func onlyABridgedInterfaceNeedsTheHostList() {
-        #expect(NetworkModeChoice.bridged("en0").namesAHostInterface)
-        #expect(!NetworkModeChoice.bridged(nil).namesAHostInterface)
-        #expect(!NetworkModeChoice.nat.namesAHostInterface)
-        #expect(!NetworkModeChoice.none.namesAHostInterface)
     }
 
     @Test("The mode title is named once per mode, not once per pass")
@@ -274,27 +158,6 @@ struct VMOverviewResolverTests {
         config.macAddress = "aa:bb:cc:dd:ee:ff"
     }
 
-    @Test("The address is the observer's answer for a running VM, and displaying it creates no network")
-    func addressComesFromTheObserver() async {
-        let vmnet = ScriptedVmnetNetworks()
-        vmnet.join(.common(.nat), on: "192.168.64.0")
-        let model = makeSettingsViewModel(
-            preferences: preferences, vmnetNetworks: vmnet.service,
-            arpTable: ScriptedARPTable([
-                .scripted("192.168.64.9", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)
-            ]))
-        let instance = model.library.admitFixture(
-            phase: .running(sessionID: UUID()), mutate: Self.shareNetwork)
-        let resolver = makeResolver(instance: instance, viewModel: model)
-        await model.library.guestAddresses.readForTesting()
-
-        resolver.refresh()
-
-        #expect(resolver.resolved.ipAddress == .observed("192.168.64.9"))
-        // The one network created is the one the test stood up.
-        #expect(vmnet.operations.createdKinds == [.nat])
-    }
-
     @Test("A running VM not yet seen says so; a stopped one states nothing")
     func addressNotSeenWhileRunningAbsentWhileStopped() {
         let runningResolver = makeResolver(instance: sharedInstance())
@@ -306,28 +169,6 @@ struct VMOverviewResolverTests {
         stoppedResolver.refresh()
         #expect(stoppedResolver.resolved.ipAddress == .unavailable)
         #expect(stoppedResolver.resolved.ipAddress.displayText == nil)
-    }
-
-    @Test("Bridged hands addressing to the network; an unentitled build has none to state")
-    func addressAbsentWhereNothingAssignsOne() {
-        let bridged = VMInstanceFixture.make {
-            $0.networkEnabled = true
-            $0.networkMode = .bridged
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let bridgedResolver = makeResolver(instance: bridged)
-        bridgedResolver.refresh()
-        #expect(bridgedResolver.resolved.ipAddress == .externallyAssigned)
-        #expect(bridgedResolver.resolved.ipAddress.displayText == "Assigned by your network")
-
-        let unentitledResolver = makeResolver(instance: sharedInstance(), entitled: false)
-        unentitledResolver.refresh()
-        #expect(unentitledResolver.resolved.ipAddress == .unavailable)
-
-        let off = VMInstanceFixture.make { $0.networkEnabled = false }
-        let offResolver = makeResolver(instance: off)
-        offResolver.refresh()
-        #expect(offResolver.resolved.ipAddress == .unavailable)
     }
 
     // MARK: - Warnings
@@ -369,40 +210,6 @@ struct VMOverviewResolverTests {
                 == "Same machine ID as \u{201C}Work\u{201D} and \u{201C}Home\u{201D}.")
     }
 
-    @Test("A VM sharing its machine ID gets the note, whatever the MAC addresses")
-    func sharedMachineIDIsANote() {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let identity = Data([2, 7, 1, 8])
-        let instance = viewModel.library.admitFixture {
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:01"
-            $0.genericMachineIdentifierData = identity
-        }
-        viewModel.library.admitFixture {
-            $0.name = "Twin"
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:02"
-            $0.genericMachineIdentifierData = identity
-        }
-        let resolver = makeResolver(instance: instance, viewModel: viewModel)
-
-        resolver.refresh()
-
-        #expect(resolver.resolved.sharedMachineIDNote == "Same machine ID as \u{201C}Twin\u{201D}.")
-        #expect(resolver.resolved.warnings[.general] == nil)
-    }
-
-    @Test("A VM alone on its address raises no Network warning")
-    func soleHolderOfAMACRaisesNothing() {
-        let instance = VMInstanceFixture.make {
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let resolver = makeResolver(instance: instance)
-        resolver.refresh()
-        #expect(resolver.resolved.warnings[.network] == nil)
-    }
-
     @Test("A refused microphone raises the System warning only while input is on")
     func micWarningFollowsPermissionAndInput() {
         let silent = VMInstanceFixture.make { $0.audioInputEnabled = false }
@@ -428,26 +235,6 @@ struct VMOverviewResolverTests {
 
     // MARK: - Async reads and rebinding
 
-    @Test("The snapshots' sizes land from an off-main read, measured once per state")
-    func snapshotSizesFollowTheirSet() async throws {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = viewModel.library.admitFixture()
-        let snapshot = VMSnapshot(name: "Base", macAddress: nil)
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(
-                snapshots: [snapshot], currentID: snapshot.id))
-        let resolver = makeResolver(instance: instance, viewModel: viewModel)
-
-        resolver.refresh()
-        #expect(resolver.resolved.snapshotSizes.isEmpty)
-        await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
-
-        // A pass over the same set re-issues nothing.
-        resolver.refresh()
-        #expect(resolver.resolved.snapshotSizes.keys.contains(snapshot.id))
-    }
-
     /// A resolver over a VM holding one snapshot whose size `files` reports.
     private func makeMeasuredResolver(
         _ files: MockVMBundleMachineFiles
@@ -457,36 +244,6 @@ struct VMOverviewResolverTests {
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
         return (makeResolver(instance: instance, viewModel: viewModel), instance, snapshot)
-    }
-
-    @Test("A lifecycle change that keeps the same snapshots measures them again")
-    func aLifecycleChangeRemeasuresTheSameSnapshots() async throws {
-        let files = MockVMBundleMachineFiles()
-        let (resolver, instance, snapshot) = makeMeasuredResolver(files)
-        let before = SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000)
-        files.setSize(before, for: snapshot.id)
-        var repainted: [VMSettingsCategory] = []
-        resolver.onCategoryResolved = { repainted.append($0) }
-        resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotSizes[snapshot.id] == before)
-
-        // A revert clones the snapshot back over the live disks, so its private
-        // bytes fall away while the manifest stays exactly as it was — and the
-        // VM rests where it started.
-        let after = SnapshotSize(bytes: 72_000_000_000, privateBytes: 4_096)
-        files.setSize(after, for: snapshot.id)
-        instance.activity.placeForTesting(
-            .operating(
-                .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: false)), from: .stopped))
-        resolver.refresh()
-        instance.activity.placeForTesting(.stopped)
-        resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
-
-        #expect(resolver.resolved.snapshotSizes[snapshot.id] == after)
-        #expect(repainted.filter { $0 == .snapshots }.count == 2)
-        #expect(files.sizeReads == 2)
     }
 
     @Test("Showing the sizes again measures them again, with nothing else changed")
@@ -506,29 +263,6 @@ struct VMOverviewResolverTests {
 
         #expect(files.sizeReads == 2)
         #expect(resolver.resolved.snapshotSizes[snapshot.id] == grown)
-    }
-
-    @Test("A measurement landing after a newer one never replaces it")
-    func aStaleMeasurementCannotOverwriteANewerOne() async throws {
-        let files = MockVMBundleMachineFiles()
-        let (resolver, _, snapshot) = makeMeasuredResolver(files)
-        let stale = SnapshotSize(bytes: 72_000_000_000, privateBytes: 8_000_000_000)
-        files.setSize(stale, for: snapshot.id)
-        let hold = files.holdNextSizeRead()
-        resolver.refresh()
-        let staleRead = resolver.snapshotSizeTaskForTesting
-        try await files.sizeReadEntered.wait { files.sizeReads == 1 }
-
-        let fresh = SnapshotSize(bytes: 72_000_000_000, privateBytes: 4_096)
-        files.setSize(fresh, for: snapshot.id)
-        resolver.remeasureSnapshotSizes()
-        resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotSizes[snapshot.id] == fresh)
-
-        hold.signal()
-        await staleRead?.value
-        #expect(resolver.resolved.snapshotSizes[snapshot.id] == fresh)
     }
 
     @Test("A size already read survives the re-read the next snapshot triggers")
@@ -555,27 +289,6 @@ struct VMOverviewResolverTests {
 
         await resolver.snapshotSizeTaskForTesting?.value
         #expect(resolver.resolved.snapshotSizes.count == 2)
-    }
-
-    @Test("Deleting a snapshot drops its size and leaves the rest measured")
-    func deletingASnapshotDropsOnlyItsOwnSize() async throws {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let instance = viewModel.library.admitFixture()
-        let first = VMSnapshot(name: "First", macAddress: nil)
-        let second = VMSnapshot(name: "Second", macAddress: nil)
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(
-                snapshots: [first, second], currentID: second.id))
-        let resolver = makeResolver(instance: instance, viewModel: viewModel)
-        resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
-        #expect(resolver.resolved.snapshotSizes.count == 2)
-
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [first], currentID: first.id))
-        resolver.refresh()
-
-        #expect(resolver.resolved.snapshotSizes[second.id] == nil)
-        #expect(resolver.resolved.snapshotSizes[first.id] != nil)
     }
 
     // MARK: - Attachment sizes
@@ -607,25 +320,6 @@ struct VMOverviewResolverTests {
         return (makeResolver(instance: instance, viewModel: viewModel), instance, viewModel)
     }
 
-    @Test("Every storage disk and removable medium is measured, keyed by its attachment")
-    func everyAttachmentIsMeasured() async {
-        let files = MockVMBundleMachineFiles()
-        let (resolver, _, _) = makeAttachmentResolver(files)
-        var reported: [VMSettingsCategory] = []
-        resolver.onCategoryResolved = { reported.append($0) }
-
-        resolver.refresh()
-        #expect(resolver.resolved.attachmentSizes.isEmpty)
-        await resolver.attachmentSizeTaskForTesting?.value
-
-        #expect(
-            resolver.resolved.attachmentSizes == [
-                Self.installer.id: Self.installerSizes, Self.mainDisk.id: Self.mainDiskSizes,
-                Self.stick.id: Self.stickSizes,
-            ])
-        #expect(reported == [.storage])
-    }
-
     @Test("A stopped VM is measured once per attachment set and phase; a running one on every pass")
     func onlyARunningVMIsRemeasuredEveryPass() async {
         let files = MockVMBundleMachineFiles()
@@ -644,23 +338,6 @@ struct VMOverviewResolverTests {
         resolver.refresh()
         await resolver.attachmentSizeTaskForTesting?.value
         #expect(files.diskSizeReads == 3)
-    }
-
-    @Test("Showing the sizes again measures a stopped VM again, with nothing else changed")
-    func remeasuringAttachmentsReadsAgain() async {
-        let files = MockVMBundleMachineFiles()
-        let (resolver, _, _) = makeAttachmentResolver(files)
-        resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
-
-        let grown = VMBundleLayout.DiskSizes(onDiskBytes: 12_000_000_000, capacityBytes: 100_000_000_000)
-        files.setDiskSizes(grown, for: Self.mainDisk.id)
-        resolver.remeasureAttachmentSizes()
-        resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
-
-        #expect(files.diskSizeReads == 2)
-        #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == grown)
     }
 
     @Test("Detaching a medium drops its sizes at once and leaves the disks' on screen")

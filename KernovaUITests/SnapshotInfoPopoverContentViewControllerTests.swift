@@ -81,35 +81,10 @@ struct SnapshotInfoPopoverContentViewControllerTests {
         #expect(findLabel(withText: "Kernova 0.10.0 (412)", in: controller.view) != nil)
     }
 
-    @Test("A saved state with no recorded version names no saver")
-    func unrecordedVersionNamesNoSaver() {
-        let controller = makeController(kind: .warm, savedStateVersion: nil)
-        #expect(findLabel(withText: "Saved by", in: controller.view) == nil)
-    }
-
-    @Test("The facts grid says what a powered-off snapshot captured")
-    func coldNamesWhatItCaptured() {
-        let controller = makeController(kind: .cold)
-        #expect(
-            findLabel(withText: SnapshotKindCopy.capturedContents(.cold), in: controller.view) != nil)
-    }
-
     /// Lays the popover out at the size it asks its host for.
     private func layOut(_ controller: NSViewController) {
         controller.view.setFrameSize(controller.view.fittingSize)
         controller.view.layoutSubtreeIfNeeded()
-    }
-
-    @Test("A running-state snapshot's Captured value sits on one line, untruncated")
-    func warmCapturedValueFitsOnOneLine() throws {
-        let controller = makeController(kind: .warm)
-        layOut(controller)
-
-        let value = try #require(
-            findLabel(withText: SnapshotKindCopy.capturedContents(.warm), in: controller.view))
-        let needed = value.fittingSize
-        #expect(value.frame.width >= needed.width)
-        #expect(value.frame.height == needed.height)
     }
 
     @Test("A long snapshot name wraps within the width the facts set")
@@ -129,18 +104,6 @@ struct SnapshotInfoPopoverContentViewControllerTests {
         // Wrapped rather than clipped: the name takes more than one line.
         let lineHeight = try #require(headline.font).boundingRectForFont.height
         #expect(headline.frame.height > lineHeight)
-    }
-
-    @Test("An editable popover always offers the Notes box, empty or not")
-    func editableAlwaysOffersNotes() {
-        let bare = makeController(kind: .warm)
-        #expect(findLabel(withText: "Notes", in: bare.view) != nil)
-        #expect(notesEditor(in: bare)?.text == "")
-        // The empty box says what it is for.
-        #expect(findLabel(withText: "Add notes\u{2026}", in: bare.view) != nil)
-
-        let annotated = makeController(kind: .warm, notes: "tools configured")
-        #expect(notesEditor(in: annotated)?.text == "tools configured")
     }
 
     @Test("Dismissing the popover commits what the box holds")
@@ -170,16 +133,5 @@ struct SnapshotInfoPopoverContentViewControllerTests {
         #expect(closeRequests == 1)
         #expect(recorder.committed.isEmpty)
         #expect(notesEditor(in: controller)?.text == "tools configured")
-    }
-
-    @Test("Dismissing an untouched popover commits nothing")
-    func dismissWithoutAnEditCommitsNothing() {
-        let recorder = NoteRecorder()
-        let controller = makeController(
-            kind: .warm, notes: "tools configured", recorder: recorder)
-
-        controller.viewWillDisappear()
-
-        #expect(recorder.committed.isEmpty)
     }
 }

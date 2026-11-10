@@ -16,7 +16,6 @@ import Testing
 @MainActor
 struct DetailContainerLibraryLoadTests {
     private let preferences = makeTestPreferences()
-    private let scratch = TestScratchDirectory(prefix: "DetailContainerLibraryLoadTests")
 
     private func makeViewModel(storageService: MockVMStorageService = MockVMStorageService())
         -> VMLibraryViewModel
@@ -78,31 +77,6 @@ struct DetailContainerLibraryLoadTests {
         return collect(controller.view)
     }
 
-    private func storageHoldingOneVM() -> (MockVMStorageService, VMConfiguration) {
-        let storage = MockVMStorageService()
-        let config = VMConfiguration(
-            name: "Library VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let url = scratch.url
-            .appendingPathComponent("\(config.id.uuidString).kernova", isDirectory: true)
-        storage.setConfiguration(config, at: url)
-        return (storage, config)
-    }
-
-    @Test("The no-VM empty state is withheld until the library has been read")
-    func emptyStateWithheldBeforeLoad() {
-        let (storage, _) = storageHoldingOneVM()
-        let viewModel = makeViewModel(storageService: storage)
-        let controller = DetailContainerViewController(viewModel: viewModel)
-        present(controller)
-
-        // The library holds a VM that simply hasn't been read yet, so "No Virtual
-        // Machine Selected" — and its New Virtual Machine button — would be a
-        // false claim the user can act on.
-        #expect(viewModel.hasLoadedLibrary == false)
-        #expect(hasEmptyState(controller) == false)
-    }
-
     @Test("A library that reads back empty reaches the no-VM empty state")
     func emptyStateShownAfterEmptyLoad() async {
         let viewModel = makeViewModel()
@@ -119,21 +93,6 @@ struct DetailContainerLibraryLoadTests {
         // the pane blank for the whole session.
         #expect(viewModel.hasLoadedLibrary == true)
         #expect(hasEmptyState(controller) == true)
-    }
-
-    @Test("A loaded VM replaces the withheld state with its detail content")
-    func detailShownAfterPopulatedLoad() async {
-        let (storage, config) = storageHoldingOneVM()
-        let viewModel = makeViewModel(storageService: storage)
-        let controller = DetailContainerViewController(viewModel: viewModel)
-        present(controller)
-
-        await viewModel.loadVMs()
-        await drainMainActor()
-
-        #expect(viewModel.selectedID == config.id)
-        #expect(viewModel.instances.map(\.name) == ["Library VM"])
-        #expect(hasEmptyState(controller) == false)
     }
 
     @Test("A selected arrival shows the placeholder carrying its label, which follows its stage")

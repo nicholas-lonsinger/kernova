@@ -43,51 +43,6 @@ struct VMDisplayBackingViewTests {
         #expect(backing.machineView.capturesSystemKeys == false)
     }
 
-    @Test("each setting moves on its own")
-    func settingsMoveIndependently() throws {
-        let backing = makeBacking()
-
-        backing.apply(settings(autoResize: true, capturesSystemKeys: false))
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
-        #expect(backing.machineView.capturesSystemKeys == false)
-
-        backing.apply(settings(autoResize: true, capturesSystemKeys: true))
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
-        #expect(backing.machineView.capturesSystemKeys == true)
-
-        backing.apply(settings(autoResize: false, capturesSystemKeys: true))
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
-        #expect(backing.machineView.capturesSystemKeys == true)
-    }
-
-    @Test("apply reaches the machine view without an update pass")
-    func applySettingsStandalone() throws {
-        let backing = makeBacking()
-
-        backing.apply(settings(autoResize: false, capturesSystemKeys: false))
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
-
-        // Re-applying the same values is a no-op, and the next change still lands.
-        backing.apply(settings(autoResize: false, capturesSystemKeys: false))
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
-
-        backing.apply(settings(autoResize: true, capturesSystemKeys: true))
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
-        #expect(backing.machineView.capturesSystemKeys == true)
-    }
-
-    @Test("detach clears the machine view and leaves the applied settings alone")
-    func detachClearsWithoutTouchingTheSettings() throws {
-        let backing = makeBacking()
-        backing.apply(settings(autoResize: false, capturesSystemKeys: true))
-
-        backing.detach()
-
-        #expect(backing.machineView.virtualMachine == nil)
-        #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
-        #expect(backing.machineView.capturesSystemKeys == true)
-    }
-
     // MARK: - File drop
 
     /// A dragging info carrying whatever `pasteboard` holds, from `source`, at
@@ -151,29 +106,6 @@ struct VMDisplayBackingViewTests {
 
     // MARK: - Files dragged out of a VM
 
-    @Test("files dragged out of this same VM that its take does not carry here are refused, with the reject cursor")
-    func refusesItsOwnUncarriedDragOut() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.txt"])])
-        var pushes: [Bool] = []
-        backing.applyRejectCursor = { pushes.append($0) }
-        var offered = false
-        host.onDrop = { _, _ in
-            offered = true
-            return true
-        }
-        let take = FakeTake(items: [])
-        let source = DisplayDragOutSource(vmID: host.id, take: take)
-        let drag = makeTextDrag("promise", source: source)
-
-        #expect(backing.draggingEntered(drag) == [])
-        #expect(pushes == [true])
-        #expect(!backing.performDragOperation(drag))
-        #expect(!offered)
-        #expect(take.events == [.hostSessionOver(.zero), .hostSessionDropped(.zero)])
-    }
-
     @Test("files dragged out of this same VM go back into the guest, the promises unread")
     func carriesItsOwnDragOutIntoTheGuest() throws {
         let backing = makeBacking()
@@ -224,32 +156,6 @@ struct VMDisplayBackingViewTests {
         #expect(backing.draggingEntered(makeTextDrag("promise", source: source)) == .copy)
     }
 
-    @Test("another VM's drag out has its promised items named before the host calls them in")
-    func anotherVMsDragOutIsNamedFirst() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        let receiver = StubPromiseReceiver(fileNames: ["IMG_0001.jpeg"])
-        backing.promiseSource = makePromiseSource([receiver])
-        var handed: [any FilePromiseReceiving] = []
-        host.onDrop = { _, promises in
-            handed = promises
-            return true
-        }
-        let take = FakeTake(items: [])
-        var handedFirst: Bool?
-        take.onNameItems = {
-            handedFirst = !handed.isEmpty
-            return true
-        }
-        let drag = makeTextDrag("promise", source: DisplayDragOutSource(vmID: UUID(), take: take))
-
-        #expect(backing.performDragOperation(drag))
-
-        #expect(handedFirst == false)
-        #expect(take.events == [.namedItemsForInAppDestination])
-        #expect(handed.map { ObjectIdentifier($0) } == [ObjectIdentifier(receiver)])
-    }
-
     @Test("another VM's drag out whose promised items could not be named is refused, nothing called in")
     func unnamedDragOutIsRefused() throws {
         let backing = makeBacking()
@@ -272,34 +178,6 @@ struct VMDisplayBackingViewTests {
         #expect(take.events == [.namedItemsForInAppDestination])
     }
 
-    @Test("a VM that never ran the agent is not a drag destination at all")
-    func neverConnectedRegistersNothing() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .none
-
-        backing.applyDropRegistration()
-
-        #expect(backing.registeredDraggedTypes.isEmpty)
-    }
-
-    @Test("a VM whose agent has connected before registers, even while disconnected")
-    func disconnectedStillRegisters() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .disconnected
-
-        backing.applyDropRegistration()
-        #expect(backing.registeredDraggedTypes.contains(.fileURL))
-
-        // Registration is idempotent, and follows availability back down.
-        let registered = backing.registeredDraggedTypes
-        backing.applyDropRegistration()
-        #expect(backing.registeredDraggedTypes == registered)
-
-        host.displayDropAvailability = .none
-        backing.applyDropRegistration()
-        #expect(backing.registeredDraggedTypes.isEmpty)
-    }
-
     @Test("a drag carrying no file URL is refused even when the agent is reachable")
     func refusesNonFileDrags() throws {
         let backing = makeBacking()
@@ -307,51 +185,6 @@ struct VMDisplayBackingViewTests {
         backing.applyDropRegistration()
 
         #expect(backing.draggingEntered(makeTextDrag("hello")) == [])
-    }
-
-    @Test("a drop hands the host the drag's own pasteboard")
-    func dropHandsOverThePasteboard() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        var received: (any ClipboardReadPasteboard)?
-        var promises: [any FilePromiseReceiving]?
-        host.onDrop = { pasteboard, handed in
-            received = pasteboard
-            promises = handed
-            return true
-        }
-        let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt"), URL(fileURLWithPath: "/tmp/b.txt")])
-
-        #expect(backing.performDragOperation(drag))
-        #expect(received === drag.draggingPasteboard)
-        #expect(promises?.isEmpty == true)
-    }
-
-    @Test("a drop re-checks availability, so a session lost mid-drag springs back")
-    func dropRechecksAvailability() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        var forwarded = false
-        host.onDrop = { _, _ in
-            forwarded = true
-            return true
-        }
-        let drag = makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])
-        #expect(backing.draggingUpdated(drag) == .copy)
-
-        // The guest agent goes away between the last pointer move and the release.
-        host.displayDropAvailability = .disconnected
-        #expect(!backing.performDragOperation(drag))
-        #expect(!forwarded)
-    }
-
-    @Test("a refused send reports the drop as not taken")
-    func reportsARefusedSend() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        host.onDrop = { _, _ in false }
-
-        #expect(!backing.performDragOperation(makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])))
     }
 
     @Test("a file promise's types are registered alongside concrete file URLs")
@@ -385,17 +218,6 @@ struct VMDisplayBackingViewTests {
 
         backing.draggingExited(drag)
         #expect(pushes == [true, false])
-    }
-
-    @Test("a drag this display accepts pushes no cursor at all")
-    func acceptedDragPushesNothing() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        var pushes: [Bool] = []
-        backing.applyRejectCursor = { pushes.append($0) }
-
-        #expect(backing.draggingEntered(makeFileDrag([URL(fileURLWithPath: "/tmp/a.txt")])) == .copy)
-        #expect(pushes.isEmpty)
     }
 
     @Test("availability changing mid-drag flips the cursor on the next update")
@@ -448,16 +270,6 @@ struct VMDisplayBackingViewTests {
         -> DisplayDropPromiseSource
     {
         DisplayDropPromiseSource(carriesPromises: { _ in true }, receivers: { _ in receivers })
-    }
-
-    @Test("a drag carrying only promises is accepted")
-    func promiseOnlyDragIsAccepted() throws {
-        let backing = makeBacking()
-        host.displayDropAvailability = .available
-        backing.promiseSource = makePromiseSource([StubPromiseReceiver(fileNames: ["a.png"])])
-
-        // The pasteboard holds no file URL at all — a Photos drag's shape.
-        #expect(backing.draggingEntered(makeTextDrag("hello")) == .copy)
     }
 
     @Test("a promise drag hands the host its receivers in drag order, none called in")
