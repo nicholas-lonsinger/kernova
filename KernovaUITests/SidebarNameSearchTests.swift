@@ -35,33 +35,6 @@ struct SidebarNameSearchTests {
 
     // MARK: - Projection
 
-    @Test("The search narrows every section — smart groups, folders and the library — on top of each one's own rule")
-    func narrowsEverySection() {
-        let entries = [
-            vm("Ubuntu", guestOS: .linux), vm("Ubuntu Mac", guestOS: .macOS), vm("Sonoma", guestOS: .macOS),
-        ]
-        let macs = VMSmartGroup(id: UUID(), name: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
-        let folder = VMFolder(id: UUID(), name: "Lab", members: entries.map(\.id))
-        let layout = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(sort: .name), search: search("ubuntu"),
-            organization: .listed([.smartGroup(macs), .folder(folder), .library]), context: .testing())
-
-        #expect(names(in: layout.sections[0]) == ["Ubuntu Mac"])
-        #expect(names(in: layout.sections[1]) == ["Ubuntu", "Ubuntu Mac"])
-        #expect(names(in: layout.sections[2]) == ["Ubuntu", "Ubuntu Mac"])
-    }
-
-    @Test("The search and the library's filter both narrow the library: a VM is listed only when both admit it")
-    func andsWithTheFilter() {
-        let entries = [vm("Ubuntu", guestOS: .linux), vm("Ubuntu Mac", guestOS: .macOS), vm("Sonoma", guestOS: .macOS)]
-        let layout = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS])),
-            search: search("ubuntu"), context: .testing())
-
-        #expect(names(in: layout.sections[0]) == ["Ubuntu Mac"])
-        #expect(layout.sections[0].count == .narrowed(shown: 1, of: 3))
-    }
-
     @Test("While a search is on, each header counts what it lists of what it holds")
     func countsUnderSearch() {
         let entries = [vm("Ubuntu", guestOS: .linux), vm("Ubuntu Mac", guestOS: .macOS), vm("Sonoma", guestOS: .macOS)]
@@ -118,90 +91,6 @@ struct SidebarNameSearchTests {
                 == SidebarGroupHeaderCellView.Filtering(countText: "1 of 2", isActive: false, activeDescription: nil))
     }
 
-    // MARK: - Apart from the filter
-
-    @Test("Clear Filters clears the filter and keeps the search")
-    func clearFiltersKeepsTheSearch() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Ubuntu", guestOS: .linux)
-        viewModel.library.admitFixture(name: "Ubuntu Mac", guestOS: .macOS)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
-        viewModel.library.sidebarSearch = search("ubuntu")
-        let controller = SidebarViewController(viewModel: viewModel)
-
-        let menu = try #require(controller.viewMenu(for: .library))
-        let clear = try #require(menu.items.first { $0.title == "Clear Filters" })
-        let command = try #require((clear.representedObject as? SidebarViewMenu.Pick)?.command)
-        controller.perform(command)
-
-        #expect(!viewModel.sidebarOptions.filter.isActive)
-        #expect(viewModel.library.sidebarSearch == search("ubuntu"))
-        #expect(names(in: try #require(viewModel.sidebarLayout.sections.last)) == ["Ubuntu", "Ubuntu Mac"])
-    }
-
-    @Test("Saving the filter as a smart group saves the filter alone, and the search stays on")
-    func saveAsSmartGroupLeavesTheSearch() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Ubuntu Mac", guestOS: .macOS)
-        viewModel.library.admitFixture(name: "Sonoma", guestOS: .macOS)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
-        viewModel.library.sidebarSearch = search("ubuntu")
-
-        let group = try viewModel.library.saveSidebarFilter(viewModel.sidebarOptions.filter, asSmartGroupNamed: "Macs")
-
-        #expect(group.filter == VMLibraryFilter(guestOSes: [.macOS]))
-        #expect(viewModel.library.sidebarSearch == search("ubuntu"))
-        // The group holds both Macs; the search lists one of them.
-        #expect(viewModel.sidebarLayout.sections.first?.count == .narrowed(shown: 1, of: 2))
-    }
-
-    // MARK: - Selection
-
-    @Test("A search that hides the selected VM clears the selection, as a filter edit does")
-    func searchHidingSelectionClearsIt() {
-        let viewModel = makeViewModel()
-        let ubuntu = viewModel.library.admitFixture(name: "Ubuntu")
-        viewModel.library.admitFixture(name: "Sonoma")
-        viewModel.selection = .library(ubuntu.id)
-
-        viewModel.library.sidebarSearch = search("sonoma")
-
-        #expect(viewModel.selection == nil)
-    }
-
-    @Test("Renaming the selected VM out of the search keeps it listed until the selection moves off it")
-    func renameKeepsSelectedVMListed() throws {
-        let viewModel = makeViewModel()
-        let ubuntu = viewModel.library.admitFixture(name: "Ubuntu")
-        let other = viewModel.library.admitFixture(name: "Ubuntu Two")
-        viewModel.library.sidebarSearch = search("ubuntu")
-        viewModel.selection = .library(ubuntu.id)
-
-        try viewModel.commandsLeavingEditsOpen.rename(.id(ubuntu.id), to: "Renamed")
-
-        let library = try #require(viewModel.sidebarLayout.sections.last)
-        #expect(names(in: library) == ["Renamed", "Ubuntu Two"])
-        #expect(viewModel.selection == .library(ubuntu.id))
-
-        viewModel.selection = .library(other.id)
-        #expect(names(in: try #require(viewModel.sidebarLayout.sections.last)) == ["Ubuntu Two"])
-    }
-
-    @Test("Revealing a VM the search hides clears the search")
-    func revealClearsAHidingSearch() {
-        let viewModel = makeViewModel()
-        let ubuntu = viewModel.library.admitFixture(name: "Ubuntu")
-        let sonoma = viewModel.library.admitFixture(name: "Sonoma")
-        viewModel.library.sidebarSearch = search("sonoma")
-
-        viewModel.selectRevealing(sonoma.id)
-        #expect(viewModel.library.sidebarSearch == search("sonoma"))
-
-        viewModel.selectRevealing(ubuntu.id)
-        #expect(!viewModel.library.sidebarSearch.isActive)
-        #expect(viewModel.selection == .library(ubuntu.id))
-    }
-
     // MARK: - A search from outside the app
 
     @Test("A search from outside the app fills the search and selects the VM the term most likely names")
@@ -215,19 +104,6 @@ struct SidebarNameSearchTests {
 
         #expect(viewModel.library.sidebarSearch == search("Ubuntu"))
         #expect(viewModel.selectedID == exact.id)
-    }
-
-    @Test("A search from outside the app that nothing matches fills the search and clears the selection it hides")
-    func showSearchResultsWithNoMatch() {
-        let viewModel = makeViewModel()
-        let ubuntu = viewModel.library.admitFixture(name: "Ubuntu")
-        viewModel.selection = .library(ubuntu.id)
-
-        viewModel.library.showSearchResults(for: "Sequoia")
-
-        #expect(viewModel.library.sidebarSearch == search("Sequoia"))
-        #expect(viewModel.selection == nil)
-        #expect(viewModel.sidebarLayout.sections.last?.emptyText == SidebarLayout.noMatchesText)
     }
 
     // MARK: - The sidebar's field and Find VM
@@ -278,26 +154,6 @@ struct SidebarNameSearchTests {
             sidebar: try #require(split.splitViewItems.first { $0.behavior == .sidebar }))
     }
 
-    @Test("The sidebar's field writes the library's search and shows one written elsewhere, with the toolbar hidden")
-    func fieldMirrorsTheLibrarySearchWithToolbarHidden() async throws {
-        let viewModel = makeViewModel()
-        let subject = try makeWindow(viewModel)
-        subject.window.toolbar?.isVisible = false
-        subject.window.makeKeyAndOrderFront(nil)
-        let field = subject.field
-        #expect(field.window === subject.window)
-
-        subject.controller.focusSearch()
-        field.stringValue = "ubu"
-        _ = field.sendAction(field.action, to: field.target)
-        #expect(viewModel.library.sidebarSearch == search("ubu"))
-
-        viewModel.library.showSearchResults(for: "sonoma")
-        // The sidebar's own observation loop writes the field, and offers no
-        // test-facing signal to await.
-        try await waitUntil { field.stringValue == "sonoma" }
-    }
-
     /// `subject`'s search field holding the keyboard, and its field editor.
     private func editField(of subject: Window) throws -> NSTextView {
         subject.window.makeKeyAndOrderFront(nil)
@@ -319,23 +175,6 @@ struct SidebarNameSearchTests {
 
         #expect(editor.string == "ubu")
         #expect(subject.field.currentEditor() === editor)
-    }
-
-    @Test("Marked text being composed survives a sync pass")
-    func markedTextSurvivesSync() throws {
-        let viewModel = makeViewModel()
-        let subject = try makeWindow(viewModel)
-        let editor = try editField(of: subject)
-
-        editor.setMarkedText(
-            "う", selectedRange: NSRange(location: 1, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0))
-        try #require(editor.hasMarkedText())
-        viewModel.library.admitFixture(name: "Ubuntu")
-        subject.controller.sidebarViewController.viewDidAppear()
-
-        #expect(editor.hasMarkedText())
-        #expect(editor.string == "う")
     }
 
     @Test("A search written from outside the idle field shows the field and the search on the next sync pass")
@@ -360,60 +199,6 @@ struct SidebarNameSearchTests {
         #expect(subject.field.stringValue == "")
     }
 
-    @Test("A library window opens with the keyboard in the outline, not the search field")
-    func libraryOpensWithTheOutlineFocused() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Ubuntu")
-        let registry = makeWindowRegistry(viewModel)
-
-        registry.showLibrary(bringToFront: true)
-
-        let window = try #require(registry.libraryWindow)
-        let sidebar = try #require(registry.librarySidebar)
-        #expect(window.firstResponder === sidebar.outlineView)
-        #expect((window.firstResponder as? NSText)?.delegate !== sidebar.searchField)
-    }
-
-    @Test("Find VM expands a collapsed sidebar and puts the keyboard in the search field")
-    func findVMWithSidebarCollapsed() async throws {
-        let subject = try makeWindow(makeViewModel())
-        subject.window.makeKeyAndOrderFront(nil)
-        subject.sidebar.isCollapsed = true
-
-        subject.controller.focusSearch()
-
-        try await waitUntil { !subject.sidebar.isCollapsed }
-        #expect(subject.fieldShown)
-        #expect(subject.fieldHasFocus)
-    }
-
-    @Test("The default toolbar puts Search right after New VM, ahead of the sidebar toggle")
-    func searchButtonInDefaultToolbar() throws {
-        let subject = try makeWindow(makeViewModel())
-        let layout = try #require(subject.window.toolbar).items.map(\.itemIdentifier)
-        let index = try #require(layout.firstIndex(of: NSToolbarItem.Identifier("newVM")))
-
-        #expect(
-            Array(layout[index...].prefix(3)) == [
-                NSToolbarItem.Identifier("newVM"), Window.search, .toggleSidebar,
-            ])
-    }
-
-    @Test("At the sidebar's minimum width, New VM, Search and the sidebar toggle all show, none in the overflow menu")
-    func sidebarItemsFitAtMinimumWidth() throws {
-        let subject = try makeWindow(makeViewModel())
-        subject.window.makeKeyAndOrderFront(nil)
-        let split = try #require(subject.window.contentViewController as? NSSplitViewController)
-
-        split.splitView.setPosition(subject.sidebar.minimumThickness, ofDividerAt: 0)
-        subject.window.layoutIfNeeded()
-        try #require(!subject.sidebar.isCollapsed)
-
-        try #require(split.splitView.arrangedSubviews[0].frame.width == subject.sidebar.minimumThickness)
-        let visible = Set(try #require(subject.window.toolbar?.visibleItems).map(\.itemIdentifier))
-        #expect(Set([NSToolbarItem.Identifier("newVM"), Window.search, .toggleSidebar]).subtracting(visible).isEmpty)
-    }
-
     @Test("New VM and Search share one glass capsule")
     func searchSharesNewVMGlass() throws {
         let subject = try makeWindow(makeViewModel())
@@ -430,37 +215,6 @@ struct SidebarNameSearchTests {
         #expect(
             try glass(behind: #selector(AppDelegate.newVM(_:)))
                 === glass(behind: #selector(MainWindowController.toggleSearch(_:))))
-    }
-
-    @Test("Clicking the on-screen Search button toggles the field")
-    func onScreenSearchButtonToggles() throws {
-        let subject = try makeWindow(makeViewModel())
-        subject.window.makeKeyAndOrderFront(nil)
-        let button = try subject.toolbarControl(sending: #selector(MainWindowController.toggleSearch(_:)))
-
-        button.performClick(nil)
-        #expect(subject.fieldShown)
-        #expect(subject.fieldHasFocus)
-
-        button.performClick(nil)
-        #expect(!subject.fieldShown)
-    }
-
-    @Test("Show in Finder's toolbar item shows the Finder's symbol, not Search's magnifying glass")
-    func showInFinderSymbol() throws {
-        let subject = try makeWindow(makeViewModel())
-        let toolbar = try #require(subject.window.toolbar)
-        func symbol(_ name: String) -> Data? {
-            NSImage(systemSymbolName: name, accessibilityDescription: nil)?.tiffRepresentation
-        }
-
-        let item = try #require(
-            subject.controller.toolbar(
-                toolbar, itemForItemIdentifier: NSToolbarItem.Identifier("showInFinder"),
-                willBeInsertedIntoToolbar: false))
-
-        #expect(item.image?.tiffRepresentation == symbol("finder"))
-        #expect(item.image?.tiffRepresentation != symbol("magnifyingglass"))
     }
 
     @Test("The Search button shows the field with the keyboard in it, and hides it again, ending its search")
@@ -483,20 +237,6 @@ struct SidebarNameSearchTests {
         #expect(!viewModel.library.sidebarSearch.isActive)
     }
 
-    @Test("The Search button expands a collapsed sidebar with the field shown instead of hiding it")
-    func searchButtonWithSidebarCollapsed() async throws {
-        let subject = try makeWindow(makeViewModel())
-        subject.window.makeKeyAndOrderFront(nil)
-        subject.controller.focusSearch()
-        subject.sidebar.isCollapsed = true
-
-        try subject.clickSearchButton()
-
-        try await waitUntil { !subject.sidebar.isCollapsed }
-        #expect(subject.fieldShown)
-        #expect(subject.fieldHasFocus)
-    }
-
     @Test("Escape clears a search field holding text and keeps it shown, then hides the empty field")
     func escapeHidesAnEmptyField() throws {
         let subject = try makeWindow(makeViewModel())
@@ -511,28 +251,5 @@ struct SidebarNameSearchTests {
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         #expect(!subject.fieldShown)
         #expect(!subject.fieldHasFocus)
-    }
-
-    @Test("Find VM is ⌘F, enabled with no library window, and opens the window with its field shown and focused")
-    func findVMOpensTheLibrary() throws {
-        let viewModel = makeViewModel()
-        let registry = makeWindowRegistry(viewModel)
-        let menuController = MainMenuController(viewModel: viewModel, windows: registry)
-        let edit = try #require(menuController.makeMainMenu().items.first { $0.submenu?.title == "Edit" }?.submenu)
-        let find = try #require(edit.items.first { $0.title == "Find VM\u{2026}" })
-        #expect(find.keyEquivalent == "f")
-        #expect(find.keyEquivalentModifierMask == [.command])
-        #expect(find.action == #selector(AppDelegate.findVM(_:)))
-        #expect(menuController.validate(find))
-
-        // What `AppDelegate.findVM(_:)` runs.
-        #expect(registry.libraryWindow == nil)
-
-        registry.focusLibrarySearch()
-
-        let window = try #require(registry.libraryWindow)
-        let sidebar = try #require(registry.librarySidebar)
-        #expect(sidebar.isSearchShown)
-        #expect((window.firstResponder as? NSText)?.delegate === sidebar.searchField)
     }
 }

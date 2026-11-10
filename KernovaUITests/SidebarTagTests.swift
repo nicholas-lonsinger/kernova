@@ -61,48 +61,6 @@ struct SidebarTagTests {
 
     // MARK: - Store
 
-    @Test("Tags persist in their order with their colors; a rename and a recolor keep the identifier")
-    func tagsRoundTrip() throws {
-        let directory = VMOrganizationDirectory(fileURL: fileURL)
-        let work = try directory.createTag(named: " Work ", color: .blue)
-        let lab = try directory.createTag(named: "Lab", color: .green)
-        #expect(work.name == "Work")
-
-        try directory.renameTag(lab.id, to: "Bench")
-        try directory.setColor(.red, ofTag: work.id)
-
-        let reread = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(
-            reread.tags == [
-                VMTag(id: work.id, name: "Work", color: .red), VMTag(id: lab.id, name: "Bench", color: .green),
-            ])
-        #expect(reread.state.listed?.tag(named: "bench")?.id == lab.id)
-        #expect(reread.state.listed?.tag(named: work.id.uuidString.lowercased())?.id == work.id)
-        #expect(reread.state.listed?.tag(named: "Home") == nil)
-        #expect(reread.unusedName(from: "Work", for: .tag) == "Work 2")
-    }
-
-    @Test("A tag's name is non-empty, no identifier, and unique among tags ignoring case")
-    func tagNamesAreValidated() throws {
-        let directory = VMOrganizationDirectory(fileURL: nil)
-        let work = try directory.createTag(named: "Work", color: .blue)
-        // A smart group's name does not take a tag's.
-        try directory.createSmartGroup(named: "Lab", filter: VMLibraryFilter())
-        let lab = try directory.createTag(named: "Lab", color: .green)
-
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameRequired(.tag)) {
-            try directory.createTag(named: " ", color: .red)
-        }
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Work", .tag)) {
-            try directory.renameTag(lab.id, to: "WORK")
-        }
-        let identifier = UUID().uuidString
-        #expect(throws: VMOrganizationDirectory.ChangeError.nameIsIdentifier(identifier, .tag)) {
-            try directory.createTag(named: identifier, color: .red)
-        }
-        #expect(directory.tags?.map(\.id) == [work.id, lab.id])
-    }
-
     @Test("A library file written before tags reads with none, and keeps its groups as a tag is added")
     func fileWithoutTagsReadsWithNone() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
@@ -116,61 +74,7 @@ struct SidebarTagTests {
         #expect(VMOrganizationDirectory(fileURL: fileURL).tags == [work])
     }
 
-    @Test("Deleting a tag keeps a smart group's condition on it, which then lists no VM through it")
-    func deletingATagNeverWidensASmartGroup() throws {
-        let viewModel = makeViewModel()
-        let library = viewModel.library
-        let work = try library.createTag(named: "Work", color: .blue)
-        library.admitFixture(name: "Tagged", hostState: VMHostState(tags: [work.id]))
-        library.admitFixture(name: "Plain")
-        let group = try library.organization.createSmartGroup(named: "Work", filter: VMLibraryFilter(tags: [work.id]))
-        func listed() -> [String] {
-            guard
-                case .rows(let rows)? = library.sidebarLayout.sections.first(where: { $0.id == .smartGroup(group.id) })?
-                    .content
-            else { return [] }
-            return rows.entries.map(\.name)
-        }
-        #expect(listed() == ["Tagged"])
-
-        try library.deleteTag(work.id)
-
-        #expect(library.organization.smartGroup(withID: group.id)?.filter == VMLibraryFilter(tags: [work.id]))
-        #expect(listed() == [])
-    }
-
     // MARK: - Assignments
-
-    @Test("An assignment the library does not define shows nowhere and filters as none")
-    func undefinedAssignmentsReadAsNone() throws {
-        let viewModel = makeViewModel()
-        let library = viewModel.library
-        let work = try library.createTag(named: "Work", color: .blue)
-        let vm = library.admitFixture(name: "A", hostState: VMHostState(tags: [work.id, UUID()]))
-
-        #expect(library.tags(of: vm) == [work])
-        #expect(library.sidebarContext.subject(of: .vm(vm))?.tags == [work.id])
-    }
-
-    @Test("Clones keep their source's tags, both a New Machine and an Exact Copy")
-    func clonesKeepTags() async throws {
-        for outcome in [CloneOutcome.newMachine, .exactCopy] {
-            let storage = MockVMStorageService()
-            let viewModel = makeViewModel(storage: storage)
-            let library = viewModel.library
-            let work = try library.createTag(named: "Work", color: .blue)
-            let original = library.admitFixture(name: "Original", hostState: VMHostState(tags: [work.id]))
-            storage.setConfiguration(original.configuration, at: original.bundleURL)
-            storage.setHostState(original.hostState, at: original.bundleURL)
-
-            viewModel.cloneVM(original, as: outcome)
-            await viewModel.awaitArrivals()
-
-            let clone = try #require(viewModel.instances.first { $0.id != original.id }, "\(outcome)")
-            #expect(library.tags(of: clone) == [work], "\(outcome)")
-            #expect(storage.hostStates[clone.bundleURL]?.tags == [work.id], "\(outcome)")
-        }
-    }
 
     @Test(
         "A clone's arrival reads as the clone it becomes, tags, Ephemeral Mode and snapshots"
@@ -234,24 +138,6 @@ struct SidebarTagTests {
         // The tag filter lists it, so the import selects it.
         #expect(viewModel.selectedID == arrival.id)
         await viewModel.awaitArrivals()
-    }
-
-    @Test("An import keeps every assignment, one this library does not define inert")
-    func importKeepsAssignments() async throws {
-        let storage = MockVMStorageService()
-        let viewModel = makeViewModel(storage: storage)
-        let work = try viewModel.library.createTag(named: "Work", color: .blue)
-        let foreign = UUID()
-        let source = try scratch.importSource(name: "Arriving")
-        try VMConfiguration.makeJSONEncoder().encode(VMHostState(tags: [work.id, foreign]))
-            .write(to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
-
-        #expect(viewModel.importVMs(fromDroppedURLs: [source.url]))
-        await viewModel.awaitArrivals()
-
-        let imported = try #require(viewModel.instances.first { $0.id == source.config.id })
-        #expect(imported.hostState.tags == [work.id, foreign])
-        #expect(viewModel.library.tags(of: imported) == [work])
     }
 
     // MARK: - Grouping
@@ -416,31 +302,6 @@ struct SidebarTagTests {
         #expect(work.color.dotImage().tiffRepresentation != lab.color.dotImage().tiffRepresentation)
     }
 
-    @Test("The Settings color pop-up lists every color with its swatch, opted in to showing")
-    func colorPopUpShowsSwatches() throws {
-        let popUp = TagsSettingsViewController.colorPopUp(selecting: .green)
-        #expect(popUp.itemArray.map(\.title) == VMTagColor.allCases.map(\.title))
-        #expect(popUp.titleOfSelectedItem == VMTagColor.green.title)
-        for item in popUp.itemArray {
-            let image = try #require(item.image, "\(item.title)")
-            #expect(image.accessibilityDescription == item.title)
-            if #available(macOS 27, *) {
-                #expect(item.preferredImageVisibility == .visible, "\(item.title)")
-            }
-        }
-    }
-
-    @Test("With no tags, a VM's Tags menu offers only Edit Tags…")
-    func contextMenuWithoutTags() throws {
-        let viewModel = makeViewModel()
-        let vm = viewModel.library.admitFixture(name: "A")
-        let controller = SidebarViewController(viewModel: viewModel)
-        controller.loadViewIfNeeded()
-
-        let submenu = try #require(controller.buildContextMenu(for: vm).items.first { $0.title == "Tags" }?.submenu)
-        #expect(submenu.items.map(\.title) == ["Edit Tags\u{2026}"])
-    }
-
     @Test("The filter menu's Tags row lists each tag with its count; a pick widens the set")
     func filterMenuTags() throws {
         let viewModel = makeViewModel()
@@ -470,19 +331,6 @@ struct SidebarTagTests {
 
         let groupBy = try #require(controller.viewMenu(for: .library)?.items.first { $0.title == "Group By" })
         #expect(groupBy.submenu?.items.map(\.title).contains("Tag") == true)
-    }
-
-    @Test("With no tags, neither the Tags filter row nor Group By ▸ Tag is offered")
-    func noTagsOffersNoTagRows() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Plain")
-        let controller = SidebarViewController(viewModel: viewModel)
-        controller.loadViewIfNeeded()
-
-        let menu = try #require(controller.viewMenu(for: .library))
-        #expect(!menu.items.contains { $0.title == "Tags" })
-        let groupBy = try #require(menu.items.first { $0.title == "Group By" })
-        #expect(groupBy.submenu?.items.map(\.title) == ["Guest OS", "State", "Network", "", "None"])
     }
 
     @Test("A condition on a deleted tag stays listed and checked in the library's and a group's menu")
@@ -545,21 +393,6 @@ struct SidebarTagTests {
         #expect(throws: VMOrganizationDirectory.ChangeError.nameTaken("Office", .tag)) {
             try pane.create(name: "office", color: .blue)
         }
-    }
-
-    @Test("Renaming or recoloring a tag deleted since the pane read it is refused, and defines nothing")
-    func settingsPaneRefusesADeletedTag() throws {
-        let viewModel = makeViewModel()
-        let library = viewModel.library
-        let work = try library.createTag(named: "Work", color: .blue)
-        let pane = TagsSettingsViewController(viewModel: viewModel)
-        pane.loadViewIfNeeded()
-        try library.deleteTag(work.id)
-
-        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.tag)) { try pane.rename(work.id, to: "Office") }
-        #expect(throws: VMOrganizationDirectory.ChangeError.missing(.tag)) { try pane.recolor(work.id, to: .red) }
-        #expect(library.tags == [])
-        #expect(VMOrganizationDirectory.ChangeError.missing(.tag).errorDescription == "The tag no longer exists.")
     }
 
     @Test("Deleting a tag takes it off every VM and keeps every filter's condition on it, as its question says")

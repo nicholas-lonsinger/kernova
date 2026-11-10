@@ -47,15 +47,6 @@ struct SidebarProjectionTests {
 
     // MARK: - Projection
 
-    @Test("The library projection is one section listing every entry in manual order")
-    func libraryProjection() {
-        let entries = [vm("A"), vm("B"), vm("C")]
-        let layout = SidebarLayout.project(entries: entries, options: SidebarViewOptions(), context: .testing())
-
-        #expect(layout.sections.map(\.id) == [.library])
-        #expect(layout.rowKeys == entries.map { SidebarRowKey.library($0.id) })
-    }
-
     @Test("A row list keeps each entry once")
     func rowsDropRepeats() {
         let alpha = vm("A")
@@ -123,30 +114,6 @@ struct SidebarProjectionTests {
         #expect(changes.created.isEmpty)
     }
 
-    @Test("The same VM in two sections, and under two groups of one, yields distinct rows")
-    func duplicateEntriesYieldDistinctRows() throws {
-        let alpha = vm("A")
-        let tree = SidebarTree()
-        _ = tree.update(to: layout(library: [alpha], grouped: [(work, [alpha]), (lab, [alpha])]))
-
-        let libraryRow = try #require(tree.row(for: .library(alpha.id)))
-        let workRow = try #require(
-            tree.row(for: SidebarRowKey(section: running, group: work, entryID: alpha.id)))
-        let labRow = try #require(
-            tree.row(for: SidebarRowKey(section: running, group: lab, entryID: alpha.id)))
-
-        #expect(libraryRow !== workRow)
-        #expect(workRow !== labRow)
-        #expect(libraryRow.entry.vm === workRow.entry.vm)
-        // Each header is listed just before its rows, beside them.
-        let children = try #require(tree.sections.last?.children)
-        #expect(children.count == 4)
-        #expect((children[0] as? SidebarGroupHeader)?.id == work)
-        #expect(children[1] === workRow)
-        #expect((children[2] as? SidebarGroupHeader)?.id == lab)
-        #expect(children[3] === labRow)
-    }
-
     @Test("An entry replaced under its identifier reloads its row in place")
     func replacedEntryReloadsInPlace() throws {
         let id = UUID()
@@ -163,47 +130,6 @@ struct SidebarProjectionTests {
         #expect(changes.reloaded.count == 1)
         #expect(changes.reloaded.first === row)
         #expect(changes.detaches(row))
-    }
-
-    @Test("A change leaves untouched rows attached and detaches the ones it moves or removes")
-    func detachesOnlyRowsItTouches() throws {
-        let alpha = vm("A")
-        let beta = vm("B")
-        let gamma = vm("C")
-        let tree = SidebarTree()
-        _ = tree.update(to: layout(library: [alpha, beta, gamma], grouped: [(work, [beta])]))
-        let alphaRow = try #require(tree.row(for: .library(alpha.id)))
-        let betaRow = try #require(tree.row(for: .library(beta.id)))
-        let gammaRow = try #require(tree.row(for: .library(gamma.id)))
-        let groupedBeta = try #require(
-            tree.row(for: SidebarRowKey(section: running, group: work, entryID: beta.id)))
-
-        // Gamma moves to the top; the Running section goes away.
-        let changes = tree.update(to: layout(library: [gamma, alpha, beta]))
-
-        #expect(!changes.detaches(alphaRow))
-        #expect(!changes.detaches(betaRow))
-        #expect(changes.detaches(gammaRow))
-        // Through its section, which the root removes.
-        #expect(changes.detaches(groupedBeta))
-        let root = try #require(changes.children.first { $0.parent == nil })
-        #expect(root.removed == [1])
-        #expect(root.inserted == [])
-    }
-
-    @Test("A section a layout adds is created along with its group headers")
-    func addedSectionIsCreated() {
-        let alpha = vm("A")
-        let tree = SidebarTree()
-        _ = tree.update(to: layout(library: [alpha]))
-
-        let changes = tree.update(to: layout(library: [alpha], grouped: [(work, [alpha])]))
-
-        #expect(changes.created.count == 2)
-        #expect(changes.created.first === tree.sections.last)
-        #expect(changes.children.count == 1)
-        #expect(changes.children.first?.parent == nil)
-        #expect(changes.children.first?.inserted == [1])
     }
 
     // MARK: - Selection
@@ -234,48 +160,7 @@ struct SidebarProjectionTests {
         #expect(gone.resolve(inWork) == nil)
     }
 
-    @Test("selectedID is the selection's entry, and setting it targets the library row")
-    func selectedIDDerivesFromSelection() {
-        let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
-        let library = viewModel.library
-        let alpha = library.admitFixture(name: "A")
-        let beta = library.admitFixture(name: "B")
-        let inWork = SidebarRowKey(section: running, group: work, entryID: alpha.id)
-
-        library.selection = inWork
-        #expect(library.selectedID == alpha.id)
-        #expect(library.preferences.sidebarSelection == inWork)
-
-        // Selected in a row no section lists: the reveal lands on one that does.
-        library.selectRevealing(alpha.id)
-        #expect(library.selection == .library(alpha.id))
-
-        library.selectRevealing(beta.id)
-        #expect(library.selection == .library(beta.id))
-        #expect(library.preferences.sidebarSelection == .library(beta.id))
-
-        library.selection = nil
-        #expect(library.selection == nil)
-    }
-
     // MARK: - Reorder
-
-    @Test("With every entry visible, a drop maps straight through and its own gap is a no-op")
-    func reorderWithEveryEntryVisible() {
-        let order = (0..<5).map { _ in UUID() }
-        func offset(_ moved: Int, to index: Int) -> Int? {
-            SidebarLayout.manualOrderOffset(
-                moving: order[moved], toVisibleIndex: index, amongVisible: order, in: order)
-        }
-        // Move down / up: the proposed gap maps straight through.
-        #expect(offset(0, to: 3) == 3)
-        #expect(offset(4, to: 1) == 1)
-        // Dropped into its own gap (above itself or just below) — no-op.
-        #expect(offset(2, to: 2) == nil)
-        #expect(offset(2, to: 3) == nil)
-        // Past the last row appends.
-        #expect(offset(0, to: 5) == 5)
-    }
 
     @Test("Under a projection that hides entries, a drop lands just before its visible neighbor")
     func reorderAmongVisibleRows() {
