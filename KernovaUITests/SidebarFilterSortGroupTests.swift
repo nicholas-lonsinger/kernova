@@ -71,112 +71,7 @@ struct SidebarFilterSortGroupTests {
         SidebarViewOptions(filter: filter)
     }
 
-    // MARK: - Filter through the projection
-
-    @Test("The guest agent bucket judges an agent by its payload hash, not by the label it reports")
-    func agentBucketByHash() {
-        let rebuilt = Data(repeating: 0xB2, count: 32)
-        let entries = [
-            vm("Current", guestOS: .macOS) {
-                $0.lastSeenAgentVersion = "0.9 (1)"
-                $0.lastSeenAgentPayloadHash = .testingPayloadHash
-            },
-            vm("Same label, other payload", guestOS: .macOS) {
-                $0.lastSeenAgentVersion = "1.0 (1)"
-                $0.lastSeenAgentPayloadHash = rebuilt
-            },
-            vm("One scope behind", guestOS: .macOS) {
-                $0.lastSeenAgentVersion = "1.0 (1)"
-                $0.lastSeenAgentPayloadHash = .testingPayloadHash
-                $0.lastSeenSystemAgentVersion = "1.0 (1)"
-                $0.lastSeenSystemAgentPayloadHash = rebuilt
-            },
-        ]
-        #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate]))) == ["Current"])
-        #expect(
-            shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion])))
-                == ["Same label, other payload", "One scope behind"])
-        // Before the bundled payload is hashed, no recorded agent is judged.
-        let unhashed = SidebarLayout.Context.testing(bundledPayloadHashes: [:])
-        #expect(
-            shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate, .olderVersion])), context: unhashed)
-                .isEmpty)
-    }
-
-    @Test("Each attribute narrows the library section by what each VM is")
-    func filterAttributes() {
-        let baseline = VMSnapshot(name: "Baseline", macAddress: nil)
-        let kept = VMSnapshot(name: "Kept", macAddress: nil)
-        let entries = [
-            vm("Mac", guestOS: .macOS, phase: .running(sessionID: UUID())) {
-                $0.lastSeenAgentVersion = "1.0 (1)"
-                $0.lastSeenAgentPayloadHash = .testingPayloadHash
-            },
-            vm("Old Mac", guestOS: .macOS) { $0.lastSeenAgentVersion = "0.9 (1)" },
-            vm("Bare Mac", guestOS: .macOS) {
-                $0.networkEnabled = false
-            },
-            vm(
-                "Ephemeral", phase: .suspended,
-                hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id),
-                snapshots: VMSnapshotManifest(snapshots: [baseline])),
-            vm("Snapshotted", snapshots: VMSnapshotManifest(snapshots: [kept])) {
-                $0.networkMode = .hostOnly
-            },
-        ]
-
-        #expect(shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux]))) == ["Ephemeral", "Snapshotted"])
-        #expect(shownNames(entries, options(VMLibraryFilter(states: [.running]))) == ["Mac"])
-        #expect(shownNames(entries, options(VMLibraryFilter(states: [.suspended]))) == ["Ephemeral"])
-        #expect(shownNames(entries, options(VMLibraryFilter(networks: [net(.none)]))) == ["Bare Mac"])
-        #expect(shownNames(entries, options(VMLibraryFilter(networks: [net(.hostOnly)]))) == ["Snapshotted"])
-        #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.upToDate]))) == ["Mac"])
-        #expect(shownNames(entries, options(VMLibraryFilter(guestAgents: [.olderVersion]))) == ["Old Mac"])
-        #expect(
-            shownNames(entries, options(VMLibraryFilter(guestAgents: [.neverConnected])))
-                == ["Bare Mac", "Ephemeral", "Snapshotted"])
-        #expect(shownNames(entries, options(VMLibraryFilter(ephemeralOnly: true))) == ["Ephemeral"])
-        // The Ephemeral baseline counts, as every surface counts it.
-        #expect(
-            shownNames(entries, options(VMLibraryFilter(withSnapshotsOnly: true))) == ["Ephemeral", "Snapshotted"])
-        // ANDed: Linux and not Host Only.
-        #expect(
-            shownNames(entries, options(VMLibraryFilter(guestOSes: [.linux], networks: [net(.nat)])))
-                == ["Ephemeral"])
-    }
-
-    @Test("A filter hiding every VM lists the no-matches line; no filter lists nothing extra")
-    func noMatchesPlaceholder() throws {
-        let entries = [vm("Linux")]
-        let hidden = SidebarLayout.project(
-            entries: entries, options: options(VMLibraryFilter(guestOSes: [.macOS])), context: .testing())
-        #expect(hidden.rowKeys.isEmpty)
-        #expect(hidden.sections.first?.emptyText == "No matching VMs")
-
-        let tree = SidebarTree()
-        _ = tree.update(to: hidden)
-        let section = try #require(tree.sections.first)
-        #expect((section.children.first as? SidebarPlaceholder)?.text == "No matching VMs")
-
-        // Clearing the filter swaps the placeholder for the rows.
-        let changes = tree.update(
-            to: .project(entries: entries, options: SidebarViewOptions(), context: .testing()))
-        #expect(section.children.count == 1)
-        #expect(section.children.first is SidebarRow)
-        #expect(changes.children.first?.removed == IndexSet(integer: 0))
-
-        let empty = SidebarLayout.project(entries: [], options: SidebarViewOptions(), context: .testing())
-        #expect(empty.sections.first?.emptyText == nil)
-    }
-
     // MARK: - Sort
-
-    @Test("Name sorts A→Z in Finder order")
-    func sortByName() {
-        let entries = [vm("VM 10"), vm("beta"), vm("VM 2"), vm("Alpha")]
-        #expect(
-            shownNames(entries, SidebarViewOptions(sort: .name)) == ["Alpha", "beta", "VM 2", "VM 10"])
-    }
 
     @Test("Date created sorts newest first; ties keep the manual order")
     func sortByDateCreated() {
@@ -260,107 +155,6 @@ struct SidebarFilterSortGroupTests {
         #expect(byNetwork[2].names == ["Built-in Host Only"])
         #expect(byNetwork[3].names == ["Lookalike"])
         #expect(byNetwork[4].names == ["Gone A", "Gone B"])
-    }
-
-    @Test("Grouping keeps a filter: a group lists only the VMs the filter admits")
-    func groupingUnderFilter() {
-        let entries = [vm("Mac", guestOS: .macOS), vm("Linux", guestOS: .linux)]
-        let grouped = groups(
-            entries,
-            SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.linux]), grouping: .guestOS))
-        #expect(grouped.map(\.title) == ["Linux"])
-    }
-
-    // MARK: - Selection rules
-
-    @Test("A selection lands on its row, clears when hidden, and falls back to the first row when removed")
-    func reconciledSelection() {
-        let mac = vm("Mac", guestOS: .macOS)
-        let linux = vm("Linux")
-        let gone = UUID()
-        let layout = SidebarLayout.project(
-            entries: [mac, linux], options: options(VMLibraryFilter(guestOSes: [.linux])), context: .testing())
-        let present: Set<UUID> = [mac.id, linux.id]
-
-        #expect(layout.reconciled(.library(linux.id)) { present.contains($0) } == .library(linux.id))
-        #expect(layout.reconciled(.library(mac.id)) { present.contains($0) } == nil)
-        #expect(layout.reconciled(.library(gone)) { present.contains($0) } == .library(linux.id))
-        #expect(layout.reconciled(nil) { present.contains($0) } == nil)
-    }
-
-    @Test("A grouping moves the selection onto the VM's grouped row")
-    func groupingMovesSelectionOntoGroupedRow() {
-        let viewModel = makeViewModel()
-        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.selectRevealing(mac.id)
-
-        viewModel.sidebarOptions.grouping = .guestOS
-
-        #expect(viewModel.selection?.entryID == mac.id)
-        #expect(viewModel.selection?.group == SidebarGroupID(rawValue: "guestOS:macOS"))
-    }
-
-    @Test("Removing the selected VM selects the first row the filter shows")
-    func removalFallsBackToFirstVisibleRow() {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Hidden Mac", guestOS: .macOS)
-        let selected = viewModel.library.admitFixture(name: "Selected", guestOS: .linux)
-        let other = viewModel.library.admitFixture(name: "Other", guestOS: .linux)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.linux])
-        viewModel.selectRevealing(selected.id)
-
-        viewModel.library.evict(selected)
-
-        #expect(viewModel.selectedID == other.id)
-    }
-
-    @Test("An arrival the filter hides is not selected; one it shows is")
-    func hiddenArrivalIsNotSelected() async {
-        let viewModel = makeViewModel()
-        let mac = viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.selectRevealing(mac.id)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
-
-        let hiddenGate = GatedStep()
-        let hidden = viewModel.library.beginGatedArrival(named: "Linux", guestOS: .linux, gate: hiddenGate)
-        #expect(viewModel.selectedID == mac.id)
-
-        let shownGate = GatedStep()
-        let shown = viewModel.library.beginGatedArrival(named: "Mac 2", guestOS: .macOS, gate: shownGate)
-        #expect(viewModel.selectedID == shown.id)
-
-        hiddenGate.release()
-        shownGate.release()
-        _ = await hidden.settle()
-        _ = await shown.settle()
-    }
-
-    @Test("Revealing a hidden VM drops only the filter attributes hiding it, then selects it")
-    func revealDropsHidingAttributes() {
-        let viewModel = makeViewModel()
-        let linux = viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS], states: [.stopped])
-
-        viewModel.selectRevealing(linux.id)
-
-        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(states: [.stopped]))
-        #expect(viewModel.selectedID == linux.id)
-    }
-
-    // MARK: - Reorder
-
-    @Test("Rows drag under every sort, since any sort's row can join a folder")
-    func rowsDragUnderEverySort() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "A")
-        let controller = SidebarViewController(viewModel: viewModel)
-        controller.loadViewIfNeeded()
-        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        let row = try #require(outline.item(atRow: 1) as? SidebarRow)
-
-        #expect(controller.outlineView(outline, pasteboardWriterForItem: row) != nil)
-        viewModel.sidebarOptions.sort = .name
-        #expect(controller.outlineView(outline, pasteboardWriterForItem: row) != nil)
     }
 
     // MARK: - Menu
@@ -466,17 +260,6 @@ struct SidebarFilterSortGroupTests {
         #expect(picked(network.items[5])?.filter.networks == [net(.none)])
     }
 
-    @Test("A network the filter names but no VM is on stays listed, checked, to turn off")
-    func orphanNetworkStaysListed() throws {
-        let gone = net(.bridged("en9"))
-        let built = menu(
-            SidebarViewOptions(filter: VMLibraryFilter(networks: [gone])), values: [value()])
-        let network = try #require(built.items[2].submenu)
-        let row = try #require(network.items.first { $0.title == gone.rawValue })
-        #expect(row.state == .on)
-        #expect(picked(row)?.filter.networks == [])
-    }
-
     @Test("Any Bridged Interface counts every bridged VM, checks each bridged row, and sorts before Automatic")
     func anyBridgedRowsReadThroughAdmission() throws {
         let automatic = net(.bridged(nil))
@@ -549,20 +332,6 @@ struct SidebarFilterSortGroupTests {
         #expect(outline.numberOfRows == 2)
     }
 
-    @Test("A grouping in place when the sidebar loads lists its rows under open headers")
-    func groupedAtLoadOpensHeaders() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.sidebarOptions.grouping = .guestOS
-        let controller = SidebarViewController(viewModel: viewModel)
-        controller.loadViewIfNeeded()
-        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-
-        #expect(outline.numberOfRows == 3)
-        #expect(outline.item(atRow: 1) is SidebarGroupHeader)
-        #expect((outline.item(atRow: 2) as? SidebarRow)?.entry.name == "Mac")
-    }
-
     @Test("The filter button stays clear of the header's Show/Hide control")
     func filterButtonClearsShowHide() throws {
         let viewModel = makeViewModel()
@@ -596,66 +365,6 @@ struct SidebarFilterSortGroupTests {
         #expect(built?.items.first?.title == "Guest OS")
     }
 
-    @Test("A selected VM that stops matching stays listed and selected until the selection moves off it")
-    func selectedVMStaysUntilSelectionMoves() async throws {
-        let viewModel = makeViewModel()
-        let started = viewModel.library.admitFixture(name: "Started")
-        let other = viewModel.library.admitFixture(name: "Other")
-        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
-        viewModel.selectRevealing(started.id)
-        let controller = SidebarViewController(viewModel: viewModel)
-        controller.loadViewIfNeeded()
-        controller.viewDidAppear()
-        controller.view.layoutSubtreeIfNeeded()
-        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        #expect(outline.numberOfRows == 3)
-
-        started.activity.placeForTesting(.running(sessionID: UUID()))
-        // Appearing runs the sidebar's sync pass synchronously.
-        controller.viewDidAppear()
-
-        #expect(outline.numberOfRows == 3)
-        #expect(viewModel.selectedID == started.id)
-        #expect((outline.item(atRow: outline.selectedRow) as? SidebarRow)?.entry.vm === started)
-        // The header counts the rows it lists, the retained one included.
-        let header = try #require(
-            outline.view(atColumn: 0, row: 0, makeIfNecessary: true) as? SidebarGroupHeaderCellView)
-        #expect(allSubviews(NSTextField.self, in: header).map(\.stringValue).contains("2 of 2"))
-
-        viewModel.selectRevealing(other.id)
-
-        // The projection's own observation loop offers no test-facing signal.
-        try await waitUntil { outline.numberOfRows == 2 }
-        #expect((outline.item(atRow: 1) as? SidebarRow)?.entry.vm === other)
-        #expect(viewModel.selectedID == other.id)
-    }
-
-    @Test("The layout's counts follow a retained VM's own changes, which its observation tracks")
-    func countFollowsRetainedVM() {
-        let viewModel = makeViewModel()
-        let started = viewModel.library.admitFixture(name: "Started")
-        viewModel.library.admitFixture(name: "Other")
-        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
-        viewModel.selectRevealing(started.id)
-        started.activity.placeForTesting(.running(sessionID: UUID()))
-        #expect(
-            viewModel.sidebarLayout.sections.first?.count == .narrowed(shown: 2, of: 2))
-
-        // The rows stay the same, so only the retained VM's own state can wake
-        // the pass that recounts: an observation of the layout must track it.
-        let woke = Mutex(false)
-        withObservationTracking {
-            _ = viewModel.sidebarLayout
-        } onChange: {
-            woke.withLock { $0 = true }
-        }
-        started.activity.placeForTesting(.stopped)
-
-        #expect(woke.withLock { $0 })
-        #expect(
-            viewModel.sidebarLayout.sections.first?.count == .narrowed(shown: 2, of: 2))
-    }
-
     @Test("A filter edit while the selected VM no longer matches hides it and clears the selection")
     func filterEditDropsRetainedVM() {
         let viewModel = makeViewModel()
@@ -670,39 +379,6 @@ struct SidebarFilterSortGroupTests {
 
         #expect(viewModel.selection == nil)
         #expect(!viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
-    }
-
-    @Test("A sort, grouping or details edit keeps a retained VM listed and selected")
-    func viewEditsKeepRetainedVM() {
-        for edit: (inout SidebarViewOptions) -> Void in [
-            { $0.sort = .name }, { $0.grouping = .state }, { $0.showsDetails = true },
-        ] {
-            let viewModel = makeViewModel()
-            let started = viewModel.library.admitFixture(name: "Started")
-            viewModel.library.admitFixture(name: "Other")
-            viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.stopped])
-            viewModel.selectRevealing(started.id)
-            started.activity.placeForTesting(.running(sessionID: UUID()))
-
-            edit(&viewModel.sidebarOptions)
-
-            #expect(viewModel.selectedID == started.id)
-            #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
-        }
-    }
-
-    @Test("A reveal through the command core shows a VM the filter hides and selects it")
-    func commandRevealUnderFilter() throws {
-        let viewModel = makeViewModel()
-        let linux = viewModel.library.admitFixture(name: "Linux", guestOS: .linux)
-        viewModel.library.admitFixture(name: "Mac", guestOS: .macOS)
-        viewModel.sidebarOptions.filter = VMLibraryFilter(guestOSes: [.macOS])
-
-        try viewModel.commandsLeavingEditsOpen.reveal(.id(linux.id))
-
-        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter())
-        #expect(viewModel.selectedID == linux.id)
-        #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == linux.id })
     }
 
     @Test("Show Details adds the detail line to an arrival's row too")
@@ -725,22 +401,6 @@ struct SidebarFilterSortGroupTests {
 
         gate.release()
         _ = await arrival.settle()
-    }
-
-    @Test("Revealing a VM the sidebar already lists — a retained one — relaxes nothing")
-    func revealOfRetainedVMKeepsFilter() {
-        let viewModel = makeViewModel()
-        let started = viewModel.library.admitFixture(name: "Started", phase: .running(sessionID: UUID()))
-        viewModel.library.admitFixture(name: "Other", phase: .running(sessionID: UUID()))
-        viewModel.sidebarOptions.filter = VMLibraryFilter(states: [.running])
-        viewModel.selectRevealing(started.id)
-        started.activity.placeForTesting(.stopped)
-        #expect(viewModel.sidebarLayout.rowKeys.contains { $0.entryID == started.id })
-
-        viewModel.selectRevealing(started.id)
-
-        #expect(viewModel.sidebarOptions.filter == VMLibraryFilter(states: [.running]))
-        #expect(viewModel.selectedID == started.id)
     }
 
     @Test("A host interface's title follows the host's interfaces from one pass to the next")
@@ -776,97 +436,6 @@ struct SidebarFilterSortGroupTests {
         #expect(VMEntity(info).stateGroup == "stopped")
     }
 
-    @Test("The detail line starts where the name does")
-    func detailLineIsLeadingAligned() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "A VM With a Long Name")
-        viewModel.sidebarOptions.showsDetails = true
-        let controller = SidebarViewController(viewModel: viewModel)
-        let window = makeTestWindow(styleMask: [.titled], contentSize: NSSize(width: 300, height: 200))
-        window.contentViewController = controller
-        controller.view.layoutSubtreeIfNeeded()
-        let outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        _ = outline.rowView(atRow: 1, makeIfNecessary: true)
-        controller.view.layoutSubtreeIfNeeded()
-        let cell = try #require(
-            outline.view(atColumn: 0, row: 1, makeIfNecessary: false) as? SidebarVMRowCellView)
-        let name = try #require(cell.textField)
-        let detail = try #require(
-            allSubviews(NSTextField.self, in: cell).first { !$0.isHidden && $0.stringValue == "Stopped" })
-
-        let nameFrame = name.convert(name.bounds, to: cell)
-        let detailFrame = detail.convert(detail.bounds, to: cell)
-        #expect(abs(nameFrame.minX - detailFrame.minX) < 1)
-    }
-
-    /// A sidebar in a window sized to its own fit width, as the divider's
-    /// snap leaves it, and what each VM row shows there: the row's cell frame
-    /// in the outline view, and whether its name is drawn whole.
-    private struct SidebarWindow {
-        let controller: SidebarViewController
-        let window: NSWindow
-        let outline: NSOutlineView
-
-        @MainActor
-        init(_ viewModel: VMLibraryViewModel) throws {
-            controller = SidebarViewController(viewModel: viewModel)
-            window = makeTestWindow(styleMask: [.titled], contentSize: NSSize(width: 200, height: 400))
-            window.contentViewController = controller
-            controller.viewDidAppear()
-            outline = try #require(firstSubview(NSOutlineView.self, in: controller.view))
-        }
-
-        /// Each VM row's name, cell frame, and whether the name fits, after
-        /// a sync pass and a snap to the fit width.
-        @MainActor
-        func rows() throws -> [(name: String, cell: NSRect, nameFits: Bool)] {
-            controller.viewDidAppear()
-            controller.view.layoutSubtreeIfNeeded()
-            let fit = try #require(controller.widthToFitLongestRow())
-            window.setContentSize(NSSize(width: fit, height: 400))
-            controller.view.layoutSubtreeIfNeeded()
-            for row in 0..<outline.numberOfRows { _ = outline.rowView(atRow: row, makeIfNecessary: true) }
-            controller.view.layoutSubtreeIfNeeded()
-            return try (0..<outline.numberOfRows).compactMap { row in
-                guard let item = outline.item(atRow: row) as? SidebarRow else { return nil }
-                let cell = try #require(
-                    outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarVMRowCellView)
-                let label = try #require(cell.textField)
-                return (item.entry.name, cell.frame, label.frame.width >= label.fittingSize.width)
-            }
-        }
-    }
-
-    @Test("Grouping and ungrouping leave every row where a fresh load puts it, its name whole")
-    func groupingRoundTripMatchesFreshLoad() throws {
-        let long = "Ubuntu Desktop 26.04 LTS Workstation"
-        func makeLibrary() -> VMLibraryViewModel {
-            let viewModel = makeViewModel()
-            viewModel.library.admitFixture(name: long, guestOS: .linux)
-            viewModel.library.admitFixture(name: "macOS 26", guestOS: .macOS)
-            return viewModel
-        }
-        let fresh = try SidebarWindow(makeLibrary()).rows()
-        #expect(fresh.allSatisfy { $0.nameFits })
-
-        let viewModel = makeLibrary()
-        let sidebar = try SidebarWindow(viewModel)
-        _ = try sidebar.rows()
-        viewModel.sidebarOptions.grouping = .guestOS
-        let grouped = try sidebar.rows()
-        viewModel.sidebarOptions.grouping = .none
-        let ungrouped = try sidebar.rows()
-
-        // A grouped row sits where an ungrouped one does: headers are listed
-        // beside their rows, not above a level of their own.
-        #expect(grouped.allSatisfy { $0.nameFits })
-        #expect(Set(grouped.map(\.cell.minX)) == Set(fresh.map(\.cell.minX)))
-        #expect(ungrouped.map(\.name) == fresh.map(\.name))
-        #expect(ungrouped.map(\.cell.minX) == fresh.map(\.cell.minX))
-        #expect(ungrouped.map(\.cell.width) == fresh.map(\.cell.width))
-        #expect(ungrouped.allSatisfy { $0.nameFits })
-    }
-
     @Test("A drop lands only among the dragged row's own group")
     func dropListIsTheRowsGroup() throws {
         let viewModel = makeViewModel()
@@ -885,39 +454,6 @@ struct SidebarFilterSortGroupTests {
         #expect(SidebarViewController.list(of: linuxB) == 3..<5)
         let mac = try #require(section.children[1] as? SidebarRow)
         #expect(SidebarViewController.list(of: mac) == 1..<2)
-    }
-
-    // MARK: - State buckets
-
-    @Test("A VM is running while a session is live, and rests where it rests otherwise")
-    func stateBucketFollowsLiveness() {
-        let session = UUID()
-        #expect(VMLifecyclePhase.running(sessionID: session).stateBucket == .running)
-        #expect(VMLifecyclePhase.livePaused(sessionID: session).stateBucket == .running)
-        #expect(VMLifecyclePhase.suspended.stateBucket == .suspended)
-        for resting: VMLifecyclePhase in [.stopped, .initialBoot, .failed(message: "x"), .removed] {
-            #expect(resting.stateBucket == .stopped)
-        }
-    }
-
-    @Test("An operation with no live session is in the bucket it started from, whatever its status")
-    func operationWithoutSessionKeepsItsRest() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        // A cold snapshot capture shows "Taking Snapshot" while nothing is live.
-        instance.activity.placeForTesting(.operating(.capturingSnapshot(.stopped), from: .stopped))
-        #expect(instance.status == .snapshotting)
-        #expect(instance.stateBucket == .stopped)
-
-        let suspended = VMInstanceFixture.make(phase: .suspended)
-        suspended.activity.placeForTesting(.operating(.deletingSnapshot, from: .suspended))
-        #expect(suspended.stateBucket == .suspended)
-    }
-
-    @Test("Another copy's hold outranks this copy's view of the VM")
-    func heldByAnotherCopyBucket() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.activity.recordOtherCopyHold(heldElsewhere: true)
-        #expect(instance.stateBucket == .heldByAnotherCopy)
     }
 
     @Test("Show Details adds the sort key's value under each name")

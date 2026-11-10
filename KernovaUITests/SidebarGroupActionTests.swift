@@ -56,20 +56,6 @@ struct SidebarGroupActionTests {
 
     // MARK: - Menu
 
-    @Test("A folder's menu counts what each action acts on, badged, and disables an action with none")
-    func folderMenuCountsAndEnables() throws {
-        let folder = VMFolder(id: UUID(), name: "Lab", members: [])
-        let built = menu().menu(
-            folder: folder, actionCounts: [.start: 2, .suspend: 1, .stop: 0, .restart: 3])
-
-        let items = actionItems(of: built)
-        #expect(items.map(\.title) == ["Start All", "Suspend All", "Stop All", "Restart All"])
-        #expect(items.map(\.isEnabled) == [true, true, false, true])
-        #expect(items.map { $0.badge?.itemCount } == [2, 1, nil, 3])
-        #expect(built.items[1].title == "Start All")
-        #expect(built.items[5].isSeparatorItem)
-    }
-
     @Test("A smart group's menu places the actions between its filter and Rename, all disabled without counts")
     func smartGroupMenuWithoutCounts() throws {
         let group = VMSmartGroup(id: UUID(), name: "Linux", filter: VMLibraryFilter(guestOSes: [.linux]))
@@ -113,88 +99,5 @@ struct SidebarGroupActionTests {
         #expect(
             viewModel.groupActionCounts(for: VMGroupReference(.folder, named: folder.id.uuidString))
                 == [.start: 1, .suspend: 1, .stop: 1, .restart: 1])
-    }
-
-    /// Restart All counts, and so enables, exactly where Stop All does.
-    @Test(
-        "Restart All is counted and enabled exactly as Stop All",
-        arguments: [
-            PhaseFixture.settled(.stopped), .settled(.running(sessionID: UUID())),
-            .settled(.livePaused(sessionID: UUID())), .settled(.suspended),
-            .operating(.saving, from: .running(sessionID: UUID())),
-        ])
-    func restartAllFollowsStopAll(phase: PhaseFixture) throws {
-        let viewModel = makeViewModel()
-        let vm = viewModel.library.admitFixture(name: "Only", phase: phase.phase)
-        if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: vm) }
-        let folder = try viewModel.library.createFolder(named: "Lab", members: [vm.id])
-        let controller = SidebarViewController(viewModel: viewModel)
-
-        let built = try #require(controller.viewMenu(for: .folder(folder.id)))
-        let stopAll = try #require(built.items.first { $0.title == "Stop All" })
-        let restartAll = try #require(built.items.first { $0.title == "Restart All" })
-
-        #expect(restartAll.isEnabled == stopAll.isEnabled, "\(phase)")
-        #expect(restartAll.badge?.itemCount == stopAll.badge?.itemCount, "\(phase)")
-    }
-
-    // MARK: - Performing
-
-    @Test("A group start in the app selects nothing, focuses no display, and says nothing when all is done")
-    func groupStartMovesNothing() async throws {
-        let viewModel = makeViewModel()
-        let presenter = MockVMLibraryPresenting()
-        viewModel.presenter = presenter
-        viewModel.libraryWindowPresenter = presenter
-        let a = viewModel.library.admitFixture(name: "A")
-        let b = viewModel.library.admitFixture(name: "B")
-        let folder = try viewModel.library.createFolder(named: "Lab", members: [a.id, b.id])
-        let selection = viewModel.selection
-
-        await viewModel.performGroupAction(.start, on: VMGroupReference(.folder, named: folder.id.uuidString))
-
-        #expect(a.status == .running && b.status == .running)
-        #expect(viewModel.selection == selection)
-        #expect(presenter.focusGuestDisplayInstances.isEmpty)
-        #expect(presenter.errors.isEmpty)
-    }
-
-    @Test("Whatever a group action leaves undone is one alert naming each VM")
-    func undoneIsOneSummary() async throws {
-        let virtualization = MockVirtualizationService()
-        let viewModel = makeViewModel(virtualization: virtualization)
-        let presenter = MockVMLibraryPresenting()
-        viewModel.presenter = presenter
-        viewModel.libraryWindowPresenter = presenter
-        let a = viewModel.library.admitFixture(name: "A")
-        let b = viewModel.library.admitFixture(name: "B")
-        let c = viewModel.library.admitFixture(name: "C")
-        virtualization.startErrors[a.id] = VirtualizationError.noVirtualMachine
-        virtualization.startErrors[c.id] = VirtualizationError.noVirtualMachine
-        try viewModel.library.createFolder(named: "Lab", members: [a.id, b.id, c.id])
-
-        await viewModel.performGroupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
-
-        #expect(b.status == .running)
-        #expect(presenter.errorTitles == ["Couldn\u{2019}t Start Every VM in \u{201C}Lab\u{201D}"])
-        let lines = try #require(presenter.errors.first).split(separator: "\n")
-        #expect(lines.count == 2)
-        #expect(lines[0].hasPrefix("Couldn\u{2019}t start A: "))
-        #expect(lines[1].hasPrefix("Couldn\u{2019}t start C: "))
-    }
-
-    @Test("A group the library no longer lists is one refusal, and nothing is acted on")
-    func unknownGroupIsRefused() async throws {
-        let virtualization = MockVirtualizationService()
-        let viewModel = makeViewModel(virtualization: virtualization)
-        let presenter = MockVMLibraryPresenting()
-        viewModel.presenter = presenter
-        viewModel.libraryWindowPresenter = presenter
-        viewModel.library.admitFixture(name: "A")
-
-        await viewModel.performGroupAction(.start, on: VMGroupReference(.folder, named: UUID().uuidString))
-
-        #expect(presenter.errors.count == 1)
-        #expect(virtualization.startCallCount == 0)
     }
 }

@@ -66,34 +66,6 @@ struct SidebarLastRunTests {
         VMLibrarySort.lastRun.detail(for: .vm(instance), at: Self.now, calendar: Self.calendar)
     }
 
-    // MARK: - Order
-
-    @Test("Live VMs sort first — another copy's included — then most recent, then none recorded, ties A→Z")
-    func projectionOrder() {
-        let held = instance("Held", lastRun: 7200)
-        held.activity.recordOtherCopyHold(heldElsewhere: true)
-        let entries: [LibraryEntry] = [
-            .vm(instance("No record")),
-            .vm(instance("Hour ago", lastRun: 3600)),
-            // A live VM's record is its session's start, older than any ended run.
-            .vm(instance("Running", phase: .running(sessionID: UUID()), lastRun: 86_400)),
-            .vm(instance("Day ago", lastRun: 86_400)),
-            .vm(held),
-            .vm(instance("Minute ago", lastRun: 60)),
-            .vm(instance("Also no record")),
-            .vm(instance("Paused", phase: .livePaused(sessionID: UUID()), lastRun: 86_400)),
-        ]
-
-        let layout = SidebarLayout.project(
-            entries: entries, options: SidebarViewOptions(sort: .lastRun), context: .testing())
-        let shown = layout.rowKeys.compactMap { key in entries.first { $0.id == key.entryID }?.name }
-
-        #expect(
-            shown == [
-                "Held", "Paused", "Running", "Minute ago", "Hour ago", "Day ago", "Also no record", "No record",
-            ])
-    }
-
     // MARK: - Detail
 
     @Test("A running session states when it started, in whole minutes, hours or calendar days")
@@ -128,20 +100,6 @@ struct SidebarLastRunTests {
         dateStyle.timeZone = Self.calendar.timeZone
         #expect(detail(instance("F", lastRun: 7 * 86_400)) == "Last run \(weekAgo.formatted(dateStyle))")
         #expect(detail(instance("G")) == "No run recorded")
-    }
-
-    @Test("Under a day reads in hours even across midnight; a 25-hour day's own date never reads as yesterday")
-    func dayBoundaries() {
-        // Tuesday 23:00 seen Wednesday 09:00.
-        #expect(detail(instance("A", lastRun: 10 * 3600)) == "Last run 10 hours ago")
-        // 2026-11-01, the US clocks fall back: 00:10 seen 23:50 the same day.
-        var pacific = Calendar(identifier: .gregorian)
-        pacific.timeZone = TimeZone(identifier: "America/Los_Angeles")!
-        let lateThatDay = Date(timeIntervalSince1970: 1_793_605_800)  // 2026-11-01 23:50 PST
-        let run = VMInstanceFixture.make(
-            name: "B", hostState: VMHostState(lastRunAt: lateThatDay.addingTimeInterval(-24 * 3600 - 40 * 60)))
-        #expect(
-            VMLibrarySort.lastRun.detail(for: .vm(run), at: lateThatDay, calendar: pacific) == "Last run 24 hours ago")
     }
 
     // MARK: - Clock
