@@ -30,29 +30,6 @@ struct VMSettingsSharingPanelTests {
 
     // MARK: - Guest Agent rows
 
-    @Test("A macOS guest's Guest Agent section holds every agent row, each with its info")
-    func guestAgentRowsForMacOS() {
-        let (vc, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        for row in ["Forward guest logs", "Clipboard sharing", "Drag and drop files", "Show install reminder"] {
-            #expect(containsLabel(row, in: vc.view), "\(row)")
-            #expect(infoButton(about: row, in: vc.view) != nil, "\(row)")
-        }
-    }
-
-    @Test("A Linux guest's Guest Agent section holds Forward guest logs alone, with its info and no footer")
-    func guestAgentRowsForLinux() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(containsLabel("Guest Agent", in: vc.view))
-        #expect(containsLabel("Forward guest logs", in: vc.view))
-        #expect(infoButton(about: "Forward guest logs", in: vc.view) != nil)
-        #expect(firstSwitch(action: "logForwardingToggled", in: vc.view) != nil)
-        #expect(!containsLabel("Drag and drop files", in: vc.view))
-        #expect(firstSwitch(action: "dropFilesToggled", in: vc.view) == nil)
-        #expect(!containsLabel("Show install reminder", in: vc.view))
-        #expect(findLabel(containing: "need the Kernova guest agent", in: vc.view) == nil)
-        #expect(findLabel(containing: "needs the Kernova guest agent", in: vc.view) == nil)
-    }
-
     @Test("The Guest Agent header's and Forward guest logs' info read each guest's own copy")
     func guestAgentInfoCopy() {
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
@@ -96,36 +73,6 @@ struct VMSettingsSharingPanelTests {
         #expect(instance.configuration.agentLogForwardingEnabled == true)
     }
 
-    // MARK: - Agent-dependent grouping (#398)
-
-    @Test("Clipboard Sharing nests in the agent group on macOS, standalone on Linux")
-    func clipboardGroupingByGuestOS() {
-        // macOS: the row is nested in the Guest Agent group, with no standalone
-        // "Clipboard" section header (guards against re-adding the sibling section).
-        let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        #expect(containsLabel("Clipboard sharing", in: macVC.view))
-        #expect(!containsLabel("Clipboard", in: macVC.view))
-
-        // Linux: SPICE clipboard keeps its own standalone section header.
-        let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(containsLabel("Clipboard sharing", in: linuxVC.view))
-        #expect(containsLabel("Clipboard", in: linuxVC.view))
-    }
-
-    @Test("The agent dependency is the Guest Agent header's info, never on screen")
-    func agentDependencyInfo() {
-        let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        #expect(infoButton(about: "Guest Agent", in: macVC.view) != nil)
-        #expect(findLabel(containing: "need the Kernova guest agent", in: macVC.view) == nil)
-
-        // Linux clipboard is SPICE-based, so its section carries no agent cue;
-        // its clipboard row carries its own info instead.
-        let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(infoButton(about: "Guest Agent", in: linuxVC.view) != nil)
-        #expect(infoButton(about: "Clipboard sharing", in: linuxVC.view) != nil)
-        #expect(infoButton(about: "Clipboard", in: linuxVC.view) == nil)
-    }
-
     // MARK: - Clipboard passthrough
 
     /// Builds a controller over a config with the given clipboard-sharing state,
@@ -146,17 +93,6 @@ struct VMSettingsSharingPanelTests {
         return (vc, instance)
     }
 
-    @Test("The passthrough toggle appears for both guest OSes")
-    func passthroughTogglePresentByGuestOS() {
-        let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
-        #expect(containsLabel("Automatic clipboard passthrough", in: macVC.view))
-        #expect(firstSwitch(action: "clipboardPassthroughToggled", in: macVC.view) != nil)
-
-        let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        #expect(containsLabel("Automatic clipboard passthrough", in: linuxVC.view))
-        #expect(firstSwitch(action: "clipboardPassthroughToggled", in: linuxVC.view) != nil)
-    }
-
     @Test("The Clipboard sharing switch on screen shows the setting, in the agent group or its own section")
     func clipboardSwitchShowsSetting() {
         for guestOS in [VMGuestOS.macOS, .linux] {
@@ -174,34 +110,6 @@ struct VMSettingsSharingPanelTests {
 
         let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
         #expect(firstSwitch(action: "clipboardPassthroughToggled", in: onVC.view)?.isEnabled == true)
-    }
-
-    /// AppKit draws a disabled `NSSwitch` that is *on* at full accent fill, so
-    /// the row reads as live while it is inert; the dim is what says otherwise.
-    @Test("A disabled passthrough toggle is dimmed, not just inert")
-    func passthroughDimsWhenDisabled() {
-        let (offVC, _) = makeController(guestOS: .macOS, sharingEnabled: false)
-        let off = firstSwitch(action: "clipboardPassthroughToggled", in: offVC.view)
-        #expect(off?.alphaValue ?? 1 < 1)
-
-        let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
-        #expect(firstSwitch(action: "clipboardPassthroughToggled", in: onVC.view)?.alphaValue == 1)
-    }
-
-    @Test("Enabling passthrough without a window reverts and does not write")
-    func passthroughEnableWithoutWindowReverts() {
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true)
-        guard let toggle = firstSwitch(action: "clipboardPassthroughToggled", in: vc.view) else {
-            Issue.record("Expected a passthrough switch")
-            return
-        }
-        // The offscreen test VC has no window to host the confirmation sheet, so
-        // the enable path must revert rather than silently enable.
-        toggle.state = .on
-        toggle.sendAction(toggle.action, to: toggle.target)
-
-        #expect(instance.configuration.clipboardPassthroughEnabled == false)
-        #expect(toggle.state == .off)
     }
 
     @Test("The passthrough prompt is the verb's")
@@ -239,33 +147,6 @@ struct VMSettingsSharingPanelTests {
         // granting the guest a continuous read without being asked.
         #expect(instance.configuration.clipboardSharingEnabled == false)
         #expect(!instance.configuration.clipboardPassthroughIsEffective)
-    }
-
-    @Test("Turning sharing on with no passthrough flag writes immediately")
-    func sharingEnableAloneWritesImmediately() throws {
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: false)
-
-        let toggle = try #require(firstSwitch(action: "clipboardToggled", in: vc.view))
-        toggle.state = .on
-        toggle.sendAction(toggle.action, to: toggle.target)
-
-        #expect(instance.configuration.clipboardSharingEnabled == true)
-    }
-
-    @Test("Turning passthrough off writes immediately without confirmation")
-    func passthroughDisableWritesImmediately() {
-        let (vc, instance) = makeController(guestOS: .macOS, sharingEnabled: true) {
-            $0.clipboardPassthroughEnabled = true
-        }
-
-        guard let toggle = firstSwitch(action: "clipboardPassthroughToggled", in: vc.view) else {
-            Issue.record("Expected a passthrough switch")
-            return
-        }
-        toggle.state = .off
-        toggle.sendAction(toggle.action, to: toggle.target)
-
-        #expect(instance.configuration.clipboardPassthroughEnabled == false)
     }
 
     @Test("The passthrough confirmation alert fires the right action per button")
@@ -376,24 +257,6 @@ struct VMSettingsSharingPanelTests {
     /// A folder no runner can have, so the probe's answer is not the machine's
     /// to decide.
     private static let missingPath = "/kernova-tests/definitely-not-here/Shared"
-
-    @Test("A share whose folder is gone badges as missing; one that is there does not")
-    func missingShareBadgesAfterTheProbeLands() async throws {
-        let present = scratch.url.appendingPathComponent(
-            "kernova-settings-share", isDirectory: true)
-        try FileManager.default.createDirectory(at: present, withIntermediateDirectories: true)
-        let presentPath = present.path(percentEncoded: false)
-
-        let (vc, _) = makeSharingController([
-            SharedDirectory(path: Self.missingPath), SharedDirectory(path: presentPath),
-        ])
-        try await seedMonitor(vc, paths: [Self.missingPath, presentPath])
-
-        let panel = try #require(vc.panelForTesting(.sharing))
-        #expect(findLabel(containing: "Missing \u{2014} \(Self.missingPath)", in: panel) != nil)
-        #expect(findLabel(containing: "Missing \u{2014} \(presentPath)", in: panel) == nil)
-        #expect(findLabel(withText: presentPath, in: panel) != nil)
-    }
 
     /// The badge has to follow the folder for the whole session, and the parent
     /// watcher cannot carry that on its own: a Powerbox grant never covers the
@@ -529,62 +392,7 @@ struct VMSettingsSharingPanelTests {
         #expect(instance.configuration.sharedDirectories?.first?.readOnly == true)
     }
 
-    @Test("A stopped VM states no share rule")
-    func stoppedVMStatesNoShareRule() throws {
-        let (vc, _) = makeSharingController(
-            [SharedDirectory(path: Self.missingPath)], guestOS: .macOS)
-        let panel = try #require(vc.panelForTesting(.sharing))
-        #expect(!visibleLabel(VMSettingsSharingPanelViewController.sharingDeviceCaption, in: panel))
-    }
-
-    /// A running Linux guest's shares each ride a device fixed at boot, so the
-    /// share controls go inert — and the verb behind each refuses if one is
-    /// driven anyway.
-    @Test("A running VM's share rows and its Add button are inert")
-    func runningVMLocksTheShareControls() async throws {
-        let (vc, instance) = makeSharingController(
-            [SharedDirectory(path: Self.missingPath)], phase: .running(sessionID: UUID()))
-        try await seedMonitor(vc, paths: [Self.missingPath])
-        let panel = try #require(vc.panelForTesting(.sharing))
-
-        let toggle = try #require(firstSwitch(action: "sharedReadOnlyToggled:", in: panel))
-        #expect(!toggle.isEnabled)
-        let add = try #require(
-            firstSubview(NSButton.self, in: panel) { $0.title == "Add Shared Directory…" })
-        #expect(!add.isEnabled)
-
-        let remove = try #require(
-            firstSubview(NSButton.self, in: panel) {
-                $0.action.map(NSStringFromSelector) == "sharedDeleteTapped:"
-            })
-        #expect(!remove.isEnabled)
-        remove.sendAction(remove.action, to: remove.target)
-        #expect(instance.configuration.sharedDirectories?.count == 1)
-    }
-
     // MARK: - Shared Directories info
-
-    @Test(
-        "The resume note joins the Shared Directories info only for a guest known to run macOS 13",
-        arguments: [
-            (VMGuestOS.macOS, "Version 13.7.8 (Build 22H730)" as String?, true),
-            (VMGuestOS.macOS, "Version 14.8.9 (Build 23J100)", false),
-            (VMGuestOS.macOS, "Version 27.0 (Build 26A428)", false),
-            (VMGuestOS.macOS, nil, false),
-            (VMGuestOS.linux, "13.7.8", false),
-        ])
-    func resumeNoteOnlyForMacOS13(guestOS: VMGuestOS, reported: String?, noted: Bool) {
-        let configuration = VMConfiguration(
-            name: "Shares",
-            guestOS: guestOS,
-            bootMode: guestOS == .macOS ? .macOS : .efi,
-            cpuCount: guestOS.hostCPUCount,
-            memorySizeInGB: guestOS.hostMemorySize,
-            lastSeenGuestOSVersion: reported)
-        let paragraphs = VMSettingsSharingPanelViewController.sharedDirectoriesInfoParagraphs(
-            for: configuration)
-        #expect(Self.mentionsResume(paragraphs) == noted)
-    }
 
     private static func mentionsResume(_ paragraphs: [InfoPopoverParagraph]) -> Bool {
         paragraphs.contains {

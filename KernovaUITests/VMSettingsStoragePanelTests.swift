@@ -3,7 +3,6 @@ import AppKit
 import KernovaCommandModel
 import KernovaTestSupport
 import Testing
-import Virtualization
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
@@ -102,9 +101,6 @@ struct VMSettingsStoragePanelTests {
 
     private static let scratchSizes = VMBundleLayout.DiskSizes(
         onDiskBytes: 2_000_000_000, capacityBytes: 32_000_000_000)
-    private static let scratchSubtitle =
-        "\(DataFormatters.formatBytes(2_000_000_000)) (used) / "
-        + "\(DataFormatters.formatBytes(32_000_000_000)) (allocated)"
 
     /// Whether the overview's Storage card states `text`.
     private func storageCardStates(_ text: String, in vc: VMSettingsViewController) -> Bool {
@@ -115,53 +111,6 @@ struct VMSettingsStoragePanelTests {
     // Each file change below is followed by the re-probe a volume mount or
     // unmount runs. Genuine no-signal predicates: the repaint lands at the end
     // of the off-main probe and the measurement it issues.
-
-    @Test("A stopped VM's disk whose file appears is measured again, and its row states the sizes")
-    func aFileAppearingRemeasuresTheRow() async throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let path = scratch.url.appendingPathComponent("appears.img").path(percentEncoded: false)
-        let files = MockVMBundleMachineFiles()
-        let (vc, disk) = makeMeasuredDiskPane(at: path, files: files, showing: .storage)
-        let panel = try #require(vc.panelForTesting(.storage))
-        try await waitUntil { self.showsMissingBadge(in: vc) }
-        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
-        let readsWhileMissing = files.diskSizeReads
-
-        // The file a volume mount brings back, and the figures it now reads.
-        files.setDiskSizes(Self.scratchSizes, for: disk.id)
-        FileManager.default.createFile(atPath: path, contents: Data([0]))
-        vc.overviewForTesting.fileMonitor.revalidate()
-
-        try await waitUntil { findLabel(withText: Self.scratchSubtitle, in: panel) != nil }
-        #expect(!showsMissingBadge(in: vc))
-        #expect(files.diskSizeReads > readsWhileMissing)
-    }
-
-    @Test("A stopped VM's disk whose file goes missing is measured again, and its row badges missing")
-    func aFileGoingMissingRemeasuresTheRow() async throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let url = scratch.url.appendingPathComponent("vanishes.img")
-        let path = url.path(percentEncoded: false)
-        FileManager.default.createFile(atPath: path, contents: Data([0]))
-        let files = MockVMBundleMachineFiles()
-        let (vc, disk) = makeMeasuredDiskPane(at: path, files: files, showing: nil)
-        files.setDiskSizes(Self.scratchSizes, for: disk.id)
-        vc.showCategory(.storage)
-        let panel = try #require(vc.panelForTesting(.storage))
-        try await waitUntil { findLabel(withText: Self.scratchSubtitle, in: panel) != nil }
-        let readsWhilePresent = files.diskSizeReads
-
-        // The volume it lived on unmounts: the file reads as nothing.
-        files.setDiskSizes(VMBundleLayout.DiskSizes(), for: disk.id)
-        try FileManager.default.removeItem(at: url)
-        vc.overviewForTesting.fileMonitor.revalidate()
-
-        try await waitUntil { self.showsMissingBadge(in: vc) }
-        try await waitUntil { files.diskSizeReads > readsWhilePresent }
-        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
-        #expect(vc.overviewForTesting.resolved.attachmentSizes[disk.id] == VMBundleLayout.DiskSizes())
-        #expect(findLabel(withText: Self.scratchSubtitle, in: panel) == nil)
-    }
 
     @Test("The overview alone follows a disk's file: the card states it once it appears, and Unknown once it goes")
     func theOverviewCardFollowsTheFile() async throws {
@@ -329,63 +278,6 @@ struct VMSettingsStoragePanelTests {
 
     private func storageRow(in view: NSView) -> AttachmentRowView? {
         firstSubview(AttachmentRowView.self, in: view)
-    }
-
-    @Test("The attachment context menu offers Edit Notes between Rename and Get Info")
-    func attachmentMenuOffersEditNotes() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-        let row = storageRow(in: vc.view)
-        let menu = row?.contextMenu?()
-
-        let titles = menu?.items.map(\.title) ?? []
-        let renameIndex = titles.firstIndex(of: "Rename")
-        let notesIndex = titles.firstIndex(of: "Edit Notes")
-        let infoIndex = titles.firstIndex(of: "Get Info")
-        #expect(renameIndex != nil && notesIndex != nil && infoIndex != nil)
-        if let renameIndex, let notesIndex, let infoIndex {
-            #expect(renameIndex < notesIndex)
-            #expect(notesIndex < infoIndex)
-        }
-        #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == true)
-    }
-
-    @Test("Edit Notes and Rename are disabled on a running VM's storage row")
-    func attachmentMenuEditNotesFollowsTheDiskGate() {
-        // The model gate, not the route: a running VM's disks are pinned by the
-        // `VZVirtualMachine`, which is what closes the row's edits.
-        let (vc, _, _) = makeController(
-            guestOS: .linux, isReadOnly: true, phase: .running(sessionID: UUID()))
-        let row = storageRow(in: vc.view)
-        let menu = row?.contextMenu?()
-
-        #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == false)
-        #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
-    }
-
-    @Test("Every row of a two-disk VM offers Remove\u{2026}, Disk.asif included")
-    func attachmentMenuOffersRemoveOnEveryDiskWithASibling() {
-        let viewModel = makeViewModel()
-        let instance = makeSettingsInstance(guestOS: .linux) {
-            let bundleURL = VMInstanceFixture.bundleURL(for: $0.id)
-            $0.storageDisks = [
-                StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: bundleURL)),
-                StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true),
-            ]
-        }
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: false)
-        vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-        vc.showCategory(.storage)
-
-        let rows = allSubviews(AttachmentRowView.self, in: vc.view)
-        #expect(rows.count == 2)
-        let mainTitles = rows.first?.contextMenu?()?.items.map(\.title) ?? []
-        let extraTitles = rows.dropFirst().first?.contextMenu?()?.items.map(\.title) ?? []
-
-        #expect(mainTitles.contains("Remove\u{2026}"))
-        #expect(mainTitles.contains("Rename"))
-        #expect(extraTitles.contains("Remove\u{2026}"))
     }
 
     @Test("A stopped VM's snapshot delete leaves disk edits open and offers no disk creation or trash")

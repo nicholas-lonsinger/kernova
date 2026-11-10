@@ -201,7 +201,7 @@ final class ModelValueField: NSTextField {
     ///
     /// At end-edit time the editor can still be attached, holding the text just
     /// consumed; a value set beneath it does not read back
-    /// (`refusedEndEditRevertsAFieldStillBeingEdited`), so the editor is
+    /// (`aTypedEditSurvivesTheStartsRefreshAndIsRefused`), so the editor is
     /// discarded first.
     func showDiscardingEdit(_ value: String) {
         abortEditing()

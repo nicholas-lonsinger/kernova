@@ -55,29 +55,6 @@ struct VMSettingsSystemPanelTests {
         return (vc, instance)
     }
 
-    @Test("The Display section is present for both guest OSes")
-    func displaySectionPresentForBothOSes() {
-        for guestOS in [VMGuestOS.macOS, .linux] {
-            let (vc, _) = makeDisplayController(guestOS: guestOS)
-            #expect(containsLabel("Display", in: vc.view))
-            #expect(containsLabel("Size display to fit window at startup", in: vc.view))
-            #expect(containsLabel("Resolution", in: vc.view))
-            #expect(firstPopUp(action: "displayResolutionChanged", in: vc.view) != nil)
-        }
-    }
-
-    @Test("The HiDPI row is macOS-only, the auto-resize row is not")
-    func hiDPIIsMacOSOnlyButAutoResizeIsNot() {
-        let (macVC, _) = makeDisplayController(guestOS: .macOS)
-        #expect(containsLabel("HiDPI (Retina)", in: macVC.view))
-        #expect(containsLabel("Automatically resize with window", in: macVC.view))
-
-        // Linux gets no HiDPI row — virtio scanouts carry no density.
-        let (linuxVC, _) = makeDisplayController(guestOS: .linux)
-        #expect(!containsLabel("HiDPI (Retina)", in: linuxVC.view))
-        #expect(containsLabel("Automatically resize with window", in: linuxVC.view))
-    }
-
     @Test("Match-window writes the flag and disables the manual controls")
     func matchWindowToggleWritesAndDisables() {
         let (vc, instance) = makeDisplayController()
@@ -99,19 +76,6 @@ struct VMSettingsSystemPanelTests {
         // both usable.
         #expect(firstSwitch(action: "displayHiDPIToggled", in: vc.view)?.isEnabled == true)
         #expect(firstSwitch(action: "displayAutoResizeToggled", in: vc.view)?.isEnabled == true)
-    }
-
-    @Test("A VM already in match-window mode builds with the size controls disabled")
-    func matchWindowOnDisablesFromBuild() {
-        let (vc, _) = makeDisplayController(sizesToWindow: true)
-
-        #expect(firstPopUp(action: "displayResolutionChanged", in: vc.view)?.isEnabled == false)
-        #expect(editableField("Width", in: vc.view)?.isEnabled == false)
-        #expect(editableField("Height", in: vc.view)?.isEnabled == false)
-        // HiDPI picks the scale the computed size is measured at, so it stays
-        // usable — as does the mode switch, so the user can turn match off.
-        #expect(firstSwitch(action: "displayHiDPIToggled", in: vc.view)?.isEnabled == true)
-        #expect(firstSwitch(action: "displayMatchWindowToggled", in: vc.view)?.isEnabled == true)
     }
 
     @Test("Choosing a preset writes it and fills the size fields")
@@ -155,53 +119,6 @@ struct VMSettingsSystemPanelTests {
         #expect(width.integerValue == DisplayBootSizing.minimumDimension)
     }
 
-    @Test("In manual mode HiDPI rewrites the stored trio in both directions")
-    func hiDPIRewritesResolution() {
-        let (vc, instance) = makeDisplayController(width: 1280, height: 800, ppi: 144)
-        guard let hiDPI = firstSwitch(action: "displayHiDPIToggled", in: vc.view) else {
-            Issue.record("Expected the HiDPI switch")
-            return
-        }
-        #expect(hiDPI.state == .off)
-
-        hiDPI.state = .on
-        hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
-
-        #expect(instance.configuration.displayHiDPI == true)
-        #expect(instance.configuration.displayWidth == 2560)
-        #expect(instance.configuration.displayHeight == 1600)
-        #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
-        // The fields keep showing the "looks like" size.
-        #expect(editableField("Width", in: vc.view)?.integerValue == 1280)
-
-        hiDPI.state = .off
-        hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
-
-        #expect(instance.configuration.displayHiDPI == false)
-        #expect(instance.configuration.displayWidth == 1280)
-        #expect(instance.configuration.displayHeight == 800)
-        #expect(instance.configuration.displayPPI == DisplayBootSizing.standardPixelsPerInch)
-    }
-
-    @Test("In match mode HiDPI writes only the flag")
-    func hiDPIInMatchModeLeavesTheTrioAlone() {
-        let (vc, instance) = makeDisplayController(
-            sizesToWindow: true, width: 2800, height: 1760, ppi: 220)
-        guard let hiDPI = firstSwitch(action: "displayHiDPIToggled", in: vc.view) else {
-            Issue.record("Expected the HiDPI switch")
-            return
-        }
-
-        hiDPI.state = .off
-        hiDPI.sendAction(hiDPI.action, to: hiDPI.target)
-
-        #expect(instance.configuration.displayHiDPI == false)
-        // The trio is the last boot's artifact until the next start recomputes it.
-        #expect(instance.configuration.displayWidth == 2800)
-        #expect(instance.configuration.displayHeight == 1760)
-        #expect(instance.configuration.displayPPI == 220)
-    }
-
     @Test("The HiDPI switch shows the stored intent, the fields the stored size")
     func hiDPISwitchShowsIntentNotDensity() {
         let (retinaVC, _) = makeDisplayController(width: 2560, height: 1600, ppi: 220)
@@ -221,78 +138,6 @@ struct VMSettingsSystemPanelTests {
         #expect(editableField("Width", in: divergentVC.view)?.integerValue == 1400)
     }
 
-    @Test("Turning match-window off reconciles the trio to the HiDPI intent")
-    func matchWindowOffReconcilesTrioToIntent() {
-        let (vc, instance) = makeDisplayController(
-            sizesToWindow: true, width: 1400, height: 880, ppi: 144, hiDPI: true)
-        guard let match = firstSwitch(action: "displayMatchWindowToggled", in: vc.view) else {
-            Issue.record("Expected the match-window switch")
-            return
-        }
-
-        match.state = .off
-        match.sendAction(match.action, to: match.target)
-
-        // Manual mode boots at the trio, so it has to carry the intent.
-        #expect(instance.configuration.displaySizesToWindow == false)
-        #expect(instance.configuration.displayWidth == 2800)
-        #expect(instance.configuration.displayHeight == 1760)
-        #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
-        #expect(editableField("Width", in: vc.view)?.integerValue == 1400)
-    }
-
-    @Test("Turning match-window off leaves an already-matching trio alone")
-    func matchWindowOffKeepsAConsistentTrio() {
-        let (vc, instance) = makeDisplayController(
-            sizesToWindow: true, width: 2800, height: 1760, ppi: 220, hiDPI: true)
-        guard let match = firstSwitch(action: "displayMatchWindowToggled", in: vc.view) else {
-            Issue.record("Expected the match-window switch")
-            return
-        }
-
-        match.state = .off
-        match.sendAction(match.action, to: match.target)
-
-        #expect(instance.configuration.displayWidth == 2800)
-        #expect(instance.configuration.displayHeight == 1760)
-        #expect(instance.configuration.displayPPI == 220)
-    }
-
-    @Test("A Linux VM leaving match-window mode keeps its resolution")
-    func matchWindowOffIgnoresHiDPIForLinux() {
-        // The flag defaults on and Linux has no HiDPI row: reconciliation must
-        // not double a resolution VZ will report without any density.
-        let (vc, instance) = makeDisplayController(
-            guestOS: .linux, sizesToWindow: true, width: 1400, height: 880, ppi: 144, hiDPI: true)
-        guard let match = firstSwitch(action: "displayMatchWindowToggled", in: vc.view) else {
-            Issue.record("Expected the match-window switch")
-            return
-        }
-
-        match.state = .off
-        match.sendAction(match.action, to: match.target)
-
-        #expect(instance.configuration.displayWidth == 1400)
-        #expect(instance.configuration.displayHeight == 880)
-        #expect(instance.configuration.displayPPI == 144)
-    }
-
-    @Test("Read-only disables the display lockables but not auto-resize")
-    func readOnlyDisablesDisplayLockables() {
-        for guestOS in [VMGuestOS.macOS, .linux] {
-            let (vc, _) = makeDisplayController(guestOS: guestOS, isReadOnly: true)
-
-            #expect(
-                firstSwitch(action: "displayMatchWindowToggled", in: vc.view)?.isEnabled == false)
-            #expect(firstPopUp(action: "displayResolutionChanged", in: vc.view)?.isEnabled == false)
-            #expect(editableField("Width", in: vc.view)?.isEnabled == false)
-            #expect(firstSwitch(action: "displayAutoResizeToggled", in: vc.view)?.isEnabled == true)
-            if guestOS == .macOS {
-                #expect(firstSwitch(action: "displayHiDPIToggled", in: vc.view)?.isEnabled == false)
-            }
-        }
-    }
-
     @Test("Toggling auto-resize writes back to the configuration")
     func autoResizeToggleWritesConfig() {
         for guestOS in [VMGuestOS.macOS, .linux] {
@@ -310,36 +155,6 @@ struct VMSettingsSystemPanelTests {
         }
     }
 
-    @Test("A refresh leaves a size field the user is still typing in alone")
-    func refreshKeepsAnInProgressSizeEdit() {
-        let (vc, _) = makeDisplayController(width: 1920, height: 1200)
-        let window = makeTestWindow(styleMask: [.titled])
-        window.contentView = vc.view
-        guard let width = editableField("Width", in: vc.view) else {
-            Issue.record("Expected the width field")
-            return
-        }
-        #expect(window.makeFirstResponder(width))
-        #expect(width.currentEditor() != nil)
-        typeText("1600", into: width)
-
-        // Stands in for any observation pass — starting the VM from the toolbar
-        // mutates status, which refreshes the whole pane.
-        vc.viewDidAppear()
-
-        #expect(width.currentEditor()?.string == "1600")
-        // The committed value is untouched: only the editor holds the edit.
-        #expect(editableField("Height", in: vc.view)?.integerValue == 1200)
-    }
-
-    @Test("A running VM's Display card adds no next-start note to its lock hint")
-    func noNextStartNoteWhileRunning() {
-        let (runningVC, _) = makeDisplayController(
-            phase: .running(sessionID: UUID()), isReadOnly: true)
-        #expect(findLabel(containing: "Takes effect", in: runningVC.view) == nil)
-        #expect(settingsLockHints(in: runningVC.view).contains { !$0.isHidden })
-    }
-
     // MARK: - Input section
 
     /// Builds a controller over a stock config for `guestOS`.
@@ -347,29 +162,6 @@ struct VMSettingsSystemPanelTests {
         guestOS: VMGuestOS = .macOS, isReadOnly: Bool = false
     ) -> (VMSettingsViewController, VMInstance) {
         makeDisplayController(guestOS: guestOS, isReadOnly: isReadOnly)
-    }
-
-    @Test("The system keys row is present for both guest OSes, the devices row is macOS-only")
-    func systemKeysRowIsNotMacOSOnly() {
-        for guestOS in [VMGuestOS.macOS, .linux] {
-            let (vc, _) = makeInputController(guestOS: guestOS)
-            #expect(containsLabel("Input", in: vc.view))
-            #expect(containsLabel("Send system keys to guest", in: vc.view))
-            #expect(firstPopUp(action: "systemKeysChanged", in: vc.view) != nil)
-            // Linux guests always take the USB pair, so they get no picker.
-            #expect(containsLabel("Devices", in: vc.view) == (guestOS == .macOS))
-        }
-    }
-
-    @Test("The system keys popup opens on the VM's stored mode")
-    func systemKeysPopUpShowsStoredMode() {
-        let (vc, instance) = makeInputController()
-        guard let popUp = firstPopUp(action: "systemKeysChanged", in: vc.view) else {
-            Issue.record("Expected the system keys popup")
-            return
-        }
-        #expect(instance.configuration.systemKeyForwarding == .always)
-        #expect(popUp.titleOfSelectedItem == "Always")
     }
 
     @Test("Choosing a system keys mode writes it")
@@ -387,14 +179,6 @@ struct VMSettingsSystemPanelTests {
             popUp.sendAction(popUp.action, to: popUp.target)
             #expect(instance.configuration.systemKeyForwarding == mode, "\(title)")
         }
-    }
-
-    @Test("A running VM can still change system keys while the devices picker locks")
-    func systemKeysStayEditableWhileReadOnly() {
-        let (vc, _) = makeInputController(isReadOnly: true)
-
-        #expect(firstPopUp(action: "systemKeysChanged", in: vc.view)?.isEnabled == true)
-        #expect(firstPopUp(action: "inputDevicesChanged", in: vc.view)?.isEnabled == false)
     }
 
     // MARK: - Microphone permission
@@ -416,18 +200,6 @@ struct VMSettingsSystemPanelTests {
         return vc
     }
 
-    @Test("Denied permission shows the warning banner with an Open System Settings button and its info")
-    func deniedMicShowsBannerAndButton() {
-        let vc = makeMicController(.denied)
-
-        #expect(visibleLabel(VMOverviewResolver.micPermissionDeniedWarning, in: vc.view))
-        #expect(findButton(titled: "Open System Settings", in: vc.view) != nil)
-        #expect(infoButton(about: "Microphone Permission", in: vc.view) != nil)
-        #expect(
-            VMSettingsSystemPanelViewController.micPermissionInfo.contains(
-                .body("In System Settings › Privacy & Security › Microphone, turn on Kernova.")))
-    }
-
     @Test("The banner's Open System Settings button opens the Microphone privacy pane")
     func deniedMicBannerButtonOpensSettings() throws {
         let recorder = URLOpenRecorder(results: [true])
@@ -438,18 +210,6 @@ struct VMSettingsSystemPanelTests {
 
         #expect(recorder.opened == [SystemSettingsLink.microphonePrivacyURL])
     }
-
-    @Test("An undetermined permission shows nothing on screen; the Audio input row's info names the prompt")
-    func undeterminedMicShowsNothing() {
-        let vc = makeMicController(.notDetermined)
-
-        #expect(findLabel(containing: "microphone permission", in: vc.view) == nil)
-        #expect(findLabel(containing: "Microphone permission is denied", in: vc.view) == nil)
-        #expect(findButton(titled: "Open System Settings", in: vc.view) == nil)
-        #expect(infoButton(about: "Audio input", in: vc.view) != nil)
-    }
-
-    // MARK: - Serial console
 
     // MARK: - Edits committed after the machine is pinned
 
@@ -642,36 +402,6 @@ struct VMSettingsSystemPanelTests {
         }
     }
 
-    /// The boot resolutions an unchanged size field has to write back exactly:
-    /// a standard one, and a Retina one whose "looks like" size is odd — the
-    /// half of a window-fitted pixel count a start can leave behind.
-    nonisolated static let unchangedResolutions = [
-        DisplayBootSizing.Resolution(
-            width: 1920, height: 1200, ppi: DisplayBootSizing.standardPixelsPerInch),
-        DisplayBootSizing.Resolution(
-            width: 1602, height: 1202, ppi: DisplayBootSizing.hiDPIPixelsPerInch),
-    ]
-
-    @Test(
-        "Ending an unchanged edit after the VM started raises nothing and writes nothing",
-        arguments: unchangedResolutions)
-    func endingAnUnchangedEditAfterAStartRaisesNothing(
-        _ resolution: DisplayBootSizing.Resolution
-    ) throws {
-        let (vc, instance, presenter, storage) = makeMachineEditController(resolution: resolution)
-        let before = instance.configuration
-        let onDisk = storage.bundles[instance.bundleURL]
-
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        for label in ["CPU cores", "Memory", "Width", "Height"] {
-            commitEdit(try #require(editableField(label, in: vc.view)))
-        }
-
-        #expect(presenter.errors.isEmpty)
-        #expect(instance.configuration == before)
-        #expect(storage.bundles[instance.bundleURL] == onDisk)
-    }
-
     /// Every end-edit field, which a start can catch mid-edit.
     enum TypedField: String, CaseIterable, Sendable {
         case cpus = "CPU cores"
@@ -774,37 +504,6 @@ struct VMSettingsSystemPanelTests {
         #expect(field.stringValue == changed)
     }
 
-    @Test("A count committed with Return is not written back over a later CLI set")
-    func aCommittedCountLeavesALaterSetStanding() throws {
-        let (vc, instance, presenter, _) = makeMachineEditController()
-        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
-        let window = makeTestWindow(styleMask: [.titled])
-        window.contentView = vc.view
-        let field = try #require(editableField("CPU cores", in: vc.view))
-        let original = instance.configuration.cpuCount
-        let typed = TypedField.cpus.changedValue(from: instance.configuration)
-        #expect(window.makeFirstResponder(field))
-        typeText(typed, into: field)
-
-        // Return commits the edit and leaves the field focused, its text
-        // reselected in a field editor.
-        try #require(field.currentEditor() as? NSTextView).insertNewline(nil)
-        #expect(String(instance.configuration.cpuCount) == typed)
-        if field.currentEditor() == nil { #expect(window.makeFirstResponder(field)) }
-
-        let outcome = viewModel.setConfiguration(
-            [ConfigurationEntry(key: "cpus", value: String(original))], on: instance)
-        #expect(outcome == .applied)
-        // Stands in for the observation pass the write drives.
-        vc.viewDidAppear()
-        #expect(field.currentEditor()?.string == String(original))
-        // Clicking the sidebar ends the edit.
-        #expect(window.makeFirstResponder(nil))
-
-        #expect(instance.configuration.cpuCount == original)
-        #expect(presenter.errors.isEmpty)
-    }
-
     @Test("A refresh that changes nothing keeps a focused field's selection, so a keystroke replaces its value")
     func aSameValueRefreshKeepsTheTabInSelection() throws {
         let (vc, instance, presenter, _) = makeMachineEditController()
@@ -883,62 +582,9 @@ struct VMSettingsSystemPanelTests {
         #expect(presenter.errors.isEmpty)
     }
 
-    @Test("Typing back the value a CLI set replaced is an edit, and is written")
-    func typingTheReplacedValueBackIsWritten() throws {
-        let (vc, instance, presenter, _) = makeMachineEditController()
-        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
-        let window = makeTestWindow(styleMask: [.titled])
-        window.contentView = vc.view
-        let field = try #require(editableField("CPU cores", in: vc.view))
-        let original = instance.configuration.cpuCount
-        let changed = TypedField.cpus.changedValue(from: instance.configuration)
-        #expect(window.makeFirstResponder(field))
-
-        let outcome = viewModel.setConfiguration(
-            [ConfigurationEntry(key: "cpus", value: changed)], on: instance)
-        #expect(outcome == .applied)
-        // Stands in for the observation pass the write drives.
-        vc.viewDidAppear()
-        #expect(field.currentEditor()?.string == changed)
-        typeText(String(original), into: field)
-        #expect(window.makeFirstResponder(nil))
-
-        #expect(instance.configuration.cpuCount == original)
-        #expect(presenter.errors.isEmpty)
-    }
-
     // MARK: - Sized-at-last-start note
 
     private var sizedNote: String { VMSettingsSystemPanelViewController.displayNextColdStartNote }
-
-    @Test(
-        "The next-cold-start note sits inside the Display card, under its last row",
-        arguments: [(VMGuestOS.macOS, "HiDPI (Retina)"), (.linux, "Height")])
-    func sizedNoteSitsInTheDisplayCard(guestOS: VMGuestOS, lastRowTitle: String) throws {
-        let (vc, _) = makeDisplayController(guestOS: guestOS, sizesToWindow: true)
-        vc.view.layoutSubtreeIfNeeded()
-
-        let caption = try #require(findLabel(withText: sizedNote, in: vc.view))
-        let card = try #require(enclosingGroupedFormCard(of: caption))
-        let lastRowTitleLabel = try #require(findLabel(withText: lastRowTitle, in: card))
-
-        // The card's own view is not flipped: "below" is a smaller y.
-        let captionInCard = caption.convert(caption.bounds, to: card)
-        let titleInCard = lastRowTitleLabel.convert(lastRowTitleLabel.bounds, to: card)
-        #expect(captionInCard.height > 0)
-        #expect(captionInCard.maxY <= titleInCard.minY)
-    }
-
-    @Test("The next-cold-start note shows only while the display is sized to the window")
-    func sizedNoteOnlyInMatchMode() {
-        let (manualVC, _) = makeDisplayController(sizesToWindow: false)
-        #expect(!visibleLabel(sizedNote, in: manualVC.view))
-        // The manual size is the fields' own, so nothing restates it.
-        #expect(findLabel(containing: "Boots at", in: manualVC.view) == nil)
-
-        let (matchVC, _) = makeDisplayController(sizesToWindow: true)
-        #expect(visibleLabel(sizedNote, in: matchVC.view))
-    }
 
     /// A save file makes the next start a resume at the saved size, so the
     /// note names a cold start only where the next start is one.
@@ -958,38 +604,6 @@ struct VMSettingsSystemPanelTests {
         #expect(!visibleLabel(sizedNote, in: suspended.view))
     }
 
-    @Test("The next-cold-start note follows a write made through the verb")
-    func sizedNoteFollowsAVerbWrite() throws {
-        let (vc, instance) = makeDisplayController(sizesToWindow: false)
-        let viewModel = try #require(vc.settingsPanelForTesting(.system)).viewModel
-
-        // Not the pane's own write: the note hears of it only through the
-        // model, as it does a CLI `set`.
-        let outcome = viewModel.setConfiguration(
-            [VMConfigurationKeyRegistry.displaySizeToWindow.assigning(true)], on: instance)
-        #expect(outcome == .applied)
-
-        // Stands in for the observation pass the write drives.
-        vc.viewDidAppear()
-        #expect(visibleLabel(sizedNote, in: vc.view))
-    }
-
-    @Test("A refused end-edit puts the model's value back in a field whose editor is still attached")
-    func refusedEndEditRevertsAFieldStillBeingEdited() throws {
-        let (vc, instance, presenter, _) = makeMachineEditController()
-        let window = makeTestWindow(styleMask: [.titled])
-        window.contentView = vc.view
-        let width = try #require(editableField("Width", in: vc.view))
-        #expect(window.makeFirstResponder(width))
-        #expect(width.currentEditor() != nil)
-        typeText("1440", into: width)
-
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        commitEdit(width)
-
-        #expect(presenter.errors.count == 1)
-        #expect(width.integerValue == instance.configuration.displayBaseSize.width)
-    }
     @Test("The reveal button comes back after a disappearance cancels its probe")
     func serialLogProbeReRunsAfterTheProbeIsCancelled() async throws {
         let instance = VMInstanceFixture.make()

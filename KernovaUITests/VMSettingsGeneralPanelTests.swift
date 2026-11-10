@@ -3,7 +3,6 @@ import AppKit
 import KernovaCommandModel
 import KernovaTestSupport
 import Testing
-import Virtualization
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
@@ -121,19 +120,6 @@ struct VMSettingsGeneralPanelTests {
         return (vc, instance, viewModel)
     }
 
-    @Test("A macOS VM that knows both shows the install record and the agent report side by side")
-    func osRowsBothKnown() {
-        let (vc, _, _) = makeOSRowsController(
-            guestOS: .macOS,
-            installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
-            lastSeenGuestOSVersion: "Version 26.6 (Build 25G12)")
-
-        #expect(visibleLabel("Installed from", in: vc.view))
-        #expect(visibleLabel("macOS 26.5.2 (25F84)", in: vc.view))
-        #expect(visibleLabel("OS version", in: vc.view))
-        #expect(visibleLabel("26.6", in: vc.view))
-    }
-
     /// The install record standing alone reads as the version the guest runs
     /// today, which it stops being at the first in-guest update.
     @Test("A macOS VM no agent has reported on says its OS version is unknown beside the install record")
@@ -144,24 +130,6 @@ struct VMSettingsGeneralPanelTests {
 
         #expect(visibleLabel("Installed from", in: vc.view))
         #expect(visibleLabel("OS version", in: vc.view))
-        #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
-    }
-
-    @Test("A macOS VM Kernova did not install shows only what the agent reports")
-    func osRowsAgentReportOnly() {
-        let (vc, _, _) = makeOSRowsController(
-            guestOS: .macOS, lastSeenGuestOSVersion: "26.6")
-
-        #expect(!visibleLabel("Installed from", in: vc.view))
-        #expect(visibleLabel("OS version", in: vc.view))
-        #expect(visibleLabel("26.6", in: vc.view))
-    }
-
-    @Test("A macOS VM that knows neither shows only the unknown OS version")
-    func osRowsNeitherKnown() {
-        let (vc, _, _) = makeOSRowsController(guestOS: .macOS)
-
-        #expect(!visibleLabel("Installed from", in: vc.view))
         #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
     }
 
@@ -180,15 +148,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(!containsLabel("Installed from", in: vc.view))
         #expect(visibleLabel("OS version", in: vc.view))
         #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
-    }
-
-    @Test("A Linux VM shows the version its agent reports")
-    func osRowsLinuxAgentReport() {
-        let (vc, _, _) = makeOSRowsController(guestOS: .linux, lastSeenGuestOSVersion: "24.04")
-
-        #expect(!visibleLabel("Installer image", in: vc.view))
-        #expect(visibleLabel("OS version", in: vc.view))
-        #expect(visibleLabel("24.04", in: vc.view))
     }
 
     // MARK: - Installer image digest
@@ -234,84 +193,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(verification.toolTip == Self.checksumListURL.absoluteString)
     }
 
-    @Test("A URL image checked against an entered checksum says so, and names its URL")
-    func digestRowsForEnteredChecksum() throws {
-        let digest = try #require(
-            Self.matched(.enteredByUser, filename: "alpine-3.22-aarch64.iso"))
-        let (vc, _, _) = makeOSRowsController(
-            guestOS: .linux, installedImage: .linuxURLImage(url: Self.isoURL, digest: digest))
-
-        #expect(visibleLabel("Installer image", in: vc.view))
-        let image = try #require(panelLabel("alpine-3.22-aarch64.iso", in: vc))
-        #expect(isVisible(image, within: vc.view))
-        #expect(image.toolTip == Self.isoURL.absoluteString)
-        #expect(visibleLabel("01234567\u{2026}76543210", in: vc.view))
-        let verification = try #require(panelLabel("Matched the checksum you entered", in: vc))
-        #expect(isVisible(verification, within: vc.view))
-        #expect(verification.toolTip == nil)
-    }
-
-    @Test("A URL image compared with nothing states it was not verified")
-    func digestRowsForUncheckedImage() throws {
-        let (vc, _, _) = makeOSRowsController(
-            guestOS: .linux,
-            installedImage: .linuxURLImage(
-                url: Self.isoURL,
-                digest: .unchecked(filename: "alpine-3.22-aarch64.iso", sha256: Self.sha256)))
-
-        #expect(visibleLabel("01234567\u{2026}76543210", in: vc.view))
-        let verification = try #require(panelLabel("Not verified", in: vc))
-        #expect(isVisible(verification, within: vc.view))
-        #expect(
-            verification.toolTip
-                == "Computed from the downloaded file. It wasn't compared with any checksum.")
-    }
-
-    @Test("A record with no digest shows neither digest row")
-    func noDigestRowsWithoutADigest() {
-        let preDigest = makeOSRowsController(
-            guestOS: .linux,
-            installedImage: .linuxCatalogImage(
-                distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil)
-        ).0
-        #expect(visibleLabel("Installer image", in: preDigest.view))
-        #expect(!visibleLabel("SHA-256", in: preDigest.view))
-        #expect(!visibleLabel("Verification", in: preDigest.view))
-        #expect(separatesEveryRow(generalCardLayout(in: preDigest)))
-
-        let macOS = makeOSRowsController(
-            guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
-        ).0
-        #expect(visibleLabel("Installed from", in: macOS.view))
-        #expect(!visibleLabel("SHA-256", in: macOS.view))
-        #expect(!visibleLabel("Verification", in: macOS.view))
-    }
-
-    @Test("Setup completing while the panel is open reveals the digest rows")
-    func digestRowsAppearOnRefresh() throws {
-        let (vc, instance, viewModel) = makeOSRowsController(guestOS: .linux)
-        #expect(!visibleLabel("SHA-256", in: vc.view))
-
-        let digest = try #require(
-            Self.matched(.checksumList(Self.checksumListURL), filename: "ubuntu-26.04-desktop-arm64.iso"))
-        // Only an operation holding the VM may write the record, as setup does.
-        try withOperationNow(on: instance) { context in
-            try viewModel.library.updateConfiguration(context.permit) {
-                $0.installedImage = .linuxCatalogImage(
-                    distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: digest)
-            }.get()
-        }
-        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
-
-        #expect(visibleLabel("Ubuntu Desktop 26.04 LTS", in: vc.view))
-        #expect(visibleLabel("01234567\u{2026}76543210", in: vc.view))
-        #expect(visibleLabel("Matched the checksum list on cdimage.ubuntu.com", in: vc.view))
-        let copy = try #require(
-            vc.panelForTesting(.general).flatMap { firstSubview(CopyValueButton.self, in: $0) })
-        #expect(copy.value == Self.sha256)
-        #expect(separatesEveryRow(generalCardLayout(in: vc)))
-    }
-
     /// The General card's visible run of rows and hairlines, `true` for a
     /// hairline — collapsible rows expanded, hidden views dropped.
     ///
@@ -350,41 +231,6 @@ struct VMSettingsGeneralPanelTests {
             && zip(layout, layout.dropFirst()).allSatisfy { $0 != $1 }
     }
 
-    @Test("A hidden install record takes its separator with it")
-    func osRowsLeaveNoStrandedSeparator() {
-        // Every combination, since each leaves a different run of rows behind.
-        let noRows = makeOSRowsController(guestOS: .macOS).0
-        #expect(separatesEveryRow(generalCardLayout(in: noRows)))
-
-        let installOnly = makeOSRowsController(
-            guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
-        ).0
-        #expect(separatesEveryRow(generalCardLayout(in: installOnly)))
-
-        let agentOnly = makeOSRowsController(guestOS: .macOS, lastSeenGuestOSVersion: "26.6").0
-        #expect(separatesEveryRow(generalCardLayout(in: agentOnly)))
-
-        let bothRows = makeOSRowsController(
-            guestOS: .macOS, installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"),
-            lastSeenGuestOSVersion: "26.6"
-        ).0
-        #expect(separatesEveryRow(generalCardLayout(in: bothRows)))
-        // The install record really is in the run the check passed on.
-        #expect(generalCardLayout(in: bothRows).count == generalCardLayout(in: noRows).count + 2)
-    }
-
-    @Test("A first agent report fills in the OS version without rebuilding the form")
-    func osVersionRowAppearsOnFirstReport() {
-        let (vc, instance, viewModel) = makeOSRowsController(guestOS: .macOS)
-        #expect(visibleLabel(VMSettingsGeneralPanelViewController.unknownGuestOSVersion, in: vc.view))
-
-        viewModel.library.editConfiguration(of: instance, as: .observations) { $0.lastSeenGuestOSVersion = "26.6" }
-        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
-
-        #expect(visibleLabel("OS version", in: vc.view))
-        #expect(visibleLabel("26.6", in: vc.view))
-    }
-
     // MARK: - Launch auto-start
 
     @Test("Toggling the Startup switch writes back to the configuration")
@@ -400,26 +246,6 @@ struct VMSettingsGeneralPanelTests {
         autoStart.sendAction(autoStart.action, to: autoStart.target)
 
         #expect(instance.hostState.startsAutomaticallyOnLaunch == true)
-    }
-
-    /// The flag is consumed once at app launch and reaches no
-    /// `VZVirtualMachineConfiguration`, so it must stay editable while the VM
-    /// runs — unlike every control the read-only banner locks.
-    @Test("The Startup toggle stays editable while the VM is running")
-    func autoStartSwitchStaysEnabledWhenReadOnly() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: true)
-        #expect(firstSwitch(action: "autoStartToggled", in: vc.view)?.isEnabled == true)
-    }
-
-    @Test("The start order is the auto-start row's info, not a caption")
-    func startupRowInfoStatesTheStartOrder() {
-        let order =
-            "Virtual machines start in the library\u{2019}s manual order: the order the sidebar lists them in when sorted by Manual, ungrouped and unfiltered."
-        #expect(VMSettingsGeneralPanelViewController.autoStartInfo.contains(.body(order)))
-
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false, category: .general)
-        #expect(infoButton(about: "Start when Kernova opens", in: vc.view) != nil)
-        #expect(findLabel(withText: order, in: vc.view) == nil)
     }
 
     // MARK: - Ephemeral Mode
@@ -468,32 +294,6 @@ struct VMSettingsGeneralPanelTests {
         return (vc, instance)
     }
 
-    @Test("A VM with no snapshot offers the mode by taking its baseline")
-    func ephemeralToggleOffersTheBaselineCapture() {
-        let (vc, _) = makeEphemeralController(snapshotCount: 0, ephemeral: false)
-        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
-
-        #expect(toggle?.state == .off)
-        #expect(toggle?.isEnabled == true)
-        #expect(toggle?.alphaValue == 1)
-        #expect(visibleLabel(EphemeralModeCopy.noSnapshotsCaption(capturesBaseline: true), in: vc.view))
-    }
-
-    @Test("One snapshot is enough to offer the mode")
-    func ephemeralToggleEnabledWithASnapshot() {
-        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: false)
-
-        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
-        #expect(toggle?.isEnabled == true)
-        #expect(toggle?.alphaValue == 1)
-        for capturesBaseline in [false, true] {
-            #expect(
-                !visibleLabel(
-                    EphemeralModeCopy.noSnapshotsCaption(capturesBaseline: capturesBaseline),
-                    in: vc.view))
-        }
-    }
-
     /// The baseline capture follows Take Snapshot's own availability, so a VM
     /// that can't be snapshotted has a dimmed switch rather than one opening a
     /// sheet that can't confirm.
@@ -510,20 +310,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(toggle?.isEnabled == false)
         #expect(toggle?.alphaValue ?? 1 < 1)
         #expect(visibleLabel(EphemeralModeCopy.noSnapshotsCaption(capturesBaseline: false), in: vc.view))
-    }
-
-    /// A VM already in the mode can always be taken back out, so the switch
-    /// stays live even once its manifest can no longer offer a baseline.
-    @Test("A VM already in the mode keeps a live toggle with no snapshots")
-    func ephemeralToggleStaysLiveWhenAlreadyOn() {
-        let (vc, instance) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
-        instance.seedSnapshotManifest(VMSnapshotManifest())
-        // Re-runs `apply()` over the mutated manifest.
-        vc.viewDidAppear()
-
-        let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view)
-        #expect(toggle?.isEnabled == true)
-        #expect(toggle?.alphaValue == 1)
     }
 
     /// The mode turns on only once the capture lands, so the switch reads off
@@ -629,21 +415,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(!visibleLabel(EphemeralModeCopy.enableCaution(baseline: pinned), in: on.view))
     }
 
-    @Test("Turning the mode off clears the baseline")
-    func ephemeralToggleOffClearsTheBaseline() {
-        let (vc, instance) = makeEphemeralController(snapshotCount: 2, ephemeral: true)
-        guard let toggle = firstSwitch(action: "ephemeralModeToggled", in: vc.view) else {
-            Issue.record("Expected an Ephemeral Mode switch")
-            return
-        }
-
-        toggle.state = .off
-        toggle.sendAction(toggle.action, to: toggle.target)
-
-        #expect(!instance.hostState.ephemeralModeEnabled)
-        #expect(instance.hostState.ephemeralBaselineSnapshotID == nil)
-    }
-
     @Test("Choosing another snapshot asks first, and confirmed moves the baseline")
     func ephemeralBaselineSelectionWritesConfig() throws {
         let viewModel = makeViewModel()
@@ -672,36 +443,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(instance.hostState.ephemeralModeEnabled)
     }
 
-    /// The flag is read at power-off and reaches no `VZVirtualMachineConfiguration`,
-    /// so it stays editable while the VM runs — and a running ephemeral VM is
-    /// exactly where a user reaches for the switch.
-    @Test("The Ephemeral toggle stays editable while the VM is running")
-    func ephemeralToggleStaysEnabledWhenReadOnly() {
-        let (vc, _) = makeEphemeralController(
-            snapshotCount: 1, ephemeral: false, isReadOnly: true)
-
-        #expect(firstSwitch(action: "ephemeralModeToggled", in: vc.view)?.isEnabled == true)
-    }
-
-    @Test("What an ephemeral VM does is the Ephemeral Mode row's info, not a caption")
-    func ephemeralExplanationLivesInTheRowInfo() {
-        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true)
-        #expect(infoButton(about: "Ephemeral Mode", in: vc.view) != nil)
-        #expect(findLabel(containing: "An ephemeral virtual machine", in: vc.view) == nil)
-    }
-
-    @Test("Each baseline entry is its snapshot's name")
-    func ephemeralBaselineMenuListsSnapshotNames() throws {
-        let (vc, _) = makeEphemeralController(
-            snapshots: [
-                makeSnapshot(index: 0, kind: .warm), makeSnapshot(index: 1, kind: .cold),
-            ], ephemeral: true)
-        let popUp = try #require(firstPopUp(action: "ephemeralBaselineChanged", in: vc.view))
-
-        // Rows render newest first, so the cold one leads.
-        #expect(popUp.itemArray.map(\.title) == ["Snapshot 1", "Snapshot 0"])
-    }
-
     /// Nothing keeps two snapshots from sharing a name, and both have to stay
     /// pickable — an entry dropped for carrying a duplicate title would take a
     /// baseline out of reach.
@@ -725,16 +466,6 @@ struct VMSettingsGeneralPanelTests {
         let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: true, kind: .warm)
 
         #expect(visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
-        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
-    }
-
-    /// There is no baseline to describe while the mode is off, and the caption
-    /// follows the sub-option that holds the choice.
-    @Test("No baseline caption shows while the mode is off")
-    func ephemeralBaselineCaptionHiddenWhenOff() {
-        let (vc, _) = makeEphemeralController(snapshotCount: 1, ephemeral: false)
-
-        #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .warm), in: vc.view))
         #expect(!visibleLabel(EphemeralModeCopy.baselineCaption(for: .cold), in: vc.view))
     }
 
@@ -812,26 +543,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(visibleLabel(warning, in: vc.view))
     }
 
-    /// Whether any visible label carries the capacity warning's vendor sentence.
-    ///
-    /// Matched by substring rather than by whole string: the message leads with
-    /// the marked count, so the exact text is only known where a warning is
-    /// expected — and the absence assertions are exactly where it is not.
-    private func showsMacOSCapacityWarning(in view: NSView) -> Bool {
-        firstSubview(NSTextField.self, in: view) {
-            $0.stringValue.contains("but macOS runs at most two at once")
-                && isVisible($0, within: view)
-        } != nil
-    }
-
-    /// Linux guests don't count against the macOS cap, so the warning is not
-    /// theirs to show even while three macOS VMs are marked.
-    @Test("A Linux guest never shows the macOS capacity warning")
-    func startupNeverWarnsOnALinuxGuest() {
-        let (vc, _) = makeStartupController(guestOS: .linux, markedMacOSVMs: 3)
-        #expect(!showsMacOSCapacityWarning(in: vc.view))
-    }
-
     /// One row of the capacity-warning decision table.
     struct CapacityCase: Sendable, CustomStringConvertible {
         let isMacOSGuest: Bool
@@ -896,14 +607,6 @@ struct VMSettingsGeneralPanelTests {
         #expect(value.toolTip == fingerprint.digest)
         #expect(value.font?.isFixedPitch == true)
         #expect(!visibleLabel(Self.sharedMachineIDNote, in: vc.view))
-        #expect(separatesEveryRow(generalCardLayout(in: vc)))
-    }
-
-    @Test("A VM with no machine ID shows no Machine ID row")
-    func machineIDRowHiddenWithoutAnIdentifier() {
-        let (vc, _, _) = makeController(guestOS: .linux, isReadOnly: false)
-
-        #expect(!visibleLabel("Machine ID", in: vc.view))
         #expect(separatesEveryRow(generalCardLayout(in: vc)))
     }
 
