@@ -33,21 +33,40 @@ struct ShellCompletionInstallerTests {
         }
     }
 
-    @Test("zsh goes to a site-functions the user owns, or to their own home")
-    func zshAvoidsAFolderTheUserCannotWrite() {
-        let directory = ShellCompletionInstaller.Shell.zsh.defaultDirectory
+    @Test("zsh goes to the first site-functions the user can write into")
+    func zshTakesTheFirstWritableSiteFunctions() throws {
+        let missing = scratch.url.appending(path: "missing").standardizedFileURL.path
+        let readOnly = try makeFolder("read-only", permissions: 0o555)
+        let preferred = try makeFolder("preferred", permissions: 0o755)
+        let later = try makeFolder("later", permissions: 0o755)
 
-        if let siteFunctions = ShellCompletionInstaller.siteFunctions {
-            #expect(directory == siteFunctions)
-            #expect(
-                ShellCompletionInstaller.isUserWritableDirectory(
-                    siteFunctions.path(percentEncoded: false)))
-        } else {
-            // Every Mac has this one, and it is the user's own.
-            #expect(
-                directory.path(percentEncoded: false)
-                    == UserHome.path + "/.zsh/completions")
-        }
+        let directory = ShellCompletionInstaller.zshDirectory(
+            siteFunctionsCandidates: [missing, readOnly, preferred, later])
+
+        #expect(directory.standardizedFileURL.path == preferred)
+    }
+
+    @Test("zsh goes to the user's own folder when no site-functions is theirs")
+    func zshFallsBackToTheUsersHome() throws {
+        let missing = scratch.url.appending(path: "missing").standardizedFileURL.path
+        let readOnly = try makeFolder("read-only", permissions: 0o555)
+
+        let directory = ShellCompletionInstaller.zshDirectory(
+            siteFunctionsCandidates: [missing, readOnly])
+
+        #expect(
+            directory.standardizedFileURL.path
+                == URL(fileURLWithPath: UserHome.path + "/.zsh/completions").standardizedFileURL
+                .path)
+    }
+
+    /// A new folder in the scratch directory with `permissions`, as its path.
+    private func makeFolder(_ name: String, permissions: Int) throws -> String {
+        let path = scratch.url.appending(path: name).standardizedFileURL.path
+        try FileManager.default.createDirectory(
+            atPath: path, withIntermediateDirectories: false,
+            attributes: [.posixPermissions: permissions])
+        return path
     }
 
     @Test("A folder the user cannot create files in is not offered")

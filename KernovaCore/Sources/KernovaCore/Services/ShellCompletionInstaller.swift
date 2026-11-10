@@ -37,9 +37,8 @@ package enum ShellCompletionInstaller {
         package var defaultDirectory: URL {
             switch self {
             case .zsh:
-                ShellCompletionInstaller.siteFunctions
-                    ?? UserHome.url.appending(
-                        path: ".zsh/completions", directoryHint: .isDirectory)
+                ShellCompletionInstaller.zshDirectory(
+                    siteFunctionsCandidates: ShellCompletionInstaller.siteFunctionsCandidates)
             case .bash:
                 UserHome.url.appending(
                     path: ".local/share/bash-completion/completions", directoryHint: .isDirectory)
@@ -91,14 +90,19 @@ package enum ShellCompletionInstaller {
         }
     }
 
-    /// A `site-functions` on this Mac the user can write into, `nil` when
-    /// neither is there or both are root's.
-    static var siteFunctions: URL? {
-        let candidates = [
-            "/opt/homebrew/share/zsh/site-functions",
-            "/usr/local/share/zsh/site-functions",
-        ]
-        guard let path = candidates.first(where: isUserWritableDirectory) else { return nil }
+    /// The package managers' `site-functions` folders on a Mac's zsh `fpath`,
+    /// most preferred first.
+    static let siteFunctionsCandidates = [
+        "/opt/homebrew/share/zsh/site-functions",
+        "/usr/local/share/zsh/site-functions",
+    ]
+
+    /// The first of `siteFunctionsCandidates` the user can write into, or
+    /// `~/.zsh/completions` when none is.
+    static func zshDirectory(siteFunctionsCandidates: [String]) -> URL {
+        guard let path = siteFunctionsCandidates.first(where: isUserWritableDirectory) else {
+            return UserHome.url.appending(path: ".zsh/completions", directoryHint: .isDirectory)
+        }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
