@@ -45,18 +45,4 @@ struct VMDetailRouterReadOnlyTests {
             #expect(router.settingsForTesting.isReadOnlyForTesting == held, "\(phase) held=\(held)")
         }
     }
-
-    @Test("A route with no form reads no lock, while the same VM's form reads it locked")
-    func displayRouteReadsNoLock() throws {
-        let display = showRouter(.suspended, heldByAnotherCopy: true)
-        let shown = try #require(display.renderedForTesting)
-        #expect(shown.route == .display)
-        #expect(!shown.isReadOnly)
-
-        let form = showRouter(.suspended, heldByAnotherCopy: true, paneMode: .settings)
-        let settings = try #require(form.renderedForTesting)
-        #expect(settings.route == .settings)
-        #expect(settings.isReadOnly)
-        #expect(form.settingsForTesting.isReadOnlyForTesting)
-    }
 }

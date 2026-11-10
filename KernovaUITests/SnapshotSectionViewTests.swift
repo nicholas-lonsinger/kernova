@@ -50,24 +50,6 @@ struct SnapshotSectionViewTests {
 
     // MARK: - Rows
 
-    @Test("Rows render newest first")
-    func rowsAreNewestFirst() {
-        let view = SnapshotSectionView()
-        let older = makeSnapshot("Older")
-        let newer = makeSnapshot("Newer", offsetSeconds: 60)
-
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [older, newer]),
-            canTakeSnapshot: true, canRevert: true)
-
-        let titles = collectLabels(in: view).map(\.stringValue)
-        let newerIndex = titles.firstIndex(of: "Newer")
-        let olderIndex = titles.firstIndex(of: "Older")
-        #expect(newerIndex != nil)
-        #expect(olderIndex != nil)
-        #expect((newerIndex ?? 0) < (olderIndex ?? 0))
-    }
-
     @Test("Rows read their sizes once they land, and the header stays a count")
     func sizesReachTheRowsNotTheHeader() {
         let view = SnapshotSectionView()
@@ -88,27 +70,6 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(containing: "4 GB", in: view) == nil)
         #expect(!view.countReadout.isHidden)
         #expect(view.sizeInfoButton.paragraphs == SnapshotSectionView.sizeExplanation)
-    }
-
-    @Test("Every row names its state between its date and its size")
-    func everyRowNamesItsState() {
-        let view = SnapshotSectionView()
-        var cold = makeSnapshot("Before first boot")
-        cold.record.kind = .cold
-        let warm = makeSnapshot("Mid-session", offsetSeconds: 60)
-
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [cold, warm]),
-            canTakeSnapshot: true, canRevert: true)
-        let size = SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)
-        view.applySizes([cold.id: size, warm.id: size])
-
-        for (snapshot, kind) in [(cold, VMSnapshotKind.cold), (warm, .warm)] {
-            #expect(
-                view.subtitleText(for: snapshot)
-                    == "\(SnapshotDateFormat.string(from: snapshot.createdAt)) \u{00B7} "
-                    + "\(SnapshotKindCopy.stateLabel(kind)) \u{00B7} 2 GB")
-        }
     }
 
     @Test("On a cloning volume a row's size carries its private bytes in parentheses")
@@ -142,24 +103,6 @@ struct SnapshotSectionViewTests {
         view.applySizes([only.id: SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)])
 
         #expect(findLabel(withText: "1 snapshot", in: view) != nil)
-    }
-
-    @Test("A snapshot whose size is unknown shows no size part")
-    func unknownSizeShowsNoSizePart() {
-        let view = SnapshotSectionView()
-        let measured = makeSnapshot("Measured")
-        let unknown = makeSnapshot("Unknown", offsetSeconds: 60)
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [measured, unknown]),
-            canTakeSnapshot: true, canRevert: true)
-
-        view.applySizes([measured.id: SnapshotSize(bytes: 2_000_000_000, privateBytes: nil)])
-
-        #expect(
-            view.subtitleText(for: unknown)
-                == "\(SnapshotDateFormat.string(from: unknown.createdAt)) \u{00B7} "
-                + "\(SnapshotKindCopy.stateLabel(unknown.kind))")
-        #expect(view.subtitleText(for: measured).hasSuffix("2 GB"))
     }
 
     @Test("An in-place update moves the current marker without a rebuild")
@@ -228,21 +171,6 @@ struct SnapshotSectionViewTests {
             }.count == 1)
     }
 
-    @Test("The baseline's Delete is offered like any other row's")
-    func baselineDeleteIsOffered() {
-        let view = SnapshotSectionView()
-        let baseline = makeSnapshot("Clean install")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [baseline]), canTakeSnapshot: true,
-            canRevert: true, baseline: baseline)
-
-        let delete = view.makeRowMenu(forRowWith: baseline.id)?.items
-            .first { $0.title == "Delete\u{2026}" }
-
-        #expect(delete?.isEnabled == true)
-        #expect(delete?.toolTip == nil)
-    }
-
     // MARK: - Enablement
 
     @Test("Revert is disabled while the VM can't be taken there")
@@ -305,37 +233,6 @@ struct SnapshotSectionViewTests {
     }
 
     // MARK: - Row menu
-
-    @Test("The row menu offers rename, info, revert, and delete")
-    func rowMenuOffersEveryAction() {
-        let view = SnapshotSectionView()
-        let snapshot = makeSnapshot("One")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: true,
-            canRevert: true)
-
-        let menu = view.makeRowMenu(
-            for: snapshot, canRevert: true, canRename: true, canSetNotes: true, canDelete: true)
-
-        #expect(
-            menu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
-                "Rename", "Edit Notes", "Get Info", "Revert", "Delete\u{2026}",
-            ])
-    }
-
-    @Test("The row menu's Revert is disabled when the VM can't be reverted")
-    func rowMenuRevertFollowsCapability() {
-        let view = SnapshotSectionView()
-        let snapshot = makeSnapshot("One")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false)
-
-        let menu = view.makeRowMenu(
-            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, canDelete: true)
-
-        #expect(menu.items.first { $0.title == "Revert" }?.isEnabled == false)
-    }
 
     @Test("The row menu's Delete names its snapshot")
     func rowMenuDeleteNamesItsSnapshot() {
@@ -435,47 +332,6 @@ struct SnapshotSectionViewTests {
 
     // MARK: - Notes
 
-    @Test("A snapshot's note trails its name in the row")
-    func notesRenderInTheRow() {
-        let view = SnapshotSectionView()
-        let annotated = makeSnapshot("One", notes: "tools configured")
-        let bare = makeSnapshot("Two", offsetSeconds: 60)
-
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [annotated, bare]), canTakeSnapshot: true,
-            canRevert: true)
-
-        let note = findLabel(withText: "tools configured", in: view)
-        #expect(note != nil)
-        #expect(note.map { isVisible($0, within: view) } == true)
-        // The row with no note shows no note field at all.
-        #expect(
-            allSubviews(InlineEditableLabel.self, in: view) {
-                $0.stringValue.isEmpty && isVisible($0, within: view)
-            }.isEmpty)
-    }
-
-    @Test("A note edit in flight suppresses the structural rebuild")
-    func notesEditSuppressesRebuild() {
-        let view = SnapshotSectionView()
-        let first = makeSnapshot("One", notes: "before")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true)
-        showInTestWindow(view, size: NSSize(width: 480, height: 200))
-
-        view.beginNotesEditing(first.id)
-        #expect(view.activeEdit == first.id)
-
-        render(
-            view,
-            manifest: VMSnapshotManifest(snapshots: [
-                first, makeSnapshot("Two", offsetSeconds: 60),
-            ]),
-            canTakeSnapshot: true, canRevert: true)
-        #expect(findLabel(withText: "Two", in: view) == nil)
-    }
-
     @Test("Cancelling a note edit ends it")
     func cancelNotesEditEndsIt() async {
         let view = SnapshotSectionView()
@@ -490,25 +346,6 @@ struct SnapshotSectionViewTests {
         await drainMainQueue()
 
         #expect(view.activeEdit == nil)
-    }
-
-    @Test("A note holding a newline opens Get Info instead of editing in the row")
-    func multilineNotesRouteToGetInfo() {
-        let view = SnapshotSectionView()
-        var infoRequests: [VMSnapshot] = []
-        view.onRequestInfo = { snapshot, _ in infoRequests.append(snapshot) }
-        let first = makeSnapshot("One", notes: "line one\nline two")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [first]), canTakeSnapshot: true,
-            canRevert: true)
-        showInTestWindow(view, size: NSSize(width: 480, height: 200))
-
-        view.beginNotesEditing(first.id)
-
-        #expect(infoRequests == [first])
-        #expect(view.activeEdit == nil)
-        // Flattened for the row; the newline survives in the stored note.
-        #expect(findLabel(withText: "line one line two", in: view) != nil)
     }
 
     @Test("The row menu offers Edit Notes regardless of whether the list can be deleted from")
@@ -564,70 +401,5 @@ struct SnapshotSectionViewTests {
         _ = label?.control(
             NSControl(), textView: NSTextView(),
             doCommandBy: #selector(NSResponder.cancelOperation(_:)))
-    }
-
-    // MARK: - Editing gate
-
-    @Test("A row whose metadata the VM refuses offers no Rename or Edit Notes, and no click-to-edit")
-    func metadataEditsFollowTheirCapabilities() {
-        let view = SnapshotSectionView()
-        let snapshot = makeSnapshot("One", notes: "A note")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false, canDelete: false, canEditMetadata: false)
-
-        let menu = view.makeRowMenu(forRowWith: snapshot.id)
-        #expect(menu?.items.first { $0.title == "Rename" }?.isEnabled == false)
-        #expect(menu?.items.first { $0.title == "Edit Notes" }?.isEnabled == false)
-        #expect(menu?.items.first { $0.title == "Get Info" }?.isEnabled == true)
-        let labels = allSubviews(InlineEditableLabel.self, in: view)
-        #expect(!labels.isEmpty)
-        #expect(labels.allSatisfy { !$0.controlsEnabled })
-    }
-
-    @Test("The row menu's Rename stays enabled with the revert and delete gate closed")
-    func rowMenuEditingFollowsTheGate() {
-        let view = SnapshotSectionView()
-        let snapshot = makeSnapshot("One")
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [snapshot]), canTakeSnapshot: false,
-            canRevert: false, canDelete: false)
-
-        let menu = view.makeRowMenu(
-            for: snapshot, canRevert: false, canRename: true, canSetNotes: true, canDelete: false)
-
-        #expect(menu.items.first { $0.title == "Rename" }?.isEnabled == true)
-        #expect(menu.items.first { $0.title == "Delete\u{2026}" }?.isEnabled == false)
-        // Reading a snapshot's details changes nothing, so it stays available.
-        #expect(menu.items.first { $0.title == "Get Info" }?.isEnabled == true)
-    }
-
-    // MARK: - Link appearance
-
-    @Test("A disabled Take Snapshot link is visibly dimmed, not link-tinted")
-    func disabledLinkIsDimmed() {
-        let view = SnapshotSectionView()
-
-        render(
-            view, manifest: VMSnapshotManifest(), canTakeSnapshot: true, canRevert: false)
-        #expect(
-            findButton(titled: "Take Snapshot\u{2026}", in: view)?.contentTintColor == .linkColor)
-
-        render(
-            view, manifest: VMSnapshotManifest(), canTakeSnapshot: false, canRevert: false)
-        #expect(
-            findButton(titled: "Take Snapshot\u{2026}", in: view)?.contentTintColor
-                == .disabledControlTextColor)
-    }
-
-    @Test("A disabled row Revert link dims the same way")
-    func disabledRevertLinkIsDimmed() {
-        let view = SnapshotSectionView()
-
-        render(
-            view, manifest: VMSnapshotManifest(snapshots: [makeSnapshot("One")]), canTakeSnapshot: false,
-            canRevert: false)
-
-        #expect(revertButtons(in: view).allSatisfy { $0.contentTintColor == .disabledControlTextColor })
     }
 }

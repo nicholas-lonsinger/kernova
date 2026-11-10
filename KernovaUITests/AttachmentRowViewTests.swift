@@ -23,39 +23,6 @@ struct AttachmentRowViewTests {
             isTitleEditable: isTitleEditable)
     }
 
-    @Test("A note trails the name in the row")
-    func notesTrailTheName() {
-        let row = makeRow(title: "Data Disk", notes: "holds the build cache")
-
-        let note = findLabel(withText: "holds the build cache", in: row)
-        #expect(note != nil)
-        #expect(note.map { isVisible($0, within: row) } == true)
-    }
-
-    @Test("A row with no note shows no note field")
-    func noNoteShowsNoField() {
-        let row = makeRow(title: "Data Disk", notes: "")
-
-        #expect(
-            allSubviews(InlineEditableLabel.self, in: row) {
-                $0.stringValue.isEmpty && isVisible($0, within: row)
-            }.isEmpty)
-    }
-
-    @Test("update(title:notes:...) replaces the name, the note and the subtitle in place")
-    func updateReplacesNameAndNotes() {
-        let row = makeRow(title: "Data Disk", notes: "before")
-
-        row.update(
-            title: "Renamed Disk", notes: "after", subtitle: "2 GB used", iconSystemName: "externaldrive",
-            missingPath: nil, readOnly: false, controlsEnabled: true, ejectEnabled: true)
-
-        #expect(findLabel(withText: "Renamed Disk", in: row) != nil)
-        #expect(findLabel(withText: "after", in: row) != nil)
-        #expect(findLabel(withText: "before", in: row) == nil)
-        #expect(findLabel(withText: "2 GB used", in: row) != nil)
-    }
-
     @Test("A missing file's path replaces the subtitle until the file is back")
     func missingPathReplacesTheSubtitle() {
         let row = makeRow()

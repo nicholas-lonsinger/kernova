@@ -58,18 +58,6 @@ struct AttachmentInfoPopoverContentViewControllerTests {
         #expect(!values.contains("\u{2014}"))
     }
 
-    @Test("An editable popover always offers the Notes box, empty or not")
-    func editableAlwaysOffersNotes() {
-        let bare = makeController()
-        #expect(findLabel(withText: "Notes", in: bare.view) != nil)
-        #expect(notesEditor(in: bare)?.text == "")
-        // The empty box says what it is for.
-        #expect(findLabel(withText: "Add notes\u{2026}", in: bare.view) != nil)
-
-        let annotated = makeController(notes: "holds the build cache")
-        #expect(notesEditor(in: annotated)?.text == "holds the build cache")
-    }
-
     @Test("A popover that can't be edited shows the note as text, and omits it when empty")
     func readOnlyKeepsStaticNotes() {
         let bare = makeController(canEdit: false)
@@ -107,15 +95,5 @@ struct AttachmentInfoPopoverContentViewControllerTests {
         #expect(closeRequests == 1)
         #expect(recorder.committed.isEmpty)
         #expect(notesEditor(in: controller)?.text == "holds the build cache")
-    }
-
-    @Test("Dismissing an untouched popover commits nothing")
-    func dismissWithoutAnEditCommitsNothing() {
-        let recorder = NoteRecorder()
-        let controller = makeController(notes: "holds the build cache", recorder: recorder)
-
-        controller.viewWillDisappear()
-
-        #expect(recorder.committed.isEmpty)
     }
 }

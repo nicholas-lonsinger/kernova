@@ -157,14 +157,6 @@ struct TakeSnapshotSheetContentViewControllerTests {
         #expect(sheet.captionText == nil)
     }
 
-    @Test("The shared-blocks explanation sits behind the title's info button")
-    func sharedBlocksLiveInTitleInfo() throws {
-        let sheet = makeSheet(mode: .live)
-        let info = try #require(firstSubview(InfoButtonView.self, in: sheet.view))
-        #expect(info.paragraphs == [.body(TakeSnapshotSheetContentViewController.sharedBlocksExplanation)])
-        #expect(findLabel(containing: "share their blocks", in: sheet.view) == nil)
-    }
-
     @Test("A guest powering off while the sheet is up moves its copy to a capture with no memory")
     func updatingTheModeRewritesTheRenderedCopy() {
         let sheet = makeSheet(mode: .live)

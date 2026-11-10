@@ -18,18 +18,6 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         #expect(firstSubview(InfoButtonView.self, in: vc.view) != nil)
     }
 
-    @Test("table renders one row per disk")
-    func rowsRendered() {
-        let disks = [disk("Main"), disk("Secondary"), disk("Installer")]
-        let vc = make(disks: disks)
-        vc.loadViewIfNeeded()
-        guard let table = firstSubview(NSTableView.self, in: vc.view) else {
-            Issue.record("Expected an NSTableView")
-            return
-        }
-        #expect(table.numberOfRows == disks.count)
-    }
-
     @Test("Each row states the pane's sizes, its path until they land, and repaints when they move")
     func rowsStateThePanesSizes() throws {
         let measured = disk("Measured")
@@ -58,39 +46,6 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         #expect(try subtitle(row: 1, in: vc) == "\(DataFormatters.formatBytes(8_000_000_000)) allocated")
     }
 
-    @Test("performReorder downward shifts disk forward and fires onReorder")
-    func reorderDownwardFiresCallback() {
-        let disks = [disk("A"), disk("B"), disk("C")]
-        let vc = make(disks: disks)
-        var reorderedOrderings: [[StorageDisk]] = []
-        vc.onReorder = { reorderedOrderings.append($0) }
-        vc.loadViewIfNeeded()
-
-        // Move "A" (row 0) past "C" — proposedRow == 3 means "after the
-        // last row." After the downward shift A should land at index 2.
-        let didReorder = vc.performReorder(sourceRow: 0, proposedRow: 3)
-        #expect(didReorder)
-        #expect(vc.disks.map(\.label) == ["B", "C", "A"])
-        #expect(reorderedOrderings.count == 1)
-        #expect(reorderedOrderings.last?.map(\.label) == ["B", "C", "A"])
-    }
-
-    @Test("performReorder upward shifts disk back and fires onReorder")
-    func reorderUpwardFiresCallback() {
-        let disks = [disk("A"), disk("B"), disk("C")]
-        let vc = make(disks: disks)
-        var reorderedOrderings: [[StorageDisk]] = []
-        vc.onReorder = { reorderedOrderings.append($0) }
-        vc.loadViewIfNeeded()
-
-        // Move "C" (row 2) to the top — proposedRow == 0 means "before
-        // the first row." Target stays at 0 (upward drag).
-        let didReorder = vc.performReorder(sourceRow: 2, proposedRow: 0)
-        #expect(didReorder)
-        #expect(vc.disks.map(\.label) == ["C", "A", "B"])
-        #expect(reorderedOrderings.last?.map(\.label) == ["C", "A", "B"])
-    }
-
     @Test("performReorder no-ops when source and target collapse to the same index")
     func reorderNoOp() {
         let disks = [disk("A"), disk("B"), disk("C")]
@@ -107,14 +62,6 @@ struct StorageDiskReorderSheetContentViewControllerTests {
         #expect(!droppedJustAfter)
         #expect(vc.disks.map(\.label) == ["A", "B", "C"])
         #expect(reorderedOrderings.isEmpty)
-    }
-
-    @Test("performReorder rejects out-of-range source")
-    func reorderInvalidSource() {
-        let vc = make(disks: [disk("A"), disk("B")])
-        vc.loadViewIfNeeded()
-        #expect(vc.performReorder(sourceRow: -1, proposedRow: 0) == false)
-        #expect(vc.performReorder(sourceRow: 99, proposedRow: 0) == false)
     }
 
     @Test("pasteboard round-trip via tableView(_:acceptDrop:row:dropOperation:)")

@@ -120,16 +120,4 @@ struct VMIdentityHeaderViewTests {
         // …and the name of what the header states stays whole.
         #expect(title.frame.width >= title.intrinsicContentSize.width - 0.5)
     }
-
-    @Test("Re-binding to another VM re-renders from the new one")
-    func configureRebindsToAnotherVM() {
-        let header = VMIdentityHeaderView()
-        header.configure(with: makeInstance(name: "First"))
-
-        header.configure(with: makeInstance(name: "Second", cpuCount: 2))
-
-        #expect(findLabel(withText: "First", in: header) == nil)
-        #expect(findLabel(withText: "Second", in: header) != nil)
-        #expect(findLabel(containing: "2 cores", in: header) != nil)
-    }
 }

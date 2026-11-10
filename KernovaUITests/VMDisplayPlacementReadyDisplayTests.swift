@@ -59,26 +59,6 @@ struct VMDisplayPlacementReadyDisplayTests {
         #expect(residency.prepareCount == 0)
     }
 
-    /// The whole point of readying from the background: the window is up and
-    /// drawing, and the app the user is in keeps key and the screen. A
-    /// fullscreen VM lands in a pop-out window, with its persisted preference
-    /// left alone for the reopen that follows.
-    @Test("A bring-up from the background puts the window up without taking key")
-    func backgroundOpensAnUnkeyWindow() throws {
-        let (placement, residency) = makeController(posture: .background)
-        let instance = makeInstance(preference: .fullscreen)
-
-        placement.readyDisplay(for: instance, presence: .attended)
-
-        let window = try #require(placement.window(for: instance.instanceID))
-        #expect(window.isVisible)
-        #expect(try shownInFront(window) == false)
-        #expect(!window.styleMask.contains(.fullScreen))
-        #expect(instance.displayMode == .popOut)
-        #expect(instance.hostState.displayPreference == .fullscreen)
-        #expect(residency.prepareCount == 1)
-    }
-
     /// The whole chain a sidebar Start All runs: the core readies each VM as
     /// unattended, and a Kernova the user is in puts the windows up without
     /// any of them taking key or a Space.

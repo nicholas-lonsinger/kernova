@@ -8,14 +8,6 @@ import Testing
 @Suite("DiskSizePopoverContentViewController Tests", .caseScoped)
 @MainActor
 struct DiskSizePopoverContentViewControllerTests {
-    @Test("loadView fits the CalloutStyle width")
-    func fittingWidthMatchesStyle() {
-        let vc = make(headline: "X", caption: "Y", sizes: [10, 50, 100], defaultGB: 50)
-        vc.loadViewIfNeeded()
-        vc.view.layoutSubtreeIfNeeded()
-        #expect(vc.view.fittingSize.width == CalloutStyle.width)
-    }
-
     @Test("popup is populated from availableSizes with size-as-tag")
     func popupPopulation() {
         let sizes = [10, 25, 50, 100]

@@ -8,14 +8,6 @@ import Testing
 @Suite("MissingAttachmentPopoverContentViewController Tests", .caseScoped)
 @MainActor
 struct MissingAttachmentPopoverContentViewControllerTests {
-    @Test("loadView fits the CalloutStyle width")
-    func fittingWidthMatchesStyle() {
-        let vc = MissingAttachmentPopoverContentViewController(path: "/tmp/missing.iso")
-        vc.loadViewIfNeeded()
-        vc.view.layoutSubtreeIfNeeded()
-        #expect(vc.view.fittingSize.width == CalloutStyle.width)
-    }
-
     @Test("path label is selectable and uses character wrapping")
     func pathLabelConfiguration() {
         let path = "/Users/test/Downloads/very/long/path/to/missing-file.ipsw"

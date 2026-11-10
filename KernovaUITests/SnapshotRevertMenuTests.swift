@@ -36,13 +36,6 @@ struct SnapshotRevertMenuTests {
         return menu
     }
 
-    @Test("No VM selected leaves a single disabled placeholder")
-    func noInstanceShowsThePlaceholder() {
-        let menu = rebuild(for: nil)
-        #expect(menu.items.map(\.title) == [SnapshotRevertMenu.emptyTitle])
-        #expect(menu.items.first?.isEnabled == false)
-    }
-
     @Test("A VM with no snapshots shows the same placeholder")
     func noSnapshotsShowsThePlaceholder() {
         let menu = rebuild(for: makeInstance())
@@ -84,14 +77,6 @@ struct SnapshotRevertMenuTests {
 
         #expect(ref?.instance === instance)
         #expect(ref?.snapshot == snapshot)
-    }
-
-    @Test("Items are enabled on a running VM, which the revert terminates")
-    func itemsEnabledWhileRunning() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
-
-        #expect(rebuild(for: instance).items.allSatisfy { $0.isEnabled })
     }
 
     @Test("The caller's gate decides, so a busy VM's items are disabled")

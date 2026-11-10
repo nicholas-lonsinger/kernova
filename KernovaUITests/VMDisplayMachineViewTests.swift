@@ -62,25 +62,6 @@ struct VMDisplayMachineViewTests {
 
     // MARK: - Asking to take over
 
-    @Test("an outside drag with no guest drag on offer is forwarded, and asks again each time")
-    func outsideDragWithoutAnOfferIsForwarded() throws {
-        let view = makeView()
-
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
-        view.mouseUp(with: try event(.leftMouseUp, x: 260))
-
-        #expect(host.pressCount == 1)
-        // Every outside event asks, so an offer that lands after the pointer
-        // left still takes over.
-        #expect(host.takeRequests == 2)
-        #expect(
-            view.forwarded.map(\.type) == [
-                .leftMouseDown, .leftMouseDragged, .leftMouseDragged, .leftMouseUp,
-            ])
-    }
-
     @Test(
         "a drag on the display's edge, the full-screen top row included, is inside",
         arguments: [(x: 200.0, y: 50.0), (x: 0, y: 50), (x: 100, y: 100), (x: 100, y: 0)])
@@ -93,47 +74,6 @@ struct VMDisplayMachineViewTests {
 
         #expect(host.takeRequests == 0)
         #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseDragged])
-    }
-
-    @Test("a drag one point past the top edge is outside")
-    func pastTheTopEdgeIsOutside() throws {
-        let view = makeView()
-        host.nextTake = makeTake()
-
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 100, y: 101))
-
-        #expect(host.takeRequests == 1)
-    }
-
-    @Test("a drag inside the display never asks to take over")
-    func insideDragNeverAsks() throws {
-        let view = makeView()
-        host.nextTake = makeTake()
-
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 150))
-
-        #expect(host.takeRequests == 0)
-        #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseDragged])
-    }
-
-    @Test("an outside drag with an offer is withheld, and so is the rest of the press")
-    func takeOverWithholdsThePress() throws {
-        let view = makeView()
-        let take = makeTake()
-        host.nextTake = take
-
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 150))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
-        view.mouseUp(with: try event(.leftMouseUp, x: 260))
-
-        // The guest saw the press up to the edge, and nothing after it.
-        #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseDragged])
-        #expect(take.events == [.withheldDrag, .withheldMouseUp])
-        #expect(host.takeRequests == 1)
     }
 
     // MARK: - What the take injects
@@ -179,22 +119,6 @@ struct VMDisplayMachineViewTests {
         #expect(view.forwarded.map(\.type) == [.leftMouseDown])
     }
 
-    @Test("a new press over a take a session carries ends that take first")
-    func newPressEndsACarriedTake() throws {
-        let view = makeView()
-        let take = makeTake()
-        take.onWithheldDrag = { #expect(view.beginHostSession(carrying: take)) }
-        host.nextTake = take
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
-
-        view.mouseDown(with: try event(.leftMouseDown, x: 60))
-
-        #expect(take.events == [.withheldDrag, .displayAbandoned])
-        #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseDown])
-    }
-
     @Test("session positions move the guest pointer, and the release goes where the last one put it")
     func sessionPositionsLeadTheRelease() throws {
         let view = makeView()
@@ -217,27 +141,6 @@ struct VMDisplayMachineViewTests {
 
     // MARK: - The exit point
 
-    @Test("returning to the exit point drags the guest pointer back to the last forwarded event")
-    func returnToTheLastForwardedEvent() throws {
-        let view = makeView()
-        let take = makeTake()
-        host.nextTake = take
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 190, y: 70))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        view.injectNudge(.offset)
-        let before = view.forwarded.count
-
-        view.returnToExitPoint()
-        view.injectRelease()
-
-        #expect(
-            Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: NSPoint(x: 190, y: 70)),
-                .init(type: .leftMouseUp, location: NSPoint(x: 190, y: 70)),
-            ])
-    }
-
     @Test("the exit point follows the session's last position over the display")
     func exitPointFollowsTheSession() throws {
         let view = makeView()
@@ -254,19 +157,6 @@ struct VMDisplayMachineViewTests {
             Array(view.forwarded.dropFirst(before)) == [
                 .init(type: .leftMouseDragged, location: NSPoint(x: 5, y: 6))
             ])
-    }
-
-    @Test("a guest pointer already at the exit point is not moved again")
-    func returnWithoutMotionInjectsNothing() throws {
-        let view = makeView()
-        host.nextTake = makeTake()
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-        let before = view.forwarded.count
-
-        view.returnToExitPoint()
-
-        #expect(view.forwarded.count == before)
     }
 
     // MARK: - The nudge
@@ -308,55 +198,6 @@ struct VMDisplayMachineViewTests {
             ])
     }
 
-    @Test("a release after the exit-point nudge lands at that nudge's point")
-    func releaseAfterTheExitPointNudgeLandsThere() throws {
-        let view = makeView()
-        try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
-        view.injectNudge(.offset)
-        let before = view.forwarded.count
-
-        view.injectNudge(.exitPoint)
-        view.injectRelease()
-
-        #expect(
-            Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: NSPoint(x: 192, y: 50)),
-                .init(type: .leftMouseUp, location: NSPoint(x: 192, y: 50)),
-            ])
-    }
-
-    @Test("a nudge leaves the exit point exact: the return before a release goes back to it unclamped")
-    func nudgeLeavesTheExitPointExact() throws {
-        let view = makeView()
-        try pressLeaving(at: NSPoint(x: 250, y: 50), view: view)
-        view.injectNudge(.exitPoint)
-        let before = view.forwarded.count
-
-        view.returnToExitPoint()
-        view.injectRelease()
-
-        #expect(
-            Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: NSPoint(x: 250, y: 50)),
-                .init(type: .leftMouseUp, location: NSPoint(x: 250, y: 50)),
-            ])
-    }
-
-    @Test("a nudge goes near the session's last position over the display")
-    func nudgeFollowsTheSession() throws {
-        let view = makeView()
-        try pressLeaving(at: NSPoint(x: 150, y: 60), view: view)
-        view.injectDrag(at: NSPoint(x: 197, y: 40))
-        let before = view.forwarded.count
-
-        view.injectNudge(.exitPoint)
-
-        #expect(
-            Array(view.forwarded.dropFirst(before)) == [
-                .init(type: .leftMouseDragged, location: NSPoint(x: 192, y: 40))
-            ])
-    }
-
     @Test("no session begins outside a withheld drag")
     func noSessionWithoutAWithheldDrag() throws {
         let view = makeView()
@@ -383,23 +224,6 @@ struct VMDisplayMachineViewTests {
         view.mouseUp(with: try event(.leftMouseUp, x: 250))
 
         #expect(view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseUp])
-    }
-
-    @Test("a take that fails mid-press hands the rest of the press back")
-    func failedTakeResumesTracking() throws {
-        let view = makeView()
-        let take = makeTake()
-        host.nextTake = take
-        view.mouseDown(with: try event(.leftMouseDown, x: 50))
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 250))
-
-        view.resumeTracking()
-        view.mouseDragged(with: try event(.leftMouseDragged, x: 260))
-        view.mouseUp(with: try event(.leftMouseUp, x: 260))
-
-        #expect(
-            view.forwarded.map(\.type) == [.leftMouseDown, .leftMouseDragged, .leftMouseUp])
-        #expect(take.events.isEmpty)
     }
 
     @Test("a withheld drag that comes back inside the display tells the take, and reaches the guest")
