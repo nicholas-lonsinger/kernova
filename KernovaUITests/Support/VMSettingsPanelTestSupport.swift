@@ -156,13 +156,6 @@ func settingsRow(labeled label: String, in view: NSView) -> NSView? {
         }
 }
 
-/// The title of `row` when it is a ``GroupedFormControlRow``, which is what
-/// dims with the controls it holds.
-@MainActor
-func rowTitle(of row: NSView) -> NSTextField? {
-    (row as? GroupedFormControlRow)?.titleLabel
-}
-
 /// The grouped-form card `view` sits in: the nearest ancestor drawing the
 /// card fill.
 @MainActor

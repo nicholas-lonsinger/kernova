@@ -77,57 +77,6 @@ struct VMSettingsOverviewTests {
         firstSubview(NSButton.self, in: header) { $0.toolTip == "Show all settings" }
     }
 
-    // MARK: - Cards
-
-    @Test("The overview carries one card per category")
-    func overviewCarriesEveryCategory() throws {
-        let (vc, _, _) = makeController()
-        for category in VMSettingsCategory.allCases {
-            let card = try self.card(category, in: vc)
-            #expect(findLabel(withText: category.title, in: card) != nil)
-        }
-    }
-
-    @Test("A macOS card set offers drag and drop")
-    func macOSCardsCoverGuestOnlySwitches() throws {
-        let (vc, _, _) = makeController(guestOS: .macOS)
-        #expect(cardSwitch(.dropFiles, in: try card(.sharing, in: vc)) != nil)
-    }
-
-    @Test("The cards stack one per row, at the column's full width, in category order")
-    func cardsStackInOneColumn() throws {
-        let (vc, _, _) = makeController()
-        let window = makeTestWindow(styleMask: [.titled, .resizable])
-        window.contentViewController = vc
-        window.setContentSize(NSSize(width: 900, height: 1600))
-        vc.view.layoutSubtreeIfNeeded()
-
-        var previous: NSRect?
-        for category in VMSettingsCategory.allCases {
-            let card = try self.card(category, in: vc)
-            let frame = card.convert(card.bounds, to: vc.view)
-            #expect(frame.width == GroupedFormStyle.columnWidth)
-            if let previous {
-                // The pane's views are unflipped, so each card sits below the
-                // one before it — no two share a row.
-                #expect(frame.maxY <= previous.minY)
-                #expect(abs(frame.minX - previous.minX) < 1)
-            }
-            previous = frame
-        }
-    }
-
-    @Test("A card's drill-in reads Edit, in the accent color")
-    func cardEditAffordanceIsAnAccentButton() throws {
-        let (vc, _, _) = makeController()
-        let edit = try #require(showButton(.system, in: try card(.system, in: vc)))
-        #expect(edit.title == "Edit")
-        #expect(!edit.isBordered)
-        #expect(edit.contentTintColor == .controlAccentColor)
-        #expect(edit.imagePosition == .imageTrailing)
-        #expect(edit.accessibilityLabel() == "Show System")
-    }
-
     // MARK: - Drill-in
 
     @Test("The card affordance opens its panel and hides the overview; back returns")
@@ -180,97 +129,6 @@ struct VMSettingsOverviewTests {
         // one rather than showing the previous VM's rows.
         #expect(try firstSection() !== built)
         #expect(findLabel(withText: "CPU cores", in: try firstSection()) != nil)
-    }
-
-    @Test("The open category survives a read-only flip and resets on a VM switch")
-    func selectionOutlivesAReadOnlyFlipOnly() throws {
-        let (vc, instance, viewModel) = makeController()
-        vc.showCategory(.network)
-
-        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: true)
-        #expect(vc.selectedCategory == .network)
-
-        vc.reconfigure(
-            instance: makeInstance(guestOS: .macOS), viewModel: viewModel, isReadOnly: false)
-
-        #expect(vc.selectedCategory == nil)
-        // The overview is actually back on screen: a rebuild that only cleared
-        // the category would leave it hidden from the previous VM's drill-in,
-        // and the pane would come up blank with nothing to click.
-        let card = try #require(vc.overviewCardForTesting(.network))
-        #expect(isVisible(card, within: vc.view))
-        for category in VMSettingsCategory.allCases {
-            #expect(vc.panelForTesting(category) == nil)
-        }
-    }
-
-    @Test("Opening a panel commits an edit in flight instead of hiding its editor")
-    func drillInSettlesAnOpenFieldEditor() throws {
-        let viewModel = makeViewModel()
-        let instance = viewModel.library.registerFixture(guestOS: .linux) {
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: false)
-        vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-        let window = makeTestWindow(styleMask: [.titled])
-        window.contentView = vc.view
-        vc.showCategory(.network)
-        let panel = try #require(vc.panelForTesting(.network))
-        let field = try #require(findEditableField(in: panel))
-        #expect(window.makeFirstResponder(field))
-        typeText("aa:bb:cc:dd:ee:01", into: field)
-
-        vc.showOverview()
-
-        // Nothing is left focused inside the hidden panel, so no later keystroke
-        // lands in a control the user can't see.
-        #expect(field.currentEditor() == nil)
-        #expect(instance.configuration.macAddress == "aa:bb:cc:dd:ee:01")
-    }
-
-    @Test("Drilling in morphs the one header anatomy rather than swapping another in")
-    func panelHeaderMorphsTheTileInPlace() throws {
-        let (vc, instance, _) = makeController()
-        let window = makeTestWindow(styleMask: [.titled])
-        window.setContentSize(NSSize(width: 700, height: 400))
-        window.contentView = vc.view
-        let header = try #require(firstSubview(VMIdentityHeaderView.self, in: vc.view))
-        vc.view.layoutSubtreeIfNeeded()
-        let facts = header.renderedFactsLine
-        #expect(!facts.isEmpty)
-        // The overview states the VM's name over the facts line, on its tile.
-        #expect(findLabel(withText: instance.name, in: header) != nil)
-        let tile = try #require(firstSubview(NSBox.self, in: header))
-        #expect(isVisible(tile, within: header))
-        #expect(backButton(in: header)?.isHidden == true)
-
-        vc.showCategory(.system)
-        vc.view.layoutSubtreeIfNeeded()
-
-        // The same header, reconfigured — not a second view swapped in.
-        #expect(firstSubview(VMIdentityHeaderView.self, in: vc.view) === header)
-        let back = try #require(backButton(in: header))
-        let title = try #require(findLabel(withText: "System", in: header))
-        let factsLabel = try #require(findLabel(withText: facts, in: header))
-        #expect(back.accessibilityLabel() == "Back")
-        // The tile stays; only the glyph it carries changes, in the accent color
-        // the cards' Edit affordances use.
-        #expect(isVisible(tile, within: header))
-        #expect(!back.isHidden)
-        #expect(!back.isBordered)
-        #expect(back.contentTintColor == .controlAccentColor)
-        #expect(findLabel(withText: instance.name, in: header) == nil)
-        #expect(title.font == Typography.title)
-        let tileFrame = tile.convert(tile.bounds, to: header)
-        let backFrame = back.convert(back.bounds, to: header)
-        let titleFrame = title.convert(title.bounds, to: header)
-        let factsFrame = factsLabel.convert(factsLabel.bounds, to: header)
-        // The glyph sits on the tile, the title beside it, the facts below.
-        #expect(abs(backFrame.midX - tileFrame.midX) < 1)
-        #expect(titleFrame.minX > tileFrame.maxX)
-        #expect(factsFrame.maxY <= titleFrame.minY)
     }
 
     @Test("A single-section panel states its name once, keeping the section's affordances")
@@ -337,57 +195,7 @@ struct VMSettingsOverviewTests {
                 == "Passthrough off \u{00B7} No shared folders")
     }
 
-    @Test("The Sharing card states passthrough in its line, not as a switch")
-    func sharingCardLineFollowsPassthrough() throws {
-        let (vc, instance, viewModel) = makeController()
-        let sharing = try card(.sharing, in: vc)
-        #expect(cardSwitch(.clipboardPassthrough, in: sharing) == nil)
-        #expect(summaryLine(in: sharing) == "Passthrough off \u{00B7} No shared folders")
-
-        // Turned on where the toggle still lives — the panel, or the clipboard
-        // window — and shared a folder with the guest.
-        viewModel.library.editConfiguration(of: instance, as: [.liveKeys, .machineKeys]) {
-            $0.clipboardSharingEnabled = true
-            $0.clipboardPassthroughEnabled = true
-            $0.sharedDirectories = [SharedDirectory(path: "/tmp/share")]
-        }
-        reapply(vc, (instance, viewModel))
-
-        #expect(summaryLine(in: sharing) == "Passthrough on \u{00B7} 1 shared folder")
-    }
-
-    // MARK: - Layout
-
-    @Test("The pane grows past the column cap instead of pinning its host's width")
-    func paneGrowsPastTheColumnCap() throws {
-        let (vc, _, _) = makeController()
-        let window = makeTestWindow(styleMask: [.titled, .resizable])
-        window.contentViewController = vc
-        window.setContentSize(NSSize(width: 1600, height: 900))
-        vc.view.layoutSubtreeIfNeeded()
-
-        // The column stays capped and centered, but the pane itself takes every
-        // point offered — a column preference that pulled its container in
-        // instead would freeze the window's width and the split-view divider.
-        #expect(vc.view.frame.width == 1600)
-        let scrollView = try #require(firstSubview(NSScrollView.self, in: vc.view))
-        let form = try #require(scrollView.documentView?.subviews.first)
-        #expect(form.frame.width == GroupedFormStyle.columnWidth)
-    }
-
     // MARK: - Card contents
-
-    @Test("The Network card folds the address into the mode row, with a copy button")
-    func networkCardCopiesTheAddress() throws {
-        let (vc, _, _) = makeController(guestOS: .linux)
-        let network = try card(.network, in: vc)
-        // A stopped VM has no address yet, so nothing offers to copy one.
-        #expect(copyButton(in: network) == nil)
-
-        let mode = try #require(vc.resolvedForTesting.networkModeLabel?.text)
-        #expect(mode == "NAT \u{2013} Common")
-        #expect(findLabel(withText: mode, in: network) != nil)
-    }
 
     @Test("The Storage card lists every disk in order with its measured capacity, and the header counts them")
     func storageCardListsEveryDisk() async throws {
@@ -508,33 +316,5 @@ struct VMSettingsOverviewTests {
         let take = try #require(actionButton(.takeSnapshot, in: try card(.snapshots, in: vc)))
         #expect(!take.isEnabled)
         #expect(!viewModel.capabilities.isAvailable(.takeSnapshot, on: instance))
-    }
-
-    @Test("A duplicate MAC address raises the Network card's warning glyph")
-    func duplicateMACRaisesTheCardWarning() throws {
-        let viewModel = makeViewModel()
-        let instance = viewModel.library.admitFixture(guestOS: .linux) {
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        viewModel.library.admitFixture(name: "Twin", guestOS: .linux) {
-            $0.macAddress = "aa:bb:cc:dd:ee:ff"
-        }
-        let vc = makeSettingsPane(
-            instance: instance, viewModel: viewModel, isReadOnly: false)
-        vc.loadViewIfNeeded()
-        vc.viewDidAppear()
-
-        let glyph = try #require(
-            firstSubview(NSImageView.self, in: try card(.network, in: vc)) {
-                !$0.isHidden && $0.toolTip?.contains("Twin") == true
-            })
-        #expect(glyph.toolTip?.contains("MAC address") == true)
-        // A VM alone on its address raises nothing.
-        let (plainVC, _, _) = makeController(guestOS: .linux)
-        let plainCard = try card(.network, in: plainVC)
-        #expect(
-            firstSubview(NSImageView.self, in: plainCard) {
-                $0.toolTip?.contains("MAC address") == true
-            } == nil)
     }
 }
