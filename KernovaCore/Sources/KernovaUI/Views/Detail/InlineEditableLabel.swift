@@ -330,8 +330,24 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         let size = super.intrinsicContentSize
         guard isEditing else { return size }
         let text = currentEditor()?.string ?? stringValue
+        Self.boxMeasure.font = font
+        Self.boxMeasure.stringValue = text
         return NSSize(
-            width: InlineRenameSizing.boxWidth(for: text, font: font ?? Typography.body),
+            width: max(ceil(Self.boxMeasure.fittingSize.width), Self.minimumBoxWidth),
             height: size.height)
     }
+
+    /// Floor so a short or momentarily empty edit still has a usable box.
+    private static let minimumBoxWidth: CGFloat = 48
+
+    /// A field with the edit box's bezel, measuring the box a text needs: its
+    /// `fittingSize` includes the bezel's inset, which also houses the caret.
+    private static let boxMeasure: NSTextField = {
+        let field = NSTextField()
+        field.isBezeled = true
+        field.isEditable = false
+        field.maximumNumberOfLines = 1
+        field.cell?.usesSingleLineMode = true
+        return field
+    }()
 }
