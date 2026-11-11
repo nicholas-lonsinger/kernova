@@ -204,7 +204,8 @@ Before calling a task done, work these follow-ups; most changes owe neither of t
 1. **Docs** — the file whose description the change invalidated, routed by the layer table above; file layout is not a component boundary. Surgical edits only.
 2. **Agent instructions** — AGENTS.md and the entry points importing it — only if a rule stated there changed.
 3. **Changelog** — a change someone using the app, the `kernova` CLI, scripting or a guest agent can notice adds one bullet under its area in the top section of [CHANGELOG.md](CHANGELOG.md), shaped like its neighbours and ending with the PR's link.
-   A change to something the previous release didn't have edits that thing's bullet instead of adding one. One that breaks what the previous release's users relied on, or leaves them a manual step, goes under that section's Upgrade notes and names the step.
+   A change to something the previous release didn't have edits that thing's bullet instead of adding one.
+   A change that leaves the previous release's users something to do, or they lose what they had — re-pick a file, reinstall the agent, turn a setting back on, edit a script — goes under that section's Action required and names the step; one that only behaves differently stays in its area.
 
 ### Reporting
 
