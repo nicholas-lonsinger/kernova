@@ -5,7 +5,7 @@ Read this before checking a change in the running app, against a guest or throug
 ## Launching the build
 
 Each copy of Kernova answers only the `kernova` tool in its own bundle, which can start that copy; the tool on `PATH` links into whichever copy installed it.
-`open` by path starts the named build beside any copy already running, and every copy loads the same VM library; `open -b app.kernova` has started a build in another session's DerivedData.
+`open` by path starts the named build beside any copy already running, and every copy loads the same VM library. A bundle identifier names no one build: `open -b app.kernova` starts whichever registered copy Launch Services picks, which has been another session's.
 
 Every copy on the Mac is a process named Kernova, so only a PID tells the copy under test from the maintainer's or another session's in a window or process query.
 A running copy you did not launch is the maintainer's or another session's, with their work in it. ⌘Q closes a copy's windows and leaves it running in the menu bar; `kernova quit` ends it.
