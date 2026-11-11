@@ -87,6 +87,8 @@ struct VMNetworkIntentTests {
         #expect(networks[1].members.isEmpty)
     }
 
+    // MARK: - Verbs
+
     @Test("A rename and a delete address the network by identifier, never by name")
     func editsAddressByIdentifier() async throws {
         let harness = WiredCommandCore()
