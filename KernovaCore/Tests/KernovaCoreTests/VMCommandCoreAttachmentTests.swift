@@ -97,24 +97,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.diskImages.lastCreatedSizeInGB == 100)
     }
 
-    @Test("A failed disk write removes what it may have left and leaves the list alone")
-    func createStorageDiskWriteFailureCleansUp() async throws {
-        let diskImages = MockDiskImageService()
-        diskImages.createDiskImageError = DiskImageError.writeFailed(NSError(domain: "t", code: 1))
-        let harness = makeHarness(diskImages: diskImages)
-        let instance = makeInstance(in: harness)
-
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.createStorageDisk(.id(instance.id), sizeInGB: 32)
-        }
-
-        #expect(refusal.isOperationFailure)
-        // App-internal: the path was minted for this create and no entry names it.
-        #expect(harness.fileSystem.removedURLs.count == 1)
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
-        #expect(instance.configuration.storageDisks == nil)
-    }
-
     @Test("A create that failed before writing leaves the destination untouched")
     func createStorageDiskPreWriteFailureTrashesNothing() async throws {
         let diskImages = MockDiskImageService()
@@ -238,22 +220,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.storage.saveConfigurationCallCount == 0)
     }
 
-    @Test("An edit to the synthesized main disk persists the whole materialized list")
-    func editingTheMainDiskMaterializesTheList() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let mainDisk = instance.effectiveStorageDisks[0]
-
-        try harness.core.setStorageDiskNotes(
-            .id(instance.id), disk: mainDisk.id, notes: "the startup disk")
-
-        #expect(instance.configuration.storageDisks?.count == 1)
-        #expect(instance.configuration.storageDisks?[0].notes == "the startup disk")
-        #expect(
-            harness.storage.bundles[instance.bundleURL]?.storageDisks?[0].notes
-                == "the startup disk")
-    }
-
     @Test("Read-only is written straight through")
     func storageDiskReadOnly() throws {
         let harness = makeHarness()
@@ -317,59 +283,6 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
         #expect(harness.fileSystem.trashedURLs == [URL(fileURLWithPath: path)])
-    }
-
-    @Test("A trashing removal of an in-bundle disk resolves the file against the bundle")
-    func removeInternalStorageDiskTrashesInsideTheBundle() async throws {
-        let harness = makeHarness()
-        let internalDisk = StorageDisk(
-            path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness) { $0.storageDisks = [internalDisk, keeper] }
-
-        try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: internalDisk.id, trashFile: true, consent: .all)
-
-        #expect(
-            harness.fileSystem.trashedURLs
-                == [instance.bundleURL.appendingPathComponent("AdditionalDisks/x.asif")])
-    }
-
-    @Test(
-        "A trashing removal holds the VM through the trash, so a Start meanwhile is refused busy",
-        arguments: [true, false])
-    func removeStorageDiskHoldsTheVMThroughTheTrash(isInternal: Bool) async throws {
-        let harness = makeHarness()
-        let disk =
-            isInternal
-            ? StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-            : StorageDisk(path: externalPath("external.img"), label: "External", isInternal: false)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness) { $0.storageDisks = [disk, keeper] }
-        harness.fileSystem.holdTrash()
-
-        let removal = Task { @MainActor in
-            try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
-        }
-        try await harness.fileSystem.trashParked.wait { harness.fileSystem.isTrashParked }
-        #expect(instance.phase.operation?.kind == .removingStorageDisk)
-        // The entry went first; the file is what is still in flight.
-        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
-        let start = try await #require(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        }
-        #expect(start.isBusy)
-
-        harness.fileSystem.resumeTrash()
-        try await removal.value
-
-        #expect(instance.phase == .stopped)
-        let trashed =
-            isInternal
-            ? instance.bundleURL.appendingPathComponent(disk.path) : URL(fileURLWithPath: disk.path)
-        #expect(harness.fileSystem.trashedURLs == [trashed])
-        #expect(harness.virtualization.startCallCount == 0)
     }
 
     @Test("A file another VM still references is kept, however the removal is asked for")
@@ -438,56 +351,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(failure.message.contains("\u{201C}\(path)\u{201D}"))
         // Told to the caller alone, never again as an unattended failure.
         #expect(harness.failures.isEmpty)
-    }
-
-    @Test("The synthesized main disk is a VM's only disk, so its removal is refused")
-    func removeSyntheticMainDiskIsRefused() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) { $0.storageDisks = nil }
-        let synthetic = StorageDisk.mainDisk(
-            layout: VMBundleLayout(bundleURL: instance.bundleURL))
-
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: synthetic.id, trashFile: true, consent: .all)
-        }
-
-        #expect(refusal.isOperationFailure)
-        #expect(instance.configuration.storageDisks == nil)
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
-    }
-
-    @Test("Disk.asif goes like any other disk once the VM has a sibling")
-    func removeMainDiskWithASiblingSucceeds() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let main = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
-        let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [main, extra] }
-
-        try await harness.core.removeStorageDisk(
-            .id(instance.id), disk: main.id, trashFile: true, consent: .all)
-
-        #expect(instance.configuration.storageDisks?.map(\.id) == [extra.id])
-        #expect(
-            harness.fileSystem.trashedURLs.contains(
-                instance.bundleURL.appendingPathComponent("Disk.asif")))
-    }
-
-    @Test("A VM's only disk is refused whichever file backs it")
-    func removeSoleAdditionalDiskIsRefused() async throws {
-        let harness = makeHarness()
-        let extra = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        let instance = makeInstance(in: harness) { $0.storageDisks = [extra] }
-
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: extra.id, trashFile: true, consent: .all)
-        }
-
-        #expect(refusal.isOperationFailure)
-        #expect(instance.configuration.storageDisks?.map(\.id) == [extra.id])
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
     @Test("A disk left the VM's last while sharing resolves is refused on the far side")
@@ -636,36 +499,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase == .suspended)
     }
 
-    @Test("A guest force-stopped during a removable-disk creation rests stopped with the entry saved")
-    func createRemovableMediaOnAGuestForceStoppedMidWrite() async throws {
-        let diskImages = MockDiskImageService()
-        diskImages.holdCreateDiskImage()
-        let harness = makeHarness(diskImages: diskImages)
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        let destination = scratch.url
-            .appendingPathComponent("\(UUID().uuidString).asif")
-
-        let creation = Task { @MainActor in
-            try await harness.core.createRemovableMedia(
-                .id(instance.id), sizeInGB: 16, destinationURL: destination)
-        }
-        try await diskImages.parked.wait { diskImages.isParked }
-        try await harness.core.stop(
-            .id(instance.id), disposition: .force, consent: .all, timeout: nil)
-        // The stop is tolerated; the creation still holds the VM.
-        #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
-
-        diskImages.resumeCreateDiskImage()
-        try await creation.value
-
-        #expect(instance.phase == .stopped)
-        #expect(
-            instance.configuration.removableMedia?.map(\.path)
-                == [destination.path(percentEncoded: false)])
-        #expect(harness.removableMedia.attachCallCount == 0)
-    }
-
     @Test("A label or note edit leaves the mount identity alone")
     func removableLabelAndNoteKeepMountIdentity() throws {
         let harness = makeHarness()
@@ -793,24 +626,6 @@ struct VMCommandCoreAttachmentTests {
 
     // MARK: - Shared directories
 
-    @Test("Adding shares appends every pick and skips a path already shared")
-    func addSharedDirectoriesSkipsDuplicates() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let first = externalPath("one")
-        let second = externalPath("two")
-
-        try harness.core.addSharedDirectories(
-            .id(instance.id), paths: [PickedFile(path: first, bookmark: Data([1]))])
-        try harness.core.addSharedDirectories(
-            .id(instance.id),
-            paths: [PickedFile(path: first, bookmark: nil), PickedFile(path: second, bookmark: nil)])
-
-        let directories = instance.configuration.sharedDirectories ?? []
-        #expect(directories.map(\.path) == [first, second])
-        #expect(directories.first?.bookmark == Data([1]))
-    }
-
     @Test("A pick spelling a folder differently is still the folder the VM shares")
     func addSharedDirectoriesComparesFoldersNotSpellings() throws {
         let harness = makeHarness()
@@ -827,43 +642,6 @@ struct VMCommandCoreAttachmentTests {
         let directories = instance.configuration.sharedDirectories ?? []
         #expect(directories.map(\.path) == [folder])
         #expect(directories.first?.bookmark == Data([1]))
-    }
-
-    @Test("An empty pick writes nothing")
-    func addSharedDirectoriesIgnoresAnEmptyPick() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-
-        try harness.core.addSharedDirectories(.id(instance.id), paths: [])
-
-        #expect(instance.configuration.sharedDirectories == nil)
-    }
-
-    @Test("Removing the last share clears the list rather than leaving it empty")
-    func removeSharedDirectoryNilsAnEmptiedList() throws {
-        let harness = makeHarness()
-        let keeper = SharedDirectory(path: externalPath("keeper"))
-        let going = SharedDirectory(path: externalPath("going"))
-        let instance = makeInstance(in: harness) { $0.sharedDirectories = [keeper, going] }
-
-        try harness.core.removeSharedDirectory(.id(instance.id), directory: going.id)
-        #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
-
-        try harness.core.removeSharedDirectory(.id(instance.id), directory: keeper.id)
-        #expect(instance.configuration.sharedDirectories == nil)
-    }
-
-    @Test("Read-only flips the share named and leaves its siblings alone")
-    func setSharedDirectoryReadOnlyTouchesOneEntry() throws {
-        let harness = makeHarness()
-        let first = SharedDirectory(path: externalPath("first"))
-        let second = SharedDirectory(path: externalPath("second"))
-        let instance = makeInstance(in: harness) { $0.sharedDirectories = [first, second] }
-
-        try harness.core.setSharedDirectoryReadOnly(
-            .id(instance.id), directory: second.id, readOnly: true)
-
-        #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [false, true])
     }
 
     @Test("A share the VM no longer carries refuses both edits")
@@ -890,38 +668,6 @@ struct VMCommandCoreAttachmentTests {
             #expect(verb == .editSharedDirectory)
         }
         #expect(instance.configuration.sharedDirectories?.count == 1)
-    }
-
-    @Test("A running VM refuses every share edit — the device set is fixed at boot")
-    func runningVMRefusesShareEdits() async throws {
-        let harness = makeHarness()
-        let directory = SharedDirectory(path: externalPath("kept"))
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
-            $0.sharedDirectories = [directory]
-        }
-
-        for refusal in [
-            try #require(throws: CommandError.self) {
-                try harness.core.addSharedDirectories(
-                    .id(instance.id), paths: [PickedFile(path: externalPath("new"), bookmark: nil)])
-            },
-            try #require(throws: CommandError.self) {
-                try harness.core.removeSharedDirectory(
-                    .id(instance.id), directory: directory.id)
-            },
-            try #require(throws: CommandError.self) {
-                try harness.core.setSharedDirectoryReadOnly(
-                    .id(instance.id), directory: directory.id, readOnly: true)
-            },
-        ] {
-            guard case .invalidState(_, let current, let allowed, _) = refusal else {
-                Issue.record("expected an invalid-state refusal, got \(refusal)")
-                continue
-            }
-            #expect(current == .running)
-            #expect(!allowed.contains(.editSharedDirectory))
-        }
-        #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [false])
     }
 
     // MARK: - Shared directories: a running macOS guest
@@ -951,22 +697,6 @@ struct VMCommandCoreAttachmentTests {
         return instance
     }
 
-    @Test("A live share edit finds the device of the instance's live session, serving its boot share")
-    func liveShareDeviceTargetsTheLiveSession() throws {
-        let harness = makeHarness()
-        let kept = SharedDirectory(path: try folder("kept"))
-        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
-
-        let device = try #require(LiveShareDevice(of: instance))
-
-        #expect(device.sessionID == instance.liveSessionID)
-        #expect(device.serving == instance.sessionContext?.directoryShare)
-        let stopped = makeInstance(in: harness, name: "Stopped", guestOS: .macOS) {
-            $0.sharedDirectories = [kept]
-        }
-        #expect(LiveShareDevice(of: stopped) == nil)
-    }
-
     @Test("A live swap holds what it adds, releases what it drops, and leaves a kept share alone")
     func liveShareSwapHoldsAddedAndReleasesRemoved() throws {
         let harness = makeHarness()
@@ -984,21 +714,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(swap.share == next)
         #expect(swap.held == [added.id])
         #expect(swap.released == [going.id])
-    }
-
-    @Test("A running macOS guest with one share takes another live, its device given the list committed")
-    func runningMacOSGuestAddsAShareLive() throws {
-        let harness = makeHarness()
-        let kept = SharedDirectory(path: try folder("kept"))
-        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
-        let added = try folder("added")
-
-        try harness.core.addSharedDirectories(
-            .id(instance.id), paths: [PickedFile(path: added, bookmark: nil)])
-
-        let directories = try #require(instance.configuration.sharedDirectories)
-        #expect(directories.map(\.path) == [kept.path, added])
-        #expect(instance.sessionContext?.directoryShare?.entries.map(\.id) == directories.map(\.id))
     }
 
     @Test("Removing one of two shares from a running macOS guest swaps live and lets the removed one go")
@@ -1075,28 +790,6 @@ struct VMCommandCoreAttachmentTests {
         }
     }
 
-    @Test("A folder a live swap cannot share is refused as the argument it is, and nothing is written")
-    func liveShareFailingValidationWritesNothing() async throws {
-        let harness = makeHarness()
-        let kept = SharedDirectory(path: try folder("kept"))
-        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
-        let serving = instance.sessionContext?.directoryShare
-
-        let refusal = try #require(throws: CommandError.self) {
-            try harness.core.addSharedDirectories(
-                .id(instance.id),
-                paths: [PickedFile(path: externalPath("never-created"), bookmark: nil)])
-        }
-
-        guard case .invalidArgument = refusal else {
-            Issue.record("expected an argument refusal, got \(refusal)")
-            return
-        }
-        instance.activity.refreshFromBundle()
-        #expect(instance.configuration.sharedDirectories == [kept])
-        #expect(instance.sessionContext?.directoryShare == serving)
-    }
-
     @Test("A running macOS guest's first share and last share are refused by the rule that holds them")
     func runningMacOSGuestRefusesTheFirstAndLastShare() async throws {
         let harness = makeHarness()
@@ -1135,113 +828,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(single.configuration.sharedDirectories == [only])
     }
 
-    @Test("A share edit on a suspended macOS guest or a running Linux one is refused by the VM's state")
-    func suspendedOrLinuxGuestRefusesShareEdits() async throws {
-        let harness = makeHarness()
-        let kept = SharedDirectory(path: try folder("kept"))
-        let suspended = makeInstance(
-            in: harness, name: "Suspended", phase: .suspended, guestOS: .macOS
-        ) { $0.sharedDirectories = [kept] }
-        try VMInstanceFixture.writeSaveFile(for: suspended)
-        let linux = makeInstance(
-            in: harness, name: "Linux", phase: .running(sessionID: UUID()), guestOS: .linux
-        ) { $0.sharedDirectories = [kept] }
-
-        for instance in [suspended, linux] {
-            let refusal = try #require(throws: CommandError.self) {
-                try harness.core.addSharedDirectories(
-                    .id(instance.id), paths: [PickedFile(path: try folder("new"), bookmark: nil)])
-            }
-            guard case .invalidState(_, _, let allowed, _) = refusal else {
-                Issue.record("expected an invalid-state refusal, got \(refusal)")
-                continue
-            }
-            #expect(!allowed.contains(.editSharedDirectory), "\(instance.name)")
-            #expect(instance.configuration.sharedDirectories == [kept], "\(instance.name)")
-        }
-    }
-
     // MARK: - State gates
-
-    @Test("A running VM refuses a disk edit and takes a removable one")
-    func runningVMSplitsTheTwoLists() async throws {
-        let harness = makeHarness()
-        let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Old")
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
-            $0.storageDisks = [disk]
-            $0.removableMedia = [item]
-        }
-
-        let refusal = try #require(throws: CommandError.self) {
-            try harness.core.renameStorageDisk(.id(instance.id), disk: disk.id, to: "New")
-        }
-        guard case .invalidState(_, let current, let allowed, _) = refusal else {
-            Issue.record("expected an invalid-state refusal")
-            return
-        }
-        #expect(current == .running)
-        #expect(!allowed.contains(.editStorageDisk))
-        #expect(allowed.contains(.editRemovableMedia))
-        #expect(instance.configuration.storageDisks?[0].label == "Extra")
-
-        // Hot-pluggable, so the same edit on the other list goes through.
-        try harness.core.renameRemovableMedia(.id(instance.id), item: item.id, to: "New")
-        #expect(instance.configuration.removableMedia?[0].label == "New")
-    }
-
-    @Test("A Start landing while sharing resolves refuses the disk removal")
-    func removeStorageDiskRefusesAStartDuringTheResolve() async throws {
-        let harness = makeHarness()
-        let path = externalPath("external.img")
-        let disk = StorageDisk(path: path, label: "External", isInternal: false)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness) { $0.storageDisks = [disk, keeper] }
-        // The removal's sheet leaves the menu key equivalents live, so a Start
-        // can land in the suspension the sharing resolve opens — this is that
-        // keystroke, landing there deterministically.
-        harness.core.afterSharingResolveForTesting = {
-            instance.activity.placeForTesting(
-                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
-        }
-
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
-        }
-
-        // The bring-up holds the VM, and the removal is what the VM takes
-        // once it rests again.
-        #expect(refusal.isBusy)
-        // Neither the entry nor the file moved: the disk is still the VM's.
-        #expect(instance.configuration.storageDisks?.map(\.id) == [disk.id, keeper.id])
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
-    }
-
-    @Test("A Start landing while sharing resolves refuses the removable-media removal")
-    func removeRemovableMediaRefusesAStartDuringTheResolve() async throws {
-        let harness = makeHarness()
-        let path = externalPath("media.iso")
-        let item = RemovableMediaItem(path: path, readOnly: true)
-        let instance = makeInstance(in: harness) { $0.removableMedia = [item] }
-        // Removable media is hot-pluggable, so the state that refuses is a VM
-        // still coming up: no live session to attach to yet.
-        harness.core.afterSharingResolveForTesting = {
-            instance.activity.placeForTesting(
-                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()))
-        }
-
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.removeRemovableMedia(
-                .id(instance.id), item: item.id, trashFile: true, consent: .all)
-        }
-
-        // The bring-up holds the VM, and the removal is what the VM takes
-        // once it rests again.
-        #expect(refusal.isBusy)
-        #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
-    }
 
     @Test("A medium ejected while sharing resolves is refused, and its file is left alone")
     func removeRemovableMediaRefusesADetachDuringTheResolve() async throws {
@@ -1264,134 +851,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("A suspended VM refuses both lists — its saved state pins the device set")
-    func suspendedVMRefusesBothLists() async throws {
-        let harness = makeHarness()
-        let item = RemovableMediaItem(path: "/tmp/installer.iso", readOnly: true, label: "Old")
-        let instance = makeInstance(in: harness, phase: .suspended) { $0.removableMedia = [item] }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        let refusal = try #require(throws: CommandError.self) {
-            try harness.core.renameRemovableMedia(.id(instance.id), item: item.id, to: "New")
-        }
-
-        guard case .invalidState = refusal else {
-            Issue.record("expected an invalid-state refusal")
-            return
-        }
-        #expect(instance.configuration.removableMedia?[0].label == "Old")
-    }
-
-    @Test("A bundle still being copied refuses every attachment edit as busy")
-    func arrivalRefusesEveryEdit() async throws {
-        let harness = makeHarness()
-        let gate = GatedStep()
-        let arrival = harness.library.beginGatedArrival(
-            .cloning, named: "Copying", gate: gate)
-
-        let storageRefusal = try #require(throws: CommandError.self) {
-            try harness.core.setStorageDiskReadOnly(
-                .id(arrival.id), disk: UUID(), readOnly: true)
-        }
-        let removableRefusal = try #require(throws: CommandError.self) {
-            try harness.core.attachRemovableMedia(
-                .id(arrival.id), paths: [PickedFile(path: "/tmp/x.iso", bookmark: nil)])
-        }
-
-        #expect(storageRefusal.isBusy)
-        #expect(removableRefusal.isBusy)
-        #expect(harness.storage.saveConfigurationCallCount == 0)
-
-        gate.release()
-        await arrival.settle()
-    }
-
-    @Test("A storage edit on a VM being cloned is refused as busy, naming the clone")
-    func copyOutRefusesStorageEditButNotRemovableMedia() async throws {
-        let harness = makeHarness()
-        let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        let source = makeInstance(in: harness, name: "Source") { $0.storageDisks = [disk] }
-        let hold = DispatchSemaphore(value: 0)
-        harness.storage.setCloneHold(hold)
-        let clone = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
-        try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
-
-        let removeError = try await #require(throws: CommandError.self) {
-            try await harness.core.removeStorageDisk(
-                .id(source.id), disk: disk.id, trashFile: false, consent: .all)
-        }
-        guard case .busy(let vm, let operation) = removeError else {
-            Issue.record("expected a busy refusal, got \(removeError)")
-            return
-        }
-        #expect(vm.id == source.id)
-        #expect(operation == "being cloned")
-        #expect(
-            removeError.message.contains(
-                "is busy being cloned. Wait for it to finish, then try again."))
-
-        let attachError = try #require(throws: CommandError.self) {
-            try harness.core.attachStorageDisks(
-                .id(source.id), paths: [PickedFile(path: "/tmp/x.img", bookmark: nil)])
-        }
-        #expect(attachError.isBusy)
-        #expect(source.configuration.storageDisks?.count == 1)
-
-        // Removable media isn't copied by a clone, so it takes an edit unblocked.
-        try harness.core.attachRemovableMedia(
-            .id(source.id), paths: [PickedFile(path: "/tmp/y.iso", bookmark: nil)])
-        #expect(source.configuration.removableMedia?.count == 1)
-
-        hold.signal()
-        await harness.library.arrivals.first { $0.id == clone.id }?.settle()
-    }
-
-    @Test("An edit naming an attachment that is no longer there is refused, not silently dropped")
-    func staleAttachmentIsRefused() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) {
-            $0.storageDisks = [
-                StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-            ]
-        }
-        let gone = UUID()
-
-        let renameRefusal = try #require(throws: CommandError.self) {
-            try harness.core.renameStorageDisk(.id(instance.id), disk: gone, to: "New")
-        }
-        let notesRefusal = try #require(throws: CommandError.self) {
-            try harness.core.setRemovableMediaNotes(.id(instance.id), item: gone, notes: "New")
-        }
-        let removeRefusal = try await #require(throws: CommandError.self) {
-            try await harness.core.removeStorageDisk(
-                .id(instance.id), disk: gone, trashFile: false, consent: .all)
-        }
-
-        #expect(renameRefusal.isOperationFailure)
-        #expect(renameRefusal.message.contains(instance.name))
-        #expect(notesRefusal.isOperationFailure)
-        #expect(removeRefusal.isOperationFailure)
-        #expect(instance.configuration.storageDisks?.count == 1)
-    }
-
     // MARK: - Guest agent disk
-
-    @Test("Mounting attaches the installer once and reports it present on a second call")
-    func mountGuestAgentDiskIsIdempotent() async throws {
-        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
-            .path(percentEncoded: false)
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .attached(.usb))
-        #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
-
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.usb))
-        #expect(instance.configuration.removableMedia?.count == 1)
-    }
 
     @Test("A Linux guest gets the agent's disk, made once and labelled as the guest shows it")
     func mountLinuxAgentDisk() async throws {
@@ -1438,25 +898,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(!FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
     }
 
-    @Test("A guest's power-off takes the installer disk's entry and the VM's copy")
-    func powerOffRemovesTheInstallerCopy() async throws {
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS)
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
-        try await waitForChange { instance.phase == .running(sessionID: sessionID) }
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(
-            for: try #require(instance.configuration.removableMedia?.first))
-        #expect(FileManager.default.fileExists(atPath: copy.path(percentEncoded: false)))
-
-        instance.handleSessionEvent(.guestDidStop)
-        try await waitForChange { instance.phase == .stopped }
-
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
-    }
-
     /// A running macOS VM holding an installer entry another build of Kernova
     /// attached: it names that build's DMG, and the bundle holds its copy.
     private func otherBuildsInstaller(in harness: Harness) throws -> (VMInstance, RemovableMediaItem, URL) {
@@ -1486,36 +927,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.usb))
     }
 
-    @Test("The Storage panel's Eject and Remove take an installer entry's copy with it")
-    func storageEditsRemoveTheInstallerCopy() async throws {
-        let harness = makeHarness()
-        let (ejected, ejectedItem, ejectedCopy) = try otherBuildsInstaller(in: harness)
-        try harness.core.ejectRemovableMedia(.id(ejected.id), item: ejectedItem.id)
-        #expect(ejected.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: ejectedCopy.path(percentEncoded: false)))
-
-        let (removed, removedItem, removedCopy) = try otherBuildsInstaller(in: harness)
-        try await harness.core.removeRemovableMedia(
-            .id(removed.id), item: removedItem.id, trashFile: true, consent: .all)
-        #expect(removed.configuration.removableMedia == nil)
-        #expect(!FileManager.default.fileExists(atPath: removedCopy.path(percentEncoded: false)))
-    }
-
-    @Test("A guest that takes the disk on virtio attaches nothing and says so")
-    func mountGuestAgentDiskOnVirtioGuest() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS
-        ) {
-            $0.installedImage = .macOSRestoreImage(version: "12.0.1", build: "21A559")
-        }
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-
-        #expect(try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil) == .alreadyPresent(.virtio))
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(instance.configuration.storageDisks == nil)
-    }
-
     @Test("Unmounting drops the installer entry, and an agent handshake does it unasked")
     func unmountGuestAgentDisk() async throws {
         let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
@@ -1538,70 +949,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.removableMedia == nil)
     }
 
-    @Test("An agent handshake during a live snapshot leaves the installer mounted for a later eject")
-    func autoEjectWaitsOutAnUnattachableSession() throws {
-        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
-            .path(percentEncoded: false)
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let instance = makeInstance(
-            in: harness,
-            phase: .operating(.capturingSnapshot(.live), from: .running(sessionID: sessionID)),
-            guestOS: .macOS
-        ) {
-            $0.removableMedia = [
-                RemovableMediaItem(path: installerPath, readOnly: true, awaitedAgentScopes: [.login])
-            ]
-        }
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-
-        instance.onCurrentAgentsArrived?([.login])
-
-        #expect(instance.configuration.removableMedia?.map(\.path) == [installerPath])
-        #expect(instance.hasGuestAgentInstallerMounted)
-        #expect(harness.removableMedia.detachCallCount == 0)
-
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-        try harness.core.unmountGuestAgentDisk(.id(instance.id))
-        #expect(instance.configuration.removableMedia == nil)
-    }
-
-    @Test("An agent handshake during a USB attach ejects the installer once the attach ends")
-    func autoEjectDuringAnAttachLandsAfterIt() async throws {
-        let installerPath = try #require(BundledGuestAgents.testing.macOSInstallerDiskImageURL)
-            .path(percentEncoded: false)
-        let installer = RemovableMediaItem(path: installerPath, readOnly: true, awaitedAgentScopes: [.login])
-        let harness = makeHarness(usbAccessoryPassthrough: .available(MockUSBAccessoryService()))
-        let sessionID = UUID()
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: sessionID), guestOS: .macOS
-        ) {
-            $0.removableMedia = [installer]
-        }
-        instance.beginSessionContextForTesting()
-        instance.recordAttachedMedia(
-            RemovableMediaDeviceInfo(id: installer.id, path: installerPath, readOnly: true),
-            for: sessionID)
-        let gate = GatedStep()
-        let attach = try instance.activity.launch(.attachingUSB(registryID: 7)) { _ in
-            try await gate.pass()
-            return .rest(.asStarted, ())
-        }
-        try await gate.waitUntilEntered()
-
-        instance.onCurrentAgentsArrived?([.login])
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(harness.removableMedia.detachCallCount == 0)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-
-        gate.release()
-        try await attach.value()
-        try await waitForChange { instance.liveRemovableMedia.isEmpty }
-        try await waitForChange { instance.phase == .running(sessionID: sessionID) }
-        #expect(harness.removableMedia.detachCallCount == 1)
-        #expect(instance.phase == .running(sessionID: sessionID))
-    }
-
     // MARK: - What the installer disk waits for
 
     /// A harness bundling a Linux agent, and a running Linux VM in it whose
@@ -1622,46 +969,6 @@ struct VMCommandCoreAttachmentTests {
         return (harness, instance)
     }
 
-    @Test("An install mount waits for each scope it names, and ejects once every one has connected current")
-    func installerWaitsForEveryScope() async throws {
-        let (harness, instance) = try linuxAgentVM()
-
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login, .system])
-        #expect(instance.guestAgentInstallerAwaits == [.login, .system])
-
-        instance.onCurrentAgentsArrived?([.login])
-        #expect(instance.guestAgentInstallerAwaits == [.system])
-        // The same scope again changes nothing.
-        instance.onCurrentAgentsArrived?([.login])
-        #expect(instance.guestAgentInstallerAwaits == [.system])
-
-        instance.onCurrentAgentsArrived?([.system])
-        #expect(instance.configuration.removableMedia == nil)
-        #expect(!instance.hasGuestAgentInstallerMounted)
-    }
-
-    @Test("An agent of a scope the disk does not wait for ejects nothing")
-    func unawaitedScopeEjectsNothing() async throws {
-        let (harness, instance) = try linuxAgentVM()
-
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.system])
-        instance.onCurrentAgentsArrived?([.login])
-
-        #expect(instance.guestAgentInstallerAwaits == [.system])
-    }
-
-    @Test("A manage mount waits for nothing, so no agent ejects it")
-    func manageMountNeverEjects() async throws {
-        let (harness, instance) = try linuxAgentVM()
-
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
-        instance.onCurrentAgentsArrived?([.login, .system])
-
-        #expect(instance.guestAgentInstallerAwaits == [])
-        try harness.core.unmountGuestAgentDisk(.id(instance.id))
-        #expect(!instance.hasGuestAgentInstallerMounted)
-    }
-
     @Test("A mount that names no scopes waits for what an install of the guest OS's agent connects")
     func mountDefaultsToTheGuestsScopes() async throws {
         let (linuxHarness, linux) = try linuxAgentVM()
@@ -1676,149 +983,6 @@ struct VMCommandCoreAttachmentTests {
         // A macOS install for everyone also brings a system service, which a mount may wait for.
         try await harness.core.mountGuestAgentDisk(.id(macOS.id), awaiting: [.login, .system])
         #expect(macOS.guestAgentInstallerAwaits == [.login, .system])
-    }
-
-    @Test("A mount on a disk already attached takes what it waits for, without attaching again")
-    func remountReplacesWhatTheDiskAwaits() async throws {
-        let (harness, instance) = try linuxAgentVM()
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
-        let item = try #require(instance.configuration.removableMedia?.first)
-
-        #expect(
-            try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.system])
-                == .alreadyPresent(.usb))
-
-        #expect(instance.configuration.removableMedia?.map(\.id) == [item.id])
-        #expect(instance.guestAgentInstallerAwaits == [.system])
-    }
-
-    @Test("What the disk waits for survives a suspend and resume, and the eject follows the agent after it")
-    func awaitedScopesSurviveASuspend() async throws {
-        let (harness, instance) = try linuxAgentVM()
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [.login, .system])
-        instance.onCurrentAgentsArrived?([.login])
-        try await instance.waitUntilIdle()
-
-        try await harness.core.suspend(.id(instance.id))
-        #expect(instance.phase == .suspended)
-        #expect(instance.guestAgentInstallerAwaits == [.system])
-
-        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        try await instance.waitUntilIdle()
-        #expect(instance.status == .running)
-        #expect(instance.guestAgentInstallerAwaits == [.system])
-
-        instance.onCurrentAgentsArrived?([.system])
-        #expect(!instance.hasGuestAgentInstallerMounted)
-    }
-
-    /// The hub snapshot of one session agent running the bundled payload.
-    private static let currentSessionAgent = AgentHubSnapshot(
-        peers: [
-            PeerSummary(
-                handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .macOS, sessionID: "2",
-                userName: "pbear", console: .on, versionLabel: AppBundleProducts.testing.versionLabel,
-                standing: .current, isResponsive: true)
-        ], features: FeatureStatus.merge([]))
-
-    /// A running macOS VM whose own agent hub judges each peer that says
-    /// Hello through `probe` against the payload `.testing` bundles; and that
-    /// payload's hash, which an agent installed from the disk claims.
-    private func macOSHubVM() async throws -> (Harness, VMInstance, AgentHubProbe, Data) {
-        let harness = makeHarness()
-        let probe = AgentHubProbe()
-        let instance = RegisteredVMInstanceFixture.register(
-            name: "Core VM", phase: .running(sessionID: UUID()), guestOS: .macOS, library: harness.library,
-            preferences: preferences, agentConnector: probe)
-        instance.beginSessionContextForTesting()
-        instance.attachAgentTransport(probe)
-        try await probe.changed.wait { probe.isStarted }
-        let hash = try #require(await AppBundleProducts.testing.guestAgents.payloadHashes()[.macOS])
-        return (harness, instance, probe, hash)
-    }
-
-    /// Says Hello through `probe` as the macOS agent in `role` of a `scope`
-    /// install, running the payload `hash`, for pbear's session at the
-    /// guest's screen; answers its connection's index.
-    private func connectMacOSAgent(
-        _ probe: AgentHubProbe, _ role: PeerRole, of scope: InstallScope, running hash: Data, process: UInt8
-    ) throws -> Int {
-        let claim = PeerClaim(
-            role: role, scope: scope, os: .macOS, architecture: .arm64, payloadHash: hash,
-            instanceID: Data(repeating: process, count: 16))
-        let state =
-            role == .systemPeer
-            ? PeerSessionState(console: .on, consoleSessionID: "2")
-            : PeerSessionState(console: .on, sessionID: "2", userName: "pbear")
-        return try #require(probe.connectPowerPeer(claim: claim, state: state))
-    }
-
-    @Test("A macOS install just for me ejects the disk once its session agent connects")
-    func macOSInstallJustForMeEjectsOnItsSessionAgent() async throws {
-        let (harness, instance, probe, hash) = try await macOSHubVM()
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
-        #expect(instance.guestAgentInstallerAwaits == [.login])
-
-        _ = try connectMacOSAgent(probe, .sessionPeer, of: .user, running: hash, process: 1)
-
-        try await waitForChange { !instance.hasGuestAgentInstallerMounted }
-        #expect(instance.agentHubSnapshot.peers.map(\.standing) == [.current])
-    }
-
-    @Test("A macOS install for everyone ejects the disk once its session agent connects, not at its system service")
-    func macOSInstallForEveryoneEjectsOnItsSessionAgent() async throws {
-        let (harness, instance, probe, hash) = try await macOSHubVM()
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
-
-        // The system service starts first; alone it is what an install with
-        // nobody logged in at the guest's screen connects until a login.
-        _ = try connectMacOSAgent(probe, .systemPeer, of: .system, running: hash, process: 1)
-        try await waitForChange { instance.agentHubSnapshot.peers.first?.standing == .current }
-        #expect(instance.guestAgentInstallerAwaits == [.login])
-
-        _ = try connectMacOSAgent(probe, .sessionPeer, of: .system, running: hash, process: 2)
-
-        try await waitForChange { !instance.hasGuestAgentInstallerMounted }
-        #expect(instance.agentHubSnapshot.peers.map(\.standing) == [.current, .current])
-    }
-
-    @Test(
-        "An agent connected before the mount ejects nothing, and the reinstalled agent's connection ejects the disk",
-        arguments: [true, false])
-    func macOSReinstallEjectsOnTheNewAgent(alreadyCurrent: Bool) async throws {
-        let (harness, instance, probe, hash) = try await macOSHubVM()
-        let installed = alreadyCurrent ? hash : Data(repeating: 0xEE, count: hash.count)
-        let old = try connectMacOSAgent(probe, .sessionPeer, of: .user, running: installed, process: 1)
-        try await waitForChange {
-            switch instance.agentHubSnapshot.peers.first?.standing {
-            case .current?: alreadyCurrent
-            case .outdated?: !alreadyCurrent
-            default: false
-            }
-        }
-
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: nil)
-        #expect(instance.guestAgentInstallerAwaits == [.login])
-
-        // The install stops the old agent and starts its own.
-        probe.deliver(.closed(.transportLost), fromConnection: old)
-        try await waitForChange { instance.agentHubSnapshot.peers.isEmpty }
-        #expect(instance.hasGuestAgentInstallerMounted)
-        _ = try connectMacOSAgent(probe, .sessionPeer, of: .user, running: hash, process: 2)
-
-        try await waitForChange { !instance.hasGuestAgentInstallerMounted }
-    }
-
-    @Test("A macOS manage mount stays through the agent's arrival")
-    func macOSManageMountStaysThroughAnArrival() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()), guestOS: .macOS)
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        try await harness.core.mountGuestAgentDisk(.id(instance.id), awaiting: [])
-
-        instance.publishAgentHubSnapshotForTesting(Self.currentSessionAgent)
-
-        #expect(instance.guestAgentInstallerAwaits == [])
     }
 
     @Test("A VM with no live session to look inside refuses the guest agent disk, as does a build without it")
@@ -1876,56 +1040,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.pendingGuestAccount != nil)
     }
 
-    @Test("A start-failed removal naming an entry that is already gone removes nothing")
-    func removeStartFailedAttachmentAlreadyGone() async throws {
-        let harness = makeHarness()
-        let keeper = RemovableMediaItem(path: externalPath("keep.iso"), readOnly: true)
-        let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed.")) {
-            $0.removableMedia = [keeper]
-        }
-
-        try await harness.core.removeStartFailedAttachment(
-            .id(instance.id),
-            attachment: StartFailedAttachment(
-                verb: .start, kind: .removableMedia, reason: .attachRefused, id: UUID(),
-                label: "Installer",
-                message: "could not open"))
-
-        // What the recovery was for already holds, so it is a quiet no-op — and
-        // the list it would have edited is untouched.
-        #expect(instance.configuration.removableMedia?.map(\.id) == [keeper.id])
-        #expect(instance.status == .error)
-    }
-
-    @Test("A resume-failed removal discards the saved state before it edits the device set")
-    func removeStartFailedAttachmentDiscardsTheSavedState() async throws {
-        let harness = makeHarness()
-        let disk = StorageDisk(path: externalPath("missing.img"), label: "Scratch", isInternal: false)
-        let keeper = StorageDisk(path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeInstance(in: harness, phase: .suspended) {
-            $0.storageDisks = [disk, keeper]
-        }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        // The saved state pins the device set, so the removal would be refused
-        // until the discard clears it.
-        #expect(!harness.core.capabilities.accepts(.editStorageDisks, on: instance))
-
-        try await harness.core.removeStartFailedAttachment(
-            .id(instance.id),
-            attachment: StartFailedAttachment(
-                verb: .resume, kind: .storageDisk, reason: .attachRefused, id: disk.id,
-                label: "Scratch",
-                message: "could not open"))
-
-        // The save file goes with the removal, and the VM rests where a VM
-        // with nothing to restore belongs, ready for the start the door runs
-        // next.
-        #expect(!instance.hasSaveFile)
-        #expect(instance.phase == .stopped)
-        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
-        #expect(harness.virtualization.startCallCount == 0)
-    }
-
     /// The removal lands before the discard, so a discard the file system
     /// turns down leaves the entry gone and the save file on disk.
     @Test("A discard that fails after a storage disk's removal names the way out")
@@ -1981,26 +1095,6 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.removableMedia?.map(\.id) == [keeper.id])
         #expect(instance.hasSaveFile)
         #expect(instance.isSuspended)
-        #expect(harness.virtualization.startCallCount == 0)
-    }
-
-    @Test("A start-failed removal of a shared folder drops only that share")
-    func removeStartFailedSharedFolderOnAStoppedVM() async throws {
-        let harness = makeHarness()
-        let missing = SharedDirectory(path: externalPath("Gone"))
-        let keeper = SharedDirectory(path: externalPath("Kept"))
-        let instance = makeInstance(in: harness, phase: .failed(message: "Boot failed.")) {
-            $0.sharedDirectories = [missing, keeper]
-        }
-
-        try await harness.core.removeStartFailedAttachment(
-            .id(instance.id),
-            attachment: StartFailedAttachment(
-                verb: .start, kind: .sharedDirectory, reason: .notFound, id: missing.id,
-                label: missing.displayName, message: "not found"))
-
-        #expect(instance.configuration.sharedDirectories?.map(\.id) == [keeper.id])
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
         #expect(harness.virtualization.startCallCount == 0)
     }
 

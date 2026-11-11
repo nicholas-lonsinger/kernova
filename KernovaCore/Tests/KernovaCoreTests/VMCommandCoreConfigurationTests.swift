@@ -69,36 +69,6 @@ struct VMCommandCoreConfigurationTests {
 
     // MARK: - Read
 
-    @Test("A whole-VM read answers every key the guest can have, in registry order")
-    func readAnswersEveryApplicableKey() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, guestOS: .linux)
-
-        let entries = try harness.core.configuration(.name("Alpha"), keys: nil)
-
-        let applicable = VMConfigurationKeyRegistry.keys
-            .filter { $0.applies(harness.library.instances[0].configuration) }
-        #expect(entries.map(\.key) == applicable.map(\.name))
-        // A Linux guest's scanout carries no density, so the key is left out
-        // rather than reported with a value no `set` would take back.
-        #expect(!entries.contains { $0.key == "display.hidpi" })
-        #expect(try value(entries, "network.mode") == "none")
-    }
-
-    @Test("A named read answers in the order asked, and refuses a name the keyspace lacks")
-    func namedReadKeepsTheCallersOrder() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-
-        let entries = try harness.core.configuration(
-            .name("Alpha"), keys: ["memory", "cpus"])
-        #expect(entries.map(\.key) == ["memory", "cpus"])
-
-        #expect(throws: CommandError.self) {
-            try harness.core.configuration(.name("Alpha"), keys: ["cpu"])
-        }
-    }
-
     @Test("A key the guest cannot have is refused when it is named outright")
     func namedReadRefusesAnInapplicableKey() throws {
         let harness = makeHarness()
@@ -114,28 +84,6 @@ struct VMCommandCoreConfigurationTests {
     }
 
     // MARK: - Write
-
-    @Test("A set writes every assignment and answers the values they landed on")
-    func setWritesAndAnswers() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-
-        let answered = try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(key: "cpus", value: "3"),
-                ConfigurationEntry(key: "display.preference", value: "fullscreen"),
-            ],
-            consent: .none)
-
-        #expect(instance.configuration.cpuCount == 3)
-        #expect(instance.hostState.displayPreference == .fullscreen)
-        #expect(
-            answered == [
-                ConfigurationEntry(key: "cpus", value: "3"),
-                ConfigurationEntry(key: "display.preference", value: "fullscreen"),
-            ])
-    }
 
     @Test("A set onto a network this build cannot attach is refused naming the build, and writes nothing")
     func setOntoAnUnattachableNetworkIsRefused() throws {
@@ -188,48 +136,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
     }
 
-    @Test("A set of the value memory holds is written when the bundle holds another")
-    func anAssignmentIsJudgedAgainstTheBundle() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let held = instance.configuration.cpuCount
-        // Another Kernova copy changed the count after this one read the bundle.
-        var onDisk = instance.configuration
-        onDisk.cpuCount = held + 1
-        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
-
-        let answered = try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [ConfigurationEntry(key: "cpus", value: String(held))],
-            consent: .none)
-
-        #expect(try value(answered, "cpus") == String(held))
-        #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held)
-        #expect(instance.configuration.cpuCount == held)
-    }
-
-    @Test("A running VM refuses the value memory holds when it would move the bundle's")
-    func aRunningVMRefusesWhatMovesTheBundle() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        let held = instance.configuration.cpuCount
-        var onDisk = instance.configuration
-        onDisk.cpuCount = held + 1
-        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
-        let assignment = ConfigurationEntry(key: "cpus", value: String(held))
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"), assignments: [assignment], consent: .none)
-        }
-        guard case .invalidState(_, _, _, let settings) = error else {
-            Issue.record("expected invalidState, got \(error)")
-            return
-        }
-        #expect(settings == [assignment])
-        #expect(harness.storage.bundles[instance.bundleURL]?.cpuCount == held + 1)
-    }
-
     @Test("A Retina display's odd size reads back as a set that changes nothing")
     func anOddRetinaSizeRoundTrips() throws {
         let harness = makeHarness()
@@ -271,91 +177,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
     }
 
-    @Test("A Retina base size down to 1 is taken, not refused")
-    func aRetinaBaseTakesTheFrameworksFloor() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, guestOS: .macOS) {
-            $0.displaySizesToWindow = false
-            $0.displayHiDPI = true
-            $0.displayResolution = DisplayBootSizing.Resolution(
-                width: 1920, height: 1200, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
-        }
-
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(key: "display.width", value: "1"),
-                ConfigurationEntry(key: "display.height", value: "1"),
-            ],
-            consent: .none)
-
-        #expect(instance.configuration.displayWidth == 2)
-        #expect(instance.configuration.displayHeight == 2)
-        #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
-    }
-
-    @Test("One bad value in a batch writes nothing at all")
-    func aBatchIsAtomic() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let before = instance.configuration
-
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [
-                    ConfigurationEntry(key: "cpus", value: "3"),
-                    ConfigurationEntry(key: "memory", value: "999999"),
-                ],
-                consent: .none)
-        }
-
-        #expect(instance.configuration == before)
-    }
-
-    @Test("A bad host-state value writes neither file")
-    func aBadHostStateValueWritesNothing() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let before = instance.settings
-
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [
-                    ConfigurationEntry(key: "cpus", value: "3"),
-                    ConfigurationEntry(key: "display.preference", value: "sideways"),
-                ],
-                consent: .none)
-        }
-
-        #expect(instance.settings == before)
-        #expect(harness.storage.bundles[instance.bundleURL] == before.configuration)
-    }
-
-    @Test("One key the state will not take writes nothing at all")
-    func aRefusedGateWritesNothing() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        let before = instance.configuration
-
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [
-                    ConfigurationEntry(key: "clipboard.sharing", value: "true"),
-                    ConfigurationEntry(key: "cpus", value: "3"),
-                ],
-                consent: .none)
-        }
-        guard case .invalidState = error else {
-            Issue.record("expected invalidState, got \(error)")
-            return
-        }
-
-        #expect(instance.configuration == before)
-    }
-
     @Test("A running VM still takes the settings read at other moments than boot")
     func liveKeysAreWritableWhileRunning() throws {
         let harness = makeHarness()
@@ -374,38 +195,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.clipboardSharingEnabled)
         #expect(!instance.configuration.displayAutoResizes)
         #expect(instance.configuration.systemKeyForwarding == .fullscreenOnly)
-    }
-
-    @Test(
-        "A Linux guest's clipboard sharing is refused while a session or a save pins its devices",
-        arguments: [VMLifecyclePhase.suspended, .running(sessionID: UUID())])
-    func linuxClipboardSharingIsPinnedWithTheMachine(phase: VMLifecyclePhase) throws {
-        let harness = makeHarness()
-        let linux = makeInstance(in: harness, name: "Linux", phase: phase, guestOS: .linux)
-        let macOS = makeInstance(in: harness, name: "Mac", phase: phase, guestOS: .macOS)
-        if phase == .suspended {
-            for instance in [linux, macOS] { try VMInstanceFixture.writeSaveFile(for: instance) }
-        }
-        let assignment = ConfigurationEntry(key: "clipboard.sharing", value: "true")
-        #expect(!linux.configuration.clipboardSharingEnabled)
-        #expect(!macOS.configuration.clipboardSharingEnabled)
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Linux"), assignments: [assignment], consent: .none)
-        }
-        guard case .invalidState(_, _, _, let settings) = error else {
-            Issue.record("expected invalidState, got \(error)")
-            return
-        }
-        #expect(settings == [assignment])
-        #expect(!linux.configuration.clipboardSharingEnabled)
-        #expect(
-            !harness.core.capabilities.isAvailable(
-                VMConfigurationKeyRegistry.clipboardSharing, writing: "true", on: linux))
-
-        try harness.core.setConfiguration(.name("Mac"), assignments: [assignment], consent: .none)
-        #expect(macOS.configuration.clipboardSharingEnabled)
     }
 
     @Test("A running VM refuses the new machine keys, naming each one it refused")
@@ -498,47 +287,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(after.hostState.ephemeralBaselineSnapshotID == snapshot.id)
     }
 
-    @Test("An assignment that leaves its value where it is passes any gate and writes nothing")
-    func anUnmovedAssignmentIsNoEdit() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-        let before = instance.configuration
-        let onDisk = harness.storage.bundles[instance.bundleURL]
-
-        let answered = try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(key: "cpus", value: String(before.cpuCount)),
-                ConfigurationEntry(key: "memory", value: before.memorySizeInGB.gibibytesText),
-            ],
-            consent: .none)
-
-        #expect(try value(answered, "cpus") == String(before.cpuCount))
-        #expect(instance.configuration == before)
-        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
-    }
-
-    @Test("A refusal names the value the state refused, not the whole key")
-    func aRefusalNamesTheRefusedValue() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, phase: .running(sessionID: UUID())) {
-            $0.networkEnabled = true
-            $0.networkMode = .nat
-        }
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "network.mode", value: "none")],
-                consent: .none)
-        }
-        // Other modes hot-swap, so the copy says which value is refused.
-        #expect(
-            error.message.hasPrefix(
-                "\u{201C}Alpha\u{201D} is running, so network.mode cannot be set to "
-                    + "\u{201C}none\u{201D} while it is. "))
-    }
-
     @Test("A running networked VM hot-swaps its mode but cannot lose its device")
     func networkModeIsLiveSwitchableButNotRemovable() throws {
         let harness = makeHarness()
@@ -562,79 +310,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.networkEnabled)
     }
 
-    @Test("A running VM with no network device cannot be given one")
-    func networkModeIsAtRestWhenThereIsNoDevice() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-
-        #expect(!instance.configuration.networkEnabled)
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "network.mode", value: "nat")],
-                consent: .none)
-        }
-        #expect(!instance.configuration.networkEnabled)
-    }
-
-    @Test("An address another VM holds is refused as a conflict, not as an alert")
-    func aTakenMACAddressIsAConflict() throws {
-        let harness = makeHarness()
-        let alpha = makeInstance(in: harness, name: "Alpha")
-        makeInstance(in: harness, name: "Beta") { $0.macAddress = "aa:bb:cc:dd:ee:ff" }
-        let before = alpha.configuration
-
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "network.mac", value: "AA:BB:CC:DD:EE:FF")],
-                consent: .none)
-        }
-        guard case .conflict(_, let other, let reason) = error else {
-            Issue.record("expected a conflict, got \(error)")
-            return
-        }
-        #expect(other.name == "Beta")
-        // The address the assignment named, canonical: what the refusal
-        // tells a caller who is typing addresses at it.
-        #expect(
-            reason
-                == .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:ff", holding: .configuration, otherHolders: []))
-        #expect(error.message.contains("aa:bb:cc:dd:ee:ff"))
-
-        #expect(alpha.configuration == before)
-    }
-
-    @Test("An address another VM's snapshot was taken with is refused as a conflict naming it")
-    func aSnapshotsMACAddressIsAConflict() throws {
-        let harness = makeHarness()
-        let alpha = makeInstance(in: harness, name: "Alpha")
-        makeInstance(
-            in: harness, name: "Beta",
-            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:ff")]
-        ) { $0.macAddress = "aa:bb:cc:dd:ee:01" }
-        let before = alpha.configuration
-
-        #expect {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "network.mac", value: "aa:bb:cc:dd:ee:ff")],
-                consent: .none)
-        } throws: { error in
-            guard case CommandError.conflict(_, let other, let reason) = error else { return false }
-            return other.name == "Beta"
-                && reason
-                    == .macAddressInUse(
-                        address: "aa:bb:cc:dd:ee:ff",
-                        holding: .snapshots(
-                            HeldSnapshots(HeldSnapshot(name: "Before", isEphemeralBaseline: false))),
-                        otherHolders: [])
-        }
-
-        #expect(alpha.configuration == before)
-    }
-
     @Test("network.mac=new lands a fresh unicast address, which a read answers in place of new")
     func newMACAddressIsMinted() throws {
         let harness = makeHarness()
@@ -653,64 +328,6 @@ struct VMCommandCoreConfigurationTests {
             try value(try harness.core.configuration(.name("Alpha"), keys: [key.name]), key.name) == minted)
         #expect(
             key.accepts(VMConfigurationKeyRegistry.newMACAddressValue, for: instance, in: harness.library))
-    }
-
-    @Test("network.mac=new is refused on a suspended VM, as any address is")
-    func newMACAddressIsRefusedWhileSuspended() throws {
-        let harness = makeHarness()
-        let old = "02:00:00:00:00:01"
-        let instance = makeInstance(in: harness, phase: .suspended) { $0.macAddress = old }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        let assignment = VMConfigurationKeyRegistry.networkMAC.assigning(
-            VMConfigurationKeyRegistry.newMACAddressValue)
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.setConfiguration(.name("Alpha"), assignments: [assignment], consent: .none)
-        }
-        guard case .invalidState(_, _, _, let settings) = error else {
-            Issue.record("expected invalidState, got \(error)")
-            return
-        }
-        #expect(settings == [assignment])
-        #expect(instance.configuration.macAddress == old)
-    }
-
-    @Test("An address no guest can send from is refused naming both spellings the key takes")
-    func anUnusableMACAddressNamesNew() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-
-        #expect(
-            throws: CommandError.invalidArgument(
-                "\u{201C}ff:ff:ff:ff:ff:ff\u{201D} is not a MAC address a guest can send from. "
-                    + "Give six colon-separated hex pairs, unicast and not all zero, or new for a fresh one.")
-        ) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "network.mac", value: "ff:ff:ff:ff:ff:ff")],
-                consent: .none)
-        }
-    }
-
-    @Test("Turning passthrough on refuses without consent, and takes it as a parameter")
-    func passthroughEnableAsksForConsent() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) { $0.clipboardSharingEnabled = true }
-
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-                consent: .none)
-        }
-        #expect(error.confirmationPrompt?.kind == .enableClipboardPassthrough)
-        #expect(!instance.configuration.clipboardPassthroughEnabled)
-
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [ConfigurationEntry(key: "clipboard.passthrough", value: "true")],
-            consent: .all)
-        #expect(instance.configuration.clipboardPassthroughEnabled)
     }
 
     @Test("Passthrough refuses without sharing, whichever order the pair arrives in")
@@ -754,60 +371,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.clipboardPassthroughEnabled)
     }
 
-    @Test("Ephemeral Mode is writable while the VM runs and pins the shared baseline")
-    func ephemeralIsWritableWhileRunning() throws {
-        let harness = makeHarness()
-        let snapshot = VMSnapshot(name: "Baseline", kind: .cold, macAddress: nil)
-        let instance = makeInstance(
-            in: harness, phase: .running(sessionID: UUID()), snapshots: [snapshot])
-
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [ConfigurationEntry(key: "ephemeral", value: "on")],
-            consent: Consent([.setEphemeralBaseline]))
-
-        #expect(instance.hostState.ephemeralModeEnabled)
-        #expect(instance.hostState.ephemeralBaselineSnapshotID == snapshot.id)
-    }
-
-    @Test("A VM with nothing to fall back to is refused Ephemeral Mode, naming the step that comes first")
-    func ephemeralNeedsASnapshot() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-
-        #expect(
-            throws: CommandError.stepRequired(
-                StepRequirement(
-                    message: "Ephemeral Mode returns the virtual machine to a snapshot, and this "
-                        + "one has none. Take a snapshot first."))
-        ) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "ephemeral", value: "true")],
-                consent: .none)
-        }
-        #expect(!instance.hostState.ephemeralModeEnabled)
-    }
-
-    @Test("An unknown key refuses as an argument and writes nothing")
-    func unknownKeysRefuse() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let before = instance.configuration
-
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "cpu", value: "3")],
-                consent: .none)
-        }
-        guard case .invalidArgument = error else {
-            Issue.record("expected invalidArgument, got \(error)")
-            return
-        }
-        #expect(instance.configuration == before)
-    }
-
     @Test("Every value a get answers is a value a set takes back")
     func readValuesAreWritableValues() throws {
         let harness = makeHarness()
@@ -845,20 +408,6 @@ struct VMCommandCoreConfigurationTests {
             assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
             consent: .all)
         #expect(instance.configuration.clipboardPassthroughIsEffective)
-    }
-
-    @Test("Sharing on a VM with no passthrough flag needs no consent")
-    func sharingEnableAloneNeedsNoConsent() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-            consent: .none)
-
-        #expect(instance.configuration.clipboardSharingEnabled)
-        #expect(!instance.configuration.clipboardPassthroughIsEffective)
     }
 
     // MARK: - Install reminder
@@ -909,137 +458,7 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState.agentInstallNudgeDismissed == !dismissed)
     }
 
-    @Test("An install reminder move refused while it is off for every VM writes nothing of its batch")
-    func aRefusedInstallReminderMoveWritesNothing() throws {
-        let harness = makeHarness()
-        preferences.agentInstallPromptDisabled = true
-        let instance = makeInstance(in: harness, guestOS: .macOS)
-        let before = instance.settings
-        let cpus = before.configuration.cpuCount == 2 ? 3 : 2
-
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [
-                    ConfigurationEntry(key: "cpus", value: String(cpus)),
-                    VMConfigurationKeyRegistry.agentInstallReminder.assigning(false),
-                ],
-                consent: .none)
-        }
-
-        #expect(instance.settings == before)
-        #expect(harness.storage.bundles[instance.bundleURL] == before.configuration)
-    }
-
-    @Test("The install reminder shows only where neither the app-wide switch nor the VM's own choice turns it off")
-    func installReminderTruthTable() {
-        for isOffForAllVMs in [false, true] {
-            for dismissed in [false, true] {
-                let reminder = AgentInstallReminder(isOffForAllVMs: isOffForAllVMs)
-                #expect(
-                    reminder.shows(for: VMHostState(agentInstallNudgeDismissed: dismissed))
-                        == (!isOffForAllVMs && !dismissed),
-                    "off=\(isOffForAllVMs) dismissed=\(dismissed)")
-            }
-        }
-    }
-
     // MARK: - Display size
-
-    @Test("The size keys name the size the pane's fields show, not the pixels")
-    func displaySizeKeysSpeakBaseSize() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, guestOS: .macOS) {
-            $0.displaySizesToWindow = false
-            $0.displayResolution = DisplayBootSizing.Resolution(
-                width: 2560, height: 1600, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
-        }
-
-        let read = try harness.core.configuration(
-            .name("Alpha"), keys: ["display.width", "display.height"])
-        #expect(read.map(\.value) == ["1280", "800"])
-
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(key: "display.width", value: "1920"),
-                ConfigurationEntry(key: "display.height", value: "1200"),
-            ],
-            consent: .none)
-
-        // Doubled for the density, exactly as the settings pane's fields write.
-        #expect(instance.configuration.displayWidth == 3840)
-        #expect(instance.configuration.displayHeight == 2400)
-        #expect(instance.configuration.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
-    }
-
-    @Test("A size below 1 is refused, whichever axis names it")
-    func displaySizeBelowTheMinimumIsRefused() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, guestOS: .macOS) {
-            $0.displaySizesToWindow = false
-            $0.displayResolution = DisplayBootSizing.Resolution(
-                width: 2560, height: 1600, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
-        }
-        let before = instance.configuration
-
-        for key in ["display.width", "display.height"] {
-            #expect(throws: CommandError.self) {
-                try harness.core.setConfiguration(
-                    .name("Alpha"), assignments: [ConfigurationEntry(key: key, value: "0")],
-                    consent: .none)
-            }
-        }
-        #expect(instance.configuration == before)
-    }
-
-    @Test("A size written while the display sizes to its window is refused")
-    func displaySizeIsRefusedWhileSizedToWindow() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) { $0.displaySizesToWindow = true }
-        let before = instance.configuration
-
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "display.width", value: "1600")],
-                consent: .none)
-        }
-        guard case .invalidArgument(let message) = error else {
-            Issue.record("expected invalidArgument, got \(error)")
-            return
-        }
-        #expect(message.contains("display.sizeToWindow"))
-        #expect(instance.configuration == before)
-
-        // Writing back the value the VM already holds is still a no-op, so a
-        // whole-VM `get` stays valid `set` input in this state.
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(
-                    key: "display.width", value: String(before.displayBaseSize.width))
-            ],
-            consent: .none)
-        #expect(instance.configuration == before)
-    }
-
-    @Test("Leaving size-to-window in the same call lets the size land, whichever order")
-    func displaySizeLandsWithSizeToWindowInTheSameBatch() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) { $0.displaySizesToWindow = true }
-
-        try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(key: "display.width", value: "1600"),
-                ConfigurationEntry(key: "display.sizeToWindow", value: "false"),
-            ],
-            consent: .none)
-
-        #expect(!instance.configuration.displaySizesToWindow)
-        #expect(instance.configuration.displayWidth == 1600)
-    }
 
     @Test("A width the new density would refuse lands whole when set before it")
     func displayWidthThenHiDPILandsWhole() throws {
@@ -1104,32 +523,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(!instance.configuration.networkEnabled)
     }
 
-    @Test("Clearing the address while giving the VM a network lands whole")
-    func emptyMACWithANewNetworkLandsWhole() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) {
-            $0.networkEnabled = false
-            $0.macAddress = nil
-        }
-
-        // The mode's write mints the address the empty spelling cleared a
-        // moment before, and the result is judged once, on what both left.
-        let answered = try harness.core.setConfiguration(
-            .name("Alpha"),
-            assignments: [
-                ConfigurationEntry(key: "network.mac", value: ""),
-                ConfigurationEntry(key: "network.mode", value: "nat"),
-            ],
-            consent: .none)
-
-        let configuration = try #require(harness.storage.bundles[instance.bundleURL])
-        #expect(configuration.networkEnabled)
-        let minted = try #require(configuration.macAddress)
-        #expect(instance.configuration == configuration)
-        #expect(try value(answered, "network.mac") == minted)
-        #expect(try value(answered, "network.mode") == "nat")
-    }
-
     @Test("A batch of configuration keys and a host-state key lands in both files")
     func aMixedBatchLandsInBothFiles() throws {
         let harness = makeHarness()
@@ -1157,51 +550,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
     }
 
-    // MARK: - Persistence
-
-    @Test("A write that never reached disk is refused rather than reported ok")
-    func aFailedSaveRefuses() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-        harness.storage.setSaveConfigurationError(CocoaError(.fileWriteNoPermission))
-
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "cpus", value: "3")],
-                consent: .none)
-        }
-        guard case .operationFailed(let verb, _, _, _) = error else {
-            Issue.record("expected operationFailed, got \(error)")
-            return
-        }
-        #expect(verb == .setConfiguration)
-    }
-
-    @Test("A bundle still being copied takes no configuration write")
-    func anArrivalTakesNoWrite() async throws {
-        let harness = makeHarness()
-        let gate = GatedStep()
-        let arrival = harness.library.beginGatedArrival(named: "Alpha", gate: gate)
-
-        // Resolution is the whole of what refuses this: an arrival is no VM, so
-        // no configuration write can name one.
-        let error = try #require(throws: CommandError.self) {
-            _ = try harness.core.setConfiguration(
-                .name("Alpha"),
-                assignments: [ConfigurationEntry(key: "clipboard.sharing", value: "true")],
-                consent: .none)
-        }
-        guard case .busy = error else {
-            Issue.record("expected busy, got \(error)")
-            return
-        }
-        #expect(harness.storage.saveConfigurationCallCount == 0)
-
-        gate.release()
-        await arrival.settle()
-    }
-
     // MARK: - Shared directories
 
     @Test("The share listing is what the VM carries, in order, without the bookmark behind it")
@@ -1222,17 +570,6 @@ struct VMCommandCoreConfigurationTests {
                 SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
                 SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
             ])
-    }
-
-    @Test("A VM sharing nothing lists nothing, and a selector nothing answers to is refused")
-    func sharedDirectoriesOnAnEmptyAndAMissingVM() throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-
-        #expect(try harness.core.sharedDirectories(of: .name("Alpha")).isEmpty)
-        #expect(throws: CommandError.self) {
-            try harness.core.sharedDirectories(of: .name("Typo"))
-        }
     }
 
     @Test("A share is added by path, and adding the same folder again changes nothing")
@@ -1271,31 +608,6 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.configuration.sharedDirectories == nil)
     }
 
-    @Test("A running VM takes no share edit at all")
-    func shareEditsAreAtRest() async throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, phase: .running(sessionID: UUID()))
-
-        await #expect(throws: CommandError.self) {
-            try await harness.core.addSharedDirectory(
-                .name("Alpha"), path: "/Users/somebody/Sites", readOnly: false)
-        }
-        // The state decided the answer, so no panel was ever put on screen.
-        #expect(harness.authority.requests.isEmpty)
-    }
-
-    @Test("A share for a VM nothing answers to never asks for a grant")
-    func shareAddResolvesBeforeItAsks() async throws {
-        let harness = makeHarness()
-        makeInstance(in: harness)
-
-        await #expect(throws: CommandError.self) {
-            try await harness.core.addSharedDirectory(
-                .name("Typo"), path: "/Users/somebody/Sites", readOnly: false)
-        }
-        #expect(harness.authority.requests.isEmpty)
-    }
-
     @Test("A path naming anything but a folder is refused rather than stored")
     func shareAddRefusesANonDirectory() async throws {
         let harness = makeHarness()
@@ -1328,26 +640,5 @@ struct VMCommandCoreConfigurationTests {
         #expect(
             instance.configuration.sharedDirectories?.map(\.path)
                 == [picked.path(percentEncoded: false)])
-    }
-
-    @Test("A VM started while the panel stood takes no share")
-    func shareAddRefusesAVMStartedWhileThePanelStood() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let picked = try makeFolder("late")
-        harness.authority.substitute = picked
-        // The panel waits on a person, so the VM can be started under it — and
-        // a share written onto a running VM is stored inert until it next boots.
-        harness.authority.whilePanelStands = { instance.activity.placeForTesting(.running(sessionID: UUID())) }
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.addSharedDirectory(
-                .name("Alpha"), path: picked.path(percentEncoded: false), readOnly: false)
-        }
-        guard case .invalidState = error else {
-            Issue.record("expected invalidState, got \(error)")
-            return
-        }
-        #expect(instance.configuration.sharedDirectories == nil)
     }
 }

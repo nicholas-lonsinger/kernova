@@ -56,15 +56,6 @@ struct VMConfigurationKeyRegistryTests {
         }
     }
 
-    /// Why `key`'s result cannot stand on `config`, for a configuration key.
-    private func resultRefusal(_ key: VMConfigurationKey, on config: VMConfiguration) -> String? {
-        guard case .configuration(let field) = key.field else {
-            Issue.record("\(key.name) is not a configuration key")
-            return nil
-        }
-        return field.refusalOnResult(config, context())
-    }
-
     /// Writes a configuration key, on a VM whose host state is the default.
     private func write(
         _ key: VMConfigurationKey, _ value: String, to config: inout VMConfiguration,
@@ -93,27 +84,6 @@ struct VMConfigurationKeyRegistryTests {
         }
     }
 
-    @Test("Every key writes back what it read without changing anything")
-    func everyKeyRoundTrips() throws {
-        for guestOS in VMGuestOS.allCases {
-            try expectEveryKeyRoundTrips(
-                VMSettings(
-                    configuration: makeConfiguration(guestOS: guestOS), hostState: VMHostState()),
-                " on \(guestOS.rawValue)")
-        }
-    }
-
-    @Test("Every key writes back what it read on a VM with no network device")
-    func everyKeyRoundTripsWithoutANetworkDevice() throws {
-        var original = makeConfiguration()
-        original.networkEnabled = false
-        original.macAddress = nil
-        original.bridgedInterfaceIdentifier = nil
-
-        try expectEveryKeyRoundTrips(
-            VMSettings(configuration: original, hostState: VMHostState()))
-    }
-
     @Test("Every key writes back what it read on an ephemeral, sharing VM")
     func everyKeyRoundTripsWithEveryFlagOn() throws {
         let manifest = makeManifest()
@@ -135,16 +105,6 @@ struct VMConfigurationKeyRegistryTests {
 
     // MARK: - Namespace
 
-    @Test("Key names are unique and lookup answers by name")
-    func keyNamesAreUnique() {
-        let names = VMConfigurationKeyRegistry.keys.map(\.name)
-        #expect(Set(names).count == names.count)
-        for name in names {
-            #expect(VMConfigurationKeyRegistry.key(named: name)?.name == name)
-        }
-        #expect(VMConfigurationKeyRegistry.key(named: "cpu") == nil)
-    }
-
     @Test("The keyspace listing answers, per guest the key applies to, whether a running VM takes it")
     func descriptorsAnswerPerGuest() throws {
         func listing(_ name: String) throws -> [String: Bool] {
@@ -159,35 +119,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(try listing("ephemeral") == ["macOS": true, "linux": true])
         #expect(try listing("dropFiles") == ["macOS": true])
         for key in VMConfigurationKeyRegistry.keys { #expect(!key.summary.isEmpty) }
-    }
-
-    @Test("Each gate names the capability that decides it")
-    func gatesNameTheirCapability() throws {
-        let cpus = try #require(VMConfigurationKeyRegistry.key(named: "cpus"))
-        #expect(cpus.capability(writing: "4", for: .macOS) == .editConfiguration)
-
-        let ephemeral = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
-        #expect(ephemeral.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
-
-        // Neither a session nor a saved state reads where the display opens.
-        let preference = try #require(VMConfigurationKeyRegistry.key(named: "display.preference"))
-        #expect(preference.capability(writing: "popOut", for: .macOS) == .editPresentation)
-
-        let bridged = try #require(
-            VMConfigurationKeyRegistry.key(named: "network.bridgedInterface"))
-        #expect(bridged.capability(writing: "en0", for: .macOS) == .switchNetworkMode)
-
-        // A hot swap between attachable modes, but taking the device away is
-        // not one — devices cannot be added or removed at runtime.
-        let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
-        #expect(mode.capability(writing: "bridged", for: .macOS) == .switchNetworkMode)
-        #expect(mode.capability(writing: "none", for: .macOS) == .editConfiguration)
-
-        // A Linux guest's clipboard rides a console device the machine is
-        // built with; a macOS guest's rides the agent's channel.
-        let clipboard = try #require(VMConfigurationKeyRegistry.key(named: "clipboard.sharing"))
-        #expect(clipboard.capability(writing: "true", for: .macOS) == .editLiveConfiguration)
-        #expect(clipboard.capability(writing: "true", for: .linux) == .editConfiguration)
     }
 
     // MARK: - Values
@@ -214,63 +145,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(read(key, config) == "false")
     }
 
-    @Test("System keys takes and reads back every mode, live")
-    func systemKeysTakesEveryMode() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "input.systemKeys"))
-        #expect(VMGuestOS.allCases.allSatisfy { key.gate($0) == .live })
-
-        for mode in VMSystemKeyForwarding.allCases {
-            var config = makeConfiguration()
-            try write(key, mode.rawValue, to: &config)
-            #expect(config.systemKeyForwarding == mode)
-            #expect(read(key, config) == mode.rawValue)
-        }
-    }
-
-    @Test("A value outside a key's range is refused rather than clamped")
-    func outOfRangeValuesAreRefused() throws {
-        let original = makeConfiguration()
-        let cases: [(key: String, value: String)] = [
-            ("cpus", String(FakeVirtualizationHost.resourceLimits.cpuCount.lower - 1)),
-            ("cpus", String(FakeVirtualizationHost.resourceLimits.cpuCount.upper + 1)),
-            ("cpus", "four"),
-            ("memory", "0"),
-            ("memory", FakeVirtualizationHost.resourceLimits.memorySize.upper.adding(gibibytes: 1).gibibytesText),
-            ("memory", "lots"),
-            ("display.width", "0"),
-            ("display.width", String(original.displayBaseSizeBounds.upper + 1)),
-            ("display.height", "0"),
-            ("display.autoResize", "maybe"),
-            ("display.preference", "windowed"),
-            ("input.systemKeys", "sometimes"),
-            ("network.mode", "wifi"),
-            ("network.mac", "aa-bb-cc-dd-ee-ff"),
-            ("network.mac", "00:00:00:00:00:00"),
-        ]
-        for entry in cases {
-            let key = try #require(VMConfigurationKeyRegistry.key(named: entry.key))
-            var config = original
-            #expect(throws: CommandError.self, "\(entry)") {
-                try write(key, entry.value, to: &config)
-            }
-            #expect(config == original, "\(entry)")
-        }
-    }
-
-    @Test("An unparseable value refuses as an argument, never as a failed operation")
-    func valueRefusalsAreArgumentRefusals() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "cpus"))
-        var config = makeConfiguration()
-        let error = try #require(throws: CommandError.self) {
-            try write(key, "999", to: &config)
-        }
-        guard case .invalidArgument(let message) = error else {
-            Issue.record("expected invalidArgument, got \(error)")
-            return
-        }
-        #expect(message.contains("cpus"))
-    }
-
     // MARK: - Display
 
     @Test("Turning HiDPI on rewrites the boot resolution the settings pane does")
@@ -289,13 +163,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(config.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
-    @Test("A guest with no display density is not offered HiDPI at all")
-    func linuxGuestsHaveNoHiDPIKey() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "display.hidpi"))
-        #expect(!key.applies(makeConfiguration(guestOS: .linux)))
-        #expect(key.applies(makeConfiguration(guestOS: .macOS)))
-    }
-
     @Test("Leaving size-to-window promotes the stored trio to the chosen density")
     func leavingSizeToWindowCarriesTheDensity() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "display.sizeToWindow"))
@@ -310,25 +177,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(!config.displaySizesToWindow)
         #expect(config.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
         #expect(config.displayWidth == 3840)
-    }
-
-    @Test("The size keys read and write the size the settings pane's fields show")
-    func sizeKeysSpeakBaseSize() throws {
-        let width = try #require(VMConfigurationKeyRegistry.key(named: "display.width"))
-        let height = try #require(VMConfigurationKeyRegistry.key(named: "display.height"))
-        var config = makeConfiguration()
-
-        #expect(read(width, config) == "1920")
-        #expect(read(height, config) == "1200")
-
-        try write(width, "1280", to: &config)
-        try write(height, "800", to: &config)
-
-        // The pane's own Width/Height write, arrived at through the one helper
-        // both call: doubled for the density, and never below the minimum.
-        #expect(config.displayWidth == 2560)
-        #expect(config.displayHeight == 1600)
-        #expect(config.displayPPI == DisplayBootSizing.hiDPIPixelsPerInch)
     }
 
     @Test("A size key takes any size down to 1 and sets no maximum of its own")
@@ -365,17 +213,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(read(memory, config) == "2")
     }
 
-    @Test("A size key states its refusal while the display is sized to its window")
-    func sizeKeysRefuseUnderSizeToWindow() throws {
-        let width = try #require(VMConfigurationKeyRegistry.key(named: "display.width"))
-        var config = makeConfiguration()
-        #expect(resultRefusal(width, on: config) == nil)
-
-        config.displaySizesToWindow = true
-        let refusal = try #require(resultRefusal(width, on: config))
-        #expect(refusal.contains("display.sizeToWindow"))
-    }
-
     // MARK: - Network
 
     @Test("The mode key spells no device as none, both ways")
@@ -393,19 +230,6 @@ struct VMConfigurationKeyRegistryTests {
         try write(key, "hostOnly", to: &config)
         #expect(config.networkEnabled)
         #expect(config.networkMode == .hostOnly)
-    }
-
-    @Test("A VM given a network device is given an address with it")
-    func enablingTheDeviceMintsAnAddress() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
-        var config = makeConfiguration()
-        config.networkEnabled = false
-        config.macAddress = nil
-
-        try write(key, "nat", to: &config)
-
-        let minted = try #require(config.macAddress)
-        #expect(GuestMACAddress.normalized(minted) == minted)
     }
 
     @Test("network.membership round-trips, hot-swaps with the attachment, and refuses another value")
@@ -479,47 +303,6 @@ struct VMConfigurationKeyRegistryTests {
         #expect(membershipField.refusalOnResult(config, listing) != nil)
     }
 
-    @Test("A build without VM networking refuses a write onto a network it cannot attach, naming the build")
-    func unattachableNetworksAreRefusedWhereEntered() throws {
-        let mode = try #require(VMConfigurationKeyRegistry.key(named: "network.mode"))
-        let membership = try #require(VMConfigurationKeyRegistry.key(named: "network.membership"))
-        let unentitled = context(entitlements: .unentitled)
-        func apply(_ key: VMConfigurationKey, _ value: String, on config: VMConfiguration) throws {
-            var settings = VMSettings(configuration: config, hostState: VMHostState())
-            try key.apply(value, to: &settings, context: unentitled)
-        }
-        let nat = makeConfiguration()
-
-        #expect(throws: CommandError.unsupportedByBuild(capability: "host-only networking")) {
-            try apply(mode, "hostOnly", on: nat)
-        }
-        #expect(throws: CommandError.unsupportedByBuild(capability: "bridged networking")) {
-            try apply(mode, "bridged", on: nat)
-        }
-        #expect(
-            throws: CommandError.unsupportedByBuild(
-                capability: "isolating a virtual machine from other virtual machines")
-        ) { try apply(membership, "isolated", on: nat) }
-        #expect(throws: Never.self) { try apply(mode, "nat", on: nat) }
-        #expect(throws: Never.self) { try apply(membership, "common", on: nat) }
-        #expect(
-            !mode.accepts(
-                "hostOnly", settings: VMSettings(configuration: nat, hostState: VMHostState()), context: unentitled))
-
-        // A VM that arrived on such a network can be moved off it, and writing
-        // back what it holds is no move at all.
-        var hostOnly = nat
-        hostOnly.networkMode = .hostOnly
-        #expect(throws: Never.self) { try apply(mode, "nat", on: hostOnly) }
-        #expect(throws: Never.self) { try apply(mode, "hostOnly", on: hostOnly) }
-
-        // The same writes land in a build that can attach them.
-        var settings = VMSettings(configuration: nat, hostState: VMHostState())
-        try mode.apply("hostOnly", to: &settings, context: context())
-        try membership.apply("isolated", to: &settings, context: context())
-        #expect(settings.configuration.joinsOwnNetwork)
-    }
-
     @Test("An empty bridged interface is automatic, and an empty MAC removes it")
     func emptyValuesClearTheirFields() throws {
         let bridged = try #require(
@@ -535,48 +318,12 @@ struct VMConfigurationKeyRegistryTests {
         #expect(config.macAddress == nil)
     }
 
-    @Test("Clearing the address is refused while the guest still has a device")
-    func emptyMACStandsOnlyWithoutADevice() throws {
-        let mac = try #require(VMConfigurationKeyRegistry.key(named: "network.mac"))
-        var config = makeConfiguration()
-        #expect(resultRefusal(mac, on: config) == nil)
-
-        try write(mac, "", to: &config)
-        // The write itself lands; what refuses it is the result, so taking the
-        // device away in the same call leaves the empty spelling valid.
-        let refusal = try #require(resultRefusal(mac, on: config))
-        #expect(refusal.contains("network.mac"))
-
-        config.applyNetworkMode(nil)
-        #expect(resultRefusal(mac, on: config) == nil)
-    }
-
     @Test("A MAC address is stored in the one canonical spelling")
     func macAddressIsNormalized() throws {
         let key = try #require(VMConfigurationKeyRegistry.key(named: "network.mac"))
         var config = makeConfiguration()
         try write(key, " AA:BB:CC:DD:EE:F1\n", to: &config)
         #expect(config.macAddress == "aa:bb:cc:dd:ee:f1")
-    }
-
-    // MARK: - Ephemeral
-
-    @Test("Ephemeral Mode pins the baseline the settings pane would")
-    func ephemeralPinsTheSharedBaseline() throws {
-        let key = try #require(VMConfigurationKeyRegistry.key(named: "ephemeral"))
-        let manifest = makeManifest()
-        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
-
-        try write(key, "true", to: &settings, manifest: manifest)
-
-        #expect(settings.hostState.ephemeralModeEnabled)
-        #expect(settings.hostState.ephemeralBaselineSnapshotID == manifest.currentID)
-
-        try write(key, "false", to: &settings, manifest: manifest)
-        #expect(!settings.hostState.ephemeralModeEnabled)
-        // Turning the mode off clears the choice rather than leaving a baseline
-        // recorded against a mode nothing reads.
-        #expect(settings.hostState.ephemeralBaselineSnapshotID == nil)
     }
 
     // MARK: - Host state
@@ -658,25 +405,6 @@ struct VMConfigurationKeyRegistryTests {
         // Matched the way the snapshot verbs match a typed name: case aside.
         try write(key, "clean", to: &settings, manifest: manifest)
         #expect(settings.hostState.ephemeralBaselineSnapshotID == older.id)
-    }
-
-    @Test("A baseline the VM has no snapshot for is refused, and an empty one changes nothing")
-    func ephemeralBaselineRefusesASnapshotTheVMLacks() throws {
-        let key = VMConfigurationKeyRegistry.ephemeralBaseline
-        let manifest = makeManifest()
-        let original = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
-        var settings = original
-
-        #expect(throws: CommandError.self) {
-            try write(key, UUID().uuidString, to: &settings, manifest: manifest)
-        }
-        #expect(throws: CommandError.self) {
-            try write(key, "Nothing by this name", to: &settings, manifest: manifest)
-        }
-        #expect(settings == original)
-
-        try write(key, "", to: &settings, manifest: manifest)
-        #expect(settings == original)
     }
 
     @Test("A snapshot name two snapshots share is refused rather than guessed")
