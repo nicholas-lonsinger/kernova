@@ -37,4 +37,4 @@ An intent runs without the Shortcuts editor from a signed shortcut file: a `WFWo
 
 An entity parameter — a virtual machine, a network — binds only in the Shortcuts editor, where the action is found by its title.
 
-`open` the signed file and choose Add Shortcut; the shortcut takes the file's name. Its first run raises Shortcuts' approval to access Kernova, and the first run that hands Kernova a file raises the approval to share that file — the proof the file bound to the parameter. The maintainer answers both.
+`open` the signed file and choose Add Shortcut; the shortcut takes the file's name. The first run that hands Kernova a file raises Shortcuts' approval to share that file — the proof the file bound to the parameter — and the maintainer answers it.
