@@ -902,6 +902,20 @@ struct VMLibraryViewModelTests {
     private static let retinaSurface = DisplayBootSurface(
         pointSize: CGSize(width: 1400, height: 880), backingScaleFactor: 2)
 
+    @Test("A Linux match-window boot ignores the screen scale")
+    func matchWindowIsOneToOneForLinux() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        viewModel.displayBootSurface = { _ in Self.retinaSurface }
+        let instance = makeMatchWindowInstance(in: viewModel.library, guestOS: .linux)
+
+        await viewModel.start(instance)
+
+        // A virtio scanout has no density channel, so points map to pixels 1:1.
+        #expect(virtService.configurationAtStart?.displayWidth == 1400)
+        #expect(virtService.configurationAtStart?.displayHeight == 880)
+        #expect(virtService.configurationAtStart?.displayPPI == DisplayBootSizing.standardPixelsPerInch)
+    }
+
     @Test("A saved-state VM keeps its resolution so the restore stays valid")
     func matchWindowSkippedWhenSaveFileExists() async throws {
         let (viewModel, _, _, virtService, _) = makeViewModel()
@@ -2346,6 +2360,36 @@ struct VMLibraryViewModelTests {
     }
 
     // MARK: - Storage Disk Helpers
+
+    @Test("sharingVMNames lists other VMs referencing a path and excludes the instance")
+    func sharingVMNamesDetectsAndExcludes() async throws {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let sharedPath = "/Volumes/External/shared.img"
+        let target = viewModel.library.admitFixture(name: "Target") {
+            $0.storageDisks = [
+                StorageDisk(
+                    path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
+            ]
+        }
+        viewModel.library.admitFixture(name: "DiskSharer") {
+            $0.storageDisks = [
+                StorageDisk(
+                    path: sharedPath, readOnly: false, label: "S", isInternal: false, kind: .virtio)
+            ]
+        }
+        viewModel.library.admitFixture(name: "MediaSharer") {
+            $0.removableMedia = [RemovableMediaItem(path: sharedPath, readOnly: true)]
+        }
+        viewModel.library.admitFixture(name: "Unrelated")
+
+        let names = await viewModel.sharingVMNames(forPath: sharedPath, bookmark: nil, excluding: target)
+        #expect(Set(names) == ["DiskSharer", "MediaSharer"])
+
+        // A unique path is shared with no one.
+        let unique = await viewModel.sharingVMNames(
+            forPath: "/Volumes/External/unique.img", bookmark: nil, excluding: target)
+        #expect(unique.isEmpty)
+    }
 
     // MARK: - Reconcile Rollback
 
