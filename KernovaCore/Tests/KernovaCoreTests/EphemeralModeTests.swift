@@ -16,11 +16,6 @@ struct EphemeralModeTitleTests {
     }
 }
 
-/// Ephemeral Mode's model rule: the flag/baseline pairing, and how it persists.
-@Suite("Ephemeral Mode Host State Tests", .caseScoped)
-struct EphemeralModeHostStateTests {
-}
-
 /// What a `VMInstance` reports about its ephemeral baseline.
 @Suite("Ephemeral Mode Instance Tests", .serialized, .caseScoped)
 @MainActor
