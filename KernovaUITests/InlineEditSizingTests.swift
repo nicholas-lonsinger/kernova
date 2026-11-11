@@ -166,4 +166,50 @@ struct InlineEditSizingTests {
         row.title.beginNotesEditing()
         expectInsideTitleLine()
     }
+
+    /// How many pixels `a` and `b` draw differently at their current size.
+    private func differingPixels(_ a: NSView, _ b: NSView) throws -> Int {
+        func render(_ view: NSView) throws -> NSBitmapImageRep {
+            let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: rep)
+            return rep
+        }
+        let (ra, rb) = (try render(a), try render(b))
+        var count = 0
+        for y in 0..<ra.pixelsHigh {
+            for x in 0..<ra.pixelsWide {
+                var pa = [Int](repeating: 0, count: 4), pb = pa
+                ra.getPixel(&pa, atX: x, y: y)
+                rb.getPixel(&pb, atX: x, y: y)
+                if pa != pb { count += 1 }
+            }
+        }
+        return count
+    }
+
+    @Test(
+        "A committed note too long for the row ends in an ellipsis, as a stock label draws it",
+        arguments: RowKind.allCases)
+    func committedLongNoteTruncatesLikeAStockLabel(kind: RowKind) throws {
+        let row = makeRow(kind, name: "Data", notes: "")
+        showInTestWindow(row.view, size: NSSize(width: 480, height: 60))
+        let label = labels(of: row).notes
+        let long = String(repeating: "A long note that runs past the row ", count: 4)
+        row.title.beginNotesEditing()
+        type(long, into: label)
+        label.endEditing()
+        row.apply("Data", long)
+        layOut(row)
+        try #require(label.frame.width < textWidth(long, in: label))
+
+        let stock = NSTextField(labelWithString: long)
+        stock.font = label.font
+        stock.textColor = label.textColor
+        stock.lineBreakMode = .byTruncatingTail
+        stock.maximumNumberOfLines = 1
+        stock.frame = label.frame
+        label.superview!.addSubview(stock)
+
+        #expect(try differingPixels(label, stock) == 0)
+    }
 }

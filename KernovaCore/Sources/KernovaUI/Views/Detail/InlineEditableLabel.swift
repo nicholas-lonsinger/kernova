@@ -124,7 +124,6 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         lineBreakMode = .byTruncatingTail
         maximumNumberOfLines = 1
         usesSingleLineMode = true
-        cell?.isScrollable = true
         delegate = self
         setContentHuggingPriority(.defaultHigh, for: .horizontal)
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -160,6 +159,9 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         isSelectable = true
         isBezeled = true
         drawsBackground = true
+        // Scrolling turns the cell's line breaks to clipping, so only the box
+        // scrolls; ``endEditAppearance()`` restores the truncation.
+        cell?.isScrollable = true
         takeFocus()
     }
 
@@ -283,6 +285,8 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         isBordered = false
         isBezeled = false
         drawsBackground = false
+        cell?.isScrollable = false
+        lineBreakMode = .byTruncatingTail
         stringValue = originalText
         clickRecognizer?.isEnabled = controlsEnabled
     }
