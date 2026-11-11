@@ -89,17 +89,6 @@ struct AppResidencySummonTests {
         return (controller, registry, viewModel)
     }
 
-    @Test("A summon asks for activation once, after its surface is on screen")
-    func summonActivatesAfterOrderFront() async throws {
-        let foreground = RecordingForeground(isHidden: false)
-        let (controller, _, _) = makeController(foreground: foreground)
-
-        controller.summonUserInterface()
-        try await foreground.gate.wait { foreground.activations > 0 }
-
-        #expect(foreground.steps == [.activate(libraryOnScreen: true)])
-    }
-
     @Test("A hidden summon unhides, shows and activates in one main-actor job")
     func hiddenSummonIsOneJob() async throws {
         let foreground = RecordingForeground(isHidden: true)

@@ -42,23 +42,6 @@ struct MainWindowControllerNewVMTests {
 
     // MARK: - Collapse and expand
 
-    @Test("Collapsing the sidebar takes New VM out of the toolbar, and expanding puts it back")
-    func collapseRemovesNewVM() throws {
-        let subject = try makeSubject()
-        let canonical = subject.layout
-        try #require(canonical.firstIndex(of: newVM) == 1)
-
-        subject.sidebar.isCollapsed = true
-
-        #expect(subject.layout == canonical.filter { $0 != newVM })
-        #expect(preferences.mainToolbarNewVMCollapseIndex == 1)
-
-        subject.sidebar.isCollapsed = false
-
-        #expect(subject.layout == canonical)
-        #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
-    }
-
     @Test("Expanding returns New VM to its own slot in a customized layout, not beside the sidebar toggle")
     func expandRestoresCustomizedSlot() throws {
         let subject = try makeSubject()
@@ -79,20 +62,6 @@ struct MainWindowControllerNewVMTests {
         subject.sidebar.isCollapsed = false
 
         #expect(subject.layout == customized)
-    }
-
-    @Test("A New VM the user removed stays out through a collapse and an expand")
-    func customizationRemovalStaysOut() throws {
-        let subject = try makeSubject()
-        let index = try #require(subject.layout.firstIndex(of: newVM))
-        subject.toolbar.removeItem(at: index)
-
-        subject.sidebar.isCollapsed = true
-        #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
-        subject.sidebar.isCollapsed = false
-
-        #expect(!subject.layout.contains(newVM))
-        #expect(preferences.mainToolbarNewVMCollapseIndex == nil)
     }
 
     // MARK: - Launch

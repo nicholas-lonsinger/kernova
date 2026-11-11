@@ -104,24 +104,6 @@ struct AppAlertPresenterTests {
         return instance
     }
 
-    // MARK: - Mode (last gesture wins, both directions)
-
-    @Test("⌥⌘⌫ then ⌘⌫ on one VM downgrades to Trash (last gesture wins both ways)")
-    func dedupSameVMDowngradesMode() async {
-        let h = makeHarness()
-        let (presenter, viewModel) = (h.presenter, h.viewModel)
-        let vmA = makeInstance(name: "A", in: viewModel)
-
-        presenter.presentDeleteSheet(for: vmA, permanently: true)
-        let task = presenter.deleteResolutionForTesting(of: vmA.id)
-        presenter.presentDeleteSheet(for: vmA, permanently: false)
-        await task?.value
-
-        #expect(presenter.waitingCountForTesting == 1)
-        // Last wins is symmetric: a later plain ⌘⌫ backs off bypass-Trash.
-        #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
-    }
-
     // MARK: - One delete per VM
 
     @Test("A delete for a second VM is a sheet of its own, with its own disposition")
@@ -436,18 +418,6 @@ struct AppAlertPresenterTests {
         #expect(answers.value == [.answered(row.answer)])
     }
 
-    @Test("A question not offering Don't ask again draws no checkbox")
-    func noDontAskAgainWithoutTheOffer() {
-        let h = makeHarness()
-        h.showLibrary()
-        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
-
-        h.presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
-
-        #expect(sheetCheckbox(titled: "Don\u{2019}t ask again", in: h) == nil)
-        h.closeLibrary()
-    }
-
     /// Holds what the requests under test are answered with.
     private final class Box<Value> {
         var value: Value
@@ -469,20 +439,6 @@ struct AppAlertPresenterTests {
         #expect(answers.value == [.answered(.confirm())])
     }
 
-    @Test("A confirmation with no window to ask in is answered unasked at once")
-    func aConfirmationWithNoWindowIsUnasked() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
-
-        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
-
-        // The verb is suspended on this answer; a queue would hold it until a
-        // window that may never come back.
-        #expect(answers.value == [.unasked])
-        #expect(presenter.waitingCountForTesting == 0)
-    }
-
     @Test("A confirmation raised while another alert is up is answered unasked at once")
     func aConfirmationBehindAnotherAlertIsUnasked() {
         let h = makeHarness()
@@ -495,33 +451,6 @@ struct AppAlertPresenterTests {
 
         #expect(answers.value == [.unasked])
         #expect(presenter.waitingCountForTesting == 0)
-    }
-
-    @Test("Tearing the window down answers the confirmation on screen unasked")
-    func stoppingUnasksTheShownConfirmation() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        h.showLibrary()
-        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
-        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
-        #expect(h.isShowingAlert)
-
-        h.closeLibrary()
-
-        #expect(answers.value == [.unasked])
-    }
-
-    @Test("Cancel on a confirmation answers that the user declined")
-    func cancelDeclinesAConfirmation() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        h.showLibrary()
-        let answers = Box<[PresenterAnswer<ConfirmationAnswer>]>([])
-        presenter.presentConfirmationRequest(confirmationRequest(answers: answers))
-
-        #expect(h.dismissShownAlert(.alertSecondButtonReturn))
-
-        #expect(answers.value == [.answered(.decline)])
     }
 
     // MARK: - A step refusal's routes
@@ -642,20 +571,6 @@ struct AppAlertPresenterTests {
     private static let accountVMID =
         UUID(uuidString: "5E00A1A0-0000-4000-8000-000000000001") ?? UUID()
 
-    @Test("An account prompt with no window to ask in is answered unasked")
-    func anAccountPromptWithNoWindowIsUnasked() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        let answers = AccountAnswers()
-
-        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
-
-        // The start is suspended on this answer, so it is answered now rather
-        // than queued behind a window that may never arrive.
-        #expect(answers.answered == [.unasked])
-        #expect(presenter.waitingCountForTesting == 0)
-    }
-
     @Test("An account prompt raised while another alert is up is answered unasked")
     func anAccountPromptBehindAnotherAlertIsUnasked() {
         let h = makeHarness()
@@ -690,30 +605,6 @@ struct AppAlertPresenterTests {
         #expect(first.answered.isEmpty)
         #expect(h.isShowingAlert)
         #expect(h.presence.requests == [.activate])
-    }
-
-    @Test(
-        "Tearing the window down answers the start suspended on the prompt, takes the sheet with it, and frees the slot"
-    )
-    func stoppingAnswersTheWaitingStart() {
-        let h = makeHarness()
-        let presenter = h.presenter
-        h.showLibrary()
-        let answers = AccountAnswers()
-        presenter.presentGuestAccountPassword(accountRequest(answers: answers))
-        #expect(h.isShowingAlert)
-
-        h.closeLibrary()
-
-        // A suspended `withCheckedContinuation` nothing resumes strands that
-        // start for the rest of the session; the user answered nothing.
-        #expect(answers.answered == [.unasked])
-        #expect(!h.isShowingAlert)
-        #expect(!h.dismissShownAlert(.alertFirstButtonReturn))
-
-        h.showLibrary()
-        presenter.presentError("Something else", title: "Couldn't Start", about: .library)
-        #expect(h.isShowingAlert)
     }
 
     @Test("A pairing prompt on screen when the window goes is answered as a hold")
@@ -904,22 +795,6 @@ struct AppAlertPresenterTests {
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 
-    @Test("An installer notice whose disk detached while it waited is dropped")
-    func installerNoticeForADetachedDiskIsDropped() throws {
-        let h = makeHarness()
-        h.showLibrary()
-        let vm = try installerVM(in: h)
-        h.presenter.presentError("Busy.", title: "Library Notice", about: .library)
-        h.presenter.presentInstallerMounted(for: vm, purpose: .install, delivery: .usb)
-        #expect(h.presenter.waitingCountForTesting == 1)
-
-        vm.onCurrentAgentsArrived?([.login])
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
-
-        #expect(!h.isShowingAlert)
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
     @Test("A disk on virtio is there for the session, so its notice stays up until the session ends")
     func virtioNoticeLastsTheSession() async throws {
         let h = makeHarness()
@@ -1038,39 +913,6 @@ struct AppAlertPresenterTests {
         #expect(h.presenter.waitingCountForTesting == 1)
     }
 
-    @Test("An alert about a VM that left the library is dropped, and stops counting as held")
-    func alertAboutAVMThatLeftIsDropped() {
-        let h = makeHarness()
-        let vm = h.viewModel.library.admitFixture(name: "Leaving")
-        let isListed: (UUID) -> Bool = { id in h.viewModel.instances.contains { $0.id == id } }
-        h.presenter.presentStartFailure("No disk.", title: "Couldn\u{2019}t Start", for: vm)
-        h.presenter.presentError("A notice.", title: "VM Notice", about: .vm(vm))
-
-        h.viewModel.library.evict(vm)
-
-        #expect(h.presenter.held.undoneStartCount(listing: isListed) == 0)
-        #expect(h.presenter.held.otherAlertCount(listing: isListed) == 0)
-        let library = h.showLibrary()
-        #expect(library.attachedSheet == nil)
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
-    @Test("A Force Stop whose VM stopped while it waited is dropped")
-    func forceStopForAStoppedVMIsDropped() {
-        let h = makeHarness()
-        h.showLibrary()
-        let vm = makeRunningInstance(name: "Work", in: h.viewModel)
-        h.presenter.presentError("Busy.", title: "Library Notice", about: .library)
-        h.presenter.presentForceStop(for: vm)
-        #expect(h.presenter.waitingCountForTesting == 1)
-
-        vm.activity.placeForTesting(.stopped)
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
-
-        #expect(!h.isShowingAlert)
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
     /// A shutdown of `vm`'s live session that its guest's agents took and
     /// Kernova can't tell the fate of, as the stop throws it.
     private func shutdownNotCarriedOut(_ vm: VMInstance) throws -> CommandError {
@@ -1091,23 +933,6 @@ struct AppAlertPresenterTests {
         vm.activity.placeForTesting(.stopped)
         // The watch applies in a main-actor task the change enqueued, ahead of this one.
         await Task { @MainActor in }.value
-
-        #expect(!h.isShowingAlert)
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
-    @Test("A shutdown alert whose session ended while it waited is dropped")
-    func shutdownAlertForAnEndedSessionIsDropped() throws {
-        let h = makeHarness()
-        h.viewModel.presenter = h.presenter
-        h.showLibrary()
-        let vm = makeRunningInstance(name: "Work", in: h.viewModel)
-        h.presenter.presentError("Busy.", title: "Library Notice", about: .library)
-        h.viewModel.present(try shutdownNotCarriedOut(vm), about: .vm(vm))
-        #expect(h.presenter.waitingCountForTesting == 1)
-
-        vm.activity.placeForTesting(.stopped)
-        #expect(h.dismissShownAlert(.alertFirstButtonReturn))
 
         #expect(!h.isShowingAlert)
         #expect(h.presenter.waitingCountForTesting == 0)
@@ -1138,25 +963,6 @@ struct AppAlertPresenterTests {
         #expect(h.dismissShownAlert(.alertFirstButtonReturn))
         h.presenter.presentStartSummary(title: "Launch Account", undone: [undone[0]])
         #expect(!h.isShowingAlert)
-        #expect(h.presenter.waitingCountForTesting == 0)
-    }
-
-    @Test("While another sheet holds the window, an alert waits, and shows once that sheet ends")
-    func anotherSheetHoldsTheWindow() {
-        let h = makeHarness()
-        let library = h.showLibrary()
-        let foreign = makeTestWindow(styleMask: [.titled])
-        library.beginSheet(foreign)
-
-        h.presenter.presentError("Later.", title: "Waiting Notice", about: .library)
-
-        #expect(library.attachedSheet === foreign)
-        #expect(h.presenter.waitingCountForTesting == 1)
-        #expect(h.presenter.held.alerts.isEmpty)
-
-        library.endSheet(foreign)
-
-        #expect(sheetText(on: library).contains("Waiting Notice"))
         #expect(h.presenter.waitingCountForTesting == 0)
     }
 

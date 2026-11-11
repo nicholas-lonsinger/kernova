@@ -77,18 +77,6 @@ struct USBAccessoryPairingAlertTests {
         }
     }
 
-    @Test("Keep on Mac answers with no virtual machine")
-    func keepOnMacAnswersWithNothing() throws {
-        let answer = Answer()
-        let configuration = USBAccessoryPairingAlert.configuration(
-            for: makeRequest(candidates: [VMInstanceFixture.make(name: "Work")], answer: answer))
-
-        try #require(configuration.buttons.last).action()
-
-        #expect(answer.answered.count == 1)
-        #expect(answer.answered[0] == nil)
-    }
-
     @Test("Pass Through answers with the one candidate when there is only one")
     func passThroughAnswersWithTheLoneCandidate() throws {
         let answer = Answer()

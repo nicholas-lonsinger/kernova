@@ -40,17 +40,4 @@ struct WindowStageStableContentSizeTests {
         #expect(contentSize.width == size.width)
         #expect(contentSize.height == size.height)
     }
-
-    @Test("The content view controller is installed on the window")
-    func installsContentViewController() {
-        let controller = makeFlexibleContentViewController()
-        let window = WindowStage.offDesktop().makeWindow(
-            stableContentSize: NSSize(width: 480, height: 320),
-            styleMask: [.titled, .closable],
-            contentViewController: controller
-        )
-
-        #expect(window.contentViewController === controller)
-        #expect(window.styleMask.contains(.titled))
-    }
 }

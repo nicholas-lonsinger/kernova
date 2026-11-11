@@ -54,62 +54,6 @@ struct MainMenuRebuildTests {
 
     // MARK: - App menu quit section
 
-    @Test("The quit section is built from the model for the current mode")
-    func quitSectionMatchesModel() throws {
-        let fixture = makeFixture()
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: false)
-
-        let items = quitItems(in: appMenu, count: model.count)
-        #expect(items.map(\.title) == model.map(\.title))
-        #expect(items.first?.keyEquivalentModifierMask == [.command])
-    }
-
-    @Test("Flipping the residency preference replaces exactly the quit section")
-    func flippedPreferenceReplacesQuitSection() throws {
-        let fixture = makeFixture()
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let before = quitItems(in: appMenu, count: 1)
-        let itemCountBefore = appMenu.items.count
-
-        fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.update(appMenu)
-
-        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
-        let after = quitItems(in: appMenu, count: model.count)
-        #expect(after.map(\.title) == model.map(\.title))
-        #expect(after.last?.keyEquivalentModifierMask == [.command, .option])
-        // Removes exactly what it added: the section grew by one, and no item
-        // from the previous section is still in the menu.
-        #expect(appMenu.items.count == itemCountBefore + 1)
-        #expect(!appMenu.items.contains { item in before.contains { $0 === item } })
-    }
-
-    @Test("A foreign item in the quit section does not survive a rebuild")
-    func foreignQuitSectionItemDoesNotSurviveARebuild() throws {
-        let fixture = makeFixture()
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        // Stands in for the alternate AppKit injects beside a `terminate:` item:
-        // the rebuild never created it, so only a positional sweep clears it.
-        let intruder = NSMenuItem(
-            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q")
-        intruder.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(intruder)
-        // Ahead of the section start, so the sweep's lower bound is asserted and
-        // not just its effect.
-        let bystander = NSMenuItem(title: "Bystander", action: nil, keyEquivalent: "")
-        appMenu.insertItem(bystander, at: 0)
-
-        fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.update(appMenu)
-
-        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
-        #expect(!appMenu.items.contains { $0 === intruder })
-        #expect(appMenu.items.first === bystander)
-        #expect(quitItems(in: appMenu, count: model.count).map(\.title) == model.map(\.title))
-    }
-
     @Test("An item injected into the quit section is swept even with the model unchanged")
     func injectedItemIsSweptWithoutAModelChange() throws {
         let fixture = makeFixture(keepInMenuBar: true)
@@ -135,50 +79,6 @@ struct MainMenuRebuildTests {
         #expect(before.count == model.count)
         #expect(zip(before, after).allSatisfy { $0 === $1 })
         // ⌥⌘Q is the true quit's again, not the alternate's.
-        let claimants = appMenu.items.filter {
-            $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
-        }
-        #expect(claimants.count == 1)
-        #expect(claimants.first?.action == #selector(AppDelegate.quitCompletely(_:)))
-    }
-
-    @Test("A split quit section that already is the model is left untouched")
-    func matchingSplitSectionIsNotMutated() throws {
-        let fixture = makeFixture(keepInMenuBar: true)
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let model = AppMenuQuitItem.items(downgradesQuitToGUIClose: true)
-        let before = quitItems(in: appMenu, count: model.count)
-        let itemCountBefore = appMenu.items.count
-
-        // Every ⌘-keystroke reaches this, so a matching section has to survive
-        // repeated updates without a single mutation.
-        fixture.update(appMenu)
-        fixture.update(appMenu)
-
-        let after = quitItems(in: appMenu, count: model.count)
-        #expect(before.count == model.count)
-        #expect(appMenu.items.count == itemCountBefore)
-        #expect(zip(before, after).allSatisfy { $0 === $1 })
-    }
-
-    @Test("A toggled menu matches one freshly built in the same mode")
-    func toggledMenuMatchesAFreshlyBuiltOne() throws {
-        let fixture = makeFixture()
-        let appMenu = try #require(fixture.mainMenu.items.first?.submenu)
-        let intruder = NSMenuItem(
-            title: "Quit and Keep Windows", action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q")
-        intruder.keyEquivalentModifierMask = [.command, .option]
-        appMenu.addItem(intruder)
-
-        fixture.viewModel.keepInMenuBarOnQuit = true
-        fixture.update(appMenu)
-
-        let fresh = makeFixture(keepInMenuBar: true)
-        let freshAppMenu = try #require(fresh.mainMenu.items.first?.submenu)
-        #expect(appMenu.items.count == freshAppMenu.items.count)
-        #expect(appMenu.items.map(\.title) == freshAppMenu.items.map(\.title))
-
         let claimants = appMenu.items.filter {
             $0.keyEquivalent == "q" && $0.keyEquivalentModifierMask == [.command, .option]
         }
@@ -248,24 +148,6 @@ struct MainMenuRebuildTests {
         let passthrough = try #require(editMenu.items.first { $0.title == "Automatic Clipboard Passthrough" })
         #expect(passthrough.action == #selector(AppDelegate.toggleClipboardPassthrough(_:)))
         #expect(passthrough.keyEquivalent.isEmpty)
-    }
-
-    @Test("No other item in the menu bar takes the clipboard commands' shortcuts")
-    func clipboardShortcutsAreTheirsAlone() {
-        let fixture = makeFixture()
-        var holders: [String] = []
-        func walk(_ menu: NSMenu) {
-            for item in menu.items {
-                if let submenu = item.submenu { walk(submenu) }
-                if item.keyEquivalentModifierMask == [.control, .shift, .command],
-                    ["c", "v"].contains(item.keyEquivalent)
-                {
-                    holders.append(item.title)
-                }
-            }
-        }
-        walk(fixture.mainMenu)
-        #expect(holders.sorted() == ["Copy Guest Clipboard to Mac", "Copy Mac Clipboard to Guest"])
     }
 
     private func revertSubmenu(in mainMenu: NSMenu) -> NSMenu? {

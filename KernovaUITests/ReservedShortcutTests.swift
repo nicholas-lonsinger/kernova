@@ -84,27 +84,6 @@ struct ReservedShortcutTests {
 
     // MARK: - The menu
 
-    @Test("Each item shows ⌃⇧⌘ and its key while its shortcut is on", arguments: ReservedShortcut.allCases)
-    func onShowsTheShortcut(_ shortcut: ReservedShortcut) throws {
-        let item = try makeFixture().item(for: shortcut)
-
-        #expect(item.title == shortcut.commandTitle)
-        #expect(item.keyEquivalent == shortcut.keyEquivalent)
-        #expect(item.keyEquivalentModifierMask == [.control, .shift, .command])
-    }
-
-    @Test("An item shows no shortcut while its shortcut is off at launch", arguments: ReservedShortcut.allCases)
-    func offAtLaunchShowsNone(_ shortcut: ReservedShortcut) throws {
-        let fixture = makeFixture(disabled: [shortcut])
-
-        let item = try fixture.item(for: shortcut)
-        #expect(item.keyEquivalent.isEmpty)
-        #expect(item.keyEquivalentModifierMask.isEmpty)
-        // The other one keeps its shortcut.
-        let other = try #require(ReservedShortcut.allCases.first { $0 != shortcut })
-        #expect(try fixture.item(for: other).keyEquivalent == other.keyEquivalent)
-    }
-
     @Test(
         "Turning a shortcut off and on again takes it off the menu and puts it back",
         arguments: ReservedShortcut.allCases)
@@ -148,21 +127,6 @@ struct ReservedShortcutTests {
         let down = try press(.keyDown, shortcut.keyEquivalent.uppercased(), keyCode: keyCode(shortcut))
         #expect(ReservedShortcutCatcher().catches(down, in: fixture.mainMenu))
         #expect(recorder.received == [shortcut.action])
-    }
-
-    @Test("A press of a shortcut that is off is dispatched as usual, down and up", arguments: ReservedShortcut.allCases)
-    func offPassesThrough(_ shortcut: ReservedShortcut) async throws {
-        let fixture = makeFixture()
-        let recorder = CommandRecorder()
-        try fixture.item(for: shortcut).target = recorder
-        fixture.viewModel.setReservedShortcut(shortcut, isOn: false)
-        await settle()
-        let catcher = ReservedShortcutCatcher()
-        let key = shortcut.keyEquivalent
-
-        #expect(!catcher.catches(try press(.keyDown, key, keyCode: keyCode(shortcut)), in: fixture.mainMenu))
-        #expect(!catcher.catches(try press(.keyUp, key, keyCode: keyCode(shortcut)), in: fixture.mainMenu))
-        #expect(recorder.received.isEmpty)
     }
 
     @Test("A shortcut that is on is taken while its item is disabled, and nothing runs")

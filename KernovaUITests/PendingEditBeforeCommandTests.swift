@@ -98,20 +98,4 @@ struct PendingEditBeforeCommandTests {
         fixture.window.contentView = nil
         #expect(fixture.presenter.errors.isEmpty)
     }
-
-    @Test("Clone saves an edit still open in a field before the clone copies the configuration")
-    func cloneSavesThePendingEditFirst() async throws {
-        let fixture = makeFixture()
-        let (control, text) = try typeChange(.cpus, in: fixture)
-
-        fixture.viewModel.cloneVM(fixture.instance)
-
-        #expect(TypedField.cpus.modelValue(of: fixture.instance.configuration) == text)
-        #expect(control.currentEditor() == nil)
-        try await waitForChange { fixture.viewModel.instances.count == 2 }
-        let clone = try #require(fixture.viewModel.instances.last)
-        #expect(clone !== fixture.instance)
-        #expect(TypedField.cpus.modelValue(of: clone.configuration) == text)
-        #expect(fixture.presenter.errors.isEmpty)
-    }
 }

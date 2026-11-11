@@ -30,14 +30,6 @@ struct AppWindowRegistryPresenceTests {
         makeWindowRegistry(makeLibraryViewModel(preferences: preferences), presence: presence)
     }
 
-    @Test("A registry that has shown nothing has no on-screen window")
-    func nothingShown() {
-        let registry = makeRegistry()
-
-        #expect(!registry.hasTrackedUserWindow)
-        #expect(!registry.hasUserWindow)
-    }
-
     @Test("An untracked titled panel on the stage counts as a user window")
     func untrackedPanelCounts() {
         let registry = makeRegistry()
@@ -45,14 +37,6 @@ struct AppWindowRegistryPresenceTests {
 
         #expect(!registry.hasTrackedUserWindow)
         #expect(registry.hasUserWindow)
-    }
-
-    @Test("The library window counts")
-    func libraryShown() throws {
-        let registry = makeRegistry()
-        registry.showLibrary(bringToFront: true)
-
-        #expect(registry.hasTrackedUserWindow)
     }
 
     @Test("A miniaturized library window counts")

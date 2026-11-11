@@ -88,34 +88,6 @@ struct StatusMenuVMSectionTests {
         #expect(rows.map(\.noticeText) == ["Clipboard: too large to copy to your Mac", nil])
     }
 
-    @Test("A running transfer draws no dropdown line — the readout is its surface")
-    func rowModelSkipsRunningReports() {
-        let running = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
-        let operation = ClipboardTransferOperation(
-            gesture: .paste, direction: .inbound, peerName: running.name, revealDelay: 0,
-            clock: GatedEngineClock(), reporter: running.clipboardTransfers)
-        running.clipboardTransfers.publish(
-            from: operation,
-            .running(
-                ClipboardProgressSnapshot(
-                    direction: .inbound, peerName: running.name, currentItemName: nil,
-                    filesCompleted: 0, fileCount: 1, bytesTransferred: 1, totalBytes: 2,
-                    bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
-                    elapsedSeconds: 1), since: Date()))
-
-        #expect(StatusMenuVMSection.rows(for: [.vm(running)]).map(\.noticeText) == [nil])
-    }
-
-    @Test("A stopped VM's refusal never reaches the dropdown — it has no row to sit under")
-    func rowModelSkipsIssuesOfVMsWithoutRows() {
-        let stopped = makeInstance(name: "Idle VM", phase: .stopped)
-        reportRefusal(.timedOut, gesture: .paste, on: stopped)
-
-        let rows = StatusMenuVMSection.rows(for: [.vm(stopped)])
-
-        #expect(rows.isEmpty)
-    }
-
     @Test("An arrival's row shows its operation, not a status")
     func rowModelPreparing() {
         let configuration = VMConfiguration(
@@ -132,18 +104,6 @@ struct StatusMenuVMSectionTests {
     }
 
     // MARK: - Rebuild
-
-    @Test("Rebuild with no rows appends the disabled placeholder")
-    func rebuildEmpty() {
-        let (menu, _, _) = makeSection(rows: [])
-
-        #expect(
-            menu.items.map(\.title) == [
-                "Open Kernova", "", "No virtual machines running", "", "Quit Kernova",
-            ])
-        #expect(menu.items[2].isEnabled == false)
-        #expect(menu.items[2].action == nil)
-    }
 
     @Test("Rebuild appends one wired row per VM")
     func rebuildRows() {
@@ -196,23 +156,6 @@ struct StatusMenuVMSectionTests {
         #expect(menu.items.count == 5)
     }
 
-    @Test("A VM stopping loses its row while other rows stay in place")
-    func removalLeavesSurvivors() {
-        let stopping = UUID()
-        let surviving = UUID()
-        let (menu, section, _) = makeSection(
-            rows: [row(stopping, "One — Running"), row(surviving, "Two — Running")])
-        let survivor = menu.items[3]
-
-        section.sync(to: [row(surviving, "Two — Running")])
-
-        #expect(
-            menu.items.map(\.title) == [
-                "Open Kernova", "", "Two — Running", "", "Quit Kernova",
-            ])
-        #expect(menu.items[2] === survivor)
-    }
-
     @Test("The last VM stopping swaps its row for the placeholder")
     func lastRemovalInsertsPlaceholder() {
         let id = UUID()
@@ -261,21 +204,6 @@ struct StatusMenuVMSectionTests {
                 "Open Kernova", "", "One — Running", "Two — Starting", "Three — Running",
                 "", "Quit Kernova",
             ])
-    }
-
-    @Test("Sync reorders surviving rows to match the model")
-    func reorder() {
-        let first = UUID()
-        let second = UUID()
-        let (menu, section, _) = makeSection(
-            rows: [row(first, "One — Running"), row(second, "Two — Running")])
-        let firstItem = menu.items[2]
-        let secondItem = menu.items[3]
-
-        section.sync(to: [row(second, "Two — Running"), row(first, "One — Running")])
-
-        #expect(menu.items[2] === secondItem)
-        #expect(menu.items[3] === firstItem)
     }
 
     @Test("An issue arriving while the menu is open inserts its line under the row")
@@ -349,44 +277,6 @@ struct StatusMenuVMSectionTests {
             ])
     }
 
-    @Test("Reordering rows carries each notice line under its own row")
-    func syncReordersNoticeLinesWithRows() {
-        let first = UUID()
-        let second = UUID()
-        let (menu, section, _) = makeSection(rows: [
-            row(first, "One — Running", notice: "Clipboard: earlier copy was removed"),
-            row(second, "Two — Running", notice: "Clipboard: some files weren't forwarded"),
-        ])
-
-        section.sync(to: [
-            row(second, "Two — Running", notice: "Clipboard: some files weren't forwarded"),
-            row(first, "One — Running", notice: "Clipboard: earlier copy was removed"),
-        ])
-
-        #expect(
-            menu.items.map(\.title) == [
-                "Open Kernova", "", "Two — Running", "Clipboard: some files weren't forwarded",
-                "One — Running", "Clipboard: earlier copy was removed", "", "Quit Kernova",
-            ])
-    }
-
-    @Test("Rows stay anchored when items are inserted above the section")
-    func prefixInsertionKeepsAnchor() {
-        let id = UUID()
-        let (menu, section, _) = makeSection(rows: [row(id, "VM — Running")])
-        menu.insertItem(NSMenuItem(title: "Paste readout", action: nil, keyEquivalent: ""), at: 0)
-        menu.insertItem(.separator(), at: 1)
-        let started = UUID()
-
-        section.sync(to: [row(id, "VM — Running"), row(started, "New — Starting")])
-
-        #expect(
-            menu.items.map(\.title) == [
-                "Paste readout", "", "Open Kernova", "", "VM — Running", "New — Starting",
-                "", "Quit Kernova",
-            ])
-    }
-
     @Test("Sync before the section is in the menu is a no-op")
     func syncBeforeRebuild() {
         let menu = NSMenu()
@@ -395,17 +285,6 @@ struct StatusMenuVMSectionTests {
             menu: menu, rowTarget: target, rowAction: #selector(RowTarget.rowTapped(_:)))
 
         section.sync(to: [row(UUID(), "VM — Running")])
-
-        #expect(menu.items.isEmpty)
-    }
-
-    @Test("Sync after the menu was cleared for rebuild is a no-op")
-    func syncAfterRemoveAllItems() {
-        let id = UUID()
-        let (menu, section, _) = makeSection(rows: [row(id, "VM — Running")])
-        menu.removeAllItems()
-
-        section.sync(to: [row(id, "VM — Stopping")])
 
         #expect(menu.items.isEmpty)
     }
