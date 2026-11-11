@@ -626,6 +626,32 @@ struct SidebarViewControllerTests {
         #expect(viewModel.activeRename == .sidebar(.entry(beta.id)))
     }
 
+    /// The edit box takes the focus wherever it opens, so the selection reads
+    /// as unfocused for a header's rename as for the selected row's own.
+    @Test("The selected row reads as unfocused while a header's rename is open, and settles after")
+    func selectionReadsUnfocusedDuringAHeaderRename() async throws {
+        let viewModel = makeViewModel()
+        let alpha = viewModel.library.admitFixture(name: "Alpha")
+        let folder = try viewModel.library.createFolder(named: "Clients")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let node = try #require(controller.tree.row(for: .library(alpha.id)))
+        outline.selectRowIndexes([outline.row(forItem: node)], byExtendingSelection: false)
+        let rowView = try #require(
+            outline.rowView(atRow: outline.selectedRow, makeIfNecessary: false) as? SidebarTableRowView)
+
+        let menu = try #require(controller.viewMenu(for: .folder(folder.id)))
+        menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Rename Folder" }))
+        let header = try #require(sectionHeader(.folder(folder.id), in: outline))
+        try #require(header.isRenaming)
+        #expect(rowView.rendersUnemphasized)
+
+        typeAndReturn("Clients 2", in: try #require(renameEditor(of: header)))
+        // The emphasis settles on a later main-actor turn, once the field
+        // editor has given up the focus, with no observable to await.
+        try await waitUntil { !rowView.rendersUnemphasized }
+    }
+
     /// Another copy of Kernova, or a script, can rename the folder while its
     /// header is being edited; the sidebar re-renders headers in place, so
     /// the box and what was typed in it stay.

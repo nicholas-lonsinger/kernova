@@ -421,6 +421,9 @@ final class SidebarViewController: NSViewController {
         case let section as SidebarSection: beginRename(of: section, holding: draft)
         default: break
         }
+        // The edit box holds the focus, wherever it is; the selection reads
+        // as unfocused, the way it does when focus leaves the list.
+        if editingNode != nil { selectedRowView?.rendersUnemphasized = true }
     }
 
     private func beginRename(of node: SidebarRow) {
@@ -442,7 +445,6 @@ final class SidebarViewController: NSViewController {
         {
             cell.beginRename()
         }
-        setRowUnemphasized(true, atRow: row)
     }
 
     /// Opens the rename on `section`'s header, holding `draft` in place of
@@ -475,19 +477,16 @@ final class SidebarViewController: NSViewController {
         case let cell as SidebarGroupHeaderCellView: cell.endRename()
         default: break
         }
-        guard node is SidebarRow else { return }
         // Settle the selection emphasis back to its natural state now that the
         // edit is torn down.
-        (outlineView.rowView(atRow: row, makeIfNecessary: false) as? SidebarTableRowView)?
-            .settleEmphasis()
+        selectedRowView?.settleEmphasis()
     }
 
-    /// Flips the row's selection between unemphasized grey and emphasized blue.
-    ///
-    /// Grey while the name is being edited, so the white edit box stands out.
-    private func setRowUnemphasized(_ unemphasized: Bool, atRow row: Int) {
-        let rowView = outlineView.rowView(atRow: row, makeIfNecessary: false)
-        (rowView as? SidebarTableRowView)?.rendersUnemphasized = unemphasized
+    /// The selected row's view, `nil` while nothing is selected.
+    private var selectedRowView: SidebarTableRowView? {
+        let row = outlineView.selectedRow
+        guard row >= 0 else { return nil }
+        return outlineView.rowView(atRow: row, makeIfNecessary: false) as? SidebarTableRowView
     }
 
     /// Closes the rename session of `node` — a VM row or a section header —
@@ -512,16 +511,11 @@ final class SidebarViewController: NSViewController {
     /// overridden. A click-commit passes false and lets focus follow the click.
     private func restoreSidebarFocus(grabbingFocus: Bool) {
         Task { @MainActor [weak self] in
-            // A rename opened since holds the focus, and its row stays
+            // A rename opened since holds the focus, and the selection stays
             // unemphasized while its edit box is up.
             guard let self, self.editingNode == nil else { return }
             if grabbingFocus { self.view.window?.makeFirstResponder(self.outlineView) }
-            // A header's rename selects nothing, and a selection can go before
-            // this turn; `rowView(atRow:makeIfNecessary:)` raises on -1.
-            let row = self.outlineView.selectedRow
-            guard row >= 0 else { return }
-            (self.outlineView.rowView(atRow: row, makeIfNecessary: false)
-                as? SidebarTableRowView)?.settleEmphasis()
+            self.selectedRowView?.settleEmphasis()
         }
     }
 
@@ -1373,8 +1367,8 @@ final class SidebarOutlineView: NSOutlineView {
 // MARK: - Row view subclass
 
 /// Source-list row view that renders its selection *unemphasized* — the lighter
-/// "selected but not focused" grey — while the row's name is being edited, so
-/// the white rounded edit box stands out against it.
+/// "selected but not focused" grey — while a rename is being edited anywhere in
+/// the sidebar, as it does when focus leaves the list.
 ///
 /// Without this the selection stays emphasized (accent blue) during editing:
 /// `NSTableRowView`'s emphasis reports `true` whenever the table *contains* the
@@ -1382,7 +1376,7 @@ final class SidebarOutlineView: NSOutlineView {
 final class SidebarTableRowView: NSTableRowView {
     static let reuseID = NSUserInterfaceItemIdentifier("SidebarTableRow")
 
-    /// Set while the row's name is being edited.
+    /// Set on the selected row while a rename is being edited.
     ///
     /// Setting the stored `isEmphasized` to `false` rebuilds the source-list
     /// selection material as grey now — a bare `needsDisplay` doesn't refresh it;
