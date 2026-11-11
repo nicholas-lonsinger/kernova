@@ -2148,6 +2148,34 @@ struct VMCommandCoreTests {
         #expect(virtualization.startCallCount == 0)
     }
 
+    @Test("A stop settles on the power-off, not on the baseline revert behind it")
+    func stopSettlesWhileAnEphemeralRevertIsStillWriting() async throws {
+        // The clock is already past the deadline the moment the wait arms, so a
+        // stop that waited for anything beyond the guest going down would refuse
+        // here — an Ephemeral VM's revert is Kernova's own work, not a guest
+        // that would not shut down.
+        let harness = makeSuspendingHarness(clock: TestEngineClock())
+        harness.virtualization.shouldSuspendOnRevert = true
+        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
+        let instance = makeInstance(
+            in: harness, name: "Ephemeral", phase: .running(sessionID: UUID()),
+            hostState: .ephemeral(baseline: baseline.id))
+        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
+        harness.machineFiles.setCapturedConfiguration(instance.configuration, for: baseline.id)
+
+        try await harness.core.stop(
+            .id(instance.id), disposition: .graceful, consent: .none, timeout: 60)
+
+        // The stop answered on the power-off; the revert it started is parked
+        // mid-copy behind it.
+        await harness.virtualization.waitUntilSuspended()
+        #expect(!instance.hasLiveVirtualMachine)
+        #expect(instance.isHeldByRevert)
+
+        harness.virtualization.resumeSuspended()
+        try await waitForChange { !instance.isHeldByRevert }
+    }
+
     @Test("A pause landing mid-wait is not the power-off a stop is waiting for")
     func stopIsNotSettledByAPauseWhileItWaits() async throws {
         let virtualization = MockVirtualizationService()
