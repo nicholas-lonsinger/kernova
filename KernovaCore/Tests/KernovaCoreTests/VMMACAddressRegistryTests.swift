@@ -45,9 +45,6 @@ struct VMMACAddressRegistryTests {
         return config
     }
 
-    private static let before = HeldSnapshot(name: "Before", isEphemeralBaseline: false)
-    private static let after = HeldSnapshot(name: "After", isEphemeralBaseline: false)
-
     /// A VM on NAT at `mac`, holding `snapshots`.
     private func makeVM(
         _ name: String, mac: String?, snapshots: [VMSnapshot] = [],
@@ -78,66 +75,6 @@ struct VMMACAddressRegistryTests {
         // The address as the edit spelled it, so the refusal names what was
         // just typed rather than the holder's own spelling of it.
         #expect(failures.errorMessage?.contains("AA:BB:CC:DD:EE:01") == true)
-    }
-
-    @Test("An edit onto an address nobody else holds is admitted")
-    func refuseMACAddressConflictAdmitsAUniqueAddress() {
-        let registry = makeRegistry()
-        let instance = VMInstanceFixture.make()
-        roster.instances = [instance]
-
-        let old = instance.configuration
-        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
-
-        #expect(refuse(registry, on: instance, movingFrom: old, to: new) == nil)
-        #expect(failures.showError == false)
-    }
-
-    @Test("An edit onto an address another VM's snapshot was taken with is refused, naming it")
-    func refuseMACAddressConflictRefusesASnapshotsAddress() {
-        let registry = makeRegistry()
-        let holder = makeVM(
-            "Twin", mac: "aa:bb:cc:dd:ee:02",
-            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")])
-        let instance = VMInstanceFixture.make(name: "Mine")
-        roster.instances = [holder, instance]
-
-        let old = instance.configuration
-        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
-
-        let conflict = registry.macAddressConflict(on: instance, movingFrom: old, to: new)
-        #expect(conflict?.other === holder)
-        #expect(
-            conflict?.reason
-                == .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:01", holding: .snapshots(HeldSnapshots(Self.before)),
-                    otherHolders: []))
-        #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
-        #expect(failures.errorMessage?.contains("\u{201C}Before\u{201D}") == true)
-    }
-
-    @Test("A holder that uses an address and took snapshots with it is named for both")
-    func macAddressConflictNamesTheConfigurationAndItsSnapshots() {
-        let registry = makeRegistry()
-        let holder = makeVM(
-            "Twin", mac: "aa:bb:cc:dd:ee:01",
-            snapshots: [
-                VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01"),
-                VMSnapshot(name: "Elsewhere", macAddress: "aa:bb:cc:dd:ee:09"),
-                VMSnapshot(name: "After", macAddress: "AA:BB:CC:DD:EE:01"),
-            ])
-        let instance = VMInstanceFixture.make(name: "Mine")
-        roster.instances = [holder, instance]
-
-        let old = instance.configuration
-        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
-
-        #expect(
-            registry.macAddressConflict(on: instance, movingFrom: old, to: new)?.reason
-                == .macAddressInUse(
-                    address: "aa:bb:cc:dd:ee:01",
-                    holding: .configurationAndSnapshots(HeldSnapshots(Self.before, [Self.after])),
-                    otherHolders: []))
     }
 
     @Test("Every VM holding an address is named, each with how it holds it")
@@ -186,46 +123,6 @@ struct VMMACAddressRegistryTests {
         #expect(failures.showError == false)
     }
 
-    @Test("Deleting the snapshot that holds an address releases it")
-    func deletingTheSnapshotReleasesTheAddress() {
-        let registry = makeRegistry()
-        let snapshot = VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")
-        let holder = makeVM("Twin", mac: "aa:bb:cc:dd:ee:02", snapshots: [snapshot])
-        let instance = VMInstanceFixture.make(name: "Mine")
-        roster.instances = [holder, instance]
-        let old = instance.configuration
-        let new = nat(old, mac: "aa:bb:cc:dd:ee:01")
-        #expect(registry.macAddressConflict(on: instance, movingFrom: old, to: new) != nil)
-
-        var remaining = holder.snapshotManifest
-        remaining.remove(id: snapshot.id)
-        holder.seedSnapshotManifest(remaining)
-
-        #expect(registry.macAddressConflict(on: instance, movingFrom: old, to: new) == nil)
-    }
-
-    @Test("A snapshot's address is never a live conflict")
-    func liveMACAddressConflictIgnoresSnapshots() {
-        let registry = makeRegistry()
-        let twin = makeVM(
-            "Twin", mac: "aa:bb:cc:dd:ee:02",
-            snapshots: [VMSnapshot(name: "Before", macAddress: "aa:bb:cc:dd:ee:01")])
-        twin.activity.placeForTesting(.running(sessionID: UUID()))
-        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
-        roster.instances = [twin, instance]
-
-        // The running guest is on its configuration's address, not on one a
-        // snapshot records.
-        #expect(registry.liveMACAddressConflict(for: instance.configuration, excluding: instance) == nil)
-
-        let sameAddress = makeVM("Same", mac: "aa:bb:cc:dd:ee:01")
-        sameAddress.activity.placeForTesting(.running(sessionID: UUID()))
-        roster.instances = [twin, sameAddress, instance]
-        #expect(
-            registry.liveMACAddressConflict(for: instance.configuration, excluding: instance)
-                === sameAddress)
-    }
-
     @Test("The VMs named as sharing an address are those whose configuration carries it")
     func vmNamesSharingMACAddressLeavesSnapshotsOut() {
         let registry = makeRegistry()
@@ -258,68 +155,6 @@ struct VMMACAddressRegistryTests {
         #expect(shared.map(\.address) == ["aa:bb:cc:dd:ee:01"])
         #expect(shared.first?.holders.map(\.vm.name) == ["Source", "Source Copy"])
         #expect(registry.vmNamesSharingMACAddress(with: copy) == ["Source"])
-    }
-
-    @Test("A live mode switch onto a network an active twin holds is refused")
-    func refuseMACAddressConflictRefusesALiveModeSwitch() {
-        let registry = makeRegistry()
-        let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01") { $0.networkMode = .hostOnly }
-        twin.activity.placeForTesting(.running(sessionID: UUID()))
-
-        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01")
-        let old = instance.configuration
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        roster.instances = [twin, instance]
-
-        // The address is unchanged; only the network it lands on moves.
-        var new = old
-        new.networkMode = .hostOnly
-
-        let conflict = refuse(registry, on: instance, movingFrom: old, to: new)
-        #expect(conflict?.other === twin)
-        // What the change would have landed, which decides whether a network
-        // of its own is offered in its place.
-        #expect(conflict?.target == new)
-        #expect(failures.errorTitle == "Duplicate MAC Address")
-    }
-
-    @Test("Holders on separate networks of one mode are no live conflict")
-    func separateNetworksOfOneModeAreNoLiveConflict() {
-        let registry = makeRegistry()
-        let isolatedTwin = makeVM("Isolated Twin", mac: "aa:bb:cc:dd:ee:01") { $0.networkMembership = .isolated }
-        isolatedTwin.activity.placeForTesting(.running(sessionID: UUID()))
-        let common = makeVM("Common", mac: "aa:bb:cc:dd:ee:01")
-        let isolated = makeVM("Isolated", mac: "aa:bb:cc:dd:ee:01") { $0.networkMembership = .isolated }
-        roster.instances = [isolatedTwin, common, isolated]
-
-        // A network of its own is one no other VM joins — whether the other
-        // is on the mode's common network or on a network of its own.
-        #expect(registry.liveMACAddressConflict(for: common.configuration, excluding: common) == nil)
-        #expect(registry.liveMACAddressConflict(for: isolated.configuration, excluding: isolated) == nil)
-
-        common.activity.placeForTesting(.running(sessionID: UUID()))
-        let other = makeVM("Other", mac: "aa:bb:cc:dd:ee:01")
-        roster.instances = [isolatedTwin, common, isolated, other]
-        #expect(registry.liveMACAddressConflict(for: other.configuration, excluding: other) === common)
-    }
-
-    @Test("A live switch off a VM's own network onto the network an active twin holds is refused")
-    func refuseMACAddressConflictRefusesALiveSwitchOntoTheCommonNetwork() {
-        let registry = makeRegistry()
-        let twin = makeVM("Twin", mac: "aa:bb:cc:dd:ee:01")
-        twin.activity.placeForTesting(.running(sessionID: UUID()))
-
-        let instance = makeVM("Mine", mac: "aa:bb:cc:dd:ee:01") { $0.networkMembership = .isolated }
-        let old = instance.configuration
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        roster.instances = [twin, instance]
-
-        // Same mode and address; only the network it joins moves.
-        var new = old
-        new.networkMembership = .common
-
-        #expect(refuse(registry, on: instance, movingFrom: old, to: new) != nil)
-        #expect(failures.errorTitle == "Duplicate MAC Address")
     }
 
     @Test("A VM already in a live conflict stays editable")

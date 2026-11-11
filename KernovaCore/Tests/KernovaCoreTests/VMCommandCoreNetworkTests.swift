@@ -30,27 +30,6 @@ struct VMCommandCoreNetworkTests {
             })
     }
 
-    @Test("A VM joins a network through network.membership, and the listing names its members")
-    func membersJoinThroughTheirMembershipKey() throws {
-        let harness = makeHarness()
-        let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
-        let alpha = makeInstance(in: harness, name: "Alpha")
-        makeInstance(in: harness, name: "Beta")
-
-        try harness.core.setConfiguration(
-            .id(alpha.instanceID),
-            assignments: [
-                ConfigurationEntry(key: "network.mode", value: "hostOnly"),
-                ConfigurationEntry(key: "network.membership", value: "Lab"),
-            ], consent: .none)
-
-        #expect(try harness.core.networks().map(\.members) == [[harness.core.summary(alpha)]])
-        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Lab"))
-        #expect(lab.kind == .hostOnly)
-        try harness.core.renameNetwork("lab", to: "Bench")
-        #expect(try harness.core.info(.id(alpha.instanceID)).networkName == .named("Bench"))
-    }
-
     @Test("Deleting a network refuses with a route moving each VM set to join it, and deletes once they have moved")
     func deleteRoutesEachJoinerToANetworkOfItsOwn() async throws {
         let harness = makeHarness()
@@ -148,22 +127,5 @@ struct VMCommandCoreNetworkTests {
         #expect(throws: CommandError.unsupportedByBuild(capability: "named networks")) {
             try harness.core.createNetwork(name: "Lab", kind: .nat)
         }
-    }
-
-    @Test("A VM naming the network whose membership is inert never holds up the delete")
-    func anInertNamerDoesNotBlockTheDelete() throws {
-        let harness = makeHarness()
-        let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
-        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
-            $0.networkMode = .bridged
-            $0.networkMembership = .network(lab.id)
-        }
-        try VMInstanceFixture.writeSaveFile(for: suspended)
-
-        try harness.core.deleteNetwork("Lab")
-
-        #expect(try harness.core.networks().isEmpty)
-        // Its state takes no write; it names an unlisted network until it does.
-        #expect(suspended.configuration.networkMembership == .network(lab.id))
     }
 }

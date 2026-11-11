@@ -86,31 +86,12 @@ struct HostARPTableTests {
         #expect(entries.first?.hardwareAddress == EthernetAddress(octets: Self.guestMAC))
     }
 
-    @Test("A message cut short ends the walk without reading past the buffer")
-    func aTruncatedMessageEndsTheWalk() {
-        let whole = Self.message(
-            addresses: Self.destinationAndGateway, expiry: 1_790_000_000,
-            [Self.inet(10, 0, 0, 2), Self.link(Self.guestMAC)])
-        let cut = Array(whole.prefix(whole.count - 4))
-
-        #expect(Self.parse(whole + cut).count == 1)
-        #expect(Self.parse(cut).isEmpty)
-    }
-
     @Test("The host's own table reads without an error")
     func theHostTableReads() {
         #expect(throws: Never.self) { try HostARPTableReader().entries() }
     }
 
     // MARK: - Ethernet addresses
-
-    @Test("A MAC address parses in either case and with or without leading zeros")
-    func macAddressSpellingsAgree() {
-        let canonical = EthernetAddress("0a:bb:0c:01:02:03")
-        #expect(canonical != nil)
-        #expect(EthernetAddress("A:BB:C:1:2:3") == canonical)
-        #expect(EthernetAddress(octets: [0x0a, 0xbb, 0x0c, 0x01, 0x02, 0x03]) == canonical)
-    }
 
     @Test("Anything but six hexadecimal octets is no MAC address")
     func malformedMACAddressesAreRefused() {

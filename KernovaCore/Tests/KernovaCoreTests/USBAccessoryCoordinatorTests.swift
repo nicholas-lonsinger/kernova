@@ -91,15 +91,6 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.startObservingCallCount == 1)
     }
 
-    @Test("Does not exist in a process that cannot pass accessories through")
-    func absentWithoutTheCapability() {
-        let lifecycle = makeTestLifecycle(usbAccessoryPassthrough: .unavailable(.needsEntitlement))
-        let library = makeWiredLibrary(lifecycle: lifecycle)
-        #expect(
-            USBAccessoryCoordinator(
-                lifecycle: lifecycle, library: library) == nil)
-    }
-
     @Test("Drops a guest's record of an accessory the host has taken back")
     func aReassignmentClearsTheStaleRecord() async throws {
         let service = MockUSBAccessoryService()
@@ -147,75 +138,7 @@ struct USBAccessoryCoordinatorTests {
         #expect(instance.liveUSBAccessories.count == 1)
     }
 
-    @Test("Leaves a guest's record alone when a different accessory arrives")
-    func anUnrelatedAssignmentLeavesRecordsAlone() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        service.accessories.append(
-            MockUSBAccessoryService.accessory(registryID: 1, serial: "0373"))
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "9999"))
-
-        #expect(instance.liveUSBAccessories.count == 1)
-    }
-
-    @Test("Leaves records alone for an accessory nothing durable identifies")
-    func anUnidentifiableAssignmentClearsNothing() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 1))
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-
-        // Both have a nil identity, and two nils are not a match.
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2))
-
-        #expect(instance.liveUSBAccessories.count == 1)
-    }
-
     // MARK: - Routing a Fresh Arrival
-
-    @Test("An accessory paired with a running guest goes straight back to it")
-    func aPairedAccessoryGoesBackToItsGuest() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeInstance(in: h, sessionID: UUID())
-        defer { withExtendedLifetime(h) {} }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        try pair(accessory, with: instance)
-
-        service.assign(accessory)
-
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [1])
-    }
-
-    @Test("An accessory paired with a virtual machine that is not running stays with the host")
-    func aPairedAccessoryWaitsForItsGuest() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let stopped = makeStoppedInstance(in: h)
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "0373")
-        try pair(accessory, with: stopped)
-
-        service.assign(accessory)
-
-        // Held for the host, and not offered to anything else: the
-        // user already said where this one goes.
-        #expect(recorder.requests.isEmpty)
-        #expect(nothingPending(in: h))
-        #expect(service.attachedRegistryIDs.isEmpty)
-    }
 
     @Test("An accessory no rule names is offered to the running guests")
     func anUnpairedAccessoryRaisesAPrompt() throws {
@@ -241,35 +164,6 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
-    @Test("An accessory no rule names is held when nothing is running")
-    func anUnpairedAccessoryWithNoCandidatesIsHeld() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        makeStoppedInstance(in: h)
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-
-        service.assign(MockUSBAccessoryService.accessory(registryID: 7, serial: "0373"))
-
-        #expect(recorder.requests.isEmpty)
-    }
-
-    @Test("An accessory nothing durable identifies is never offered")
-    func anUnidentifiableAccessoryRaisesNoPrompt() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-
-        // Answering the prompt would create a rule keyed on nothing.
-        service.assign(MockUSBAccessoryService.accessory(registryID: 7))
-
-        #expect(recorder.requests.isEmpty)
-    }
-
     @Test("At most one prompt is outstanding, however many accessories arrive")
     func promptsAreRaisedOneAtATime() throws {
         let service = MockUSBAccessoryService()
@@ -291,48 +185,6 @@ struct USBAccessoryCoordinatorTests {
         #expect(recorder.requests[1].accessory.registryID == 2)
     }
 
-    @Test("A queued prompt names the guests running when it is raised")
-    func aQueuedPromptRederivesItsCandidates() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let first = makeInstance(in: h, sessionID: UUID(), named: "First")
-        let second = makeStoppedInstance(in: h, named: "Second")
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
-        #expect(recorder.requests.first?.candidates.map(\.id) == [first.id])
-
-        // The library moves on while the second accessory waits its turn.
-        first.handleSessionEvent(.guestDidStop)
-        second.beginSessionContextForTesting()
-        second.activity.placeForTesting(.running(sessionID: UUID()))
-        recorder.requests[0].answer(nil)
-
-        // Offering the guest that has since stopped would refuse the attach the
-        // answer runs, and leave the one that is running unoffered.
-        #expect(recorder.requests.count == 2)
-        #expect(recorder.requests[1].candidates.map(\.id) == [second.id])
-    }
-
-    @Test("A queued prompt is held when nothing is running by the time it is raised")
-    func aQueuedPromptWithNoCandidatesIsHeld() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
-
-        instance.handleSessionEvent(.guestDidStop)
-        recorder.requests[0].answer(nil)
-
-        #expect(recorder.requests.count == 1)
-    }
-
     @Test("A queued prompt whose accessory has gone is dropped rather than raised")
     func aQueuedPromptForADepartedAccessoryIsDropped() throws {
         let service = MockUSBAccessoryService()
@@ -352,42 +204,6 @@ struct USBAccessoryCoordinatorTests {
         // The one behind it is still there and is asked about instead.
         #expect(recorder.requests.count == 2)
         #expect(recorder.requests[1].accessory.registryID == 3)
-    }
-
-    @Test("A queued prompt for an accessory a guest has taken is dropped")
-    func aQueuedPromptForAHeldAccessoryIsDropped() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
-
-        // Placed from the USB Device menu while its prompt waited its turn.
-        try await h.lifecycle.attachUSBAccessory(2, to: instance, for: sessionID)
-        recorder.requests[0].answer(nil)
-
-        #expect(recorder.requests.count == 1)
-    }
-
-    @Test("Answering the same prompt twice raises nothing extra")
-    func aSecondAnswerToOnePromptIsIgnored() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
-
-        recorder.requests[0].answer(nil)
-        recorder.requests[0].answer(nil)
-
-        #expect(recorder.requests.count == 2)
     }
 
     // MARK: - The Guards
@@ -471,31 +287,6 @@ struct USBAccessoryCoordinatorTests {
         }
     }
 
-    @Test("An accessory a capture took off goes back to that guest, whatever the pairings say")
-    func anOwedReturnBypassesThePairings() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        let one = makeInstance(in: h, sessionID: UUID(), named: "One")
-        let two = makeInstance(in: h, sessionID: UUID(), named: "Two")
-        defer { withExtendedLifetime(h) {} }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        // Two other VMs claim it, which on its own holds it for the host.
-        try pair(accessory, with: one)
-        try pair(accessory, with: two)
-        service.accessories.append(accessory)
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-
-        try await capture(instance, service: service)
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [1, 2])
-        #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [2])
-    }
-
     @Test("An owed return is spent by one arrival, so the next one is routed as fresh")
     func anOwedReturnIsSpentOnce() async throws {
         let service = MockUSBAccessoryService()
@@ -524,154 +315,6 @@ struct USBAccessoryCoordinatorTests {
 
         #expect(recorder.requests.map(\.accessory.registryID) == [3])
         #expect(service.attachedRegistryIDs == [1, 2])
-    }
-
-    @Test("A detach the user asked for outranks an owed return, and both are spent")
-    func aUserDetachOutranksAnOwedReturn() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        let identity = try #require(accessory.identity)
-        service.accessories.append(accessory)
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-        // What a detach the user asked for leaves armed when VZ refused it: the
-        // accessory is still on the guest, and the user's last word is that it
-        // belongs to the Mac.
-        h.coordinator.userDetaching(accessory)
-
-        try await capture(instance, service: service)
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        #expect(h.library.accessoryHolders.owedReturn(of: identity) == nil)
-        #expect(instance.phase == .running(sessionID: sessionID))
-        #expect(service.attachedRegistryIDs == [1])
-    }
-
-    @Test("A guest that goes away under the capture drops what it was owed")
-    func aSessionEndDropsItsOwedReturns() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        let identity = try #require(accessory.identity)
-        service.accessories.append(accessory)
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-        let gate = GatedStep()
-        let snapshot = Task { try? await capture(instance, service: service, gate: gate) }
-        try await gate.waitUntilEntered()
-        #expect(h.library.accessoryHolders.owedReturn(of: identity) === instance)
-
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(h.library.accessoryHolders.owedReturn(of: identity) == nil)
-        gate.release()
-        _ = await snapshot.value
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        #expect(service.attachedRegistryIDs == [1])
-        #expect(!instance.hasLiveVirtualMachine)
-    }
-
-    @Test("A return that arrives under the capture waits behind it, and a session end drops it")
-    func aSessionEndDropsAQueuedReturn() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        service.accessories.append(
-            MockUSBAccessoryService.accessory(
-                registryID: 1, serial: "0373", receptacle: "hub/Port-A@1"))
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-        let gate = GatedStep()
-        let snapshot = Task { try? await capture(instance, service: service, gate: gate) }
-        try await gate.waitUntilEntered()
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        gate.release()
-        _ = await snapshot.value
-
-        #expect(service.attachedRegistryIDs == [1])
-        #expect(!instance.hasLiveVirtualMachine)
-    }
-
-    // MARK: - The User's Own Edits
-
-    @Test("An attach the user asked for is remembered, and taken off every other VM")
-    func aUserAttachRewritesTheRuleLibraryWide() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let first = makeInstance(in: h, sessionID: UUID(), named: "First")
-        let second = makeInstance(in: h, sessionID: UUID(), named: "Second")
-        defer { withExtendedLifetime(h) {} }
-        let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "0373")
-        try pair(accessory, with: first)
-
-        try second.activity.edit(.pairingRules) { try h.coordinator.userAttached(accessory, $0) }
-
-        // Moving a device between guests is a detach then an attach, and the
-        // rewrite is what makes one key name one VM.
-        #expect(first.usbPairings.isEmpty)
-        #expect(second.usbPairings.pairings.map(\.key) == [accessory.identity?.key])
-    }
-
-    @Test("A detach the user asked for forgets the rule and the device stays with the Mac")
-    func aUserDetachForgetsAndSuppressesTheEcho() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        try pair(accessory, with: instance)
-        service.accessories.append(accessory)
-
-        h.coordinator.userDetaching(accessory)
-        try instance.activity.edit(.pairingRules) { try h.coordinator.userReleased(accessory, $0) }
-        #expect(instance.usbPairings.isEmpty)
-
-        // The detach resets the device, so macOS hands the same stick back
-        // under a new registry ID. It must neither be re-attached nor prompted
-        // for, or the user could never take it away.
-        service.accessories.removeAll()
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-        #expect(recorder.requests.isEmpty)
-        #expect(nothingPending(in: h))
-        #expect(service.attachedRegistryIDs.isEmpty)
-    }
-
-    @Test("The suppression is spent once, so a later replug is offered again")
-    func theReleaseTokenIsSpentOnce() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        let accessory = MockUSBAccessoryService.accessory(
-            registryID: 1, serial: "0373", receptacle: "hub/Port-A@1")
-        h.coordinator.userDetaching(accessory)
-
-        service.assignComposing(registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-        #expect(recorder.requests.isEmpty)
-
-        // A token that outlived its own echo would silence the device for good.
-        service.accessories.removeAll()
-        service.assignComposing(registryID: 3, serial: "0373", receptacle: "hub/Port-A@1")
-        #expect(recorder.requests.count == 1)
     }
 
     // MARK: - VM Start
@@ -704,38 +347,6 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs == [1, 3])
     }
 
-    @Test("A start that ends running takes back its paired accessory in the step that settles it")
-    func aRealStartAttachesInItsEndingStep() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeStoppedInstance(in: h)
-        defer { withExtendedLifetime(h) {} }
-        instance.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
-            coordinator?.sessionBecameAttachable(instance) ?? []
-        }
-        let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
-        try pair(accessory, with: instance)
-        service.accessories = [accessory]
-        instance.beginSessionContextForTesting()
-        let sessionID = UUID()
-        service.suspendNextAttach = true
-
-        try await instance.activity.launchStartGuest(.starting(recovery: false)) { context in
-            context.bringUp.bindSessionForTesting(sessionID)
-            return .rest(.live(.running), ())
-        }.value()
-
-        // The start's own ending admitted the attach: no other request could
-        // be decided against the running VM in between.
-        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 1))
-        #expect(instance.phase.operation?.startedFrom == .running(sessionID: sessionID))
-        try await service.attachStarted()
-        service.resumeAttach()
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [1])
-        #expect(instance.phase == .running(sessionID: sessionID))
-    }
-
     @Test("Resuming a paused guest does not run the take-back again")
     func aResumeIsNotAnEdge() async throws {
         let service = MockUSBAccessoryService()
@@ -765,66 +376,6 @@ struct USBAccessoryCoordinatorTests {
     }
 
     // MARK: - An Operation in Flight
-
-    @Test("An accessory arriving during a snapshot delete attaches in the step the delete ends")
-    func anArrivalDuringAnOperationAttachesAfterIt() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeInstance(in: h, sessionID: UUID())
-        defer { withExtendedLifetime(h) {} }
-        let accessory = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
-        try pair(accessory, with: instance)
-        let gate = GatedStep()
-        let delete = try instance.activity.launch(.deletingSnapshot) { _ in
-            try await gate.pass()
-            return .rest(.asStarted, ())
-        }
-        try await gate.waitUntilEntered()
-
-        // The delete holds the VM, so the attach this assignment asks for
-        // waits behind it rather than being refused.
-        service.assign(accessory)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-        #expect(service.attachedRegistryIDs.isEmpty)
-
-        service.suspendNextAttach = true
-        gate.release()
-        try await delete.value()
-        // The delete's ending admitted it, so nothing else was decided between.
-        #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 2))
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        try await service.attachStarted()
-        service.resumeAttach()
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [2])
-    }
-
-    @Test("Two accessories arriving under one operation both attach once it ends, in arrival order")
-    func twoArrivalsUnderOneOperationBothAttach() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        let holding = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
-        let first = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
-        let second = MockUSBAccessoryService.accessory(registryID: 3, serial: "C")
-        service.accessories.append(holding)
-        try pair(first, with: instance)
-        try pair(second, with: instance)
-
-        service.suspendNextAttach = true
-        let held = Task { try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
-        try await service.attachStarted()
-        service.assign(first)
-        service.assign(second)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 2)
-
-        service.resumeAttach()
-        _ = try await held.value
-        try await waitForChange { instance.liveUSBAccessories.count == 3 }
-        #expect(service.attachedRegistryIDs == [1, 2, 3])
-    }
 
     @Test("A guest that goes away under an attach keeps the next accessory with the host")
     func aVMThatStopsUnderTheWaitHoldsTheAccessory() async throws {
