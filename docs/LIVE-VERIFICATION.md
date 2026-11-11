@@ -25,13 +25,13 @@ A guest's login screen can be passed without its password, in a guest the run ma
 
 ## App Intents
 
-Spotlight and Siri see Kernova's intents only from a build installed in `/Applications` and launched once. A build running from DerivedData shows only its app row in Spotlight while Shortcuts still lists and runs every intent, which reads like broken intent metadata.
+Spotlight, Siri and Shortcuts see Kernova's intents from a build installed in `/Applications` and launched once. With only a DerivedData build running, Shortcuts has listed no Kernova actions, which reads like broken intent metadata.
 
 `/Applications/Kernova.app`, where it exists, is the maintainer's installed copy, and installing a build there replaces it: theirs to allow. `make ghosts` reports an on-disk copy that outranks the installed one.
 
 Afterwards, unregister the copy you installed with `lsregister -u` and delete it outright: a bundle in the Trash stays registered and can win the election until the Trash is emptied.
 
-A log capture that can tell whether a request reached Kernova is a stream started before acting, over the copy's PID, `linkd`, `searchtoold` and `assistantd` ([research note](research/2026-09-04-siri-and-spotlight-routing-macos27-beta.md)). The framework's `com.apple.appintents:Execution` lines are debug-level, so `log show` afterwards never has them.
+A log capture that can tell whether a request reached Kernova is a stream started before acting, over the copy's PID, `linkd`, `searchtoold` and `assistantd` ([research note](research/2026-09-04-siri-and-spotlight-routing-macos27-beta.md)). The framework's `com.apple.appintents:Execution` lines are mostly info-level, so `log show` afterwards has them only with `--info`.
 
 An intent runs without the Shortcuts editor from a signed shortcut file: a `WFWorkflowActions` plist whose action identifier is `app.kernova.<IntentTypeName>` and whose parameters are keyed by property name. A file parameter bound to Shortcut Input is `{"Value":{"Type":"ExtensionInput"},"WFSerializationType":"WFTextTokenAttachment"}`. `shortcuts sign` takes only a file whose name ends in `.shortcut`, and signing checks nothing in its actions.
 
