@@ -32,7 +32,7 @@ agent_address='^noreply@[^@[:space:]]+\.[^@[:space:]]+$'
 parenthetical='^(.*[^[:space:]])[[:space:]]+\([^()]*\)$'
 
 # The version closing the name: dot-separated numbers, its own token, with a
-# model name in front of it — `Claude Fable 5.1`, `GPT-5.4 Codex 0.42`.
+# model name in front of it — `<family> <model> 5.1`, `<model> <tool> 0.42`.
 version='[^[:space:]][[:space:]]+[0-9]+(\.[0-9]+)*$'
 
 findings=""
@@ -71,7 +71,8 @@ if [ -n "$findings" ]; then
     echo "commit-msg: an agent's Co-authored-by trailer must name its model." >&2
     printf '%s' "$findings" >&2
     echo "" >&2
-    echo "            expected: Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>" >&2
+    echo "            expected: Co-authored-by: <model name> <version> <noreply@vendor.example>" >&2
+    echo "                      each part the running model's own, never copied from an example;" >&2
     echo "                      one trailer per model that wrote part of the change." >&2
     echo "            Bypass with git commit --no-verify." >&2
     exit 1

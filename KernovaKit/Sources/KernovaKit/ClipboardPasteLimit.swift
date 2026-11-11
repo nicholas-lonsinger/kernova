@@ -1,7 +1,9 @@
 import Foundation
 
-/// The ceiling on the total of one paste's file representations, and the ladder
-/// of values a user may select for it.
+/// The ceiling on what one clipboard offer's pulls land, its files and every
+/// other representation together, and the ladder of values a user may select
+/// for it. A file set that totals over it is withheld whole, and the offer's
+/// other representations are still served.
 ///
 /// The cap is a **timeout budget**, not a bandwidth or memory guard: a promised
 /// file's bytes pull synchronously inside the consumer's `provideData` callback,
@@ -9,16 +11,12 @@ import Foundation
 /// 120 s (docs/research/2026-07-27-pasteboard-promise-deadlines.md). Both ends
 /// of the wire enforce the same figure, pushed host→guest in `PolicyUpdate`.
 public enum ClipboardPasteLimit {
-    /// Largest total a paste's file reps may sum to when the user has expressed
-    /// no preference: 2 GiB.
+    /// The ceiling when the user has expressed no preference: 2 GiB.
     ///
     /// At the measured 366–415 MiB/s app-stack throughput
     /// (docs/research/2026-07-13-vsock-transport-throughput.md), 2 GiB streams in
     /// ~6 s — over 4× margin under the tighter deadline for the request-time
-    /// archive pass, the extract, and its writes. The cap is
-    /// compared against the total of the offer's reps that serve
-    /// `public.file-url` — every promisable rep carrying a filename, image files
-    /// included — all-or-nothing per paste.
+    /// archive pass, the extract, and its writes.
     public static let defaultBytes = 2 * 1024 * 1024 * 1024
 
     /// Every ceiling the user may select, ascending: 512 MiB through 16 GiB.

@@ -79,7 +79,9 @@ evidence), or **unverifiable** (say what would verify it). Give the grep
 rather than a count, since a count is only as good as the pattern.
 
 A true declaration is still deleted when a reader with the repo derives it in
-seconds. A false one is not automatically a rewrite: correct it, then run the
+seconds, or when it states what changes without the text changing — a path,
+an inventory, a version, what a machine holds — and the reader finds it at
+use: correcting that one only schedules the next correction. A false one is not automatically a rewrite: correct it, then run the
 corrected version through the same derivability test and the layer test. Most
 corrected declarations belong one layer down, or nowhere.
 
@@ -99,7 +101,9 @@ questions, in order; the first failure sets the verdict.
    a fixed action, and the verdict is `delete`. "Good practice" and "what we
    do" are not wrong actions. A convention every neighboring file already
    follows is derivable by reading neighbors, so it is not a wrong choice
-   either.
+   either. The model is the newest one that will read the file: a rule
+   written for a mistake an older model made restricts one that would not
+   make it, and is deleted — a mistake that recurs is written again.
 2. **Would the wrong action fail silently?** If lint, a compile error, a
    required CI check, a hook, a repo setting, or the first review catches it,
    the rule is a reminder, and reminders are deleted — a loud failure is
@@ -192,9 +196,7 @@ arrangement because it discloses a plan or a stance. Four things differ:
   more capable than the auditor, since the auditor is the model most likely
   to have needed it. Where the subject changes release to release, an agent
   harness above all, keep the shape of the failure, not its mechanism. A
-  `Why:` that narrates how the memory was learned is filler. A memory that
-  guards against a model's own mistake, written under a model older than the
-  current one, is deleted: if the mistake recurs, it is written again.
+  `Why:` that narrates how the memory was learned is filler.
 - **A stated limit is reproduced before the verdict.** A memory resting on
   "X cannot" or "this must wait for the user" is tried when trying it is
   safe; a limit that does not reproduce deletes the memory, and the

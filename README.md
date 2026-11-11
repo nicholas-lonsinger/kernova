@@ -224,7 +224,6 @@ Runs every test target via the test plan — [Swift Testing](https://developer.a
 
 | Read | For |
 |---|---|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The component map — which type owns a behavior, and the seams between them |
 | [CLIPBOARD.md](docs/CLIPBOARD.md) | The clipboard subsystem's principles |
 | [NETWORKING.md](docs/NETWORKING.md) | Networking principles |
 | [docs/README.md](docs/README.md) | The full index |

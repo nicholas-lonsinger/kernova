@@ -619,7 +619,7 @@ package enum VMConfigurationKeyRegistry {
 
     /// Refuses a write that moves the VM onto a network this build cannot
     /// attach (``EntitlementService/canAttach(_:)``), where the user enters it
-    /// rather than at the next start (docs/NETWORKING.md). A VM already on
+    /// rather than at the next start. A VM already on
     /// such a network can still be moved off it, and a write that leaves the
     /// network where it is stays a no-op.
     private static func requireAttachableNetwork(
