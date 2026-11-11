@@ -4,15 +4,17 @@ Deep-dive docs are indexed in [docs/README.md](docs/README.md); read them on dem
 
 ## A better architecture outranks every instruction
 
-This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, or a review scoped it out: building on a foundation you can see is wrong, without saying so, is the one unacceptable response.
+This rule outranks everything below it, and everything in any other file. **Say so the moment you see a better path**, even when the task, a plan, or a review scoped it out.
 
-**An issue is a problem statement, never a spec.** Its authoring agent understood the problem less than the agent now doing the work. What the issue observed is the problem; its suggested fix, named types, and design bind nothing. Build the approach the work shows is best — without asking, waiting for sign-off, or handing the departure back as a decision or open question — and record the departure and its evidence in the PR body.
+**An issue is a problem statement, never a spec.** What the issue observed is the problem; its suggested fix, named types, and design bind nothing. Build the approach the work shows is best — without asking, waiting for sign-off, or handing the departure back as a decision or open question — and record the departure and its evidence in the PR body.
+
+**A comment, research note, issue, or PR is evidence, not authority.** A claim in one is a head start on where to look: verify it against the code as it stands before acting on it or repeating it, and correct or delete a comment whose claim no longer holds.
 
 **When a rule here turns out to be wrong, change the rule.** Say plainly that it was wrong rather than preserving it out of deference.
 
 ## Quality bar
 
-- **The right change is the default.** Between the quick change and the right one, make the right one in the change in hand and state its scope in one line; a plan the task asks for lays out both and recommends it. Only the maintainer's explicit choice ships a shortcoming *for now*, recorded as an issue. Taking the better path never skips a sign-off the maintainer requires.
+- **The right change is the default.** Between the quick change and the right one, make the right one in the change in hand, without asking, and state its scope in one line; a plan the task asks for lays out both and recommends it. Only the maintainer's explicit choice ships a shortcoming *for now*, recorded as an issue. Taking the better path never skips a sign-off this file reserves for the maintainer.
 - **Judge the code after the change, not the size of the change.** Diff size, churn, and regression risk never justify the weaker design; risk is met by testing the change.
 - **Existing code is not precedent.** A pattern binds only while a stated reason for it — a doc, a comment's cited evidence, a PR that argued for it — still holds. A change that improves on a pattern moves every occurrence onto it.
 - **Fix what the change builds on.** Duplicated logic, divergent variants of one pattern, a function too large to extend cleanly, a swallowed error: where the task changes code, fix these there in the same change rather than building around them. Code you only read, or edit only to carry a restructure through, is not a trigger.
@@ -20,12 +22,12 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **Rules hold by construction.** The simple design is the one whose types, ownership, and structure make its invariants impossible to break — not the one with the fewest lines.
   Code whose only job is to stop a state Kernova's own structure allows is a patch, whatever its form: a flag, a special-case branch, a lock between two writers, a clamp on a value that should not regress, a retry, a longer wait. Needing one means the design changes, and shipping the patch instead is a *for now* call.
   Checking what Kernova does not own — input, files, the guest, the platform — is design; steering around a vendor's defect in them is not (*A vendor defect is reported, not worked around*).
-- **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX. A patch is not one of those designs, so being smaller never lets it win.
+- **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX.
 
 ## Principles
 
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
-- **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once. Worked case: `ValidatedEntry.allowedXattrNames`.
+- **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once.
 - **Name a missing prerequisite to whoever can supply it.** When a capability needs something the build, the Mac or the guest lacks — a macOS version, a signing team, an entitlement a provisioning profile grants, a guest agent, a setting — it still shows where the user would look for it, marked unavailable, with what enables it worded for whoever can supply that: the user for the Mac, the guest and settings; the developer for the build.
   What no configuration can supply — a capability the guest OS lacks, a vendor limit — is absent instead. Either way, what can be delivered keeps working unchanged, and nothing is built to serve the configuration that lacks the prerequisite — no fallback, alternate mechanism or scaffolding.
   Nothing is offered as if it works: a control that looks usable and then fails is the defect. A failure that names what is missing is the floor; naming it before use is the aim. Worked case: `AgentStatus.reinstallNeeded`.
@@ -34,7 +36,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
   Kernova.app ships through App Store Connect, whose review allows only public API ([App Store Review Guideline 2.5.1](https://developer.apple.com/app-store/review/guidelines/#software-requirements)), so no private symbol, selector, key or framework goes in the app. The guest agent isn't sandboxed and ships with its own Developer ID signature, but it travels inside the reviewed app and must run on every supported guest macOS, so private API in it is a review risk and a fragility, raised with the maintainer before use.
   Doing what a vendor documents as unsafe stays off until the user turns it on, and then is a confirmation like any other, whose prompt quotes the vendor's claim. Worked case: `VMLiveIdentities.conflict(for:bringingUp:override:)`.
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `VMSettingsNetworkPanelViewController.modeInfoParagraphs(offered:isolationOffered:namedNetworksOffered:natAddressShown:guestOS:)`.
-- **Outcome names or the field's standard term in the UI; vendor terms at the platform boundary.** A UI name says what the thing does for the user, or is the term networking or virtualization already uses for it (NAT, DHCP) — never a vendor's API spelling. Where Apple's own UI names the thing, keep Apple's term at that boundary and the domain term everywhere else. Worked case: `NetworkModeChoice.label(attachable:interfaces:networks:)`.
+- **Outcome names or the field's standard term in the UI; vendor terms at the platform boundary.** A UI name says what the thing does for the user, or is the term networking or virtualization already uses for it (NAT, DHCP) — never a vendor's API spelling. Where Apple's own UI names the thing, keep Apple's term at that boundary and the domain term everywhere else.
 - **The guest answers its own shutdown.** Stop and Restart are requests the guest OS answers its own way: an app that won't quit, a shutdown inhibitor, a dialog of its own. Kernova adds no detection, timeout or notice for a stop the guest holds up; whether to wait, Stop Anyway or Force Stop is the user's call.
 - **A vendor defect is reported, not worked around.** When a failure's root cause is a defect in a framework or OS — the host's or a guest's — it goes to the vendor (a Feedback, for Apple) and into an issue labeled `Upstream` that says what triggers it, what it costs the user, and how to recheck it on a new release.
   Kernova adds no guard, avoidance or workaround for it; one takes the maintainer's explicit sign-off, asked for each defect. An `Upstream` issue is a record, not a work item: it closes when every OS version Kernova supports has the vendor's fix.
@@ -44,13 +46,9 @@ This rule outranks everything below it, and everything in any other file. **Say 
 
 Build and test through the `Makefile` (`make help`); its `xcodebuild` flags are not the obvious ones.
 
-A session runs the app and its `Contents/Helpers/kernova` from its own worktree's build, both of them, never a copy it finds on disk: DerivedData holds every other session's builds, and one of those may be the copy another session is testing.
+A session runs the app and its `Contents/Helpers/kernova` from its own worktree's build, never a copy it finds on disk: DerivedData holds every other session's builds, and one of those may be the copy another session is testing.
 
-Test waits are event-driven; the seams and their contracts are `KernovaKit/Sources/KernovaTestSupport/AsyncWaits.swift` and `KernovaCore/Sources/KernovaCoreTestSupport/TestHelpers.swift` (`waitForChange`).
-
-A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. A change that turns the test green while that structure still permits the failure — a loosened assertion, a longer wait, a retry — is a patch, and an intermittent failure is owed the same root cause as a steady one.
-
-No guest agent has a version to bump: the host identifies each agent by the SHA-256 of the update payload it bundles, and a guest whose agent's differs is offered the update.
+A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. An intermittent failure is owed the same root cause as a steady one, and a cause is named only once it is traced: until then a failure is reported as what was observed, cause unknown.
 
 ### What earns a test
 
@@ -61,8 +59,7 @@ A test an agent writes for its own code carries that agent's assumptions, so a t
 - **A fix adds one test per defect, seen failing against the unfixed code.** Any other new test is seen failing by breaking what it guards.
 - **A test drives the path production takes and asserts the outcome.** Fakes replace what Kernova doesn't own and gates order steps Kernova runs. A test that needs a `ForTesting` read to see a result is a sign the code should return that result as a value.
 - **The verdict rests on nothing outside the test's control:** not elapsed time, the host's displays or CPU count, or process-wide state. Those fail with no defect present.
-- **The bar holds for tests already written.** A test stays when removing it would let a plausible defect through, or when it pins a contract outside the code (wire bytes, on-disk formats, scripting names, OS behavior), guards data loss, consent or the sandbox, or has caught a real defect. One that does none of these is deleted; git keeps it.
-- **An edit that relaxes or deletes an existing assertion says why in the PR body,** so a reviewer can tell a changed spec from a test bent to reach green.
+- **The bar holds for tests already written.** A test stays when removing it would let a plausible defect through, or when it pins a contract outside the code (wire bytes, on-disk formats, scripting names, OS behavior), guards data loss, consent or the sandbox, or has caught a real defect. One that does none of these is deleted.
 
 ## Dependencies
 
@@ -72,7 +69,7 @@ Swift packages from the `apple`, `swiftlang` and `swift-server` GitHub organizat
 
 The app is sandboxed in every build configuration, and each of these works until it doesn't:
 
-- A panel-picked URL is stored through `SecurityScopedBookmark.capture` (its `///` has the contract); a bare path works until relaunch.
+- A panel-picked URL is stored through `SecurityScopedBookmark.capture`; a bare path works until relaunch.
 - `homeDirectoryForCurrentUser` is the container, so a path the user sees comes from the system (`.downloadsDirectory`) or `UserHome`.
 - A tool spawned through `Process` inherits the sandbox; use the in-process framework API.
 
@@ -80,11 +77,9 @@ The app is sandboxed in every build configuration, and each of these works until
 
 ### Logging
 
-`KernovaLogger.log(_:_:)` is the one logging spelling: it emits the local log record and, in the guest agent, forwards the same message to the host — a record emitted any other way never leaves the guest.
-
 Capture with `subsystem BEGINSWITH "app.kernova"` — an exact `==` match drops the agent's own records while the capture still looks complete.
 
-Apple's level table ([Generating Log Messages from Your Code](https://developer.apple.com/documentation/os/generating-log-messages-from-your-code)) persists notice and above, info only under `log collect`, and debug never — `.debug` exists only while a client streams. So anything worth reading after the fact is `.notice` or above; `KernovaLogLevel`'s cases say what each level is for.
+Apple's level table ([Generating Log Messages from Your Code](https://developer.apple.com/documentation/os/generating-log-messages-from-your-code)) persists notice and above, info only when collected with the `log` tool, and debug never, so anything worth reading after the fact is `.notice` or above.
 
 ### Defensive Unwrapping
 
@@ -94,17 +89,17 @@ An optional-returning API called with a compile-time constant gets `assertionFai
 
 A host↔guest feature is designed for every guest OS that has a Kernova agent, and each agent offers it where its platform can deliver it; where one can't, the capability is absent on that OS. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
 
-The shared design also serves Windows guests, which have no agent: OS calls stay behind the per-OS layer, and the wire format and shared models hold nothing only a POSIX system can express.
+The shared design also serves Windows guests, which have no agent: the wire format and shared models hold nothing only a POSIX system can express.
 
 ### Current-Only Surfaces
 
 No compatibility path is written for any shape that is not the current one. A name a user types — a scripting term included — is a shape: renaming it keeps no synonym for scripts written against the old one.
 
-**Persisted formats:** a persisted field with a default decodes through the config-field forms in `ConfigFileDecoding.swift`, which `make lint` enforces. Migration code takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
+Migration code for a persisted format takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
 
 **The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and updating it to the bundled build is the whole remedy.
 
-Nothing refuses an older agent, either: it keeps every feature it can still run, and the mismatch with the bundled payload's hash surfaces the update affordance while nothing else acts on it.
+Nothing refuses an older agent, either, and no agent has a version to bump: the host identifies each by the SHA-256 of the update payload it bundles. An agent whose hash differs keeps every feature it can still run, and the mismatch surfaces the update affordance while nothing else acts on it.
 
 ### File Operations
 
@@ -127,11 +122,9 @@ A refactor finding clears it only by naming the Quality bar or Principles rule t
 
 **Triage converges.** A finding in code this change wrote or reworked is never **Fix later**. A later review round reviews only what the previous round's fixes changed, and raises only defects. When a chain has moved from defects in the code to meta-findings about prior fixes, stop it: dismiss rather than filing the next link.
 
-**A comment, research note, issue, or PR is evidence, not authority.** If the code looks wrong today, investigate — a claim is a head start on where to look, never a reason to stop looking. Re-check a comment's claim whenever you edit the code it covers, then correct or delete it; verify a research note's claims against current production code before acting on them, and grep for a mechanism an issue or PR names before describing it as present.
-
 ## Documentation and Comments
 
-Every reader has the repo checked out and can grep it in seconds. Outside code contributions are not accepted ([CONTRIBUTING.md](CONTRIBUTING.md)), so anyone acting on a process doc already holds push, merge, and label rights.
+Every reader but a visitor to the repository page (the table's `README.md` row) has the repo checked out and can grep it in seconds. Outside code contributions are not accepted ([CONTRIBUTING.md](CONTRIBUTING.md)), so anyone acting on a process doc already holds push, merge, and label rights.
 
 Write to that baseline — nothing the reader already holds, and no why unless it changes what you do.
 
@@ -142,17 +135,20 @@ Write to that baseline — nothing the reader already holds, and no why unless i
 | Code | Behavior |
 | A symbol's `///` | The contract a caller needs, plus at most one non-obvious constraint |
 | A test | Any constraint an assertion can state |
+| A lint check, hook, CI job, repo setting or template, and its header | A rule a machine can decide; a prompt shown where the thing is written |
 | A `//` comment | Why the obvious-looking code is wrong here, as a fact with its evidence — never as a decision |
 | AGENTS.md | Rules that must fire without a lookup |
 | An agent's own entry point beside its AGENTS.md import (`CLAUDE.md`) | What holds only under that agent's harness while working here |
 | A principles doc | Rules constraining *future* decisions — never a description of what was built |
 | ARCHITECTURE.md | What exists and how pieces connect — never what a component does internally |
-| A runbook | The procedure you follow while doing it |
+| A runbook or a skill | The procedure you follow while doing it |
+| `docs/README.md` | When to read each doc |
 | `docs/research/YYYY-MM-DD-*.md` | A finding plus its method. Immutable — superseded by a new note, never edited |
 | A GitHub issue | Known gaps, planned work, triage |
 | The PR body | The argument, the route taken, rejected alternatives |
 | The squash commit body | The merged change |
 | CHANGELOG.md | What each release changes for the people who use Kernova, and the manual step an update needs |
+| `README.md`, `CONTRIBUTING.md`, `SECURITY.md` | What someone with no checkout needs to use Kernova or report to it |
 | An agent's memory | What no row above can hold — the maintainer's own machine, accounts, and private arrangements; a fact true in every repository goes to the agent's user scope |
 | **Nowhere** | Everything else. The common destination, not a failure |
 
@@ -167,7 +163,7 @@ A section that mirrors what another layer already holds is deleted whole, never 
 4. Is it stated in another layer? Yes → keep the deepest one only.
 5. Is it true-as-of-a-date rather than always-true? Yes → dated research note, or nowhere.
 
-**A rule earns its place by preventing a wrong action** a capable reader with the repo would take and not notice. One a mechanism can enforce lives in the mechanism. It states the fact that makes the reader choose right, not the prohibition, and the principle, not the instance that prompted it.
+**A rule earns its place by preventing a wrong action** a capable reader with the repo would take and not notice. It states the fact that makes the reader choose right, not the prohibition, and the principle, not the instance that prompted it.
 
 **Unsure it has value? Cut it** — relocate only material whose value in the other layer is already established.
 
@@ -185,32 +181,18 @@ Before committing, with the diff in view, and before writing to an agent's memor
 
 ## Git Workflow
 
-A PR's head branch is `<type>/<short-description>` — `<type>` one of `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `style`; two to four kebab-case words — from the first push: renaming a branch under an open PR closes the PR ([GitHub Docs: Renaming a branch](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-branches-in-your-repository/renaming-a-branch)).
+An AI agent's commit message ends with one `Co-authored-by` trailer per model that wrote part of the change, in place of any its harness adds: that model's name and version, nothing else, at its vendor's no-reply address — `Co-authored-by: <model name> <version> <noreply@vendor.example>`, each part the running model's own. A subagent's commit names the subagent's model.
 
-An AI agent ends its commit message with a `Co-authored-by` trailer naming the model that wrote the change — name and version, nothing else — at the vendor's no-reply address: `Co-authored-by: Claude Fable 5.1 <noreply@anthropic.com>`, added explicitly, once; a subagent's commit names the subagent's model.
+The "Require Tests" ruleset holds a merge until the PR head's `Test Attestation` status passes. `make attest` posts it for the checked-out commit, reusing a passing `make test` of the same content or running one; where `make test` cannot run, labeling the PR `ci` has CI test every push and post it instead.
 
-Merge with `gh pr merge <N> --squash --body …`, adding `--auto` only while the PR head's `Test Attestation` status is pending: the "Require Tests" ruleset holds the merge until it passes, and GitHub refuses `--auto` on a PR already mergeable. `make attest` posts that status for the checked-out commit, reusing a passing `make test` of the same content or running one; where `make test` cannot run, labeling the PR `ci` has CI test every push and post it instead.
-The repo's squash default leaves the body empty, so `--body` carries one short paragraph describing the merged state, not the route to it, and then one `Co-authored-by` trailer per model that contributed to the branch.
+The repo's squash default leaves the commit body empty, so the merge supplies one: a short paragraph describing the merged state, not the route to it, then one `Co-authored-by` trailer per model that contributed to the branch.
 
-A fix's PR body states the invariant it restores and what now holds it: the structure that makes the bad state impossible, or — a *for now* call only the maintainer makes — the guard that stops it.
-
-`Closes #N` in the PR body auto-closes the issue; a bare `#N` doesn't, and the keyword repeats per issue (`Closes #12, closes #34`) ([GitHub Docs: Linking a pull request to an issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue)).
+A PR body answers the prompts in `.github/PULL_REQUEST_TEMPLATE.md`, which a body passed on the command line or through the API never shows.
 
 ## Change Protocol
 
-Before calling a task done, work these follow-ups; most changes owe neither of the first two.
+Before calling a task done:
 
-1. **Docs** — the file whose description the change invalidated, routed by the layer table above; file layout is not a component boundary. Surgical edits only.
-2. **Agent instructions** — AGENTS.md and the entry points importing it — only if a rule stated there changed.
-3. **Changelog** — a change someone using the app, the `kernova` CLI, scripting or a guest agent can notice adds one bullet under its area in the top section of [CHANGELOG.md](CHANGELOG.md), shaped like its neighbours and ending with the PR's link.
+1. **Docs** — the file whose description the change invalidated, AGENTS.md and the entry points importing it included, routed by the layer table above. Most changes owe none; an edit that is owed and unpaid is named at the end of the response, with its issue number or what closing it takes.
+2. **Changelog** — a change someone using the app, the `kernova` CLI, scripting or a guest agent can notice adds one bullet under its area in the top section of [CHANGELOG.md](CHANGELOG.md), shaped like its neighbours and ending with the PR's link.
    A change to something the previous release didn't have edits that thing's bullet instead of adding one.
-   A change that leaves the previous release's users something to do, or they lose what they had — re-pick a file, reinstall the agent, turn a setting back on, edit a script — goes under that section's Action required and names the step; one that only behaves differently stays in its area.
-
-### Reporting
-
-When the docs or agent-instructions follow-up changed a file, or is owed and unpaid, end the response with a `### Maintenance Notes` list, one line per file:
-
-- 📝 — changed here; name the file and what changed, in a phrase.
-- ⚠️ — owed and unpaid; name the gap and its issue number, or what closing it takes.
-
-A task that changed no doc or instruction file and owes none ends without the list.

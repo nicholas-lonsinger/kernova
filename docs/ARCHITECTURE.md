@@ -2,182 +2,99 @@
 
 The map for a structural change — a new service, protocol or seam, a changed
 data flow, a changed actor isolation: which type owns a behavior, and which
-protocol joins it to its neighbors. Each type's contract is on its own `///`;
-nothing here restates one.
+protocol joins it to its neighbors.
+
+## Packages and targets
+
+`KernovaCore/Package.swift` and `KernovaKit/Package.swift` explain each of
+their targets, and each Xcode target explains itself in
+`Config/Targets/<Target>.xcconfig`. The `KernovaCore` package is three layers:
+the `KernovaCore` target, the core, which reaches neither AppKit nor
+Virtualization (`Tools/check-core-imports.sh`); `KernovaVirtualization`, the
+engine, over it; and `KernovaUI`, the AppKit layer, over both.
 
 ## Composition
 
 `KernovaApp.main()` (`Kernova/App/`) is the composition root. It reads
-`Bundle.main` once, into `AppBundleProducts`, builds the production
-services and the `VMLibraryViewModel` over them, and hands that to
-`AppDelegate.init`, which builds `AppWindowRegistry` (holding
-`VMDisplayPlacementController`), `AppAlertPresenter` (attached to the view
-model before the library's first read), `AppResidencyController`,
-`MainMenuController` and `AppTerminationController`. The shared application
-it starts is a `KernovaApplication`, whose `sendEvent(_:)` hands every event to
-`ReservedShortcutCatcher` before AppKit dispatches it.
-
-What those owners decide lives in AppKit-free types they call:
-`AppResidencyPolicy`, `VMDisplayPlacement`, `AlertQueue` and
-`AppAlertConfigurations`, `AppMenuQuitItem`, and `WindowAutosave` (inside
-`WindowStage`). `AppTerminationController` is AppKit-free itself; its
-`+AppKit` extension supplies the quit Apple Event, the sender lookup and the
-termination it ends.
-
-The root also builds the one `AppPresence` those owners share. Every window
-controller builds its window through a `WindowStage`; the test stage parks each
-window beyond every display, and the sheets on it go up beside it.
-
-`VMLibraryViewModel.init` (`KernovaCore/Sources/KernovaCore/ViewModels/`) builds everything beneath the
-UI: `VMLifecycleCoordinator` over the services, `VMLibrary`,
-`VMSleepWakeCoordinator`, `USBAccessoryCoordinator` and `VMCommandCore`. Each
-`VMInstance` owns a `VMActivity`, the one writer of its lifecycle phase and live
-session.
-
-The seams between the App-layer owners are protocols: `AppLaunchHosting`,
-`WindowResidencyHosting`, `SoftQuitHosting`, `VMDisplayPlacementHosting`.
+`Bundle.main` once, into `AppBundleProducts`, builds the production services
+and the `VMLibraryViewModel` over them, and hands that to `AppDelegate.init`,
+which builds the App-layer owners (`KernovaCore/Sources/KernovaUI/App/`). What
+those owners decide lives in the AppKit-free types of
+`KernovaCore/Sources/KernovaCore/App/`. Every window controller builds its
+window through a `WindowStage`.
 
 ## Front doors
 
-Every verb is a `VMCommandCore` method (`KernovaCore/Sources/KernovaCore/Commands/`); `VMAdmission`
-decides what a VM admits, which `VMCapabilityCatalog` reads for every surface
-and `VMActivity` commits, and `VMConfigurationKeyRegistry` names every
-configuration key. Five surfaces call the core and present its refusals in
-their own idiom:
+Every verb is a `VMCommandCore` method; `VMAdmission` decides what a VM admits,
+which `VMCapabilityCatalog` reads for every surface and `VMActivity` commits,
+and `VMConfigurationKeyRegistry` names every configuration key. These surfaces
+call the core and present its refusals in their own idiom; the out-of-process
+ones open in `AppResidencyController.registerAutomationFrontDoors`:
 
-- `VMLibraryViewModel` — AppKit, through `VMLibraryPresenting` (alerts, which
-  `AppAlertPresenter` shows on the window each is about) and
-  `LibraryWindowPresenting` (the library window's own surfaces).
-- `VMCommandSocketListener` → `VMCommandEnvelopeRouter` — the `kernova` tool,
-  over the app-group `AF_UNIX` socket.
-- `VMIntentGateway` (`KernovaCore/Sources/KernovaCore/Intents/`) — Shortcuts and Spotlight.
-- `VMURLGateway` (`KernovaCore/Sources/KernovaCore/URLs/`) — `kernova:` links, from
-  `application(_:open:)`.
-- `VMScriptingGateway` (`KernovaCore/Sources/KernovaUI/Scripting/`) — Apple events, through the
-  delegate's `virtualMachines` element.
+- `VMLibraryViewModel` — the app's own UI, through `VMLibraryPresenting` and
+  `LibraryWindowPresenting`.
+- `VMCommandSocketListener` → `VMCommandEnvelopeRouter` — the `kernova` tool.
+- `VMIntentGateway` — Shortcuts and Spotlight.
+- `VMURLGateway` — `kernova:` links.
+- `VMScriptingGateway` — Apple events.
 
 ## Models
 
-`VMConfiguration` (`config.json`), `VMHostState` (`host-state.json`),
-`VMSnapshotManifest` (`Snapshots/manifest.json`) and `USBAccessoryPairingSet`
-(`usb-accessories.json`) are what persists in a bundle; the library's named
-networks (`Networks.json`) and its smart groups, folders and tag definitions (`Organization.json`) persist apart
-from every bundle, each file written only by its directory — `VMNetworkDirectory`
-and `VMOrganizationDirectory` (`KernovaCore/Sources/KernovaCore/ViewModels/`), which `VMLibrary` owns,
-both through `CoordinatedJSONFile`. `VMBundle` holds their committed
-values and is the one writer of a library bundle's readable files, through
-`VMBundleFiles` over the `VMBundleFileAccessing` seam
-(`CoordinatedBundleFileAccess` in production); every write holds a
-`VMEditPermit` that `VMActivity` mints on admission, and a configuration write
-passes the policy `VMLibrary` builds every bundle with through `VMBundle.Factory`.
-A bundle a create, clone or import is still writing is a `VMStagedBundle`,
-minted only for a fresh path under the staging directory. `VMBundle` is also the one writer
-of the bundle's machine files, through the `VMBundleMachineFileWorking` seam
-(`VMBundleMachineFiles` in production) that only `VMBundle.Factory` holds; it
-writes the firmware and platform files through `VMPlatformFileWriting`, which
-the engine's `VirtualizationPlatformFiles` answers.
-`VMInstance` is the `@MainActor`
-runtime owner of one VM: it reads its state off its `VMBundle`, and its
-`VMActivity` holds the lifecycle phase and at most one `VMSessionContext`,
-whose `VMSession` actor alone touches the `VZVirtualMachine`. `VMLibrary`
-lists a `VMArrival` beside its VMs for each create, clone or import still
-writing its bundle, and turns every published bundle into a `VMInstance`
-through `adopt`; a bundle no read can take is listed as an `UnreadableVM`
-instead. Every config file decodes through one decoder whose collecting mode
-(`ConfigFileDiagnosis`) yields an `UnreadableConfigFile`; the config check
-(`VMLibrary+ConfigCheck.swift`) reads them all and rewrites a file no read can
-take through `VMBundleFiles.repair` or `CoordinatedJSONFile.repair`.
-`VMBundleLayout` derives every in-bundle path.
+`VMInstance` is the `@MainActor` runtime owner of one VM: it reads its state
+off its `VMBundle`, and its `VMActivity` holds at most one `VMSessionContext`,
+whose `VMSession` actor alone touches the `VZVirtualMachine`.
 
-Guest-version floors: `GuestAgentDiskDelivery`, `GuestInputDevices`, and
-`MacOSGuestProvisioning` each carry one `MacOSVersion` floor and read
-`VMConfiguration.effectiveGuestMacOSVersion` of
-`VMInstance.effectiveConfiguration`, the one source of a guest's version.
+`VMBundle` holds a library bundle's committed state. It writes the state files
+through `VMBundleFiles` over the `VMBundleFileAccessing` seam, the machine
+files through `VMBundleMachineFileWorking`, and the firmware and platform files
+through `VMPlatformFileWriting`, which the engine answers. `VMBundleLayout`
+derives every in-bundle path. The library's own files persist apart from every
+bundle, in `VMNetworkDirectory` and `VMOrganizationDirectory`, through
+`CoordinatedJSONFile`.
+
+A bundle a create, clone or import is still writing is a `VMStagedBundle`,
+which `VMLibrary` lists as a `VMArrival`; a bundle no read can take is listed
+as an `UnreadableVM`. The config check (`VMLibrary+ConfigCheck.swift`) reads
+every persisted config file and repairs one no read can take.
 
 ## Services
 
-- VZ-facing, the engine (`KernovaVirtualization`): `ConfigurationBuilder` (the one
-  `VZVirtualMachineConfiguration` translation), `VMSession`,
-  `VirtualizationService`, `MacOSInstallService`, `USBAccessoryService` (macOS
-  27; held by `VMLifecycleCoordinator` as `USBAccessoryPassthrough`, which
-  carries the cause of its absence) and `VirtualizationHost`. Code outside the
-  engine and the AppKit layer reaches it only through `VMSessionOperating`,
-  `VirtualizationHostProviding` and the `Services/Protocols/` seams, whose
-  engine implementations `KernovaApp` builds.
-- Network: `VmnetNetworkService` (process-wide) and the `VmnetSessionNetworks`
-  view each session attaches through and `NetworkAttachmentCoordinator` (one
-  of each per session, held by `VMSessionContext`), and `GuestAddressObserver`
-  (over `HostARPTableReader`) and `VMMACAddressRegistry`, sequenced by
-  `VMLibrary`.
-- Agent hub, every VM with a socket device: one `AgentHub` (KernovaKit's
-  `KernovaAgentHost`) per `VMInstance`; each
-  session attaches its `VZGuestStreamTransport`, and `VMInstance.agentPresentation`
-  is what every agent-status surface reads. Its item events, each item
-  feature's console-peer changes and the content its pulls serve route through
-  one `ItemFeatureRouter` to that feature's owner.
-- Guest-agent installer disks: `BundledGuestAgents` (one of `AppBundleProducts`)
-  hands `VMCommandCore.mountGuestAgentDisk` the macOS agent's bundled DMG, or the
-  Linux agent's ISO, which `GuestAgentDiskCache` writes into Application Support
-  with KernovaKit's `KernovaISO9660`; the guest is attached the VM's own copy,
-  which `GuestAgentDiskCopies` keeps in the bundle.
+- Engine: `ConfigurationBuilder` is the one `VZVirtualMachineConfiguration`
+  translation. The core reaches the engine only through `VMSessionOperating`
+  and the `Services/Protocols/` seams, whose engine implementations
+  `KernovaApp` supplies.
+- Network: `VmnetNetworkService` is process-wide; each session's
+  `VMSessionContext` holds its `VmnetSessionNetworks` view of it and its
+  `NetworkAttachmentCoordinator`.
+- Agent hub: one `AgentHub` (KernovaKit's `KernovaAgentHost`) per `VMInstance`,
+  to which each session with a socket device attaches its
+  `VZGuestStreamTransport`. `VMInstance.agentPresentation` is what every
+  agent-status surface reads, and one `ItemFeatureRouter` joins the hub to each
+  item feature's owner: `HubClipboardService`, `HubDropService` and
+  `HubDragOut`.
 - Clipboard: `ClipboardServicing` unifies `HubClipboardService` (the guest
-  agent's CLIPBOARD owner, one per `VMInstance`) and `SpiceClipboardService`
-  (Linux) behind `VMInstance.clipboardService`, which `ClipboardRoute` picks;
-  `HostClipboardPublisher` and `ClipboardPassthroughCoordinator` write the host
-  pasteboard, and `VMInstance`'s clipboard commands copy a snapshot each way
-  through the service. `HubClipboardService` runs over KernovaKit's
-  `ClipboardItemExchange` (`KernovaClipboardItems`). Drops and drags out run
-  over the hub too, through `HubDropService` and `HubDragOut`.
-- Sockets: `UnixSocketListener` under `SerialSocketRelay` and
-  `VMCommandSocketListener`.
+  agent) and `SpiceClipboardService` (the guest's SPICE agent) behind
+  `VMInstance.clipboardService`, which `ClipboardRoute` picks.
 
 ## Views
 
-`MainWindowController` (`KernovaCore/Sources/KernovaUI/App/`) hosts `SidebarViewController` and
-`DetailContainerViewController`; the detail side routes through
-`VMDetailRouterViewController` on `DetailRoute`, and a live display is
+`MainWindowController` hosts `SidebarViewController` and
+`DetailContainerViewController`, whose detail side routes through
+`VMDetailRouterViewController` on `DetailRoute`. A live display is
 `VMDisplayBackingView`, fed only through `VMDisplayHandle`; it moves files both
 ways through the `VMDisplayTransferHosting` its host resolves (`VMInstance`).
-`MainWindowController` and `VMDisplayWindowController` each build their
-toolbar through a `VMToolbarManager`; the two clipboard commands' items are
-its view-backed ones, each a `ClipboardToolbarButton`.
 
 ## Guest agents
 
-The host and every agent share one protocol stack in KernovaKit:
-`KernovaWire` is the wire format, `KernovaAgentCore` the state machines over
-it, and `KernovaAgentRuntime` drives them over a `ByteStream` —
-`HostConnectionRuntime` on the host, `PeerAgentRuntime` in an agent. The one
-stream is `KernovaPlatformPOSIX`'s `POSIXByteStream`, over the vsock socket an
-agent dials and the host's `AgentListenerHost` accepts. Item pulls land and
-serve through `KernovaItemTransfer` (over `KernovaTreeTransfer`,
-`KernovaContainer`, `KernovaContainerPipeline` and `KernovaFileTree`), install
-and in-band update through `KernovaAgentInstall`, and
-`KernovaAgentSimulation` runs core endpoints against each other in tests.
-
-Calls into an OS live in its platform layer: `KernovaPlatformDarwin` and
-`KernovaPlatformLinux` (over `KernovaDBus`).
+The host and every agent share one protocol stack in KernovaKit.
+`HostConnectionRuntime` drives it on the host and `PeerAgentRuntime` in an
+agent, over the one `ByteStream`: `KernovaPlatformPOSIX`'s `POSIXByteStream`,
+on the vsock socket an agent dials and the engine's `AgentListenerHost`
+accepts. Calls into an OS live in its platform layer: `KernovaPlatformDarwin`
+and `KernovaPlatformLinux`.
 
 - The app links the `KernovaAgentHost` product through `KernovaCore`.
-- `KernovaMacOSAgent` links the `KernovaPlatformDarwin` product, whose
-  `MacAgentPeer` runs both the session peer and the system peer
-  (`MacAgentTools`); the session peer routes DROP to `DropReceiver` and the
-  target's `GuestClipboard` (over `ClipboardItemExchange`) and `GuestDragOut`
-  through its own `ItemFeatureRouter`.
+- `KernovaMacOSAgent` links `KernovaPlatformDarwin`, whose `MacAgentPeer` runs
+  both the session peer and the system peer.
 - `kernova-agent` is the `KernovaLinuxAgent` executable, whose `AgentShell`
   runs a `PeerAgentRuntime` over `KernovaPlatformLinux`.
-
-## Shared package and helper targets
-
-`KernovaKit/Package.swift` names every product and why each is shaped as it is.
-`KernovaCore` (`KernovaCore/`) holds app code that needs neither AppKit nor
-Virtualization; the app links it and reaches its `package` declarations. Its
-`KernovaVirtualization` target is
-the engine, over the core, and its `KernovaUI` target is the AppKit layer; the
-app links both.
-`KernovaRelaunchHelper`, `KernovaCLI` (`kernova`), `KernovaMacOSAgent`
-(`Kernova Guest Agent.app`), `KernovaMacOSAgentTests`, `KernovaTestHost`,
-`KernovaUITests` and `KernovaAppBundleTests` each explain
-themselves in `Config/Targets/<Target>.xcconfig` and their entitlements file.
-`KernovaLinuxGuestAgent` (`kernova-agent`, embedded by the app's "Embed Linux
-Guest Agent" Copy Files phase) explains itself in its xcconfig.

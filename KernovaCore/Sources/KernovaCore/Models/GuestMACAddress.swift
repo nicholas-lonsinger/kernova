@@ -21,8 +21,7 @@ package enum GuestMACAddress {
     /// other spelling, so case is the only thing left to normalize. A parse
     /// alone also accepts the all-zero address and multicast/broadcast
     /// addresses, none of which a station can send from: a guest configured
-    /// with one gets no link, and the host can never observe it on the network
-    /// (docs/NETWORKING.md, refuse at entry what cannot take effect).
+    /// with one gets no link, and the host can never observe it on the network.
     package static func normalized(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let octets = octets(spelledBy: trimmed), octets[0] & 0b1 == 0,

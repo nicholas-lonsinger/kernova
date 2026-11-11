@@ -2,43 +2,35 @@
 
 Read this before changing how a guest attaches to a network or is reached from one.
 
-## Principles
+## Exposure is the user's choice
 
-### 1. Exposure is the user's choice; recovery restores it, never widens or substitutes
+A guest gets exactly the exposure the user chose for it, per VM. Given a choice that
+cannot be realized — an interface that is gone, a network that cannot be made — and a
+way to keep the guest online on something else, the guest runs detached until the
+choice returns: no mode change, decode fallback or recovery path attaches a mode or a
+network the user did not choose. Worked case: `NetworkAttachmentCoordinator`.
 
-**A guest gets exactly the exposure the user chose for it, per VM.** Nothing widens it
-without that choice — not a mode change, a decode fallback, or a recovery path. When the exact choice is unavailable, recovery narrows within the chosen
-mode (a persisted bridged interface that is gone falls back to Automatic) or runs
-detached until it returns; it never attaches a mode the user did not choose.
+## An address is stated at the strength of its source
 
-### 2. Refuse at entry what cannot take effect
+Show a guest address only as what the app saw: the address the host last saw the
+guest use, while that sighting is current. Where the app sees none, say who assigns
+it or say nothing. Given a source that would fill the gap — a lease read from
+elsewhere, an entry past its expiry — leave the gap. Worked case: `GuestIPAddress`.
 
-**A value the guest can never use is refused, or disclosed, where the user enters it** —
-a MAC address no frame can source, a share path that is not a folder — never accepted
-and left to fail at the next start.
+## A MAC address belongs to one virtual machine
 
-### 3. An address is stated at the strength of its source
+Given a bundle that arrives with an address another VM holds, admit it and disclose
+it rather than rewrite or refuse it: the guest may pin the address, and a LAN's DHCP
+server may hold a reservation for it. Two holders never run on one network at once,
+and no confirmation waives that. An address a VM's snapshot was taken with stays that
+VM's until the snapshot is deleted, because a revert puts the VM back on it
+([VZ restore requires the saved MAC address](research/2026-09-23-vz-restore-requires-the-saved-mac-address.md)).
+Worked case: `VMMACAddressRegistry`.
 
-**Show a guest address only as what the app saw — the address the host last saw the
-guest use, while that sighting is current.** Where the app sees none, say who assigns
-it or say nothing; never present a guess — a lease read from elsewhere, an entry past
-its expiry — as the address.
+## Guest-to-guest reach is network membership
 
-### 4. A MAC address belongs to one virtual machine
-
-**The app gives a second VM an address only in an Exact Copy, which keeps its source's machine
-identity too, and never rewrites or refuses one a bundle arrives with** — the guest may pin it,
-and a LAN's DHCP server may hold a reservation for it — so import, load and reconcile admit the
-duplicate, an edit onto an address another VM holds is refused, and two holders never run on one
-network at once: the second to start is refused, and the refusal offers a change to that VM's
-network — never running both on one network. The address is checked apart from the machine
-identity: whatever theirs, each holder's Network section names the others while the address stays
-editable, and holders on separate networks run at once.
-An address a VM's snapshot was taken with stays that VM's until the snapshot is deleted, because a revert puts the
-VM back on it ([VZ restore requires the saved MAC address](research/2026-09-23-vz-restore-requires-the-saved-mac-address.md)).
-
-### 5. Guest-to-guest reach is network membership
-
-**A guest reaches another guest exactly when the user placed both on the same
-app-managed network.** Isolation is expressed by membership — separate networks are
-mutually isolated; a stricter grouping is a new network, not a mode variant.
+On NAT and Host Only, a guest reaches another guest exactly when the user placed both
+on the same app-managed network: separate networks do not reach each other
+([separate vmnet networks isolate their guests](research/2026-09-30-separate-vmnet-networks-isolate-their-guests.md)).
+Given a stricter or different grouping to express, add a network, not a mode variant
+or a per-interface isolation flag. Worked case: `VMNetworkMembership`.
