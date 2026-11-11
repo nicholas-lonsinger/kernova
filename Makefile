@@ -73,6 +73,7 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/check-config-decoding.sh \
                  Tools/tests/check-test-waits.sh \
                  Tools/tests/check-logging.sh \
+                 Tools/tests/check-package-origins.sh \
                  Tools/tests/check-exit-tests.sh \
                  Tools/tests/check-self-activation.sh \
                  Tools/tests/check-portable-imports.sh \
@@ -272,7 +273,7 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, logging only through KernovaLogger, the app's Launch Services self-activation and AppPresence routing, the local package references, KernovaCore's import allowlist, the portable targets' Foundation imports, and the checked-in protobuf Swift against its schemas
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, logging only through KernovaLogger, the app's Launch Services self-activation and AppPresence routing, the local package references, remote packages only from allowed GitHub organizations, KernovaCore's import allowlist, the portable targets' Foundation imports, and the checked-in protobuf Swift against its schemas
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \
@@ -299,6 +300,7 @@ lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture 
 	@bash Tools/check-build-settings-layering.sh
 	@bash Tools/check-build-phases.sh
 	@bash Tools/check-package-reference.sh
+	@bash Tools/check-package-origins.sh
 	@bash Tools/check-core-imports.sh
 	@bash Tools/check-portable-imports.sh $(PORTABLE_TARGETS)
 	@bash Tools/check-generated-protos.sh

@@ -69,7 +69,7 @@ A test an agent writes for its own code carries that agent's assumptions, so a t
 
 ## Dependencies
 
-Swift packages from the `apple`, `swiftlang` and `swift-server` GitHub organizations only; a package from anywhere else takes explicit sign-off.
+A Swift package from outside the GitHub organizations `Tools/check-package-origins.sh` allows takes the maintainer's explicit sign-off, and granting it means adding the organization to that check's `allowed_orgs`.
 
 ## App Sandbox rules
 
