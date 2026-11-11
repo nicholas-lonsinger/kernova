@@ -196,6 +196,7 @@ In progress since 2026-09-16: everything since 0.10.0 (TestFlight build 835). Th
 
 - **Copy buttons confirm the copy.** In the details pane, the copy icon turns into a checkmark for a moment, and VoiceOver announces "Copied" ([#1754](https://github.com/nicholas-lonsinger/kernova/pull/1754)).
 - **No one-time-code AutoFill in Kernova's text fields.** Focusing a settings or name field no longer offers a verification code from Messages or Mail, and no "AutoFill (Kernova)" process starts ([#1906](https://github.com/nicholas-lonsinger/kernova/pull/1906)).
+- **Renaming and editing notes in place show the whole text.** On snapshot, disk and shared folder rows, the edit box fits the name or note from the moment editing begins and grows as you type, and a note is cut off only where the row runs out of room, while editing and after ([#1932](https://github.com/nicholas-lonsinger/kernova/pull/1932)).
 - **Starting a VM is faster with many VMs in the library** ([#1618](https://github.com/nicholas-lonsinger/kernova/pull/1618)).
 - **A .kernova bundle copied into the VMs folder appears** when you switch back to Kernova ([#1489](https://github.com/nicholas-lonsinger/kernova/pull/1489)).
 - **Deleting one VM no longer discards a download another VM is still using** ([#1582](https://github.com/nicholas-lonsinger/kernova/pull/1582)).
