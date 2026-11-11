@@ -133,6 +133,32 @@ struct VMLibraryTests {
         #expect(library.selectedID == library.instances.first?.id)
     }
 
+    @Test("loadVMs preserves valid selection on reload")
+    func loadVMsPreservesSelection() async {
+        let storage = MockVMStorageService()
+        let config1 = VMConfiguration(
+            name: "First VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let config2 = VMConfiguration(
+            name: "Second VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let url1 = scratch.url
+            .appendingPathComponent("\(config1.id.uuidString).kernova", isDirectory: true)
+        let url2 = scratch.url
+            .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
+        storage.setConfiguration(config1, at: url1)
+        storage.setConfiguration(config2, at: url2)
+
+        let (library, _, _, _) = makeLibrary(storageService: storage)
+        await library.loadVMs()
+        let secondID = library.instances.last?.id
+        if let secondID { library.selectRevealing(secondID) }
+
+        await library.loadVMs()
+
+        #expect(library.selectedID == secondID)
+    }
+
     // MARK: - Configuration Writes
 
     /// Puts `instance` live on a session no lifecycle call holds.
