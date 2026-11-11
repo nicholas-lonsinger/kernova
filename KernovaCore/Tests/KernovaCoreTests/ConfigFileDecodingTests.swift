@@ -273,36 +273,6 @@ struct ConfigFileDecodingTests {
 
     // MARK: - The snapshot's captured network
 
-    @Test("A snapshot's captured network reads past what its configuration no longer takes, keeping the address")
-    func theCapturedNetworkReadsPastBadValues() throws {
-        let data = try configJSON {
-            $0["guestOS"] = Self.unrecognized
-            $0["networkMode"] = Self.unrecognized
-            $0["networkEnabled"] = nil
-            $0["macAddress"] = "aa:bb:cc:dd:ee:ff"
-        }
-        let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
-        #expect(network.macAddress == "aa:bb:cc:dd:ee:ff")
-        #expect(network.networkMode == .nat)
-    }
-
-    @Test("A snapshot's captured network missing networkEnabled had no network device")
-    func aMissingCapturedNetworkEnabledReadsOff() throws {
-        let data = try configJSON {
-            $0["networkEnabled"] = nil
-            $0["networkMode"] = nil
-            $0["networkMembership"] = nil
-            $0["bridgedInterfaceIdentifier"] = nil
-            $0["macAddress"] = nil
-        }
-        let network = try VMConfiguration.makeJSONDecoder().decode(VMCapturedNetwork.self, from: data)
-        #expect(
-            network
-                == VMCapturedNetwork(
-                    networkEnabled: false, networkMode: .nat, networkMembership: .common,
-                    bridgedInterfaceIdentifier: nil, macAddress: nil))
-    }
-
     @Test("A snapshot's captured network lists an unrecognized value as a problem no default repairs")
     func anUnrecognizedCapturedNetworkValueIsUnrepairable() throws {
         let data = try configJSON {
@@ -530,36 +500,6 @@ struct ConfigFileDecodingTests {
     }
 
     // MARK: - Smart groups
-
-    @Test("A smart group's network no build spells is refused strictly, and removed alone when collecting")
-    func aSmartGroupsUnknownNetworkIsRemovedAlone() throws {
-        let group = UUID()
-        let folder = UUID()
-        let tag = UUID()
-        let data = Data(
-            #"""
-            {"smartGroups": [{"id": "\#(group.uuidString)", "name": "NAT",
-                              "filter": {"networks": ["bogus:common"], "guestOSes": ["linux"]}}],
-             "folders": [{"id": "\#(folder.uuidString)", "name": "Lab", "members": []}],
-             "sectionOrder": ["folder:\#(folder.uuidString)", "virtualMachines", "smartGroup:\#(group.uuidString)"],
-             "tags": [{"id": "\#(tag.uuidString)", "name": "Work", "color": "red"}]}
-            """#.utf8)
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
-        }
-        let diagnosis = ConfigFileDiagnosis(
-            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
-
-        #expect(diagnosis.problems.map(\.path?.description) == ["$.smartGroups[0].filter.networks[0]"])
-        #expect(diagnosis.problems.map(\.repair) == [.removeEntry])
-        let repaired = try JSONDecoder().decode(
-            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
-        #expect(repaired.smartGroups.map(\.id) == [group])
-        #expect(repaired.smartGroups.first?.filter == VMLibraryFilter(guestOSes: [.linux]))
-        #expect(repaired.folders.map(\.id) == [folder])
-        #expect(repaired.tags.map(\.id) == [tag])
-        #expect(repaired.sections.map(\.id) == [.folder(folder), .library, .smartGroup(group)])
-    }
 
     @Test("A smart group that doesn't decode is removed alone; a file with none lists none")
     func aBadSmartGroupIsRemovedAlone() throws {

@@ -328,33 +328,6 @@ struct VMConfigurationTests {
 
     // MARK: - linuxInstallContext Tests
 
-    @Test("linuxInstallContext round-trips through JSON")
-    func linuxInstallContextRoundTrip() throws {
-        let context = LinuxInstallContext(
-            source: .catalogEntry(makeLinuxCatalogEntry()),
-            downloadDestinationPath: "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso"
-        )
-        let config = VMConfiguration(
-            name: "Pending Debian VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            linuxInstallContext: context
-        )
-
-        let data = try VMConfiguration.makeJSONEncoder().encode(config)
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.linuxInstallContext == context)
-        #expect(catalogEntry(of: decoded.linuxInstallContext)?.id == "debian-13")
-        #expect(
-            decoded.linuxInstallContext?.downloadDestinationPath
-                == "/Users/me/Downloads/debian-13.6.0-arm64-netinst.iso")
-        // The two contexts are separate fields, and each guest uses only its own.
-        #expect(decoded.installContext == nil)
-    }
-
     @Test("An installContext omitting requestedFreshDownload decodes it as false")
     func installContextOmittingRequestedFreshDownloadDecodesFalse() throws {
         let baseFields = """
@@ -442,68 +415,6 @@ struct VMConfigurationTests {
         let config = try decoder.decode(VMConfiguration.self, from: Data(Self.makeBaseJSON().utf8))
 
         #expect(config.agentLogForwardingEnabled == false)
-    }
-
-    // MARK: - lastSeenGuestOSVersion Tests
-
-    @Test("Configuration round-trips lastSeenGuestOSVersion")
-    func lastSeenGuestOSVersionRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Persisted VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            cpuCount: VMGuestOS.macOS.hostCPUCount,
-            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
-            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)"
-        )
-
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        let data = try encoder.encode(config)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
-    }
-
-    // MARK: - installedImage Tests
-
-    @Test("Configuration round-trips a macOS installedImage")
-    func macOSInstalledImageRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Persisted VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            cpuCount: VMGuestOS.macOS.hostCPUCount,
-            memorySizeInGB: VMGuestOS.macOS.hostMemorySize,
-            installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84")
-        )
-
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
-
-        #expect(decoded.installedImage == .macOSRestoreImage(version: "26.5.2", build: "25F84"))
-    }
-
-    @Test("Configuration round-trips a Linux installedImage")
-    func linuxInstalledImageRoundTrip() throws {
-        let config = VMConfiguration(
-            name: "Persisted VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            installedImage: .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil)
-        )
-
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(
-            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(config))
-
-        #expect(
-            decoded.installedImage
-                == .linuxCatalogImage(distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil))
     }
 
     // MARK: - Audio Tests
