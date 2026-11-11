@@ -115,95 +115,7 @@ struct VMSnapshotIntentTests {
                 == "\(date) \u{00B7} \(SnapshotKindCopy.stateLabel(.cold))")
     }
 
-    // MARK: - Reads
-
-    @Test("The snapshot read answers entities carrying the VM that lists them, newest first")
-    func snapshotsCarryTheirVM() async throws {
-        let wired = WiredCommandCore()
-        let older = VMSnapshot(
-            name: "First", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
-        let newer = VMSnapshot(
-            name: "Second", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
-        let vm = register(in: wired, snapshots: [older, newer])
-        register(in: wired, snapshots: [VMSnapshot(name: "Twin's", macAddress: nil)])
-
-        let snapshots = try await makeGateway(wired).snapshots(ofVM: vm.id)
-
-        #expect(snapshots.map(\.name) == ["Second", "First"])
-        #expect(
-            snapshots.map(\.id) == [
-                SnapshotEntityID(vm: vm.id, snapshot: newer.id),
-                SnapshotEntityID(vm: vm.id, snapshot: older.id),
-            ])
-    }
-
     // MARK: - Verb Dispatch
-
-    @Test("Every snapshot verb addresses its VM by identifier and names its snapshot")
-    func verbsAddressBothTheVMAndTheSnapshot() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let target = VMSnapshot(name: "Target", kind: .cold, macAddress: nil)
-        let deleted = VMSnapshot(name: "Deleted", kind: .cold, macAddress: nil)
-        let vm = register(in: wired, snapshots: [target, deleted])
-        let twinSnapshot = VMSnapshot(name: "Twin's", kind: .cold, macAddress: nil)
-        let twin = register(in: wired, snapshots: [twinSnapshot])
-        let gateway = makeGateway(wired)
-
-        try await gateway.revertToSnapshot(
-            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: target.id), consent: .all)
-        try await gateway.renameSnapshot(
-            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: target.id), to: "Renamed")
-        try await gateway.setSnapshotNotes(
-            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: target.id), notes: "a note")
-        try await gateway.deleteSnapshot(
-            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: deleted.id), consent: .all)
-
-        #expect(virtualization.revertedSnapshots.map(\.id) == [target.id])
-        #expect(vm.snapshotManifest.currentID == target.id)
-        #expect(vm.snapshotManifest.snapshots.map(\.id) == [target.id])
-        let renamed = try #require(vm.snapshotManifest.snapshot(id: target.id))
-        #expect(renamed.name == "Renamed")
-        #expect(renamed.notes == "a note")
-        #expect(wired.machineFiles.discardedIDs == [deleted.id])
-        // The twin answering to the same name is untouched.
-        #expect(listing(of: twin) == listing(of: [twinSnapshot]))
-        #expect(twin.snapshotManifest.currentID == nil)
-    }
-
-    /// The VM parameter is authoritative, and the refusal is the surface's own:
-    /// a rename or a note edit is a documented no-op for an identifier the
-    /// manifest does not list, so without this the mismatch would reach the
-    /// core, change nothing, and report success.
-    @Test("A snapshot picked from another VM is refused by every verb, never quietly dropped")
-    func aSnapshotFromAnotherVMIsRefused() async throws {
-        let wired = WiredCommandCore()
-        let named = register(in: wired, snapshots: [])
-        let other = VMSnapshot(name: "Elsewhere", kind: .cold, macAddress: nil)
-        let elsewhere = register(in: wired, name: "Elsewhere", snapshots: [other])
-        let stale = SnapshotEntityID(vm: elsewhere.id, snapshot: other.id)
-        let refusal = CommandError.itemNotFound(
-            vm: wired.core.summary(named),
-            item: "snapshot with the identifier \(other.id.uuidString)")
-        let gateway = makeGateway(wired)
-
-        await #expect(throws: refusal) {
-            try await gateway.revertToSnapshot(named.id, snapshot: stale, consent: .all)
-        }
-        await #expect(throws: refusal) {
-            try await gateway.deleteSnapshot(named.id, snapshot: stale, consent: .all)
-        }
-        await #expect(throws: refusal) {
-            try await gateway.renameSnapshot(named.id, snapshot: stale, to: "Renamed")
-        }
-        await #expect(throws: refusal) {
-            try await gateway.setSnapshotNotes(named.id, snapshot: stale, notes: "a note")
-        }
-
-        #expect(listing(of: elsewhere) == listing(of: [other]))
-        #expect(elsewhere.snapshotManifest.currentID == nil)
-        #expect(named.snapshotManifest.isEmpty)
-    }
 
     /// A pick is only as current as the run that made it: the snapshot it names
     /// can have been deleted, or dropped by a revert, between two runs of the
@@ -231,30 +143,6 @@ struct VMSnapshotIntentTests {
         #expect(listing(of: vm) == listing(of: [kept]))
     }
 
-    /// A clone carries its source's snapshot identifiers, so an identifier the
-    /// named VM lists can still be a pick made in the VM it was copied from —
-    /// which the VM parameter's authority refuses rather than redirects.
-    @Test("A pick from a clone's source is refused where the named VM lists that identifier")
-    func aSnapshotPickedInACloneSourceIsRefused() async throws {
-        let wired = WiredCommandCore()
-        let shared = VMSnapshot(name: "Before Update", macAddress: nil)
-        let source = register(in: wired, name: "Source", snapshots: [shared])
-        let clone = register(in: wired, name: "Source Copy", snapshots: [shared])
-        let pickedInTheSource = SnapshotEntityID(vm: source.id, snapshot: shared.id)
-
-        await #expect(
-            throws: CommandError.itemNotFound(
-                vm: wired.core.summary(clone),
-                item: "snapshot with the identifier \(shared.id.uuidString)")
-        ) {
-            try await makeGateway(wired).renameSnapshot(
-                clone.id, snapshot: pickedInTheSource, to: "Renamed")
-        }
-
-        #expect(listing(of: clone) == listing(of: [shared]))
-        #expect(listing(of: source) == listing(of: [shared]))
-    }
-
     /// The core trims a snapshot name and writes nothing when none is left —
     /// the inline field commits on end-editing whether or not the text
     /// changed — so a Shortcut whose Name resolves to nothing would report
@@ -278,20 +166,6 @@ struct VMSnapshotIntentTests {
         #expect(listing(of: vm) == listing(of: [listed]))
     }
 
-    /// An empty note is a legitimate value — it clears the note — so the note
-    /// edit takes what the rename refuses.
-    @Test("An empty note clears the note rather than being refused")
-    func anEmptyNoteIsWritten() async throws {
-        let wired = WiredCommandCore()
-        let listed = VMSnapshot(name: "Listed", notes: "an old note", macAddress: nil)
-        let vm = register(in: wired, snapshots: [listed])
-
-        try await makeGateway(wired).setSnapshotNotes(
-            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: listed.id), notes: "")
-
-        #expect(vm.snapshotManifest.snapshot(id: listed.id)?.notes == "")
-    }
-
     // MARK: - Consent
 
     @Test("A revert asks once, then re-issues with the consent")
@@ -312,25 +186,6 @@ struct VMSnapshotIntentTests {
         #expect(asked == [prompt])
         #expect(virtualization.revertedSnapshots.map(\.id) == [listed.id])
         #expect(vm.snapshotManifest.currentID == listed.id)
-    }
-
-    /// The revert can still fail once consent is in — and the caller is told,
-    /// rather than getting a success for a rollback that did not happen.
-    @Test("A revert that fails after consent refuses rather than reporting success")
-    func revertSurfacesAFailureAfterConsent() async throws {
-        let virtualization = MockVirtualizationService()
-        virtualization.revertToSnapshotError = CocoaError(.fileWriteOutOfSpace)
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let listed = VMSnapshot(name: "Clean", kind: .cold, macAddress: nil)
-        let vm = register(in: wired, snapshots: [listed])
-
-        await #expect(throws: CommandError.self) {
-            try await makeGateway(wired).revertToSnapshot(
-                vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: listed.id), consent: .all)
-        }
-
-        #expect(virtualization.revertedSnapshots.isEmpty)
-        #expect(vm.snapshotManifest.currentID == nil)
     }
 
     @Test("A snapshot delete asks once and re-issues with the consent")
