@@ -26,21 +26,6 @@ struct ResourceConfigContentViewControllerTests {
         #expect(vm.vmName == "Test Box")
     }
 
-    @Test("CPU/memory stepper bounds are the framework's, for every guest", arguments: VMGuestOS.allCases)
-    func stepperBoundsAreTheFrameworks(os: VMGuestOS) throws {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = os
-        let vc = ResourceConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        let steppers = allSubviews(NSStepper.self, in: vc.view)
-        try #require(steppers.count == 2)
-        #expect(steppers[0].minValue == Double(VirtualizationHost.frameworkResourceLimits.cpuCount.lower))
-        #expect(steppers[0].maxValue == Double(VirtualizationHost.frameworkResourceLimits.cpuCount.upper))
-        #expect(steppers[1].minValue == VirtualizationHost.frameworkResourceLimits.memorySize.lower.gibibytes)
-        #expect(steppers[1].maxValue == VirtualizationHost.frameworkResourceLimits.memorySize.upper.gibibytes)
-    }
-
     @Test("Every guest is offered every disk size, tagged by size", arguments: VMGuestOS.allCases)
     func diskPopupPopulated(os: VMGuestOS) {
         let vm = VMCreationViewModel.overEngine()

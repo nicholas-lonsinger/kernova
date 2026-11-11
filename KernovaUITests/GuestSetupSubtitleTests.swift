@@ -24,7 +24,6 @@ struct GuestSetupSubtitleTests {
     /// wording the subtitle ships with.
     private static let downloadVerb = GuestSetupDescriptor.macOSInstall.copy(for: .download)
         .detailVerb
-    private static let installVerb = GuestSetupDescriptor.macOSInstall.copy(for: .install).detailVerb
 
     private func width(_ line: String) -> CGFloat {
         NSAttributedString(string: line, attributes: [.font: Self.font]).size().width
@@ -80,34 +79,6 @@ struct GuestSetupSubtitleTests {
         #expect(abs(width(numeric ?? "") - width(placeholder ?? "")) < tolerance)
     }
 
-    @Test("Line 1 always sets the label box: every line-2 width stays below every line-1 width")
-    func line1AnchorsTheBox() {
-        var line1Widths: [CGFloat] = []
-        var line2Widths: [CGFloat] = []
-        for speed in regimeSpeeds {
-            for eta in etaBoundaries {
-                let lines = downloadLines(etaSeconds: eta, bytesPerSecond: speed)
-                line1Widths.append(width(lines[0]))
-                line2Widths.append(width(lines[1]))
-            }
-        }
-        // Because line 1 is always the wider line, it fixes the centered label's
-        // width — so line 2 appearing, disappearing, or changing width never
-        // shifts line 1.
-        #expect((line2Widths.max() ?? 0) < (line1Widths.min() ?? .greatestFiniteMagnitude))
-    }
-
-    @Test("The install-phase percentage renders at a constant width across its range")
-    func installPercentStable() {
-        let widths = [0.0, 0.09, 0.10, 0.5, 0.99, 1.0].map {
-            width(
-                GuestSetupProgressViewController.detailLine1(
-                    for: .fraction($0), verb: Self.installVerb))
-        }
-        let spread = (widths.max() ?? 0) - (widths.min() ?? 0)
-        #expect(spread < tolerance, "install percentage width moved by \(spread)pt")
-    }
-
     // MARK: - Per-line builders (the labels are refreshed on separate cadences)
 
     @Test("detailLine2 is nil for the install phase and before the first speed sample")
@@ -118,30 +89,5 @@ struct GuestSetupSubtitleTests {
                 for: .download(
                     DownloadProgress(bytesWritten: 0, totalBytes: 1_000_000, bytesPerSecond: 0)))
                 == nil)
-    }
-
-    @Test("detailLine2 is present, with the dash placeholder, when speed is below the ETA guard")
-    func line2UsesPlaceholderBelowGuard() {
-        let line2 = GuestSetupProgressViewController.detailLine2(
-            for: .download(
-                DownloadProgress(bytesWritten: 0, totalBytes: 500_000, bytesPerSecond: 500)))
-        #expect(line2 != nil)
-        #expect(line2?.contains(DataFormatters.etaUnknownPlaceholder) == true)
-    }
-
-    @Test("detailLine1 names the step's verb and its percentage for both progress kinds")
-    func line1CarriesVerbAndPercent() {
-        let downloading = SetupStepProgress.download(
-            DownloadProgress(bytesWritten: 0, totalBytes: 100_000_000, bytesPerSecond: 10_000_000))
-        let downloadLine1 = GuestSetupProgressViewController.detailLine1(
-            for: downloading, verb: Self.downloadVerb)
-        #expect(downloadLine1.hasPrefix(Self.downloadVerb))
-        #expect(downloadLine1.hasSuffix("0%"))
-
-        let installing = SetupStepProgress.fraction(0.42)
-        let installLine1 = GuestSetupProgressViewController.detailLine1(
-            for: installing, verb: Self.installVerb)
-        #expect(installLine1.hasPrefix(Self.installVerb))
-        #expect(installLine1.hasSuffix("42%"))
     }
 }

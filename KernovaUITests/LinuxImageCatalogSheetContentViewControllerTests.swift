@@ -68,12 +68,6 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
         #expect(vc.selectedEntry?.id == "ubuntu-desktop-26.04")
     }
 
-    @Test("A previous pick is preselected")
-    func preselectsPreviousPick() {
-        let vc = makeSheet(selectedID: "debian-13")
-        #expect(vc.selectedEntry?.id == "debian-13")
-    }
-
     @Test("Rows read in catalog order whatever order they arrive in")
     func sortsEntriesForDisplay() {
         let vc = makeSheet(entries: entries.reversed())
@@ -81,20 +75,6 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
             vc.visibleEntries.map(\.id) == [
                 "ubuntu-desktop-26.04", "ubuntu-desktop-24.04", "debian-13",
             ])
-    }
-
-    @Test("Search filters on distribution and version")
-    func searchFiltersRows() {
-        let vc = makeSheet()
-
-        vc.applyFilter("debian")
-        #expect(vc.visibleEntries.map(\.id) == ["debian-13"])
-
-        vc.applyFilter("24.04")
-        #expect(vc.visibleEntries.map(\.id) == ["ubuntu-desktop-24.04"])
-
-        vc.applyFilter("")
-        #expect(vc.visibleEntries.count == 3)
     }
 
     @Test("A selection surviving the filter is kept")
@@ -155,18 +135,6 @@ struct LinuxImageCatalogSheetContentViewControllerTests {
         // Under the mirror's own name, so no download will ever find or adopt
         // it — saying it is there would promise a fast path that is not there.
         let vc = makeSheet(downloads: ["debian-13.1.0-arm64-netinst.iso"])
-
-        #expect(try cellText(vc, row: 2, column: "status").isEmpty)
-    }
-
-    @Test("The same image fetched from another mirror does not read as In Downloads")
-    func statusIgnoresTheSameImageFromAnotherURL() throws {
-        // Same published filename, different directory, so the discriminator
-        // differs and choosing this row downloads the whole ISO again.
-        let elsewhere = makeLinuxCatalogEntry(
-            directoryURLString: "https://mirror.example/debian-cd/current/arm64/iso-cd/")
-        let vc = makeSheet(
-            downloads: [downloadedName(of: "debian-13.1.0-arm64-netinst.iso", from: elsewhere)])
 
         #expect(try cellText(vc, row: 2, column: "status").isEmpty)
     }

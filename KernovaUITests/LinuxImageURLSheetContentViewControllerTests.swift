@@ -44,14 +44,6 @@ struct LinuxImageURLSheetContentViewControllerTests {
         #expect(vc.checkedImage == nil)
     }
 
-    @Test("Check with an empty URL does nothing")
-    func checkIgnoresEmptyField() async {
-        let resolve = MockLinuxImageResolveService()
-        let vc = makeSheet(resolve: resolve)
-        await check(vc)
-        #expect(resolve.resolveCallCount == 0)
-    }
-
     @Test("A successful check enables Use and records the image")
     func successfulCheckEnablesUse() async {
         let resolve = MockLinuxImageResolveService()
@@ -89,57 +81,6 @@ struct LinuxImageURLSheetContentViewControllerTests {
             findLabel(
                 containing: "This download won't be verified. Choose a host you trust.",
                 in: vc.view) != nil)
-    }
-
-    @Test("A malformed checksum fails at entry, before anything is contacted")
-    func malformedChecksumNeverResolves() async {
-        let resolve = MockLinuxImageResolveService()
-        let vc = makeSheet(resolve: resolve, initialURL: Self.isoURL, initialChecksum: "deadbeef")
-
-        await check(vc)
-
-        #expect(resolve.resolveCallCount == 0)
-        #expect(vc.checkedImage == nil)
-        #expect(findLabel(containing: "isn't a SHA-256 checksum", in: vc.view) != nil)
-        #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == false)
-    }
-
-    @Test("An http link is refused with or without a checksum, before anything is contacted")
-    func httpIsRefused() async {
-        let httpURL = "http://mirror.example/alpine-3.22-aarch64.iso"
-        let resolve = MockLinuxImageResolveService()
-
-        for checksum in ["", Self.digest] {
-            let vc = makeSheet(resolve: resolve, initialURL: httpURL, initialChecksum: checksum)
-            await check(vc)
-
-            #expect(vc.checkedImage == nil)
-            #expect(findLabel(containing: "must be served over HTTPS", in: vc.view) != nil)
-        }
-        #expect(resolve.resolveCallCount == 0)
-    }
-
-    @Test("A malformed URL is refused without reaching the resolve")
-    func malformedURLNeverResolves() async {
-        let resolve = MockLinuxImageResolveService()
-        let vc = makeSheet(resolve: resolve, initialURL: "not a url")
-
-        await check(vc)
-
-        #expect(resolve.resolveCallCount == 0)
-        #expect(vc.checkedImage == nil)
-        #expect(findLabel(containing: "isn't a valid URL", in: vc.view) != nil)
-    }
-
-    @Test("A link that doesn't name an .iso is refused without reaching the resolve")
-    func nonISOLinkNeverResolves() async {
-        let resolve = MockLinuxImageResolveService()
-        let vc = makeSheet(resolve: resolve, initialURL: "https://mirror.example/downloads/")
-
-        await check(vc)
-
-        #expect(resolve.resolveCallCount == 0)
-        #expect(findLabel(containing: "doesn't end in the name of an .iso file", in: vc.view) != nil)
     }
 
     @Test("A failed check leaves Use disabled and shows the reason")

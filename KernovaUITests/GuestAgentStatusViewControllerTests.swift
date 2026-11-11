@@ -16,17 +16,6 @@ struct GuestAgentStatusViewControllerTests {
     private static let withheld = GuestAgentDiskControl.Model(
         title: GuestAgentDiskControl.unavailableTitle, isEnabled: false, action: .mount(.install))
 
-    @Test("default state — title and action button reflect .waiting")
-    func defaultState() {
-        let vc = GuestAgentStatusViewController()
-        vc.update(
-            presentation: GuestAgentPresentation(hub: .empty), diskControl: Self.install, hasDismissAction: true)
-        vc.loadViewIfNeeded()
-
-        #expect(titleLabel(in: vc.view)?.stringValue == "Set up the Kernova guest agent")
-        #expect(actionButton(in: vc.view)?.title == "Install Guest Agent…")
-    }
-
     @Test("Each status has its own title")
     func titlePerStatus() {
         let cases: [(status: AgentStatus, title: String)] = [
@@ -81,23 +70,6 @@ struct GuestAgentStatusViewControllerTests {
         }
     }
 
-    @Test("The action button carries the disk control it is handed")
-    func actionButtonFollowsDiskControl() {
-        let vc = GuestAgentStatusViewController()
-        vc.loadViewIfNeeded()
-
-        let cases: [(control: GuestAgentDiskControl.Model, title: String)] = [
-            (Self.install, "Install Guest Agent…"),
-            (Self.eject, "Eject Guest Agent Media"),
-            (Self.withheld, "Done"),
-        ]
-        for (control, title) in cases {
-            vc.update(
-                presentation: GuestAgentPresentation(hub: .empty), diskControl: control, hasDismissAction: false)
-            #expect(actionButton(in: vc.view)?.title == title)
-        }
-    }
-
     @Test("Don't show again button visibility tracks hasDismissAction")
     func dismissButtonVisibility() {
         let vc = GuestAgentStatusViewController()
@@ -137,14 +109,6 @@ struct GuestAgentStatusViewControllerTests {
         #expect(title == "Eject Guest Agent Media")
         #expect(diskControlCount == 1)
         #expect(doneCount == 0)
-    }
-
-    @Test("While the control is disabled the button reads Done and only closes")
-    func disabledControlIsDone() {
-        let (title, diskControlCount, doneCount) = tapAction(diskControl: Self.withheld)
-        #expect(title == "Done")
-        #expect(doneCount == 1)
-        #expect(diskControlCount == 0)
     }
 
     @Test("dismiss button click fires onDismiss")

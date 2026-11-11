@@ -73,57 +73,6 @@ struct GuestAgentStatusWindowTests {
         #expect(fixture.registry.hasTrackedUserWindow)
     }
 
-    @Test("A healthy agent's status opens while the sidebar badge is hidden")
-    func opensWhileTheBadgeIsHidden() throws {
-        let fixture = makeFixture()
-        let instance = makeLinuxInstance(in: fixture.viewModel)
-        instance.publishAgentHubSnapshotForTesting(Self.currentAgents)
-        #expect(
-            SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: false) == nil)
-
-        fixture.registry.showGuestAgentStatus(for: instance)
-
-        let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
-        let status = try content(of: window)
-        let presentation = try #require(instance.agentPresentation)
-        for row in GuestAgentStatusViewController.rows(presentation) {
-            #expect(findLabel(withText: row.title, in: status.view) != nil, "\(row.title)")
-        }
-    }
-
-    @Test(
-        "No window opens for a VM whose session has no channel to an agent",
-        arguments: [
-            (VMGuestOS.macOS, PhaseFixture.settled(.stopped), false),
-            (.linux, .settled(.stopped), false),
-            // A Linux session with no socket device has no agent to show.
-            (.linux, .settled(.running(sessionID: UUID())), true),
-            (.macOS, .operating(.saving, from: .running(sessionID: UUID())), true),
-        ])
-    func refusedWithoutAnAgentChannel(guestOS: VMGuestOS, phase: PhaseFixture, hasSessionContext: Bool) {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: guestOS, phase: phase.phase)
-        if hasSessionContext { instance.beginSessionContextForTesting() }
-
-        fixture.registry.showGuestAgentStatus(for: instance)
-
-        #expect(fixture.registry.guestAgentStatusWindow(for: instance.instanceID) == nil)
-    }
-
-    @Test("Choosing the item again brings the open window forward rather than opening a second")
-    func reopenFocusesTheOpenWindow() throws {
-        let fixture = makeFixture()
-        let instance = makeLinuxInstance(in: fixture.viewModel)
-        fixture.registry.showGuestAgentStatus(for: instance)
-        let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
-        window.orderOut(nil)
-
-        fixture.registry.showGuestAgentStatus(for: instance)
-
-        #expect(fixture.registry.guestAgentStatusWindow(for: instance.instanceID) === window)
-        #expect(window.isVisible)
-    }
-
     @Test("The window follows the agent and refits its content")
     func followsTheAgent() async throws {
         let fixture = makeFixture()

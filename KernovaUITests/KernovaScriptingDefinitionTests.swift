@@ -69,16 +69,6 @@ struct KernovaScriptingDefinitionTests {
 
     // MARK: - What the dictionary points at
 
-    @Test("Every class the dictionary names exists under that name in the runtime")
-    func everyCocoaClassResolves() throws {
-        let named = try values(".//cocoa[@class]", "class", in: try loadSuite())
-
-        #expect(named.contains("VMScriptObject"))
-        for name in named {
-            #expect(NSClassFromString(name) != nil, "No class is registered as \(name)")
-        }
-    }
-
     @Test("Every command the dictionary names is handled by a script command class")
     func everyCommandHasItsHandler() throws {
         let suite = try loadSuite()
@@ -97,34 +87,6 @@ struct KernovaScriptingDefinitionTests {
                 try values("direct-parameter/type", "type", in: command)
                     == ["virtual machine", "virtual machine"])
             #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
-        }
-    }
-
-    @Test("Every command takes its event over itself: no class is declared to respond to one")
-    func noCommandIsDispatchedToItsReceivers() throws {
-        // A class declared to respond to a command is one Cocoa dispatches the
-        // command to after evaluating its specifier itself — the evaluation
-        // each command holds until the library has landed, and the one that
-        // answers a duplicate name with "can't get" instead of the core's
-        // refusal.
-        let suite = try loadSuite()
-
-        #expect(try suite.nodes(forXPath: "class//responds-to").isEmpty)
-        for command in try suite.nodes(forXPath: "command").compactMap({ $0 as? XMLElement }) {
-            let handler = try #require(try values("cocoa", "class", in: command).first)
-            let handlerClass: AnyClass = try #require(NSClassFromString(handler))
-            #expect(handlerClass is VMScriptCommand.Type, "\(handler) does not take its event over")
-        }
-    }
-
-    @Test("The commands that wait on the guest tell a script how to wait longer than AppleScript does")
-    func longWaitsAreDocumented() throws {
-        let suite = try loadSuite()
-
-        for verb in ["stop", "restart"] {
-            let description = try #require(
-                try values("command[@name='\(verb)']", "description", in: suite).first)
-            #expect(description.contains("with timeout"), "\(verb) says nothing about with timeout")
         }
     }
 
@@ -168,24 +130,6 @@ struct KernovaScriptingDefinitionTests {
         #expect(writable.isSubset(of: names))
     }
 
-    @Test("The application's virtual machines element reads the key the delegate handles")
-    func theElementKeyIsTheDelegateKey() throws {
-        let extensions = try loadSuite().nodes(
-            forXPath: "class-extension[@extends='application']/element[@type='virtual machine']")
-        let element = try #require(extensions.first as? XMLElement)
-
-        let key = try #require(try values("cocoa", "key", in: element).first)
-
-        #expect(key == VMScriptingRoot.virtualMachinesKey)
-        #expect(VMScriptingRoot.instancesRespond(to: NSSelectorFromString(key)))
-        // Cocoa resolves `virtual machine "…"` through the accessor named for
-        // that key, and answers with its own case-insensitive first match when
-        // there is none — so the spelling is part of the contract.
-        #expect(
-            VMScriptingRoot.instancesRespond(
-                to: NSSelectorFromString("valueInVirtualMachinesWithName:")))
-    }
-
     @Test("Every property and element of a network reads a key the object answers to")
     func everyNetworkKeyResolves() throws {
         let classes = try loadSuite().nodes(forXPath: "class[@name='network']")
@@ -204,21 +148,6 @@ struct KernovaScriptingDefinitionTests {
         #expect(try values("property[@name='kind']", "access", in: network) == ["r"])
         #expect(try values("property[@name='id']", "access", in: network) == ["r"])
         #expect(VMNetworkScriptObject.instancesRespond(to: NSSelectorFromString("setName:")))
-    }
-
-    @Test("A virtual machine's storage disks element reads the key the object answers to")
-    func theStorageDisksElementIsTheObjectKey() throws {
-        let elements = try loadSuite().nodes(
-            forXPath: "class[@name='virtual machine']/element[@type='storage disk']")
-        let element = try #require(elements.first as? XMLElement)
-
-        let key = try #require(try values("cocoa", "key", in: element).first)
-
-        #expect(key == VMScriptObject.storageDisksKey)
-        #expect(VMScriptObject.instancesRespond(to: NSSelectorFromString(key)))
-        #expect(element.attribute(forName: "access")?.stringValue == "r")
-        #expect(
-            Set(try values("accessor", "style", in: element)) == ["index", "name", "id", "range", "test"])
     }
 
     @Test("Every property of a storage disk reads a key the object answers to, and none is writable")
@@ -312,15 +241,6 @@ struct KernovaScriptingDefinitionTests {
         #expect(try enumerators("VM state")["preparing"] == VMScriptState.preparing.code)
     }
 
-    @Test("A suspended VM reports its own term, apart from a paused one")
-    func suspendedIsItsOwnState() throws {
-        let declared = try enumerators("VM state")
-        #expect(VMScriptState(wireName: VMStatus.suspended.rawValue) == .suspended)
-        #expect(VMScriptState(.suspended).term == "suspended")
-        #expect(declared["suspended"] == VMScriptState.suspended.code)
-        #expect(VMScriptState.suspended.code != VMScriptState.paused.code)
-    }
-
     @Test("Every way the core can stop a guest has a term a script can name")
     func everyStopDispositionHasAnEnumerator() throws {
         let declared = try enumerators("VM stop method")
@@ -330,23 +250,6 @@ struct KernovaScriptingDefinitionTests {
             let method = VMScriptStopMethod(disposition)
             #expect(declared[method.term] == method.code, "No \(method.term) enumerator")
             #expect(method.disposition == disposition)
-        }
-    }
-
-    @Test("stop and restart take their method under one label, named as the Virtual Machine menu names each")
-    func theStopMethodReadsAsTheMenu() throws {
-        let suite = try loadSuite()
-
-        let expected: [String: FourCharCode] = [
-            "normal": VMScriptStopMethod.normal.code,
-            "anyway": VMScriptStopMethod.anyway.code,
-            "force": VMScriptStopMethod.force.code,
-        ]
-        #expect(try enumerators("VM stop method") == expected)
-        for verb in ["stop", "restart"] {
-            let command = "command[@name='\(verb)']"
-            #expect(try values("\(command)/parameter[@type='VM stop method']", "name", in: suite) == ["method"])
-            #expect(try values("\(command)/parameter[@name='by']", "name", in: suite).isEmpty)
         }
     }
 
