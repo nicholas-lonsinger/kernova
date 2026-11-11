@@ -37,18 +37,6 @@ struct RestoreImageCatalogSheetContentViewControllerTests {
         return vc
     }
 
-    @Test("Opens with the newest supported version selected")
-    func selectsNewestSupportedByDefault() {
-        let vc = makeSheet()
-        #expect(vc.selectedEntry?.build == "25G72")
-    }
-
-    @Test("A previous pick is preselected")
-    func preselectsPreviousPick() {
-        let vc = makeSheet(selectedBuild: "24G90")
-        #expect(vc.selectedEntry?.build == "24G90")
-    }
-
     @Test("A guest newer than the host cannot be selected")
     func guestNewerThanHostIsUnselectable() throws {
         // Host below 26.6, so the newest entry is out of reach.

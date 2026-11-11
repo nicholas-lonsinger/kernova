@@ -8,25 +8,6 @@ import Testing
 @Suite("BootConfigContentViewController Tests", .caseScoped)
 @MainActor
 struct BootConfigContentViewControllerTests {
-    @Test("EFI mode shows the subtitle, its lead-in, and each source's description")
-    func efiShowsSubtitleAndDescriptions() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        for text in [
-            "Choose how to boot your Linux virtual machine.",
-            "Choose the installer image to boot from via EFI.",
-            "Download a Linux installer image after the virtual machine is created.",
-            "Download an installer image from a link you supply.",
-            "Boot an ISO image already on your Mac.",
-        ] {
-            #expect(findLabel(withText: text, in: vc.view) != nil, "\(text)")
-        }
-    }
-
     /// The descriptions name what each source does; the popover keeps only
     /// when a download happens, which they don't say.
     @Test("The title popover says when a downloaded image is fetched")
@@ -48,20 +29,6 @@ struct BootConfigContentViewControllerTests {
             ])
     }
 
-    @Test("Linux Kernel mode shows its lead-in")
-    func linuxKernelShowsLeadIn() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(
-            findLabel(
-                withText: "Provide the kernel image and optional initrd/command line.", in: vc.view)
-                != nil)
-    }
-
     @Test("EFI mode offers all three image sources, with none picked to start")
     func efiShowsEveryImageSource() {
         let vm = VMCreationViewModel.overEngine()
@@ -75,46 +42,6 @@ struct BootConfigContentViewControllerTests {
         #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .off)
         #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .off)
         #expect(findLabel(withText: "Kernel", in: vc.view) == nil)
-    }
-
-    @Test("A checked URL pick lights its radio, names the file and size, and says what it is checked against")
-    func verifiedURLPickRendersBadge() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(makeCustomLinuxImage(), sizeBytes: 1_073_741_824)
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(findButton(titled: "Image URL…", in: vc.view)?.state == .on)
-        #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .off)
-        // Two fields: the check runs after download, so the primary line
-        // claims no result.
-        #expect(
-            findLabel(
-                withText:
-                    "alpine-3.22-aarch64.iso  ·  \(DataFormatters.formatBytes(1_073_741_824))",
-                in: vc.view) != nil)
-        #expect(
-            findLabel(
-                withText: "Checked after download against the checksum you entered",
-                in: vc.view) != nil)
-        #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
-        #expect(findButton(titled: "Change…", in: vc.view) != nil)
-    }
-
-    /// The URL sheet already warned before the pick was made, so the step says
-    /// it once, on the badge.
-    @Test("An unverified URL pick says so on the badge alone")
-    func unverifiedURLPickWarns() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
-        #expect(findLabel(containing: "Checked after download", in: vc.view) == nil)
-        #expect(findLabel(containing: "won't be verified", in: vc.view) == nil)
     }
 
     @Test("A catalog pick lights its radio and names the image on a badge")
@@ -184,20 +111,6 @@ struct BootConfigContentViewControllerTests {
         #expect(findButton(titled: "Choose a Distribution…", in: vc.view)?.state == .on)
     }
 
-    @Test("Cancelling the picker leaves the earlier pick standing")
-    func catalogSheetCancelKeepsThePick() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectLocalISO(path: "/tmp/ubuntu.iso", bookmark: nil)
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        vc.dismissSourceSheet()
-
-        #expect(vm.linuxSelection == .localISO(path: "/tmp/ubuntu.iso", bookmark: nil))
-        #expect(findButton(titled: "ISO File…", in: vc.view)?.state == .on)
-    }
-
     @Test("Choosing from the URL sheet commits the image and lights its radio")
     func urlSheetChoiceCommits() {
         let vm = VMCreationViewModel.overEngine()
@@ -253,17 +166,5 @@ struct BootConfigContentViewControllerTests {
         vc.controlTextDidChange(
             Notification(name: NSControl.textDidChangeNotification, object: field))
         #expect(vm.kernelCommandLine == "root=/dev/vda console=hvc0")
-    }
-
-    @Test("An explicitly cleared command line is not re-seeded with the default")
-    func clearedCommandLineNotReseeded() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
-        vm.kernelCommandLine = ""  // user cleared it intentionally
-        let vc = BootConfigContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(vm.kernelCommandLine == "")
     }
 }

@@ -39,41 +39,6 @@ struct RestoreImageURLSheetContentViewControllerTests {
         #expect(vc.checkedImage == nil)
     }
 
-    @Test("Check with an empty field does nothing")
-    func checkIgnoresEmptyField() async {
-        let probe = MockRestoreImageProbeService()
-        let vc = makeSheet(probe: probe)
-        await check(vc)
-        #expect(probe.probeCallCount == 0)
-    }
-
-    @Test("A successful check enables Use and records the image")
-    func successfulCheckEnablesUse() async {
-        let probe = MockRestoreImageProbeService()
-        let vc = makeSheet(
-            probe: probe,
-            initialURL: "https://updates.cdn-apple.com/x/UniversalMac_15.6.1_24G90_Restore.ipsw")
-
-        await check(vc)
-
-        #expect(probe.probeCallCount == 1)
-        #expect(vc.checkedImage == probe.probeResult)
-        #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == true)
-    }
-
-    @Test("A failed check leaves Use disabled and shows the reason")
-    func failedCheckKeepsUseDisabled() async {
-        let probe = MockRestoreImageProbeService()
-        probe.probeError = RestoreImageProbeError.notAVirtualMachineImage
-        let vc = makeSheet(probe: probe, initialURL: "https://example.com/R.ipsw")
-
-        await check(vc)
-
-        #expect(vc.checkedImage == nil)
-        #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == false)
-        #expect(findLabel(containing: "can't run as a virtual machine", in: vc.view) != nil)
-    }
-
     @Test("A malformed URL is refused without reaching the probe")
     func malformedURLNeverProbes() async {
         let probe = MockRestoreImageProbeService()

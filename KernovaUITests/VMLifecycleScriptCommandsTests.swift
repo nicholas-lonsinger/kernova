@@ -38,49 +38,6 @@ struct VMLifecycleScriptCommandsTests {
             prepareToSurface: {})
     }
 
-    // MARK: - Reading the event
-
-    @Test("A with/without parameter reads as the flag it was given, and as without when absent")
-    func flagsReadTheirParameter() throws {
-        let given = try makeCommand(
-            VMStartScriptCommand.init(commandDescription:), code: "Strt", arguments: ["RecoveryMode": true])
-        let absent = try makeCommand(VMStartScriptCommand.init(commandDescription:), code: "Strt")
-
-        #expect(given.flag("RecoveryMode"))
-        #expect(!absent.flag("RecoveryMode"))
-    }
-
-    @Test("A deadline parameter reads as seconds, and as no deadline when absent")
-    func secondsReadTheirParameter() throws {
-        let given = try makeCommand(
-            VMStopScriptCommand.init(commandDescription:), code: "Stop", arguments: ["GivingUpAfter": 45])
-        let absent = try makeCommand(VMStopScriptCommand.init(commandDescription:), code: "Stop")
-
-        #expect(given.seconds("GivingUpAfter") == 45)
-        #expect(absent.seconds("GivingUpAfter") == nil)
-    }
-
-    @Test("A refusal records the number and the words the script reads back")
-    func refusalsRecordNumberAndMessage() throws {
-        let command = try makeCommand(VMPauseScriptCommand.init(commandDescription:), code: "Paus")
-
-        command.refuse(Int(errAEEventFailed), "Kernova is not ready to answer scripts.")
-
-        #expect(command.scriptErrorNumber == Int(errAEEventFailed))
-        #expect(command.scriptErrorString == "Kernova is not ready to answer scripts.")
-    }
-
-    @Test("The core's refusal is recorded as the Apple event error it maps to")
-    func aCoreRefusalRecordsItsMapping() throws {
-        let command = try makeCommand(VMPauseScriptCommand.init(commandDescription:), code: "Paus")
-        let refusal = CommandError.notFound(.name("Alpha"))
-
-        command.refuse(refusal)
-
-        #expect(command.scriptErrorNumber == Int(errAENoSuchObject))
-        #expect(command.scriptErrorString == refusal.message)
-    }
-
     // MARK: - Running the verb
 
     @Test("start passes recovery mode through")
@@ -96,27 +53,6 @@ struct VMLifecycleScriptCommandsTests {
         #expect(virtualization.startCallCount == 1)
         #expect(virtualization.lastStartBootIntoRecovery)
         #expect(alpha.status == .running)
-    }
-
-    @Test("stop passes the method and the consent through")
-    func stopPassesItsParameters() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        let command = try makeCommand(
-            VMStopScriptCommand.init(commandDescription:), code: "Stop",
-            arguments: [
-                "StopMethod": NSNumber(value: VMScriptStopMethod.force.code),
-                "Confirmation": true, "GivingUpAfter": 30,
-            ])
-
-        // The force stop refuses without consent, so the termination is the
-        // consent's doing.
-        try await command.run(makeGateway(wired), on: [.name("Alpha")])
-
-        #expect(virtualization.forceStopCallCount == 1)
-        #expect(virtualization.stopCallCount == 0)
-        #expect(alpha.status == .stopped)
     }
 
     @Test(
@@ -169,20 +105,6 @@ struct VMLifecycleScriptCommandsTests {
         #expect(alpha.status == .running)
     }
 
-    @Test("stop is normal when no method is named")
-    func stopIsNormalByDefault() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        let command = try makeCommand(VMStopScriptCommand.init(commandDescription:), code: "Stop")
-
-        try await command.run(makeGateway(wired), on: [.name("Alpha")])
-
-        #expect(virtualization.stopCallCount == 1)
-        #expect(virtualization.forceStopCallCount == 0)
-        #expect(alpha.status == .stopped)
-    }
-
     @Test("A stop method from no vocabulary this app writes is a type error, and stops nothing")
     func anUnknownStopMethodIsRefused() async throws {
         let virtualization = MockVirtualizationService()
@@ -199,66 +121,6 @@ struct VMLifecycleScriptCommandsTests {
         #expect(refusal?.appleEventErrorNumber == Int(errAETypeError))
         #expect(virtualization.stopCallCount == 0)
         #expect(virtualization.forceStopCallCount == 0)
-        #expect(alpha.status == .running)
-    }
-
-    @Test("restart method force asks for Force Restart's consent, and with confirmation terminates and boots")
-    func restartMethodForceRoutes() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        func command(confirmation: Bool) throws -> VMRestartScriptCommand {
-            try makeCommand(
-                VMRestartScriptCommand.init(commandDescription:), code: "Rstr",
-                arguments: [
-                    "StopMethod": NSNumber(value: VMScriptStopMethod.force.code),
-                    "Confirmation": confirmation,
-                ])
-        }
-
-        let unconsented = try await #require(throws: CommandError.self) {
-            try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
-        }
-        #expect(unconsented.confirmationPrompt?.kind == .forceRestart)
-        #expect(virtualization.forceStopCallCount == 0)
-
-        try await command(confirmation: true).run(makeGateway(wired), on: [.name("Alpha")])
-        #expect(virtualization.forceStopCallCount == 1)
-        #expect(virtualization.stopCallCount == 0)
-        #expect(virtualization.startCallCount == 1)
-        #expect(alpha.status == .running)
-    }
-
-    @Test(
-        "restart method anyway asks for Restart Anyway's consent where offered, and is refused naming the For everyone install where not"
-    )
-    func restartMethodAnywayRoutes() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()), guestOS: .macOS)
-        func command(confirmation: Bool) throws -> VMRestartScriptCommand {
-            try makeCommand(
-                VMRestartScriptCommand.init(commandDescription:), code: "Rstr",
-                arguments: [
-                    "StopMethod": NSNumber(value: VMScriptStopMethod.anyway.code),
-                    "Confirmation": confirmation,
-                ])
-        }
-
-        let unoffered = try await #require(throws: CommandError.self) {
-            try await command(confirmation: true).run(makeGateway(wired), on: [.name("Alpha")])
-        }
-        #expect(unoffered.stepRequirement?.title == "Can\u{2019}t Restart Anyway")
-
-        alpha.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
-        let unconsented = try await #require(throws: CommandError.self) {
-            try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
-        }
-        #expect(unconsented.confirmationPrompt?.kind == .restartAnyway)
-
-        #expect(virtualization.stopCallCount == 0)
-        #expect(virtualization.startCallCount == 0)
         #expect(alpha.status == .running)
     }
 

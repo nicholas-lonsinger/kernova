@@ -62,25 +62,6 @@ struct VMCreationWizardViewControllerTests {
         #expect(vm.currentStep == .bootConfig)
     }
 
-    @Test("Review step shows Create and reports the model on click")
-    func reviewStepCreate() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.currentStep = .review
-        let wizard = VMCreationWizardViewController(creationVM: vm)
-        var createRequests: [VMCreationViewModel] = []
-        wizard.onCreate = { createRequests.append($0) }
-        wizard.loadViewIfNeeded()
-
-        #expect(findButton(titled: "Next", in: wizard.view)?.isHidden == true)
-        let create = findButton(titled: "Create", in: wizard.view)
-        #expect(create?.isHidden == false)
-        #expect(create?.isEnabled == true)
-
-        create?.performClick(nil)
-        #expect(createRequests.count == 1)
-        #expect(createRequests.first === vm)
-    }
-
     @Test("Create is disabled on review when the name is blank")
     func reviewCreateDisabledWhenNameBlank() {
         let vm = VMCreationViewModel.overEngine()

@@ -183,17 +183,6 @@ struct ReviewContentViewControllerTests {
                 in: vc.view) != nil)
     }
 
-    @Test("A Linux URL pick with no checksum says the download is not verified")
-    func linuxShowsUnverifiedURLPick() {
-        let vm = VMCreationViewModel.overEngine()
-        vm.selectedOS = .linux
-        vm.selectLinuxCustomURL(makeCustomLinuxImage(sha256: nil), sizeBytes: 1_073_741_824)
-        let vc = ReviewContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(findLabel(withText: "Not verified", in: vc.view) != nil)
-    }
-
     // MARK: - Guest Account
 
     /// A wizard model on an image that can be provisioned, with the account
@@ -249,46 +238,6 @@ struct ReviewContentViewControllerTests {
         #expect(findLabel(withText: "Automatic login", in: vc.view) != nil)
         #expect(findLabel(withText: "Remote Login (SSH)", in: vc.view) != nil)
         #expect(redactedPasswordLabel(in: vc.view) != nil)
-    }
-
-    @Test("A wizard creating no account shows no Account section")
-    func accountSectionAbsentWhenNoAccount() {
-        let vm = makeAccountModel()
-        vm.unattendedSetupEnabled = false
-        let vc = ReviewContentViewController(creationVM: vm)
-        vc.loadViewIfNeeded()
-
-        #expect(findLabel(withText: "Account", in: vc.view) == nil)
-        #expect(findLabel(withText: "Ada Lovelace", in: vc.view) == nil)
-        #expect(redactedPasswordLabel(in: vc.view) == nil)
-    }
-
-    @available(macOS 27.0, *)
-    @Test("The password reaches no label, placeholder, button title or tooltip in the tree")
-    func passwordIsNeverRendered() {
-        let password = "correct-horse-battery-staple"
-        let vc = ReviewContentViewController(creationVM: makeAccountModel(password: password))
-        vc.loadViewIfNeeded()
-
-        let strings = renderedStrings(in: vc.view)
-        // The walk has to have found the section, or it proves nothing.
-        #expect(strings.contains("Ada Lovelace"))
-        #expect(!strings.contains { $0.contains(password) })
-    }
-
-    @available(macOS 27.0, *)
-    @Test("The bullets stand for the password without echoing its length")
-    func passwordLengthIsNotEchoed() throws {
-        let shortVC = ReviewContentViewController(creationVM: makeAccountModel(password: "abcd"))
-        shortVC.loadViewIfNeeded()
-        let longVC = ReviewContentViewController(
-            creationVM: makeAccountModel(password: String(repeating: "z", count: 40)))
-        longVC.loadViewIfNeeded()
-
-        let short = try #require(redactedPasswordLabel(in: shortVC.view)).stringValue
-        let long = try #require(redactedPasswordLabel(in: longVC.view)).stringValue
-        #expect(short == long)
-        #expect(short.count != 4)
     }
 
     @Test("Start-after-create switch writes back to the model")

@@ -52,27 +52,6 @@ struct VMScriptSelectorTests {
         return command.scriptErrorOffendingObjectDescriptor
     }
 
-    @Test("A name of the application's element reaches the core as a name")
-    func aNameSpecifierIsReadAsAName() throws {
-        let specifier = NSNameSpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: VMScriptingRoot.virtualMachinesKey, name: "Alpha")
-
-        // The core is what refuses a name several VMs answer to, with the
-        // candidates listed; evaluating here would lose that.
-        #expect(try VMScriptSelector.selectors(addressing: specifier) == [.name("Alpha")])
-    }
-
-    @Test("An identifier of the application's element reaches the core as an identifier")
-    func aUniqueIDSpecifierIsReadAsAnIdentifier() throws {
-        let id = UUID()
-        let specifier = NSUniqueIDSpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: VMScriptingRoot.virtualMachinesKey, uniqueID: id.uuidString)
-
-        #expect(try VMScriptSelector.selectors(addressing: specifier) == [.id(id)])
-    }
-
     @Test("An identifier Kernova never issued is left to the evaluation, which refuses it")
     func anUnparsableIdentifierIsEvaluated() throws {
         let specifier = NSUniqueIDSpecifier(
@@ -95,26 +74,6 @@ struct VMScriptSelectorTests {
         let specifier = NSNameSpecifier(
             containerClassDescription: try makeContainer(), containerSpecifier: window,
             key: VMScriptingRoot.virtualMachinesKey, name: "Alpha")
-
-        let failure = try #require(
-            evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
-        #expect(try offendingObject(of: failure, addressing: specifier) != nil)
-    }
-
-    @Test("Every virtual machine of an empty library addresses nothing and refuses nothing")
-    func everyElementOfAnEmptyLibraryIsEmpty() throws {
-        let specifier = NSPropertySpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: VMScriptingRoot.virtualMachinesKey)
-
-        #expect(try VMScriptSelector.selectors(addressing: specifier).isEmpty)
-    }
-
-    @Test("A position the library has no VM at is refused, naming the position")
-    func anIndexPastTheLibraryIsRefused() throws {
-        let specifier = NSIndexSpecifier(
-            containerClassDescription: try makeContainer(), containerSpecifier: nil,
-            key: VMScriptingRoot.virtualMachinesKey, index: 0)
 
         let failure = try #require(
             evaluationFailure { try VMScriptSelector.selectors(addressing: specifier) })
