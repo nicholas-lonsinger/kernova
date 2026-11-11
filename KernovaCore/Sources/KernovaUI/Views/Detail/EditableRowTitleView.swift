@@ -111,7 +111,7 @@ final class EditableRowTitleView: NSView {
             guard let self else { return }
             self.onEditBegan?(self.itemID)
         }
-        nameLabel.onEditCommitted = { [weak self] text, _ in
+        nameLabel.onEditCommitted = { [weak self] text in
             guard let self else { return }
             self.onRenameCommitted?(self.itemID, text)
         }
@@ -125,7 +125,7 @@ final class EditableRowTitleView: NSView {
             guard let self else { return }
             self.onEditBegan?(self.itemID)
         }
-        notesLabel.onEditCommitted = { [weak self] text, _ in
+        notesLabel.onEditCommitted = { [weak self] text in
             guard let self else { return }
             // Re-hide an empty note straight away; a committed one re-appears
             // when the owner feeds the stored value back through ``update``.

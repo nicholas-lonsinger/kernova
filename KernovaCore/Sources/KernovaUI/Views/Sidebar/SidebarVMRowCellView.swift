@@ -35,9 +35,8 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// Reads whether the install nudge's dismissal can be written now, live.
     private var agentNudgeDismissible: (() -> Bool)?
     private var rowObservation: ObservationLoop?
-    /// Commits the edited name; the `Bool` is `true` when editing ended by Return,
-    /// which decides whether the controller restores sidebar focus.
-    private var onCommitRename: ((String, Bool) -> Void)?
+    /// Commits the edited name.
+    private var onCommitRename: ((String) -> Void)?
     private var onCancelRename: (() -> Void)?
     /// Reads this row's busy state, live: the cell's own observation loop calls
     /// it, so every observable read inside it wakes the row — including the
@@ -95,8 +94,8 @@ final class SidebarVMRowCellView: NSTableCellView {
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         nameLabel.currentText = { [weak self] in self?.instance?.name }
-        nameLabel.onEditCommitted = { [weak self] newName, endedByReturn in
-            self?.onCommitRename?(newName, endedByReturn)
+        nameLabel.onEditCommitted = { [weak self] newName in
+            self?.onCommitRename?(newName)
         }
         nameLabel.onEditCancelled = { [weak self] in self?.onCancelRename?() }
 
@@ -192,7 +191,7 @@ final class SidebarVMRowCellView: NSTableCellView {
         isBusy: @escaping () -> Bool,
         detail: @escaping () -> String?,
         tags: @escaping () -> [VMTag],
-        onCommitRename: @escaping (String, Bool) -> Void,
+        onCommitRename: @escaping (String) -> Void,
         onCancelRename: @escaping () -> Void,
         onAgentDiskControl: @escaping () -> Void,
         onDismissAgentNudge: @escaping () -> Void

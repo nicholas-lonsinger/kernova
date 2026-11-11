@@ -195,7 +195,7 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         // `refreshGeneral`, which is the one place the box opens.
         nameLabel.onClicked = { [weak self] in self?.startRename() }
         nameLabel.currentText = { [weak self] in self?.instance.name }
-        nameLabel.onEditCommitted = { [weak self] text, _ in
+        nameLabel.onEditCommitted = { [weak self] text in
             guard let self else { return }
             self.viewModel.commitRename(for: self.instance, newName: text, from: .detail)
         }

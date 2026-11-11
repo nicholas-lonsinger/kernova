@@ -65,7 +65,7 @@ struct InlineEditableLabelTests {
     func reseedsFromCurrentTextAfterTakingFocus() {
         let name = SharedName("Original")
         let first = makeLabel(text: name.value)
-        first.onEditCommitted = { text, _ in name.value = text }
+        first.onEditCommitted = { text in name.value = text }
         let second = makeLabel(text: name.value)
         second.currentText = { name.value }
         host([first, second])
@@ -103,7 +103,7 @@ struct InlineEditableLabelTests {
     func endEditingCommitsOnce() {
         var commits: [String] = []
         let label = makeLabel()
-        label.onEditCommitted = { text, _ in commits.append(text) }
+        label.onEditCommitted = { text in commits.append(text) }
         host([label])
 
         label.beginEditing()
@@ -123,7 +123,7 @@ struct InlineEditableLabelTests {
         var commits = 0
         var cancels = 0
         let label = makeLabel(text: "Original")
-        label.onEditCommitted = { _, _ in commits += 1 }
+        label.onEditCommitted = { _ in commits += 1 }
         label.onEditCancelled = { cancels += 1 }
         host([label])
 
@@ -144,7 +144,7 @@ struct InlineEditableLabelTests {
         var commits = 0
         var cancels = 0
         let label = makeLabel(text: "Original")
-        label.onEditCommitted = { _, _ in commits += 1 }
+        label.onEditCommitted = { _ in commits += 1 }
         label.onEditCancelled = { cancels += 1 }
         host([label])
 

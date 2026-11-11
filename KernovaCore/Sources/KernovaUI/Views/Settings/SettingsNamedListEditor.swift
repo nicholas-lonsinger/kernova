@@ -38,12 +38,13 @@ protocol SettingsNamedListSource: AnyObject {
     func delete(_ id: UUID) throws
 }
 
-/// A Settings pane's list of the library's named items: a table whose name
-/// column takes an inline rename, a +/− control that creates through the
-/// source and deletes after its confirmation, and an observation loop, live
-/// while the pane is on screen, that repaints the list on any change.
+/// A Settings pane's list of the library's named items: a table whose names
+/// are renamed in place, a +/− control that creates through the source and
+/// deletes after its confirmation, and an observation loop, live while the
+/// pane is on screen, that repaints the list on any change.
 ///
-/// A refusal is shown as a sheet on the Settings window. A change from
+/// A refusal is shown as a sheet on the Settings window; a refused name opens
+/// the rename again, holding it, once the sheet is dismissed. A change from
 /// elsewhere arriving while a name is being edited repaints once the edit
 /// ends, since a reload would end the edit; the pane's own changes end the
 /// edit, committing it, before they run. While the list can't be read, a
@@ -64,7 +65,7 @@ final class SettingsNamedListEditor: NSObject {
     private let nameColumn: NSUserInterfaceItemIdentifier
     private weak var source: (any SettingsNamedListSource)?
 
-    let tableView = NSTableView()
+    let tableView = SettingsNamedListTableView()
     private let scrollView = NSScrollView()
     private let unreadableNotice = NSStackView()
     private let unreadableLabel = NSTextField(wrappingLabelWithString: "")
@@ -77,26 +78,31 @@ final class SettingsNamedListEditor: NSObject {
     /// Whether the last read found the list unreadable, which the pane shows
     /// in place of the table.
     private(set) var isUnreadable = false
-    /// The name field the window's field editor is editing, from the moment
-    /// it opens — before anything is typed.
-    private var editingNameField: NSTextField? {
-        guard let editor = tableView.window?.firstResponder as? NSText,
-            let field = editor.delegate as? NSTextField, field.isDescendant(of: tableView)
-        else { return nil }
-        return field
+    /// The name cell whose rename is open, from the moment it opens — before
+    /// anything is typed.
+    private var openRename: SettingsNamedListNameCellView? {
+        let column = tableView.column(withIdentifier: nameColumn)
+        guard column >= 0 else { return nil }
+        return (0..<tableView.numberOfRows).lazy
+            .compactMap { self.tableView.view(atColumn: column, row: $0, makeIfNecessary: false) }
+            .compactMap { $0 as? SettingsNamedListNameCellView }
+            .first { $0.isRenaming }
     }
     private var observation: ObservationLoop?
 
+    /// A slow second click's rename waits out the double-click interval
+    /// through `renameDeferral`.
     init(
         noun: String, columns: [Column], nameColumn: NSUserInterfaceItemIdentifier, logger: KernovaLogger,
-        source: any SettingsNamedListSource
+        source: any SettingsNamedListSource,
+        renameDeferral: @escaping InPlaceRenameClicks<UUID>.Deferral = afterDoubleClickInterval
     ) {
         self.noun = noun
         self.nameColumn = nameColumn
         self.logger = logger
         self.source = source
         super.init()
-        configureTable(columns)
+        configureTable(columns, renameDeferral: renameDeferral)
     }
 
     // MARK: - View
@@ -166,7 +172,7 @@ final class SettingsNamedListEditor: NSObject {
         unreadableNotice.isHidden = true
     }
 
-    private func configureTable(_ columns: [Column]) {
+    private func configureTable(_ columns: [Column], renameDeferral: @escaping InPlaceRenameClicks<UUID>.Deferral) {
         for spec in columns {
             let column = NSTableColumn(identifier: spec.id)
             column.title = spec.title
@@ -182,8 +188,22 @@ final class SettingsNamedListEditor: NSObject {
         tableView.style = .fullWidth
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.target = self
-        tableView.doubleAction = #selector(rowDoubleClicked)
+        let clicks = InPlaceRenameClicks<UUID>(
+            table: tableView, doubleClickBegins: true, deferral: renameDeferral,
+            item: { [weak self] row in
+                guard let self, ids.indices.contains(row) else { return nil }
+                return ids[row]
+            },
+            row: { [weak self] id in self?.ids.firstIndex(of: id) },
+            isOverName: { [weak self] point, _ in
+                guard let self else { return false }
+                return tableView.column(at: point) == tableView.column(withIdentifier: nameColumn)
+            })
+        clicks.begin = { [weak self] row in
+            guard let self, ids.indices.contains(row) else { return }
+            beginRename(of: ids[row])
+        }
+        tableView.renameClicks = clicks
     }
 
     // MARK: - Observation
@@ -200,6 +220,7 @@ final class SettingsNamedListEditor: NSObject {
     func stopObserving() {
         observation?.cancel()
         observation = nil
+        tableView.renameClicks?.cancel()
     }
 
     // MARK: - List
@@ -208,7 +229,7 @@ final class SettingsNamedListEditor: NSObject {
     /// item it was on.
     func reload() {
         // A reload would end the edit; the edit's end repaints instead.
-        guard editingNameField == nil else { return }
+        guard openRename == nil else { return }
         repaint()
     }
 
@@ -258,20 +279,49 @@ final class SettingsNamedListEditor: NSObject {
 
     @objc private func addRemoveClicked() {
         switch addRemoveControl.selectedSegment {
-        case Self.addSegment: source?.presentCreate()
-        case Self.removeSegment: confirmDelete()
+        case Self.addSegment: create()
+        case Self.removeSegment: deleteSelected()
         default: break
         }
     }
 
-    @objc private func rowDoubleClicked() {
-        let row = tableView.clickedRow
-        guard row >= 0,
-            let cell = tableView.view(
-                atColumn: tableView.column(withIdentifier: nameColumn), row: row, makeIfNecessary: false)
-                as? NSTableCellView
-        else { return }
-        cell.textField?.selectText(nil)
+    /// Asks the source for a new item, committing an open rename first.
+    ///
+    /// The +/− control takes no focus, so a click on it leaves an open rename
+    /// open; the pane's own changes end it before they run.
+    func create() {
+        openRename?.endRename()
+        source?.presentCreate()
+    }
+
+    /// Asks before deleting the selected item, committing an open rename
+    /// first, so the question names the item as renamed.
+    func deleteSelected() {
+        openRename?.endRename()
+        confirmDelete()
+    }
+
+    /// Opens the rename of the item `id` identifies, selecting it, the box
+    /// holding `draft` in place of its name when one is given.
+    private func beginRename(of id: UUID, holding draft: String? = nil) {
+        guard let row = ids.firstIndex(of: id) else { return }
+        select(id)
+        (tableView.view(atColumn: tableView.column(withIdentifier: nameColumn), row: row, makeIfNecessary: true)
+            as? SettingsNamedListNameCellView)?.beginRename(holding: draft)
+    }
+
+    /// Renames the item `id` identifies to `typed`, the text its rename was
+    /// committed with, then repaints the list with every change that arrived
+    /// during the edit. A name the source refuses opens the rename again,
+    /// holding that name, once the refusal is dismissed.
+    private func commitRename(of id: UUID, to typed: String) {
+        if let source, typed != source.name(of: id) {
+            run(
+                "Couldn\u{2019}t Rename the \(noun)",
+                retry: { [weak self] in self?.beginRename(of: id, holding: typed) }
+            ) { try source.rename(id, to: typed) }
+        }
+        repaint()
     }
 
     private func confirmDelete() {
@@ -289,20 +339,21 @@ final class SettingsNamedListEditor: NSObject {
     /// committing it, then runs `change` and repaints. What it was refused
     /// with is shown under `title`.
     func attempt(_ title: String, _ change: () throws -> Void) {
-        if editingNameField != nil { tableView.window?.makeFirstResponder(nil) }
+        openRename?.endRename()
         run(title, change)
         reload()
     }
 
-    /// Runs `change`, showing what it was refused with under `title`.
-    private func run(_ title: String, _ change: () throws -> Void) {
+    /// Runs `change`, showing what it was refused with under `title`, then
+    /// `retry` once that sheet is dismissed.
+    private func run(_ title: String, retry: (() -> Void)? = nil, _ change: () throws -> Void) {
         do {
             try change()
         } catch {
             let message = (error as? CommandError)?.message ?? error.localizedDescription
             logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
             guard let window = tableView.window else { return }
-            presentSheetAlert(.acknowledgement(title: title, message: message), in: window)
+            presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
         }
     }
 
@@ -333,33 +384,40 @@ extension SettingsNamedListEditor: NSTableViewDelegate {
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let identifier = tableColumn?.identifier, ids.indices.contains(row), let source else { return nil }
         let id = ids[row]
+        if identifier == nameColumn {
+            let cell =
+                tableView.makeView(withIdentifier: identifier, owner: nil) as? SettingsNamedListNameCellView
+                ?? SettingsNamedListNameCellView(identifier: identifier)
+            cell.configure(
+                name: source.name(of: id),
+                renaming: .init(
+                    commit: { [weak self] typed in self?.commitRename(of: id, to: typed) },
+                    // The edit's end repaints what arrived during it.
+                    cancel: { [weak self] in self?.repaint() }))
+            return cell
+        }
         if let control = source.control(for: identifier, of: id) { return control }
         let cell =
-            tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView ?? makeCell(identifier)
-        cell.textField?.allowsExpansionToolTips = true
-        cell.textField?.stringValue =
-            identifier == nameColumn ? source.name(of: id) : source.text(for: identifier, of: id)
+            tableView.makeView(withIdentifier: identifier, owner: nil) as? NSTableCellView ?? makeTextCell(identifier)
+        cell.textField?.stringValue = source.text(for: identifier, of: id)
         return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // A pending slow-second-click rename was armed on the old selection.
+        self.tableView.renameClicks?.cancel()
         refreshControls()
     }
 
-    /// A cell whose one field shows the column's value; the name's field is
-    /// where a rename is typed.
-    private func makeCell(_ identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
+    /// A cell whose one field shows the column's value.
+    private func makeTextCell(_ identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
         let cell = NSTableCellView()
         cell.identifier = identifier
         let field = NSTextField(labelWithString: "")
         field.lineBreakMode = .byTruncatingTail
+        field.allowsExpansionToolTips = true
+        field.textColor = .secondaryLabelColor
         field.translatesAutoresizingMaskIntoConstraints = false
-        if identifier == nameColumn {
-            field.isEditable = true
-            field.delegate = self
-        } else {
-            field.textColor = .secondaryLabelColor
-        }
         cell.addSubview(field)
         cell.textField = field
         NSLayoutConstraint.activate([
@@ -371,24 +429,20 @@ extension SettingsNamedListEditor: NSTableViewDelegate {
     }
 }
 
-// MARK: - NSTextFieldDelegate
+// MARK: - Table
 
-extension SettingsNamedListEditor: NSTextFieldDelegate {
-    /// Commits a rename typed into a name cell, then repaints the list with
-    /// every change that arrived during the edit; a name the source refuses
-    /// puts the item's name back.
-    ///
-    /// AppKit sends this whether or not anything was typed, while the field
-    /// editor is still the window's first responder — so ``reload()`` called
-    /// from here still waits, and the repaint is this method's own.
-    func controlTextDidEndEditing(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField, let source else { return }
-        let row = tableView.row(for: field)
-        if ids.indices.contains(row), field.stringValue != source.name(of: ids[row]) {
-            let id = ids[row]
-            let name = field.stringValue
-            run("Couldn\u{2019}t Rename the \(noun)") { try source.rename(id, to: name) }
+/// A ``SettingsNamedListEditor``'s table, whose clicks open a row's rename
+/// through ``renameClicks``.
+@MainActor
+final class SettingsNamedListTableView: NSTableView {
+    /// Set by the editor, which answers for the rows.
+    fileprivate(set) var renameClicks: InPlaceRenameClicks<UUID>?
+
+    override func mouseDown(with event: NSEvent) {
+        guard let renameClicks else { return super.mouseDown(with: event) }
+        renameClicks.mouseDown(with: event) {
+            super.mouseDown(with: $0)
+            return self.window?.mouseLocationOutsideOfEventStream ?? $0.locationInWindow
         }
-        repaint()
     }
 }
