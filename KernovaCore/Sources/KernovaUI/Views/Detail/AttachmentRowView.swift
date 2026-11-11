@@ -86,9 +86,9 @@ final class AttachmentRowView: NSView {
             itemID: itemID, name: title, notes: notes,
             controlsEnabled: controlsEnabled && isTitleEditable)
         super.init(frame: .zero)
-        buildLayout(
-            icon: icon, subtitle: subtitle, readOnlyToggle: readOnlyToggle,
-            readOnlyCaption: readOnlyCaption, ejectButton: ejectButton)
+        layOutEditableListRow(
+            in: self, icon: icon, title: titleView, subtitle: subtitle,
+            trailing: [readOnlyToggle, readOnlyCaption, ejectButton].compactMap { $0 })
     }
 
     /// Updates the row's display state in place, without a teardown/rebuild;
@@ -122,56 +122,6 @@ final class AttachmentRowView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("AttachmentRowView does not support NSCoder")
-    }
-
-    private func buildLayout(
-        icon: NSView, subtitle: NSTextField, readOnlyToggle: NSView, readOnlyCaption: NSView,
-        ejectButton: NSButton?
-    ) {
-        translatesAutoresizingMaskIntoConstraints = false
-
-        titleView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        titleView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let textStack = NSStackView(views: [titleView, subtitle])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = Spacing.hairline
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        // Both rows fill the column width: the title line so it can hold its
-        // spacer, the subtitle so it middle-truncates.
-        NSLayoutConstraint.activate([
-            titleView.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
-            titleView.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
-            subtitle.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
-            subtitle.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
-        ])
-
-        // Keep the leading icon and trailing controls rigid so the text column
-        // is the only view that stretches to absorb the row's spare width.
-        for accessory in [icon, readOnlyToggle, ejectButton].compactMap({ $0 }) {
-            accessory.setContentHuggingPriority(.required, for: .horizontal)
-            accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-
-        let row = NSStackView(views: [
-            icon, textStack, readOnlyToggle, readOnlyCaption,
-        ])
-        if let ejectButton { row.addArrangedSubview(ejectButton) }
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.distribution = .fill
-        row.spacing = Spacing.standard
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
     }
 
     // MARK: - Context menu

@@ -87,8 +87,6 @@ final class SnapshotRowView: NSView {
     }
 
     private func buildLayout(target: AnyObject, moreAction: Selector) {
-        translatesAutoresizingMaskIntoConstraints = false
-
         icon.configure(systemName: "clock.arrow.circlepath", missingPath: nil)
 
         subtitleField.font = .preferredFont(forTextStyle: .caption1)
@@ -97,21 +95,6 @@ final class SnapshotRowView: NSView {
         subtitleField.maximumNumberOfLines = 1
         subtitleField.isSelectable = false
         subtitleField.translatesAutoresizingMaskIntoConstraints = false
-        subtitleField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        subtitleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let textStack = NSStackView(views: [titleView, subtitleField])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = Spacing.hairline
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        NSLayoutConstraint.activate([
-            titleView.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
-            titleView.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
-            subtitleField.leadingAnchor.constraint(equalTo: textStack.leadingAnchor),
-            subtitleField.trailingAnchor.constraint(equalTo: textStack.trailingAnchor),
-        ])
 
         markerLabel.font = .preferredFont(forTextStyle: .caption1)
         markerLabel.textColor = .secondaryLabelColor
@@ -130,30 +113,8 @@ final class SnapshotRowView: NSView {
         menuButton.target = target
         menuButton.action = moreAction
 
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        for accessory in [icon, markerLabel, revertButton, menuButton] as [NSView] {
-            accessory.setContentHuggingPriority(.required, for: .horizontal)
-            accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-
-        let row = NSStackView(views: [
-            icon, textStack, spacer, markerLabel, revertButton, menuButton,
-        ])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.distribution = .fill
-        row.spacing = Spacing.standard
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor),
-            row.topAnchor.constraint(equalTo: topAnchor),
-            row.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        layOutEditableListRow(
+            in: self, icon: icon, title: titleView, subtitle: subtitleField,
+            trailing: [markerLabel, revertButton, menuButton])
     }
 }

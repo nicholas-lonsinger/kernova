@@ -71,9 +71,9 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// last read refused; its tooltip names the file.
     private let unreadableWarning = NSImageView()
     private let spinner = NSProgressIndicator()
-    /// A flexible filler trailing the name so the name label can hug its text
-    /// while renaming; inert in the display state.
-    private let nameSpacer = NSView()
+    /// The name and the filler trailing it; it spans the name column, which is
+    /// the region a slow second click arms the rename from.
+    private let nameLine = NSStackView()
 
     // MARK: - Init
 
@@ -94,24 +94,11 @@ final class SidebarVMRowCellView: NSTableCellView {
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        // The label hugs its own text by default, which would shrink the display
-        // name to a hit region narrower than the name area a slow second click
-        // arms the rename from. Filling the row instead — with `nameSpacer`
-        // hugging one step harder — is what `isPointOverName` measures against.
-        nameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         nameLabel.currentText = { [weak self] in self?.instance?.name }
         nameLabel.onEditCommitted = { [weak self] newName, endedByReturn in
             self?.onCommitRename?(newName, endedByReturn)
         }
         nameLabel.onEditCancelled = { [weak self] in self?.onCancelRename?() }
-
-        // The filler hugs slightly more eagerly than the name field, so the name
-        // claims the spare width in the display state, and while renaming the
-        // filler absorbs the slack instead of the box ballooning.
-        nameSpacer.translatesAutoresizingMaskIntoConstraints = false
-        nameSpacer.setContentHuggingPriority(.defaultLow + 1, for: .horizontal)
-        nameSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.style = .spinning
@@ -138,7 +125,12 @@ final class SidebarVMRowCellView: NSTableCellView {
         // shift when they swap. The agent badge stays outermost — it is the one
         // that asks for action, where the ephemeral badge only states a policy.
         // No gap between the name and its filler.
-        let nameLine = NSStackView(views: [nameLabel, nameSpacer])
+        let nameSpacer = NSView()
+        nameSpacer.translatesAutoresizingMaskIntoConstraints = false
+        nameSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        nameSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        nameLine.addArrangedSubview(nameLabel)
+        nameLine.addArrangedSubview(nameSpacer)
         nameLine.orientation = .horizontal
         nameLine.alignment = .centerY
         nameLine.spacing = 0
@@ -179,9 +171,9 @@ final class SidebarVMRowCellView: NSTableCellView {
             row.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -2),
 
             iconView.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
-            // The name line fills the column, so the name keeps the full width
-            // the slow-second-click rename measures, and the detail line sits
-            // at the column's leading edge under it.
+            // The name line fills the column, so it keeps the full width the
+            // slow-second-click rename measures, and the detail line sits at
+            // the column's leading edge under it.
             nameLine.widthAnchor.constraint(equalTo: nameColumn.widthAnchor),
             spinner.widthAnchor.constraint(equalToConstant: Self.iconSlotWidth),
             unreadableWarning.widthAnchor.constraint(
@@ -370,13 +362,11 @@ final class SidebarVMRowCellView: NSTableCellView {
 
     // MARK: - Inline rename
 
-    /// `true` when `point` (in this cell's coordinate space) is over the editable
-    /// name, so a slow-second-click rename starts only over the name itself.
+    /// `true` when `point` (in this cell's coordinate space) is over the name's
+    /// line, so a slow-second-click rename starts only there.
     func isPointOverName(_ point: NSPoint) -> Bool {
-        // Convert into the name label's own space — its `frame` is relative to the
-        // inset row stack, not the cell, so comparing directly never matches.
         guard !nameLabel.isHidden else { return false }
-        return nameLabel.bounds.contains(nameLabel.convert(point, from: self))
+        return nameLine.bounds.contains(nameLine.convert(point, from: self))
     }
 
     /// Opens the rename box on this row.

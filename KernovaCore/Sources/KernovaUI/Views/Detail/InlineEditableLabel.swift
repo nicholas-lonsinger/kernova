@@ -8,10 +8,12 @@ import AppKit
 /// gesture and the outside-click monitor — so every inline-edited value behaves
 /// identically. The owner supplies identity: the callbacks carry only the text.
 ///
-/// It fills whatever width its container gives it, so it covers most of the
-/// row's right-click target and must re-surface the row's context menu — which
-/// it would otherwise swallow — via ``contextMenu``. While editing it falls
-/// through to the field editor's standard menu.
+/// Its intrinsic width is its text, or while editing a box that fits the live
+/// text, so a container hugs it and a row too narrow compresses it: text
+/// truncates, or scrolls inside the box, only past the room the row has. It
+/// covers part of the row's right-click target and must re-surface the row's
+/// context menu — which it would otherwise swallow — via ``contextMenu``. While
+/// editing it falls through to the field editor's standard menu.
 ///
 /// Two surfaces can hold an edit of the same value at once, which is why
 /// ``currentText`` exists: taking first responder can synchronously commit the
@@ -58,17 +60,14 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// re-seed from.
     var currentText: (() -> String?)?
 
-    /// A `<=` cap on the label's width, activated only while editing.
-    ///
-    /// The bound is `<=`, not `==`, so the box hugs the text without demanding
-    /// width that would stretch the pane.
-    private var editWidth: NSLayoutConstraint?
     private var originalText: String
     /// Whether click-to-edit is armed, and a programmatic edit taken.
     private(set) var controlsEnabled: Bool
     private let clickHandling: ClickHandling
 
-    private(set) var isEditing = false
+    private(set) var isEditing = false {
+        didSet { invalidateIntrinsicContentSize() }
+    }
     /// Suppresses the commit path while a path that already settled the edit
     /// (Escape, or a silent abandon) resigns the field editor.
     private var isCancellingEdit = false
@@ -125,7 +124,6 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         lineBreakMode = .byTruncatingTail
         maximumNumberOfLines = 1
         usesSingleLineMode = true
-        cell?.isScrollable = true
         delegate = self
         setContentHuggingPriority(.defaultHigh, for: .horizontal)
         setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -136,10 +134,6 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
             addGestureRecognizer(recognizer)
             clickRecognizer = recognizer
         }
-
-        let cap = widthAnchor.constraint(lessThanOrEqualToConstant: 0)
-        cap.priority = .defaultHigh
-        editWidth = cap
     }
 
     // MARK: - Context menu
@@ -165,10 +159,9 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         isSelectable = true
         isBezeled = true
         drawsBackground = true
-        // Cap the (still column-filling) label at the current text's width so the
-        // box hugs it; re-capped as the user types.
-        updateEditBoxWidth(for: stringValue)
-        editWidth?.isActive = true
+        // Scrolling turns the cell's line breaks to clipping, so only the box
+        // scrolls; ``endEditAppearance()`` restores the truncation.
+        cell?.isScrollable = true
         takeFocus()
     }
 
@@ -219,7 +212,7 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         originalText = text
         stringValue = text
         currentEditor()?.string = text
-        updateEditBoxWidth(for: text)
+        invalidateIntrinsicContentSize()
     }
 
     /// Installs a local mouse-down monitor that commits the edit when the user
@@ -292,7 +285,8 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         isBordered = false
         isBezeled = false
         drawsBackground = false
-        editWidth?.isActive = false
+        cell?.isScrollable = false
+        lineBreakMode = .byTruncatingTail
         stringValue = originalText
         clickRecognizer?.isEnabled = controlsEnabled
     }
@@ -306,8 +300,7 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        let live = currentEditor()?.string ?? stringValue
-        updateEditBoxWidth(for: live)
+        invalidateIntrinsicContentSize()
     }
 
     func controlTextDidEndEditing(_ obj: Notification) {
@@ -329,10 +322,32 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
 
     // MARK: - Edit box sizing
 
-    /// Sizes the edit box to fit `text`; the `<=` column cap clamps the result,
-    /// so over-long text scrolls inside the box instead of overflowing the row.
-    private func updateEditBoxWidth(for text: String) {
-        editWidth?.constant = InlineRenameSizing.boxWidth(
-            for: text, font: font ?? Typography.body)
+    /// While editing, the width of a box that fits the live text.
+    ///
+    /// An editable `NSTextField` reports no intrinsic width of its own, which
+    /// would leave a hugging container nothing to size the box by.
+    override var intrinsicContentSize: NSSize {
+        let size = super.intrinsicContentSize
+        guard isEditing else { return size }
+        let text = currentEditor()?.string ?? stringValue
+        Self.boxMeasure.font = font
+        Self.boxMeasure.stringValue = text
+        return NSSize(
+            width: max(ceil(Self.boxMeasure.fittingSize.width), Self.minimumBoxWidth),
+            height: size.height)
     }
+
+    /// Floor so a short or momentarily empty edit still has a usable box.
+    private static let minimumBoxWidth: CGFloat = 48
+
+    /// A field with the edit box's bezel, measuring the box a text needs: its
+    /// `fittingSize` includes the bezel's inset, which also houses the caret.
+    private static let boxMeasure: NSTextField = {
+        let field = NSTextField()
+        field.isBezeled = true
+        field.isEditable = false
+        field.maximumNumberOfLines = 1
+        field.cell?.usesSingleLineMode = true
+        return field
+    }()
 }
