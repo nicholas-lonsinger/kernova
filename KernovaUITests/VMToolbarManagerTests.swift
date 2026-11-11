@@ -131,6 +131,49 @@ struct VMToolbarManagerTests {
         #expect(item("testSaveState", in: toolbar)?.isEnabled == false)
     }
 
+    @Test("The toolbar's own observation dims Take Snapshot when an operation starts settling")
+    func takeSnapshotDisabledWhileSettling() async throws {
+        let suspending = SuspendingMockVirtualizationService()
+        suspending.shouldSuspendOnResume = true
+        let (library, lifecycle) = makeLibrary(virtualization: suspending)
+        let instance = library.admitFixture(phase: .livePaused(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
+        let manager = makeManager(instance: instance, library: library)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+
+        // The loop both hosts run, verbatim. Every item sets
+        // `autovalidates = false`, so this is the *only* thing that refreshes
+        // them — driving `updateToolbarItems(in:)` directly would pass whether
+        // or not the settle signal is in the tracked read set.
+        let applied = AsyncGate()
+        let loop = observeRecurring(
+            track: { manager.trackItemState() },
+            apply: {
+                manager.updateToolbarItems(in: toolbar)
+                applied.notify()
+            })
+        defer { loop.cancel() }
+
+        manager.updateToolbarItems(in: toolbar)
+        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == true)
+
+        // The resume presents `.paused` while it runs, so the phase it started
+        // from still names a capture — one requested now is refused as busy,
+        // so the button has to go dim rather than error on click.
+        let resume = try lifecycle.launchResume(instance)
+        await suspending.waitUntilSuspended()
+        try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
+
+        #expect(
+            VMAdmission.settledCaptureMode(phase: instance.phase, facts: instance.admissionFacts)
+                == .live)
+        #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
+
+        suspending.resumeSuspended()
+        try await resume.value()
+    }
+
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
     func displayItemsStructure() {
         let manager = makeManager()

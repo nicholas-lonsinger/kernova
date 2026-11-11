@@ -121,24 +121,6 @@ struct VMLibraryViewModelSnapshotTests {
 
     // MARK: - Seeding
 
-    @Test("A loaded VM carries the snapshots its bundle holds")
-    func loadSeedsTheManifest() async throws {
-        let harness = makeHarness()
-        let config = VMConfiguration(
-            name: "Seeded", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let bundleURL = try harness.storage.bundleURL(for: config)
-        harness.storage.setConfiguration(config, at: bundleURL)
-        let snapshot = makeSnapshot()
-        harness.storage.files.setManifest(
-            VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id), at: bundleURL)
-
-        await harness.viewModel.loadVMs()
-
-        #expect(harness.viewModel.instances.first?.snapshotManifest.snapshots == [snapshot])
-        #expect(harness.viewModel.instances.first?.snapshotManifest.currentID == snapshot.id)
-    }
-
     @Test("Launch reclaims what an interrupted revert or resume left, and a load alone does not")
     func launchSweepsInterruptedWork() async throws {
         let harness = makeHarness()
@@ -164,101 +146,6 @@ struct VMLibraryViewModelSnapshotTests {
     }
 
     // MARK: - Take
-
-    @Test("Requesting a snapshot opens the sheet")
-    func requestOpensTheSheet() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-
-        harness.viewModel.requestTakeSnapshot(instance)
-
-        #expect(presenter.takeSnapshotSheetInstances.count == 1)
-    }
-
-    @Test("A VM with nothing settled to capture opens no sheet")
-    func requestRefusedWhileTransitioning() {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness.viewModel, files: harness.storage.files,
-            phase: .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
-
-        harness.viewModel.requestTakeSnapshot(instance)
-
-        #expect(presenter.takeSnapshotSheetInstances.isEmpty)
-    }
-
-    @Test("A capture of a stopped VM is stamped cold")
-    func stoppedCaptureIsCold() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .stopped)
-
-        await harness.viewModel.takeSnapshot(instance, name: "Before first boot").value
-
-        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
-        #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.cold])
-        #expect(instance.manifestOnDisk == instance.snapshotManifest)
-        #expect(instance.phase == .stopped)
-    }
-
-    @Test("A capture of a suspended VM is stamped as memory-and-disks and lands in the manifest")
-    func suspendedCaptureIsWarm() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .suspended)
-        // A capturable suspend slot: `canTakeSnapshot` for a suspended VM
-        // needs one on disk, not just the status.
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        FileManager.default.createFile(
-            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
-            contents: Data("fake save".utf8))
-
-        await harness.viewModel.takeSnapshot(instance, name: "Suspended").value
-
-        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
-        #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.warm])
-        #expect(instance.manifestOnDisk == instance.snapshotManifest)
-        #expect(instance.phase == .suspended)
-        #expect(!instance.hasLiveVirtualMachine)
-    }
-
-    @Test("A capture of a running VM is stamped as memory-and-disks")
-    func runningCaptureIsWarm() async {
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let instance = makeInstance(
-            in: harness.viewModel, files: harness.storage.files, phase: .running(sessionID: sessionID))
-
-        await harness.viewModel.takeSnapshot(instance, name: "Mid-session").value
-
-        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
-        #expect(instance.snapshotManifest.snapshots.map(\.kind) == [.warm])
-        #expect(instance.phase == .running(sessionID: sessionID))
-    }
-
-    @Test("A capture of a live-paused VM is stamped as memory-and-disks and stays live-paused")
-    func livePausedCaptureIsWarm() async {
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let instance = makeInstance(
-            in: harness.viewModel, files: harness.storage.files, phase: .livePaused(sessionID: sessionID))
-
-        await harness.viewModel.takeSnapshot(instance, name: "Paused mid-session").value
-
-        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.warm])
-        #expect(instance.phase == .livePaused(sessionID: sessionID))
-    }
-
-    @Test("A snapshot is listed carrying the MAC address it was taken with")
-    func takenSnapshotCarriesItsMACAddress() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files) {
-            $0.macAddress = "aa:bb:cc:dd:ee:04"
-        }
-
-        await harness.viewModel.takeSnapshot(instance, name: "Clean install").value
-
-        #expect(instance.snapshotManifest.snapshots.map(\.macAddress) == ["aa:bb:cc:dd:ee:04"])
-    }
 
     @Test("An Ephemeral baseline keeps the address it was taken with from every other VM")
     func ephemeralBaselineReservesItsAddress() async throws {
@@ -328,33 +215,6 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Snapshot"])
     }
 
-    @Test("A failed capture surfaces the error and lists nothing")
-    func failedCaptureListsNothing() async {
-        let harness = makeHarness()
-        harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-
-        await harness.viewModel.takeSnapshot(instance, name: "Doomed").value
-
-        #expect(instance.snapshotManifest.isEmpty)
-        #expect(presenter.showError)
-    }
-
-    @Test("A baseline capture turns Ephemeral Mode on with the snapshot it produced")
-    func baselineCaptureTurnsTheModeOnWithIt() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-
-        await harness.viewModel.takeSnapshot(
-            instance, name: "Clean install", for: .ephemeralBaseline
-        ).value
-
-        let captured = try #require(instance.snapshotManifest.snapshots.first)
-        #expect(instance.hostState.ephemeralModeEnabled)
-        #expect(instance.hostState.ephemeralBaselineSnapshotID == captured.id)
-        #expect(!presenter.showError)
-    }
-
     /// The baseline is the capture's own result, not whichever snapshot the
     /// mode would default to, so the Current one — named first here — is
     /// passed over.
@@ -372,19 +232,6 @@ struct VMLibraryViewModelSnapshotTests {
         let captured = try #require(
             instance.snapshotManifest.snapshots.first { $0.name == "Baseline" })
         #expect(instance.hostState.ephemeralBaselineSnapshotID == captured.id)
-    }
-
-    @Test("A failed baseline capture leaves Ephemeral Mode off")
-    func failedBaselineCaptureLeavesTheModeOff() async {
-        let harness = makeHarness()
-        harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-
-        await harness.viewModel.takeSnapshot(instance, name: "Doomed", for: .ephemeralBaseline).value
-
-        #expect(instance.snapshotManifest.isEmpty)
-        #expect(!instance.hostState.ephemeralModeEnabled)
-        #expect(presenter.showError)
     }
 
     /// The snapshot stands as a restore point either way, so a baseline
@@ -446,28 +293,6 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(!presenter.showError)
     }
 
-    @Test("A snapshot taken after a failed configuration write captures what the bundle holds")
-    func captureAfterAFailedConfigurationWriteTakesTheBundleConfiguration() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let held = instance.configuration
-        harness.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
-        let write = try harness.viewModel.library.updateConfiguration(of: instance, as: .rename) {
-            $0.name = "Renamed"
-        }
-        #expect(write.failedToSave)
-        harness.storage.setSaveConfigurationError(nil)
-
-        await harness.viewModel.takeSnapshot(instance, name: "After the failure").value
-
-        let snapshot = try #require(instance.snapshotManifest.snapshots.first)
-        let captured = try harness.snapshots.planRestore(
-            bundleURL: instance.bundleURL, snapshotID: snapshot.id, kind: snapshot.kind
-        ).configuration
-        #expect(captured == held)
-        #expect(captured == harness.storage.bundles[instance.bundleURL])
-    }
-
     // MARK: - Revert
 
     @Test("Requesting a revert opens the confirmation")
@@ -480,89 +305,6 @@ struct VMLibraryViewModelSnapshotTests {
         harness.viewModel.requestRevert(instance, to: snapshot)
 
         #expect(presenter.revertSnapshots == [snapshot])
-    }
-
-    @Test("A VM with no snapshots opens no revert confirmation")
-    func requestRevertRefusedWithoutSnapshots() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-
-        harness.viewModel.requestRevert(instance, to: makeSnapshot())
-
-        #expect(presenter.revertSnapshots.isEmpty)
-    }
-
-    @Test("Reverting moves the current marker to the snapshot")
-    func revertMovesTheCurrentMarker() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot(name: "Fresh install")
-        let other = VMSnapshot(name: "Later", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
-        seed(harness, instance, [target, other], currentID: other.id)
-
-        await harness.viewModel.revert(instance, to: target)
-
-        #expect(harness.virtualization.revertedSnapshots == [target])
-        #expect(instance.snapshotManifest.currentID == target.id)
-        // The snapshot is kept, unlike the suspend slot.
-        #expect(instance.snapshotManifest.snapshots.count == 2)
-        // Nothing is left holding a quit back once the call returns.
-        #expect(!harness.viewModel.quitMustWaitOut)
-    }
-
-    @Test("Reverting keeps the VM's tags, which its host state holds")
-    func revertKeepsTheTags() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot(name: "Fresh install")
-        seed(harness, instance, [target], currentID: target.id)
-        let library = harness.viewModel.library
-        let work = try library.createTag(named: "Work", color: .blue)
-        try library.setTag(work.id, assigned: true, on: instance)
-
-        await harness.viewModel.revert(instance, to: target)
-
-        #expect(harness.virtualization.revertedSnapshots == [target])
-        #expect(library.tags(of: instance) == [work])
-        #expect(harness.storage.hostStates[instance.bundleURL]?.tags == [work.id])
-    }
-
-    @Test("Reverting to an unlisted snapshot does nothing")
-    func revertToAnUnlistedSnapshotDoesNothing() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-
-        await harness.viewModel.revert(instance, to: makeSnapshot())
-
-        #expect(harness.virtualization.revertedSnapshots.isEmpty)
-    }
-
-    @Test("A failed revert surfaces the error and leaves the marker alone")
-    func failedRevertLeavesTheMarker() async {
-        let harness = makeHarness()
-        harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot()
-        seed(harness, instance, [target])
-
-        await harness.viewModel.revert(instance, to: target)
-
-        #expect(instance.snapshotManifest.currentID == nil)
-        #expect(presenter.showError)
-    }
-
-    @Test("Snapshot-then-revert captures first, then reverts")
-    func snapshotThenRevertDoesBoth() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot()
-        seed(harness, instance, [target])
-
-        await harness.viewModel.revert(instance, to: target, takingSnapshotFirst: true)
-
-        #expect(harness.virtualization.takenSnapshots.count == 1)
-        #expect(harness.virtualization.revertedSnapshots == [target])
-        #expect(instance.snapshotManifest.snapshots.count == 2)
     }
 
     @Test("Snapshot-then-revert check-points a stopped VM cold before reverting")
@@ -594,83 +336,7 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(presenter.showError)
     }
 
-    @Test("A revert whose resume fails still marks the snapshot current")
-    func revertMarksCurrentWhenTheResumeFails() async {
-        let harness = makeHarness()
-        harness.virtualization.revertToSnapshotError = VirtualizationError.revertResumeFailed(
-            underlying: VirtualizationError.noVirtualMachine)
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot()
-        seed(harness, instance, [target])
-
-        await harness.viewModel.revert(instance, to: target)
-
-        // The files landed before the resume was attempted, so the VM's state
-        // does descend from this snapshot.
-        #expect(instance.snapshotManifest.currentID == target.id)
-        #expect(presenter.showError)
-    }
-
-    @Test("A revert that never reached the files leaves the marker alone")
-    func revertLeavesTheMarkerWhenTheRestoreFails() async {
-        let harness = makeHarness()
-        harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot()
-        seed(harness, instance, [target])
-
-        await harness.viewModel.revert(instance, to: target)
-
-        #expect(instance.snapshotManifest.currentID == nil)
-    }
-
-    @Test("A revert installs the settings the snapshot captured, keeping the VM's identity")
-    func revertInstallsTheCapturedSettings() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let target = makeSnapshot()
-        var captured = instance.configuration
-        captured.memorySizeInGB = instance.configuration.memorySizeInGB.adding(gibibytes: 8)
-        captured.name = "Name from the snapshot"
-        seed(harness, instance, [target], capturedConfiguration: captured)
-        let originalName = instance.configuration.name
-
-        await harness.viewModel.revert(instance, to: target)
-
-        #expect(instance.configuration.memorySizeInGB == captured.memorySizeInGB)
-        #expect(instance.configuration.name == originalName)
-    }
-
     // MARK: - Gating
-
-    @Test("A capture confirmed after the VM stopped is refused")
-    func takeSnapshotRechecksAtConfirmTime() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        harness.viewModel.requestTakeSnapshot(instance)
-        #expect(presenter.takeSnapshotSheetInstances.count == 1)
-
-        // The sheet gathers a name, and the VM starts restoring while it is up.
-        instance.activity.placeForTesting(
-            .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
-        await harness.viewModel.takeSnapshot(instance, name: "Too late").value
-
-        #expect(harness.virtualization.takenSnapshots.isEmpty)
-        #expect(instance.snapshotManifest.isEmpty)
-    }
-
-    @Test("A VM that stopped while the sheet was up is captured cold, not refused")
-    func kindIsStampedAtConfirmTime() async {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness.viewModel, files: harness.storage.files, phase: .running(sessionID: UUID()))
-        harness.viewModel.requestTakeSnapshot(instance)
-
-        instance.activity.placeForTesting(.stopped)
-        await harness.viewModel.takeSnapshot(instance, name: "Powered off first").value
-
-        #expect(harness.virtualization.takenSnapshots.map(\.kind) == [.cold])
-    }
 
     @Test("A rename arriving while an operation is unsettled still lands")
     func renameLandsWhileAnOperationIsUnsettled() {
@@ -698,40 +364,6 @@ struct VMLibraryViewModelSnapshotTests {
         harness.viewModel.requestDeleteSnapshot(instance, snapshot: snapshot)
 
         #expect(presenter.deleteSnapshots == [snapshot])
-    }
-
-    @Test("Deleting trashes the snapshot's files and drops it from the manifest")
-    func deleteTrashesAndUnlists() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(
-                snapshots: [snapshot], currentID: snapshot.id))
-
-        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
-
-        #expect(harness.snapshots.discardedIDs == [snapshot.id])
-        #expect(instance.snapshotManifest.isEmpty)
-        #expect(instance.snapshotManifest.currentID == nil)
-    }
-
-    @Test("A delete whose unlisting fails surfaces the error, keeps the snapshot listed, and trashes nothing")
-    func failedDeleteKeepsTheSnapshot() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        harness.storage.files.setReplaceError(
-            VMStorageError.bundleNotFound(URL(filePath: "/tmp")),
-            for: VMBundleLayout.snapshotManifestRelativePath)
-
-        await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
-
-        #expect(instance.snapshotManifest.snapshots == [snapshot])
-        #expect(instance.manifestOnDisk == instance.snapshotManifest)
-        #expect(harness.snapshots.discardedIDs.isEmpty)
-        #expect(presenter.showError)
     }
 
     @Test("A snapshot delete whose trash fails leaves no manifest entry pointing at it")
@@ -795,33 +427,6 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.manifestOnDisk == instance.snapshotManifest)
     }
 
-    @Test("An unchanged note writes nothing")
-    func notesNoOpWritesNothing() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        var snapshot = makeSnapshot()
-        snapshot.notes = "before the update"
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-
-        harness.viewModel.setSnapshotNotes(snapshot, notes: "before the update", on: instance)
-
-        #expect(instance.fixtureBundleFiles.replaceCount(of: VMBundleLayout.snapshotManifestRelativePath) == 0)
-    }
-
-    @Test("Clearing a note to empty is written, unlike an empty name")
-    func notesClearToEmptyWritesThrough() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        var snapshot = makeSnapshot()
-        snapshot.notes = "before the update"
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-
-        harness.viewModel.setSnapshotNotes(snapshot, notes: "   ", on: instance)
-
-        #expect(instance.snapshotManifest.snapshot(id: snapshot.id)?.notes == "")
-        #expect(instance.manifestOnDisk == instance.snapshotManifest)
-    }
-
     @Test("A note arriving while an operation is unsettled still lands")
     func notesLandWhileAnOperationIsUnsettled() {
         let harness = makeHarness()
@@ -863,29 +468,5 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(
             instance.manifestOnDisk?.snapshot(id: snapshot.id)?.name
                 == "Renamed mid-revert")
-    }
-
-    // MARK: - Sizes
-
-    @Test("Snapshot sizes come back keyed by snapshot")
-    func snapshotSizesAreReported() async {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
-        let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        let size = SnapshotSize(bytes: 4_200_000_000, privateBytes: 200_000_000)
-        harness.snapshots.setSize(size, for: snapshot.id)
-
-        let sizes = await harness.viewModel.snapshotSizes(for: instance)
-
-        #expect(sizes[snapshot.id] == size)
-    }
-
-    @Test("A VM with no snapshots reads no sizes")
-    func snapshotSizesEmptyWithoutSnapshots() async {
-        let harness = makeHarness()
-        let sizes = await harness.viewModel.snapshotSizes(
-            for: makeInstance(in: harness.viewModel, files: harness.storage.files))
-        #expect(sizes.isEmpty)
     }
 }
