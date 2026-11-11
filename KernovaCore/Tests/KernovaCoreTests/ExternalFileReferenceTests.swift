@@ -101,6 +101,28 @@ struct ExternalFileReferenceTests {
             ])
     }
 
+    // MARK: - Heal round-trip
+
+    @Test("Healing every projected reference writes back to the field it came from")
+    func healWritesBackEveryKind() {
+        var config = makeFullyPopulatedConfig()
+        var expected: [UUID: (path: String, bookmark: Data)] = [:]
+
+        for (index, reference) in config.externalFileReferences.enumerated() {
+            let path = "/Volumes/Moved/\(index)"
+            let bookmark = Data([0xF0, UInt8(index)])
+            expected[reference.id] = (path, bookmark)
+            config.healExternalReference(reference, movedTo: path, bookmark: bookmark)
+        }
+
+        let healed = config.externalFileReferences
+        #expect(healed.count == expected.count)
+        for reference in healed {
+            #expect(reference.path == expected[reference.id]?.path)
+            #expect(reference.bookmark == expected[reference.id]?.bookmark)
+        }
+    }
+
     // MARK: - Stable identity
 
     @Test("The singleton kinds keep one id across projections and differ from each other")

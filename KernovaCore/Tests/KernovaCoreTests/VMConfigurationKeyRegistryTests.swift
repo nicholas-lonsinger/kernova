@@ -407,6 +407,22 @@ struct VMConfigurationKeyRegistryTests {
         #expect(settings.hostState.ephemeralBaselineSnapshotID == older.id)
     }
 
+    @Test("A snapshot name two snapshots share is refused rather than guessed")
+    func ephemeralBaselineRefusesAnAmbiguousName() throws {
+        let key = VMConfigurationKeyRegistry.ephemeralBaseline
+        let first = VMSnapshot(
+            name: "Twin", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
+        let second = VMSnapshot(
+            name: "Twin", createdAt: Date(timeIntervalSince1970: 2), kind: .cold, macAddress: nil)
+        let manifest = VMSnapshotManifest(snapshots: [first, second], currentID: first.id)
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+
+        #expect(throws: CommandError.self) {
+            try write(key, "Twin", to: &settings, manifest: manifest)
+        }
+        #expect(!settings.hostState.ephemeralModeEnabled)
+    }
+
     // MARK: - accepts
 
     @Test("accepts answers what a write would refuse, and writes nothing")
