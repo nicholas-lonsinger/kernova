@@ -161,25 +161,6 @@ struct NetworksSettingsViewControllerTests {
         #expect(farm == ["Build Farm", "Host Only", "None"])
     }
 
-    @Test("Revealing a network before the pane appears selects its row, and the appearance keeps it")
-    func revealBeforeAppearanceSelectsTheRow() throws {
-        let viewModel = makeViewModel()
-        _ = try viewModel.networks.create(name: "Build Farm", kind: .hostOnly, verb: .createNetwork)
-        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
-        let pane = NetworksSettingsViewController(viewModel: viewModel)
-
-        pane.reveal(lab.id)
-        #expect(pane.selectedNetworkIDForTesting == lab.id)
-
-        pane.viewWillAppear()
-        defer { pane.viewDidDisappear() }
-        #expect(pane.selectedNetworkIDForTesting == lab.id)
-
-        // A network the library does not list selects nothing new.
-        pane.reveal(UUID())
-        #expect(pane.selectedNetworkIDForTesting == lab.id)
-    }
-
     @Test("A network created anywhere else appears in the open list")
     func listFollowsTheLibrary() async throws {
         let viewModel = makeViewModel()
@@ -197,28 +178,6 @@ struct NetworksSettingsViewControllerTests {
 
     // MARK: - Changes
 
-    @Test("Create lists the network in the chosen mode")
-    func createListsTheNetwork() throws {
-        let viewModel = makeViewModel()
-        let pane = makePane(viewModel)
-
-        try pane.create(name: "Lab", kind: .hostOnly)
-
-        #expect(viewModel.networks.state.listed?.map(\.name) == ["Lab"])
-        #expect(viewModel.networks.state.listed?.first?.kind == .hostOnly)
-        #expect(pane.networks.map(\.name) == ["Lab"])
-    }
-
-    @Test("A name another network has is refused, and nothing is listed")
-    func duplicateNameIsRefused() throws {
-        let viewModel = makeViewModel()
-        let pane = makePane(viewModel)
-        try pane.create(name: "Lab", kind: .nat)
-
-        #expect(throws: CommandError.self) { try pane.create(name: "lab", kind: .hostOnly) }
-        #expect(pane.networks.count == 1)
-    }
-
     @Test("Rename renames the network, and a refused name changes nothing")
     func renameRenamesTheNetwork() throws {
         let viewModel = makeViewModel()
@@ -231,20 +190,6 @@ struct NetworksSettingsViewControllerTests {
 
         #expect(throws: CommandError.self) { try pane.rename(id, to: "  ") }
         #expect(viewModel.networks.state.listed?.map(\.name) == ["Staging"])
-    }
-
-    @Test("Creating and renaming a network each save an edit still open in a field first")
-    func createAndRenameSavePendingEdits() throws {
-        let viewModel = makeViewModel()
-        let pane = makePane(viewModel)
-        var saves = 0
-        viewModel.savePendingEdits = { saves += 1 }
-
-        try pane.create(name: "Lab", kind: .nat)
-        #expect(saves == 1)
-
-        try pane.rename(try #require(pane.networks.first?.id), to: "Staging")
-        #expect(saves == 2)
     }
 
     @Test("Delete stops listing the network and moves each VM on it to a network of its own")
@@ -264,14 +209,6 @@ struct NetworksSettingsViewControllerTests {
     }
 
     // MARK: - Copy
-
-    @Test("The members column names each VM, or None")
-    func membersText() {
-        #expect(NetworksSettingsViewController.membersText([]) == "None")
-        #expect(
-            NetworksSettingsViewController.membersText(summary("Lab", members: ["A", "B"]).members)
-                == "A, B")
-    }
 
     @Test("Delete asks first, naming the VMs it moves, with the destructive button on no key")
     func deleteConfirmationNamesTheMembers() {

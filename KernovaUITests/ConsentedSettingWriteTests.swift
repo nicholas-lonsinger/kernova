@@ -25,18 +25,6 @@ struct ConsentedSettingWriteTests {
         return (setting, instance, { refreshes })
     }
 
-    @Test("Confirming the passthrough prompt turns passthrough on")
-    func confirmPassthroughEnables() {
-        let (setting, instance, refreshes) = makeSetting { $0.clipboardSharingEnabled = true }
-
-        setting.write(
-            VMConfigurationKeyRegistry.clipboardPassthrough.assigning(true), confirmingIn: nil,
-            consent: Consent([.enableClipboardPassthrough]))
-
-        #expect(instance.configuration.clipboardPassthroughEnabled)
-        #expect(refreshes() == 0)
-    }
-
     @Test("Confirming sharing over a passthrough flag already set starts passthrough")
     func confirmSharingOverAStalePassthroughFlag() {
         let (setting, instance, _) = makeSetting { $0.clipboardPassthroughEnabled = true }

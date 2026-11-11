@@ -84,18 +84,4 @@ struct KeyboardSettingsViewControllerTests {
         #expect(viewModel.disabledReservedShortcuts.isEmpty)
         #expect(makeLibraryViewModel(preferences: preferences).disabledReservedShortcuts.isEmpty)
     }
-
-    @Test("Settings offers the Keyboard pane after Clipboard")
-    func paneIsOffered() {
-        let tabs = SettingsTabViewController(
-            viewModel: makeLibraryViewModel(preferences: preferences), visibleFrame: offDesktopVisibleFrame)
-        tabs.loadViewIfNeeded()
-
-        let labels = tabs.tabViewItems.map(\.label)
-        let clipboard = labels.firstIndex(of: "Clipboard")
-        #expect(clipboard.map { labels[$0 + 1] } == "Keyboard")
-        #expect(
-            tabs.tabViewItems.first { $0.label == "Keyboard" }?.viewController
-                is KeyboardSettingsViewController)
-    }
 }

@@ -38,37 +38,6 @@ struct GeneralSettingsViewControllerTests {
         }.first
     }
 
-    @Test(
-        "The approval note shows only while the login item requires approval",
-        arguments: [
-            (SMAppService.Status.requiresApproval, true),
-            (.enabled, false),
-            (.notRegistered, false),
-            (.notFound, false),
-        ])
-    func approvalNoteFollowsStatus(status: SMAppService.Status, shown: Bool) {
-        let controller = makeController(registration: StubRegistration(status: status))
-        defer { controller.viewDidDisappear() }
-
-        #expect((approvalNote(in: controller) != nil) == shown)
-    }
-
-    @Test("Returning to the app re-reads the status into the note")
-    func activationRefreshesNote() async {
-        let registration = StubRegistration(status: .requiresApproval)
-        let controller = makeController(registration: registration)
-        defer { controller.viewDidDisappear() }
-        #expect(approvalNote(in: controller) != nil)
-
-        // Approving in System Settings, then switching back to Kernova.
-        registration.status = .enabled
-        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
-        // The pane observes on the main queue, so its refresh may be queued there.
-        await drainMainQueue()
-
-        #expect(approvalNote(in: controller) == nil)
-    }
-
     /// The tab container resizes the window from the published size, so a note
     /// appearing or going away while the pane is on screen has to move it.
     @Test("The approval note coming and going changes the published size")

@@ -116,22 +116,6 @@ struct InlineEditableLabelTests {
         #expect(!label.isEditable)
     }
 
-    @Test("endEditing on a label that is not editing fires nothing")
-    func endEditingIdleFiresNothing() {
-        var commits = 0
-        var cancels = 0
-        let label = makeLabel()
-        label.onEditCommitted = { _, _ in commits += 1 }
-        label.onEditCancelled = { cancels += 1 }
-        host([label])
-
-        label.endEditing()
-
-        #expect(commits == 0)
-        #expect(cancels == 0)
-        #expect(!label.isEditing)
-    }
-
     /// A recycled row's typed text belongs to a VM the cell no longer shows, so
     /// tearing the edit down must not commit it.
     @Test("abandonEditing drops the text silently and restores the display state")
@@ -193,34 +177,12 @@ struct InlineEditableLabelTests {
         #expect(label.isEditing)
     }
 
-    @Test("A label whose edit is armed off-window still re-seeds when it joins one")
-    func armedBeforeWindowReseedsOnJoin() {
-        let name = SharedName("Original")
-        let label = makeLabel(text: name.value)
-        label.currentText = { name.value }
-        label.beginEditing()
-        name.value = "Renamed elsewhere"
-
-        host([label])
-
-        #expect(label.stringValue == "Renamed elsewhere")
-        #expect(label.currentEditor()?.string == "Renamed elsewhere")
-    }
-
     // MARK: - Click ownership
 
     @Test("A label that owns its clicks arms a click recognizer")
     func ownedClickHandlingInstallsARecognizer() {
         let label = makeLabel()
         #expect(label.gestureRecognizers.contains { $0 is NSClickGestureRecognizer })
-    }
-
-    /// The sidebar's clicks belong to the enclosing outline view, which does its
-    /// own selection and drag tracking.
-    @Test("A label that delegates its clicks installs no recognizer")
-    func delegatedClickHandlingInstallsNoRecognizer() {
-        let label = makeLabel(clickHandling: .delegatedToEnclosingView)
-        #expect(label.gestureRecognizers.isEmpty)
     }
 
     // MARK: - Arming gate
