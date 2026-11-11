@@ -33,8 +33,8 @@ Afterwards, unregister the copy you installed with `lsregister -u` and delete it
 
 A log capture that can tell whether a request reached Kernova is a stream started before acting, over the copy's PID, `linkd`, `searchtoold` and `assistantd` ([research note](research/2026-09-04-siri-and-spotlight-routing-macos27-beta.md)). The framework's `com.apple.appintents:Execution` lines are mostly info-level, so `log show` afterwards has them only with `--info`.
 
-An intent runs without the Shortcuts editor from a signed shortcut file: a `WFWorkflowActions` plist whose action identifier is `app.kernova.<IntentTypeName>` and whose parameters are keyed by property name. A file parameter bound to Shortcut Input is `{"Value":{"Type":"ExtensionInput"},"WFSerializationType":"WFTextTokenAttachment"}`. `shortcuts sign` takes only a file whose name ends in `.shortcut`, and signing checks nothing in its actions.
+An intent runs without the Shortcuts editor from a signed shortcut file: a `WFWorkflowActions` plist whose action identifier is `app.kernova.<IntentTypeName>` and whose parameters are keyed by property name. `shortcuts sign` takes only a file whose name ends in `.shortcut`, and signing checks nothing in its actions.
 
 An entity parameter — a virtual machine, a network — binds only in the Shortcuts editor, where the action is found by its title.
 
-`open` the signed file and choose Add Shortcut; the shortcut takes the file's name. The first run that hands Kernova a file raises Shortcuts' approval to share that file — the proof the file bound to the parameter — and the maintainer answers it.
+`open` the signed file and choose Add Shortcut; the shortcut takes the file's name.
