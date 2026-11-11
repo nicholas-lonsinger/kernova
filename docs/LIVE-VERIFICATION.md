@@ -14,7 +14,7 @@ A running copy you did not launch is the maintainer's or another session's, with
 
 Take an offered agent update before observing anything: what an older agent does is not what the build does.
 
-With the VM's **Clipboard sharing** on, **Edit → Copy Mac Clipboard to Guest** puts the Mac's clipboard on the guest's. A paste into a Linux guest has delivered the clipboard's previous text, so read back what landed before running it.
+With the VM's **Clipboard sharing** on, **Edit → Copy Mac Clipboard to Guest** puts the Mac's clipboard on the guest's.
 
 The agent's installers ask nothing under `NONINTERACTIVE=1`; `KernovaMacOSAgent/install.command`'s header and the Linux disk's `README.txt` give the lines.
 

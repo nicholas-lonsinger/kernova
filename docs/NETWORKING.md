@@ -4,11 +4,11 @@ Read this before changing how a guest attaches to a network or is reached from o
 
 ## Exposure is the user's choice
 
-A guest gets exactly the exposure the user chose for it, per VM. Given a choice that
-cannot be realized — an interface that is gone, a network that cannot be made — and a
-way to keep the guest online on something else, the guest runs detached until the
-choice returns: no mode change, decode fallback or recovery path attaches a mode or a
-network the user did not choose. Worked case: `NetworkAttachmentCoordinator`.
+A guest gets the exposure the user chose for it, per VM: no mode change, decode
+fallback or recovery path attaches a mode or a network the user did not choose.
+Recovery stays inside the chosen mode — a Bridged VM whose interface is gone bridges
+over the host's default-route interface — and a network that cannot be made leaves
+the guest detached until it can. Worked case: `NetworkAttachmentCoordinator`.
 
 ## An address is stated at the strength of its source
 
