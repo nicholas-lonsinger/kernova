@@ -299,6 +299,18 @@ struct VMBundleTests {
         }
     }
 
+    @Test("A pairings file holding no pairings key reads as no pairings")
+    func pairingsObjectWithoutPairingsReadsAsEmpty() throws {
+        try withBundle { url in
+            try Data("{}".utf8).write(to: VMBundleLayout(bundleURL: url).usbPairingsURL)
+
+            let read = try onDisk(url)
+
+            #expect(read.usbPairings.isEmpty)
+            #expect(read.unreadableFiles.isEmpty)
+        }
+    }
+
     @Test("A committed manifest reads back as itself")
     func manifestRoundTrips() throws {
         try withBundle { url in

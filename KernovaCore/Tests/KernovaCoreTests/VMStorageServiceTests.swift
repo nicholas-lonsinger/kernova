@@ -84,6 +84,15 @@ struct VMStorageServiceTests {
         #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
     }
 
+    @Test("Permanently deleting non-existent bundle throws error")
+    func permanentlyDeleteNonExistentThrows() {
+        let fakeURL = library.url.appendingPathComponent("nonexistent-vm-bundle")
+
+        #expect(throws: VMStorageError.self) {
+            try service.permanentlyDeleteVMBundle(at: fakeURL)
+        }
+    }
+
     // MARK: - Bundle Identity
 
     @Test("A bundle's identity follows the directory across a rename, and a place with no bundle has none")

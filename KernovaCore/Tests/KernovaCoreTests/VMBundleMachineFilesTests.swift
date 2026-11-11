@@ -70,6 +70,22 @@ struct VMBundleMachineFilesTests {
 
     // MARK: - Capture and restore
 
+    @Test("Capture reports a file that is not in the bundle")
+    func captureReportsMissingSource() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        let snapshotID = UUID()
+        _ = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+            configuration: fixture.configuration)
+
+        #expect(throws: VMSnapshotError.self) {
+            try store.captureDisks(
+                bundleURL: fixture.bundleURL, snapshotID: snapshotID,
+                relativePaths: ["Nowhere.asif"])
+        }
+    }
+
     @Test("Capturing the suspend slot with no bundle save file reports it missing")
     func captureSuspendSlotReportsMissingSource() throws {
         let fixture = try makeFixture()
@@ -321,6 +337,17 @@ struct VMBundleMachineFilesTests {
     }
 
     // MARK: - Removal and sizes
+
+    @Test("Discarding a snapshot with nothing on disk trashes nothing")
+    func discardOfAMissingDirectoryIsANoOp() throws {
+        let fixture = try makeFixture()
+        let fileSystem = MockFileSystem()
+        let store = VMBundleMachineFiles(fileSystem: fileSystem, platform: FakePlatformFiles())
+
+        try store.discardSnapshot(bundleURL: fixture.bundleURL, snapshotID: UUID())
+
+        #expect(fileSystem.trashedURLs.isEmpty)
+    }
 
     @Test("Disk sizes answer every image asked about, with no figures for one whose file is missing")
     func diskSizesAnswerEveryImage() throws {
