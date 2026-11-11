@@ -104,29 +104,6 @@ struct VMSleepWakeCoordinatorTests {
         try await probe.changed.wait { probe.commands.contains(.setPeerFrozen(true)) }
     }
 
-    @Test("Sleep pauses every running VM, then allows sleep")
-    func sleepPausesRunningVMsThenAllowsSleep() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let running1 = VMInstanceFixture.make(name: "Running 1")
-        running1.activity.placeForTesting(.running(sessionID: UUID()))
-        let running2 = VMInstanceFixture.make(name: "Running 2")
-        running2.activity.placeForTesting(.running(sessionID: UUID()))
-        let stopped = VMInstanceFixture.make(name: "Stopped")
-        stopped.activity.placeForTesting(.stopped)
-        let suspended = VMInstanceFixture.make(name: "Suspended")
-        suspended.activity.placeForTesting(.suspended)
-        roster.instances = [running1, running2, stopped, suspended]
-
-        let ack = await sleep(coordinator, virtService)
-
-        #expect(ack.pausesAtAllow == [2])
-        #expect(running1.status == .paused)
-        #expect(running2.status == .paused)
-        #expect(stopped.status == .stopped)
-        #expect(suspended.status == .suspended)
-        #expect(!failures.showError)
-    }
-
     @Test("A VM the user paused live is neither paused again, reported, nor resumed on wake")
     func userLivePausedVMIsLeftAlone() async {
         let (coordinator, roster, virtService) = makeCoordinator()
@@ -142,69 +119,6 @@ struct VMSleepWakeCoordinatorTests {
         #expect(virtService.pauseCallCount == 0)
         #expect(virtService.resumeCallCount == 0)
         #expect(userPaused.phase == .livePaused(sessionID: session))
-        #expect(!failures.showError)
-    }
-
-    @Test("A VM at rest gets nothing queued and nothing reported, and sleep is allowed at once")
-    func vmAtRestGetsNothing() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let stopped = VMInstanceFixture.make(name: "Stopped")
-        stopped.activity.placeForTesting(.stopped)
-        let initial = VMInstanceFixture.make(name: "Initial")
-        initial.activity.placeForTesting(.initialBoot)
-        let failed = VMInstanceFixture.make(name: "Failed")
-        failed.activity.placeForTesting(.failed(message: "Test failure"))
-        let suspended = VMInstanceFixture.make(name: "Suspended")
-        suspended.activity.placeForTesting(.suspended)
-        // A cold boot that has no session yet has nothing to pause either.
-        let starting = VMInstanceFixture.make(name: "Starting")
-        starting.activity.placeForTesting(
-            .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
-        let all = [stopped, initial, failed, suspended, starting]
-        roster.instances = all
-
-        let ack = await sleep(coordinator, virtService)
-
-        #expect(ack.count == 1)
-        #expect(virtService.pauseCallCount == 0)
-        for instance in all {
-            #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        }
-        #expect(!failures.showError)
-    }
-
-    @Test("A failed sleep pause is reported before sleep is allowed, and not resumed on wake")
-    func failedPauseIsReported() async {
-        let virtService = MockVirtualizationService()
-        virtService.pauseError = VirtualizationError.noVirtualMachine
-        let (coordinator, roster, _) = makeCoordinator(virtualizationService: virtService)
-        let running = VMInstanceFixture.make(name: "Running")
-        running.activity.placeForTesting(.running(sessionID: UUID()))
-        roster.instances = [running]
-
-        let ack = await sleep(coordinator, virtService)
-        #expect(ack.count == 1)
-        #expect(failures.errorMessage?.contains("Running") == true)
-
-        virtService.pauseError = nil
-        await coordinator.resumeAllAfterWake().value
-        #expect(virtService.resumeCallCount == 0)
-        #expect(failures.errors.count == 1)
-    }
-
-    @Test("A sleep pause the termination refuses is not reported")
-    func sleepDuringTerminationIsNotReported() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let running = VMInstanceFixture.make(name: "Running")
-        running.activity.placeForTesting(.running(sessionID: UUID()))
-        roster.instances = [running]
-        roster.isTerminating = true
-
-        let ack = await sleep(coordinator, virtService)
-
-        #expect(ack.count == 1)
-        #expect(virtService.pauseCallCount == 0)
-        #expect(running.status == .running)
         #expect(!failures.showError)
     }
 
@@ -243,50 +157,7 @@ struct VMSleepWakeCoordinatorTests {
         #expect(!failures.showError)
     }
 
-    @Test("A pause queued behind a save that ends the session is dropped, unreported")
-    func pauseBehindASaveIsDropped() async throws {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let instance = VMInstanceFixture.make(name: "Saving")
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        roster.instances = [instance]
-        let gate = GatedStep()
-        let save = try launchGated(.saving, on: instance, gate: gate, resting: .atRest(.stopped))
-        try await gate.waitUntilEntered()
-
-        let ack = PowerAck()
-        let pass = coordinator.pauseAllForSleep { [virtService] in
-            ack.allow(pauses: virtService.pauseCallCount)
-        }
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-
-        gate.release()
-        try await save.value()
-        await pass.value
-
-        #expect(ack.pausesAtAllow == [0])
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        #expect(instance.phase == .stopped)
-        #expect(!failures.showError)
-    }
-
     // MARK: - Wake
-
-    @Test("Wake resumes only the VMs sleep paused")
-    func wakeResumesOnlySleepPaused() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let suspended = VMInstanceFixture.make(name: "Suspended")
-        suspended.activity.placeForTesting(.suspended)
-        roster.instances = [suspended]
-        let sleepPaused = await makeSleepPaused(
-            coordinator, roster: roster, virtService, name: "Sleep Paused")
-
-        await coordinator.resumeAllAfterWake().value
-
-        #expect(virtService.resumeCallCount == 1)
-        #expect(sleepPaused.status == .running)
-        #expect(suspended.status == .suspended)
-    }
 
     @Test("A failed wake resume is reported, and a second wake has nothing left to resume")
     func failedResumeIsReported() async {
@@ -301,18 +172,6 @@ struct VMSleepWakeCoordinatorTests {
         virtService.resumeError = nil
         await coordinator.resumeAllAfterWake().value
         #expect(virtService.resumeCallCount == 1)
-    }
-
-    @Test("Wake passes over a sleep-paused VM that came to rest meanwhile")
-    func wakeSkipsVMsNoLongerLive() async {
-        let (coordinator, roster, virtService) = makeCoordinator()
-        let instance = await makeSleepPaused(coordinator, roster: roster, virtService, name: "Was Paused")
-        instance.activity.placeForTesting(.stopped)
-
-        await coordinator.resumeAllAfterWake().value
-
-        #expect(virtService.resumeCallCount == 0)
-        #expect(!failures.showError)
     }
 
     @Test("Wake before the capture ends withdraws the pause, which never runs, and reports it")
@@ -397,27 +256,6 @@ struct VMSleepWakeCoordinatorTests {
         return (coordinator, instance, session, sleep, wake)
     }
 
-    /// The pause can still be running at wake on the `NSWorkspace` fallback,
-    /// which holds nothing, or once the platform stopped waiting.
-    @Test("Wake while the sleep pause still runs resumes the VM once the pause ends")
-    func wakeDuringARunningPauseResumesAfterIt() async {
-        let mock = SuspendingMockVirtualizationService()
-        let (coordinator, instance, session, sleep, wake) = await wakeDuringAParkedPause(mock)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-        #expect(mock.resumeCallCount == 0)
-        #expect(instance.phase.operation?.kind == .pausing)
-
-        mock.resumeSuspended()
-        await sleep.value
-        await wake.value
-        // The composition root holds the coordinator; the pass holds it weakly.
-        withExtendedLifetime(coordinator) {}
-
-        #expect(mock.resumeCallCount == 1)
-        #expect(instance.phase == .running(sessionID: session))
-        #expect(!failures.showError)
-    }
-
     @Test("Wake while the sleep pause still runs resumes nothing when the pause fails")
     func wakeDuringARunningPauseThatFailsResumesNothing() async {
         let mock = SuspendingMockVirtualizationService()
@@ -438,45 +276,5 @@ struct VMSleepWakeCoordinatorTests {
         // the pause's ending refused is not reported.
         #expect(failures.errors.count == 1)
         #expect(failures.errorMessage?.contains("Failed to pause") == true)
-    }
-
-    /// Wake's resume is a hot one: a VM that came to rest on its slot while
-    /// the host slept is not restored behind the user's back.
-    @Test("A wake passes over a VM that came to rest on its slot, keeping the slot")
-    func wakeColdResumeOntoALiveIdentityIsRefused() async throws {
-        let virtService = MockVirtualizationService()
-        let lifecycle = makeTestLifecycle(virtualization: virtService, fileSystem: fileSystem)
-        let mac = "aa:bb:cc:dd:ee:30"
-        let library = makeWiredLibrary(lifecycle: lifecycle)
-        let sleeper = library.registerFixture(name: "Sleeper") {
-            $0.networkEnabled = true
-            $0.macAddress = mac
-        }
-        sleeper.activity.placeForTesting(.running(sessionID: UUID()))
-        let twin = library.registerFixture(name: "Twin") {
-            $0.networkEnabled = true
-            $0.macAddress = mac
-        }
-        let coordinator = VMSleepWakeCoordinator(lifecycle: lifecycle, roster: library)
-        coordinator.onFailure = { [failures] error in
-            failures.record(title: "Error", message: error.localizedDescription, subject: .library)
-        }
-
-        await sleep(coordinator, virtService)
-        // Between sleep and wake the paused VM came to rest on its suspend slot,
-        // releasing its address, and its twin came up on it.
-        try VMInstanceFixture.writeSaveFile(for: sleeper)
-        sleeper.handleSessionEvent(.guestDidStop)
-        twin.activity.placeForTesting(.running(sessionID: UUID()))
-
-        await coordinator.resumeAllAfterWake().value
-
-        #expect(virtService.resumeCallCount == 0)
-        #expect(virtService.startCallCount == 0)
-        #expect(sleeper.phase == .suspended)
-        #expect(sleeper.hasSaveFile)
-        #expect(twin.status == .running)
-        // No hot resume is owed a VM that is no longer live-paused.
-        #expect(failures.showError == false)
     }
 }

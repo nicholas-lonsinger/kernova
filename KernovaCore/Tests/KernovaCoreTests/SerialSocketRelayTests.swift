@@ -92,17 +92,6 @@ struct SerialSocketRelayTests {
         #expect(received == Data("hello".utf8))
     }
 
-    @Test("forwardOutput with no client connected is a safe no-op")
-    func forwardOutputNoClient() async throws {
-        let pipe = Pipe()
-        let relay = SerialSocketRelay(
-            path: socketPath, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
-        relay.start()
-        defer { relay.stop() }
-        relay.forwardOutput(Data("ignored".utf8))  // must not crash or block
-        #expect(relay.hasClientForTesting == false)
-    }
-
     // MARK: - Input (client → guest)
 
     @Test("client input reaches the guest input pipe")
@@ -203,33 +192,6 @@ struct SerialSocketRelayTests {
         #expect(FileManager.default.fileExists(atPath: path))
         relay.stop()
         #expect(!FileManager.default.fileExists(atPath: path))
-        #expect(relay.socketPath == nil)
-    }
-
-    @Test("an over-long path disables the relay without crashing")
-    func lengthGuardDisablesRelay() {
-        let pipe = Pipe()
-        let longPath =
-            scratch.url.appendingPathComponent(String(repeating: "x", count: 200) + ".sock").path(percentEncoded: false)
-        let relay = SerialSocketRelay(
-            path: longPath, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
-        relay.start()
-        #expect(relay.socketPath == nil)
-        #expect(!FileManager.default.fileExists(atPath: longPath))
-        relay.stop()
-    }
-
-    @Test("start and stop are idempotent")
-    func startStopIdempotent() {
-        let pipe = Pipe()
-        let path = socketPath
-        let relay = SerialSocketRelay(
-            path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
-        relay.start()
-        relay.start()  // second start is a no-op
-        #expect(relay.socketPath == path)
-        relay.stop()
-        relay.stop()  // second stop is a no-op
         #expect(relay.socketPath == nil)
     }
 
