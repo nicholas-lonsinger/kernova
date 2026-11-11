@@ -6,6 +6,11 @@ import AppKit
 /// `NSOutlineView` in `.sourceList` style draws the group-row background and the
 /// hover disclosure control; this cell supplies the title, and for a section
 /// that filters, how many VMs it shows and the button opening its menu.
+///
+/// A smart group's or folder's title is renamed in place: the controller opens
+/// the box with ``beginRename(holding:)`` and ends it with ``endRename()``, and
+/// the shared ``InlineEditableLabel`` commits on Return/focus-loss and cancels
+/// on Escape.
 @MainActor
 final class SidebarGroupHeaderCellView: NSTableCellView {
     /// What a filtering section's header shows beside its title.
@@ -21,8 +26,24 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
         var buttonLabel = SidebarViewMenu.accessibilityLabel
     }
 
-    private let label = NSTextField(labelWithString: "")
+    /// What committing and cancelling a rename of the title run.
+    struct Renaming {
+        /// Runs with the typed text; the `Bool` is `true` when Return ended
+        /// the edit.
+        let commit: (String, Bool) -> Void
+        let cancel: () -> Void
+    }
+
+    /// The title, and the rename box it becomes.
+    ///
+    /// Clicks belong to the enclosing outline view, as a VM row's name
+    /// label's do.
+    private let label = InlineEditableLabel(
+        text: "", font: .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+        textColor: .secondaryLabelColor, placeholder: "", controlsEnabled: false,
+        clickHandling: .delegatedToEnclosingView)
     private let countLabel = NSTextField(labelWithString: "")
+    private var renaming: Renaming?
     private(set) var filterButton: NSButton?
     private var filterButtonAction: ((NSButton) -> Void)?
     private var filterButtonTrailing: NSLayoutConstraint?
@@ -30,16 +51,15 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
     init() {
         super.init(frame: .zero)
 
-        for field in [label, countLabel] {
-            field.translatesAutoresizingMaskIntoConstraints = false
-            field.isSelectable = false
-            field.lineBreakMode = .byTruncatingTail
-            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
-            field.textColor = .secondaryLabelColor
-            addSubview(field)
-        }
+        label.onEditCommitted = { [weak self] text, endedByReturn in self?.renaming?.commit(text, endedByReturn) }
+        label.onEditCancelled = { [weak self] in self?.renaming?.cancel() }
+        addSubview(label)
+        countLabel.translatesAutoresizingMaskIntoConstraints = false
+        countLabel.isSelectable = false
+        countLabel.lineBreakMode = .byTruncatingTail
         countLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         countLabel.textColor = .tertiaryLabelColor
+        addSubview(countLabel)
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         countLabel.isHidden = true
         textField = label
@@ -59,14 +79,16 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
     }
 
     /// Shows `title` — disabled, with `notice` on hover, for a section that
-    /// lists nothing and says why — and, for a section that filters,
-    /// `filtering`, with `onFilterButton` called with the button when it is
-    /// clicked.
+    /// lists nothing and says why — renamed in place through `renaming`, and,
+    /// for a section that filters, `filtering`, with `onFilterButton` called
+    /// with the button when it is clicked.
     func configure(
-        title: String, notice: String? = nil, filtering: Filtering? = nil,
+        title: String, notice: String? = nil, renaming: Renaming? = nil, filtering: Filtering? = nil,
         onFilterButton: ((NSButton) -> Void)? = nil
     ) {
-        label.stringValue = title
+        // Self-guards mid-rename, leaving the open box's text alone.
+        label.update(text: title, controlsEnabled: renaming != nil)
+        self.renaming = renaming
         label.textColor = notice == nil ? .secondaryLabelColor : .disabledControlTextColor
         toolTip = notice
         countLabel.stringValue = filtering?.countText ?? ""
@@ -126,5 +148,29 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
 
     @objc private func filterButtonClicked(_ sender: NSButton) {
         filterButtonAction?(sender)
+    }
+
+    // MARK: - Inline rename
+
+    /// `true` while the title is in its editable rename state.
+    var isRenaming: Bool { label.isEditing }
+
+    /// Opens the rename box on the title, holding `draft` in place of it when
+    /// one is given.
+    func beginRename(holding draft: String? = nil) {
+        label.beginEditing(holding: draft)
+    }
+
+    /// Ends a live rename through the commit path, so the in-flight text lands.
+    func endRename() {
+        label.endEditing()
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        // Silently: the typed name belongs to the section the cell used to
+        // show.
+        label.abandonEditing()
+        renaming = nil
     }
 }

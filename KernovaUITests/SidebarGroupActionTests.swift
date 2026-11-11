@@ -66,7 +66,7 @@ struct SidebarGroupActionTests {
         #expect(built.items[start - 1].isSeparatorItem)
         #expect(
             titles[start...].prefix(6) == [
-                "Start All", "Suspend All", "Stop All", "Restart All", "", "Rename Smart Group\u{2026}",
+                "Start All", "Suspend All", "Stop All", "Restart All", "", "Rename Smart Group",
             ])
         #expect(actionItems(of: built).allSatisfy { !$0.isEnabled && $0.badge == nil })
     }

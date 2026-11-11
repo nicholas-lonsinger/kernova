@@ -200,7 +200,7 @@ struct SidebarFilterSortGroupTests {
         #expect(
             built.items.map(\.title) == [
                 "Guest OS", "State", "Network", "Guest Agent", "Other", "", "Group By", "Sort By", "",
-                "Show Details", "", "Save as Smart Group\u{2026}", "New Folder\u{2026}", "Clear Filters",
+                "Show Details", "", "Save as Smart Group\u{2026}", "New Folder", "Clear Filters",
             ])
         #expect(built.items[11].isEnabled == false)
         #expect(built.items[0].badge?.stringValue == "All")

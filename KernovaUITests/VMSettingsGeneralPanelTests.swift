@@ -74,7 +74,7 @@ struct VMSettingsGeneralPanelTests {
 
         #expect(instance.name == "Typed in detail")
         // The marker belongs to the sidebar now, and the detail commit left it.
-        #expect(viewModel.activeRename == .sidebar(instance.id))
+        #expect(viewModel.activeRename == .sidebar(.entry(instance.id)))
     }
 
     @Test("The rename box holds the whole name, before and after it commits")

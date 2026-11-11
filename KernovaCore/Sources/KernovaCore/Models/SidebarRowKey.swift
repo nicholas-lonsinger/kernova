@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// A sidebar section's identity, which is also its expansion-state key.
 package struct SidebarSectionID: RawRepresentable, Hashable, Sendable, Codable {
@@ -38,5 +39,28 @@ package struct SidebarRowKey: Hashable, Sendable, Codable {
     /// The entry's row in the library section, outside any group.
     static func library(_ entryID: UUID) -> SidebarRowKey {
         SidebarRowKey(section: .library, group: nil, entryID: entryID)
+    }
+}
+
+/// What a rename in the sidebar is open on.
+package enum SidebarRename: Hashable, Sendable {
+    /// The library entry `id` identifies, in its row.
+    case entry(UUID)
+    /// The smart group or folder `id` identifies, on its section's header.
+    case group(VMGroupKind, UUID)
+}
+
+extension SidebarSectionID {
+    /// The section listing the `kind` `id` identifies.
+    package init(_ kind: VMGroupKind, _ id: UUID) {
+        self = kind == .smartGroup ? .smartGroup(id) : .folder(id)
+    }
+
+    /// The smart group or folder this section lists, `nil` for any other
+    /// section.
+    package var group: (kind: VMGroupKind, id: UUID)? {
+        if let id = smartGroupID { return (.smartGroup, id) }
+        if let id = folderID { return (.folder, id) }
+        return nil
     }
 }

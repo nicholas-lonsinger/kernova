@@ -341,21 +341,31 @@ package final class VMLibrary: VMAdmissionPeers {
 
     /// Moves ``selection`` onto what `layout` — by default the current
     /// ``sidebarLayout`` — shows, by ``SidebarLayout/reconciled(_:libraryHolds:)``,
-    /// and ends a ``sidebarRenameID`` request no row of it lists.
+    /// and ends a ``sidebarRename`` request it lists nowhere.
     func reconcileSelection(with layout: SidebarLayout? = nil) {
         let layout = layout ?? sidebarLayout
         let reconciled = layout.reconciled(selection) { id in entries.contains { $0.id == id } }
         if reconciled != selection { selection = reconciled }
-        if let id = sidebarRenameID, layout.resolve(preferredRow(of: id)) == nil { sidebarRenameID = nil }
+        if let rename = sidebarRename, !lists(rename, in: layout) { sidebarRename = nil }
     }
 
-    /// The entry a rename in its sidebar row is asked for on.
+    /// Whether `layout` lists what `rename` is open on: a row of the entry,
+    /// or the group's section.
+    private func lists(_ rename: SidebarRename, in layout: SidebarLayout) -> Bool {
+        switch rename {
+        case .entry(let id): layout.resolve(preferredRow(of: id)) != nil
+        case .group(let kind, let id): layout.sections.contains { $0.id == SidebarSectionID(kind, id) }
+        }
+    }
+
+    /// What a rename in the sidebar is asked for on: an entry in its row, or
+    /// a smart group or folder on its section's header.
     ///
-    /// Reconciled with the selection: a layout listing no row for it ends the
+    /// Reconciled with the selection: a layout listing nowhere for it ends the
     /// request, so it never waits for a row to come back and opens a rename
-    /// nobody is asking for any more. The text typed into a row a change takes
-    /// down is committed, as the row's edit ending commits it.
-    var sidebarRenameID: UUID?
+    /// nobody is asking for any more. The text typed into a row or header a
+    /// change takes down is committed, as the edit ending commits it.
+    var sidebarRename: SidebarRename?
 
     /// The row the entry `id` is looked for from: its row in `section` when
     /// one is named, else the selected row when it is the entry's, else its

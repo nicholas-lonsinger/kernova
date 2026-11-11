@@ -317,6 +317,15 @@ package final class VMOrganizationDirectory {
         folders?.first { $0.id == id }
     }
 
+    /// The name of the `kind` `id` identifies, `nil` when the library lists
+    /// none.
+    package func name(of kind: VMGroupKind, withID id: UUID) -> String? {
+        switch kind {
+        case .smartGroup: smartGroup(withID: id)?.name
+        case .folder: folder(withID: id)?.name
+        }
+    }
+
     /// `base`, or the first of "`base` 2", "`base` 3", … no `element` is
     /// named — what a new one's name field starts from. `base` itself while
     /// the file cannot be read, where creating one is refused anyway.
