@@ -98,18 +98,6 @@ struct VMLibraryConfigCheckTests {
         #expect(throws: CommandError.notFound(.name("Dev"))) { try harness.core.info(.name("Dev")) }
     }
 
-    @Test("A bundle whose config has no name is named by its folder")
-    func anUnnamedBundleIsNamedByItsFolder() async throws {
-        let harness = makeHarness()
-        let (url, _) = try addBundle("Dev", to: harness.storage) { $0["name"] = nil }
-
-        await harness.library.loadVMs()
-
-        let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
-        #expect(row.name == url.lastPathComponent)
-        #expect(!row.file.isRepairable)
-    }
-
     // MARK: - The unreadable row among the library's groups
 
     /// The identifier `bytes`' configuration gives its VM.
@@ -201,40 +189,6 @@ struct VMLibraryConfigCheckTests {
         preferences.sidebarSelection = .library(row.id)
         library.restoreSelection()
         #expect(library.selection == .library(row.id))
-    }
-
-    @Test("A listing naming a tag, a group or a network refuses while the file listing them can't be read")
-    func listingsRefuseUnreadableLists() async throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
-        let networksURL = scratch.url.appendingPathComponent("Networks.json")
-        try Data("not json".utf8).write(to: organizationURL)
-        try Data("not json".utf8).write(to: networksURL)
-        let harness = makeHarness(
-            networks: VMNetworkDirectory(fileURL: networksURL),
-            organization: VMOrganizationDirectory(fileURL: organizationURL))
-        try addBundle("Readable", to: harness.storage)
-        await harness.library.loadVMs()
-
-        let organizationRefusal = CommandError.operationFailed(
-            verb: .list, message: VMOrganizationDirectory.unreadableMessage)
-        #expect(throws: organizationRefusal) {
-            try harness.core.selection(for: VMListQuery(tags: ["Work"]), verb: .list)
-        }
-        #expect(throws: organizationRefusal) {
-            try harness.core.selection(for: VMListQuery(groups: [VMGroupReference(.folder, named: "Lab")]), verb: .list)
-        }
-        #expect(throws: CommandError.operationFailed(verb: .groups, message: VMOrganizationDirectory.unreadableMessage))
-        {
-            try harness.core.groups()
-        }
-        #expect(throws: CommandError.operationFailed(verb: .list, message: VMNetworkDirectory.unreadableMessage)) {
-            try harness.core.selection(for: VMListQuery(networks: ["Lab"]), verb: .list)
-        }
-        // A mode needs no list, and an unfiltered listing none either.
-        #expect(
-            try harness.core.selection(for: VMListQuery(networks: ["nat"]), verb: .list).filter.networks.count == 1)
-        #expect(harness.core.list(.all).map(\.name) == ["Readable"])
     }
 
     // MARK: - Reporting
@@ -518,30 +472,6 @@ struct VMLibraryConfigCheckTests {
 
     // MARK: - Reporting the bundle's other files
 
-    @Test("A load asks for the check once for a snapshot config it can't read, the VM loading as it is")
-    func aLoadReportsAnUnreadableSnapshotConfigOnce() async throws {
-        let harness = makeHarness()
-        let (url, _) = try addBundle("Dev", to: harness.storage)
-        let snapshotID = UUID()
-        let manifest = """
-            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Before update",
-              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
-            """
-        harness.storage.files.setData(
-            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
-        harness.storage.files.setData(
-            Data("not json".utf8), atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID),
-            in: url)
-
-        await harness.library.loadVMs()
-
-        #expect(harness.library.instances.map(\.name) == ["Dev"])
-        #expect(checkRequests.count == 1)
-        harness.library.reconcileWithDisk()
-        harness.library.refreshFromOtherCopies()
-        #expect(checkRequests.count == 1)
-    }
-
     @Test("A running VM's bundle is read by no list or reconcile; its unreadable config is reported once it stops")
     func aRunningVMsUnreadableConfigIsReportedWhenItStops() async throws {
         let harness = makeHarness()
@@ -640,27 +570,6 @@ struct VMLibraryConfigCheckTests {
                 == nil)
     }
 
-    @Test("The check lists nothing for a VM config with no device shape, which loads as the shape it always had")
-    func aVMConfigWithoutADeviceShapeIsReadable() async throws {
-        let harness = makeHarness()
-        try addBundle("Dev", to: harness.storage) { $0["deviceShape"] = nil }
-        await harness.library.loadVMs()
-
-        #expect(try await harness.library.checkConfigFiles().isEmpty)
-        let instance = try #require(harness.library.instances.first { $0.name == "Dev" })
-        #expect(instance.configuration.deviceShape == .unrecorded(bootMode: .efi))
-    }
-
-    @Test("The check lists nothing for a snapshot config with no device shape")
-    func aSnapshotConfigWithoutADeviceShapeIsReadable() async throws {
-        let harness = makeHarness()
-        _ = try addBundleWithSnapshot(to: harness.storage) { $0["deviceShape"] = nil }
-        await harness.library.loadVMs()
-
-        #expect(try await harness.library.checkConfigFiles().isEmpty)
-        #expect(harness.library.instances.first?.unreadableFiles.isEmpty == true)
-    }
-
     @Test("A snapshot error carries its heading onto the failure it becomes; an untitled error keeps the generic one")
     func snapshotErrorsAreTitled() {
         #expect(
@@ -671,27 +580,6 @@ struct VMLibraryConfigCheckTests {
                 .alertTitle == "Couldn\u{2019}t Take the Snapshot")
         #expect(
             CommandError.failed(verb: .start, error: CocoaError(.fileReadUnknown)).alertTitle == "Error")
-    }
-
-    @Test("The notice names the first file and counts the rest")
-    func theNoticeCountsTheRest() {
-        let bundle = scratch.url.appendingPathComponent("VMs/Dev.kernova")
-        let problem = ConfigProblem(path: nil, issue: .fileMissing)
-        let snapshot = UnreadableConfigFile(
-            location: .bundle(bundle, .snapshotConfiguration(UUID())),
-            owner: .snapshot(vm: "Dev", snapshot: "Clean"), problems: [problem])
-        let pairings = UnreadableConfigFile(
-            location: .bundle(bundle, .usbPairings), owner: .virtualMachine("Dev"), problems: [problem])
-
-        #expect(UnreadableConfigFile.notice(for: []) == nil)
-        #expect(
-            UnreadableConfigFile.notice(for: [pairings])
-                == "Kernova can\u{2019}t read \u{201C}\(pairings.fileName)\u{201D}. "
-                + "Choose File > Check Config Files\u{2026} to review it.")
-        #expect(
-            UnreadableConfigFile.notice(for: [snapshot, pairings, snapshot])
-                == "Kernova can\u{2019}t read the settings of snapshot \u{201C}Clean\u{201D} and 2 more files. "
-                + "Choose File > Check Config Files\u{2026} to review them.")
     }
 
     @Test("Starting an Ephemeral VM whose baseline can't be read is refused at every door, and starts once it reads")

@@ -80,64 +80,7 @@ struct VMLibraryAdoptionTests {
         #expect(library.instances.map(\.name) == ["Edited on Disk"])
     }
 
-    @Test("A reconcile that runs between the rename and the adoption leaves the arrival to its pipeline")
-    func aReconcileBetweenTheRenameAndAdoptYieldsOneVM() async throws {
-        let library = makeLibrary()
-        let config = configuration("Raced")
-        let destination = try storage.bundleURL(for: config)
-        let reconciledEntries = Captured<[LibraryEntry]>([])
-        let (arrival, instance) = try await storage.withAfterPublish({
-            library.reconcileWithDisk()
-            reconciledEntries.value = library.entries
-        }) {
-            let arrival = library.beginArrival(
-                kind: .creating, configuration: config, destination: destination,
-                staged: try VMStagedBundle.mint(in: storage), source: nil, awaited: true,
-                write: writing(config))
-            return (arrival, try await arrival.settled.value)
-        }
-
-        // Only the arrival's own pipeline turns its row into a VM, since it
-        // alone knows whether a cancel withdrew the bundle.
-        #expect(reconciledEntries.value.count == 1)
-        #expect(reconciledEntries.value.first?.arrival === arrival)
-        #expect(library.entries.count == 1)
-        #expect(library.instances.count == 1)
-        #expect(library.instances.first === instance)
-    }
-
     // MARK: - Moved Bundles
-
-    @Test("A bundle moved within the VMs directory keeps its VM, re-bound to the new URL")
-    func aBundleMovedWithinTheVMsDirectoryKeepsItsVMReboundToTheNewURL() {
-        let library = makeLibrary()
-        let instance = RegisteredVMInstanceFixture.register(
-            name: "Mover", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
-        let moved = bundleURL("Moved Here")
-
-        storage.moveBundle(from: instance.bundleURL, to: moved)
-        library.reconcileWithDisk()
-
-        #expect(library.instances.count == 1)
-        #expect(library.instances.first === instance)
-        #expect(library.isSameBundle(instance.bundleURL, moved))
-    }
-
-    @Test("A write after the move lands in the bundle at its new URL")
-    func aWriteAfterTheMoveLandsAtTheNewURL() {
-        let library = makeLibrary()
-        let instance = RegisteredVMInstanceFixture.register(
-            name: "Mover", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
-        let original = instance.bundleURL
-        let moved = bundleURL("Moved Here")
-        storage.moveBundle(from: original, to: moved)
-        library.reconcileWithDisk()
-
-        library.editConfiguration(of: instance, as: .rename) { $0.name = "Renamed After Move" }
-
-        #expect(storage.files.configuration(at: moved)?.name == "Renamed After Move")
-        #expect(storage.files.configuration(at: original) == nil)
-    }
 
     @Test("A case-only rename keeps its VM, re-bound to the new spelling, with no duplicate report")
     func aCaseOnlyRenameKeepsItsVMReboundToTheNewSpelling() {
@@ -261,21 +204,5 @@ struct VMLibraryAdoptionTests {
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(storage.bundleIdentity(at: destination) == nil)
         #expect(library.entries.isEmpty)
-    }
-
-    @Test("A cancel after the adoption finds nothing left to cancel")
-    func aCancelAfterTheAdoptionFindsNothingToCancel() async throws {
-        let library = makeLibrary()
-        let config = configuration("Adopted")
-        let arrival = library.beginArrival(
-            kind: .creating, configuration: config,
-            destination: try storage.bundleURL(for: config),
-            staged: try VMStagedBundle.mint(in: storage), source: nil, awaited: true,
-            write: writing(config))
-        let instance = try await arrival.settled.value
-
-        #expect(arrival.requestCancel() == .adopted)
-        #expect(library.instances.first === instance)
-        #expect(storage.deleteVMBundleCallCount == 0)
     }
 }

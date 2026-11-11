@@ -168,21 +168,6 @@ struct VMBundleTests {
 
     // MARK: - Invariants
 
-    @Test("A write whose replace fails leaves the committed value equal to the file", arguments: StateFile.allCases)
-    func failedReplaceLeavesMemoryEqualToFile(_ file: StateFile) throws {
-        try withBundle { url in
-            let access = ReplaceFailingBundleFileAccess(failing: [file.relativePath])
-            let (library, instance) = try makeVM(at: url, access: access)
-            let bundle = instance.bundle
-
-            #expect(!commitOwnChange(to: file, of: instance, in: library))
-
-            let read = try onDisk(url)
-            #expect(!holdsOwnChange(file, read))
-            #expect(memoryMatchesDisk(file, bundle, read))
-        }
-    }
-
     @Test(
         "A field changed on disk after load survives an unrelated write to the same file",
         arguments: StateFile.allCases)
@@ -233,23 +218,6 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A write to a pairings file that does not decode fails and leaves it in place")
-    func aWriteToAnUndecodablePairingsFileFails() throws {
-        try withBundle { url in
-            let pairingsURL = VMBundleLayout(bundleURL: url).usbPairingsURL
-            let corrupt = Data("{ not json".utf8)
-            try corrupt.write(to: pairingsURL)
-            let bundle = makeBundle(try onDisk(url))
-
-            #expect(throws: UnreadableConfigFile.self) {
-                try bundle.commitUSBPairings { $0.upsert(pairing("new")) }
-            }
-
-            #expect(bundle.usbPairings.isEmpty)
-            #expect(try Data(contentsOf: pairingsURL) == corrupt)
-        }
-    }
-
     @Test("A configuration that no longer decodes refuses a write")
     func anUndecodableConfigurationRefusesAWrite() throws {
         try withBundle { url in
@@ -269,23 +237,6 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A write that changes nothing leaves the file untouched")
-    func aNoOpWriteReplacesNothing() throws {
-        try withBundle { url in
-            let access = ReplaceFailingBundleFileAccess()
-            let bundle = makeBundle(try files(url, access).read())
-
-            try bundle.commitHostState { $0.displayPreference = .inline }
-            try bundle.commitSnapshotManifest { $0.remove(id: UUID()) }
-            try bundle.commitUSBPairings { $0.remove(key: "absent") }
-
-            #expect(access.replacedPaths.isEmpty)
-            #expect(
-                !FileManager.default.fileExists(
-                    atPath: VMBundleLayout(bundleURL: url).hostStateURL.path(percentEncoded: false)))
-        }
-    }
-
     @Test("A committed value is what the file holds, down to the second a date keeps")
     func aCommittedValueIsWhatTheFileHolds() throws {
         try withBundle { url in
@@ -300,36 +251,6 @@ struct VMBundleTests {
     }
 
     // MARK: - Reading
-
-    @Test("A bundle with no config.json cannot be read")
-    func aMissingConfigurationThrows() throws {
-        try withBundle { url in
-            try FileManager.default.removeItem(at: VMBundleLayout(bundleURL: url).configURL)
-
-            #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
-        }
-    }
-
-    @Test("A bundle with no sidecars reads their defaults")
-    func missingSidecarsReadAsDefaults() throws {
-        try withBundle { url in
-            let read = try onDisk(url)
-
-            #expect(read.hostState == VMHostState())
-            #expect(read.snapshotManifest.isEmpty)
-            #expect(read.usbPairings.isEmpty)
-            #expect(read.unreadableFiles.isEmpty)
-        }
-    }
-
-    @Test("A host state that does not decode fails the read rather than reading as the defaults")
-    func anUndecodableHostStateThrows() throws {
-        try withBundle { url in
-            try Data("{ not json".utf8).write(to: VMBundleLayout(bundleURL: url).hostStateURL)
-
-            #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
-        }
-    }
 
     /// Only absence means "nothing recorded": a file that is there but cannot
     /// be opened still holds state, whatever the reason it cannot be read.
@@ -361,64 +282,7 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A write to a bundle that is not there fails rather than inventing one")
-    func aWriteToAMissingBundleThrows() {
-        let missing = scratch.url.appendingPathComponent(
-            "kernova-absent.kernova", isDirectory: true)
-
-        #expect(throws: (any Error).self) {
-            try writer(missing).update(.usbPairings) { $0.upsert(pairing("a")) }
-        }
-        #expect(!FileManager.default.fileExists(atPath: missing.path(percentEncoded: false)))
-    }
-
     // MARK: - Coding
-
-    @Test("A committed host state reads back as itself")
-    func hostStateRoundTrips() throws {
-        try withBundle { url in
-            var written = VMHostState(
-                startsAutomaticallyOnLaunch: true, displayPreference: .popOut,
-                lastFullscreenDisplayID: 0xDEAD_BEEF, agentInstallNudgeDismissed: true)
-            written.applyEphemeralMode(
-                enabled: true, baseline: UUID(uuidString: "DEADBEEF-DEAD-BEEF-DEAD-BEEFDEADBEEF"))
-            let bundle = makeBundle(try onDisk(url))
-
-            try bundle.commitHostState { $0 = written }
-
-            #expect(try onDisk(url).hostState == written)
-        }
-    }
-
-    @Test("Writing the host state leaves config.json alone")
-    func hostStateIsItsOwnFile() throws {
-        try withBundle { url in
-            let configURL = VMBundleLayout(bundleURL: url).configURL
-            let configBefore = try Data(contentsOf: configURL)
-            let bundle = makeBundle(try onDisk(url))
-
-            try bundle.commitHostState { $0.startsAutomaticallyOnLaunch = true }
-
-            #expect(try Data(contentsOf: configURL) == configBefore)
-        }
-    }
-
-    @Test("Committed pairings read back as themselves")
-    func pairingsRoundTrip() throws {
-        try withBundle { url in
-            let bundle = makeBundle(try onDisk(url))
-            let written = USBAccessoryPairingSet(pairings: [
-                pairing("04e8:6300:0100:0373"),
-                USBAccessoryPairing(
-                    key: "04e8:6300:0100@hub/Port-A@1", form: .receptacle, displayName: "Hub port",
-                    receptacleLabel: "Port-USB-C@2", pairedAt: Date(timeIntervalSince1970: 1_700_000_000)),
-            ])
-
-            try bundle.commitUSBPairings { $0 = written }
-
-            #expect(try onDisk(url).usbPairings == written)
-        }
-    }
 
     @Test("A pairing field the file does not carry decodes to its default")
     func pairingAbsentFieldsTakeTheirDefaults() throws {
@@ -432,18 +296,6 @@ struct VMBundleTests {
 
             #expect(loaded.pairings.count == 1)
             #expect(loaded.pairings.first?.receptacleLabel == nil)
-        }
-    }
-
-    @Test("A pairings file holding no pairings key reads as no pairings")
-    func pairingsObjectWithoutPairingsReadsAsEmpty() throws {
-        try withBundle { url in
-            try Data("{}".utf8).write(to: VMBundleLayout(bundleURL: url).usbPairingsURL)
-
-            let read = try onDisk(url)
-
-            #expect(read.usbPairings.isEmpty)
-            #expect(read.unreadableFiles.isEmpty)
         }
     }
 

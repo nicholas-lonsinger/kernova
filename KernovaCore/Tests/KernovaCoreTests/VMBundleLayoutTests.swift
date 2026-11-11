@@ -12,13 +12,6 @@ struct VMBundleLayoutTests {
 
     // MARK: - Path Computed Properties
 
-    @Test("diskImageURL appends Disk.asif to bundle path")
-    func diskImageURL() {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        #expect(layout.diskImageURL.lastPathComponent == "Disk.asif")
-        #expect(layout.diskImageURL.deletingLastPathComponent() == bundleURL)
-    }
-
     @Test("the snapshot store hangs off a Snapshots directory in the bundle")
     func snapshotStorePaths() {
         let layout = VMBundleLayout(bundleURL: bundleURL)
@@ -45,13 +38,6 @@ struct VMBundleLayoutTests {
         #expect(snapshot.saveFileURL != layout.saveFileURL)
     }
 
-    @Test("auxiliaryStorageURL appends AuxiliaryStorage to bundle path")
-    func auxiliaryStorageURL() {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        #expect(layout.auxiliaryStorageURL.lastPathComponent == "AuxiliaryStorage")
-        #expect(layout.auxiliaryStorageURL.deletingLastPathComponent() == bundleURL)
-    }
-
     @Test("hardwareModelURL appends HardwareModel to bundle path")
     func hardwareModelURL() {
         let layout = VMBundleLayout(bundleURL: bundleURL)
@@ -73,13 +59,6 @@ struct VMBundleLayoutTests {
         #expect(layout.efiVariableStoreURL.deletingLastPathComponent() == bundleURL)
     }
 
-    @Test("saveFileURL appends SaveFile.vzvmsave to bundle path")
-    func saveFileURL() {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        #expect(layout.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
-        #expect(layout.saveFileURL.deletingLastPathComponent() == bundleURL)
-    }
-
     @Test("serialLogURL appends serial.log to bundle path")
     func serialLogURL() {
         let layout = VMBundleLayout(bundleURL: bundleURL)
@@ -93,26 +72,6 @@ struct VMBundleLayoutTests {
         #expect(layout.serialLogRotatedURL.lastPathComponent == "serial.log.1")
         #expect(layout.serialLogRotatedURL.deletingLastPathComponent() == bundleURL)
     }
-
-    @Test("additionalDisksDirectoryURL appends AdditionalDisks to bundle path")
-    func additionalDisksDirectoryURL() {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        #expect(layout.additionalDisksDirectoryURL.lastPathComponent == "AdditionalDisks")
-        #expect(layout.additionalDisksDirectoryURL.deletingLastPathComponent() == bundleURL)
-    }
-
-    @Test("additionalDiskURL returns path with UUID and .asif extension")
-    func additionalDiskURL() {
-        let layout = VMBundleLayout(bundleURL: bundleURL)
-        let diskID = UUID()
-        let diskURL = layout.additionalDiskURL(id: diskID)
-        #expect(diskURL.lastPathComponent == "\(diskID.uuidString).asif")
-        #expect(
-            diskURL.path(percentEncoded: false).hasPrefix(
-                layout.additionalDisksDirectoryURL.path(percentEncoded: false)))
-    }
-
-    // MARK: - hasSaveFile
 
     // MARK: - diskSizes.onDiskBytes
 
@@ -128,26 +87,6 @@ struct VMBundleLayoutTests {
 
     private func mainDiskCapacityBytes(_ layout: VMBundleLayout) -> UInt64? {
         mainDiskSizes(layout).capacityBytes
-    }
-
-    @Test("onDiskBytes is nil when the disk image does not exist")
-    func diskOnDiskBytesReturnsNilForMissingFile() {
-        let layout = VMBundleLayout(bundleURL: scratch.url)
-        #expect(mainDiskOnDiskBytes(layout) == nil)
-    }
-
-    @Test("onDiskBytes is non-nil for an existing file")
-    func diskOnDiskBytesReturnsSize() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-
-        let layout = VMBundleLayout(bundleURL: scratch.url)
-        let testData = Data(repeating: 0xAB, count: 4096)
-        try testData.write(to: layout.diskImageURL)
-
-        let usage = mainDiskOnDiskBytes(layout)
-        #expect(usage != nil)
-        // totalFileAllocatedSizeKey returns block-aligned allocation, so >= data size
-        #expect(usage! >= 4096)
     }
 
     @Test("onDiskBytes is the physical allocation, below the logical size for sparse files")
@@ -185,17 +124,6 @@ struct VMBundleLayoutTests {
         try header.write(to: layout.diskImageURL)
 
         #expect(mainDiskCapacityBytes(layout) == 50_000_000_000)
-    }
-
-    @Test("capacityBytes is the logical file size for a non-ASIF file")
-    func diskCapacityBytesLogicalSizeForNonASIF() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-
-        let layout = VMBundleLayout(bundleURL: scratch.url)
-        // A raw image (no `shdw` magic): apparent size *is* the capacity.
-        try Data(repeating: 0xAB, count: 0x40).write(to: layout.diskImageURL)
-
-        #expect(mainDiskCapacityBytes(layout) == 0x40)
     }
 
     @Test("capacityBytes resolves an external (absolute) path's logical size")

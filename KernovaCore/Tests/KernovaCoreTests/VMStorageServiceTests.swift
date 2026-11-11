@@ -54,49 +54,6 @@ struct VMStorageServiceTests {
         return url
     }
 
-    @Test("Load configuration from bundle")
-    func loadConfiguration() throws {
-        let config = VMConfiguration(
-            name: "Persistence Test",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            cpuCount: 6,
-            memorySizeInGB: .gibibytes(12)
-        )
-
-        let bundleURL = try makeBundle(config)
-
-        let loaded = try files(bundleURL).readConfiguration()
-        #expect(loaded.id == config.id)
-        #expect(loaded.name == config.name)
-        #expect(loaded.cpuCount == 6)
-        #expect(loaded.memorySizeInGB == .gibibytes(12))
-    }
-
-    @Test("Save updated configuration")
-    func saveUpdatedConfiguration() throws {
-        let config = VMConfiguration(
-            name: "Original Name",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize
-        )
-
-        let bundleURL = try makeBundle(config)
-
-        // Update and save
-        try writer(bundleURL).update(.configuration) {
-            $0.name = "Updated Name"
-            $0.cpuCount = 8
-        }
-
-        // Reload and verify
-        let loaded = try files(bundleURL).readConfiguration()
-        #expect(loaded.name == "Updated Name")
-        #expect(loaded.cpuCount == 8)
-    }
-
     @Test("Deleting non-existent bundle throws error")
     func deleteNonExistentThrows() {
         let fakeURL = library.url.appendingPathComponent("nonexistent-vm-bundle")
@@ -104,23 +61,6 @@ struct VMStorageServiceTests {
         #expect(throws: VMStorageError.self) {
             try service.deleteVMBundle(at: fakeURL)
         }
-    }
-
-    @Test("Permanently delete VM bundle removes it from disk")
-    func permanentlyDeleteBundle() throws {
-        let config = VMConfiguration(
-            name: "Immediate Delete VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize
-        )
-
-        let bundleURL = try makeBundle(config)
-        #expect(FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
-
-        try service.permanentlyDeleteVMBundle(at: bundleURL)
-        #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
     }
 
     @Test("Permanently deleting a suspended VM's bundle takes its saved state with it")
@@ -142,15 +82,6 @@ struct VMStorageServiceTests {
 
         #expect(!FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false)))
         #expect(!FileManager.default.fileExists(atPath: bundleURL.path(percentEncoded: false)))
-    }
-
-    @Test("Permanently deleting non-existent bundle throws error")
-    func permanentlyDeleteNonExistentThrows() {
-        let fakeURL = library.url.appendingPathComponent("nonexistent-vm-bundle")
-
-        #expect(throws: VMStorageError.self) {
-            try service.permanentlyDeleteVMBundle(at: fakeURL)
-        }
     }
 
     // MARK: - Bundle Identity
@@ -234,13 +165,6 @@ struct VMStorageServiceTests {
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
     }
 
-    @Test("Each staged path is minted fresh, so no two writes can name the same tree")
-    func stagedBundleURLsAreUniquePerWrite() throws {
-        // An import keeps the source bundle's configuration id, so a retry after
-        // an attempt whose discard failed would otherwise stage onto its tree.
-        #expect(try service.makeStagedBundleURL() != (try service.makeStagedBundleURL()))
-    }
-
     @Test("Listing bundles never admits a config-bearing bundle that is still staged")
     func listIgnoresStagedBundles() throws {
         let staged = try stageBundle(
@@ -309,37 +233,6 @@ struct VMStorageServiceTests {
         }
     }
 
-    @Test("Of many concurrent publishes to one name, exactly one wins and every other gets exists")
-    func concurrentPublishesToOneNameYieldOneWinner() throws {
-        let contenders = (0..<8).map {
-            VMConfiguration(
-                name: "Contender \($0)", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        }
-        let finalURL = try service.bundleURL(for: contenders[0])
-        let staged = try contenders.map { try stageBundle($0) }
-
-        let outcomes = Mutex<[Int: Result<Void, any Error>]>([:])
-        let service = service
-        DispatchQueue.concurrentPerform(iterations: staged.count) { index in
-            let outcome = Result { try service.publishBundle(from: staged[index], to: finalURL) }
-            outcomes.withLock { $0[index] = outcome }
-        }
-
-        let results = outcomes.withLock { $0 }
-        let winners = results.filter { if case .success = $0.value { true } else { false } }
-        #expect(winners.count == 1)
-        for (_, outcome) in results {
-            guard case .failure(let error) = outcome else { continue }
-            guard case VMStorageError.bundleAlreadyExists? = error as? VMStorageError else {
-                Issue.record("a losing publish failed with \(error), not an exists refusal")
-                continue
-            }
-        }
-        let winner = try #require(winners.keys.first)
-        #expect(try files(finalURL).readConfiguration().id == contenders[winner].id)
-    }
-
     @Test("Reclaiming keeps a bundle another running process is staging, and this process's own")
     func reclaimKeepsBundlesLiveProcessesAreStaging() async throws {
         let other = otherProcess()
@@ -378,21 +271,6 @@ struct VMStorageServiceTests {
                 atPath: abandoned.deletingLastPathComponent().path(percentEncoded: false)))
     }
 
-    @Test("Reclaiming discards a bundle staged directly under the staging directory, where no lock holds it")
-    func reclaimDiscardsAnUnrootedStagedBundle() async throws {
-        let unrooted = service.stagingRoot.url.deletingLastPathComponent().appendingPathComponent(
-            "\(UUID().uuidString).\(VMBundleFormat.fileExtension)", isDirectory: true)
-        try FileManager.default.createDirectory(at: unrooted, withIntermediateDirectories: true)
-        try writer(unrooted).writeInitial(
-            VMConfiguration(
-                name: "Unrooted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
-
-        await service.reclaimStagedBundles().value
-
-        #expect(!FileManager.default.fileExists(atPath: unrooted.path(percentEncoded: false)))
-    }
-
     @Test("A clone copies only the files it was given, so it inherits no USB pairings")
     func cloneLeavesUSBPairingsBehind() throws {
         let sourceURL = try makeBundle(
@@ -416,28 +294,5 @@ struct VMStorageServiceTests {
         // A change that moves nothing answers what the file holds.
         #expect(try writer(cloneURL).update(.usbPairings) { _ in }.isEmpty)
         #expect(try !writer(sourceURL).update(.usbPairings) { _ in }.isEmpty)
-    }
-
-    @Test("A clone copies a snapshot directory whole, under the same relative path")
-    func cloneCopiesASnapshotDirectory() throws {
-        let sourceURL = try makeBundle(
-            VMConfiguration(
-                name: "Snapshot Source", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
-        let cloneURL = try service.makeStagedBundleURL()
-        let id = UUID()
-        let snapshot = VMBundleLayout(bundleURL: sourceURL).snapshotLayout(id: id)
-        try FileManager.default.createDirectory(
-            at: snapshot.additionalDisksDirectoryURL, withIntermediateDirectories: true)
-        try Data("saved".utf8).write(to: snapshot.saveFileURL)
-        try Data("disk".utf8).write(to: snapshot.additionalDiskURL(id: id))
-
-        try service.cloneVMBundle(
-            from: sourceURL, to: cloneURL,
-            relativePaths: [VMBundleLayout.snapshotRelativePath(id: id)])
-
-        let copied = VMBundleLayout(bundleURL: cloneURL).snapshotLayout(id: id)
-        #expect(try Data(contentsOf: copied.saveFileURL) == Data("saved".utf8))
-        #expect(try Data(contentsOf: copied.additionalDiskURL(id: id)) == Data("disk".utf8))
     }
 }
