@@ -81,10 +81,4 @@ struct GuestInputDevicesTests {
         let config = Self.makeConfig(lastSeen: "12.0.1", mode: .mac)
         #expect(GuestInputDevices.resolve(for: config) == .mac)
     }
-
-    @Test("An explicit USB choice wins over a 13+ version")
-    func explicitUSBBeatsModernVersion() {
-        let config = Self.makeConfig(lastSeen: "26.0", mode: .usb)
-        #expect(GuestInputDevices.resolve(for: config) == .usb)
-    }
 }

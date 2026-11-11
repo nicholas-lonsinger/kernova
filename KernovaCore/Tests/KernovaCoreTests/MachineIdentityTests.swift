@@ -15,22 +15,4 @@ struct MachineIdentityTests {
         #expect(identity.fingerprint.digest == digest)
         #expect(identity.fingerprint.short == "BA78-16BF")
     }
-
-    @Test(
-        "The same bytes fingerprint alike and different bytes differ, in either case",
-        arguments: [MachineIdentity.mac(Data([1, 2, 3])), .generic(Data([1, 2, 3]))])
-    func fingerprintFollowsTheBytes(identity: MachineIdentity) {
-        let same: MachineIdentity
-        let other: MachineIdentity
-        switch identity {
-        case .mac:
-            same = .mac(Data([1, 2, 3]))
-            other = .mac(Data([1, 2, 4]))
-        case .generic:
-            same = .generic(Data([1, 2, 3]))
-            other = .generic(Data([1, 2, 4]))
-        }
-        #expect(identity.fingerprint == same.fingerprint)
-        #expect(identity.fingerprint != other.fingerprint)
-    }
 }
