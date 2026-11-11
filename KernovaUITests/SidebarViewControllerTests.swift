@@ -415,6 +415,30 @@ struct SidebarViewControllerTests {
         return cell
     }
 
+    @Test("The rename box fits the name, and the slow-click region still spans the name line")
+    func renameBoxHugsTheNameInsideAFullWidthClickRegion() throws {
+        let instance = VMInstanceFixture.make()
+        let cell = makeRenamingRow(instance: instance)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.setContentSize(NSSize(width: 320, height: 40))
+        window.contentView = cell
+        cell.layoutSubtreeIfNeeded()
+        let label = try nameLabel(in: cell)
+        let nameWidth = ceil(
+            NSAttributedString(string: instance.name, attributes: [.font: label.font!]).size().width)
+
+        #expect(label.frame.width >= nameWidth)
+        // The box hugs the name rather than spanning the row.
+        #expect(label.frame.width < cell.bounds.width / 2)
+
+        cell.endRename()
+        cell.layoutSubtreeIfNeeded()
+        // Past the end of the name, still on its line.
+        let pastName = label.convert(
+            NSPoint(x: label.bounds.maxX + 20, y: label.bounds.midY), to: cell)
+        #expect(cell.isPointOverName(pastName))
+    }
+
     /// The controller restores sidebar focus only for a keyboard Return, so the
     /// flag has to survive the trip out of the shared label.
     @Test("A Return-terminated rename reports that it ended by Return")

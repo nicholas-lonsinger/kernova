@@ -130,17 +130,16 @@ final class SnapshotRowView: NSView {
         menuButton.target = target
         menuButton.action = moreAction
 
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
+        // Rigid accessories leave the text column as the one view that absorbs
+        // the row's spare width; the title line's own spacer then takes it, so
+        // the name and note keep their text's width until the row runs out.
         for accessory in [icon, markerLabel, revertButton, menuButton] as [NSView] {
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
         let row = NSStackView(views: [
-            icon, textStack, spacer, markerLabel, revertButton, menuButton,
+            icon, textStack, markerLabel, revertButton, menuButton,
         ])
         row.orientation = .horizontal
         row.alignment = .centerY

@@ -77,6 +77,38 @@ struct VMSettingsGeneralPanelTests {
         #expect(viewModel.activeRename == .sidebar(instance.id))
     }
 
+    @Test("The rename box holds the whole name, before and after it commits")
+    func renameBoxHoldsTheName() throws {
+        let (vc, instance, viewModel) = makeController(
+            guestOS: .linux, isReadOnly: false, category: .general)
+        let window = makeTestWindow(styleMask: [.titled])
+        window.contentView = vc.view
+        viewModel.renameVMInDetail(instance)
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+        let panel = try #require(vc.panelForTesting(.general))
+        let field = try #require(findEditableField(in: panel) as? InlineEditableLabel)
+        func textWidth(_ text: String) -> CGFloat {
+            ceil(NSAttributedString(string: text, attributes: [.font: field.font!]).size().width)
+        }
+        vc.view.layoutSubtreeIfNeeded()
+        #expect(field.frame.width >= textWidth(instance.name))
+        // The box hugs the name rather than spanning the row.
+        #expect(field.frame.width < field.superview!.frame.width / 2)
+
+        let typed = "A Linux VM for the release build"
+        field.currentEditor()?.string = typed
+        field.controlTextDidChange(
+            Notification(name: NSControl.textDidChangeNotification, object: field))
+        vc.view.layoutSubtreeIfNeeded()
+        #expect(field.frame.width >= textWidth(typed))
+
+        field.endEditing()
+        vc.reconfigure(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.view.layoutSubtreeIfNeeded()
+        #expect(instance.name == typed)
+        #expect(field.frame.width >= textWidth(typed))
+    }
+
     /// The row used to be a borderless button, which grayed its own title; a
     /// plain label doesn't, so the pane has to gray it.
     @Test("The name reads as disabled while the VM can't be renamed")
