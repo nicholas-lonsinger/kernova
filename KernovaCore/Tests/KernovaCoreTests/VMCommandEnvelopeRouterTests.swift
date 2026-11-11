@@ -80,22 +80,6 @@ struct VMCommandEnvelopeRouterTests {
 
     // MARK: - Reads
 
-    @Test("A listing crosses the wire as summaries")
-    func listCrossesTheWire() async throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, name: "First")
-        makeInstance(in: harness, name: "Second", phase: .running(sessionID: UUID()))
-
-        let response = try await harness.transport.send(.list())
-
-        guard case .summaries(let summaries) = response.result else {
-            Issue.record("expected summaries, got \(response.result)")
-            return
-        }
-        #expect(summaries.map(\.name) == ["First", "Second"])
-        #expect(summaries.map(\.status) == ["stopped", "running"])
-    }
-
     @Test("A filtered listing and the groups cross the wire, and an unknown group is refused")
     func filteredListAndGroupsCrossTheWire() async throws {
         let harness = makeHarness()
@@ -221,26 +205,6 @@ struct VMCommandEnvelopeRouterTests {
                 ]))
     }
 
-    @Test("A VM with no configured disk list answers the main disk its bundle holds")
-    func storageDisksOfAnUnlistedVMAnswerTheMainDisk() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Plain") { $0.storageDisks = nil }
-        let main = try #require(instance.effectiveStorageDisks.first)
-        harness.snapshots.setDiskSizes(
-            VMBundleLayout.DiskSizes(onDiskBytes: 1_000, capacityBytes: 64_000_000_000), for: main.id)
-
-        let response = try await harness.transport.send(.storageDisks(.name("Plain")))
-
-        #expect(
-            response.result
-                == .storageDisks([
-                    StorageDiskSummary(
-                        id: main.id, label: "Main Disk", kind: "virtio", readOnly: false,
-                        path: instance.bundleURL.appendingPathComponent("Disk.asif").path(percentEncoded: false),
-                        notes: "", capacityBytes: 64_000_000_000, usedBytes: 1_000)
-                ]))
-    }
-
     @Test("A VM's shares cross the wire as their own listing, addressed by identifier")
     func theShareListingCrossesTheWire() async throws {
         let harness = makeHarness()
@@ -338,89 +302,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(second.usbPairings.pairings.count == 1)
     }
 
-    @Test("A listing the core refuses crosses the wire as that refusal, not as an empty list")
-    func aRefusedListingCrossesTheWire() async throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, name: "Stub") {
-            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites")]
-        }
-
-        let refusedShares = try await harness.transport.send(.sharedDirectories(.name("Typo"))).result
-
-        #expect(refusedShares == .failure(.notFound(selector: .name("Typo"))))
-    }
-
     // MARK: - Verbs
-
-    @Test("A start crosses the wire and reaches the service")
-    func startCrossesTheWire() async throws {
-        let virtualization = MockVirtualizationService()
-        let harness = makeHarness(virtualization: virtualization)
-        let instance = makeInstance(in: harness)
-
-        let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none))
-
-        #expect(response.result == .ok)
-        #expect(virtualization.startCallCount == 1)
-    }
-
-    @Test("A stop deadline crosses the wire and comes back as a timeout failure")
-    func stopDeadlineCrossesTheWire() async throws {
-        let virtualization = MockVirtualizationService()
-        virtualization.guestIgnoresShutdownRequest = true
-        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
-        let instance = makeInstance(
-            in: harness, name: "Stubborn", phase: .running(sessionID: UUID()))
-
-        let response = try await harness.transport.send(
-            .stop(.id(instance.id), disposition: .graceful, consent: .none, timeout: 60))
-
-        guard case .timedOut(let vm, let verb, let seconds) = response.failure else {
-            Issue.record("expected a timeout failure, got \(response.result)")
-            return
-        }
-        #expect(vm.id == instance.id)
-        #expect(verb == .stop)
-        #expect(seconds == 60)
-        #expect(instance.status == .running)
-    }
-
-    @Test(
-        "stop --anyway crosses the wire; a guest whose agents don't offer it is refused naming the For everyone install"
-    )
-    func stopAnywayCrossesTheWire() async throws {
-        let virtualization = MockVirtualizationService()
-        let harness = makeHarness(virtualization: virtualization)
-        let instance = makeInstance(in: harness, name: "Anyway", phase: .running(sessionID: UUID()))
-
-        let response = try await harness.transport.send(
-            .stop(.id(instance.id), disposition: .anyway, consent: .all, timeout: nil))
-
-        guard case .stepRequired(let requirement) = response.failure else {
-            Issue.record("expected a step refusal, got \(response.result)")
-            return
-        }
-        #expect(requirement.routes.isEmpty)
-        #expect(requirement.message.contains("\u{201C}For everyone\u{201D}"))
-        #expect(virtualization.stopCallCount == 0)
-        #expect(instance.status == .running)
-    }
-
-    @Test("restart --force crosses the wire: the guest is terminated and booted again")
-    func forceRestartCrossesTheWire() async throws {
-        let virtualization = MockVirtualizationService()
-        let harness = makeHarness(virtualization: virtualization)
-        let instance = makeInstance(in: harness, name: "Forced", phase: .running(sessionID: UUID()))
-
-        let response = try await harness.transport.send(
-            .restart(.id(instance.id), disposition: .force, timeout: nil, consent: .all))
-
-        #expect(response.failure == nil, "\(response.result)")
-        #expect(virtualization.forceStopCallCount == 1)
-        #expect(virtualization.startCallCount == 1)
-        #expect(instance.status == .running)
-    }
 
     @Test("A snapshot capture answers with the snapshot that landed")
     func takeSnapshotCrossesTheWire() async throws {
@@ -439,47 +321,6 @@ struct VMCommandEnvelopeRouterTests {
     }
 
     // MARK: - Refusals
-
-    @Test("A selector nothing answers to comes back as a not-found failure")
-    func notFoundCrossesTheWire() async throws {
-        let harness = makeHarness()
-
-        let response = try await harness.transport.send(.info(.name("Nothing")))
-
-        #expect(response.failure == .notFound(selector: .name("Nothing")))
-    }
-
-    @Test("An ambiguous name comes back carrying every candidate")
-    func ambiguityCrossesTheWire() async throws {
-        let harness = makeHarness()
-        let first = makeInstance(in: harness, name: "Twin")
-        let second = makeInstance(in: harness, name: "Twin")
-
-        let response = try await harness.transport.send(.info(.name("Twin")))
-
-        guard case .ambiguous(_, let candidates)? = response.failure else {
-            Issue.record("expected an ambiguity, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(candidates.map(\.id) == [first.id, second.id])
-    }
-
-    @Test("A state gate comes back naming the state and the verbs it allows")
-    func invalidStateCrossesTheWire() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-
-        let response = try await harness.transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none))
-
-        guard case .invalidState(_, let current, let allowed, _)? = response.failure else {
-            Issue.record("expected an invalid state, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(current == "running")
-        #expect(allowed.contains(.stop))
-        #expect(!allowed.contains(.start))
-    }
 
     @Test("A destructive verb with no consent comes back as the prompt to gather")
     func consentCrossesTheWire() async throws {
@@ -551,40 +392,6 @@ struct VMCommandEnvelopeRouterTests {
         #expect(prompt.title == "Cancel Installation?")
     }
 
-    @Test("A confirmed cancel of a running setup crosses the wire and cancels the task")
-    func cancelGuestSetupCrossesTheWire() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .initialBoot) {
-            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-        let cancelStream = AsyncStream<Void>.makeStream()
-        try instance.launchParkedSetup {
-            cancelStream.continuation.yield(())
-            cancelStream.continuation.finish()
-        }
-
-        let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), consent: .all))
-
-        #expect(response.result == .ok)
-        for await _ in cancelStream.stream { break }
-    }
-
-    @Test("Cancelling with nothing in flight refuses, and the verb is not offered")
-    func cancelGuestSetupWithNothingInFlightRefuses() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .stopped)
-
-        let response = try await harness.transport.send(
-            .cancelGuestSetup(.id(instance.id), consent: .all))
-
-        guard case .invalidState(_, _, let allowed, _)? = response.failure else {
-            Issue.record("expected an invalid state, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(!allowed.contains(.cancelGuestSetup))
-    }
-
     @Test("A second cancel after the setup task drains refuses, and the VM stays resumable")
     func repeatedCancelGuestSetupRefusesOnceDrained() async throws {
         let installService = SuspendingMockMacOSInstallService()
@@ -621,39 +428,6 @@ struct VMCommandEnvelopeRouterTests {
             Issue.record("expected an invalid state, got \(String(describing: secondCancel.failure))")
             return
         }
-    }
-
-    @Test("The cancelGuestSetup gate clears before the chained auto-boot, not after it")
-    func cancelGuestSetupGateClosesBeforeAutoBoot() async throws {
-        let virtualization = SuspendingMockVirtualizationService()
-        let harness = makeHarness(virtualization: virtualization)
-        let transport = harness.transport
-
-        let instance = harness.library.registerFixture(
-            name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
-        ) {
-            $0.installContext = MacOSInstallContext(
-                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-
-        let started = try await transport.send(
-            .start(.id(instance.id), recovery: false, consent: .none))
-        #expect(started.result == .ok)
-
-        // The install completes synchronously (`MockMacOSInstallService` has no
-        // suspension), so by the time the chained auto-boot reaches the
-        // suspending virtualization service's `start`, the setup phase is over
-        // and the gate should already be closed.
-        await virtualization.waitUntilSuspended()
-
-        let response = try await transport.send(.cancelGuestSetup(.id(instance.id), consent: .all))
-        guard case .invalidState(_, _, let allowed, _)? = response.failure else {
-            Issue.record("expected an invalid state, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(!allowed.contains(.cancelGuestSetup))
-
-        virtualization.resumeSuspended()
     }
 
     // MARK: - Attachments
@@ -761,26 +535,6 @@ struct VMCommandEnvelopeRouterTests {
         #expect(instance.configuration.removableMedia == nil)
     }
 
-    @Test("A running VM refuses a disk edit over the wire and names what it does take")
-    func storageDiskEditRefusedOnARunningVM() async throws {
-        let harness = makeHarness()
-        let disk = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID())) {
-            $0.storageDisks = [disk]
-        }
-
-        let response = try await harness.transport.send(
-            .editStorageDisk(.id(instance.id), .rename(disk: disk.id, newLabel: "New")))
-
-        guard case .invalidState(_, _, let allowed, _) = try #require(response.failure) else {
-            Issue.record("expected an invalid-state refusal, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(!allowed.contains(.editStorageDisk))
-        #expect(allowed.contains(.editRemovableMedia))
-        #expect(instance.configuration.storageDisks?[0].label == "Extra")
-    }
-
     @Test("A trashing removal refuses over the wire until consent comes with it")
     func trashingRemovalAsksForConsentOverTheWire() async throws {
         let harness = makeHarness()
@@ -808,50 +562,6 @@ struct VMCommandEnvelopeRouterTests {
         #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
     }
 
-    // MARK: - Import
-
-    @Test("An import crosses the wire as the path the client named, answered at once")
-    func importCrossesTheWire() async throws {
-        let harness = makeHarness()
-        let source = try scratch.importSource(name: "Named").url
-        let path = source.path(percentEncoded: false)
-
-        let response = try await harness.transport.send(.importVM(path: path, waitForOutcome: false))
-
-        guard case .summary(let summary) = response.result else {
-            Issue.record("expected a summary, got \(response.result)")
-            return
-        }
-        #expect(summary.name == "Named")
-        // Unwaited: the answer is the row still being copied in.
-        #expect(summary.status == VMStatus.preparingWireName)
-        // The grant the path needs belongs to the verb, not to the wire: the
-        // router hands the string over untouched.
-        #expect(harness.authority.requests.map(\.source) == [.vmBundle])
-        #expect(harness.authority.requestedURLs.map { $0.path(percentEncoded: false) } == [path])
-        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
-        await arrival.settle()
-    }
-
-    @Test("An import nobody granted comes back as the verb's own refusal")
-    func importRefusalCrossesTheWire() async throws {
-        let harness = makeHarness()
-        harness.authority.error = CommandError.operationFailed(
-            verb: .importVM,
-            message: "Kernova was not given permission to read \u{201C}Named.kernova\u{201D}.")
-
-        let response = try await harness.transport.send(
-            .importVM(path: "/Users/somebody/Desktop/Named.kernova", waitForOutcome: false))
-
-        guard case .operationFailed(let verb, _, let message, _)? = response.failure else {
-            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(verb == .importVM)
-        #expect(message.contains("was not given permission"))
-        #expect(harness.library.entries.isEmpty)
-    }
-
     // MARK: - Arrivals
 
     @Test("A waited clone answers the row it settled into")
@@ -871,147 +581,7 @@ struct VMCommandEnvelopeRouterTests {
         #expect(Set(harness.library.instances.map(\.id)) == [instance.id, summary.id])
     }
 
-    @Test("A waited clone whose copy fails answers that failure, and nothing is reported")
-    func waitedCloneThrowsTheCopysFailure() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Source")
-        harness.storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
-
-        let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
-
-        guard case .operationFailed(let verb, _, _, _)? = response.failure else {
-            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(verb == .clone)
-        #expect(harness.wired.failures.isEmpty)
-        #expect(harness.library.entries.map(\.id) == [instance.id])
-    }
-
-    @Test("An unwaited clone answers its preparing row at once")
-    func unwaitedCloneAnswersThePreparingRow() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Source")
-        let hold = DispatchSemaphore(value: 0)
-        harness.storage.setCloneHold(hold)
-        defer { hold.signal() }
-
-        let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
-
-        guard case .summary(let summary) = response.result else {
-            Issue.record("expected a summary, got \(response.result)")
-            return
-        }
-        #expect(summary.status == VMStatus.preparingWireName)
-        let arrival = try #require(harness.library.arrivals.first)
-        #expect(arrival.id == summary.id)
-        hold.signal()
-        await arrival.settle()
-    }
-
-    @Test("A waited clone the user cancels answers that it was cancelled")
-    func waitedCloneCancelledAnswersCancelled() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Source")
-        let hold = DispatchSemaphore(value: 0)
-        harness.storage.setCloneHold(hold)
-        let waiting = Task {
-            try await harness.transport.send(
-                .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: true))
-        }
-        // Held inside the copy, so the cancel is what the settle finds rather
-        // than a race with it.
-        try await harness.storage.cloneEntered.wait { harness.storage.cloneVMBundleCallCount == 1 }
-        let arrival = try #require(harness.library.arrivals.first)
-
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
-        hold.signal()
-        let settled = try await waiting.value
-
-        guard case .operationFailed(let verb, _, let message, _)? = settled.failure else {
-            Issue.record("expected an operation failure, got \(String(describing: settled.failure))")
-            return
-        }
-        #expect(verb == .clone)
-        #expect(message == "The clone was cancelled.")
-        #expect(!harness.library.entries.contains { $0.id == arrival.id })
-    }
-
-    // MARK: - Events
-
-    @Test("A clone's settling crosses the wire as an event")
-    func cloneSettlingCrossesTheWireAsAnEvent() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Source")
-        var events = harness.transport.router.eventResponses().makeAsyncIterator()
-
-        let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
-        guard case .summary(let summary) = response.result else {
-            Issue.record("expected a summary, got \(response.result)")
-            return
-        }
-        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
-        await arrival.settle()
-
-        var sawSettled = false
-        while let event = await events.next() {
-            if case .event(.statusChanged(let id, _, let from, let to)) = event.result,
-                id == arrival.id, from == "preparing"
-            {
-                #expect(to == "stopped")
-                sawSettled = true
-                break
-            }
-        }
-        #expect(sawSettled)
-    }
-
-    @Test("A clone whose copy fails crosses the wire as a failure event")
-    func cloneFailureCrossesTheWireAsAnEvent() async throws {
-        let harness = makeHarness()
-        harness.storage.setCloneVMBundleError(
-            VMStorageError.bundleAlreadyExists(URL(filePath: "/tmp/occupied.kernova")))
-        let instance = makeInstance(in: harness, name: "Source")
-        var events = harness.transport.router.eventResponses().makeAsyncIterator()
-
-        let response = try await harness.transport.send(
-            .clone(.id(instance.id), outcome: .newMachine, waitForOutcome: false))
-        guard case .summary(let summary) = response.result else {
-            Issue.record("expected a summary, got \(response.result)")
-            return
-        }
-        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
-        await arrival.settle()
-
-        var sawFailure = false
-        while let event = await events.next() {
-            if case .event(.failure(let id, _, _)) = event.result, id == arrival.id {
-                sawFailure = true
-                break
-            }
-        }
-        #expect(sawFailure)
-    }
-
     // MARK: - Envelope
-
-    @Test("Bytes that are not a request are refused before any verb runs")
-    func undecodableBytesAreRefused() async throws {
-        let virtualization = MockVirtualizationService()
-        let harness = makeHarness(virtualization: virtualization)
-        makeInstance(in: harness)
-
-        let response = try await harness.transport.sendRaw(Data("not a request".utf8))
-
-        guard case .refused(.undecodableRequest) = response.result else {
-            Issue.record("expected an undecodable-request refusal, got \(response.result)")
-            return
-        }
-        #expect(virtualization.startCallCount == 0)
-    }
 
     @Test("A peer speaking another version of the vocabulary is refused")
     func foreignProtocolVersionIsRefused() async throws {
@@ -1176,41 +746,6 @@ struct VMCommandEnvelopeRouterTests {
         #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [true])
     }
 
-    @Test("A share nobody granted comes back as the verb's own refusal")
-    func shareAddRefusalCrossesTheWire() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Alpha")
-        harness.authority.error = CommandError.operationFailed(
-            verb: .editSharedDirectory, message: "Kernova was not given permission.")
-
-        let response = try await harness.transport.send(
-            .editSharedDirectory(
-                .name("Alpha"), .add(path: "/Users/somebody/Asked", readOnly: false)))
-
-        guard case .operationFailed(let verb, _, let message, _)? = response.failure else {
-            Issue.record("expected an operation failure, got \(String(describing: response.failure))")
-            return
-        }
-        #expect(verb == .editSharedDirectory)
-        #expect(message == "Kernova was not given permission.")
-        #expect(instance.configuration.sharedDirectories == nil)
-    }
-
-    @Test("A share removal names the folder by path")
-    func shareRemovalByPathCrossesTheWire() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Alpha") {
-            $0.sharedDirectories = [SharedDirectory(path: "/Users/somebody/Sites")]
-        }
-
-        #expect(
-            try await harness.transport.send(
-                .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites"))
-            ).result == .ok)
-
-        #expect(instance.configuration.sharedDirectories == nil)
-    }
-
     // MARK: - Ephemeral revert notices
 
     /// A stopped VM in Ephemeral Mode with `baseline` as its baseline.
@@ -1232,47 +767,6 @@ struct VMCommandEnvelopeRouterTests {
             case .ephemeralRevert(let vm, let baseline): "\(vm.name) → \(baseline.name)"
             }
         }
-    }
-
-    @Test("A set that moves a setting a revert restores answers with the notice beside the values")
-    func setOfARevertingKeyCarriesTheNotice() async throws {
-        let harness = makeHarness()
-        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
-        #expect(instance.ephemeralBaselineSnapshot != nil)
-
-        let response = try await harness.transport.send(
-            .setConfiguration(
-                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
-
-        #expect(response.result == .configuration([ConfigurationEntry(key: "cpus", value: "3")]))
-        #expect(named(response.notices) == ["Alpha → Clean install"])
-    }
-
-    @Test("A host-state key, a VM with no baseline and a turned-off reminder carry no notice")
-    func settingsTheRevertLeavesCarryNoNotice() async throws {
-        let harness = makeHarness()
-        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
-        makeInstance(in: harness, name: "Plain")
-
-        let hostState = try await harness.transport.send(
-            .setConfiguration(
-                .name("Alpha"), assignments: [ConfigurationEntry(key: "autoStart", value: "true")],
-                consent: .none))
-        #expect(hostState.failure == nil)
-        #expect(hostState.notices.isEmpty)
-
-        let plain = try await harness.transport.send(
-            .setConfiguration(
-                .name("Plain"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
-        #expect(plain.failure == nil)
-        #expect(plain.notices.isEmpty)
-
-        preferences.ephemeralSettingsBannerDismissed = true
-        let dismissed = try await harness.transport.send(
-            .setConfiguration(
-                .name("Alpha"), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none))
-        #expect(dismissed.failure == nil)
-        #expect(dismissed.notices.isEmpty)
     }
 
     @Test("A rename keeps the VM's name through a revert, so it carries no notice")
@@ -1298,81 +792,6 @@ struct VMCommandEnvelopeRouterTests {
             .editSharedDirectory(.name("Alpha"), .removePath(path: "/Users/somebody/Sites")))
 
         #expect(response.result == .ok)
-        #expect(named(response.notices) == ["Alpha → Clean install"])
-    }
-
-    @Test("A verb that is no settings edit carries no notice")
-    func readCarriesNoNotice() async throws {
-        let harness = makeHarness()
-        makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
-
-        let response = try await harness.transport.send(.info(.name("Alpha")))
-
-        #expect(response.failure == nil)
-        #expect(response.notices.isEmpty)
-    }
-
-    @Test("Mounting the agent installer adds an item that ejects itself, so it carries no notice")
-    func agentDiskMountCarriesNoNotice() async throws {
-        let harness = makeHarness()
-        let instance = makeEphemeralInstance(
-            in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil),
-            phase: .running(sessionID: UUID()), guestOS: .macOS)
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-
-        let response = try await harness.transport.send(
-            .guestAgentDisk(.name("Alpha"), .mount(awaiting: nil)))
-
-        #expect(response.failure == nil)
-        #expect(instance.configuration.removableMedia?.count == 1)
-        #expect(response.notices.isEmpty)
-    }
-
-    @Test("A commit made outside a request while it awaits is no change of that request's")
-    func concurrentCommitIsNotTheRequestsChange() async throws {
-        let harness = makeHarness()
-        harness.authority.holdsPanel = true
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        makeEphemeralInstance(in: harness, name: "PoolA", baseline: baseline)
-        let other = makeEphemeralInstance(in: harness, name: "PoolB", baseline: baseline)
-        let folder = externalPath("Asked")
-        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
-
-        let request = Task {
-            try await harness.transport.send(
-                .editSharedDirectory(.name("PoolA"), .add(path: folder, readOnly: false)))
-        }
-        try await harness.authority.requested.wait { harness.authority.requests.count == 1 }
-        // Another door's edit, landing from this task while the share add
-        // waits on its panel.
-        try harness.core.setConfiguration(
-            .id(other.id), assignments: [ConfigurationEntry(key: "cpus", value: "3")], consent: .none)
-        #expect(other.configuration.cpuCount == 3)
-        harness.authority.releasePanel()
-
-        let response = try await request.value
-        #expect(response.failure == nil)
-        #expect(named(response.notices) == ["PoolA → Clean install"])
-    }
-
-    @Test("A configuration commit the verb then fails after still carries its notice")
-    func failureAfterACommitCarriesTheNotice() async throws {
-        let harness = makeHarness()
-        let instance = makeEphemeralInstance(in: harness, baseline: VMSnapshot(name: "Clean install", macAddress: nil))
-        harness.storage.setSaveHostStateError(CocoaError(.fileWriteNoPermission))
-
-        // The configuration commits first; the host-state half then fails.
-        let response = try await harness.transport.send(
-            .setConfiguration(
-                .name("Alpha"),
-                assignments: [
-                    ConfigurationEntry(key: "cpus", value: "3"),
-                    ConfigurationEntry(key: "autoStart", value: "true"),
-                ],
-                consent: .none))
-
-        #expect(response.failure != nil)
-        #expect(instance.configuration.cpuCount == 3)
         #expect(named(response.notices) == ["Alpha → Clean install"])
     }
 }

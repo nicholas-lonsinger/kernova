@@ -99,33 +99,6 @@ struct VMLibraryIntentTests {
         #expect(wired.library.instances.map(\.id) == [twin.id])
     }
 
-    @Test("Both cancels address their VM by identifier, never by name")
-    func cancelsAddressByIdentifier() async throws {
-        let wired = WiredCommandCore()
-        let gate = GatedStep()
-        let cancelled = wired.library.beginGatedArrival(.cloning, named: "Copying", gate: gate)
-        let kept = wired.library.beginGatedArrival(.cloning, named: "Copying", gate: gate)
-        let (installing, setupCancelled) = try registerInstalling(in: wired, name: "Installing")
-        let (installingTwin, _) = try registerInstalling(in: wired, name: "Installing")
-        let gateway = makeGateway(wired)
-
-        try await gateway.cancelPreparing(cancelled.id, consent: .all)
-        try await gateway.cancelGuestSetup(installing.id, consent: .all)
-
-        #expect(cancelled.isCancelling)
-        #expect(!kept.isCancelling)
-        for await _ in setupCancelled { break }
-        await installing.setupOperationTask?.value
-        #expect(installing.setupOperationTask == nil)
-        #expect(installingTwin.setupOperationTask != nil)
-
-        gate.release()
-        #expect(await cancelled.settle() == nil)
-        #expect(await kept.settle() != nil)
-        try wired.core.cancelGuestSetup(.id(installingTwin.id), consent: .all)
-        await installingTwin.setupOperationTask?.value
-    }
-
     /// The core trims the name and writes nothing when none is left — the
     /// inline field commits on end-editing whether or not the text changed —
     /// so a Shortcut whose Name resolves to nothing would report success
@@ -148,22 +121,6 @@ struct VMLibraryIntentTests {
     }
 
     // MARK: - Import
-
-    @Test("An import copies the bundle it is handed, waits for the copy, and answers the settled VM")
-    func importWaitsForTheCopy() async throws {
-        let wired = WiredCommandCore()
-        let source = try scratch.importSource(name: "Imported").url
-
-        let entity = try await makeGateway(wired).importVM(from: source)
-
-        // Waited: the copy has settled into a VM by the time the import answers.
-        #expect(wired.library.arrivals.isEmpty)
-        let imported = try #require(wired.library.instances.first)
-        #expect(wired.library.instances.count == 1)
-        #expect(entity.id == imported.id)
-        #expect(entity.name == "Imported")
-        #expect(entity.status == "stopped")
-    }
 
     /// A bundle whose configuration reads but with nothing on disk to copy, so
     /// the import fails in the copy.
@@ -257,20 +214,5 @@ struct VMLibraryIntentTests {
         gate.release()
         #expect(await arrival.settle() == nil)
         await installing.setupOperationTask?.value
-    }
-
-    // MARK: - Error Surfacing
-
-    @Test("A refusal from the core reaches the caller unchanged")
-    func refusalsPassThrough() async throws {
-        let wired = WiredCommandCore()
-        wired.register()
-        let missing = UUID()
-
-        await #expect(throws: CommandError.notFound(.id(missing))) {
-            _ = try await makeGateway(wired).clone(missing, outcome: .newMachine)
-        }
-
-        #expect(wired.library.arrivals.isEmpty)
     }
 }

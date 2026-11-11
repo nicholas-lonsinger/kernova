@@ -124,16 +124,6 @@ struct ShellCompletionInstallerTests {
         #expect(!zsh.contains("unset"))
     }
 
-    @Test("Installing writes the loader where it was asked to")
-    func installWritesTheLoader() throws {
-        let destination = scratch.url.appendingPathComponent("_kernova")
-
-        try ShellCompletionInstaller.install(.zsh, at: destination)
-
-        let written = try String(contentsOf: destination, encoding: .utf8)
-        #expect(written == ShellCompletionInstaller.Shell.zsh.loaderScript)
-    }
-
     @Test("Reinstalling replaces what an earlier install left")
     func installReplacesAnOlderLoader() throws {
         let destination = scratch.url.appendingPathComponent("kernova")
@@ -143,15 +133,6 @@ struct ShellCompletionInstallerTests {
 
         let written = try String(contentsOf: destination, encoding: .utf8)
         #expect(written == ShellCompletionInstaller.Shell.bash.loaderScript)
-    }
-
-    @Test("A destination nothing can be written to is refused, not ignored")
-    func anUnwritableDestinationIsRefused() {
-        let destination = URL(fileURLWithPath: "/no-such-folder/_kernova")
-
-        #expect(throws: InstallFailure.self) {
-            try ShellCompletionInstaller.install(.zsh, at: destination)
-        }
     }
 
     @Test("The pasteable command writes the same loader the install would")

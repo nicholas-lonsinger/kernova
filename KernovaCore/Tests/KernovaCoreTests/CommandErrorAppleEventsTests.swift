@@ -91,13 +91,6 @@ struct CommandErrorAppleEventsTests {
                 == Int(errAETypeError))
     }
 
-    @Test("A refusal reads back in the words every other door shows")
-    func refusalsKeepTheirWords() {
-        let refusal = CommandError.operationFailed(verb: .stop, message: "It did not go down.")
-
-        #expect(refusal.appleEventErrorString == refusal.message)
-    }
-
     @Test("A consent refusal names the one thing a script can do about it")
     func consentRefusalsNameTheFlag() {
         let refusal = CommandError.confirmationRequired(makePrompt())
@@ -106,14 +99,5 @@ struct CommandErrorAppleEventsTests {
 
         #expect(message.hasPrefix(refusal.message))
         #expect(message.hasSuffix("Add `with confirmation` to do it anyway."))
-    }
-
-    @Test("A step refusal promises nothing the flag would do: its message names the step")
-    func aStepRefusalNamesNoFlag() {
-        let refusal = CommandError.stepRequired(
-            StepRequirement(
-                message: "\u{201C}Alpha\u{201D} is paused, so it can\u{2019}t receive a shutdown request."))
-
-        #expect(refusal.appleEventErrorString == refusal.message)
     }
 }

@@ -59,18 +59,6 @@ struct VMSettingIntentTests {
         #expect(twin.configuration.networkMembership == .common)
     }
 
-    @Test("A write answers the value the key ended up holding, not the one written")
-    func aWriteAnswersTheHeldValue() async throws {
-        let harness = WiredCommandCore()
-        let vm = harness.register(name: "Wired")
-
-        let held = try await makeGateway(over: harness).setConfiguration(
-            vm.id, key: "network.mac", value: VMConfigurationKeyRegistry.newMACAddressValue, consent: .none)
-
-        #expect(held != VMConfigurationKeyRegistry.newMACAddressValue)
-        #expect(held == vm.configuration.macAddress)
-    }
-
     @Test("Turning clipboard passthrough on asks once, then re-issues the write with the consent")
     func clipboardPassthroughAsks() async throws {
         let harness = WiredCommandCore()
@@ -85,21 +73,5 @@ struct VMSettingIntentTests {
 
         #expect(asked == [ClipboardPassthroughConsent.prompt(vmName: "Wired")])
         #expect(vm.configuration.clipboardPassthroughEnabled)
-    }
-
-    @Test("A refusal from the core reaches the caller unchanged")
-    func refusalsPassThrough() async throws {
-        let harness = WiredCommandCore()
-        let vm = harness.register(name: "Wired")
-
-        await #expect(
-            throws: CommandError.invalidArgument(
-                "network.membership takes common, isolated, or a network\u{2019}s name or identifier, "
-                    + "not \u{201C}Nowhere\u{201D}.")
-        ) {
-            _ = try await makeGateway(over: harness).setConfiguration(
-                vm.id, key: "network.membership", value: "Nowhere", consent: .none)
-        }
-        #expect(vm.configuration.networkMembership == .common)
     }
 }

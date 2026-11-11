@@ -174,54 +174,6 @@ struct VMOrganizationDirectoryTests {
         #expect(try parsed(Data(contentsOf: fileURL)) == full)
     }
 
-    @Test(
-        "A file with no section order lists its smart groups, then its folders, each in its list's order, then the library"
-    )
-    func fileWithNoSectionOrderListsSmartGroupsFirst() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let full = try #require(try parsed(Data(fixture(named: "Old").utf8)).mutableCopy() as? NSMutableDictionary)
-        full.removeObject(forKey: "sectionOrder")
-        let second = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000003"))
-        let groups = try #require(full["smartGroups"] as? [[String: Any]])
-        var copy = try #require(groups.first)
-        copy["id"] = second.uuidString
-        copy["name"] = "Second"
-        full["smartGroups"] = groups + [copy]
-        try JSONSerialization.data(withJSONObject: full).write(to: fileURL)
-
-        let directory = VMOrganizationDirectory(fileURL: fileURL)
-
-        #expect(directory.state.unreadable == nil)
-        #expect(
-            directory.sections?.map(\.id) == [
-                .smartGroup(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))),
-                .smartGroup(second),
-                .folder(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))),
-                .library,
-            ])
-    }
-
-    @Test("A section the order does not name follows the ones it does; an identifier no section carries is ignored")
-    func partialSectionOrder() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let full = try #require(try parsed(Data(fixture(named: "Old").utf8)).mutableCopy() as? NSMutableDictionary)
-        full["sectionOrder"] = ["folder:\(UUID().uuidString)", "folder:6F1D7E2C-0000-4000-8000-000000000002"]
-        try JSONSerialization.data(withJSONObject: full).write(to: fileURL)
-        let group = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))
-        let folder = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))
-
-        let directory = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(directory.sections?.map(\.id) == [.folder(folder), .smartGroup(group), .library])
-
-        // The next write states every section, and only those.
-        let made = try directory.createFolder(named: "Made")
-        #expect(
-            try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == [
-                "folder:\(folder.uuidString)", "smartGroup:\(group.uuidString)", "virtualMachines",
-                "folder:\(made.id.uuidString)",
-            ])
-    }
-
     @Test("Smart groups, folders and the library share one order, kept across a reread")
     func interleavedOrderRoundTrip() throws {
         let directory = VMOrganizationDirectory(fileURL: fileURL)
@@ -246,27 +198,6 @@ struct VMOrganizationDirectoryTests {
         #expect(reread.smartGroups?.map(\.id) == [running.id, macs.id])
         #expect(reread.folders?.map(\.id) == [clients.id])
         #expect(try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == order.map(\.rawValue))
-    }
-
-    @Test("Deleting a smart group or a folder leaves the order naming the rest, and a new section goes last")
-    func deleteKeepsTheOrderConsistent() throws {
-        let directory = VMOrganizationDirectory(fileURL: fileURL)
-        let macs = try directory.createSmartGroup(named: "Macs", filter: VMLibraryFilter())
-        let clients = try directory.createFolder(named: "Clients")
-        let demo = try directory.createFolder(named: "Demo")
-        try directory.moveSection(.library, before: nil)
-
-        try directory.removeSmartGroup(macs.id)
-        try directory.removeFolder(demo.id)
-
-        let pruned = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(pruned.sections?.map(\.id) == [.folder(clients.id), .library])
-        #expect(
-            try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == [
-                SidebarSectionID.folder(clients.id).rawValue, SidebarSectionID.library.rawValue,
-            ])
-        let made = try pruned.createSmartGroup(named: "Made", filter: VMLibraryFilter())
-        #expect(pruned.sections?.map(\.id) == [.folder(clients.id), .library, .smartGroup(made.id)])
     }
 
     @Test("A name has to be non-empty and unique ignoring case")

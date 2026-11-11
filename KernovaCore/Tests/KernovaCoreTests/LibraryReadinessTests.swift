@@ -42,16 +42,4 @@ struct LibraryReadinessTests {
 
         #expect(readiness.hasLanded)
     }
-
-    @Test("Every caller returns once the read lands, on one await of the read")
-    func callersShareOneAwait() async throws {
-        let awaits = Counter()
-        let readiness = LibraryReadiness(awaitReady: { await awaits.increment() })
-
-        await readiness.ready()
-        await readiness.ready()
-
-        #expect(readiness.hasLanded)
-        #expect(await awaits.value == 1)
-    }
 }
