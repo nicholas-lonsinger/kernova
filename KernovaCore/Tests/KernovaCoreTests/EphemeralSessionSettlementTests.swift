@@ -227,6 +227,27 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.status == .running)
     }
 
+    @Test("A start whose owed revert fails is refused, booting nothing")
+    func failedOwedRevertRefusesTheStart() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, baseline, _) = try makeVM(in: harness, unsettled: true)
+
+        await #expect {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        } throws: { error in
+            guard case .operationFailed(.start, _, let message, _) = error as? CommandError else {
+                return false
+            }
+            return message.contains(baseline.name)
+        }
+
+        #expect(virtualization.startCallCount == 0)
+        #expect(!instance.hasLiveVirtualMachine)
+        #expect(instance.hostState.hasUnsettledSession)
+    }
+
     // MARK: - Waiting
 
     @Test("A live Exact Copy arrives settled")

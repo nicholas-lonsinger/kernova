@@ -115,7 +115,61 @@ struct VMSnapshotIntentTests {
                 == "\(date) \u{00B7} \(SnapshotKindCopy.stateLabel(.cold))")
     }
 
+    // MARK: - Reads
+
+    @Test("The snapshot read answers entities carrying the VM that lists them, newest first")
+    func snapshotsCarryTheirVM() async throws {
+        let wired = WiredCommandCore()
+        let older = VMSnapshot(
+            name: "First", createdAt: Date(timeIntervalSince1970: 1_700_000_000), macAddress: nil)
+        let newer = VMSnapshot(
+            name: "Second", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
+        let vm = register(in: wired, snapshots: [older, newer])
+        register(in: wired, snapshots: [VMSnapshot(name: "Twin's", macAddress: nil)])
+
+        let snapshots = try await makeGateway(wired).snapshots(ofVM: vm.id)
+
+        #expect(snapshots.map(\.name) == ["Second", "First"])
+        #expect(
+            snapshots.map(\.id) == [
+                SnapshotEntityID(vm: vm.id, snapshot: newer.id),
+                SnapshotEntityID(vm: vm.id, snapshot: older.id),
+            ])
+    }
+
     // MARK: - Verb Dispatch
+
+    @Test("Every snapshot verb addresses its VM by identifier and names its snapshot")
+    func verbsAddressBothTheVMAndTheSnapshot() async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let target = VMSnapshot(name: "Target", kind: .cold, macAddress: nil)
+        let deleted = VMSnapshot(name: "Deleted", kind: .cold, macAddress: nil)
+        let vm = register(in: wired, snapshots: [target, deleted])
+        let twinSnapshot = VMSnapshot(name: "Twin's", kind: .cold, macAddress: nil)
+        let twin = register(in: wired, snapshots: [twinSnapshot])
+        let gateway = makeGateway(wired)
+
+        try await gateway.revertToSnapshot(
+            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: target.id), consent: .all)
+        try await gateway.renameSnapshot(
+            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: target.id), to: "Renamed")
+        try await gateway.setSnapshotNotes(
+            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: target.id), notes: "a note")
+        try await gateway.deleteSnapshot(
+            vm.id, snapshot: SnapshotEntityID(vm: vm.id, snapshot: deleted.id), consent: .all)
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [target.id])
+        #expect(vm.snapshotManifest.currentID == target.id)
+        #expect(vm.snapshotManifest.snapshots.map(\.id) == [target.id])
+        let renamed = try #require(vm.snapshotManifest.snapshot(id: target.id))
+        #expect(renamed.name == "Renamed")
+        #expect(renamed.notes == "a note")
+        #expect(wired.machineFiles.discardedIDs == [deleted.id])
+        // The twin answering to the same name is untouched.
+        #expect(listing(of: twin) == listing(of: [twinSnapshot]))
+        #expect(twin.snapshotManifest.currentID == nil)
+    }
 
     /// A pick is only as current as the run that made it: the snapshot it names
     /// can have been deleted, or dropped by a revert, between two runs of the

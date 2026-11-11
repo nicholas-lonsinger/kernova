@@ -119,6 +119,30 @@ struct VMLibraryViewModelSnapshotTests {
         }
     }
 
+    @Test("Launch reclaims what an interrupted revert or resume left, and a load alone does not")
+    func launchSweepsInterruptedWork() async throws {
+        let harness = makeHarness()
+        let config = VMConfiguration(
+            name: "Interrupted", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        let bundleURL = try harness.storage.bundleURL(for: config)
+        harness.storage.setConfiguration(config, at: bundleURL)
+        let spentSlot = VMBundleLayout(bundleURL: bundleURL).spentSaveFileURL
+        try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+        try Data("spent".utf8).write(to: spentSlot)
+
+        await harness.viewModel.loadVMs()
+        #expect(harness.snapshots.sweptStagingBundleURLs.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: spentSlot.path(percentEncoded: false)))
+
+        await harness.viewModel.startLibrary()
+        // Otherwise the reclaim waits on the next revert of this same VM, which
+        // may never come — and its clones own their blocks outright once the
+        // snapshot they were cloned from is discarded.
+        #expect(harness.snapshots.sweptStagingBundleURLs == [bundleURL])
+        #expect(!FileManager.default.fileExists(atPath: spentSlot.path(percentEncoded: false)))
+    }
+
     // MARK: - Take
 
     @Test("An Ephemeral baseline keeps the address it was taken with from every other VM")
@@ -208,6 +232,24 @@ struct VMLibraryViewModelSnapshotTests {
         #expect(instance.hostState.ephemeralBaselineSnapshotID == captured.id)
     }
 
+    /// The snapshot stands as a restore point either way, so a baseline
+    /// write that fails keeps it listed and says the mode stayed off.
+    @Test("A baseline write that fails keeps the snapshot and reports the mode off")
+    func failedBaselineWriteKeepsTheSnapshot() async {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+        instance.fixtureBundleFiles.setReplaceError(
+            VMStorageError.bundleNotFound(URL(filePath: "/tmp")),
+            for: VMBundleLayout.hostStateRelativePath)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Kept", for: .ephemeralBaseline).value
+
+        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Kept"])
+        #expect(instance.manifestOnDisk == instance.snapshotManifest)
+        #expect(!instance.hostState.ephemeralModeEnabled)
+        #expect(presenter.showError)
+    }
+
     @Test("A restore point leaves Ephemeral Mode alone")
     func restorePointLeavesTheModeAlone() async {
         let harness = makeHarness()
@@ -216,6 +258,21 @@ struct VMLibraryViewModelSnapshotTests {
         await harness.viewModel.takeSnapshot(instance, name: "Plain").value
 
         #expect(!instance.hostState.ephemeralModeEnabled)
+    }
+
+    @Test("A manifest write that fails undoes the capture")
+    func failedManifestWriteUndoesTheCapture() async {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
+        instance.fixtureBundleFiles.setReplaceError(
+            VMStorageError.bundleNotFound(URL(filePath: "/tmp")),
+            for: VMBundleLayout.snapshotManifestRelativePath)
+
+        await harness.viewModel.takeSnapshot(instance, name: "Unlistable").value
+
+        #expect(instance.snapshotManifest.isEmpty)
+        #expect(harness.snapshots.removedDirectoryIDs.count == 1)
+        #expect(presenter.showError)
     }
 
     @Test("A snapshot taken over a manifest copied in after load lists both")

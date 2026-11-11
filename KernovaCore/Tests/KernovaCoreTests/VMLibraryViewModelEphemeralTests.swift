@@ -189,6 +189,20 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(harness.storage.hostStates[instance.bundleURL] == editedHostState)
     }
 
+    @Test("A baseline revert that fails surfaces the error")
+    func failedBaselineRevertSurfacesTheError() async throws {
+        let harness = try await makeHarness()
+        harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
+
+        await harness.viewModel.stop(harness.instance)
+        await settleEphemeralRevert(harness)
+
+        #expect(presenter.showError)
+        // The files never landed, so the VM's state does not descend from the
+        // baseline and the marker says so.
+        #expect(harness.instance.snapshotManifest.currentID == harness.later.id)
+    }
+
     // MARK: - Launch
 
     @Test("A VM whose last session ended unsettled reverts as the library loads, and the revert settles it")
@@ -205,6 +219,24 @@ struct VMLibraryViewModelEphemeralTests {
     }
 
     // MARK: - Baseline delete
+
+    @Test("A delete that fails after the mode turned off leaves the mode off and the snapshot listed")
+    func failedDeleteLeavesTheModeOffAndTheSnapshot() async throws {
+        let harness = try await makeHarness(phase: .stopped)
+        harness.storage.files.setReplaceError(
+            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.snapshotManifestRelativePath)
+
+        await harness.viewModel.deleteSnapshot(
+            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: true
+        ).value
+
+        #expect(presenter.showError)
+        #expect(!harness.instance.hostState.ephemeralModeEnabled)
+        #expect(
+            harness.instance.snapshotManifest.snapshots.map(\.id)
+                == [harness.baseline.id, harness.later.id])
+        #expect(harness.snapshots.discardedIDs.isEmpty)
+    }
 
     /// The plain confirmation was answered before the mode came to name the
     /// snapshot: the core refuses the delete, and the app asks again with the
