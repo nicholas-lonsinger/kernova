@@ -178,8 +178,9 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
             return
         }
         // Resigning is the one commit path: `controlTextDidEndEditing` →
-        // `endEditAppearance()` → `onEditCommitted`.
-        window?.makeFirstResponder(nil)
+        // `endEditAppearance()` → `onEditCommitted`. The focus goes where a
+        // keyboard-ended edit's does.
+        window?.makeFirstResponder(focusReturnTarget)
     }
 
     /// Drops an in-flight edit without committing or cancelling it.
@@ -246,9 +247,9 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
         onEditCancelled?()
     }
 
-    /// Where the focus goes once a keyboard-ended edit is over: the table the
-    /// label sits in, when its clicks belong to that table, as they would
-    /// after a table's own cell edit.
+    /// Where the focus goes once a keyboard-ended or owner-ended edit is over:
+    /// the table the label sits in, when its clicks belong to that table, as
+    /// they would after a table's own cell edit.
     private var focusReturnTarget: NSTableView? {
         guard clickHandling == .delegatedToEnclosingView else { return nil }
         return sequence(first: superview, next: { $0?.superview }).lazy.compactMap { $0 as? NSTableView }.first

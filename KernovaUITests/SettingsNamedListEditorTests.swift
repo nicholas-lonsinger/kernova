@@ -178,10 +178,10 @@ struct SettingsNamedListEditorTests {
         #expect(window.firstResponder === editor.tableView)
     }
 
-    @Test("− with a rename open commits it before asking about the item")
+    @Test("− with a rename open commits it before asking about the item, and the list keeps the focus")
     func deleteCommitsAnOpenRenameFirst() throws {
         let source = Source([(UUID(), "Work")])
-        let (editor, _) = makeEditor(source)
+        let (editor, window) = makeEditor(source)
         try click(editor, row: 0, count: 2)
         try #require(renameEditor(editor, row: 0)).string = "Home"
 
@@ -190,6 +190,8 @@ struct SettingsNamedListEditorTests {
         #expect(renameEditor(editor, row: 0) == nil)
         #expect(source.name(of: source.order[0]) == "Home")
         #expect(source.confirmedNames == ["Home"])
+        // The control takes no focus, so the list keeps it.
+        #expect(window.firstResponder === editor.tableView)
     }
 
     @Test("A double-click while a slow second click waits drops the waiting rename")
