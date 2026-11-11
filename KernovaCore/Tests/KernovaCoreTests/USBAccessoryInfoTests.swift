@@ -106,6 +106,11 @@ struct USBAccessoryInfoTests {
         #expect(USBConfigurationDescriptor.firstInterfaceClass(in: data) == 0x02)
     }
 
+    @Test("Finds no interface class in bytes that carry none")
+    func noInterfaceDescriptor() {
+        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: Data([9, 2, 9, 0, 0, 1, 0, 0xA0, 50])) == nil)
+    }
+
     // MARK: - Display Names
 
     @Test("Names the first interface's class when the device declares none of its own")
@@ -125,5 +130,16 @@ struct USBAccessoryInfoTests {
     @Test("Identifies an accessory by its registry ID")
     func identityIsRegistryID() throws {
         #expect(try info(descriptor: descriptorBytes(), registryID: 99).id == 99)
+    }
+
+    // MARK: - Attachment
+
+    @Test("Identifies an attachment by its device UUID")
+    func attachmentIdentityIsDeviceID() throws {
+        let deviceID = UUID()
+        let attached = AttachedUSBAccessory(
+            deviceID: deviceID, accessory: try info(descriptor: descriptorBytes()))
+        #expect(attached.id == deviceID)
+        #expect(attached.accessory.registryID == 1)
     }
 }

@@ -86,4 +86,20 @@ struct VMNetworkIntentTests {
         #expect(networks[0].members.map(\.networkName) == ["Lab"])
         #expect(networks[1].members.isEmpty)
     }
+
+    @Test("A rename and a delete address the network by identifier, never by name")
+    func editsAddressByIdentifier() async throws {
+        let harness = WiredCommandCore()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .nat)
+        let spare = try harness.core.createNetwork(name: "Spare", kind: .nat)
+        let gateway = makeGateway(over: harness)
+
+        try await gateway.renameNetwork(lab.id, to: "Bench")
+        #expect(try harness.core.networks().map(\.id) == [lab.id, spare.id])
+        #expect(try harness.core.networks().map(\.name) == ["Bench", "Spare"])
+
+        // Addressed by the identifier a rename leaves in place.
+        try await gateway.deleteNetwork(lab.id)
+        #expect(try harness.core.networks().map(\.id) == [spare.id])
+    }
 }

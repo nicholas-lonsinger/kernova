@@ -48,6 +48,12 @@ struct VMCommandCoreUSBAccessoryTests {
         return instance
     }
 
+    private func makeStoppedInstance(in harness: WiredCommandCore, name: String = "Core VM") -> VMInstance {
+        RegisteredVMInstanceFixture.register(
+            name: name, phase: .stopped, guestOS: .linux, library: harness.library,
+            preferences: preferences)
+    }
+
     /// Attaches `accessory` to `instance` and answers the attachment's
     /// identifier — the setup every detach and every listing assertion needs.
     private func attach(
@@ -88,6 +94,25 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(edit == refusal)
         #expect(available == refusal)
         #expect(available.message == message)
+    }
+
+    @Test("An accessory macOS has not assigned to Kernova is a miss, not a failed attach")
+    func attachingAnUnassignedAccessoryIsRefusedAsAMiss() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.usbAccessories)
+        let instance = makeRunningInstance(in: harness)
+        service.accessories.append(MockUSBAccessoryService.accessory(registryID: 7))
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.attachUSBAccessory(.id(instance.id), accessory: 42)
+        }
+
+        // Host-scoped: the VM is not what is missing, and a script reads this
+        // as the same kind of miss as a name nothing answers to.
+        #expect(refusal == .itemNotFoundOnHost(item: "USB accessory with the identifier 42"))
+        #expect(refusal.message == "Kernova has no USB accessory with the identifier 42.")
+        #expect(service.attachedRegistryIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.isEmpty)
     }
 
     // MARK: - Reads
@@ -157,6 +182,31 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(instance.liveUSBAccessories.isEmpty)
     }
 
+    @Test("A detach naming a device the guest does not hold is refused, not quietly accepted")
+    func detachOfAnUnknownDeviceIsRefused() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.usbAccessories)
+        let instance = makeRunningInstance(in: harness)
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 11), to: instance, in: harness)
+        let stranger = UUID()
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.detachUSBAccessory(.id(instance.id), device: stranger)
+        }
+
+        // "Already gone" is a success only for a device the guest was recorded
+        // as holding; an identifier nothing answers to is a mistake, and
+        // succeeding at it would tell a script the detach happened.
+        #expect(refusal.isItemNotFound)
+        #expect(
+            refusal.message
+                == "\u{201C}Core VM\u{201D} has no USB accessory with the device identifier \(stranger.uuidString)."
+        )
+        #expect(service.detachedDeviceIDs.isEmpty)
+        #expect(instance.liveUSBAccessories.count == 1)
+    }
+
     // MARK: - Names
 
     @Test("Two accessories that would read alike are told apart by their ports")
@@ -215,7 +265,53 @@ struct VMCommandCoreUSBAccessoryTests {
         #expect(refusal.message == USBAccessoryError.accessoryNotFound.errorDescription)
     }
 
+    // MARK: - One accessory, one guest
+
+    @Test("An accessory another guest is holding is refused rather than handed over twice")
+    func anAccessoryHeldElsewhereIsRefused() async throws {
+        let harness = makeHarness()
+        let holder = makeRunningInstance(in: harness, name: "Holder")
+        let other = makeRunningInstance(in: harness, name: "Other")
+        _ = try await attach(
+            MockUSBAccessoryService.accessory(registryID: 5), to: holder, in: harness)
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.attachUSBAccessory(.id(other.id), accessory: 5)
+        }
+
+        // A guest captures an accessory exclusively, so the second attach could
+        // otherwise only fail inside VZ.
+        #expect(refusal.isOperationFailure)
+        #expect(refusal.message == "That USB accessory is in use by \u{201C}Holder\u{201D}.")
+        #expect(other.liveUSBAccessories.isEmpty)
+        #expect(holder.liveUSBAccessories.count == 1)
+    }
+
     // MARK: - What the Edits Remember
+
+    @Test("A pairing move the VM holding the pairing refuses is reported as that VM being busy")
+    func pairingMoveRefusalNamesTheHoldingVM() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.usbAccessories)
+        let holder = makeStoppedInstance(in: harness, name: "Holder")
+        let target = makeRunningInstance(in: harness, name: "Target")
+        let accessory = MockUSBAccessoryService.accessory(
+            registryID: 7, serial: "0373", receptacle: "hub/Port-A@1")
+        let pairing = try #require(USBAccessoryPairing.make(for: accessory))
+        try holder.activity.edit(.pairingRules) {
+            try harness.library.updateUSBPairings($0) { $0.upsert(pairing) }
+        }
+        holder.activity.placeForTesting(.operating(.deleting, from: .stopped))
+
+        _ = try await attach(accessory, to: target, in: harness)
+
+        #expect(service.attachedRegistryIDs == [7])
+        let busy = harness.core.commandError(for: .busy(.deleting), on: holder)
+        #expect(harness.failures.count == 1)
+        #expect(harness.failures.first?.message.hasSuffix(busy.message) == true)
+        #expect(holder.usbPairings.pairings.map(\.key) == [pairing.key])
+        #expect(target.usbPairings.isEmpty)
+    }
 
     @Test(
         "A detach whose forget cannot be written still arms the echo token, so the device is not re-attached, and is reported"
@@ -350,6 +446,11 @@ struct VMCommandCoreUSBAccessoryTests {
 }
 
 extension CommandError {
+    fileprivate var isItemNotFound: Bool {
+        if case .itemNotFound = self { return true }
+        return false
+    }
+
     fileprivate var isInvalidState: Bool {
         if case .invalidState = self { return true }
         return false

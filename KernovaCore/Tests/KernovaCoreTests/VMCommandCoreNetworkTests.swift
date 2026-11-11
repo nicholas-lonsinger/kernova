@@ -120,4 +120,12 @@ struct VMCommandCoreNetworkTests {
         #expect(try harness.core.networks().map(\.id) == [lab.id])
         #expect(stopped.configuration.networkMembership == .network(lab.id))
     }
+
+    @Test("A build that cannot attach a named network refuses to create one")
+    func anUnentitledBuildCreatesNone() {
+        let harness = makeHarness(entitlements: .unentitled)
+        #expect(throws: CommandError.unsupportedByBuild(capability: "named networks")) {
+            try harness.core.createNetwork(name: "Lab", kind: .nat)
+        }
+    }
 }

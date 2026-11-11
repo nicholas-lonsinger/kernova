@@ -50,6 +50,12 @@ struct USBAccessoryIdentityTests {
 
     // MARK: - Node Properties
 
+    @Test("Separates a device with no serial from one whose serial did not come back")
+    func declaresSerialNumberSeparatesTheTwoAbsences() {
+        #expect(!node().declaresSerialNumber)
+        #expect(node(serialIndex: 3).declaresSerialNumber)
+    }
+
     @Test("Reads the receptacle label off the last path component")
     func receptacleLabelIsTheLastComponent() {
         #expect(node(ioPortPath: "IOService:/a/b/Port-USB-C@2").receptacleLabel == "Port-USB-C@2")

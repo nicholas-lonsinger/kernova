@@ -255,6 +255,23 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
     }
 
+    @Test("An Automatic bridge holds its interface across a default-route change")
+    func automaticBridgeHoldsInterfaceAcrossPrimaryChange() {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: nil),
+            devicePlan: .bridged("en0"),
+            available: [Self.wiFi, Self.ethernet],
+            primary: "en0",
+            entitled: true)
+        h.coordinator.activate()
+
+        h.provider.setPrimary("en1")
+        h.observer.fire()
+
+        #expect(h.device.appliedPlans.isEmpty)
+        #expect(h.device.currentPlan == .bridged("en0"))
+    }
+
     @Test("A vanished interface detaches the stale bridge, goes pending, and arms a retry")
     func vanishedInterfaceDetachesStaleBridge() {
         let h = makeHarness(
