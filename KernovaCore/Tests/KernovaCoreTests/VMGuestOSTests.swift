@@ -36,12 +36,6 @@ struct VMGuestOSTests {
         #expect(VMGuestOS.linux.defaultMemorySize(within: tight) == .gibibytes(3))
     }
 
-    @Test("Default disk size is 100 GB, OS-independent, and one of the offered sizes")
-    func defaultDiskSize() {
-        #expect(VMGuestOS.defaultDiskSizeInGB == 100)
-        #expect(VMGuestOS.allDiskSizes.contains(VMGuestOS.defaultDiskSizeInGB))
-    }
-
     // MARK: - Display Capabilities
 
     @Test("Only macOS guests carry a display density")

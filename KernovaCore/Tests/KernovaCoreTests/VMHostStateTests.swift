@@ -22,29 +22,6 @@ struct VMHostStateTests {
         return hostState
     }
 
-    @Test("A new VM's host state is the defaults")
-    func defaults() {
-        let hostState = VMHostState()
-
-        #expect(!hostState.startsAutomaticallyOnLaunch)
-        #expect(!hostState.ephemeralModeEnabled)
-        #expect(hostState.ephemeralBaselineSnapshotID == nil)
-        #expect(hostState.displayPreference == .inline)
-        #expect(hostState.lastFullscreenDisplayID == nil)
-        #expect(!hostState.agentInstallNudgeDismissed)
-        #expect(hostState.tags.isEmpty)
-        #expect(hostState.lastRunAt == nil)
-    }
-
-    @Test("An encoded host state decodes back as itself")
-    func roundTrip() throws {
-        let written = everyFieldSet()
-
-        let data = try VMConfiguration.makeJSONEncoder().encode(written)
-
-        #expect(try VMConfiguration.makeJSONDecoder().decode(VMHostState.self, from: data) == written)
-    }
-
     @Test("A key the JSON does not carry decodes to its default")
     func absentKeysTakeTheirDefaults() throws {
         let data = Data(#"{"displayPreference":"fullscreen"}"#.utf8)

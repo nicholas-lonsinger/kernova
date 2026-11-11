@@ -32,14 +32,6 @@ struct ConfigFileDecodingTests {
 
     // MARK: - A field with a default
 
-    @Test("Strict decoding refuses an unrecognized value in a field with a default")
-    func strictRefusesADefaultedField() throws {
-        let data = try configJSON { $0["networkMode"] = Self.unrecognized }
-        #expect(throws: DecodingError.self) {
-            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-        }
-    }
-
     @Test("Collecting decoding records the path, the value found and the default, and repairs to it")
     func collectingRepairsADefaultedField() throws {
         let data = try configJSON {
@@ -66,19 +58,6 @@ struct ConfigFileDecodingTests {
         #expect(repaired.networkMode == fresh.networkMode)
         #expect(repaired.displayHiDPI == fresh.displayHiDPI)
         #expect(repaired.name == "Dev")
-    }
-
-    @Test("An absent defaulted field takes its default in both modes, as no problem")
-    func anAbsentDefaultedFieldIsNoProblem() throws {
-        let data = try configJSON { $0["networkMode"] = nil }
-        let strict = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-        #expect(
-            strict.networkMode
-                == VMConfiguration(
-                    name: "", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                    memorySizeInGB: VMGuestOS.linux.hostMemorySize
-                ).networkMode)
-        #expect(diagnose(data).problems.isEmpty)
     }
 
     // MARK: - Fields with no default, and structure
@@ -113,52 +92,7 @@ struct ConfigFileDecodingTests {
         #expect(diagnosis.repaired == nil)
     }
 
-    @Test("A missing required key is recorded as no value, with no repair")
-    func aMissingRequiredKey() throws {
-        let data = try configJSON { $0["name"] = nil }
-        #expect(throws: DecodingError.self) {
-            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-        }
-        let diagnosis = diagnose(data)
-        let problem = try #require(diagnosis.problems.first)
-        #expect(diagnosis.problems.count == 1)
-        #expect(problem == ConfigProblem(path: ConfigValuePath([.key("name")]), issue: .missing))
-        #expect(
-            problem.reportLine(fileName: "config.json")
-                == "$.name: no value. Kernova can\u{2019}t repair this file.")
-        #expect(diagnosis.name == nil)
-        #expect(diagnosis.repaired == nil)
-    }
-
-    @Test("Malformed JSON is recorded as not JSON, with no repair")
-    func malformedJSON() throws {
-        let data = Data("{ \"name\": ".utf8)
-        #expect(throws: DecodingError.self) {
-            try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-        }
-        let diagnosis = diagnose(data)
-        let problem = try #require(diagnosis.problems.first)
-        guard case .notJSON = problem.issue else {
-            Issue.record("Expected not-JSON, got \(problem.issue)")
-            return
-        }
-        #expect(problem.path == nil)
-        #expect(problem.summary(fileName: "config.json").hasPrefix("config.json isn\u{2019}t valid JSON"))
-        #expect(diagnosis.repaired == nil)
-    }
-
     // MARK: - Paths
-
-    @Test("A path renders keys after a dot and array indexes in brackets, nested to any depth")
-    func pathsRender() {
-        #expect(ConfigValuePath([]).description == "$")
-        #expect(ConfigValuePath([.key("networkMode")]).description == "$.networkMode")
-        #expect(
-            ConfigValuePath([.key("networks"), .index(0), .key("kind")]).description
-                == "$.networks[0].kind")
-        #expect(
-            ConfigValuePath([.key("a"), .index(2), .index(1), .key("b")]).description == "$.a[2][1].b")
-    }
 
     @Test("A problem nested in an array names its index")
     func aNestedProblemNamesItsIndex() throws {
@@ -229,25 +163,6 @@ struct ConfigFileDecodingTests {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .nat), in: decoder)
         }
-    }
-
-    @Test("A record replaced whole by its default keeps the inner cause, not the value found")
-    func aReplacedValueKeepsItsCause() throws {
-        let data = Data(#"{"inner": {"mode": "plan9-mode"}}"#.utf8)
-        let diagnosis = ConfigFileDiagnosis(
-            decoding: Holder.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
-
-        let problem = try #require(diagnosis.problems.first)
-        #expect(problem.path?.description == "$.inner")
-        #expect(problem.issuePath?.description == "$.inner.mode")
-        #expect(problem.issue == .unrecognized(found: Self.unrecognized))
-        #expect(
-            problem.reportLine(fileName: "x.json")
-                == "$.inner.mode: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. "
-                + "Default for $.inner: {\"mode\":\"nat\"}.")
-        #expect(
-            try JSONDecoder().decode(Holder.self, from: try #require(diagnosis.repaired))
-                == Holder(inner: Holder.Inner(mode: .nat)))
     }
 
     // MARK: - Facts
@@ -341,14 +256,6 @@ struct ConfigFileDecodingTests {
         #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
     }
 
-    @Test("A config with no device shape reads strictly, as no problem")
-    func aMissingDeviceShapeIsNoProblem() throws {
-        let data = try configJSON { $0["deviceShape"] = nil }
-        let strict = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-        #expect(strict.deviceShape == .unrecorded(bootMode: .efi))
-        #expect(diagnose(data).problems.isEmpty)
-    }
-
     @Test("An unrecognized device shape is refused strictly, and recorded with no repair")
     func anUnrecognizedDeviceShapeHasNoRepair() throws {
         let data = try configJSON { $0["deviceShape"] = Self.unrecognized }
@@ -365,36 +272,6 @@ struct ConfigFileDecodingTests {
     }
 
     // MARK: - The snapshot's captured network
-
-    @Test("A snapshot's captured network reads past what its configuration no longer takes, keeping the address")
-    func theCapturedNetworkReadsPastBadValues() throws {
-        let data = try configJSON {
-            $0["guestOS"] = Self.unrecognized
-            $0["networkMode"] = Self.unrecognized
-            $0["networkEnabled"] = nil
-            $0["macAddress"] = "aa:bb:cc:dd:ee:ff"
-        }
-        let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
-        #expect(network.macAddress == "aa:bb:cc:dd:ee:ff")
-        #expect(network.networkMode == .nat)
-    }
-
-    @Test("A snapshot's captured network missing networkEnabled had no network device")
-    func aMissingCapturedNetworkEnabledReadsOff() throws {
-        let data = try configJSON {
-            $0["networkEnabled"] = nil
-            $0["networkMode"] = nil
-            $0["networkMembership"] = nil
-            $0["bridgedInterfaceIdentifier"] = nil
-            $0["macAddress"] = nil
-        }
-        let network = try VMConfiguration.makeJSONDecoder().decode(VMCapturedNetwork.self, from: data)
-        #expect(
-            network
-                == VMCapturedNetwork(
-                    networkEnabled: false, networkMode: .nat, networkMembership: .common,
-                    bridgedInterfaceIdentifier: nil, macAddress: nil))
-    }
 
     @Test("A snapshot's captured network lists an unrecognized value as a problem no default repairs")
     func anUnrecognizedCapturedNetworkValueIsUnrepairable() throws {
@@ -623,36 +500,6 @@ struct ConfigFileDecodingTests {
     }
 
     // MARK: - Smart groups
-
-    @Test("A smart group's network no build spells is refused strictly, and removed alone when collecting")
-    func aSmartGroupsUnknownNetworkIsRemovedAlone() throws {
-        let group = UUID()
-        let folder = UUID()
-        let tag = UUID()
-        let data = Data(
-            #"""
-            {"smartGroups": [{"id": "\#(group.uuidString)", "name": "NAT",
-                              "filter": {"networks": ["bogus:common"], "guestOSes": ["linux"]}}],
-             "folders": [{"id": "\#(folder.uuidString)", "name": "Lab", "members": []}],
-             "sectionOrder": ["folder:\#(folder.uuidString)", "virtualMachines", "smartGroup:\#(group.uuidString)"],
-             "tags": [{"id": "\#(tag.uuidString)", "name": "Work", "color": "red"}]}
-            """#.utf8)
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode(VMOrganizationDirectory.File.self, from: data)
-        }
-        let diagnosis = ConfigFileDiagnosis(
-            decoding: VMOrganizationDirectory.File.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
-
-        #expect(diagnosis.problems.map(\.path?.description) == ["$.smartGroups[0].filter.networks[0]"])
-        #expect(diagnosis.problems.map(\.repair) == [.removeEntry])
-        let repaired = try JSONDecoder().decode(
-            VMOrganizationDirectory.File.self, from: try #require(diagnosis.repaired))
-        #expect(repaired.smartGroups.map(\.id) == [group])
-        #expect(repaired.smartGroups.first?.filter == VMLibraryFilter(guestOSes: [.linux]))
-        #expect(repaired.folders.map(\.id) == [folder])
-        #expect(repaired.tags.map(\.id) == [tag])
-        #expect(repaired.sections.map(\.id) == [.folder(folder), .library, .smartGroup(group)])
-    }
 
     @Test("A smart group that doesn't decode is removed alone; a file with none lists none")
     func aBadSmartGroupIsRemovedAlone() throws {

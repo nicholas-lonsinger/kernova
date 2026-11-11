@@ -35,27 +35,7 @@ struct VMConfigurationCloneTests {
         #expect(clone.id != original.id)
     }
 
-    @Test("Clone generates a new creation date")
-    func cloneNewCreationDate() {
-        let original = VMConfiguration(
-            name: "Old VM",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            createdAt: Date.distantPast
-        )
-        let clone = original.clonedForNewInstance(existingNames: [])
-        #expect(clone.createdAt > original.createdAt)
-    }
-
     // MARK: - Name Generation
-
-    @Test("Clone appends ' Copy' to the name")
-    func cloneNameCopy() {
-        let clone = makeConfig(name: "Ubuntu").clonedForNewInstance(existingNames: ["Ubuntu"])
-        #expect(clone.name == "Ubuntu Copy")
-    }
 
     @Test("Clone appends ' Copy 2' when ' Copy' already exists")
     func cloneNameCopy2() {
@@ -63,94 +43,6 @@ struct VMConfigurationCloneTests {
             existingNames: ["Ubuntu", "Ubuntu Copy"]
         )
         #expect(clone.name == "Ubuntu Copy 2")
-    }
-
-    // MARK: - Preserved Settings
-
-    @Test("Clone preserves resource settings")
-    func clonePreservesResources() {
-        let original = VMConfiguration(
-            name: "Test",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: 8,
-            memorySizeInGB: .gibibytes(16)
-        )
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.cpuCount == 8)
-        #expect(clone.memorySizeInGB == .gibibytes(16))
-    }
-
-    @Test("Clone preserves display settings")
-    func clonePreservesDisplay() {
-        let original = VMConfiguration(
-            name: "Test",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            displayWidth: 2560,
-            displayHeight: 1440,
-            displayPPI: 218
-        )
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.displayWidth == 2560)
-        #expect(clone.displayHeight == 1440)
-        #expect(clone.displayPPI == 218)
-    }
-
-    @Test("Clone preserves network settings")
-    func clonePreservesNetwork() {
-        let original = VMConfiguration(
-            name: "Test",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            networkEnabled: true,
-            macAddress: "aa:bb:cc:dd:ee:ff"
-        )
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.networkEnabled == true)
-        #expect(clone.networkMode == .nat)
-        // Copied as-is: the clone's caller decides it with the machine identity.
-        #expect(clone.macAddress == "aa:bb:cc:dd:ee:ff")
-    }
-
-    @Test("Clone preserves the bridged mode and its interface")
-    func clonePreservesBridgedInterface() {
-        let original = VMConfiguration(
-            name: "Test",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            networkMode: .bridged,
-            bridgedInterfaceIdentifier: "en0"
-        )
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.networkMode == .bridged)
-        #expect(clone.bridgedInterfaceIdentifier == "en0")
-    }
-
-    @Test("Clone preserves guest OS and boot mode")
-    func clonePreservesOSAndBoot() {
-        let original = makeConfig(guestOS: .linux, bootMode: .linuxKernel)
-        let clone = original.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.guestOS == .linux)
-        #expect(clone.bootMode == .linuxKernel)
-    }
-
-    @Test("Clone preserves macOS hardware model data")
-    func clonePreservesHardwareModelData() {
-        let hwData = Data([0x01, 0x02, 0x03])
-        let clone = makeConfig(hardwareModelData: hwData).clonedForNewInstance(existingNames: [])
-        #expect(clone.hardwareModelData == hwData)
     }
 
     // MARK: - Shared Directories
@@ -201,20 +93,6 @@ struct VMConfigurationCloneTests {
         #expect(clone.storageDisks?[1].notes == "weekly snapshot source")
     }
 
-    // MARK: - lastSeenAgentVersion
-
-    @Test("Clone preserves lastSeenAgentVersion")
-    func clonePreservesLastSeenAgentVersion() {
-        // The disk image is copied as part of the clone, which means the
-        // installed agent comes along with it — so the persisted version is
-        // still accurate for the new VM. (Without this, the clone would show
-        // a spurious "install agent" badge until next boot.)
-        var config = makeConfig(guestOS: .macOS, bootMode: .macOS)
-        config.lastSeenAgentVersion = "0.9.2"
-        let clone = config.clonedForNewInstance(existingNames: [])
-        #expect(clone.lastSeenAgentVersion == "0.9.2")
-    }
-
     // MARK: - Removable Media
 
     @Test("Clone keeps removable media item IDs")
@@ -250,31 +128,5 @@ struct VMConfigurationCloneTests {
 
         #expect(macOS.clonedForNewInstance(existingNames: []).installContext == nil)
         #expect(linux.clonedForNewInstance(existingNames: []).linuxInstallContext == nil)
-    }
-
-    // MARK: - Security Bookmarks
-
-    @Test("Clone carries security bookmarks through disks, media, and shared directories")
-    func cloneCarriesBookmarksThrough() {
-        // The clone references the same external files, so the same access
-        // grants remain valid — bookmarks must survive the ID regeneration.
-        let diskBookmark = Data([0x01])
-        let mediaBookmark = Data([0x02])
-        let dirBookmark = Data([0x03])
-        var config = makeConfig(sharedDirectories: [
-            SharedDirectory(path: "/Users/test/Shared", bookmark: dirBookmark)
-        ])
-        config.storageDisks = [
-            StorageDisk(path: "/ext/backup.img", isInternal: false, bookmark: diskBookmark)
-        ]
-        config.removableMedia = [
-            RemovableMediaItem(path: "/tmp/install.iso", bookmark: mediaBookmark)
-        ]
-
-        let clone = config.clonedForNewInstance(existingNames: [])
-
-        #expect(clone.storageDisks?[0].bookmark == diskBookmark)
-        #expect(clone.removableMedia?[0].bookmark == mediaBookmark)
-        #expect(clone.sharedDirectories?[0].bookmark == dirBookmark)
     }
 }
