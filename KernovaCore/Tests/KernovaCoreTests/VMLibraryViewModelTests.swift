@@ -902,6 +902,21 @@ struct VMLibraryViewModelTests {
     private static let retinaSurface = DisplayBootSurface(
         pointSize: CGSize(width: 1400, height: 880), backingScaleFactor: 2)
 
+    @Test("A match-window boot with HiDPI off fills the window at 1×")
+    func matchWindowAtStandardDensityWhenHiDPIOff() async {
+        let (viewModel, _, _, virtService, _) = makeViewModel()
+        viewModel.displayBootSurface = { _ in Self.retinaSurface }
+        let instance = makeMatchWindowInstance(in: viewModel.library) { $0.displayHiDPI = false }
+
+        await viewModel.start(instance)
+
+        // Same points as `matchWindowWritesResolutionBeforeStart`, measured at
+        // 1× instead of the surface's 2×.
+        #expect(virtService.configurationAtStart?.displayWidth == 1400)
+        #expect(virtService.configurationAtStart?.displayHeight == 880)
+        #expect(virtService.configurationAtStart?.displayPPI == DisplayBootSizing.standardPixelsPerInch)
+    }
+
     @Test("A Linux match-window boot ignores the screen scale")
     func matchWindowIsOneToOneForLinux() async {
         let (viewModel, _, _, virtService, _) = makeViewModel()
@@ -1623,6 +1638,47 @@ struct VMLibraryViewModelTests {
         #expect(instance.status == .initialBoot)
         #expect(instance.errorMessage == nil)
         #expect(presenter.showError == false)
+    }
+
+    // MARK: - Pending Linux Image Download
+
+    /// A stopped Linux VM with a pending catalog download, registered in
+    /// `viewModel` with its configuration persisted.
+    private func makePendingLinuxVM(
+        in viewModel: VMLibraryViewModel,
+        destinationPath: String? = nil
+    ) -> VMInstance {
+        let instance = viewModel.library.registerFixture(name: "Debian") {
+            $0.linuxInstallContext = LinuxInstallContext(
+                source: .catalogEntry(makeLinuxCatalogEntry()),
+                downloadDestinationPath: destinationPath)
+        }
+        instance.activity.placeForTesting(.initialBoot)
+        return instance
+    }
+
+    @Test("A Linux download that misses its checksum is titled for the mismatch")
+    func linuxChecksumMismatchIsTitled() async {
+        let expected = ExpectedDigest(
+            sha256: String(repeating: "a", count: 64),
+            source: .checksumList(URL(string: "https://checksums.example/SHA256SUMS")!))
+        let resolveService = MockLinuxImageResolveService()
+        let downloadService = MockDownloadService()
+        downloadService.setDownloadError(
+            DownloadError.checksumMismatch(
+                filename: "debian.iso", expected: expected, actual: String(repeating: "b", count: 64)))
+        let (viewModel, _, _, _, _) = makeViewModel(
+            linuxImageResolveService: resolveService, downloadService: downloadService,
+            downloadsDirectory: scratch.url)
+        let instance = makePendingLinuxVM(in: viewModel)
+
+        await viewModel.start(instance)
+        await instance.setupOperationTask?.value
+
+        #expect(presenter.errorTitle == "Download Doesn't Match Its Checksum")
+        #expect(
+            presenter.errorMessage
+                == "debian.iso doesn't match the checksum list on checksums.example. Try downloading it again.")
     }
 
     // MARK: - Agent Install Nudge
