@@ -185,6 +185,27 @@ struct USBAccessoryCoordinatorTests {
         #expect(recorder.requests[1].accessory.registryID == 2)
     }
 
+    @Test("A queued prompt whose accessory has gone is dropped rather than raised")
+    func aQueuedPromptForADepartedAccessoryIsDropped() throws {
+        let service = MockUSBAccessoryService()
+        let h = try makeHarness(service)
+        makeInstance(in: h, sessionID: UUID())
+        let recorder = PromptRecorder()
+        defer { withExtendedLifetime(h) {} }
+        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
+        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
+        service.assign(MockUSBAccessoryService.accessory(registryID: 3, serial: "C"))
+
+        // Unplugged, or handed to another app, while it waited its turn.
+        service.accessories.removeAll { $0.registryID == 2 }
+        recorder.requests[0].answer(nil)
+
+        // The one behind it is still there and is asked about instead.
+        #expect(recorder.requests.count == 2)
+        #expect(recorder.requests[1].accessory.registryID == 3)
+    }
+
     // MARK: - The Guards
 
     @Test("An accessory two virtual machines claim is held rather than guessed at")
