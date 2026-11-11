@@ -22,7 +22,7 @@ final class SettingsNamedListNameCellView: NSTableCellView {
         super.init(frame: .zero)
         self.identifier = identifier
         label.allowsExpansionToolTips = true
-        label.onEditCommitted = { [weak self] text, _ in self?.renaming?.commit(text) }
+        label.onEditCommitted = { [weak self] text in self?.renaming?.commit(text) }
         label.onEditCancelled = { [weak self] in self?.renaming?.cancel() }
         addSubview(label)
         textField = label

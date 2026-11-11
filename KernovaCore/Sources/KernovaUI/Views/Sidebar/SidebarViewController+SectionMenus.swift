@@ -96,17 +96,15 @@ extension SidebarViewController {
             title: section.title, notice: section.notice,
             renaming: id.group.map { group in
                 SidebarGroupHeaderCellView.Renaming(
-                    commit: { [weak self, weak section] typed, endedByReturn in
+                    commit: { [weak self, weak section] typed in
                         guard let self else { return }
                         commitRename(of: group.kind, group.id, to: typed)
-                        // Return keeps focus in the sidebar; a click-commit
-                        // lets focus follow the click.
-                        renameEnded(in: section, grabbingFocus: endedByReturn)
+                        renameEnded(in: section)
                     },
                     cancel: { [weak self, weak section] in
                         guard let self else { return }
                         viewModel.cancelGroupRename(group.kind, group.id)
-                        renameEnded(in: section, grabbingFocus: true)
+                        renameEnded(in: section)
                     })
             },
             filtering: filtering,

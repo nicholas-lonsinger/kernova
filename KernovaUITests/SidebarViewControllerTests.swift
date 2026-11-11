@@ -166,7 +166,7 @@ struct SidebarViewControllerTests {
             isBusy: { isBusy },
             detail: { nil },
             tags: { [] },
-            onCommitRename: { _, _ in },
+            onCommitRename: { _ in },
             onCancelRename: {},
             onAgentDiskControl: {},
             onDismissAgentNudge: {})
@@ -344,7 +344,7 @@ struct SidebarViewControllerTests {
             isBusy: { false },
             detail: { nil },
             tags: { [] },
-            onCommitRename: { _, _ in },
+            onCommitRename: { _ in },
             onCancelRename: {},
             onAgentDiskControl: {},
             onDismissAgentNudge: {})
@@ -396,7 +396,7 @@ struct SidebarViewControllerTests {
     }
 
     private func makeRenamingRow(
-        instance: VMInstance, onCommitRename: @escaping (String, Bool) -> Void = { _, _ in }
+        instance: VMInstance, onCommitRename: @escaping (String) -> Void = { _ in }
     ) -> SidebarVMRowCellView {
         let cell = SidebarVMRowCellView()
         cell.configure(
@@ -439,28 +439,27 @@ struct SidebarViewControllerTests {
         #expect(cell.isPointOverName(pastName))
     }
 
-    /// The controller restores sidebar focus only for a keyboard Return, so the
-    /// flag has to survive the trip out of the shared label.
-    @Test("A Return-terminated rename reports that it ended by Return")
-    func renameCommitReportsEndedByReturn() throws {
-        let instance = VMInstanceFixture.make()
-        var commits: [(name: String, endedByReturn: Bool)] = []
-        let cell = makeRenamingRow(instance: instance) { commits.append(($0, $1)) }
-        let window = makeTestWindow(styleMask: [.titled])
-        window.contentView = cell
-        let label = try nameLabel(in: cell)
+    /// The label hands the focus back to the outline view when Return ends
+    /// its edit, as a table's own cell edit does.
+    @Test("Return on a row's rename commits it and hands the focus back to the sidebar")
+    func returnHandsFocusBackToTheSidebar() throws {
+        let viewModel = makeViewModel()
+        let alpha = viewModel.library.admitFixture(name: "Alpha")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        viewModel.renameVMInSidebar(alpha)
+        controller.viewDidAppear()
+        let node = try #require(controller.tree.row(for: .library(alpha.id)))
+        let cell = try #require(
+            outline.view(atColumn: 0, row: outline.row(forItem: node), makeIfNecessary: false)
+                as? SidebarVMRowCellView)
+        let editor = try #require(try nameLabel(in: cell).currentEditor() as? NSTextView)
 
-        label.currentEditor()?.string = "Renamed"
-        label.stringValue = "Renamed"
-        label.controlTextDidEndEditing(
-            Notification(
-                name: NSControl.textDidEndEditingNotification, object: label,
-                userInfo: ["NSTextMovement": NSTextMovement.return.rawValue]))
+        typeAndReturn("Renamed", in: editor)
 
-        #expect(commits.count == 1)
-        #expect(commits.first?.name == "Renamed")
-        #expect(commits.first?.endedByReturn == true)
+        #expect(alpha.name == "Renamed")
         #expect(!cell.isRenaming)
+        #expect(outline.window?.firstResponder === outline)
     }
 
     /// A recycled row carries typed text belonging to the VM it used to show,
@@ -469,7 +468,7 @@ struct SidebarViewControllerTests {
     func recyclingARenamingRowCommitsNothing() throws {
         let instance = VMInstanceFixture.make()
         var commits = 0
-        let cell = makeRenamingRow(instance: instance) { _, _ in commits += 1 }
+        let cell = makeRenamingRow(instance: instance) { _ in commits += 1 }
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = cell
         let label = try nameLabel(in: cell)
@@ -1306,7 +1305,7 @@ private final class SelectedRowFontProbe: NSObject, NSOutlineViewDataSource,
             isBusy: { false },
             detail: { nil },
             tags: { [] },
-            onCommitRename: { _, _ in },
+            onCommitRename: { _ in },
             onCancelRename: {},
             onAgentDiskControl: {},
             onDismissAgentNudge: {}

@@ -42,7 +42,12 @@ struct SettingsNamedListEditorTests {
         }
         var canCreate: Bool { true }
         func presentCreate() {}
-        func deleteConfirmation(for id: UUID, delete: @escaping () -> Void) -> AlertConfiguration? { nil }
+        /// The name each delete confirmation asked about, as it was then.
+        private(set) var confirmedNames: [String] = []
+        func deleteConfirmation(for id: UUID, delete: @escaping () -> Void) -> AlertConfiguration? {
+            confirmedNames.append(name(of: id))
+            return nil
+        }
         func delete(_ id: UUID) throws { order.removeAll { $0 == id } }
     }
 
@@ -155,6 +160,36 @@ struct SettingsNamedListEditorTests {
 
         #expect(editor.tableView.selectedRow == 1)
         #expect(renameEditor(editor, row: 1)?.string == "Home")
+    }
+
+    @Test("Return and Escape hand the focus back to the list")
+    func keyboardEndedRenameReturnsFocusToTheList() async throws {
+        let source = Source([(UUID(), "Work")])
+        let (editor, window) = makeEditor(source)
+
+        try click(editor, row: 0, count: 2)
+        typeAndReturn("Home", in: try #require(renameEditor(editor, row: 0)))
+        #expect(window.firstResponder === editor.tableView)
+        await Task.yield()
+        #expect(window.firstResponder === editor.tableView)
+
+        try click(editor, row: 0, count: 2)
+        try #require(renameEditor(editor, row: 0)).doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        #expect(window.firstResponder === editor.tableView)
+    }
+
+    @Test("− with a rename open commits it before asking about the item")
+    func deleteCommitsAnOpenRenameFirst() throws {
+        let source = Source([(UUID(), "Work")])
+        let (editor, _) = makeEditor(source)
+        try click(editor, row: 0, count: 2)
+        try #require(renameEditor(editor, row: 0)).string = "Home"
+
+        editor.deleteSelected()
+
+        #expect(renameEditor(editor, row: 0) == nil)
+        #expect(source.name(of: source.order[0]) == "Home")
+        #expect(source.confirmedNames == ["Home"])
     }
 
     @Test("A double-click while a slow second click waits drops the waiting rename")

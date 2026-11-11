@@ -39,10 +39,8 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// Fires when the user begins editing, so the controller can suppress list
     /// rebuilds that would otherwise destroy the editing field.
     var onEditBegan: (() -> Void)?
-    /// Fires with the new (untrimmed) text on Return / focus-loss; the `Bool` is
-    /// `true` when editing ended by Return, which an owner that moves focus on
-    /// its own reads.
-    var onEditCommitted: ((String, Bool) -> Void)?
+    /// Fires with the new (untrimmed) text on Return / focus-loss.
+    var onEditCommitted: ((String) -> Void)?
     /// Fires on Escape.
     var onEditCancelled: (() -> Void)?
     /// Supplies the right-click menu, built lazily by the controller.
@@ -242,8 +240,28 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// Cancels the in-progress edit (Escape).
     private func cancelEditing() {
         guard isEditing else { return }
+        let table = focusReturnTarget
         revertAndResign()
+        table?.window?.makeFirstResponder(table)
         onEditCancelled?()
+    }
+
+    /// Where the focus goes once a keyboard-ended edit is over: the table the
+    /// label sits in, when its clicks belong to that table, as they would
+    /// after a table's own cell edit.
+    private var focusReturnTarget: NSTableView? {
+        guard clickHandling == .delegatedToEnclosingView else { return nil }
+        return sequence(first: superview, next: { $0?.superview }).lazy.compactMap { $0 as? NSTableView }.first
+    }
+
+    override func textDidEndEditing(_ notification: Notification) {
+        let byReturn =
+            (notification.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.return.rawValue
+        // Read first: the commit can reload the table and take the label
+        // out of it.
+        let table = byReturn ? focusReturnTarget : nil
+        super.textDidEndEditing(notification)
+        table?.window?.makeFirstResponder(table)
     }
 
     /// Reverts to the display state, dropping any in-flight text and firing
@@ -312,10 +330,8 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     func controlTextDidEndEditing(_ obj: Notification) {
         guard isEditing, !isCancellingEdit else { return }
         let newText = stringValue
-        let endedByReturn =
-            (obj.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.return.rawValue
         endEditAppearance()
-        onEditCommitted?(newText, endedByReturn)
+        onEditCommitted?(newText)
     }
 
     func control(

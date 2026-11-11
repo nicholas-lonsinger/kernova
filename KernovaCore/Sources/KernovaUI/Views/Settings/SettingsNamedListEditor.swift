@@ -279,10 +279,26 @@ final class SettingsNamedListEditor: NSObject {
 
     @objc private func addRemoveClicked() {
         switch addRemoveControl.selectedSegment {
-        case Self.addSegment: source?.presentCreate()
-        case Self.removeSegment: confirmDelete()
+        case Self.addSegment: create()
+        case Self.removeSegment: deleteSelected()
         default: break
         }
+    }
+
+    /// Asks the source for a new item, committing an open rename first.
+    ///
+    /// The +/− control takes no focus, so a click on it leaves an open rename
+    /// open; the pane's own changes end it before they run.
+    func create() {
+        openRename?.endRename()
+        source?.presentCreate()
+    }
+
+    /// Asks before deleting the selected item, committing an open rename
+    /// first, so the question names the item as renamed.
+    func deleteSelected() {
+        openRename?.endRename()
+        confirmDelete()
     }
 
     /// Opens the rename of the item `id` identifies, selecting it, the box

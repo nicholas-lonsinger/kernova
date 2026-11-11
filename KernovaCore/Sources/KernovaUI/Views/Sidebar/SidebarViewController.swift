@@ -491,30 +491,25 @@ final class SidebarViewController: NSViewController {
 
     /// Closes the rename session of `node` — a VM row or a section header —
     /// once its edit has ended on its own, by Return, Escape or a click away,
-    /// then settles focus and the selection's emphasis.
+    /// then settles the selection's emphasis. A keyboard-ended edit's label
+    /// has already handed the focus back to the outline view.
     ///
     /// The session closes here, with the edit, rather than on the next model
     /// pass: a rename reopened before that pass would otherwise find the
     /// session still open and open nothing.
-    func renameEnded(in node: SidebarNode?, grabbingFocus: Bool) {
+    func renameEnded(in node: SidebarNode?) {
         if let node, editingNode === node { editingNode = nil }
-        restoreSidebarFocus(grabbingFocus: grabbingFocus)
+        settleEmphasisAfterRename()
     }
 
-    /// Settles the edited row's selection emphasis after an edit ends, deferred
-    /// to the next main-actor turn so any commit-click has moved the first
-    /// responder before we read it.
-    ///
-    /// With `grabbingFocus` (a keyboard Return/Escape) focus is first returned to
-    /// the sidebar. The field editor resigns first responder *after* the
-    /// end-editing notification fires, so this must run on a later turn or it is
-    /// overridden. A click-commit passes false and lets focus follow the click.
-    private func restoreSidebarFocus(grabbingFocus: Bool) {
+    /// Settles the selection's emphasis after an edit ends, deferred to the
+    /// next main-actor turn so the focus has moved — back to the outline view,
+    /// or to wherever a commit-click landed — before it is read.
+    private func settleEmphasisAfterRename() {
         Task { @MainActor [weak self] in
             // A rename opened since holds the focus, and the selection stays
             // unemphasized while its edit box is up.
             guard let self, self.editingNode == nil else { return }
-            if grabbingFocus { self.view.window?.makeFirstResponder(self.outlineView) }
             self.selectedRowView?.settleEmphasis()
         }
     }
@@ -753,18 +748,15 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 guard let self, let instance else { return [] }
                 return self.viewModel.library.tags(of: instance)
             },
-            onCommitRename: { [weak self, weak instance, weak row] newName, endedByReturn in
+            onCommitRename: { [weak self, weak instance, weak row] newName in
                 guard let self, let instance else { return }
                 self.viewModel.commitRename(for: instance, newName: newName, from: .sidebar)
-                // Return keeps focus in the sidebar; a click-commit lets focus
-                // follow the click.
-                self.renameEnded(in: row, grabbingFocus: endedByReturn)
+                self.renameEnded(in: row)
             },
             onCancelRename: { [weak self, weak instance, weak row] in
                 guard let self, let instance else { return }
                 self.viewModel.cancelRename(for: instance, from: .sidebar)
-                // Escape returns focus to the sidebar (and the blue selection).
-                self.renameEnded(in: row, grabbingFocus: true)
+                self.renameEnded(in: row)
             },
             onAgentDiskControl: { [weak self, weak instance] in
                 guard let self, let instance else { return }

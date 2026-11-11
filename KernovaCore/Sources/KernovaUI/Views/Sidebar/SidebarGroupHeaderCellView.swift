@@ -28,9 +28,8 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
 
     /// What committing and cancelling a rename of the title run.
     struct Renaming {
-        /// Runs with the typed text; the `Bool` is `true` when Return ended
-        /// the edit.
-        let commit: (String, Bool) -> Void
+        /// Runs with the typed text.
+        let commit: (String) -> Void
         let cancel: () -> Void
     }
 
@@ -51,7 +50,7 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
     init() {
         super.init(frame: .zero)
 
-        label.onEditCommitted = { [weak self] text, endedByReturn in self?.renaming?.commit(text, endedByReturn) }
+        label.onEditCommitted = { [weak self] text in self?.renaming?.commit(text) }
         label.onEditCancelled = { [weak self] in self?.renaming?.cancel() }
         addSubview(label)
         countLabel.translatesAutoresizingMaskIntoConstraints = false
