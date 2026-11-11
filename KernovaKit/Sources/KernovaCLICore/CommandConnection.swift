@@ -34,8 +34,8 @@ enum CommandConnection {
     ///
     /// - Throws: ``CLIFailure`` with ``CLIExitCode/unavailable``, whether or not
     ///   the app is running, when this copy of the tool can reach no app: its
-    ///   build resolves no app-group container — an ad-hoc signature has none —
-    ///   or `app` cannot be looked up. That is a different answer from "there is
+    ///   build is signed with no team, so it claims no app group, or `app`
+    ///   cannot be looked up. That is a different answer from "there is
     ///   nothing to talk to".
     static func openIfRunning(_ app: URL) throws -> VMCommandClient? {
         let socketPath = try socketPath(of: app)
@@ -76,9 +76,9 @@ enum CommandConnection {
             case .noContainer:
                 throw CLIFailure(
                     .unavailable,
-                    "This copy of kernova is not signed to share Kernova's app group, so it "
-                        + "cannot reach the app. Install the tool from Kernova's Settings "
-                        + "\u{2192} Advanced.")
+                    "This build of Kernova is signed with no team, so kernova cannot reach the "
+                        + "app: the two meet in an app-group container only a team-signed build is "
+                        + "granted. Set DEVELOPMENT_TEAM in Config/Local.xcconfig and rebuild.")
             case .unresolvableBundle(let lookup):
                 throw CLIFailure(
                     .unavailable,
