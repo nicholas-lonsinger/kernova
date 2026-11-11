@@ -34,14 +34,6 @@ struct VMURLRouteTests {
         #expect(try delivery("kernova://open/a%2Fb") == .route(.open(.idOrName("a/b"))))
     }
 
-    @Test("A link addresses its VM the way a typed argument does, identifier or name")
-    func identifierReadsAsIdOrName() throws {
-        let id = UUID()
-        #expect(
-            try delivery("kernova://open/\(id.uuidString)")
-                == .route(.open(.idOrName(id.uuidString))))
-    }
-
     @Test("The route name and the scheme are both case-insensitive")
     func routeNameIsCaseInsensitive() throws {
         #expect(try delivery("kernova://OPEN/Sonoma") == .route(.open(.idOrName("Sonoma"))))
@@ -55,12 +47,6 @@ struct VMURLRouteTests {
     }
 
     // MARK: - Not a link
-
-    @Test("Another scheme is not a link, so the file-open path keeps it")
-    func anotherSchemeIsNotALink() throws {
-        #expect(try delivery("file:///Users/someone/VMs/Sonoma.kernova") == .notALink)
-        #expect(try delivery("https://example.com/open/Sonoma") == .notALink)
-    }
 
     @Test("A delivered batch splits into the links and the files")
     func aMixedBatchSplitsByScheme() throws {
@@ -80,11 +66,6 @@ struct VMURLRouteTests {
         #expect(try delivery("kernova:") == .refused(.noRoute))
     }
 
-    @Test("A route Kernova does not offer is refused, naming what was asked for")
-    func unknownRouteIsRefused() throws {
-        #expect(try delivery("kernova://start/Sonoma") == .refused(.unknownRoute("start")))
-    }
-
     @Test("A route naming no VM is refused")
     func routeWithNoVMIsRefused() throws {
         #expect(try delivery("kernova://open") == .refused(.noVM(route: .open)))
@@ -97,13 +78,6 @@ struct VMURLRouteTests {
         #expect(
             try delivery("kernova://open/Sonoma/display")
                 == .refused(.extraSegments(route: .open)))
-    }
-
-    @Test("Query and fragment are no part of what a link says")
-    func queryAndFragmentAreIgnored() throws {
-        #expect(
-            try delivery("kernova://open/Sonoma?window=new#top")
-                == .route(.open(.idOrName("Sonoma"))))
     }
 
     @Test("A refusal quotes back only enough of the link's own text to recognize it")

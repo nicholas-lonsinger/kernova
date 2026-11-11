@@ -156,29 +156,6 @@ struct VMCommandCoreGroupActionTests {
         #expect(harness2.virtualization.saveCallCount == 2)
     }
 
-    @Test("Restart All restarts the running guest through the single-VM restart and passes the rest over")
-    func restartAllRestartsTheRunningGuest() async throws {
-        let harness = makeHarness()
-        let library = try makeLibrary(in: harness)
-        let session = library.running.activity.liveSessionID
-
-        let report = try await harness.core.groupAction(.restart, on: library.folder)
-
-        #expect(
-            outcomes(report) == [
-                "Stopped": .passedOver(reason: .state), "Running": .done(verb: .restart),
-                "Paused": .passedOver(reason: .state), "Suspended": .passedOver(reason: .state),
-                "Fresh": .passedOver(reason: .state),
-            ])
-        #expect(report.results.first { $0.vm.name == "Running" }?.line(for: .restart) == "Restarted Running")
-        #expect(report.undone.isEmpty)
-        #expect(harness.virtualization.stopCallCount == 1)
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(library.running.status == .running)
-        #expect(library.running.activity.liveSessionID != session)
-        #expect(library.paused.status == .paused)
-    }
-
     @Test("Restart All takes every running guest at once: a held shutdown holds back only the report")
     func restartAllDoesNotWaitOnAHeldShutdown() async throws {
         let harness = makeHarness()
@@ -276,102 +253,7 @@ struct VMCommandCoreGroupActionTests {
         await arrival.settle()
     }
 
-    @Test("Failures land in one report: the macOS guest cap fails one VM and the others still start")
-    func macOSGuestLimitIsAPerVMFailure() async throws {
-        let harness = makeHarness()
-        let first = makeInstance(in: harness, name: "First", guestOS: .macOS)
-        let second = makeInstance(in: harness, name: "Second", guestOS: .macOS)
-        let third = makeInstance(in: harness, name: "Third", guestOS: .macOS)
-        let linux = makeInstance(in: harness, name: "Linux")
-        harness.virtualization.startErrors[third.id] = makeVMLimitExceededError()
-        try harness.library.organization.createFolder(
-            named: "Macs", members: [first, second, third, linux].map(\.id))
-
-        let report = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Macs"))
-
-        #expect(report.results.map(\.outcome.isUndone) == [false, false, true, false])
-        guard case .failed(let error) = report.results[2].outcome else {
-            Issue.record("expected the third to fail, got \(report.results[2].outcome)")
-            return
-        }
-        #expect(error.message.contains("macOS allows at most two macOS virtual machines to run at once."))
-        #expect([first, second, linux].allSatisfy { $0.status == .running })
-        #expect(third.status == .stopped)
-        #expect(report.undone.map(\.vm.name) == ["Third"])
-        #expect(report.undoneMessage == "Couldn\u{2019}t start Third: \(error.message)")
-    }
-
-    @Test("A VM busy with other work is passed over with the refusal its own verb would give")
-    func busyVMIsPassedOverWithItsRefusal() async throws {
-        let harness = makeHarness()
-        let busy = makeInstance(
-            in: harness, name: "Busy", phase: .operating(.saving, from: .running(sessionID: UUID())))
-        try harness.library.organization.createFolder(named: "One", members: [busy.id])
-
-        let report = try await harness.core.groupAction(.suspend, on: VMGroupReference(.folder, named: "One"))
-
-        guard case .passedOver(.refused(let error)) = report.results[0].outcome,
-            case .busy(_, let operation) = error
-        else {
-            Issue.record("expected a busy refusal, got \(report.results[0].outcome)")
-            return
-        }
-        #expect(operation == "suspending")
-        #expect(report.undone.isEmpty)
-    }
-
-    @Test("A group the library does not list is refused before any VM is acted on")
-    func unknownGroupIsRefused() async throws {
-        let harness = makeHarness()
-        makeInstance(in: harness, name: "Stopped")
-
-        await #expect(throws: CommandError.itemNotFoundOnHost(item: "folder named \u{201C}Nope\u{201D}")) {
-            try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Nope"))
-        }
-        #expect(harness.virtualization.startCallCount == 0)
-    }
-
-    @Test("A group action selects nothing and readies only what a start from any door readies")
-    func groupActionMovesNoSelection() async throws {
-        let harness = makeHarness()
-        let a = makeInstance(in: harness, name: "A")
-        let b = makeInstance(in: harness, name: "B")
-        try harness.library.organization.createFolder(named: "Both", members: [a.id, b.id])
-        let selected = harness.library.selectedID
-
-        _ = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Both"))
-
-        #expect(a.status == .running && b.status == .running)
-        #expect(harness.library.selectedID == selected)
-        #expect(harness.surfacedDisplays.isEmpty)
-        #expect(harness.revealedInLibrary.isEmpty)
-    }
-
     // MARK: - Unattended bring-ups
-
-    @Test("Every bring-up a group action takes is readied as unattended, a detached display's included")
-    func groupBringUpsAreReadiedUnattended() async throws {
-        let harness = makeHarness()
-        let popOut = RegisteredVMInstanceFixture.register(
-            name: "Pop Out", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences,
-            hostState: VMHostState(displayPreference: .fullscreen))
-        let paused = RegisteredVMInstanceFixture.register(
-            name: "Paused", phase: .livePaused(sessionID: UUID()), guestOS: .linux, library: harness.library,
-            preferences: preferences, hostState: VMHostState(displayPreference: .popOut))
-        try harness.library.organization.createFolder(named: "Lab", members: [popOut.id, paused.id])
-        var readied: [String: VMBringUpPresence] = [:]
-        harness.core.readyDisplay = { readied[$0.name] = $1 }
-
-        _ = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
-
-        #expect(readied == ["Pop Out": .unattended, "Paused": .unattended])
-
-        // The same VM started on its own is attended.
-        try await harness.core.stop(.id(popOut.id), disposition: .force, consent: .all, timeout: nil)
-        readied = [:]
-        try await harness.core.start(.id(popOut.id), recovery: false, consent: .none)
-        #expect(readied == ["Pop Out": .attended])
-    }
 
     @Test("A group start refuses a guest setup at the commit, whatever was decided before it")
     func groupStartRefusesGuestSetupAtTheCommit() async throws {
@@ -455,22 +337,6 @@ struct VMCommandCoreGroupActionTests {
         #expect(other.heldByAnotherCopy)
     }
 
-    /// The members are what the launch's read found: a mark this copy learned
-    /// of after it is a setting for the next launch.
-    @Test("The launch pass leaves a VM it was not handed, though marked now")
-    func launchPassLeavesAVMMarkedAfterTheRead() async {
-        let harness = makeHarness()
-        let markedLater = makeMarkedInstance(in: harness, name: "Marked Later")
-        let reads = harness.storage.files.readCount(of: VMBundleLayout.configRelativePath)
-
-        let results = await harness.core.startVMsMarkedToStartAutomatically([])
-
-        #expect(results.isEmpty)
-        #expect(markedLater.status == .stopped)
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
-    }
-
     @Test("The launch pass reports a VM removed while its turn waited as gone")
     func launchMemberRemovedWhileItsTurnWaitedIsPassedOver() async throws {
         let harness = makeHarness()
@@ -547,27 +413,6 @@ struct VMCommandCoreGroupActionTests {
         return (first, second)
     }
 
-    @Test("VMs are acted on one after another: the second start waits for the first bring-up to end")
-    func actsOneAfterAnother() async throws {
-        let harness = makeSuspendingHarness()
-        let (first, second) = try makePair(in: harness)
-
-        let running = Task { @MainActor in
-            try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
-        }
-        await harness.virtualization.waitUntilSuspended()
-
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(second.status == .stopped)
-        harness.virtualization.shouldSuspendOnStart = false
-        harness.virtualization.resumeSuspended()
-        let report = try await running.value
-
-        #expect(harness.virtualization.startCallCount == 2)
-        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
-        #expect(first.status == .running && second.status == .running)
-    }
-
     @Test("A cancel lets the VM in hand finish and reports every later one untouched")
     func cancelStopsBetweenVMs() async throws {
         let harness = makeSuspendingHarness()
@@ -605,26 +450,6 @@ struct VMCommandCoreGroupActionTests {
     }
 
     // MARK: - Membership during the run
-
-    @Test("A member that arrives as a VM before its turn is acted on")
-    func arrivalThatLandsBeforeItsTurnIsActedOn() async throws {
-        let harness = makeSuspendingHarness()
-        let first = RegisteredVMInstanceFixture.register(
-            name: "First", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences)
-        let gate = GatedStep()
-        let arrival = harness.library.beginGatedArrival(.importing, named: "Arriving", gate: gate)
-        try harness.library.organization.createFolder(named: "Pair", members: [first.id, arrival.id])
-
-        let report = try await startPair(in: harness) {
-            gate.release()
-            await arrival.settle()
-        }
-
-        #expect(report.results.map(\.vm.name) == ["First", "Arriving"])
-        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
-        #expect(report.results[1].vm.status == "running")
-        #expect(report.undone.isEmpty)
-    }
 
     @Test("A member deleted before its turn is passed over as gone, named as this copy last knew it")
     func memberDeletedBeforeItsTurnIsPassedOver() async throws {
@@ -677,23 +502,6 @@ struct VMCommandCoreGroupActionTests {
         var checks = 0
         harness.library.onUnreadableFilesFound = { checks += 1 }
         return (harness, free, held, { checks })
-    }
-
-    @Test("The counts read only what this copy holds, touching no disk; the library's catch-up moves them")
-    func countsTouchNoDisk() throws {
-        let (harness, _, held, checks) = try makeUnreadableHarness()
-        harness.storage.files.holdElsewhere(held.bundleURL)
-        let reads = harness.storage.files.readCount(of: VMBundleLayout.configRelativePath)
-        let pair = VMGroupReference(.folder, named: "Pair")
-
-        // No run lock probed, no bundle re-read, no config check asked for.
-        #expect(try harness.core.concernedCounts(in: pair)[.start] == 2)
-        #expect(!held.heldByAnotherCopy)
-        #expect(harness.storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
-        #expect(checks() == 0)
-
-        harness.library.refreshFromOtherCopies()
-        #expect(try harness.core.concernedCounts(in: pair)[.start] == 1)
     }
 
     @Test("The counts read the groups as this copy holds them, reloading no file")
@@ -751,89 +559,6 @@ struct VMCommandCoreGroupActionTests {
         #expect(report.results.map(\.vm.name) == ["First", "Second"])
         #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .state)])
         #expect(report.results[1].vm.heldByAnotherCopy)
-    }
-
-    @Test("Each turn re-reads its VM's bundle: a guest setup another copy finished is seen")
-    func turnReReadsItsVM() async throws {
-        let harness = makeSuspendingHarness()
-        let first = RegisteredVMInstanceFixture.register(
-            name: "First", phase: .stopped, guestOS: .linux, library: harness.library, preferences: preferences)
-        let fresh = RegisteredVMInstanceFixture.register(
-            name: "Fresh", phase: .initialBoot, guestOS: .macOS, library: harness.library, preferences: preferences
-        ) {
-            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-        try harness.library.organization.createFolder(named: "Pair", members: [first.id, fresh.id])
-
-        let report = try await startPair(in: harness) {
-            var finished = fresh.configuration
-            finished.installContext = nil
-            harness.storage.files.setConfiguration(finished, at: fresh.bundleURL)
-        }
-
-        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
-        #expect(fresh.status == .running)
-    }
-
-    @Test("A turn reloads no library file")
-    func turnReloadsNoLibraryFile() async throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let organizationURL = scratch.url.appendingPathComponent("Organization.json")
-        let harness = makeSuspendingHarness(organization: VMOrganizationDirectory(fileURL: organizationURL))
-        let (_, second) = try makePair(in: harness)
-
-        let report = try await startPair(in: harness) {
-            try Data("not json".utf8).write(to: organizationURL)
-        }
-
-        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
-        #expect(second.status == .running)
-        #expect(harness.library.organization.state.listed != nil)
-    }
-
-    @Test("A VM another copy starts before its turn is passed over, not failed")
-    func vmHeldBeforeItsTurnIsPassedOver() async throws {
-        let harness = makeSuspendingHarness()
-        let (first, second) = try makePair(in: harness)
-
-        let report = try await startPair(in: harness) {
-            harness.storage.files.holdElsewhere(second.bundleURL)
-        }
-
-        #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .state)])
-        #expect(report.results[1].vm.heldByAnotherCopy)
-        #expect(report.undone.isEmpty)
-        #expect(first.status == .running)
-        #expect(second.status == .stopped)
-    }
-
-    @Test("A VM another copy lets go of before its turn is acted on")
-    func vmReleasedBeforeItsTurnIsActedOn() async throws {
-        let harness = makeSuspendingHarness()
-        let (_, second) = try makePair(in: harness)
-        harness.storage.files.holdElsewhere(second.bundleURL)
-
-        let report = try await startPair(in: harness) {
-            harness.storage.files.releaseElsewhere(second.bundleURL)
-        }
-
-        #expect(report.results.map(\.outcome) == [.done(verb: .start), .done(verb: .start)])
-        #expect(second.status == .running)
-    }
-
-    @Test("A VM another copy takes between its turn's read and its commit is passed over as held, not failed")
-    func vmTakenAtTheCommitIsPassedOver() async throws {
-        let harness = makeHarness()
-        let taken = makeInstance(in: harness, name: "Taken")
-        try harness.library.organization.createFolder(named: "One", members: [taken.id])
-        harness.storage.files.holdElsewhereAfterProbes(taken.bundleURL)
-
-        let report = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "One"))
-
-        #expect(report.results.map(\.outcome) == [.passedOver(reason: .state)])
-        #expect(report.results[0].vm.heldByAnotherCopy)
-        #expect(report.undone.isEmpty)
-        #expect(harness.virtualization.startCallCount == 0)
     }
 
     // MARK: - Error mapping

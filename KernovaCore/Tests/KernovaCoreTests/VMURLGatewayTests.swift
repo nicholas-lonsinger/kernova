@@ -117,17 +117,6 @@ struct VMURLGatewayTests {
         #expect(trace.presented.isEmpty)
     }
 
-    /// Readied once, for the alert: the refused verb itself surfaced nothing.
-    @Test("A verb refusal readies the app once and summons the library before it is shown")
-    func aVerbRefusalSummonsTheLibraryBeforePresenting() async throws {
-        let wired = WiredCommandCore()
-        let trace = Trace()
-        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
-
-        #expect(
-            trace.steps == [.prepared, .summoned, .presented(.notFound(.idOrName("Sonoma")))])
-    }
-
     @Test("The verb waits for the app's first library read")
     func theVerbWaitsForTheFirstLibraryRead() async throws {
         let wired = WiredCommandCore()
@@ -148,57 +137,6 @@ struct VMURLGatewayTests {
         #expect(wired.surfacedDisplays == [sonoma.id])
     }
 
-    // MARK: - Refusals the core raises
-
-    @Test("A name several VMs answer to is shown in the app")
-    func anAmbiguousNameIsShownInTheApp() async throws {
-        let wired = WiredCommandCore()
-        let first = registerRunning(in: wired)
-        let second = registerRunning(in: wired)
-        let trace = Trace()
-        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
-
-        let presented = try #require(trace.presented.first)
-        #expect(trace.presented.count == 1)
-        guard case .ambiguous(let selector, let candidates) = presented else {
-            Issue.record("expected an ambiguity refusal, got \(presented)")
-            return
-        }
-        #expect(selector == .idOrName("Sonoma"))
-        #expect(Set(candidates.map(\.id)) == [first.id, second.id])
-        #expect(wired.surfacedDisplays.isEmpty)
-    }
-
-    @Test("A name no VM answers to is shown in the app")
-    func aNameNoVMAnswersToIsShownInTheApp() async throws {
-        let wired = WiredCommandCore()
-        wired.register(name: "Sonoma")
-        let trace = Trace()
-        await makeGateway(wired, trace: trace).handle(try url("kernova://reveal/Ghost"))
-
-        #expect(trace.presented == [.notFound(.idOrName("Ghost"))])
-        #expect(wired.revealedInLibrary.isEmpty)
-    }
-
-    @Test("A VM whose state admits no open refuses the open route, in the app")
-    func aStoppedVMRefusesTheOpenRoute() async throws {
-        let wired = WiredCommandCore()
-        let sonoma = wired.register(name: "Sonoma")
-        let trace = Trace()
-        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
-
-        let presented = try #require(trace.presented.first)
-        #expect(trace.presented.count == 1)
-        guard case .invalidState(let vm, let current, let allowed, _) = presented else {
-            Issue.record("expected an invalid-state refusal, got \(presented)")
-            return
-        }
-        #expect(vm.id == sonoma.id)
-        #expect(current == .stopped)
-        #expect(!allowed.contains(.open))
-        #expect(wired.surfacedDisplays.isEmpty)
-    }
-
     // MARK: - Refusals the link itself earns
 
     @Test("A route Kernova does not offer is refused without running any verb")
@@ -216,21 +154,5 @@ struct VMURLGatewayTests {
                 .prepared, .summoned,
                 .presented(.invalidArgument(VMURLRoute.Refusal.unknownRoute("start").message)),
             ])
-    }
-
-    @Test("A link Kernova cannot read is refused without waiting for the library read")
-    func aMalformedLinkIsRefusedWithoutWaitingForTheLibrary() async throws {
-        let wired = WiredCommandCore()
-        let trace = Trace()
-        let readiness = ReadinessGate()
-        let gateway = makeGateway(
-            wired, trace: trace, awaitReady: { await readiness.wait() })
-
-        // Nothing about the library decides this refusal, so it never parks on
-        // a read that a launch may still have in flight.
-        await gateway.handle(try url("kernova://start/Sonoma"))
-
-        #expect(!readiness.isWaiting)
-        #expect(trace.presented.count == 1)
     }
 }

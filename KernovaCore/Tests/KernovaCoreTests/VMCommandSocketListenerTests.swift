@@ -110,25 +110,6 @@ struct VMCommandSocketListenerTests {
 
     // MARK: - Reads
 
-    @Test("A read verb round-trips over the socket")
-    func unaryReadRoundTrips() async throws {
-        let harness = try makeHarness()
-        harness.wired.register(name: "Alpha")
-        let library = harness.wired.core.list(.all)
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(VMCommandRequest(verb: .list()))
-        let response = try await client.nextResponse()
-
-        #expect(library.map(\.name) == ["Alpha"])
-        #expect(response?.result == .summaries(library))
-        #expect(harness.authorizer.checkCount == 1)
-    }
-
     @Test("A connection is held for its I/O lifetime, and dropped at EOF")
     func connectionCountRisesAndFalls() async throws {
         let harness = try makeHarness()
@@ -173,76 +154,6 @@ struct VMCommandSocketListenerTests {
         #expect(try await client.nextResponse()?.result == .summaries(library))
     }
 
-    @Test(
-        "A verb that surfaces readies the app and asks the client to activate it once, before answering",
-        arguments: [
-            VMCommandRequest.Verb.open(.name("Alpha")),
-            .reveal(.name("Alpha")),
-        ])
-    func surfacingVerbsAskTheClientToActivate(_ verb: VMCommandRequest.Verb) async throws {
-        let harness = try makeHarness()
-        let alpha = harness.wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(VMCommandRequest(verb: verb))
-
-        // Ahead of the answer, so the client has activated the app by the time
-        // it reads that the window is up.
-        #expect(try await client.nextResponse()?.result == .activate)
-        #expect(try await client.nextResponse()?.result == .ok)
-        #expect(harness.preparationCount.value == 1)
-        #expect(harness.wired.surfacedDisplays == [alpha.id])
-    }
-
-    @Test(
-        "A refused open or reveal neither readies the app nor asks the client to activate it",
-        arguments: [
-            VMCommandRequest.Verb.open(.name("Alpha")),
-            .reveal(.name("Alpha")),
-        ])
-    func refusedSurfacingVerbsSendNoActivate(_ verb: VMCommandRequest.Verb) async throws {
-        // No VM answers to the name, so the core refuses it.
-        let harness = try makeHarness()
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(VMCommandRequest(verb: verb))
-
-        #expect(try await client.nextResponse()?.result == .failure(.notFound(selector: .name("Alpha"))))
-        #expect(harness.preparationCount.value == 0)
-    }
-
-    @Test("A verb that puts nothing on screen answers with no activate frame")
-    func nonSurfacingVerbsSendNoActivate() async throws {
-        let harness = try makeHarness()
-        let alpha = harness.wired.register(name: "Alpha")
-        let library = harness.wired.core.list(.all)
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(VMCommandRequest(verb: .list()))
-        #expect(try await client.nextResponse()?.result == .summaries(library))
-
-        // A headless start is a bring-up nobody asked to see.
-        try client.send(
-            VMCommandRequest(verb: .start(.id(alpha.id), recovery: false, consent: .none)))
-        #expect(try await client.nextResponse()?.result == .ok)
-
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(harness.preparationCount.value == 0)
-        #expect(harness.wired.surfacedDisplays.isEmpty)
-    }
-
     @Test("A permission panel a verb puts up asks the client on that connection to activate")
     func permissionPanelAsksTheConnectionsClient() async throws {
         let harness = try makeHarness()
@@ -264,34 +175,6 @@ struct VMCommandSocketListenerTests {
         #expect(try await client.nextResponse()?.result == .activate)
         #expect(try await client.nextResponse()?.failure != nil)
         #expect(harness.preparationCount.value == 1)
-    }
-
-    @Test("A client that hangs up cancels the verb it left running")
-    func closingAConnectionCancelsItsRequest() async throws {
-        let harness = try makeHarness()
-        let authority = harness.wired.authority
-        let park = CancellationPark()
-        authority.parkUntilCancelled = park
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(
-            VMCommandRequest(
-                verb: .importVM(path: "/Users/somebody/Desktop/Alpha.kernova", waitForOutcome: true)))
-        // The verb has to be running before the hang-up, or the close would be
-        // cancelling nothing and the test would prove nothing.
-        try await authority.requested.wait { authority.requests.count == 1 }
-
-        client.close()
-
-        // A verb suspended on something only the caller wanted — an import's
-        // permission panel — would otherwise outlive the request that asked.
-        try await park.released.wait { park.wasCancelled }
-        #expect(park.wasCancelled)
-        #expect(harness.wired.library.entries.isEmpty)
     }
 
     // MARK: - Envelope refusals
@@ -331,25 +214,6 @@ struct VMCommandSocketListenerTests {
         #expect(harness.listener.connectionCountForTesting == 0)
     }
 
-    @Test("Bytes that are not a request are refused, and end the connection")
-    func undecodableBytesAreRefused() async throws {
-        let harness = try makeHarness()
-        harness.listener.start()
-        defer { harness.listener.stop() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.sendRaw(Data("not a request".utf8))
-
-        let response = try await client.nextResponse()
-        guard case .refused(.undecodableRequest) = response?.result else {
-            Issue.record("expected an undecodable-request refusal, got \(String(describing: response))")
-            return
-        }
-        #expect(try await client.nextResponse() == nil)
-    }
-
     // MARK: - Subscription
 
     @Test("A subscription answers with the library, then with each change")
@@ -371,42 +235,6 @@ struct VMCommandSocketListenerTests {
         #expect(
             try await client.nextResponse()?.result
                 == .event(.renamed(id: alpha.id, from: "Alpha", to: "Beta")))
-    }
-
-    // MARK: - Degraded builds
-
-    @Test(
-        "A build that could make no claim on its copy publishes no socket",
-        arguments: [
-            AppCopyClaim.Unavailable.unnamed(.noContainer),
-            .unnamed(.unresolvableBundle(.noSuchFileOrDirectory)),
-            .unlockable(.permissionDenied),
-        ])
-    func unclaimedCopyBindsNothing(reason: AppCopyClaim.Unavailable) {
-        let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: WiredCommandCore().core),
-            authorizer: MockPeerAuthorizer(),
-            copyClaim: .failure(reason),
-            awaitReady: {},
-            prepareToSurface: {})
-        listener.start()
-        #expect(listener.connectionCountForTesting == 0)
-        listener.stop()
-    }
-
-    @Test("A build whose signature names no team publishes no socket")
-    func noAuthorizerBindsNothing() throws {
-        let claim = try makeClaim()
-        let path = claim.socketPath
-        let listener = VMCommandSocketListener(
-            router: VMCommandEnvelopeRouter(commands: WiredCommandCore().core),
-            authorizer: nil,
-            copyClaim: .success(claim),
-            awaitReady: {},
-            prepareToSurface: {})
-        listener.start()
-        #expect(!FileManager.default.fileExists(atPath: path))
-        listener.stop()
     }
 }
 

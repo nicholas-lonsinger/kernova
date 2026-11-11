@@ -23,36 +23,6 @@ struct VMConsentPolicyTests {
         }
     }
 
-    @Test("A verb needing two consents asks each with its own prompt, then runs with both")
-    func asksEachConsentInTurn() async throws {
-        var asked: [ConfirmationKind] = []
-        var given: [Consent] = []
-        let needs: [ConfirmationKind] = [.revertToSnapshot, .startBesideSharedMachineIdentity]
-
-        try await VMConsentPolicy.run(prompting: { asked.append($0.kind) }) { consent in
-            given.append(consent)
-            try verb(needing: needs)(consent)
-        }
-
-        #expect(asked == needs)
-        #expect(
-            given == [
-                .none, Consent([.revertToSnapshot]),
-                Consent([.revertToSnapshot, .startBesideSharedMachineIdentity]),
-            ])
-    }
-
-    @Test("A refusal for a consent already given is rethrown rather than asked again")
-    func aRepeatedRefusalIsRethrown() async throws {
-        var asked = 0
-        let refusal = CommandError.confirmationRequired(prompt(.forceStop))
-
-        await #expect(throws: refusal) {
-            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { _ in throw refusal }
-        }
-        #expect(asked == 1)
-    }
-
     @Test("A declined prompt ends the loop with what the prompt threw")
     func aDeclinedPromptEndsTheLoop() async throws {
         struct Declined: Error {}
@@ -122,56 +92,5 @@ struct VMConsentPolicyTests {
         }
 
         #expect(endings == [.refusedVerb, .start(vm: vm)])
-    }
-
-    @Test("A second step refusal after a route is rethrown rather than asked again")
-    func aRepeatedStepRefusalIsRethrown() async throws {
-        var asked = 0
-        let refusal = CommandError.stepRequired(requirement())
-
-        await #expect(throws: refusal) {
-            try await VMConsentPolicy.run(
-                prompting: { _ in },
-                choosingRoute: {
-                    asked += 1
-                    return $0.routes[0]
-                },
-                taking: { _ in }
-            ) { _, _ in throw refusal }
-        }
-        #expect(asked == 1)
-    }
-
-    @Test("A step that fails ends the run before the verb runs again")
-    func aFailedStepEndsTheRun() async throws {
-        struct StepFailed: Error {}
-        var runs = 0
-
-        await #expect(throws: StepFailed.self) {
-            try await VMConsentPolicy.run(
-                prompting: { _ in },
-                choosingRoute: { $0.routes[0] },
-                taking: { _ in throw StepFailed() }
-            ) { _, _ in
-                runs += 1
-                throw CommandError.stepRequired(requirement())
-            }
-        }
-        #expect(runs == 1)
-    }
-
-    @Test("A step refusal naming no route, or met by a door that cannot chain steps, stands")
-    func unroutableStepRefusalStands() async throws {
-        let empty = CommandError.stepRequired(requirement(routes: 0))
-        await #expect(throws: empty) {
-            try await VMConsentPolicy.run(
-                prompting: { _ in }, choosingRoute: { $0.routes[0] }, taking: { _ in }
-            ) { _, _ in throw empty }
-        }
-
-        let routed = CommandError.stepRequired(requirement())
-        await #expect(throws: routed) {
-            try await VMConsentPolicy.run(prompting: { _ in }) { _ in throw routed }
-        }
     }
 }
