@@ -23,6 +23,36 @@ struct VMConsentPolicyTests {
         }
     }
 
+    @Test("A verb needing two consents asks each with its own prompt, then runs with both")
+    func asksEachConsentInTurn() async throws {
+        var asked: [ConfirmationKind] = []
+        var given: [Consent] = []
+        let needs: [ConfirmationKind] = [.revertToSnapshot, .startBesideSharedMachineIdentity]
+
+        try await VMConsentPolicy.run(prompting: { asked.append($0.kind) }) { consent in
+            given.append(consent)
+            try verb(needing: needs)(consent)
+        }
+
+        #expect(asked == needs)
+        #expect(
+            given == [
+                .none, Consent([.revertToSnapshot]),
+                Consent([.revertToSnapshot, .startBesideSharedMachineIdentity]),
+            ])
+    }
+
+    @Test("A refusal for a consent already given is rethrown rather than asked again")
+    func aRepeatedRefusalIsRethrown() async throws {
+        var asked = 0
+        let refusal = CommandError.confirmationRequired(prompt(.forceStop))
+
+        await #expect(throws: refusal) {
+            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { _ in throw refusal }
+        }
+        #expect(asked == 1)
+    }
+
     @Test("A declined prompt ends the loop with what the prompt threw")
     func aDeclinedPromptEndsTheLoop() async throws {
         struct Declined: Error {}
