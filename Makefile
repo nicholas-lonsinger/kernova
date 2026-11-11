@@ -76,6 +76,7 @@ FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  Tools/tests/check-self-activation.sh \
                  Tools/tests/check-portable-imports.sh \
                  Tools/tests/check-generated-protos.sh \
+                 Tools/tests/githooks.sh \
                  Tools/tests/dead-code.sh
 
 # Source roots for format/lint, derived from git rather than hand-maintained

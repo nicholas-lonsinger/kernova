@@ -24,6 +24,10 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+# Git exports GIT_DIR and its companions to a hook (githooks(5)), and they
+# outrank `-C` and a directory's own .git for every git and SwiftPM call below.
+# shellcheck disable=SC2046 # one variable name per word
+unset $(git rev-parse --local-env-vars)
 
 echo "pre-push: running 'make lint' (bypass with git push --no-verify)"
 
