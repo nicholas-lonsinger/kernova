@@ -120,6 +120,31 @@ struct VMCommandCoreArrivalTests {
         #expect(events.failures.first?.message == failure.message)
     }
 
+    // MARK: - F2: An Arrival Is Not a VM
+
+    @Test("An arrival's storage disks answer the list its write was asked for, unmeasured")
+    func storageDisksOfAnArrivalAreUnmeasured() async throws {
+        let harness = makeHarness()
+        let source = makeSource(in: harness)
+        let hold = DispatchSemaphore(value: 0)
+        storage.setCloneHold(hold)
+        defer { hold.signal() }
+
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .newMachine, waitForOutcome: false)
+        let arrival = try #require(harness.library.arrivals.first)
+
+        let disks = try await harness.core.storageDisks(of: .id(row.id))
+
+        #expect(disks.map(\.label) == ["Main Disk"])
+        #expect(
+            disks.map(\.path)
+                == [arrival.destinationURL.appendingPathComponent("Disk.asif").path(percentEncoded: false)])
+        #expect(disks.allSatisfy { $0.capacityBytes == nil && $0.usedBytes == nil })
+        hold.signal()
+        await arrival.settle()
+    }
+
     // MARK: - F14: Cancel Around the Rename
 
     @Test("A cancel during the rename of a create that starts after creating trashes it and starts nothing")
