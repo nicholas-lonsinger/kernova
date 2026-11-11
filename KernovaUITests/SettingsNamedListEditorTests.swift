@@ -50,14 +50,18 @@ struct SettingsNamedListEditorTests {
     /// place of the double-click interval.
     @MainActor
     private final class Deferrals {
-        private var pending: [@MainActor () -> Void] = []
+        private var pending: [UUID: @MainActor () -> Void] = [:]
 
-        func deferral(_ fire: @escaping @MainActor () -> Void) { pending.append(fire) }
+        func deferral(_ fire: @escaping @MainActor () -> Void) -> @MainActor () -> Void {
+            let id = UUID()
+            pending[id] = fire
+            return { [weak self] in self?.pending[id] = nil }
+        }
 
         /// Fires every rename waiting out the interval.
         func elapse() {
-            let due = pending
-            pending = []
+            let due = pending.values
+            pending = [:]
             for fire in due { fire() }
         }
     }
@@ -151,6 +155,21 @@ struct SettingsNamedListEditorTests {
 
         #expect(editor.tableView.selectedRow == 1)
         #expect(renameEditor(editor, row: 1)?.string == "Home")
+    }
+
+    @Test("A double-click while a slow second click waits drops the waiting rename")
+    func doubleClickDropsAWaitingSlowClickRename() throws {
+        let source = Source([(UUID(), "Work")])
+        let deferrals = Deferrals()
+        let (editor, _) = makeEditor(source, deferrals)
+        try click(editor, row: 0)
+        try click(editor, row: 0)
+
+        try click(editor, row: 0, count: 2)
+        try #require(renameEditor(editor, row: 0)).doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        deferrals.elapse()
+
+        #expect(renameEditor(editor, row: 0) == nil)
     }
 
     @Test("Return renames through the source; Escape puts the name back and renames nothing")

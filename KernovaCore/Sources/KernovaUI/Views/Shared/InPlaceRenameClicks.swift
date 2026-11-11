@@ -15,8 +15,9 @@ import AppKit
 /// row is still the selected one.
 @MainActor
 final class InPlaceRenameClicks<Item> {
-    /// Runs `fire` once the double-click interval has passed.
-    typealias Deferral = @MainActor (_ fire: @escaping @MainActor () -> Void) -> Void
+    /// Runs `fire` once the double-click interval has passed, unless the
+    /// returned cancel runs first.
+    typealias Deferral = @MainActor (_ fire: @escaping @MainActor () -> Void) -> @MainActor () -> Void
 
     /// Opens the rename on a row.
     var begin: ((Int) -> Void)?
@@ -33,12 +34,9 @@ final class InPlaceRenameClicks<Item> {
     /// Whether a point in the table is over a row's name.
     private let isOverName: (NSPoint, Int) -> Bool
 
-    /// The item a slow second click armed, waiting out the double-click
-    /// interval.
-    private var pendingItem: Item?
-    /// Which arming a deferred fire belongs to, so one ``cancel()`` or a
-    /// later arming superseded fires nothing.
-    private var arming = 0
+    /// Cancels the rename a slow second click armed, while it waits out the
+    /// double-click interval.
+    private var cancelPending: (@MainActor () -> Void)?
 
     init(
         table: NSTableView, doubleClickBegins: Bool, deferral: @escaping Deferral = afterDoubleClickInterval,
@@ -79,21 +77,18 @@ final class InPlaceRenameClicks<Item> {
         guard wasSelected, overName, Self.releasedInPlace(start, end), table.selectedRow == clickedRow,
             let clickedItem = item(clickedRow)
         else { return }
-        arming += 1
-        let armed = arming
-        pendingItem = clickedItem
-        deferral { [weak self] in self?.firePendingRename(armed) }
+        cancel()
+        cancelPending = deferral { [weak self] in self?.firePendingRename(of: clickedItem) }
     }
 
     /// Drops a pending slow-second-click rename, so it can't fire later.
     func cancel() {
-        arming += 1
-        pendingItem = nil
+        cancelPending?()
+        cancelPending = nil
     }
 
-    private func firePendingRename(_ armed: Int) {
-        guard armed == arming, let item = pendingItem else { return }
-        pendingItem = nil
+    private func firePendingRename(of item: Item) {
+        cancelPending = nil
         guard let current = row(item), current == table.selectedRow else { return }
         begin?(current)
     }
@@ -108,9 +103,10 @@ final class InPlaceRenameClicks<Item> {
 /// Runs `fire` once the user's double-click interval has passed, in the run
 /// loop's default mode, so not while a press is being tracked.
 @MainActor
-func afterDoubleClickInterval(_ fire: @escaping @MainActor () -> Void) {
+func afterDoubleClickInterval(_ fire: @escaping @MainActor () -> Void) -> @MainActor () -> Void {
     let timer = Timer(timeInterval: NSEvent.doubleClickInterval, repeats: false) { _ in
         MainActor.assumeIsolated { fire() }
     }
     RunLoop.main.add(timer, forMode: .default)
+    return { timer.invalidate() }
 }
