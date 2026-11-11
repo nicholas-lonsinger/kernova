@@ -153,6 +153,7 @@ Write to that baseline — nothing the reader already holds, and no why unless i
 | A GitHub issue | Known gaps, planned work, triage |
 | The PR body | The argument, the route taken, rejected alternatives |
 | The squash commit body | The merged change |
+| CHANGELOG.md | What each release changes for the people who use Kernova, and the manual step an update needs |
 | An agent's memory | What no row above can hold — the maintainer's own machine, accounts, and private arrangements; a fact true in every repository goes to the agent's user scope |
 | **Nowhere** | Everything else. The common destination, not a failure |
 
@@ -198,14 +199,16 @@ A fix's PR body states the invariant it restores and what now holds it: the stru
 
 ## Change Protocol
 
-Before calling a task done, work these two follow-ups; most changes owe neither.
+Before calling a task done, work these follow-ups; most changes owe neither of the first two.
 
 1. **Docs** — the file whose description the change invalidated, routed by the layer table above; file layout is not a component boundary. Surgical edits only.
 2. **Agent instructions** — AGENTS.md and the entry points importing it — only if a rule stated there changed.
+3. **Changelog** — a change someone using the app, the `kernova` CLI, scripting or a guest agent can notice adds one bullet under its area in the top section of [CHANGELOG.md](CHANGELOG.md), shaped like its neighbours and ending with the PR's link.
+   A change to something the previous release didn't have edits that thing's bullet instead of adding one. One that breaks what the previous release's users relied on, or leaves them a manual step, goes under that section's Upgrade notes and names the step.
 
 ### Reporting
 
-When either follow-up changed a file, or is owed and unpaid, end the response with a `### Maintenance Notes` list, one line per file:
+When the docs or agent-instructions follow-up changed a file, or is owed and unpaid, end the response with a `### Maintenance Notes` list, one line per file:
 
 - 📝 — changed here; name the file and what changed, in a phrase.
 - ⚠️ — owed and unpaid; name the gap and its issue number, or what closing it takes.
