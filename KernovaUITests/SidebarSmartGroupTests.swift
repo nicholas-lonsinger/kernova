@@ -260,7 +260,7 @@ struct SidebarSmartGroupTests {
         #expect(
             menu.items.map(\.title) == [
                 "Show VMs in \u{201C}Picked\u{201D} where", "Guest OS", "State", "Network", "Guest Agent", "Other", "",
-                "Start All", "Suspend All", "Stop All", "Restart All", "", "Rename Smart Group\u{2026}",
+                "Start All", "Suspend All", "Stop All", "Restart All", "", "Rename Smart Group",
                 "Delete Smart Group",
             ])
         #expect(menu.items[0].isSectionHeader)
@@ -309,6 +309,32 @@ struct SidebarSmartGroupTests {
         #expect(viewModel.library.smartGroups == [])
         try await waitUntil { outline.numberOfRows == 2 }
         #expect((outline.item(atRow: 0) as? SidebarSection)?.id == .library)
+    }
+
+    @Test("A name the library refuses on a header reopens its edit holding that name, once the refusal is dismissed")
+    func refusedHeaderNameReopensTheEdit() async throws {
+        let viewModel = makeViewModel()
+        viewModel.library.admitFixture(name: "A")
+        try viewModel.library.saveSidebarFilter(VMLibraryFilter(guestOSes: [.macOS]), asSmartGroupNamed: "Macs")
+        let linux = try viewModel.library.saveSidebarFilter(
+            VMLibraryFilter(guestOSes: [.linux]), asSmartGroupNamed: "Linux")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let window = try #require(outline.window)
+        let menu = try #require(controller.viewMenu(for: .smartGroup(linux.id)))
+        menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Rename Smart Group" }))
+
+        typeAndReturn("macs", in: try #require(renameEditor(of: sectionHeader(.smartGroup(linux.id), in: outline))))
+
+        let refusal = try #require(window.attachedSheet)
+        #expect(viewModel.activeRename == nil)
+        #expect(sectionHeader(.smartGroup(linux.id), in: outline)?.isRenaming == false)
+        window.endSheet(refusal, returnCode: .alertFirstButtonReturn)
+
+        try await waitUntil { renameEditor(of: sectionHeader(.smartGroup(linux.id), in: outline)) != nil }
+        #expect(renameEditor(of: sectionHeader(.smartGroup(linux.id), in: outline))?.string == "macs")
+        #expect(viewModel.activeRename == .sidebar(.group(.smartGroup, linux.id)))
+        #expect(viewModel.library.smartGroups?.map(\.name) == ["Macs", "Linux"])
     }
 
     @Test("Deleting a named network leaves each filter naming it, which then admits no VM and says so")

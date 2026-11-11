@@ -101,7 +101,8 @@ package final class SidebarTree {
         package fileprivate(set) var children: [Children] = []
 
         /// Nodes present in both layouts whose content changed: a row's entry,
-        /// or a section's or header's title.
+        /// or a group header's title. A section's title and notice change in
+        /// place, without a reload.
         package fileprivate(set) var reloaded: [SidebarNode] = []
 
         /// Sections and group headers the current layout added.
@@ -224,8 +225,10 @@ package final class SidebarTree {
             let existing = self.sectionsByID[spec.id]
             let section = existing ?? SidebarSection(id: spec.id, title: spec.title, notice: spec.notice)
             if let existing {
-                retitle(existing, from: existing.title, to: spec.title) { existing.title = spec.title }
-                retitle(existing, from: existing.notice ?? "", to: spec.notice ?? "") { existing.notice = spec.notice }
+                // Not reloaded: the sidebar re-renders every section header in
+                // place on each pass, which keeps a rename open in one.
+                existing.title = spec.title
+                existing.notice = spec.notice
             } else {
                 changes.created.append(section)
             }

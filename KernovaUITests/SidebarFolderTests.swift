@@ -194,7 +194,7 @@ struct SidebarFolderTests {
             return try #require(menu.items.first { $0.title == "Add to Folder" }?.submenu)
         }
 
-        #expect(try submenu().items.map(\.title) == ["Clients", "Demo", "", "New Folder\u{2026}"])
+        #expect(try submenu().items.map(\.title) == ["Clients", "Demo", "", "New Folder"])
         #expect(try submenu().items.prefix(2).map(\.state) == [.off, .off])
         try submenu().performActionForItem(at: 0)
         try submenu().performActionForItem(at: 1)
@@ -260,7 +260,7 @@ struct SidebarFolderTests {
         #expect(
             menu.items.map(\.title) == [
                 "\u{201C}Clients\u{201D} \u{2014} drag VMs here to add them", "Start All", "Suspend All",
-                "Stop All", "Restart All", "", "Rename Folder\u{2026}", "Delete Folder",
+                "Stop All", "Restart All", "", "Rename Folder", "Delete Folder",
             ])
         #expect(menu.items[0].isSectionHeader)
         #expect(
@@ -268,56 +268,98 @@ struct SidebarFolderTests {
                 == menu.items.map(\.title))
     }
 
-    @Test("New Folder… in the library menu names a new, empty folder through a sheet")
-    func newFolderFromLibraryMenu() async throws {
+    @Test("New Folder in the library menu lists an empty Untitled Folder at once, its header open to name it")
+    func newFolderFromLibraryMenu() throws {
         let viewModel = makeViewModel()
         viewModel.library.admitFixture(name: "A")
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
         let window = try #require(outline.window)
         let menu = try #require(controller.viewMenu(for: .library))
-        let item = try #require(menu.items.firstIndex { $0.title == "New Folder\u{2026}" })
+        let item = try #require(menu.items.firstIndex { $0.title == "New Folder" })
         #expect(menu.items[item - 1].title == "Save as Smart Group\u{2026}")
         #expect(menu.items[item].isEnabled)
 
         menu.performActionForItem(at: item)
-        let sheet = try #require(window.attachedSheet)
-        let field = try #require(
-            sheet.contentView.flatMap { allSubviews(NSTextField.self, in: $0).first(where: \.isEditable) })
-        #expect(field.stringValue == "Untitled Folder")
-        field.stringValue = "Clients"
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
 
-        try await waitUntil { viewModel.library.folders?.map(\.name) == ["Clients"] }
-        #expect(viewModel.library.folders?.first?.members == [])
-        try await waitUntil { (outline.item(atRow: 0) as? SidebarSection)?.id == .library }
+        #expect(window.attachedSheet == nil)
+        let folder = try #require(viewModel.library.folders?.first)
+        #expect(viewModel.library.folders?.map(\.name) == ["Untitled Folder"])
+        #expect(folder.members == [])
+        #expect(viewModel.activeRename == .sidebar(.group(.folder, folder.id)))
+        let editor = try #require(renameEditor(of: sectionHeader(.folder(folder.id), in: outline)))
+        #expect(editor.string == "Untitled Folder")
+
+        typeAndReturn("Clients", in: editor)
+
+        #expect(viewModel.library.folders?.map(\.name) == ["Clients"])
+        #expect(viewModel.activeRename == nil)
+        controller.viewDidAppear()
+        #expect(sectionHeader(.folder(folder.id), in: outline)?.isRenaming == false)
         #expect(
             (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.title } == [
                 "Virtual Machines", "Clients",
             ])
     }
 
-    @Test("New Folder… under Add to Folder makes a folder holding that VM")
-    func newFolderFromRowMenu() async throws {
+    @Test("New Folder under Add to Folder lists an unused-named folder holding that VM, its header open to name it")
+    func newFolderFromRowMenu() throws {
         let viewModel = makeViewModel()
         let a = viewModel.library.admitFixture(name: "A")
         try viewModel.library.createFolder(named: "Untitled Folder")
         let controller = SidebarViewController(viewModel: viewModel)
         let outline = try shownOutline(of: controller)
-        let window = try #require(outline.window)
         let submenu = try #require(
             controller.buildContextMenu(for: a).items.first { $0.title == "Add to Folder" }?.submenu)
 
-        submenu.performActionForItem(at: try #require(submenu.items.firstIndex { $0.title == "New Folder\u{2026}" }))
-        let sheet = try #require(window.attachedSheet)
-        let field = try #require(
-            sheet.contentView.flatMap { allSubviews(NSTextField.self, in: $0).first(where: \.isEditable) })
-        #expect(field.stringValue == "Untitled Folder 2")
-        window.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        submenu.performActionForItem(at: try #require(submenu.items.firstIndex { $0.title == "New Folder" }))
 
-        try await waitUntil { viewModel.library.folders?.count == 2 }
-        #expect(viewModel.library.folders?.last?.name == "Untitled Folder 2")
-        #expect(viewModel.library.folders?.last?.members == [a.id])
+        let folder = try #require(viewModel.library.folders?.last)
+        #expect(viewModel.library.folders?.count == 2)
+        #expect(folder.name == "Untitled Folder 2")
+        #expect(folder.members == [a.id])
+        #expect(renameEditor(of: sectionHeader(.folder(folder.id), in: outline))?.string == "Untitled Folder 2")
+    }
+
+    @Test("Rename Folder opens the folder's header in place; Escape keeps its name")
+    func renameFolderInPlaceThenEscape() throws {
+        let viewModel = makeViewModel()
+        let folder = try viewModel.library.createFolder(named: "Clients")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let window = try #require(outline.window)
+        let menu = try #require(controller.viewMenu(for: .folder(folder.id)))
+
+        menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Rename Folder" }))
+
+        #expect(window.attachedSheet == nil)
+        let header = try #require(sectionHeader(.folder(folder.id), in: outline))
+        let editor = try #require(renameEditor(of: header))
+        #expect(editor.string == "Clients")
+        editor.string = "Abandoned"
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+
+        #expect(viewModel.activeRename == nil)
+        #expect(!header.isRenaming)
+        #expect(viewModel.library.folders?.map(\.name) == ["Clients"])
+    }
+
+    @Test("Deleting a folder whose header is being renamed ends the rename and reports nothing")
+    func deletingTheRenamedFolderEndsTheRename() throws {
+        let viewModel = makeViewModel()
+        let folder = try viewModel.library.createFolder(named: "Clients")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        let window = try #require(outline.window)
+        controller.renameGroup(.folder, folder.id)
+        try #require(renameEditor(of: sectionHeader(.folder(folder.id), in: outline))).string = "Typed"
+
+        try viewModel.library.deleteFolder(folder.id)
+        controller.viewDidAppear()
+
+        #expect(viewModel.activeRename == nil)
+        #expect(viewModel.library.folders == [])
+        #expect(window.attachedSheet == nil)
     }
 
     @Test("Rename retitles the folder; Delete asks first, then removes it, keeps its VMs, and moves its selection")

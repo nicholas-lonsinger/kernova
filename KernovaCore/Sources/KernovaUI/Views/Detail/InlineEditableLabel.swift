@@ -145,13 +145,16 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
 
     // MARK: - Inline edit
 
-    /// Begins inline editing of the text.
+    /// Begins inline editing of the text, the box holding `draft` in its
+    /// place when one is given — the text an edit the owner refused was
+    /// committed with. Escape still reverts to the text.
     ///
     /// The appearance flips whether or not the label is in a window yet: a row
     /// configured during a list reload is armed before it joins one, and
     /// ``viewDidMoveToWindow()`` takes focus when it does.
-    func beginEditing() {
+    func beginEditing(holding draft: String? = nil) {
         guard controlsEnabled, !isEditing else { return }
+        if let draft { stringValue = draft }
         isEditing = true
         onEditBegan?()
         clickRecognizer?.isEnabled = false
@@ -206,10 +209,13 @@ final class InlineEditableLabel: NSTextField, NSTextFieldDelegate {
     /// Taking focus can synchronously commit another surface's pending edit of
     /// the same value, changing it after the seed — and that mutation lands
     /// inside this very pass, so no later pass repairs an already-open box.
-    /// `originalText` moves with it, so Escape reverts to the handed-off text.
+    /// `originalText` moves with it, so Escape reverts to the handed-off text;
+    /// a draft the edit opened holding stays in the box.
     private func reseedFromCurrentText() {
-        guard let source = currentText, let text = source(), text != stringValue else { return }
+        guard let source = currentText, let text = source(), text != originalText else { return }
+        let holdsDraft = stringValue != originalText
         originalText = text
+        guard !holdsDraft else { return }
         stringValue = text
         currentEditor()?.string = text
         invalidateIntrinsicContentSize()

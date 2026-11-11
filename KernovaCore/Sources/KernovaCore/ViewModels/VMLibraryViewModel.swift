@@ -632,21 +632,21 @@ package final class VMLibraryViewModel {
     /// existed, focused when one attaches.
     @ObservationIgnored private var bufferedDisplayFocus: UUID?
 
-    /// The one rename open: in a sidebar row — held by the library
-    /// (``VMLibrary/sidebarRenameID``), which ends it once no row lists the
-    /// VM — or in the detail pane.
+    /// The one rename open: in the sidebar, on a VM's row or a group's
+    /// header — held by the library (``VMLibrary/sidebarRename``), which ends
+    /// it once the sidebar lists neither — or in the detail pane.
     package var activeRename: RenameTarget? {
-        get { library.sidebarRenameID.map(RenameTarget.sidebar) ?? detailRenameID.map(RenameTarget.detail) }
+        get { library.sidebarRename.map(RenameTarget.sidebar) ?? detailRenameID.map(RenameTarget.detail) }
         set {
             switch newValue {
-            case .sidebar(let id):
+            case .sidebar(let rename):
                 detailRenameID = nil
-                library.sidebarRenameID = id
+                library.sidebarRename = rename
             case .detail(let id):
-                library.sidebarRenameID = nil
+                library.sidebarRename = nil
                 detailRenameID = id
             case nil:
-                library.sidebarRenameID = nil
+                library.sidebarRename = nil
                 detailRenameID = nil
             }
         }
@@ -1605,7 +1605,7 @@ package final class VMLibraryViewModel {
     // MARK: - Rename
 
     package enum RenameTarget: Equatable {
-        case sidebar(UUID)
+        case sidebar(SidebarRename)
         case detail(UUID)
     }
 
@@ -1619,7 +1619,7 @@ package final class VMLibraryViewModel {
 
         fileprivate func target(for instance: VMInstance) -> RenameTarget {
             switch self {
-            case .sidebar: .sidebar(instance.id)
+            case .sidebar: .sidebar(.entry(instance.id))
             case .detail: .detail(instance.id)
             }
         }
@@ -1634,7 +1634,42 @@ package final class VMLibraryViewModel {
             return
         }
         Self.logger.log(.debug, "Starting sidebar rename for '\(instance.name, privacy: .public)'")
-        activeRename = .sidebar(instance.id)
+        activeRename = .sidebar(.entry(instance.id))
+    }
+
+    /// Opens a rename of the `kind` `id` identifies on its section's header;
+    /// one the library doesn't list is asked for no rename.
+    package func renameGroupInSidebar(_ kind: VMGroupKind, _ id: UUID) {
+        guard library.organization.name(of: kind, withID: id) != nil else {
+            Self.logger.log(
+                .notice, "No \(kind.rawValue, privacy: .public) \(id.uuidString, privacy: .public) — no rename opened")
+            return
+        }
+        activeRename = .sidebar(.group(kind, id))
+    }
+
+    /// Commits `name`, typed on the header of the `kind` `id` identifies,
+    /// ending that rename while it is still the one open — as
+    /// ``commitRename(for:newName:from:)`` ends a VM's.
+    ///
+    /// An empty or unchanged name, or a group deleted under the edit, changes
+    /// nothing, as an empty or unchanged VM name does. Throws what the
+    /// library refuses the name with.
+    package func commitGroupRename(_ kind: VMGroupKind, _ id: UUID, to name: String) throws {
+        clearRename(ifOwnedBy: .sidebar(.group(kind, id)))
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let current = library.organization.name(of: kind, withID: id), !trimmed.isEmpty, trimmed != current
+        else { return }
+        switch kind {
+        case .smartGroup: try library.renameSmartGroup(id, to: trimmed)
+        case .folder: try library.renameFolder(id, to: trimmed)
+        }
+    }
+
+    /// Cancels the rename open on the header of the `kind` `id` identifies,
+    /// leaving any rename that has since replaced it.
+    package func cancelGroupRename(_ kind: VMGroupKind, _ id: UUID) {
+        clearRename(ifOwnedBy: .sidebar(.group(kind, id)))
     }
 
     package func renameVMInDetail(_ instance: VMInstance) {

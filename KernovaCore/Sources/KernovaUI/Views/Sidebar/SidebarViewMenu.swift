@@ -170,7 +170,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         let save = pickItem("Save as Smart Group\u{2026}", state: .off, command: .saveAsSmartGroup)
         save.isEnabled = options.filter.isActive
         menu.addItem(save)
-        menu.addItem(pickItem("New Folder\u{2026}", state: .off, command: .newFolder(adding: nil)))
+        menu.addItem(pickItem("New Folder", state: .off, command: .newFolder(adding: nil)))
         menu.addItem(clearFiltersItem(options))
         return menu
     }
@@ -258,7 +258,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         addGroupActions(
             to: menu, group: VMGroupReference(.smartGroup, named: group.id.uuidString), counts: actionCounts)
         menu.addItem(.separator())
-        menu.addItem(pickItem("Rename Smart Group\u{2026}", state: .off, command: .renameSmartGroup(group.id)))
+        menu.addItem(pickItem("Rename Smart Group", state: .off, command: .renameSmartGroup(group.id)))
         menu.addItem(pickItem("Delete Smart Group", state: .off, command: .deleteSmartGroup(group.id)))
         return menu
     }
@@ -271,7 +271,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.sectionHeader(title: "\u{201C}\(folder.name)\u{201D} \u{2014} drag VMs here to add them"))
         addGroupActions(to: menu, group: VMGroupReference(.folder, named: folder.id.uuidString), counts: actionCounts)
         menu.addItem(.separator())
-        menu.addItem(pickItem("Rename Folder\u{2026}", state: .off, command: .renameFolder(folder.id)))
+        menu.addItem(pickItem("Rename Folder", state: .off, command: .renameFolder(folder.id)))
         menu.addItem(pickItem("Delete Folder", state: .off, command: .deleteFolder(folder.id)))
         return menu
     }
@@ -303,7 +303,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
 
     /// A VM row's Add to Folder item for the entry `entry`: a submenu listing
     /// each of `folders`, checked where it holds the entry and each pick
-    /// toggling that, then New Folder…; disabled, pointing to the config
+    /// toggling that, then New Folder; disabled, pointing to the config
     /// check, while the folders can't be read (`nil`).
     func addToFolderItem(entry: UUID, folders: [VMFolder]?) -> NSMenuItem {
         let item = NSMenuItem(title: "Add to Folder", action: nil, keyEquivalent: "")
@@ -322,7 +322,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
                     command: .setMembership(entry: entry, folder: folder.id, isMember: !isMember)))
         }
         if !folders.isEmpty { submenu.addItem(.separator()) }
-        submenu.addItem(pickItem("New Folder\u{2026}", state: .off, command: .newFolder(adding: entry)))
+        submenu.addItem(pickItem("New Folder", state: .off, command: .newFolder(adding: entry)))
         item.submenu = submenu
         return item
     }

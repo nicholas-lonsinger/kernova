@@ -1868,7 +1868,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.renameVMInSidebar(instance)
 
-        #expect(viewModel.activeRename == .sidebar(instance.id))
+        #expect(viewModel.activeRename == .sidebar(.entry(instance.id)))
     }
 
     @Test("commitRename updates name and persists")
@@ -1905,7 +1905,7 @@ struct VMLibraryViewModelTests {
     func cancelRenameClearsState() {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture()
-        viewModel.activeRename = .sidebar(instance.id)
+        viewModel.activeRename = .sidebar(.entry(instance.id))
 
         viewModel.cancelRename(for: instance, from: .sidebar)
 
@@ -1920,12 +1920,12 @@ struct VMLibraryViewModelTests {
         let other = viewModel.library.admitFixture(name: "Other VM")
         // A rename-switch handoff: the marker already moved to the other VM's
         // row when the first row's deferred commit lands.
-        viewModel.activeRename = .sidebar(other.id)
+        viewModel.activeRename = .sidebar(.entry(other.id))
 
         viewModel.commitRename(for: renamed, newName: "New Name", from: .sidebar)
 
         #expect(renamed.name == "New Name")
-        #expect(viewModel.activeRename == .sidebar(other.id))
+        #expect(viewModel.activeRename == .sidebar(.entry(other.id)))
     }
 
     // MARK: - Launch Auto-Start

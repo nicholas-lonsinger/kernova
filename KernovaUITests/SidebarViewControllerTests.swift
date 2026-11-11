@@ -511,7 +511,7 @@ struct SidebarViewControllerTests {
 
         #expect(alphaCell() === editing)
         #expect(editing.isRenaming)
-        #expect(viewModel.activeRename == .sidebar(alpha.id))
+        #expect(viewModel.activeRename == .sidebar(.entry(alpha.id)))
     }
 
     /// A move takes the row's view down, which would drop the typed name with
@@ -566,7 +566,7 @@ struct SidebarViewControllerTests {
         let row = outline.row(forItem: node)
         let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarVMRowCellView)
         #expect(cell.isRenaming)
-        #expect(viewModel.activeRename == .sidebar(mac.id))
+        #expect(viewModel.activeRename == .sidebar(.entry(mac.id)))
     }
 
     @Test("A sidebar rename whose row a filter hides before it opens ends, and opens nothing when the row returns")
@@ -585,6 +585,70 @@ struct SidebarViewControllerTests {
         controller.viewDidAppear()
         #expect(viewModel.activeRename == nil)
         #expect(!isRenamingAnyRow(in: outline))
+    }
+
+    /// A folder's header and a VM's row hold the one rename between them: the
+    /// one opened last takes over, and the text typed into the other lands.
+    @Test("Opening a header's rename commits a row's open one, and the reverse")
+    func headerAndRowRenamesTakeOverFromEachOther() throws {
+        let storage = MockVMStorageService()
+        let viewModel = makeViewModel(storageService: storage)
+        let alpha = viewModel.library.admitFixture(name: "Alpha", files: storage.files)
+        let beta = viewModel.library.admitFixture(name: "Beta", files: storage.files)
+        let folder = try viewModel.library.createFolder(named: "Clients")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        func cell(of instance: VMInstance) throws -> SidebarVMRowCellView {
+            let node = try #require(controller.tree.row(for: .library(instance.id)))
+            return try #require(
+                outline.view(atColumn: 0, row: outline.row(forItem: node), makeIfNecessary: false)
+                    as? SidebarVMRowCellView)
+        }
+        viewModel.renameVMInSidebar(alpha)
+        controller.viewDidAppear()
+        try #require(try nameLabel(in: try cell(of: alpha)).currentEditor()).string = "Alpha 2"
+
+        let menu = try #require(controller.viewMenu(for: .folder(folder.id)))
+        menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Rename Folder" }))
+
+        #expect(alpha.name == "Alpha 2")
+        #expect(try !cell(of: alpha).isRenaming)
+        #expect(viewModel.activeRename == .sidebar(.group(.folder, folder.id)))
+        let header = try #require(sectionHeader(.folder(folder.id), in: outline))
+        try #require(renameEditor(of: header)).string = "Clients 2"
+
+        viewModel.renameVMInSidebar(beta)
+        controller.viewDidAppear()
+
+        #expect(viewModel.library.folders?.map(\.name) == ["Clients 2"])
+        #expect(!header.isRenaming)
+        #expect(try cell(of: beta).isRenaming)
+        #expect(viewModel.activeRename == .sidebar(.entry(beta.id)))
+    }
+
+    /// Another copy of Kernova, or a script, can rename the folder while its
+    /// header is being edited; the sidebar re-renders headers in place, so
+    /// the box and what was typed in it stay.
+    @Test("A header's open rename stays, with its text, through library changes, its own folder's rename included")
+    func headerRenameSurvivesLibraryChanges() throws {
+        let viewModel = makeViewModel()
+        let alpha = viewModel.library.admitFixture(name: "Alpha")
+        let folder = try viewModel.library.createFolder(named: "Clients")
+        let controller = SidebarViewController(viewModel: viewModel)
+        let outline = try shownOutline(of: controller)
+        controller.renameGroup(.folder, folder.id)
+        let header = try #require(sectionHeader(.folder(folder.id), in: outline))
+        try #require(renameEditor(of: header)).string = "Typed"
+
+        try viewModel.library.add([alpha.id], toFolder: folder.id)
+        try viewModel.library.renameFolder(folder.id, to: "Elsewhere")
+        viewModel.library.admitFixture(name: "Beta")
+        controller.viewDidAppear()
+
+        #expect(controller.tree.sections.first { $0.id == .folder(folder.id) }?.title == "Elsewhere")
+        #expect(sectionHeader(.folder(folder.id), in: outline) === header)
+        #expect(renameEditor(of: header)?.string == "Typed")
+        #expect(viewModel.activeRename == .sidebar(.group(.folder, folder.id)))
     }
 
     private func isRenamingAnyRow(in outline: NSOutlineView) -> Bool {

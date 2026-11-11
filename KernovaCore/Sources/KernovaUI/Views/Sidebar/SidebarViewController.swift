@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
 import KernovaKit
 import KernovaLogging
@@ -43,9 +44,13 @@ final class SidebarViewController: NSViewController {
 
     private var modelObservation: ObservationLoop?
 
-    /// The row currently hosting an inline-rename field editor, so the rename
-    /// loop doesn't restart an in-flight edit.
-    private var editingRow: SidebarRow?
+    /// The VM row or section header currently hosting an inline-rename field
+    /// editor, so the rename loop doesn't restart an in-flight edit.
+    private var editingNode: SidebarNode?
+
+    /// The text the next group rename the rename pass opens holds in place of
+    /// the group's name: what a refused rename was committed with.
+    private var groupRenameDraft: String?
 
     /// Builds each section header's menu and a row's folder and tag items; a
     /// pick runs its command.
@@ -236,9 +241,9 @@ final class SidebarViewController: NSViewController {
         // 27.0), but nothing documents that, and it would run the commit inside
         // the update. The session ends with its view, so a row the change
         // reinserts comes back closed.
-        if let editingRow, changes.detaches(editingRow) {
+        if let editingNode, changes.detaches(editingNode) {
             view.window?.makeFirstResponder(outlineView)
-            self.editingRow = nil
+            self.editingNode = nil
         }
         outlineView.beginUpdates()
         // Each parent's removals index its previous children, its moves the
@@ -381,27 +386,47 @@ final class SidebarViewController: NSViewController {
     /// ``VMLibrary/preferredRow(of:in:)`` resolves to, the row the library's
     /// reconcile keeps the request against.
     private func renameRow(for id: UUID) -> SidebarRow? {
-        if let editingRow, editingRow.key.entryID == id, tree.row(for: editingRow.key) === editingRow {
+        if let editingRow = editingNode as? SidebarRow, editingRow.key.entryID == id,
+            tree.row(for: editingRow.key) === editingRow
+        {
             return editingRow
         }
         let row = tree.row(resolving: viewModel.library.preferredRow(of: id))
         return row?.entry.vm == nil ? nil : row
     }
 
+    /// The row or section header `rename` is open in.
+    private func renameNode(for rename: SidebarRename) -> SidebarNode? {
+        switch rename {
+        case .entry(let id): renameRow(for: id)
+        case .group(let kind, let id): tree.sections.first { $0.id == SidebarSectionID(kind, id) }
+        }
+    }
+
     private func applyRenameState() {
-        guard case .sidebar(let id)? = viewModel.activeRename, let node = renameRow(for: id) else {
+        let draft = groupRenameDraft
+        groupRenameDraft = nil
+        guard case .sidebar(let rename)? = viewModel.activeRename, let node = renameNode(for: rename) else {
             endActiveEditingIfNeeded()
             return
         }
-        guard editingRow !== node else { return }
-        // Moving the rename to a different row: end the previous session first,
-        // committing its in-flight text — the switch path below otherwise never
-        // tears the old row down.
+        guard editingNode !== node else { return }
+        // Moving the rename to a different row or header: end the previous
+        // session first, committing its in-flight text — the switch path below
+        // otherwise never tears the old one down.
         endActiveEditingIfNeeded()
 
+        switch node {
+        case let row as SidebarRow: beginRename(of: row)
+        case let section as SidebarSection: beginRename(of: section, holding: draft)
+        default: break
+        }
+    }
+
+    private func beginRename(of node: SidebarRow) {
         guard let row = revealedRow(of: node) else { return }
 
-        editingRow = node
+        editingNode = node
 
         // Rename implies selection.
         if outlineView.selectedRow != row {
@@ -420,16 +445,37 @@ final class SidebarViewController: NSViewController {
         setRowUnemphasized(true, atRow: row)
     }
 
+    /// Opens the rename on `section`'s header, holding `draft` in place of
+    /// its name when one is given. A header isn't selectable, so the
+    /// selection stays where it is.
+    private func beginRename(of section: SidebarSection, holding draft: String?) {
+        let row = outlineView.row(forItem: section)
+        guard row >= 0 else { return }
+        editingNode = section
+        outlineView.scrollRowToVisible(row)
+        (outlineView.view(atColumn: 0, row: row, makeIfNecessary: true) as? SidebarGroupHeaderCellView)?
+            .beginRename(holding: draft)
+    }
+
+    /// Opens a rename of the `kind` `id` identifies on its section's header,
+    /// holding `draft` in place of its name when one is given.
+    func renameGroup(_ kind: VMGroupKind, _ id: UUID, holding draft: String? = nil) {
+        viewModel.renameGroupInSidebar(kind, id)
+        groupRenameDraft = draft
+        sync()
+    }
+
     private func endActiveEditingIfNeeded() {
-        guard let node = editingRow else { return }
-        editingRow = nil
+        guard let node = editingNode else { return }
+        editingNode = nil
         let row = outlineView.row(forItem: node)
         guard row >= 0 else { return }
-        if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false)
-            as? SidebarVMRowCellView
-        {
-            cell.endRename()
+        switch outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) {
+        case let cell as SidebarVMRowCellView: cell.endRename()
+        case let cell as SidebarGroupHeaderCellView: cell.endRename()
+        default: break
         }
+        guard node is SidebarRow else { return }
         // Settle the selection emphasis back to its natural state now that the
         // edit is torn down.
         (outlineView.rowView(atRow: row, makeIfNecessary: false) as? SidebarTableRowView)?
@@ -444,6 +490,18 @@ final class SidebarViewController: NSViewController {
         (rowView as? SidebarTableRowView)?.rendersUnemphasized = unemphasized
     }
 
+    /// Closes the rename session of `node` — a VM row or a section header —
+    /// once its edit has ended on its own, by Return, Escape or a click away,
+    /// then settles focus and the selection's emphasis.
+    ///
+    /// The session closes here, with the edit, rather than on the next model
+    /// pass: a rename reopened before that pass would otherwise find the
+    /// session still open and open nothing.
+    func renameEnded(in node: SidebarNode?, grabbingFocus: Bool) {
+        if let node, editingNode === node { editingNode = nil }
+        restoreSidebarFocus(grabbingFocus: grabbingFocus)
+    }
+
     /// Settles the edited row's selection emphasis after an edit ends, deferred
     /// to the next main-actor turn so any commit-click has moved the first
     /// responder before we read it.
@@ -452,16 +510,16 @@ final class SidebarViewController: NSViewController {
     /// the sidebar. The field editor resigns first responder *after* the
     /// end-editing notification fires, so this must run on a later turn or it is
     /// overridden. A click-commit passes false and lets focus follow the click.
-    private func restoreSidebarFocus(grabbingFocus: Bool = true) {
+    private func restoreSidebarFocus(grabbingFocus: Bool) {
         Task { @MainActor [weak self] in
-            guard let self else { return }
+            // A rename opened since holds the focus, and its row stays
+            // unemphasized while its edit box is up.
+            guard let self, self.editingNode == nil else { return }
             if grabbingFocus { self.view.window?.makeFirstResponder(self.outlineView) }
+            // A header's rename selects nothing, and a selection can go before
+            // this turn; `rowView(atRow:makeIfNecessary:)` raises on -1.
             let row = self.outlineView.selectedRow
-            // A row that has since started its own rename must stay unemphasized
-            // while its edit box is up — don't settle it back to blue.
-            if let editingRow = self.editingRow, self.outlineView.item(atRow: row) as? SidebarRow === editingRow {
-                return
-            }
+            guard row >= 0 else { return }
             (self.outlineView.rowView(atRow: row, makeIfNecessary: false)
                 as? SidebarTableRowView)?.settleEmphasis()
         }
@@ -590,7 +648,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
             switch row.entry {
             case .arriving(let arrival): arrivalCell(arrival)
             case .unreadable(let bundle): unreadableCell(bundle)
-            case .vm(let instance): vmCell(instance, isRenaming: editingRow === row)
+            case .vm(let instance): vmCell(instance, in: row)
             }
         default: nil
         }
@@ -599,6 +657,8 @@ extension SidebarViewController: NSOutlineViewDelegate {
     private func headerCell(for section: SidebarSection) -> NSView {
         let cell = headerCell(title: section.title)
         configureHeader(cell, for: section)
+        // Re-armed on remake, as a VM row's rename is.
+        if editingNode === section { cell.beginRename() }
         return cell
     }
 
@@ -668,13 +728,13 @@ extension SidebarViewController: NSOutlineViewDelegate {
         return cell
     }
 
-    private func vmCell(_ instance: VMInstance, isRenaming: Bool) -> NSView {
+    private func vmCell(_ instance: VMInstance, in row: SidebarRow) -> NSView {
         let cell =
             outlineView.makeView(withIdentifier: SidebarVMRowCellView.reuseIdentifier, owner: nil)
             as? SidebarVMRowCellView ?? SidebarVMRowCellView()
         cell.configure(
             instance: instance,
-            isRenaming: isRenaming,
+            isRenaming: editingNode === row,
             installPromptDisabled: { [weak self] in
                 self?.viewModel.agentInstallPromptDisabled ?? false
             },
@@ -699,18 +759,18 @@ extension SidebarViewController: NSOutlineViewDelegate {
                 guard let self, let instance else { return [] }
                 return self.viewModel.library.tags(of: instance)
             },
-            onCommitRename: { [weak self, weak instance] newName, endedByReturn in
+            onCommitRename: { [weak self, weak instance, weak row] newName, endedByReturn in
                 guard let self, let instance else { return }
                 self.viewModel.commitRename(for: instance, newName: newName, from: .sidebar)
                 // Return keeps focus in the sidebar; a click-commit lets focus
                 // follow the click.
-                self.restoreSidebarFocus(grabbingFocus: endedByReturn)
+                self.renameEnded(in: row, grabbingFocus: endedByReturn)
             },
-            onCancelRename: { [weak self, weak instance] in
+            onCancelRename: { [weak self, weak instance, weak row] in
                 guard let self, let instance else { return }
                 self.viewModel.cancelRename(for: instance, from: .sidebar)
                 // Escape returns focus to the sidebar (and the blue selection).
-                self.restoreSidebarFocus()
+                self.renameEnded(in: row, grabbingFocus: true)
             },
             onAgentDiskControl: { [weak self, weak instance] in
                 guard let self, let instance else { return }

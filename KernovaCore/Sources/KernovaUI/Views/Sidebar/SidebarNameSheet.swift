@@ -1,8 +1,7 @@
 import AppKit
-import KernovaCommandModel
 import KernovaCore
 
-/// The sheets naming a smart group or a folder: a new one, and a rename.
+/// The sheet naming a new smart group, which lists the conditions it saves.
 @MainActor
 enum SidebarNameSheet {
     /// Asks for the name of a new smart group showing VMs under
@@ -43,42 +42,6 @@ enum SidebarNameSheet {
                     AlertButton("Cancel", role: .cancel),
                 ]),
             accessoryView: stack, initialFirstResponder: field)
-    }
-
-    /// Asks for the name of a new folder, starting from `suggestedName`;
-    /// Create hands `create` the name typed.
-    static func newFolder(suggestedName: String, create: @escaping (String) -> Void) -> SheetAlert {
-        let field = nameField(suggestedName)
-        let row = nameRow(field)
-        row.setFrameSize(row.fittingSize)
-        return SheetAlert(
-            AlertConfiguration(
-                title: "New Folder",
-                message: "Drag VMs onto the folder to add them. A VM can be in several folders.",
-                buttons: [
-                    AlertButton("Create", role: .default) { create(field.stringValue) },
-                    AlertButton("Cancel", role: .cancel),
-                ]),
-            accessoryView: row, initialFirstResponder: field)
-    }
-
-    /// Asks for a new name for the `kind` named `currentName`; Rename hands
-    /// `rename` the name typed.
-    static func rename(
-        _ kind: VMGroupKind, currentName: String, rename: @escaping (String) -> Void
-    ) -> SheetAlert {
-        let field = nameField(currentName)
-        let row = nameRow(field)
-        row.setFrameSize(row.fittingSize)
-        return SheetAlert(
-            AlertConfiguration(
-                title: kind == .smartGroup ? "Rename Smart Group" : "Rename Folder",
-                message: "",
-                buttons: [
-                    AlertButton("Rename", role: .default) { rename(field.stringValue) },
-                    AlertButton("Cancel", role: .cancel),
-                ]),
-            accessoryView: row, initialFirstResponder: field)
     }
 
     /// How wide the name field is, and how wide a condition wraps at.

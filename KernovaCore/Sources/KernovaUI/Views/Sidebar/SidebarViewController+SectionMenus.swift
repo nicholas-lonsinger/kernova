@@ -42,10 +42,10 @@ extension SidebarViewController {
     /// section is a smart group or a folder, counting `values` — the
     /// library's ``SidebarViewMenu/values(of:)``.
     func selectedGroupMenu(values: [SidebarViewMenu.Value]) -> (kind: VMGroupKind, menu: NSMenu)? {
-        guard let section = viewModel.selection?.section else { return nil }
-        let kind: VMGroupKind? = section.smartGroupID != nil ? .smartGroup : section.folderID != nil ? .folder : nil
-        guard let kind, let menu = viewMenu(for: section, values: values) else { return nil }
-        return (kind, menu)
+        guard let section = viewModel.selection?.section, let group = section.group,
+            let menu = viewMenu(for: section, values: values)
+        else { return nil }
+        return (group.kind, menu)
     }
 
     private func popUpViewMenu(for section: SidebarSectionID, from button: NSButton) {
@@ -87,14 +87,41 @@ extension SidebarViewController {
                 filter: filter, values: SidebarViewMenu.values(of: viewModel)))
     }
 
-    /// Shows `section`'s title, count and menu button in `cell`.
+    /// Shows `section`'s title — renamed in place for a smart group or a
+    /// folder — count and menu button in `cell`.
     func configureHeader(_ cell: SidebarGroupHeaderCellView, for section: SidebarSection) {
         let filtering = filtering(for: section)
         let id = section.id
         cell.configure(
-            title: section.title, notice: section.notice, filtering: filtering,
+            title: section.title, notice: section.notice,
+            renaming: id.group.map { group in
+                SidebarGroupHeaderCellView.Renaming(
+                    commit: { [weak self, weak section] typed, endedByReturn in
+                        guard let self else { return }
+                        commitRename(of: group.kind, group.id, to: typed)
+                        // Return keeps focus in the sidebar; a click-commit
+                        // lets focus follow the click.
+                        renameEnded(in: section, grabbingFocus: endedByReturn)
+                    },
+                    cancel: { [weak self, weak section] in
+                        guard let self else { return }
+                        viewModel.cancelGroupRename(group.kind, group.id)
+                        renameEnded(in: section, grabbingFocus: true)
+                    })
+            },
+            filtering: filtering,
             onFilterButton: filtering == nil
                 ? nil : { [weak self] button in self?.popUpViewMenu(for: id, from: button) })
+    }
+
+    /// Renames the `kind` `id` identifies to `typed`, the text its header's
+    /// edit was committed with. A name the library refuses opens the edit
+    /// again, holding that name, once the refusal is dismissed.
+    private func commitRename(of kind: VMGroupKind, _ id: UUID, to typed: String) {
+        attempt(
+            kind == .smartGroup ? "Couldn\u{2019}t Rename the Smart Group" : "Couldn\u{2019}t Rename the Folder",
+            retry: { [weak self] in self?.renameGroup(kind, id, holding: typed) }
+        ) { try viewModel.commitGroupRename(kind, id, to: typed) }
     }
 
     /// Re-renders each section header the outline view has a view for.
@@ -122,13 +149,13 @@ extension SidebarViewController {
         case .setSmartGroupFilter(let id, let filter):
             attempt("Couldn\u{2019}t Change the Smart Group") { try library.setFilter(filter, ofSmartGroup: id) }
         case .renameSmartGroup(let id):
-            presentRename(.smartGroup, id)
+            renameGroup(.smartGroup, id)
         case .deleteSmartGroup(let id):
             attempt("Couldn\u{2019}t Delete the Smart Group") { try library.deleteSmartGroup(id) }
         case .newFolder(let entry):
-            presentNewFolder(adding: entry)
+            createFolder(adding: entry)
         case .renameFolder(let id):
-            presentRename(.folder, id)
+            renameGroup(.folder, id)
         case .deleteFolder(let id):
             presentDeleteFolder(id)
         case .setMembership(let entry, let folder, true):
@@ -177,27 +204,17 @@ extension SidebarViewController {
             in: window)
     }
 
-    /// Asks for the name of a new folder, starting from `name` — an unused
-    /// "Untitled Folder" when `nil` — which then holds the entry `entry`, if
-    /// any. A name the library refuses brings the sheet back with that name
-    /// in it.
-    private func presentNewFolder(adding entry: UUID?, name: String? = nil) {
-        guard let window = view.window else { return }
-        presentSheetAlert(
-            SidebarNameSheet.newFolder(
-                suggestedName: name
-                    ?? viewModel.library.organization.unusedName(from: "Untitled Folder", for: .folder)
-            ) { [weak self] typed in
-                guard let self else { return }
-                attempt(
-                    "Couldn\u{2019}t Create the Folder",
-                    retry: { [weak self] in self?.presentNewFolder(adding: entry, name: typed) }
-                ) {
-                    let folder = try viewModel.library.createFolder(named: typed, members: entry.map { [$0] } ?? [])
-                    scrollSectionIntoView(.folder(folder.id))
-                }
-            },
-            in: window)
+    /// Lists a new folder under an unused "Untitled Folder" name, holding the
+    /// entry `entry`, if any, and opens its header for a rename, as the
+    /// Finder names a new folder.
+    private func createFolder(adding entry: UUID?) {
+        let library = viewModel.library
+        attempt("Couldn\u{2019}t Create the Folder") {
+            let folder = try library.createFolder(
+                named: library.organization.unusedName(from: "Untitled Folder", for: .folder),
+                members: entry.map { [$0] } ?? [])
+            renameGroup(.folder, folder.id)
+        }
     }
 
     /// Asks before deleting the folder `id` identifies: its membership was
@@ -231,33 +248,6 @@ extension SidebarViewController {
                 AlertButton("Delete", role: .destructive, action: delete),
                 AlertButton("Cancel", role: .cancel),
             ])
-    }
-
-    /// Asks for a new name for the `kind` `id` identifies, starting from
-    /// `name` — its current one when `nil`. A name the library refuses brings
-    /// the sheet back with that name in it.
-    private func presentRename(_ kind: VMGroupKind, _ id: UUID, name: String? = nil) {
-        let library = viewModel.library
-        let current: String? =
-            switch kind {
-            case .smartGroup: library.organization.smartGroup(withID: id)?.name
-            case .folder: library.organization.folder(withID: id)?.name
-            }
-        guard let window = view.window, let current else { return }
-        presentSheetAlert(
-            SidebarNameSheet.rename(kind, currentName: name ?? current) { [weak self] typed in
-                self?.attempt(
-                    kind == .smartGroup
-                        ? "Couldn\u{2019}t Rename the Smart Group" : "Couldn\u{2019}t Rename the Folder",
-                    retry: { [weak self] in self?.presentRename(kind, id, name: typed) }
-                ) {
-                    switch kind {
-                    case .smartGroup: try library.renameSmartGroup(id, to: typed)
-                    case .folder: try library.renameFolder(id, to: typed)
-                    }
-                }
-            },
-            in: window)
     }
 
     /// Runs `change`, showing what it was refused with under `title`, then
