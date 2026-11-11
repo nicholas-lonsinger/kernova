@@ -119,6 +119,8 @@ struct VMLibraryViewModelSnapshotTests {
         }
     }
 
+    // MARK: - Seeding
+
     @Test("Launch reclaims what an interrupted revert or resume left, and a load alone does not")
     func launchSweepsInterruptedWork() async throws {
         let harness = makeHarness()
