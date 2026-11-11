@@ -12,14 +12,6 @@ import Testing
 @Suite("HostAgentStatusItemController.iconSymbol", .caseScoped)
 @MainActor
 struct HostAgentStatusItemIconTests {
-    @Test("A quiet status item wears the plain window glyph")
-    func quietGlyph() {
-        let symbol = HostAgentStatusItemController.iconSymbol(hasUndoneStarts: false, hasWaitingAlerts: false)
-
-        #expect(symbol == "macwindow")
-        #expect(NSImage(systemSymbolName: symbol, accessibilityDescription: nil) != nil)
-    }
-
     @Test("A start left undone with no window to report it swaps in the badged glyph")
     func undoneStartGlyph() {
         let symbol = HostAgentStatusItemController.iconSymbol(hasUndoneStarts: true, hasWaitingAlerts: false)

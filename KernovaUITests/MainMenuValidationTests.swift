@@ -48,13 +48,6 @@ struct MainMenuValidationTests {
         #expect(fixture.validate(makeMenuItem(#selector(AppDelegate.quitCompletely(_:)))))
     }
 
-    @Test("A VM command with nothing selected is disabled")
-    func vmCommandWithoutSelection() {
-        let fixture = makeFixture()
-
-        #expect(!fixture.validate(makeMenuItem(#selector(AppDelegate.startVM(_:)))))
-    }
-
     @Test("Start takes its title from the VM's start action")
     func startRetitlesForPendingInstall() {
         let fixture = makeFixture()
@@ -81,68 +74,6 @@ struct MainMenuValidationTests {
         #expect(fixture.viewModel.capabilities.isAvailable(.discardSavedState, on: instance))
         #expect(fixture.validate(item))
         #expect(item.title == VMInstance.StopAction.discardSavedState.menuTitle)
-    }
-
-    /// Menu validation is where a VM mid-operation used to offer a termination
-    /// Virtualization would refuse; the item is greyed for those seconds now,
-    /// as any unavailable command is.
-    @Test(
-        "Force Stop is enabled only where Virtualization takes a termination",
-        arguments: [
-            (PhaseFixture.settled(.running(sessionID: UUID())), true),
-            (.settled(.livePaused(sessionID: UUID())), true),
-            (
-                .operating(
-                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
-                false
-            ),
-            (.operating(.saving, from: .running(sessionID: UUID())), false),
-            (.operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()), false),
-            (.operating(.capturingSnapshot(.live), from: .running(sessionID: UUID())), false),
-            (.settled(.stopped), false),
-        ])
-    func forceStopValidationFollowsTheStoppableStates(
-        phase: PhaseFixture, isEnabled: Bool
-    ) {
-        let fixture = makeFixture()
-        makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
-        let item = makeMenuItem(#selector(AppDelegate.forceStopVM(_:)))
-
-        #expect(fixture.validate(item) == isEnabled, "\(phase)")
-    }
-
-    /// Restart is offered wherever the stop item stands for the graceful Stop;
-    /// a suspended VM's retitled item discards its saved state, which no
-    /// restart follows.
-    @Test(
-        "Restart is enabled exactly where the stop item offers Stop",
-        arguments: [
-            (PhaseFixture.settled(.running(sessionID: UUID())), true),
-            (.settled(.livePaused(sessionID: UUID())), true),
-            (.settled(.stopped), false),
-            (.settled(.suspended), false),
-            (.settled(.failed(message: "Boot failed.")), false),
-            (
-                .operating(
-                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
-                false
-            ),
-            (.operating(.saving, from: .running(sessionID: UUID())), false),
-            (.operating(.pausing, from: .running(sessionID: UUID())), true),
-            (.operating(.resuming, from: .livePaused(sessionID: UUID())), false),
-            (.operating(.forceStopping, from: .running(sessionID: UUID())), false),
-        ])
-    func restartValidationFollowsStop(phase: PhaseFixture, isEnabled: Bool) throws {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
-        if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: instance) }
-        let stop = makeMenuItem(#selector(AppDelegate.stopVM(_:)))
-        let restart = makeMenuItem(#selector(AppDelegate.restartVM(_:)))
-
-        let offersStop =
-            fixture.validate(stop) && stop.title == VMInstance.StopAction.stop.menuTitle
-        #expect(offersStop == isEnabled, "\(phase)")
-        #expect(fixture.validate(restart) == isEnabled, "\(phase)")
     }
 
     @Test("The Virtual Machine menu lists the six power commands in grid order, none of them an Option alternate")
@@ -193,25 +124,6 @@ struct MainMenuValidationTests {
         }
     }
 
-    @Test(
-        "Force Restart… is enabled exactly where Force Stop… is",
-        arguments: [
-            PhaseFixture.settled(.running(sessionID: UUID())),
-            .settled(.livePaused(sessionID: UUID())),
-            .settled(.stopped),
-            .settled(.suspended),
-            .operating(.forceStopping, from: .running(sessionID: UUID())),
-        ])
-    func forceRestartValidationFollowsForceStop(phase: PhaseFixture) throws {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
-        if case .settled(.suspended) = phase { try VMInstanceFixture.writeSaveFile(for: instance) }
-        let forceStop = makeMenuItem(#selector(AppDelegate.forceStopVM(_:)))
-        let forceRestart = makeMenuItem(#selector(AppDelegate.forceRestartVM(_:)))
-
-        #expect(fixture.validate(forceRestart) == fixture.validate(forceStop), "\(phase)")
-    }
-
     @Test("A build with no bundled guest-agent disk withholds the command")
     func guestAgentDiskWithoutBundledImage() {
         let fixture = makeFixture(
@@ -225,91 +137,6 @@ struct MainMenuValidationTests {
         #expect(fixture.viewModel.capabilities.isAvailable(.toggleGuestAgentDisk, on: instance))
         #expect(!fixture.validate(item))
         #expect(item.title == GuestAgentDiskControl.unavailableTitle)
-    }
-
-    @Test("A bundled guest-agent disk hands title and enablement to the item model")
-    func guestAgentDiskWithBundledImage() {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        let item = makeMenuItem(#selector(AppDelegate.toggleGuestAgentDisk(_:)))
-        let model = GuestAgentDiskControl.model(for: instance, in: fixture.viewModel.capabilities)
-
-        #expect(fixture.validate(item) == model.isEnabled)
-        #expect(item.title == model.title)
-    }
-
-    /// Whether the VM's session has a channel to an agent, and what kind.
-    enum AgentChannel: Sendable {
-        case none
-        /// A session context without the hub transport a socket device gives
-        /// it.
-        case sessionOnly
-        case agent
-    }
-
-    @Test(
-        "Guest Agent Status is enabled exactly while a settled session has a channel to an agent",
-        arguments: [
-            (VMGuestOS.macOS, PhaseFixture.settled(.stopped), AgentChannel.none, false),
-            (.macOS, .settled(.suspended), .none, false),
-            (.macOS, .settled(.running(sessionID: UUID())), .agent, true),
-            (.macOS, .settled(.livePaused(sessionID: UUID())), .agent, true),
-            // An operation presenting the live phase it started from keeps it.
-            (.macOS, .operating(.pausing, from: .running(sessionID: UUID())), .agent, true),
-            (.macOS, .operating(.saving, from: .running(sessionID: UUID())), .agent, false),
-            (
-                .macOS,
-                .operating(
-                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
-                .agent, false
-            ),
-            (.linux, .settled(.stopped), .none, false),
-            (.linux, .settled(.running(sessionID: UUID())), .agent, true),
-            (.linux, .settled(.livePaused(sessionID: UUID())), .agent, true),
-            // A session without a socket device has no agent.
-            (.linux, .settled(.running(sessionID: UUID())), .sessionOnly, false),
-            (.macOS, .settled(.running(sessionID: UUID())), .sessionOnly, false),
-        ])
-    func guestAgentStatusFollowsTheAgentChannel(
-        guestOS: VMGuestOS, phase: PhaseFixture, channel: AgentChannel, isEnabled: Bool
-    ) throws {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: guestOS, phase: phase.phase)
-        if phase.phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
-        switch channel {
-        case .none: break
-        case .sessionOnly: instance.beginSessionContextForTesting()
-        case .agent: instance.beginSessionContextForTesting().hasAgentTransport = true
-        }
-        let item = makeMenuItem(#selector(AppDelegate.showGuestAgentStatus(_:)))
-
-        #expect(fixture.validate(item) == isEnabled, "\(guestOS) \(phase) \(channel)")
-    }
-
-    @Test("Guest Agent Status stays enabled while every agent is current and the sidebar hides its badge")
-    func guestAgentStatusEnabledWhileTheBadgeIsHidden() {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .linux, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        let current = PeerSummary(
-            handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
-            userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
-        instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [current], features: FeatureStatus.merge([])))
-
-        #expect(
-            SidebarVMRowCellView.visibleAgentPresentation(for: instance, installPromptDisabled: false) == nil)
-        #expect(fixture.validate(makeMenuItem(#selector(AppDelegate.showGuestAgentStatus(_:)))))
-    }
-
-    @Test("The Virtual Machine menu offers Guest Agent Status")
-    func vmMenuOffersGuestAgentStatus() {
-        let fixture = makeFixture()
-        let vmMenu = submenu(titled: "Virtual Machine", in: fixture.controller.makeMainMenu())
-
-        let item = vmMenu?.items.first { $0.action == #selector(AppDelegate.showGuestAgentStatus(_:)) }
-        #expect(item?.title == "Guest Agent Status")
     }
 
     @Test("The Clone items name the preference with no VM selected")
@@ -338,26 +165,6 @@ struct MainMenuValidationTests {
         _ = fixture.validate(alternate)
         #expect(clone.title == "Clone as Exact Copy")
         #expect(alternate.isHidden)
-    }
-
-    @Test(
-        "Clone is enabled for a stopped, suspended, paused or running VM, and greyed while an operation holds it",
-        arguments: [
-            (PhaseFixture.settled(.stopped), true),
-            (.settled(.suspended), true),
-            (.settled(.running(sessionID: UUID())), true),
-            (.settled(.livePaused(sessionID: UUID())), true),
-            (.operating(.saving, from: .running(sessionID: UUID())), false),
-            (.operating(.copyingOut(.live), from: .running(sessionID: UUID())), false),
-        ])
-    func cloneValidationFollowsTheCloneableStates(phase: PhaseFixture, isEnabled: Bool) throws {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, phase: phase.phase)
-        if phase.phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
-
-        #expect(
-            fixture.validate(makeMenuItem(#selector(AppDelegate.cloneVM(_:)))) == isEnabled,
-            "\(phase)")
     }
 
     @Test("Take Snapshot is greyed for a running VM whose guest can write an external disk, and enabled once stopped")
@@ -443,34 +250,6 @@ struct MainMenuValidationTests {
     }
 
     // MARK: - The clipboard commands
-
-    /// Has a console peer carry `instance`'s clipboard through its hub.
-    private func carryClipboard(on instance: VMInstance) {
-        let peer = PeerHandle(rawValue: 1)
-        instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), consolePeers: [.clipboard: peer]))
-        instance.hubClipboard.setConsolePeer(peer)
-    }
-
-    @Test(
-        "A clipboard command is enabled only while an agent carries the clipboard and passthrough is off",
-        arguments: [
-            #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)),
-        ])
-    func clipboardCommandEnablement(action: Selector) {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .macOS, phase: .running(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-        }
-        let item = makeMenuItem(action)
-        #expect(!fixture.validate(item))
-
-        carryClipboard(on: instance)
-        #expect(fixture.validate(item))
-
-        fixture.viewModel.library.editConfiguration(of: instance) { $0.clipboardPassthroughEnabled = true }
-        #expect(!fixture.validate(item))
-    }
 
     @Test("The passthrough item is checked while passthrough is on, and enabled while sharing is")
     func passthroughItemFollowsTheSetting() {

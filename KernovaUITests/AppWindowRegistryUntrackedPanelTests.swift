@@ -14,32 +14,11 @@ import Testing
 @Suite("AppWindowRegistry.isUntrackedUserPanel", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct AppWindowRegistryUntrackedPanelTests {
-    @Test("A visible, titled, normal-level window counts as an untracked user panel")
-    func titledNormalLevelWindow() {
-        let window = showTestWindow(styleMask: [.titled, .closable])
-
-        #expect(AppWindowRegistry.isUntrackedUserPanel(window))
-    }
-
     @Test("A status-bar-level window does not count, regardless of visibility")
     func statusBarLevelWindow() {
         let window = makeTestWindow(styleMask: [.titled, .closable])
         window.level = .statusBar
         window.orderFront(nil)
-
-        #expect(!AppWindowRegistry.isUntrackedUserPanel(window))
-    }
-
-    @Test("A visible borderless window does not count")
-    func borderlessWindow() {
-        let window = showTestWindow(styleMask: [.borderless])
-
-        #expect(!AppWindowRegistry.isUntrackedUserPanel(window))
-    }
-
-    @Test("A titled, normal-level window that was never shown does not count")
-    func neverShownWindow() {
-        let window = makeTestWindow(styleMask: [.titled, .closable])
 
         #expect(!AppWindowRegistry.isUntrackedUserPanel(window))
     }

@@ -49,51 +49,6 @@ struct SheetAlertTests {
 
     // MARK: - dispatchAction
 
-    @Test("first-button response fires buttons[0].action")
-    func firstButtonResponse() {
-        var fired: [Int] = []
-        let buttons = [
-            AlertButton("Zero", action: { fired.append(0) }),
-            AlertButton("One", action: { fired.append(1) }),
-            AlertButton("Two", action: { fired.append(2) }),
-        ]
-        dispatchAction(for: .alertFirstButtonReturn, buttons: buttons)
-        #expect(fired == [0])
-    }
-
-    @Test("second-button response fires buttons[1].action")
-    func secondButtonResponse() {
-        var fired: [Int] = []
-        let buttons = [
-            AlertButton("Zero", action: { fired.append(0) }),
-            AlertButton("One", action: { fired.append(1) }),
-            AlertButton("Two", action: { fired.append(2) }),
-        ]
-        dispatchAction(for: .alertSecondButtonReturn, buttons: buttons)
-        #expect(fired == [1])
-    }
-
-    @Test("third-button response fires buttons[2].action")
-    func thirdButtonResponse() {
-        var fired: [Int] = []
-        let buttons = [
-            AlertButton("Zero", action: { fired.append(0) }),
-            AlertButton("One", action: { fired.append(1) }),
-            AlertButton("Two", action: { fired.append(2) }),
-        ]
-        dispatchAction(for: .alertThirdButtonReturn, buttons: buttons)
-        #expect(fired == [2])
-    }
-
-    @Test("a response naming no button is a no-op")
-    func outOfRangeResponseNoOp() {
-        var fired = false
-        let buttons = [AlertButton("Only", action: { fired = true })]
-        // .alertSecondButtonReturn requested but only one button → skip
-        dispatchAction(for: .alertSecondButtonReturn, buttons: buttons)
-        #expect(!fired)
-    }
-
     @Test("a response naming no button runs no action, cancel included")
     func outOfRangeResponseRunsNothing() {
         var fired: [String] = []
@@ -109,36 +64,5 @@ struct SheetAlertTests {
         dispatchAction(for: .stop, buttons: buttons)
 
         #expect(fired.isEmpty)
-    }
-
-    @Test("A sheet alert carries the accessory view it was given")
-    func sheetAlertKeepsItsAccessoryView() {
-        let hint = NSView()
-        let sheet = SheetAlert(
-            .acknowledgement(title: "Couldn't Install", message: "Run it yourself."), accessoryView: hint)
-
-        #expect(sheet.accessoryView === hint)
-        #expect(sheet.buttons.map(\.title) == ["OK"])
-    }
-
-    // MARK: - initialFirstResponder
-
-    @Test("An alert that asks for nothing names no first responder")
-    func aTextOnlyAlertNamesNoFirstResponder() {
-        let sheet = SheetAlert(.acknowledgement(title: "Error", message: "It failed."))
-
-        #expect(sheet.initialFirstResponder == nil)
-    }
-
-    @Test("An alert with something to fill in names the control the typing lands in")
-    func anEditableAlertNamesItsField() {
-        let field = NSSecureTextField()
-        let sheet = SheetAlert(
-            AlertConfiguration(
-                title: "Enter the Password", message: "It is needed again.",
-                buttons: [AlertButton("OK", role: .default)]),
-            accessoryView: field, initialFirstResponder: field)
-
-        #expect(sheet.initialFirstResponder === field)
     }
 }

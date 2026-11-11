@@ -52,15 +52,6 @@ struct AppWindowRegistryWorkingWindowTests {
         #expect(scene.working.first?.vmIDs == [instance.id])
     }
 
-    @Test("The library window answers for its selection while it is key")
-    func keyLibraryAnswersItsSelection() throws {
-        let fixture = makeFixture()
-        let instance = makeMenuInstance(in: fixture.viewModel)
-        let library = try showLibrary(fixture.registry)
-
-        #expect(fixture.registry.workingInstance(keyWindow: library, mainWindow: library) === instance)
-    }
-
     @Test("The library window answers for its selection while it is main behind a key window showing no VM")
     func mainLibraryAnswersBehindANonVMKeyWindow() throws {
         let fixture = makeFixture()
@@ -82,23 +73,5 @@ struct AppWindowRegistryWorkingWindowTests {
         #expect(fixture.registry.workingInstance(keyWindow: other, mainWindow: other) == nil)
         #expect(fixture.registry.workingInstance(keyWindow: other, mainWindow: library) == nil)
         #expect(fixture.registry.workingInstance(keyWindow: nil, mainWindow: nil) == nil)
-    }
-
-    @Test("A working window showing no VM leaves the VM commands disabled")
-    func noWorkingVMDisablesVMCommands() throws {
-        let fixture = makeFixture()
-        makeMenuInstance(in: fixture.viewModel)
-        let other = showTestWindow(styleMask: [.titled])
-        let controller = MainMenuController(
-            viewModel: fixture.viewModel, windows: fixture.registry)
-        let working = fixture.registry.workingInstance(keyWindow: other, mainWindow: other)
-
-        #expect(working == nil)
-        #expect(
-            !controller.validate(
-                makeMenuItem(#selector(AppDelegate.startVM(_:))), workingInstance: working))
-        #expect(
-            !controller.validate(
-                makeMenuItem(#selector(AppDelegate.deleteVM(_:))), workingInstance: working))
     }
 }

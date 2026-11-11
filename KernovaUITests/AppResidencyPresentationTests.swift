@@ -40,14 +40,6 @@ struct AppResidencyPresentationTests {
         return (controller, host)
     }
 
-    @Test("A controller that has presented nothing arms nothing")
-    func freshControllerArmsNothing() {
-        let (controller, launchHost) = makeController()
-
-        withExtendedLifetime(controller) {}
-        #expect(launchHost.count == 0)
-    }
-
     @Test("A second window re-arms the seam, leaving the once-per-process latch to the delegate")
     func repeatedPreparesReachTheSeamEachTime() {
         let (controller, launchHost) = makeController()

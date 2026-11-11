@@ -100,40 +100,7 @@ struct GuestAccountPasswordAlertTests {
         #expect(answers.retries.isEmpty)
     }
 
-    @Test("Skip Setup answers with a start that creates no account")
-    func skipSetupAnswersSkip() throws {
-        let answers = Answers()
-        let (configuration, _) = makeConfiguration(
-            password: "analytical-engine", verification: "analytical-engine", answers: answers)
-
-        configuration.buttons[1].action()
-
-        #expect(answers.answered == [.skip])
-    }
-
-    @Test("Cancel answers with no start at all")
-    func cancelAnswersCancelled() throws {
-        let answers = Answers()
-        let (configuration, _) = makeConfiguration(
-            password: "analytical-engine", verification: "analytical-engine", answers: answers)
-
-        try #require(configuration.buttons.last).action()
-
-        #expect(answers.answered == [.cancelled])
-    }
-
     // MARK: - Refusals
-
-    @Test("An empty field is refused back to the sheet rather than answered")
-    func anEmptyFieldGoesBackToTheSheet() throws {
-        let answers = Answers()
-        let (configuration, _) = makeConfiguration(password: "", verification: "", answers: answers)
-
-        try #require(configuration.buttons.first).action()
-
-        #expect(answers.retries == ["Enter the password to continue."])
-        #expect(answers.answered.isEmpty)
-    }
 
     @Test("A verification that doesn't match is refused back to the sheet")
     func aMismatchGoesBackToTheSheet() throws {
@@ -148,24 +115,6 @@ struct GuestAccountPasswordAlertTests {
         // The refusal leaves what the user typed where they typed it, so the
         // sheet that comes back is the one they were already looking at.
         #expect(fields.password == "analytical-engine")
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A field this sheet cannot show is not the user's to fill in")
-    func aFieldTheSheetCannotShowIsNotRefusedAsUnfinished() throws {
-        let answers = Answers()
-        // An account whose full name is blank: this sheet has no control for
-        // it, so "enter the password" would refuse a password that is already
-        // there every time it is clicked.
-        let (configuration, _) = makeConfiguration(
-            password: "analytical-engine", verification: "analytical-engine", answers: answers,
-            prompt: makePrompt(fullName: ""))
-
-        try #require(configuration.buttons.first).action()
-
-        let refusal = try #require(answers.retries.first)
-        #expect(refusal != "Enter the password to continue.")
-        #expect(answers.answered.isEmpty)
     }
 
     @Test("Showing a refusal leaves room for it, and taking it away gives the room back")

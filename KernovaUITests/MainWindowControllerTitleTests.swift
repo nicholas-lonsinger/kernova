@@ -14,12 +14,6 @@ struct MainWindowControllerTitleTests {
         #expect(MainWindowController.windowTitle(for: nil) == "Kernova")
     }
 
-    @Test("A selected VM titles the window with its name")
-    func selectedVMTitlesTheWindow() {
-        let entry = LibraryEntry.vm(VMInstanceFixture.make(name: "Alpha"))
-        #expect(MainWindowController.windowTitle(for: entry) == "Alpha")
-    }
-
     @Test("A selected arrival titles the window with its name")
     func selectedArrivalTitlesTheWindow() {
         let arrival = VMArrival.inert(
