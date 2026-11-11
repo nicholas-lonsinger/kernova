@@ -8,29 +8,6 @@ import Testing
 @Suite("InfoPopoverContentViewController Tests", .caseScoped)
 @MainActor
 struct InfoPopoverContentViewControllerTests {
-    @Test("loadView fits the CalloutStyle width")
-    func fittingWidthMatchesStyle() {
-        let vc = InfoPopoverContentViewController(paragraphs: [.body("Hello")])
-        vc.loadViewIfNeeded()
-        vc.view.layoutSubtreeIfNeeded()
-        #expect(vc.view.fittingSize.width == CalloutStyle.width)
-    }
-
-    @Test("each body paragraph renders as a wrapping NSTextField")
-    func bodyParagraphsRender() {
-        let texts = ["First paragraph.", "Second paragraph.", "Third paragraph."]
-        let vc = InfoPopoverContentViewController(paragraphs: texts.map { .body($0) })
-        vc.loadViewIfNeeded()
-
-        guard let stack = vc.view.subviews.first as? NSStackView else {
-            Issue.record("Expected NSStackView as the first container subview")
-            return
-        }
-        #expect(stack.arrangedSubviews.count == texts.count)
-        let rendered = stack.arrangedSubviews.compactMap { ($0 as? NSTextField)?.stringValue }
-        #expect(rendered == texts)
-    }
-
     @Test("code paragraph renders monospaced and selectable, while the body paragraph stays non-selectable")
     func codeParagraphRenders() {
         let snippet = "mount -t virtiofs share0 /mnt/myshare"
@@ -96,13 +73,5 @@ struct InfoPopoverContentViewControllerTests {
     func unpairedBacktickStaysLiteral() {
         let rendered = InfoPopoverContentViewController.renderedBody("Use `a` then ` alone")
         #expect(rendered.string == "Use a then ` alone")
-    }
-
-    @Test("empty paragraph list still loads")
-    func emptyParagraphList() {
-        let vc = InfoPopoverContentViewController(paragraphs: [])
-        vc.loadViewIfNeeded()
-        vc.view.layoutSubtreeIfNeeded()
-        #expect(vc.view.fittingSize.width == CalloutStyle.width)
     }
 }

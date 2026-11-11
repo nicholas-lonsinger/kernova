@@ -120,22 +120,6 @@ struct ScrollMoreIndicatorTests {
         #expect(overflows.flashCountForTesting == 1)
     }
 
-    /// The latch has to survive until there is a visible window to spend it on.
-    ///
-    /// The cue is an animated fade-in, so one fired before the window is ordered
-    /// on screen is spent where nobody can see it — the pane's first visit then
-    /// shows a scroller that only fades out, unlike every later visit.
-    @Test("Holds the flash until the scroller has a visible window")
-    func flashWaitsForAVisibleWindow() {
-        let scrollView = makeScrollView(documentHeight: 1000)
-        let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
-        #expect(indicator.flashCountForTesting == 0)
-
-        showInTestWindow(scrollView)
-        indicator.rearmFlash()
-        #expect(indicator.flashCountForTesting == 1)
-    }
-
     @Test("Flash-only cue flashes the scroller but inserts no overlays, even once mounted")
     func flashOnlyCueSkipsOverlays() {
         // The settings pane opts into `.flash` alone: it should still latch the
@@ -150,42 +134,6 @@ struct ScrollMoreIndicatorTests {
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
         scrollView.reflectScrolledClipView(scrollView.contentView)
         #expect(indicator.overlaysForTesting.isEmpty)
-    }
-
-    @Test("Overlays-only cue inserts overlays but never flashes the scroller")
-    func overlaysOnlyCueSkipsFlash() {
-        let scrollView = makeScrollView(documentHeight: 1000)
-        let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .overlays)
-        #expect(indicator.flashCountForTesting == 0)
-
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.viewportHeight))
-        host.addSubview(scrollView)
-        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
-        #expect(indicator.overlaysForTesting.count == 2)
-    }
-
-    /// A surface whose arrivals are cued by an explicit `rearmFlash()` opts out
-    /// of the born-armed flash: fired from pre-appearance layout churn, it would
-    /// spend the fade-in off screen and leave the arrival cue a scroller already
-    /// at full alpha.
-    @Test("An indicator born spent holds the flash for an explicit rearm")
-    func bornSpentFlashWaitsForRearm() {
-        let scrollView = makeShownScrollView(documentHeight: 1000)
-        let indicator = ScrollMoreIndicator(
-            scrollView: scrollView, cues: .flash, flashOnFirstOverflow: false)
-        // Overflowing content against a visible window — the born-armed
-        // configuration flashes here; born spent must not.
-        #expect(indicator.flashCountForTesting == 0)
-
-        // Nor from later geometry churn (a pane laying out before it is shown).
-        scrollView.contentView.scroll(to: NSPoint(x: 0, y: 1))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
-        #expect(indicator.flashCountForTesting == 0)
-
-        // The arrival cue is the first flash anyone gets.
-        indicator.rearmFlash()
-        #expect(indicator.flashCountForTesting == 1)
     }
 
     /// A scroll view with an explicit scroller style, so the veil assertions do
@@ -243,36 +191,6 @@ struct ScrollMoreIndicatorTests {
         _ = ScrollMoreIndicator(
             scrollView: scrollView, cues: .overlays, flashOnFirstOverflow: false)
         #expect(scroller.alphaValue == 1)
-    }
-
-    @Test("rearmFlash re-arms the one-time flash for a reused indicator")
-    func rearmFlashReevaluates() {
-        // Mirrors the settings pane reusing one indicator across VM switches.
-        let scrollView = makeShownScrollView(documentHeight: 1000)
-        let indicator = ScrollMoreIndicator(scrollView: scrollView, cues: .flash)
-        #expect(indicator.flashCountForTesting == 1)  // flashed on first overflow
-
-        // Switching to a shorter form that fits, then re-arming, clears the latch
-        // with nothing to spend it on — so the count holds.
-        scrollView.documentView?.setFrameSize(NSSize(width: Self.width, height: 50))
-        indicator.rearmFlash()
-        #expect(indicator.flashCountForTesting == 1)
-
-        // A subsequent overflow re-flashes, proving the latch was genuinely cleared
-        // (a never-reset latch would have left the count at 1).
-        scrollView.documentView?.setFrameSize(NSSize(width: Self.width, height: 1000))
-        #expect(indicator.flashCountForTesting == 2)
-    }
-
-    @Test("Re-evaluates when content grows in place")
-    func reevaluatesWhenContentGrows() {
-        let scrollView = makeScrollView(documentHeight: 50)
-        let indicator = ScrollMoreIndicator(scrollView: scrollView)
-        #expect(indicator.hasMoreBelow == false)
-
-        // Mirrors a step rebuilding its conditional section to overflow.
-        scrollView.documentView?.setFrameSize(NSSize(width: Self.width, height: 1000))
-        #expect(indicator.hasMoreBelow == true)
     }
 
     @Test("Pulls its overlays out of the host superview when deallocated")

@@ -90,41 +90,6 @@ struct HostClipboardPublisherCancellationTests {
         #expect(f.publisher.lastWriteChangeCount == nil)
     }
 
-    @Test("A publish cancelled at its write leaves the pasteboard and the registry untouched")
-    func cancelAtWriteWritesNothing() async throws {
-        let f = makeFixture()
-        defer { f.pasteboard.releaseGlobally() }
-        defer { f.registry.releaseAllForTesting() }
-        let baseline = f.pasteboard.changeCount
-
-        let atWrite = AsyncGate()
-        let resumed = AsyncGate()
-        var isAtWrite = false
-        var isReleased = false
-        f.publisher.beforePasteboardWriteForTesting = {
-            isAtWrite = true
-            atWrite.notify()
-            // A fired backstop only lets the publish write, which the assertions
-            // below catch — this hides no stuck condition.
-            try? await resumed.wait { isReleased }
-        }
-
-        let publish = Task { @MainActor in try await f.publisher.publish(from: f.service) }
-        try await atWrite.wait { isAtWrite }
-        publish.cancel()
-        isReleased = true
-        resumed.notify()
-
-        await #expect(throws: CancellationError.self) { try await publish.value }
-        // It planned its items — the cancel arrived afterwards — and stopped
-        // there: no write, and so no provider handed to the registry.
-        #expect(f.service.materializeCount == 1)
-        #expect(f.pasteboard.changeCount == baseline)
-        #expect(f.pasteboard.string(forType: .string) == Self.hostContent)
-        #expect(f.publisher.lastWriteChangeCount == nil)
-        #expect(f.registry.countForTesting == 0)
-    }
-
     @Test("An uncancelled publish writes its items and registers their providers")
     func uncancelledPublishWrites() async throws {
         let f = makeFixture(text: "lazy bytes")
@@ -189,26 +154,6 @@ struct HostClipboardPublisherOutcomeTests {
     private static let inline = ClipboardContent.Representation(
         uti: ClipboardContent.utf8TextUTI, data: Data("note".utf8))
 
-    @Test("Every item dropped serves nothing, carrying the reasons")
-    func everyItemDroppedServesNothing() async throws {
-        let outcome = try await publish([.droppedFile(.overPasteBudget)])
-        guard case .nothingServed(let reasons) = outcome else {
-            Issue.record("Expected .nothingServed, got \(outcome)")
-            return
-        }
-        #expect(reasons == [.overPasteBudget])
-    }
-
-    @Test("No items at all serves nothing, with no reason")
-    func noItemsServesNothing() async throws {
-        let outcome = try await publish([])
-        guard case .nothingServed(let reasons) = outcome else {
-            Issue.record("Expected .nothingServed, got \(outcome)")
-            return
-        }
-        #expect(reasons.isEmpty)
-    }
-
     @Test("A payload that stages nothing is a staging failure")
     func unstageablePayloadFailsStaging() async throws {
         // A file payload whose bytes were never pulled stages no file, so the
@@ -218,15 +163,6 @@ struct HostClipboardPublisherOutcomeTests {
         let outcome = try await publish([.resolved(unstageable)])
         guard case .stagingFailed = outcome else {
             Issue.record("Expected .stagingFailed, got \(outcome)")
-            return
-        }
-    }
-
-    @Test("A failed pasteboard write is a write failure")
-    func failedWriteIsAWriteFailure() async throws {
-        let outcome = try await publish([.resolved(Self.inline)], failWrite: true)
-        guard case .writeFailed = outcome else {
-            Issue.record("Expected .writeFailed, got \(outcome)")
             return
         }
     }

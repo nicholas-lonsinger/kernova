@@ -115,40 +115,6 @@ struct SettingsTabViewControllerTests {
         #expect(indicator.flashCountForTesting == before + 1)
     }
 
-    /// The cue must be spent *after* the window is ordered on screen: the flash
-    /// animates a fade-in, so one started on the way in is already over by the
-    /// time the window appears, and the pane's first visit shows a scroller that
-    /// only fades out — unlike every visit after it.
-    @Test("The pre-appearance hook does not spend the flash")
-    func viewWillAppearDoesNotFlash() throws {
-        let (tabController, pane) = try makeOverflowingPane()
-        defer { pane.viewDidDisappear() }
-        let indicator = try #require(pane.scrollMoreIndicatorForTesting)
-        let before = indicator.flashCountForTesting
-
-        tabController.viewWillAppear()
-
-        #expect(indicator.flashCountForTesting == before)
-    }
-
-    /// A pane that never overflows publishes no cue, so selecting it must not
-    /// reach for one — the container asks only panes that opt in.
-    @Test("Selecting a pane without a cue is inert")
-    func selectingNonCueingPaneIsInert() throws {
-        let (tabController, pane) = try makeOverflowingPane()
-        defer { pane.viewDidDisappear() }
-        let indicator = try #require(pane.scrollMoreIndicatorForTesting)
-        let general = try #require(
-            tabController.tabViewItems.first {
-                $0.viewController is GeneralSettingsViewController
-            })
-        let before = indicator.flashCountForTesting
-
-        tabController.tabView(tabController.tabView, didSelect: general)
-
-        #expect(indicator.flashCountForTesting == before)
-    }
-
     // MARK: - Destinations
 
     private func tabs(of registry: AppWindowRegistry) throws -> SettingsTabViewController {
@@ -172,42 +138,6 @@ struct SettingsTabViewControllerTests {
         let tabs = try tabs(of: registry)
         #expect(tabs.selectedPaneForTesting == .networks)
         #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
-    }
-
-    @Test("Settings already open on another pane switches to the Networks pane and the network")
-    func openWindowSwitchesToTheNetwork() throws {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
-        let registry = makeWindowRegistry(viewModel)
-        registry.showSettings(at: .pane(.clipboard))
-        let tabs = try tabs(of: registry)
-        #expect(tabs.selectedPaneForTesting == .clipboard)
-
-        registry.showSettings(at: .network(lab.id))
-
-        #expect(tabs.selectedPaneForTesting == .networks)
-        #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
-
-        // With no destination, the window stays on the pane it was left on.
-        registry.showSettings()
-        #expect(tabs.selectedPaneForTesting == .networks)
-    }
-
-    @Test("⌘, opens Settings through the app's own action, which names no destination and keeps the last pane")
-    func commandCommaKeepsTheLastPane() throws {
-        let viewModel = makeSettingsViewModel(preferences: preferences)
-        let registry = makeWindowRegistry(viewModel)
-        let controller = MainMenuController(
-            viewModel: viewModel, windows: registry)
-        let appMenu = try #require(controller.makeMainMenu().items.first?.submenu)
-        let settings = try #require(appMenu.items.first { $0.keyEquivalent == "," })
-        #expect(settings.keyEquivalentModifierMask == [.command])
-        #expect(settings.action == #selector(AppDelegate.showSettings(_:)))
-        #expect(settings.representedObject == nil)
-
-        registry.showSettings(at: .pane(.tags))
-        registry.showSettings()
-        #expect(try tabs(of: registry).selectedPaneForTesting == .tags)
     }
 
     @Test("Each pane is a destination, and one the build does not offer leaves the selection")

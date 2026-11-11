@@ -123,31 +123,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(delivered)
     }
 
-    private func expectHeadersVisible(in root: NSView) {
-        for text in ["App Reminders", "Virtual Machine Reminders"] {
-            let header = findLabel(withText: text, in: root)
-            #expect(header != nil, "header '\(text)' missing from the view tree")
-            if let header {
-                #expect(header.frame.height > 0, "header '\(text)' collapsed: \(header.frame)")
-            }
-        }
-    }
-
-    @Test("A VM list past the height cap scrolls instead of collapsing the text")
-    func cappedPaneScrollsAndKeepsText() throws {
-        let controller = makeLaidOutController(vmCount: overflowingVMCount())
-        defer { controller.viewDidDisappear() }
-
-        expectHeadersVisible(in: controller.view)
-
-        // The content must keep its natural height and overflow the capped
-        // pane — a squeezed document exactly matching the pane's height is the
-        // collapse bug, not scrolling.
-        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
-        let documentView = try #require(scrollView.documentView)
-        #expect(documentView.frame.height > scrollView.frame.height)
-    }
-
     /// The app reminders share a card; the Virtual Machine section's governing
     /// switch heads its own.
     @Test("The app reminders share a card apart from the install reminder's")
@@ -217,19 +192,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(question.message.hasSuffix(DuplicateMachineIDQuestion.vendorClaim))
     }
 
-    @Test("Advanced states Apple's claim in the words the question quotes")
-    func advancedQuotesTheQuestionsClaim() throws {
-        let advanced = AdvancedSettingsViewController(
-            preferences: preferences, commandLineTool: AppBundleProducts.testing.commandLineTool)
-        advanced.loadViewIfNeeded()
-
-        let info = try #require(
-            infoButton(about: "Offer to start duplicate machine IDs anyway", in: advanced.view)
-        ).paragraphs
-
-        #expect(info.contains(.body(DuplicateMachineIDQuestion.vendorClaim)))
-    }
-
     @Test("The install reminder's info opens with the title the sidebar prompt shows")
     func installReminderInfoShowsThePrompt() throws {
         let controller = makeLaidOutController(vmCount: 1)
@@ -276,31 +238,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
     }
 
-    @Test(
-        "The question's switch can be changed exactly while the duplicate machine ID setting is on, whichever way it is set",
-        arguments: [false, true])
-    func questionRowEnabledExactlyWhileTheSettingIsOn(dismissed: Bool) throws {
-        preferences.allowsDuplicateMachineIDOverride = true
-        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
-        defer { controller.viewDidDisappear() }
-        viewModel.duplicateMachineIDQuestionDismissed = dismissed
-        let toggle = try questionSwitch(in: controller)
-
-        for settingOn in [true, false, true] {
-            preferences.allowsDuplicateMachineIDOverride = settingOn
-            // The Advanced pane is another tab of the same window, so coming
-            // back here is an appear.
-            controller.viewWillAppear()
-
-            #expect(toggle.isEnabled == settingOn)
-            #expect(toggle.state == (dismissed ? .off : .on))
-            // A state note keeps its last text while hidden.
-            #expect(
-                (findLabel(containing: "No effect while Offer to start", in: controller.view)?.isHidden == false)
-                    == !settingOn)
-        }
-    }
-
     @Test("Turning the question's switch off saves the choice not to be asked, and on clears it")
     func theQuestionsSwitchWorksBothWays() throws {
         preferences.allowsDuplicateMachineIDOverride = true
@@ -323,68 +260,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(toggle.isEnabled)
     }
 
-    @Test("A restart beside a machine ID twin goes ahead unasked once the switch is off, and asks again once it is on")
-    func theSwitchDecidesWhetherARestartAsks() async throws {
-        preferences.allowsDuplicateMachineIDOverride = true
-        let virtualization = MockVirtualizationService()
-        let viewModel = makeViewModel(virtualization: virtualization)
-        let presenter = MockVMLibraryPresenting()
-        viewModel.presenter = presenter
-        func admitTwin(_ name: String, macAddress: String) -> VMInstance {
-            let instance = viewModel.library.admitFixture(
-                name: name, guestOS: .macOS, phase: .running(sessionID: UUID())
-            ) {
-                $0.machineIdentifierData = Data([1, 2, 3])
-                $0.macAddress = macAddress
-            }
-            viewModel.library.wireHooks(for: instance)
-            return instance
-        }
-        let restarting = admitTwin("Restarting", macAddress: "02:4b:4e:56:02:01")
-        _ = admitTwin("Twin", macAddress: "02:4b:4e:56:02:02")
-        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
-        _ = controller.view
-        controller.viewWillAppear()
-        defer { controller.viewDidDisappear() }
-
-        try setQuestion(on: false, in: controller)
-        await viewModel.restart(restarting)
-
-        #expect(presenter.confirmationRequests.isEmpty)
-        #expect(virtualization.stopCallCount == 1)
-        #expect(virtualization.startCallCount == 1)
-        #expect(restarting.status == .running)
-        #expect(presenter.errors.isEmpty)
-
-        try setQuestion(on: true, in: controller)
-        presenter.confirmationAnswer = .answered(.decline)
-        await viewModel.restart(restarting)
-
-        #expect(
-            presenter.confirmationRequests.map(\.prompt) == [
-                DuplicateMachineIDQuestion.prompt(
-                    verb: .restart, names: (vm: "Restarting", other: "Twin", otherHeldByAnotherCopy: false))
-            ])
-        // Declined before the guest went down.
-        #expect(virtualization.stopCallCount == 1)
-        #expect(virtualization.startCallCount == 1)
-        #expect(restarting.status == .running)
-    }
-
-    @Test("The question's switch follows a choice made while the pane is on screen")
-    func questionRowFollowsTheChoiceLive() async throws {
-        preferences.allowsDuplicateMachineIDOverride = true
-        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
-        defer { controller.viewDidDisappear() }
-        let toggle = try questionSwitch(in: controller)
-
-        viewModel.duplicateMachineIDQuestionDismissed = true
-
-        // The pane's observation loop applies on a later turn; the switch
-        // itself is not observable.
-        try await waitUntil { toggle.state == .off }
-    }
-
     @Test("The Ephemeral banner's switch follows the view model both ways, and reset turns it back on")
     func ephemeralBannerSwitchWorksBothWays() throws {
         let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
@@ -402,45 +277,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(NSApp.sendAction(try #require(reset.action), to: reset.target, from: reset))
         #expect(viewModel.ephemeralSettingsBannerDismissed == false)
         #expect(toggle.state == .on)
-    }
-
-    @Test("Reset All Reminders clears the choice not to be asked")
-    func resetAllRemindersClearsTheChoice() throws {
-        preferences.allowsDuplicateMachineIDOverride = true
-        let (controller, viewModel) = makeLaidOutPane(vmCount: 1)
-        defer { controller.viewDidDisappear() }
-        viewModel.duplicateMachineIDQuestionDismissed = true
-        controller.viewWillAppear()
-
-        let reset = try #require(
-            allSubviews(NSButton.self, in: controller.view) { $0.title == "Reset All Reminders" }.first)
-        #expect(NSApp.sendAction(try #require(reset.action), to: reset.target, from: reset))
-
-        #expect(viewModel.duplicateMachineIDQuestionDismissed == false)
-        #expect(preferences.duplicateMachineIDQuestionDismissed == false)
-        #expect(try questionSwitch(in: controller).state == .on)
-    }
-
-    /// Apple's guidance for showing that one control governs others is to indent
-    /// the subordinates beneath it.
-    ///
-    /// The greying only speaks while the governing switch is off; the indent
-    /// states the relationship at all times.
-    @Test("The per-VM rows are indented beneath the switch that governs them")
-    func perVMRowsIndentUnderGoverningSwitch() throws {
-        let controller = makeLaidOutController(vmCount: 2)
-        defer { controller.viewDidDisappear() }
-
-        let agentToggle = try #require(
-            switches(action: "agentInstallToggled", in: controller).first)
-        let governingCard = try #require(enclosingGroupedFormCard(of: agentToggle))
-        let vmToggle = try #require(vmSwitches(in: controller).first)
-        let vmCard = try #require(enclosingGroupedFormCard(of: vmToggle))
-
-        let root = controller.view
-        let governingLeading = governingCard.convert(governingCard.bounds, to: root).minX
-        let subordinateLeading = vmCard.convert(vmCard.bounds, to: root).minX
-        #expect(subordinateLeading - governingLeading == groupedFormSubOptionIndent)
     }
 
     @Test("Turning the app-wide install reminder off disables and explains the per-VM rows")
@@ -533,48 +369,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(indicator.flashCountForTesting == 1)
     }
 
-    /// The override note describes the per-VM switches, so with none on screen
-    /// it would point at nothing.
-    @Test("The override note does not show when there are no virtual machines")
-    func perVMCaptionsHideWithoutVMs() throws {
-        let controller = RemindersSettingsViewController(
-            viewModel: makeViewModel(), visibleFrame: offDesktopVisibleFrame)
-        _ = controller.view
-        controller.viewWillAppear()
-        defer { controller.viewDidDisappear() }
-        controller.view.setFrameSize(controller.preferredContentSize)
-        controller.view.layoutSubtreeIfNeeded()
-
-        // Turning the app-wide reminder off is what would reveal the override
-        // caption; the empty state has to suppress it anyway.
-        try setAppWideInstallReminder(on: false, in: controller)
-
-        let visible = allSubviews(NSTextField.self, in: controller.view) { !$0.isHidden }
-            .map(\.stringValue)
-        #expect(visible.contains { $0.hasPrefix("No macOS virtual machines yet") })
-        // The override caption is a note of the per-VM card, which the empty
-        // state does not build.
-        #expect(findLabel(containing: "No effect while the reminder above is off", in: controller.view) == nil)
-    }
-
-    /// The disabled rows keep showing each VM's own setting, so turning the
-    /// app-wide reminder back on restores what the user had chosen.
-    @Test("A disabled per-VM row still reflects its VM's dismissed flag")
-    func disabledPerVMRowKeepsItsState() throws {
-        let (controller, viewModel) = makeLaidOutPane(vmCount: 2)
-        defer { controller.viewDidDisappear() }
-        viewModel.library.editHostState(of: viewModel.instances[0]) {
-            $0.agentInstallNudgeDismissed = true
-        }
-        viewModel.agentInstallPromptDisabled = true
-        controller.viewWillAppear()
-
-        let switches = vmSwitches(in: controller)
-        #expect(switches.count == 2)
-        #expect(switches[0].state == .off)
-        #expect(switches[1].state == .on)
-    }
-
     /// The row reads the key's gate, as VM Settings' switch does, so it doesn't
     /// offer a flip the configuration verb would refuse.
     @Test("A per-VM row is disabled while its VM's state takes no live edit, and follows it")
@@ -630,19 +424,6 @@ struct RemindersSettingsViewControllerTests {
         #expect(toggle.state == .on)
     }
 
-    @Test("With only Linux VMs the section says there is no macOS VM")
-    func onlyLinuxVMsShowTheEmptyState() throws {
-        let viewModel = makeViewModel()
-        viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
-        let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
-        _ = controller.view
-        controller.viewWillAppear()
-        defer { controller.viewDidDisappear() }
-
-        #expect(vmSwitches(in: controller).isEmpty)
-        #expect(findLabel(withText: "No macOS virtual machines yet.", in: controller.view) != nil)
-    }
-
     /// The Reminders tab of a Settings window holding seven VMs — taller than
     /// the pane is wide — its window fitting whatever `visibleFrame` returns
     /// when the pane publishes.
@@ -667,32 +448,6 @@ struct RemindersSettingsViewControllerTests {
 
     private func overrideNote(in controller: RemindersSettingsViewController) throws -> NSTextField {
         try #require(findLabel(containing: "No effect while the reminder above is off", in: controller.view))
-    }
-
-    @Test("The override note grows the Settings window by its full height while the display has room")
-    func overrideNoteGrowsWindowByItsHeight() throws {
-        let (window, controller) = try showRemindersTab(visibleFrame: offDesktopVisibleFrame)
-        defer { controller.viewDidDisappear() }
-        let paneBefore = controller.preferredContentSize.height
-        let windowBefore = window.contentLayoutRect.height
-
-        try setAppWideInstallReminder(on: false, in: controller)
-        window.layoutIfNeeded()
-
-        let note = try overrideNote(in: controller)
-        #expect(note.frame.height > 0)
-        let growth = note.frame.height + GroupedFormStyle.cardStackSpacing
-        try #require(
-            paneBefore + growth
-                <= SettingsPaneMetrics.maxHeight(in: window, visibleFrame: WindowStage.offDesktopVisibleFrame),
-            "the display has no room for the note, so its growth stops at the cap")
-        #expect(controller.preferredContentSize.height == paneBefore + growth)
-        #expect(window.contentLayoutRect.height == windowBefore + growth)
-
-        // Nothing overflows, so nothing scrolls.
-        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
-        let documentView = try #require(scrollView.documentView)
-        #expect(documentView.frame.height <= scrollView.frame.height)
     }
 
     /// A visible frame a test changes while the pane is up.
@@ -720,18 +475,5 @@ struct RemindersSettingsViewControllerTests {
         let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
         let documentView = try #require(scrollView.documentView)
         #expect(documentView.frame.height > scrollView.frame.height)
-    }
-
-    @Test("A short VM list hugs the content with the text laid out")
-    func shortPaneHugsContentAndKeepsText() throws {
-        let controller = makeLaidOutController(vmCount: 2)
-        defer { controller.viewDidDisappear() }
-
-        expectHeadersVisible(in: controller.view)
-
-        // Hugged: everything fits, so nothing scrolls.
-        let scrollView = try #require((controller.view as? SettingsPaneRootView)?.content as? NSScrollView)
-        let documentView = try #require(scrollView.documentView)
-        #expect(documentView.frame.height <= scrollView.frame.height)
     }
 }

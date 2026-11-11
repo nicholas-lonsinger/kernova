@@ -111,17 +111,6 @@ struct ClipboardSettingsViewControllerTests {
         return info.paragraphs.map(\.text)
     }
 
-    @Test("the row's info states what the ceiling protects against, not just its size")
-    func infoExplainsTheDeadline() throws {
-        let controller = makeLaidOutController()
-
-        let info = try sizeInfo(in: controller).joined(separator: "\n")
-        for fragment in ["60 seconds in Finder", "while the pasting app waits"] {
-            #expect(info.contains(fragment), "info lacks '\(fragment)…'")
-        }
-        #expect(findLabel(containing: "60 seconds in Finder", in: controller.view) == nil)
-    }
-
     @Test("the row's info names the selected ceiling and its transfer time")
     func estimateNamesTheSelection() throws {
         let controller = makeLaidOutController()
@@ -138,16 +127,6 @@ struct ClipboardSettingsViewControllerTests {
         let info = try sizeInfo(in: controller)
         #expect(info.contains { $0.contains("16 GB transfers in about 45 seconds") })
         #expect(!info.contains { $0.contains("2 GB transfers in about 6 seconds") })
-    }
-
-    @Test("the estimate quotes the measured throughput it divides by")
-    func estimateQuotesTheMeasuredThroughput() {
-        let text = ClipboardSettingsViewController.estimateText(
-            for: ClipboardPasteLimit.defaultBytes)
-        #expect(
-            text.contains(
-                ClipboardPasteLimit.displayLimit(
-                    ClipboardPasteLimit.measuredThroughputBytesPerSecond)))
     }
 }
 

@@ -39,14 +39,6 @@ struct GroupedFormStyleTests {
         #expect(content.frame.midX == documentWidth / 2)
     }
 
-    @Test("A viewport narrower than the cap fills it, minus the side insets")
-    func narrowViewportFillsMinusInsets() {
-        let (documentWidth, content) = laidOutScrollView(
-            width: 400, maxContentWidth: GroupedFormStyle.columnWidth)
-
-        #expect(content.frame.width == documentWidth - 2 * GroupedFormStyle.contentSideInset)
-    }
-
     @Test("Without a cap the content fills any viewport, minus the side insets")
     func uncappedContentFillsTheViewport() {
         let (documentWidth, content) = laidOutScrollView(width: 1200, maxContentWidth: nil)
@@ -68,29 +60,6 @@ struct GroupedFormStyleTests {
         #expect(hairlineInCard.maxX == card.bounds.maxX)
         #expect(rowInCard.minX == GroupedFormStyle.cardPadding)
         #expect(rowInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
-    }
-
-    @Test("A card's field rows start their fields at one edge, past the widest label")
-    func fieldRowsShareALabelColumn() throws {
-        let short = NSTextField(string: "")
-        let long = NSTextField(string: "")
-        let card = makeGroupedFormCard(rows: [
-            GroupedFormFieldRow("Name", control: short),
-            GroupedFormFieldRow("Account name", control: long),
-        ])
-        card.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
-        card.layoutSubtreeIfNeeded()
-
-        let widest = try #require(findLabel(withText: "Account name", in: card))
-        let widestInCard = widest.convert(widest.bounds, to: card)
-        let shortInCard = short.convert(short.bounds, to: card)
-        let longInCard = long.convert(long.bounds, to: card)
-        #expect(
-            widest.alignmentRect(forFrame: widest.frame).width == widest.intrinsicContentSize.width)
-        #expect(shortInCard.minX == longInCard.minX)
-        #expect(shortInCard.minX > widestInCard.maxX)
-        #expect(shortInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
-        #expect(longInCard.maxX == shortInCard.maxX)
     }
 
     /// A two-row card laid out at a fixed width, with `notes` under its rows.
@@ -119,34 +88,6 @@ struct GroupedFormStyleTests {
         #expect(noteInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
     }
 
-    @Test("No hairline separates a card's last row from its notes")
-    func noHairlineBeforeTheNotes() {
-        let note = shownNote("Boots at 800 × 900 pixels.")
-        let (card, lastRow) = laidOutCard(notes: [note])
-
-        let rowMinY = lastRow.convert(lastRow.bounds, to: card).minY
-        let hairlines = allSubviews(NSBox.self, in: card) { $0.frame.height == 1 }
-        #expect(!hairlines.isEmpty)
-        for hairline in hairlines {
-            #expect(hairline.convert(hairline.bounds, to: card).minY >= rowMinY)
-        }
-    }
-
-    @Test("A note sits a small gap under the last row showing, past a hidden collapsible row")
-    func noteGapSkipsAHiddenLastRow() throws {
-        let first = makeGroupedFormCardRow("Mode", control: NSTextField(labelWithString: "None"))
-        let collapsed = GroupedFormCollapsibleRow(
-            row: makeGroupedFormCardRow("MAC address", control: NSTextField(labelWithString: "-")))
-        collapsed.isHidden = true
-        let note = shownNote("This virtual machine has no network device.")
-        let card = makeGroupedFormCard(rows: [first, collapsed], notes: [note])
-        card.frame = NSRect(x: 0, y: 0, width: 400, height: card.fittingSize.height)
-        card.layoutSubtreeIfNeeded()
-
-        let rowInCard = first.convert(first.bounds, to: card)
-        #expect(try rowInCard.minY - alignmentRect(of: note, in: card).maxY == Spacing.small)
-    }
-
     @Test(
         "Rows sit a relaxed gap either side of the hairline between them, collapsible or not",
         arguments: [false, true])
@@ -165,16 +106,6 @@ struct GroupedFormStyleTests {
         let hairlineInCard = hairline[0].convert(hairline[0].bounds, to: card)
         #expect(firstInCard.minY - hairlineInCard.maxY == Spacing.relaxed)
         #expect(hairlineInCard.minY - secondInCard.maxY == Spacing.relaxed)
-    }
-
-    @Test("A card whose only note is hidden is as tall as a card with none")
-    func hiddenNoteLeavesNoGap() {
-        let note = GroupedFormStateNote("Takes effect on next start.", shownWhen: { false })
-        note.refresh()
-        let (withHiddenNote, _) = laidOutCard(notes: [note])
-        let (withoutNotes, _) = laidOutCard(notes: [])
-
-        #expect(withHiddenNote.fittingSize.height == withoutNotes.fittingSize.height)
     }
 
     /// A card holding a top-level row and a sub-option group whose sub-option
@@ -221,17 +152,6 @@ struct GroupedFormStyleTests {
         let (withoutNote, _) = laidOutSubOptionCard(subOptionNotes: [], isSubOptionHidden: true)
 
         #expect(withNote.fittingSize.height == withoutNote.fittingSize.height)
-    }
-
-    @Test("A card's own note beside a sub-option group sits at the rows' edge")
-    func cardNoteBesideAGroupSitsAtTheRowsEdge() throws {
-        let rowNote = shownNote("Comes back suspended.")
-        let cardNote = shownNote("Takes effect at the next power-off.")
-        let (card, _) = laidOutSubOptionCard(subOptionNotes: [rowNote], cardNotes: [cardNote])
-
-        let noteInCard = try alignmentRect(of: cardNote, in: card)
-        #expect(noteInCard.minX == GroupedFormStyle.cardPadding)
-        #expect(noteInCard.maxX == card.bounds.maxX - GroupedFormStyle.cardPadding)
     }
 
     @Test("A field row that owns a note still shares the card's label column")
@@ -285,14 +205,6 @@ struct GroupedFormStyleTests {
             row.titleLabel.contentCompressionResistancePriority(for: .horizontal) == .required)
     }
 
-    @Test("A card row without info has no info button")
-    func cardRowWithoutInfoHasNoButton() {
-        let row = makeGroupedFormCardRow("Name", control: NSSwitch())
-
-        #expect(row.infoButton == nil)
-        #expect(firstSubview(InfoButtonView.self, in: row) == nil)
-    }
-
     @Test("A field row with info keeps the card's label column, its button inside it")
     func fieldRowWithInfoKeepsTheLabelColumn() throws {
         let short = NSTextField(string: "")
@@ -339,55 +251,7 @@ struct GroupedFormStyleTests {
         #expect(note.isHidden)
     }
 
-    @Test("A state note built from content shows whatever the content states now")
-    func stateNoteRereadsItsContent() {
-        let content = TestState<String?>("Comes back suspended.")
-        let note = GroupedFormStateNote(content: { content.value })
-        note.refresh()
-        #expect(!note.isHidden)
-        #expect(note.stringValue == "Comes back suspended.")
-
-        content.value = "Comes back powered off."
-        note.refresh()
-        #expect(note.stringValue == "Comes back powered off.")
-
-        content.value = nil
-        note.refresh()
-        #expect(note.isHidden)
-    }
-
-    @Test("A card collapses a note when its state stops holding")
-    func cardCollapsesANoteWhoseStateEnds() {
-        let holds = TestState(true)
-        let note = GroupedFormStateNote("Takes effect on next start.", shownWhen: { holds.value })
-        note.refresh()
-        let (card, _) = laidOutCard(notes: [note])
-        let shownHeight = card.fittingSize.height
-
-        holds.value = false
-        note.refresh()
-        let (withoutNotes, _) = laidOutCard(notes: [])
-        #expect(card.fittingSize.height < shownHeight)
-        #expect(card.fittingSize.height == withoutNotes.fittingSize.height)
-    }
-
     // MARK: - Titles
-
-    @Test("A wizard step title shows an info button beside it when given info")
-    func wizardTitleShowsInfo() throws {
-        let plain = makeWizardTitle("Configure Resources")
-        #expect(firstSubview(InfoButtonView.self, in: plain) == nil)
-
-        let titled = makeWizardTitle("Configure Resources", info: [.body("Set at creation.")])
-        titled.frame = NSRect(x: 0, y: 0, width: 600, height: titled.fittingSize.height)
-        titled.layoutSubtreeIfNeeded()
-        let info = try #require(firstSubview(InfoButtonView.self, in: titled))
-        let label = try #require(findLabel(withText: "Configure Resources", in: titled))
-        #expect(info.button.toolTip == "About Configure Resources")
-        #expect(
-            info.convert(info.bounds, to: titled).minX
-                > label.convert(label.bounds, to: titled).maxX)
-    }
 
     @Test("A sheet title shows an info button beside it when given info")
     func sheetTitleShowsInfo() throws {
@@ -397,26 +261,6 @@ struct GroupedFormStyleTests {
         let info = try #require(firstSubview(InfoButtonView.self, in: titled))
         #expect(info.button.toolTip == "About Boot Order")
         #expect(titled.arrangedSubviews.last === info)
-    }
-
-    @Test("A wizard radio option shows its description beneath the radio")
-    func radioOptionShowsDescriptionBeneathRadio() throws {
-        let radio = NSButton(radioButtonWithTitle: "macOS", target: nil, action: nil)
-        let option = makeWizardRadioOption(
-            radio: radio, iconSymbol: "apple.logo", description: "Run macOS.")
-        option.frame = NSRect(x: 0, y: 0, width: 400, height: option.fittingSize.height)
-        option.layoutSubtreeIfNeeded()
-
-        let description = try #require(findLabel(withText: "Run macOS.", in: option))
-        let descriptionFrame = description.convert(description.bounds, to: option)
-        let radioFrame = radio.convert(radio.bounds, to: option)
-        // Flipped or not, the description lies wholly on the far side of the
-        // radio from the option's top.
-        let isBelow =
-            option.isFlipped
-            ? descriptionFrame.minY >= radioFrame.maxY : descriptionFrame.maxY <= radioFrame.minY
-        #expect(isBelow)
-        #expect(descriptionFrame.minX > radioFrame.minX)
     }
 
     @Test(

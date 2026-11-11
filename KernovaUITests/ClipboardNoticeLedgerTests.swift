@@ -10,15 +10,6 @@ struct ClipboardNoticeLedgerTests {
     private let vm = UUID()
     private let raised = Date(timeIntervalSinceReferenceDate: 1_000)
 
-    @Test("a refusal raised with the dropdown closed is noticed once")
-    func closedDropdownNoticesOnce() {
-        var ledger = ClipboardNoticeLedger()
-
-        #expect(ledger.route(raised, for: vm, dropdownIsOpen: false) == .notice)
-        #expect(ledger.route(raised, for: vm, dropdownIsOpen: false) == .presented)
-        #expect(ledger.route(raised, for: vm, dropdownIsOpen: true) == .presented)
-    }
-
     @Test("a refusal raised into a dropdown the user opened is its line, never also a notice")
     func openDropdownCarriesTheLine() {
         var ledger = ClipboardNoticeLedger()

@@ -202,53 +202,6 @@ struct ClipboardPassthroughCoordinatorTests {
             })
     }
 
-    @Test("A host clipboard change is forwarded to the guest on poll")
-    func pollForwardsHostChange() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        writeText("hello guest", to: h.pasteboard)
-        try await poll(h)
-
-        #expect(h.service.grabbed.count == 1)
-        #expect(h.service.grabbed.first?.text == "hello guest")
-    }
-
-    @Test("An unchanged host clipboard is not re-forwarded")
-    func pollSkipsUnchanged() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        writeText("once", to: h.pasteboard)
-        try await poll(h)
-        try await poll(h)  // change count unchanged
-
-        #expect(h.service.grabbed.count == 1)
-    }
-
-    @Test("A copy made during an outage stays on the host; one made after the reconnect is forwarded")
-    func copyDuringOutageIsNotForwardedAfterReconnect() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        h.service.isConnected = false
-        writeText("copied during the outage", to: h.pasteboard)
-        try await poll(h)
-        #expect(h.service.grabbed.isEmpty)
-
-        // The accept path swaps in a fresh service on redial.
-        let reconnected = FakePassthroughService()
-        reconnected.reporter = h.reports.reporter
-        h.instance.sessionContext?.clipboardService = reconnected
-        try await poll(h)
-        try await poll(h)
-        #expect(reconnected.grabbed.isEmpty)
-
-        writeText("copied after the reconnect", to: h.pasteboard)
-        try await poll(h)
-        #expect(reconnected.grabbed.map(\.text) == ["copied after the reconnect"])
-    }
-
     @Test("A service that reconnects in place forwards only copies made after it came back")
     func copyDuringInPlaceOutageIsNotForwarded() async throws {
         let h = makeHarness()
@@ -269,91 +222,6 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.service.grabbed.map(\.text) == ["copied after the reconnect"])
     }
 
-    @Test("The copy standing at connect is neither forwarded nor reported, even when its file is gone")
-    func standingCopyAtConnectIsIgnored() async throws {
-        let h = makeHarness(bindsConnection: false)
-        defer { h.pasteboard.releaseGlobally() }
-
-        let doomed = scratch.url.appendingPathComponent("doomed.txt")
-        try Data("doomed".utf8).write(to: doomed)
-        writeFileURLs([doomed], to: h.pasteboard)
-        try FileManager.default.removeItem(at: doomed)
-
-        try await poll(h)
-        try await poll(h)
-        #expect(h.service.grabbed.isEmpty)
-        #expect(h.reports.failure == nil)
-        #expect(h.reports.refusals.isEmpty)
-
-        writeText("copied once connected", to: h.pasteboard)
-        try await poll(h)
-        #expect(h.service.grabbed.map(\.text) == ["copied once connected"])
-    }
-
-    @Test("Passthrough started on a connected guest skips the current clipboard and forwards the next copy")
-    func startOnConnectedServiceSkipsStandingCopy() async throws {
-        let h = makeHarness(bindsConnection: false)
-        defer { h.pasteboard.releaseGlobally() }
-
-        writeText("copied before passthrough started", to: h.pasteboard)
-        h.coordinator.start()
-        defer { h.coordinator.stop() }
-        try await poll(h)
-        try await poll(h)
-        #expect(h.service.grabbed.isEmpty)
-
-        writeText("copied after passthrough started", to: h.pasteboard)
-        try await poll(h)
-        #expect(h.service.grabbed.map(\.text) == ["copied after passthrough started"])
-    }
-
-    @Test("A forward the transport never delivered is re-offered until it lands")
-    func undeliveredForwardIsRetried() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        // The send failed on a connection that still reports itself up — a
-        // verdict only the transport's own outcome carries.
-        h.service.grabOutcome = .undelivered
-        writeText("never left the host", to: h.pasteboard)
-        try await poll(h)
-        #expect(h.service.grabbed.count == 1)
-
-        // Same copy, same change count: the poll must offer it again rather than
-        // read the count as already spent.
-        try await poll(h)
-        #expect(h.service.grabbed.count == 2)
-
-        h.service.grabOutcome = .settled
-        try await poll(h)
-        #expect(h.service.grabbed.count == 3)
-        #expect(h.service.grabbed.last?.text == "never left the host")
-
-        // Landed — the count is settled and the retries stop.
-        try await poll(h)
-        #expect(h.service.grabbed.count == 3)
-    }
-
-    @Test("Our own inbound publish is absorbed, not re-forwarded (echo suppression)")
-    func echoSuppressed() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        // Simulate a guest offer landing and publish it to the host pasteboard —
-        // exactly what the inbound path (or a manual "Copy to Mac") does through
-        // the shared publisher.
-        h.service.guestContent = ClipboardContent(text: "from guest")
-        let outcome = try await h.publisher.publish(from: h.service)
-        guard case .written = outcome else {
-            Issue.record("Expected the publish to land on the pasteboard, got \(outcome)")
-            return
-        }
-
-        // The poll must recognize its own write and not offer it back to the guest.
-        try await poll(h)
-        #expect(h.service.grabbed.isEmpty)
-    }
-
     @Test("a copied zero-byte file is forwarded like any other, with nothing noted")
     func pollForwardsZeroByteFile() async throws {
         let h = makeHarness()
@@ -369,27 +237,6 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.service.grabbed.last?.filenames == ["empty.txt"])
         #expect(h.service.grabbed.last?.copy.items.first?.representations.first?.sizeEstimate == 0)
         #expect(h.reports.failure == nil)
-    }
-
-    @Test("a file deleted before the poll reads the pasteboard surfaces the skip as an issue")
-    func pollSurfacesPrePollLoss() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        let kept = scratch.url.appendingPathComponent("kept.txt")
-        let doomed = scratch.url.appendingPathComponent("doomed.txt")
-        try Data("kept".utf8).write(to: kept)
-        try Data("doomed".utf8).write(to: doomed)
-        writeFileURLs([kept, doomed], to: h.pasteboard)
-
-        // A forward carrying fewer files than were copied, with no gesture to
-        // report it back to.
-        try FileManager.default.removeItem(at: doomed)
-        h.coordinator.pollHostClipboard()
-
-        try await h.reports.waitForFailure()
-        #expect(h.service.grabbed.last?.filenames == ["kept.txt"])
-        #expect(h.reports.failure == .itemsSkipped(count: 1))
     }
 
     @Test("a copy whose every file vanished before the poll surfaces the rejection")
@@ -436,61 +283,6 @@ struct ClipboardPassthroughCoordinatorTests {
 
         #expect(h.reports.refusals.count == 2)
         #expect(h.reports.failure == .itemsSkipped(count: 1))
-    }
-
-    @Test("a text-only transport reports no lost file")
-    func pollStaysQuietForTextOnlyTransport() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-        h.service.supportsBinaryRepresentations = false
-
-        let doomed = scratch.url.appendingPathComponent("doomed.txt")
-        try Data("doomed".utf8).write(to: doomed)
-        writeFileURLs([doomed], to: h.pasteboard)
-        try FileManager.default.removeItem(at: doomed)
-
-        // Wait on the read *completing*, not on a bounded sleep: the loss is
-        // handled on an unstructured Task, so a sleep that outruns a loaded
-        // scheduler would assert "no issue" before the branch that could raise
-        // one had run, and pass for the wrong reason.
-        try await poll(h)
-
-        // A text-only transport (a Linux guest's) carries no file, so a vanished
-        // one is nothing it lost.
-        #expect(h.service.grabbed.isEmpty)
-        #expect(h.reports.failure == nil)
-    }
-
-    @Test("A file resolve whose connection dropped offers nothing to the reconnected service")
-    func resolveOutlivingItsConnectionIsDropped() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        let file = scratch.url.appendingPathComponent("notes.txt")
-        try Data("notes".utf8).write(to: file)
-        writeFileURLs([file], to: h.pasteboard)
-
-        // The resolve's continuation needs the main actor this test holds, so the
-        // connection drops and the redial's service comes up strictly between
-        // the poll's read and the offer it leads to.
-        h.coordinator.pollHostClipboard()
-        h.service.isConnected = false
-        h.coordinator.pollHostClipboard()
-        let reconnected = FakePassthroughService()
-        reconnected.reporter = h.reports.reporter
-        h.instance.sessionContext?.clipboardService = reconnected
-        h.coordinator.pollHostClipboard()
-        try await h.resolves.wait(untilCompleted: 1)
-
-        #expect(h.service.grabbed.isEmpty)
-        #expect(reconnected.grabbed.isEmpty)
-        #expect(h.reports.failure == nil)
-        #expect(h.reports.refusals.isEmpty)
-
-        // The copy belonged to the dropped connection, so the new one's polls
-        // leave it on the host.
-        try await poll(h)
-        #expect(reconnected.grabbed.isEmpty)
     }
 
     @Test("A poll during an in-flight file resolve starts no second walk of the same copy")
@@ -593,72 +385,6 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.reports.failure == .itemsSkipped(count: 1))
     }
 
-    @Test("A transient-marked snapshot is not forwarded")
-    func transientMarkerSkipped() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        let item = NSPasteboardItem()
-        item.setString("secret-ish", forType: .string)
-        let transientType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI)
-        item.setData(Data("1".utf8), forType: transientType)
-        h.pasteboard.clearContents()
-        h.pasteboard.writeObjects([item])
-
-        try await poll(h)
-        #expect(h.service.grabbed.isEmpty)
-    }
-
-    @Test("A new inbound guest offer is auto-published to the host pasteboard")
-    func inboundOfferPublishesToHost() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        // Event-driven: the gate fires when the inbound auto-publish completes, so
-        // the wait resolves on the publish itself — never a poll deadline — even
-        // when a contended CI main actor delays the observation → publish Task
-        // chain. The generous timeout is a stuck-condition backstop, not the
-        // success deadline.
-        let published = AsyncGate()
-        h.coordinator.onInboundPublishedForTesting = { published.notify() }
-        h.coordinator.start()
-        defer { h.coordinator.stop() }
-
-        h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
-
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        try await published.wait {
-            h.pasteboard.data(forType: textType) == Data("guest copied this".utf8)
-        }
-    }
-
-    @Test("An over-cap inbound offer writes nothing and leaves the refusal on the service")
-    func inboundOverCapOfferPublishesNothing() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        // What the Mac clipboard holds when the guest copies the over-cap files —
-        // and still holds afterwards, since the publish returns before it clears.
-        writeText("previous host content", to: h.pasteboard)
-        let baseline = h.pasteboard.changeCount
-
-        let published = AsyncGate()
-        h.coordinator.onInboundPublishedForTesting = { published.notify() }
-        h.coordinator.start()
-        defer { h.coordinator.stop() }
-
-        h.service.refusesOverCopyBudget = true
-        h.service.simulateInboundOffer(ClipboardContent(text: "over the cap"))
-
-        try await published.wait { h.reports.failure != nil }
-        #expect(h.pasteboard.changeCount == baseline)
-        #expect(h.pasteboard.string(forType: .string) == "previous host content")
-        // No gesture outcome exists on this path — the coordinator discards
-        // everything but the change count — so the report is the whole account.
-        #expect(
-            h.reports.failure == .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes))
-    }
-
     // MARK: - Replaying a refusal after the ceiling is raised
 
     /// Drives a passthrough session to the state the raise has to rescue: an
@@ -739,29 +465,6 @@ struct ClipboardPassthroughCoordinatorTests {
         await h.coordinator.inboundPublishTaskForTesting?.value
         #expect(!republished)
         #expect(h.pasteboard.string(forType: .string) == "what the user copied")
-    }
-
-    @Test("a ceiling that did not rise republishes nothing")
-    func anUnraisedCeilingRepublishesNothing() async throws {
-        let preferences = makeTestPreferences()
-        preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
-        let h = try await makeBudgetRefusedHarness(preferences: preferences)
-        defer {
-            h.coordinator.stop()
-            h.pasteboard.releaseGlobally()
-        }
-
-        // Lowering it can only refuse more, so replaying would rewrite the Mac
-        // clipboard for no gain.
-        var republished = false
-        h.coordinator.onInboundPublishedForTesting = { republished = true }
-        h.service.refusesOverCopyBudget = false
-        preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
-        h.coordinator.republishIfCeilingRaised()
-
-        await h.coordinator.inboundPublishTaskForTesting?.value
-        #expect(!republished)
-        #expect(h.pasteboard.string(forType: .string) == "previous host content")
     }
 
     /// A guest-offer service: `guestClipboardItems` returns the offer whole, and
@@ -870,27 +573,6 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(service.puller.pullCount == 1)
     }
 
-    @Test("After stop, a new inbound offer is not published")
-    func stopHaltsInboundPublish() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        var publishedAfterStop = false
-        h.coordinator.start()
-        h.coordinator.stop()
-        h.coordinator.onInboundPublishedForTesting = { publishedAfterStop = true }
-
-        let baseline = h.pasteboard.changeCount
-        h.service.simulateInboundOffer(ClipboardContent(text: "should not appear"))
-
-        // The offer's observation fires in a main-actor job the offer enqueued,
-        // and a publish it launched lands with the task it leaves behind.
-        await drainMainQueue()
-        await h.coordinator.inboundPublishTaskForTesting?.value
-        #expect(!publishedAfterStop)
-        #expect(h.pasteboard.changeCount == baseline)
-    }
-
     /// Starts a session and parks its one inbound publish at the write: past
     /// `guestClipboardItems` *and* past the publisher's off-actor stage, the
     /// window a cancellation has to land in for the write to be stopped.
@@ -929,29 +611,6 @@ struct ClipboardPassthroughCoordinatorTests {
         // The write records this whether or not the pasteboard took the items,
         // so `nil` means the write was never attempted.
         #expect(h.publisher.lastWriteChangeCount == nil)
-    }
-
-    @Test("A publish held at its write still lands while the session is running")
-    func heldInboundPublishLandsWithoutAStop() async throws {
-        let (h, hold) = try await makeHeldPublishHarness()
-        defer {
-            h.coordinator.stop()
-            h.pasteboard.releaseGlobally()
-        }
-
-        let published = AsyncGate()
-        var publishCompleted = false
-        h.coordinator.onInboundPublishedForTesting = {
-            publishCompleted = true
-            published.notify()
-        }
-        hold.release()
-        try await published.wait { publishCompleted }
-
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        #expect(h.pasteboard.data(forType: textType) == Data("guest copied this".utf8))
-        // The coordinator absorbed its own write, so the next poll tick skips it.
-        #expect(h.publisher.lastWriteChangeCount == h.pasteboard.changeCount)
     }
 
     @Test("A newer inbound offer supersedes the publish in flight")

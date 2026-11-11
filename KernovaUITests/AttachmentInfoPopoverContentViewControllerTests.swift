@@ -96,4 +96,14 @@ struct AttachmentInfoPopoverContentViewControllerTests {
         #expect(recorder.committed.isEmpty)
         #expect(notesEditor(in: controller)?.text == "holds the build cache")
     }
+
+    @Test("Dismissing an untouched popover commits nothing")
+    func dismissWithoutAnEditCommitsNothing() {
+        let recorder = NoteRecorder()
+        let controller = makeController(notes: "holds the build cache", recorder: recorder)
+
+        controller.viewWillDisappear()
+
+        #expect(recorder.committed.isEmpty)
+    }
 }
