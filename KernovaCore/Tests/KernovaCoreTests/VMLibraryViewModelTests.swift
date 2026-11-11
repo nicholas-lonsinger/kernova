@@ -220,6 +220,42 @@ struct VMLibraryViewModelTests {
     }
 
     @Test(
+        "deleteVM discards the IPSW resume-data sidecar",
+        arguments: [
+            MacOSInstallContext.Source.downloadLatest, .catalogVersion, .customURL,
+        ]
+    )
+    func deleteVMDiscardsResumeData(source: MacOSInstallContext.Source) async {
+        // Every source that downloads its image leaves a partial bundle at
+        // `downloadDestinationPath`, so deleting the VM has to discard it.
+        let downloadService = MockDownloadService()
+        let storage = MockVMStorageService()
+        let (viewModel, _, _, _, _) = makeViewModel(
+            storageService: storage, downloadService: downloadService)
+
+        let destination = scratch.url
+            .appendingPathComponent("\(UUID().uuidString)-RestoreImage.ipsw")
+        let instance = viewModel.library.registerFixture {
+            $0.installContext = MacOSInstallContext(
+                source: source,
+                downloadDestinationPath: destination.path(percentEncoded: false)
+            )
+        }
+        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
+
+        await viewModel.delete(instance)
+
+        #expect(downloadService.discardResumeDataCallCount == 1)
+        #expect(
+            downloadService.discardedResumeDataURLs.last?.path(percentEncoded: false)
+                == destination.path(percentEncoded: false)
+        )
+        // A move-to-Trash delete discards the partial download to the Trash too.
+        #expect(downloadService.lastDiscardResumeDataPermanently == false)
+        #expect(viewModel.instances.isEmpty)
+    }
+
+    @Test(
         "Deleting one of two VMs whose setups share a destination keeps the bundle",
         arguments: [false, true]
     )

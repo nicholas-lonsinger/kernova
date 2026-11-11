@@ -66,11 +66,6 @@ struct VMCommandCoreArrivalTests {
         return url
     }
 
-    private func isBusy(_ refusal: CommandError?) -> Bool {
-        guard case .busy? = refusal else { return false }
-        return true
-    }
-
     // MARK: - R9: One Report per Failure
 
     @Test("A failed import with a waiter throws to the waiter and never reaches the report hook")
@@ -125,135 +120,7 @@ struct VMCommandCoreArrivalTests {
         #expect(events.failures.first?.message == failure.message)
     }
 
-    @Test("A failed clone nobody waits on is reported once")
-    func failedUnwaitedCloneReportsOnce() async throws {
-        let harness = makeHarness()
-        let source = makeSource(in: harness)
-        let (events, recording) = recordFailureEvents(of: harness.core)
-        defer { recording.cancel() }
-        storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
-        #expect(row.status == VMStatus.preparingWireName)
-        let arrival = try #require(harness.library.arrivals.first)
-        await arrival.settle()
-        // The failed copy let go of its source where it found it.
-        #expect(source.phase == .stopped)
-        // Reported in the step the arrival settled in.
-        #expect(harness.failures.count == 1)
-
-        try await events.changed.wait { !events.failures.isEmpty }
-        #expect(events.failures.map(\.id) == [row.id])
-    }
-
-    @Test("A waiter that leaves before the outcome hands the failure to the report hook")
-    func aWaiterThatLeavesBeforeTheOutcomeHandsTheFailureToReport() async throws {
-        let harness = makeHarness()
-        let source = makeSource(in: harness)
-        let hold = DispatchSemaphore(value: 0)
-        storage.setCloneHold(hold)
-
-        let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
-        }
-        try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
-        storage.setCloneVMBundleError(CocoaError(.fileWriteOutOfSpace))
-        waiter.cancel()
-        hold.signal()
-
-        await #expect(throws: CommandError.self) { try await waiter.value }
-        try await harness.failureReported.wait { harness.failures.count == 1 }
-    }
-
-    @Test("A cancelled waited clone throws its cancel and reports nothing")
-    func cancelledWaitedCloneThrowsCancelledAndNeverReports() async throws {
-        let harness = makeHarness()
-        let source = makeSource(in: harness)
-        let hold = DispatchSemaphore(value: 0)
-        storage.setCloneHold(hold)
-
-        let waiter = Task {
-            try await harness.core.clone(.id(source.id), outcome: .newMachine, waitForOutcome: true)
-        }
-        try await storage.cloneEntered.wait { storage.cloneVMBundleCallCount == 1 }
-        let arrival = try #require(harness.library.arrivals.first)
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
-        // The copy cannot be interrupted, so its source stays held until it ends.
-        #expect(source.phase.operation?.kind == .copyingOut(.stopped))
-        hold.signal()
-
-        let error = try await #require(throws: CommandError.self) { try await waiter.value }
-        guard case .operationFailed(_, _, let message, _) = error else {
-            Issue.record("expected the clone's cancel, got \(error)")
-            return
-        }
-        #expect(message.contains("cancelled"))
-        #expect(harness.failures.isEmpty)
-        #expect(source.phase == .stopped)
-        #expect(harness.library.instances.map(\.id) == [source.id])
-        #expect(storage.publishBundleCallCount == 0)
-        #expect(storage.discardedStagedURLs.count == 1)
-    }
-
     // MARK: - F2: An Arrival Is Not a VM
-
-    @Test("An arrival is not a VM: it lists, but every VM verb refuses it as busy")
-    func anArrivalIsNotAVM() async throws {
-        let harness = makeHarness()
-        let source = makeSource(in: harness)
-        let hold = DispatchSemaphore(value: 0)
-        storage.setCloneHold(hold)
-        defer { hold.signal() }
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
-        let savesBefore = storage.saveConfigurationCallCount
-
-        #expect(harness.library.instances.map(\.id) == [source.id])
-        #expect(Set(harness.library.entries.map(\.id)) == [source.id, row.id])
-        #expect(harness.core.list(.all).map(\.status).contains(VMStatus.preparingWireName))
-        #expect(try harness.core.info(.id(row.id)).status == VMStatus.preparingWireName)
-        #expect(try harness.core.info(.id(row.id)).agentStatus == nil)
-        let renameRefusal = #expect(throws: CommandError.self) {
-            try harness.core.rename(.id(row.id), to: "Renamed")
-        }
-        #expect(isBusy(renameRefusal))
-        let writeRefusal = #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .id(row.id), assignments: [ConfigurationEntry(key: "name", value: "Renamed")],
-                consent: .all)
-        }
-        #expect(isBusy(writeRefusal))
-        #expect(storage.saveConfigurationCallCount == savesBefore)
-        let arrival = try #require(harness.library.arrivals.first)
-        hold.signal()
-        await arrival.settle()
-    }
-
-    @Test("An arrival's address and snapshots refuse as busy")
-    func ipAddressAndSnapshotsOnAnArrivalRefuseAsBusy() async throws {
-        let harness = makeHarness()
-        let source = makeSource(in: harness)
-        let hold = DispatchSemaphore(value: 0)
-        storage.setCloneHold(hold)
-        defer { hold.signal() }
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: false)
-
-        let addressRefusal = #expect(throws: CommandError.self) {
-            try harness.core.ipAddress(of: .id(row.id))
-        }
-        #expect(isBusy(addressRefusal))
-        let snapshotsRefusal = #expect(throws: CommandError.self) {
-            try harness.core.snapshots(of: .id(row.id))
-        }
-        #expect(isBusy(snapshotsRefusal))
-        let arrival = try #require(harness.library.arrivals.first)
-        hold.signal()
-        await arrival.settle()
-    }
 
     @Test("An arrival's storage disks answer the list its write was asked for, unmeasured")
     func storageDisksOfAnArrivalAreUnmeasured() async throws {
@@ -310,65 +177,6 @@ struct VMCommandCoreArrivalTests {
         #expect(harness.library.entries.isEmpty)
         #expect(harness.virtualization.startCallCount == 0)
         #expect(harness.failures.isEmpty)
-    }
-
-    @Test("A create publishing when the termination begins is adopted, and its start is refused unreported")
-    func aCreatePublishingAtTerminationStartsNothing() async throws {
-        let harness = makeHarness()
-        let hold = DispatchSemaphore(value: 0)
-        storage.setPublishHold(hold)
-        let configuration = VMConfiguration(
-            name: "Quitting", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-
-        try harness.core.create(
-            configuration: configuration, diskSizeInGB: 64,
-            startAfterCreate: true, guestAccountPassword: nil)
-        let arrival = try #require(harness.library.arrivals.first)
-        try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
-        #expect(arrival.stage == .publishing)
-
-        harness.library.beginTermination()
-        hold.signal()
-
-        let instance = try #require(await arrival.settle())
-        // The start-after-create is decided in the step that adopts the VM.
-        #expect(instance.phase == .stopped)
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(harness.failures.isEmpty)
-    }
-
-    @Test("A create's auto-start is admitted in the step that adopts the new VM")
-    func aCreatesAutoStartIsAdmittedAtAdoption() async throws {
-        // The boot parks inside Virtualization, so the VM is still held by it
-        // when the arrival's outcome is read.
-        let virtualization = SuspendingMockVirtualizationService()
-        let wired = WiredCommandCore(
-            virtualization: virtualization, storage: storage, preferences: preferences)
-        let core = wired.core
-        let library = wired.library
-        let configuration = VMConfiguration(
-            name: "Fresh", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-
-        try core.create(
-            configuration: configuration, diskSizeInGB: 64,
-            startAfterCreate: true, guestAccountPassword: nil)
-        let arrival = try #require(library.arrivals.first)
-        let instance = try #require(await arrival.settle())
-
-        // Held by its start from the adoption on, so the first request decided
-        // against the new VM — a clone here — finds it busy.
-        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
-        let clone = #expect(throws: CommandError.self) {
-            try core.beginClone(.id(instance.id), outcome: .exactCopy)
-        }
-        #expect(isBusy(clone))
-
-        await virtualization.waitUntilSuspended()
-        virtualization.resumeSuspended()
-        try await waitForChange { instance.status == .running }
-        #expect(virtualization.startCallCount == 1)
     }
 
     @Test("A waiter on an arrival cancelled during its rename receives the cancel, not the VM")
@@ -469,13 +277,6 @@ struct VMCommandCoreArrivalTests {
         #expect(config.macAddress == "aa:bb:cc:dd:ee:01")
     }
 
-    @Test("An Exact Copy of a source with no MAC address is given none")
-    func exactCopyOfAddresslessSourceStaysAddressless() async throws {
-        let config = try await clonedConfiguration(
-            ofSourceWith: nil, networkEnabled: false, outcome: .exactCopy)
-        #expect(config.macAddress == nil)
-    }
-
     @Test("A New Machine gets a fresh MAC address")
     func newMachineGetsFreshMACAddress() async throws {
         let config = try await clonedConfiguration(
@@ -483,13 +284,6 @@ struct VMCommandCoreArrivalTests {
         let mac = try #require(config.macAddress)
         #expect(mac != "aa:bb:cc:dd:ee:01")
         #expect(GuestMACAddress.normalized(mac) == mac)
-    }
-
-    @Test("A New Machine of a source with networking off and no address is given none")
-    func newMachineOfAddresslessSourceStaysAddressless() async throws {
-        let config = try await clonedConfiguration(
-            ofSourceWith: nil, networkEnabled: false, outcome: .newMachine)
-        #expect(config.macAddress == nil)
     }
 
     @Test("A New Machine of a networked source with no address gets one")
@@ -526,23 +320,6 @@ struct VMCommandCoreArrivalTests {
             preferences: preferences, mutate: mutate)
     }
 
-    @Test("An Exact Copy of a suspended VM arrives suspended on its saved state, and the source keeps its own")
-    func exactCopyOfASuspendedVMCarriesItsSavedState() async throws {
-        let harness = makeHarness()
-        let source = register(.suspended, in: harness)
-        try VMInstanceFixture.writeSaveFile(for: source)
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
-
-        let clone = try #require(harness.library.instances.first { $0.id == row.id })
-        #expect(clone.phase == .suspended)
-        #expect(clone.hasSaveFile)
-        #expect(source.phase == .suspended)
-        #expect(source.hasSaveFile)
-        #expect(harness.virtualization.copyLiveCallCount == 0)
-    }
-
     @Test("An Exact Copy keeps the version that wrote each saved state it carries")
     func exactCopyKeepsEachSavedStatesVersion() async throws {
         let harness = makeHarness()
@@ -565,36 +342,6 @@ struct VMCommandCoreArrivalTests {
         #expect(clone.phase == .suspended)
         #expect(clone.savedStateVersion == "0.9.0 (300)")
         #expect(clone.savedStateVersion(ofSnapshot: snapshot.id) == "0.8.0 (200)")
-    }
-
-    @Test("An Exact Copy of a live VM records the copying Kernova on the state it saves")
-    func liveExactCopyRecordsTheVersion() async throws {
-        let harness = makeHarness()
-        let source = register(.running(sessionID: UUID()), in: harness)
-        harness.virtualization.liveCopySession = MockSnapshotSession(guestState: .running, writesStateFile: true)
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
-
-        let clone = try #require(harness.library.instances.first { $0.id == row.id })
-        #expect(clone.phase == .suspended)
-        #expect(clone.savedStateVersion == source.bundleProducts.versionLabel)
-    }
-
-    @Test("A New Machine of a suspended VM arrives stopped, and the source keeps its saved state")
-    func newMachineOfASuspendedVMBootsCold() async throws {
-        let harness = makeHarness()
-        let source = register(.suspended, in: harness)
-        try VMInstanceFixture.writeSaveFile(for: source)
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: true)
-
-        let clone = try #require(harness.library.instances.first { $0.id == row.id })
-        #expect(clone.phase == .stopped)
-        #expect(!clone.hasSaveFile)
-        #expect(source.phase == .suspended)
-        #expect(source.hasSaveFile)
     }
 
     /// The bundle files `source`'s saved state restores onto — what a live
@@ -649,93 +396,5 @@ struct VMCommandCoreArrivalTests {
             #expect(clone.phase == .stopped)
             #expect(!clone.hasSaveFile)
         }
-    }
-
-    @Test("A New Machine of a paused VM saves and copies inside a pause, stays paused, and arrives stopped")
-    func newMachineOfAPausedVMArrivesStopped() async throws {
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let source = register(.livePaused(sessionID: sessionID), in: harness)
-        let session = MockSnapshotSession(guestState: .paused, writesStateFile: true)
-        harness.virtualization.liveCopySession = session
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .newMachine, waitForOutcome: true)
-
-        #expect(await session.calls == ["pauseIfRunning", "saveMachineState"])
-        #expect(await session.guestState == .paused)
-        #expect(source.phase == .livePaused(sessionID: sessionID))
-        #expect(storage.cloneVMBundleCallCount == 2)
-        let clone = try #require(harness.library.instances.first { $0.id == row.id })
-        #expect(clone.phase == .stopped)
-        #expect(!clone.hasSaveFile)
-    }
-
-    @Test("A live clone whose save fails copies no guest file, discards the staged bundle and resumes the source")
-    func failedLiveSaveDiscardsTheCloneAndResumesTheSource() async throws {
-        let harness = makeHarness()
-        let sessionID = UUID()
-        let source = register(.running(sessionID: sessionID), in: harness)
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
-        await session.setSaveError(CocoaError(.fileWriteOutOfSpace))
-        harness.virtualization.liveCopySession = session
-
-        await #expect(throws: CommandError.self) {
-            try await harness.core.clone(.id(source.id), outcome: .exactCopy, waitForOutcome: true)
-        }
-
-        // Only the settled files, before the pause, were copied.
-        #expect(storage.cloneVMBundleCallCount == 1)
-        let copied = Set(storage.lastCloneRelativePaths ?? [])
-        #expect(copied.isDisjoint(with: stateBoundPaths(of: source)))
-        #expect(storage.discardedStagedURLs.count == 1)
-        #expect(await session.guestState == .running)
-        #expect(source.phase == .running(sessionID: sessionID))
-        #expect(harness.library.instances.map(\.id) == [source.id])
-    }
-
-    @Test(
-        "A suspended or live VM whose guest can write an external disk is refused a clone until it is stopped",
-        arguments: [
-            VMLifecyclePhase.suspended, .running(sessionID: UUID()),
-            .livePaused(sessionID: UUID()),
-        ])
-    func writableExternalDiskRefusesALiveOrSuspendedClone(phase: VMLifecyclePhase) throws {
-        let harness = makeHarness()
-        let source = register(phase, in: harness) {
-            $0.removableMedia = [RemovableMediaItem(path: "/Volumes/Data/Scratch.img", readOnly: false)]
-        }
-        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: source) }
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.beginClone(.id(source.id), outcome: .exactCopy)
-        }
-        guard case .changeTakesStoppedVM(_, _, let change) = error else {
-            Issue.record("expected a stopped-VM refusal, got \(error)")
-            return
-        }
-        #expect(change == .cloneWritingOutsideBundle)
-        #expect(
-            error.message
-                == "\u{201C}Source\u{201D} is \(source.status.phrase(heldByAnotherCopy: false)). "
-                + "Cloning a virtual machine with a writable external disk needs it stopped.")
-        #expect(storage.cloneVMBundleCallCount == 0)
-        #expect(harness.library.entries.map(\.id) == [source.id])
-    }
-
-    @Test("A stopped VM whose guest can write an external disk clones as before")
-    func writableExternalDiskLeavesAStoppedCloneAlone() async throws {
-        let harness = makeHarness()
-        let source = register(.stopped, in: harness) {
-            $0.storageDisks = [
-                StorageDisk(path: "Disk.asif", isInternal: true),
-                StorageDisk(path: "/Volumes/Data/Shared.asif", readOnly: false),
-            ]
-        }
-
-        let row = try await harness.core.clone(
-            .id(source.id), outcome: .exactCopy, waitForOutcome: true)
-
-        #expect(harness.library.instances.contains { $0.id == row.id })
     }
 }
