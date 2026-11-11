@@ -82,6 +82,23 @@ struct VMLibraryIntentTests {
         #expect(twin.configuration.genericMachineIdentifierData == Data([4, 5, 6]))
     }
 
+    @Test("A rename and a delete address their VM by identifier, never by name")
+    func renameAndDeleteAddressByIdentifier() async throws {
+        let wired = WiredCommandCore()
+        let renamed = wired.register()
+        let twin = wired.register()
+        let gateway = makeGateway(wired)
+
+        try await gateway.rename(renamed.id, to: "  Renamed  ")
+
+        #expect(renamed.name == "Renamed")
+        #expect(twin.name == "Wired")
+
+        try await gateway.delete(renamed.id, consent: .all)
+
+        #expect(wired.library.instances.map(\.id) == [twin.id])
+    }
+
     /// The core trims the name and writes nothing when none is left — the
     /// inline field commits on end-editing whether or not the text changed —
     /// so a Shortcut whose Name resolves to nothing would report success

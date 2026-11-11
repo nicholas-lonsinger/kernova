@@ -117,6 +117,17 @@ struct VMURLGatewayTests {
         #expect(trace.presented.isEmpty)
     }
 
+    /// Readied once, for the alert: the refused verb itself surfaced nothing.
+    @Test("A verb refusal readies the app once and summons the library before it is shown")
+    func aVerbRefusalSummonsTheLibraryBeforePresenting() async throws {
+        let wired = WiredCommandCore()
+        let trace = Trace()
+        await makeGateway(wired, trace: trace).handle(try url("kernova://open/Sonoma"))
+
+        #expect(
+            trace.steps == [.prepared, .summoned, .presented(.notFound(.idOrName("Sonoma")))])
+    }
+
     @Test("The verb waits for the app's first library read")
     func theVerbWaitsForTheFirstLibraryRead() async throws {
         let wired = WiredCommandCore()

@@ -127,6 +127,21 @@ struct CommandLineToolInstallerTests {
         #expect(target == installer.bundledToolURL.path(percentEncoded: false))
     }
 
+    @Test("A path the app cannot write refuses, and says why")
+    func installRefusesAnUnwritablePath() {
+        // The system volume is read-only, and no grant makes it otherwise.
+        let destination = URL(fileURLWithPath: "/System/kernova-should-not-exist")
+        do {
+            try installer.installSymlink(at: destination)
+            Issue.record("expected the write to be refused")
+            try? FileManager.default.removeItem(at: destination)
+        } catch InstallFailure.unwritable(let detail) {
+            #expect(!detail.isEmpty)
+        } catch {
+            Issue.record("expected an unwritable failure, got \(error)")
+        }
+    }
+
     @Test("A process whose signature claims no app group offers no tool, even with one bundled")
     func noContainerOffersNoTool() throws {
         // The test runner's signature claims no application group.

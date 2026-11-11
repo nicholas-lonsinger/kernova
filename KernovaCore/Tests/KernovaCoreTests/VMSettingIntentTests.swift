@@ -21,6 +21,17 @@ struct VMSettingIntentTests {
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
     }
 
+    @Test("The settings offered are the registry's keys, in its order, each described by its summary")
+    func settingsAreTheRegistryKeys() async throws {
+        let settings = await makeGateway(over: WiredCommandCore()).configurationKeys()
+
+        #expect(settings.map(\.id) == VMConfigurationKeyRegistry.keys.map(\.name))
+        let mac = try #require(settings.first { $0.id == VMConfigurationKeyRegistry.networkMAC.name })
+        #expect(String(localized: mac.displayRepresentation.title) == "network.mac")
+        let subtitle = try #require(mac.displayRepresentation.subtitle)
+        #expect(String(localized: subtitle) == VMConfigurationKeyRegistry.networkMAC.summary)
+    }
+
     @Test("Resolving by name, or by a typed fragment, answers only the settings asked for, in registry order")
     func lookupFilters() async throws {
         let gateway = makeGateway(over: WiredCommandCore())

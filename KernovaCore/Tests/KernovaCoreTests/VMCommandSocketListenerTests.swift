@@ -214,6 +214,25 @@ struct VMCommandSocketListenerTests {
         #expect(harness.listener.connectionCountForTesting == 0)
     }
 
+    @Test("Bytes that are not a request are refused, and end the connection")
+    func undecodableBytesAreRefused() async throws {
+        let harness = try makeHarness()
+        harness.listener.start()
+        defer { harness.listener.stop() }
+
+        let client = try TestCommandClient(connectingTo: harness.path)
+        defer { client.close() }
+
+        try client.sendRaw(Data("not a request".utf8))
+
+        let response = try await client.nextResponse()
+        guard case .refused(.undecodableRequest) = response?.result else {
+            Issue.record("expected an undecodable-request refusal, got \(String(describing: response))")
+            return
+        }
+        #expect(try await client.nextResponse() == nil)
+    }
+
     // MARK: - Subscription
 
     @Test("A subscription answers with the library, then with each change")

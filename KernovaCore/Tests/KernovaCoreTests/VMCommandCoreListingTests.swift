@@ -82,6 +82,23 @@ struct VMCommandCoreListingTests {
         #expect(item == "network named \u{201C}Nowhere\u{201D}")
     }
 
+    @Test("A text naming both a mode and a named network is refused with the identifier that picks the network")
+    func ambiguousNetworkTextIsRefused() throws {
+        let harness = makeHarness()
+        let shadow = try harness.core.createNetwork(name: "NAT", kind: .hostOnly)
+        makeInstance(in: harness, name: "Member") {
+            $0.applyNetworkMode(.hostOnly)
+            $0.networkMembership = .network(shadow.id)
+        }
+
+        guard case .invalidArgument(let message)? = refusal(harness, VMListQuery(networks: ["nat"])) else {
+            Issue.record("expected an invalid-argument refusal")
+            return
+        }
+        #expect(message.contains(shadow.id.uuidString))
+        #expect(try listed(harness, VMListQuery(networks: [shadow.id.uuidString])) == ["Member"])
+    }
+
     // MARK: - Tags
 
     @Test("A tag text reads as a tag's name ignoring case or its identifier, any tag given admitting a VM")
