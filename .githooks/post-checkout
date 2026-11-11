@@ -16,6 +16,11 @@ set -uo pipefail
 # which creates no working tree.
 [ "${3:-0}" = "1" ] || exit 0
 
+# Git exports GIT_DIR and its companions to a hook (githooks(5)), and they
+# outrank `-C` and a directory's own .git for every git and SwiftPM call below.
+# shellcheck disable=SC2046 # one variable name per word
+unset $(git rev-parse --local-env-vars)
+
 # Best-effort: a failed setup must not fail the checkout.
 if [ -x Tools/worktree-setup.sh ]; then
     Tools/worktree-setup.sh || true
