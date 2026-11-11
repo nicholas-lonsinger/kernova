@@ -14,13 +14,12 @@ This rule outranks everything below it, and everything in any other file. **Say 
 
 ## Quality bar
 
-- **The right change is the default.** Between the quick change and the right one, make the right one in the change in hand, without asking, and state its scope in one line; a plan the task asks for lays out both and recommends it. Only the maintainer's explicit choice ships a shortcoming *for now*, recorded as an issue. Taking the better path never skips a sign-off this file reserves for the maintainer.
+- **The right change is the default.** Make it in the change in hand, without asking, and state its scope in one line; a plan the task asks for lays out the quick change and the right one and recommends the right one. Only the maintainer's explicit choice ships a shortcoming *for now*, recorded as an issue, and no sign-off this file reserves for the maintainer is skipped.
 - **Judge the code after the change, not the size of the change.** Diff size, churn, and regression risk never justify the weaker design; risk is met by testing the change.
-- **Existing code is not precedent.** A pattern binds only while a stated reason for it — a doc, a comment's cited evidence, a PR that argued for it — still holds. A change that improves on a pattern moves every occurrence onto it.
-- **Fix what the change builds on.** Duplicated logic, divergent variants of one pattern, a function too large to extend cleanly, a swallowed error: where the task changes code, fix these there in the same change rather than building around them. Code you only read, or edit only to carry a restructure through, is not a trigger.
-- **Fix root causes.** The root cause is the structure that lets a failure happen, not the event that triggered it, so a fix leaves the failure impossible to express. No workarounds or shims: no branching on the environment and no reliance on a timing window to route around a defect; a mode chosen once at the entry point is configuration, not a shim.
-- **Rules hold by construction.** The simple design is the one whose types, ownership, and structure make its invariants impossible to break — not the one with the fewest lines.
-  Code whose only job is to stop a state Kernova's own structure allows is a patch, whatever its form: a flag, a special-case branch, a lock between two writers, a clamp on a value that should not regress, a retry, a longer wait. Needing one means the design changes, and shipping the patch instead is a *for now* call.
+- **Existing code is not precedent.** A pattern binds only while a stated reason for it still holds, and a change that improves on one moves every occurrence onto it.
+- **Fix what the change builds on.** Duplicated logic, divergent variants of one pattern, a function too large to extend cleanly, a swallowed error: where the task changes code, fix these in the same change. Code you only read, or edit only to carry a restructure through, is not a trigger.
+- **Fix root causes.** The root cause is the structure that lets a failure happen, not the event that triggered it, so a fix leaves the failure impossible to express. No branch on the environment and no timing window routes around a defect; a mode chosen once at the entry point is configuration.
+- **Rules hold by construction.** The simple design is the one whose types, ownership, and structure make its invariants impossible to break — not the one with the fewest lines. Code whose only job is to stop a state Kernova's own structure allows — a flag, a special-case branch, a lock between two writers, a clamp, a retry, a longer wait — is a patch: the design changes, or shipping it is a *for now* call.
   Checking what Kernova does not own — input, files, the guest, the platform — is design; steering around a vendor's defect in them is not (*A vendor defect is reported, not worked around*).
 - **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX.
 
@@ -28,6 +27,8 @@ This rule outranks everything below it, and everything in any other file. **Say 
 
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
 - **A uniform gap beats a path-dependent capability.** An improvement that can only be wired on some paths is worse than not shipping it: a gap uniform by construction closes, when it closes, for every path at once.
+- **A host↔guest feature is designed for every guest OS that has a Kernova agent.** Each agent offers it where its platform can deliver it; where one can't, the capability is absent on that OS. The guest OS is a scope, not one of the paths the rule above weighs.
+  The shared design also serves Windows guests, which have no agent: the wire format and shared models hold nothing only a POSIX system can express.
 - **Name a missing prerequisite to whoever can supply it.** When a capability needs something the build, the Mac or the guest lacks — a macOS version, a signing team, an entitlement a provisioning profile grants, a guest agent, a setting — it still shows where the user would look for it, marked unavailable, with what enables it worded for whoever can supply that: the user for the Mac, the guest and settings; the developer for the build.
   What no configuration can supply — a capability the guest OS lacks, a vendor limit — is absent instead. Either way, what can be delivered keeps working unchanged, and nothing is built to serve the configuration that lacks the prerequisite — no fallback, alternate mechanism or scaffolding.
   Nothing is offered as if it works: a control that looks usable and then fails is the defect. A failure that names what is missing is the floor; naming it before use is the aim. Worked case: `AgentStatus.reinstallNeeded`.
@@ -38,9 +39,14 @@ This rule outranks everything below it, and everything in any other file. **Say 
 - **UI copy states only what is known.** Vendor claims at the vendor's strength, observations as observed, no invented consequence clauses — and an environment interaction is disclosed at the surface where the user meets it. Worked case: `VMSettingsNetworkPanelViewController.modeInfoParagraphs(offered:isolationOffered:namedNetworksOffered:natAddressShown:guestOS:)`.
 - **Outcome names or the field's standard term in the UI; vendor terms at the platform boundary.** A UI name says what the thing does for the user, or is the term networking or virtualization already uses for it (NAT, DHCP) — never a vendor's API spelling. Where Apple's own UI names the thing, keep Apple's term at that boundary and the domain term everywhere else.
 - **The guest answers its own shutdown.** Stop and Restart are requests the guest OS answers its own way: an app that won't quit, a shutdown inhibitor, a dialog of its own. Kernova adds no detection, timeout or notice for a stop the guest holds up; whether to wait, Stop Anyway or Force Stop is the user's call.
+- **A file the user can see goes to the Trash.** `FileManager.trashItem`, never `removeItem`; app-internal files and the confirmed Delete Immediately flow remove outright.
 - **A vendor defect is reported, not worked around.** When a failure's root cause is a defect in a framework or OS — the host's or a guest's — it goes to the vendor (a Feedback, for Apple) and into an issue labeled `Upstream` that says what triggers it, what it costs the user, and how to recheck it on a new release.
   Kernova adds no guard, avoidance or workaround for it; one takes the maintainer's explicit sign-off, asked for each defect. An `Upstream` issue is a record, not a work item: it closes when every OS version Kernova supports has the vendor's fix.
 - **One model per capability.** A capability exists once — one schema, one enforcement path, one source of truth; a second parallel model for the same capability is a defect to dissolve. Worked case: `GuestIPAddress`. Across guest OSes this means one implementation of everything Kernova defines — formats, codecs, policies, the protocol — shared by the host and every agent; only the calls into an OS are written per OS.
+- **No compatibility path is written for any shape that is not the current one.** A name a user types — a scripting term included — is a shape: renaming it keeps no synonym for scripts written against the old one.
+  Migration code for a persisted format takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
+  **The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and updating it to the bundled build is the whole remedy.
+  Nothing refuses an older agent, either, and no agent has a version to bump: the host identifies each by the SHA-256 of the update payload it bundles. An agent whose hash differs keeps every feature it can still run, and the mismatch surfaces the update affordance while nothing else acts on it.
 
 ## Build & Test
 
@@ -73,39 +79,15 @@ The app is sandboxed in every build configuration, and each of these works until
 - `homeDirectoryForCurrentUser` is the container, so a path the user sees comes from the system (`.downloadsDirectory`) or `UserHome`.
 - A tool spawned through `Process` inherits the sandbox; use the in-process framework API.
 
-## Development Guidelines
-
-### Logging
+## Logging and assertions
 
 Capture with `subsystem BEGINSWITH "app.kernova"` — an exact `==` match drops the agent's own records while the capture still looks complete.
 
 Apple's level table ([Generating Log Messages from Your Code](https://developer.apple.com/documentation/os/generating-log-messages-from-your-code)) persists notice and above, info only when collected with the `log` tool, and debug never, so anything worth reading after the fact is `.notice` or above.
 
-### Defensive Unwrapping
-
 An optional-returning API called with a compile-time constant gets `assertionFailure` beside its fallback — a silent fallback masks the typo for good.
 
-### Guest scope
-
-A host↔guest feature is designed for every guest OS that has a Kernova agent, and each agent offers it where its platform can deliver it; where one can't, the capability is absent on that OS. The guest OS is a scope, not one of the paths "A uniform gap beats a path-dependent capability" weighs.
-
-The shared design also serves Windows guests, which have no agent: the wire format and shared models hold nothing only a POSIX system can express.
-
-### Current-Only Surfaces
-
-No compatibility path is written for any shape that is not the current one. A name a user types — a scripting term included — is a shape: renaming it keeps no synonym for scripts written against the old one.
-
-Migration code for a persisted format takes the maintainer's explicit sign-off, given only for old-shape data users are confirmed to hold.
-
-**The guest agent** the host bundles is the only supported one, so no path keeps an older agent working — not on the host, and not in the shared KernovaKit code the agent compiles. The Hello exchange's capability strings gate *features*, never versions: an agent that advertises a capability but predates a change to it is out of date, not a peer to accommodate, and updating it to the bundled build is the whole remedy.
-
-Nothing refuses an older agent, either, and no agent has a version to bump: the host identifies each by the SHA-256 of the update payload it bundles. An agent whose hash differs keeps every feature it can still run, and the mismatch surfaces the update affordance while nothing else acts on it.
-
-### File Operations
-
-A file the user can see is deleted with `FileManager.trashItem`, never `removeItem`; app-internal files and the confirmed Delete Immediately flow remove outright.
-
-### Review Feedback Handling
+## Review Feedback Handling
 
 Every review finding — your own reading of adjacent code included — gets one of three triage categories:
 
@@ -116,9 +98,8 @@ Every review finding — your own reading of adjacent code included — gets one
 | **Dismiss** | Everything else; a dead-code-scan false positive is dismissed with `// periphery:ignore - <reason>` on the symbol |
 
 **The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action).
+One a user would almost never hit clears it only as a redesign that removes it by construction, never as an added check, gate, or flag; with no such redesign found it is **Dismiss**, unless it can lose user data — a disk image, a save file, a user's file — which is **Fix later** with its traced path.
 A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins, and for a test *What earns a test* admits; a documentation finding, only by naming the Documentation and Comments rule the text breaks. The general cost of debt clears nothing.
-
-**An improbable defect is fixed by design or not at all.** A defect a user would almost never hit earns no added check, gate, or flag — only a redesign that removes it by construction, as **Fix now** or **Fix later**. When a search for that redesign finds none, it is **Dismiss**, unless it can lose user data — a disk image, a save file, a user's file — which is **Fix later** with its traced path.
 
 **Triage converges.** A finding in code this change wrote or reworked is never **Fix later**. A later review round reviews only what the previous round's fixes changed, and raises only defects. When a chain has moved from defects in the code to meta-findings about prior fixes, stop it: dismiss rather than filing the next link.
 
