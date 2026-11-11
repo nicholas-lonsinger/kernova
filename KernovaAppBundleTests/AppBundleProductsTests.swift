@@ -94,6 +94,31 @@ struct AppBundleProductsTests {
         #expect(FileManager.default.isExecutableFile(atPath: tool.path(percentEncoded: false)))
     }
 
+    /// A sandboxed tool's launch asks for its containers before `main`, which
+    /// on a Mac that ran a team-signed build raises a dialog for a team-less
+    /// one.
+    @Test("The built tool claims the sandbox and its team's app group exactly when it carries a signing team")
+    func toolIsSandboxedOnlyWhenTeamSigned() throws {
+        let tool = products.commandLineTool.bundledToolURL
+        var code: SecStaticCode?
+        try #require(SecStaticCodeCreateWithPath(tool as CFURL, [], &code) == errSecSuccess)
+        var information: CFDictionary?
+        let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
+        try #require(SecCodeCopySigningInformation(try #require(code), flags, &information) == errSecSuccess)
+        let signing = information as? [String: Any]
+        let team = signing?[kSecCodeInfoTeamIdentifier as String] as? String
+        let entitlements = signing?[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+        let sandboxed = entitlements["com.apple.security.app-sandbox"] as? Bool == true
+        let groups = entitlements["com.apple.security.application-groups"] as? [String]
+        if let team {
+            #expect(sandboxed)
+            #expect(groups == ["\(team).app.kernova"])
+        } else {
+            #expect(!sandboxed)
+            #expect(groups == nil)
+        }
+    }
+
     @Test("The built app carries the relaunch helper")
     func builtAppCarriesTheRelaunchHelper() throws {
         let helper = try #require(products.relaunchHelperURL)

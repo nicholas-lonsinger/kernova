@@ -21,7 +21,15 @@ GENERATE_INFOPLIST_FILE = YES
 CREATE_INFOPLIST_SECTION_IN_BINARY = YES
 
 CODE_SIGN_STYLE = Automatic
-CODE_SIGN_ENTITLEMENTS = KernovaCLI/KernovaCLI.entitlements
+// A build with no team signs the tool with no entitlements. Sandboxed, the
+// tool's launch asks containermanagerd for its containers before main, and on
+// a Mac where a team-signed build ran it first that raises "differs from
+// previously opened versions" and waits for an answer (observed 2026-11-06,
+// macOS 27.2); a team-less signature is granted no app group either way.
+KERNOVA_CLI_TEAMLESS_ = YES
+KERNOVA_CLI_ENTITLEMENTS_TEAMLESS_ = KernovaCLI/KernovaCLI.entitlements
+KERNOVA_CLI_ENTITLEMENTS_TEAMLESS_YES =
+CODE_SIGN_ENTITLEMENTS = $(KERNOVA_CLI_ENTITLEMENTS_TEAMLESS_$(KERNOVA_CLI_TEAMLESS_$(DEVELOPMENT_TEAM)))
 PROVISIONING_PROFILE_SPECIFIER =
 
 CODE_SIGN_IDENTITY[sdk=macosx*][config=Release] = -
