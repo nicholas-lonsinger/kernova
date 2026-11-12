@@ -38,8 +38,8 @@
 	     API use, and a bridged attachment fails VZ configuration validation
 	     without it. A managed capability on the App ID — eligible provisioning
 	     profiles carry it automatically. It is restricted: signing must be
-	     authorized by such a profile, so the default build signs with
-	     Kernova.Development.entitlements instead; see Config/Base.xcconfig.
+	     authorized by such a profile, so it is absent from
+	     Kernova.Development.entitlements.
 	     The sandbox profile needs nothing further: application.sb grants the
 	     com.apple.NetworkSharing mach-lookup exactly when this key is present. -->
 	<key>com.apple.vm.networking</key>
@@ -62,8 +62,7 @@
 	     it on the App ID takes no request to Apple — but it is restricted, like
 	     com.apple.vm.networking above: amfid kills an ad-hoc-signed binary
 	     claiming it ("adhoc signed but contains restricted entitlements"), so
-	     the default build signs with Kernova.Development.entitlements, this
-	     file minus its restricted keys. -->
+	     it is absent from Kernova.Development.entitlements. -->
 	<key>com.apple.developer.accessory-access.usb</key>
 	<true/>
 	<!-- The container the app and its `kernova` command-line tool meet in,

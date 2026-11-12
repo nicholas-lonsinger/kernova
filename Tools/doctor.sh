@@ -221,9 +221,9 @@ section 'Signing'
 # target leaves Release unpinned, so the override also governs archives); the
 # same file supplies DEVELOPMENT_TEAM, which automatic signing resolves the
 # certificate through and the agent's Release Developer ID signing needs, and
-# optionally KERNOVA_APP_ENTITLEMENTS, which decides whether an archive
-# carries the restricted com.apple.vm.networking key. CI has no Local.xcconfig
-# and signs ad-hoc too, so it can't catch a broken team here either.
+# optionally KERNOVA_DEBUG_APP_ENTITLEMENTS, Debug's entitlement set. CI has no
+# Local.xcconfig and signs ad-hoc too, so it can't catch a broken team here
+# either.
 local_xcconfig="Config/Local.xcconfig"
 resolved_team=""
 resolved_identity=""
@@ -248,18 +248,14 @@ else
     detail "With a development certificate, add to $local_xcconfig: CODE_SIGN_IDENTITY = Apple Development"
 fi
 
-# KERNOVA_APP_ENTITLEMENTS selects the app's entitlement set; unset means the
-# Development variant, without the restricted keys check-entitlements.sh names.
-# Surfaced here because archives inherit it silently.
-resolved_entitlements=$(sed -n 's/^[[:space:]]*KERNOVA_APP_ENTITLEMENTS[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
-if [ "$resolved_entitlements" = "Kernova/Resources/Kernova.entitlements" ]; then
-    pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
-    detail 'archives cut on this machine carry the restricted keys Tools/check-entitlements.sh names — the embedded profile has to authorize each'
-elif [ -n "$resolved_entitlements" ]; then
-    pass "KERNOVA_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
-    detail 'not the full Kernova.entitlements set — archives will NOT carry the restricted keys'
+# KERNOVA_DEBUG_APP_ENTITLEMENTS selects Debug's entitlement set; unset means
+# the Development variant, without the restricted keys check-entitlements.sh
+# names.
+resolved_entitlements=$(sed -n 's/^[[:space:]]*KERNOVA_DEBUG_APP_ENTITLEMENTS[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
+if [ -n "$resolved_entitlements" ]; then
+    pass "KERNOVA_DEBUG_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"
 else
-    pass 'App entitlements: Development variant (default — no restricted keys; archives need the full set for VM networking and USB accessory access)'
+    pass 'Debug entitlements: Development variant (default — no restricted keys, so no VM networking beyond NAT and no USB accessory access)'
 fi
 
 # `security find-identity` lists every codesigning-capable identity in the

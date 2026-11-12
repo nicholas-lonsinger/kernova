@@ -13,10 +13,12 @@
 # while `make doctor` goes on reporting Local.xcconfig's values. The guest
 # agent, the CLI and the relaunch helper pin an identity for Release only, and
 # take Local.xcconfig's in Debug: an installed guest agent's launch constraint
-# is its own cdhash when ad-hoc, which no later build meets. The app's
-# entitlement path is Local.xcconfig's to choose too; the test host's plist
-# holds no restricted key (Tools/check-entitlements.sh), so it signs under any
-# identity and names its path itself.
+# is its own cdhash when ad-hoc, which no later build meets. The app's Debug
+# entitlement path is Local.xcconfig's to choose too, and its Release path is
+# the full set, out of Local.xcconfig's reach, so an archive carries every
+# restricted key; the test host's plist holds no restricted key
+# (Tools/check-entitlements.sh), so it signs under any identity and names its
+# path itself.
 #
 # Reports every violation before failing, so one run fixes them all.
 
@@ -110,7 +112,9 @@ done
 # A declaration is NAME, optional [condition] groups, then `=`; the condition
 # is part of the spelling, not an escape, so a conditioned assignment fails the
 # same way an unconditioned one does.
-signing_violations=$(awk -v app="$app_file" -v pinned="${release_pinned_files[*]}" '
+signing_violations=$(awk -v app="$app_file" -v pinned="${release_pinned_files[*]}" \
+    -v debug_entitlements='$(KERNOVA_DEBUG_APP_ENTITLEMENTS)' \
+    -v release_entitlements=Kernova/Resources/Kernova.entitlements '
     BEGIN {
         n = split(pinned, files, " ")
         for (i = 1; i <= n; i++) release_pinned[files[i]] = 1
@@ -120,18 +124,29 @@ signing_violations=$(awk -v app="$app_file" -v pinned="${release_pinned_files[*]
         sub(/\/\/.*$/, "", line)
         if (!match(line, /^[A-Za-z_][A-Za-z0-9_]*([[:space:]]*\[[^]]*\])*[[:space:]]*=/)) next
 
-        name = substr(line, 1, RLENGTH)
-        sub(/([[:space:]]*\[[^]]*\])*[[:space:]]*=$/, "", name)
+        declaration = substr(line, 1, RLENGTH)
         value = substr(line, RLENGTH + 1)
+        name = declaration
+        sub(/([[:space:]]*\[[^]]*\])*[[:space:]]*=$/, "", name)
+        condition = substr(declaration, length(name) + 1)
+        sub(/[[:space:]]*=$/, "", condition)
+        gsub(/[[:space:]]/, "", condition)
         gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
 
-        if (name == "CODE_SIGN_IDENTITY" || name == "DEVELOPMENT_TEAM")
-            if (!(FILENAME in release_pinned) || substr(line, 1, RLENGTH) !~ /\[config=Release\]/)
+        if (name == "CODE_SIGN_IDENTITY" || name == "DEVELOPMENT_TEAM") {
+            if (!(FILENAME in release_pinned) || condition !~ /\[config=Release\]/)
                 printf "  %s:%d: %s — Config/Local.xcconfig has to reach this target\n", FILENAME, FNR, name
-        else if (name == "PROVISIONING_PROFILE_SPECIFIER" && value != "")
+        } else if (name == "PROVISIONING_PROFILE_SPECIFIER" && value != "")
             printf "  %s:%d: %s = %s — leave it empty\n", FILENAME, FNR, name, value
-        else if (name == "CODE_SIGN_ENTITLEMENTS" && FILENAME == app && value !="$(KERNOVA_APP_ENTITLEMENTS)")
-            printf "  %s:%d: %s = %s — read $(KERNOVA_APP_ENTITLEMENTS) instead\n", FILENAME, FNR, name, value
+        else if (name == "CODE_SIGN_ENTITLEMENTS" && FILENAME == app) {
+            if (condition == "[config=Debug]" && value == debug_entitlements) debug_seen = 1
+            else if (condition == "[config=Release]" && value == release_entitlements) release_seen = 1
+            else printf "  %s:%d: %s%s = %s — Debug reads %s, Release names %s\n", FILENAME, FNR, name, condition, value, debug_entitlements, release_entitlements
+        }
+    }
+    END {
+        if (!debug_seen) printf "  %s: no CODE_SIGN_ENTITLEMENTS[config=Debug] = %s\n", app, debug_entitlements
+        if (!release_seen) printf "  %s: no CODE_SIGN_ENTITLEMENTS[config=Release] = %s\n", app, release_entitlements
     }
 ' "${signing_files[@]}" "${release_pinned_files[@]}")
 
@@ -152,4 +167,4 @@ fi
 [ "$failed" -eq 0 ] || exit 1
 
 pass "build settings: every configuration is xcconfig-backed with an empty inline block"
-pass "signing: the app, test host, and test xcconfigs name no identity, team, or profile, the agent, CLI and relaunch helper pin one for Release only, and the app's entitlement path is KERNOVA_APP_ENTITLEMENTS"
+pass "signing: the app, test host, and test xcconfigs name no identity, team, or profile, the agent, CLI and relaunch helper pin one for Release only, and the app's entitlement path is KERNOVA_DEBUG_APP_ENTITLEMENTS in Debug and the full set in Release"
