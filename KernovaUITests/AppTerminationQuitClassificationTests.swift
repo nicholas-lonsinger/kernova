@@ -1,4 +1,5 @@
 import Darwin
+import KernovaLogging
 import Testing
 
 @testable import KernovaCore
@@ -149,5 +150,25 @@ struct AppTerminationQuitClassificationTests {
             isProcessAlive: { _ in true }
         )
         #expect(classification == .terminateAndRelaunch)
+    }
+
+    /// The classification decides whether running VMs keep running, so every
+    /// attributed sender's is worth reading after the fact: `.notice`, which the
+    /// unified log persists. Only the unattributable fail-safe is a warning.
+    @Test(
+        "A quit's classification is logged at notice for an attributed sender, and warning only when unattributable",
+        arguments: [
+            (pid_t?.some(4_242), pid_t?.some(4_242), String?.some("com.apple.dock"), KernovaLogLevel.notice),
+            (4_242, 4_242, nil, .notice),
+            (4_242, nil, nil, .warning),
+            (nil, nil, nil, .warning),
+        ])
+    func classificationLogLevel(
+        senderPID: pid_t?, attributablePID: pid_t?, bundleID: String?, level: KernovaLogLevel
+    ) {
+        let record = AppTerminationController.classificationRecord(
+            senderPID: senderPID, attributablePID: attributablePID, bundleID: bundleID,
+            classification: .terminateAndSave)
+        #expect(record.level == level)
     }
 }

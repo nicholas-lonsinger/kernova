@@ -229,26 +229,43 @@ package final class AppTerminationController {
             sender: QuitSenderProbe(
                 isProcessAlive: { _ in attributablePID != nil }, bundleID: { _ in bundleID }))
 
-        if let attributablePID {
-            if let bundleID {
-                Self.logger.log(
-                    .debug,
-                    "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID, privacy: .public)) classified as \(String(describing: classification), privacy: .public)"
-                )
-            } else {
-                Self.logger.log(
-                    .warning,
-                    "Quit Apple Event: sender PID \(attributablePID, privacy: .public) is alive but could not be resolved to an application with a bundle identifier — classified as \(String(describing: classification), privacy: .public)"
-                )
-            }
-        } else {
-            Self.logger.log(
-                .warning,
-                "Quit Apple Event sender could not be attributed (PID \(senderPID.map(String.init) ?? "none", privacy: .public)) — failing safe to \(String(describing: classification), privacy: .public)"
-            )
-        }
+        let record = Self.classificationRecord(
+            senderPID: senderPID, attributablePID: attributablePID, bundleID: bundleID,
+            classification: classification)
+        Self.logger.log(record.level, record.message)
 
         latchQuitClassification(classification)
+    }
+
+    /// The record a quit's classification leaves in the log.
+    ///
+    /// The classification decides whether running VMs keep running, so an
+    /// attributed sender's is a `.notice`, bundle identifier or not — a script's
+    /// `osascript` has none. Only an unattributable sender, which fails safe, is
+    /// a `.warning`.
+    ///
+    /// `attributablePID` is `senderPID` when it names a live process, and
+    /// `bundleID` that process's, when it has one.
+    nonisolated static func classificationRecord(
+        senderPID: pid_t?, attributablePID: pid_t?, bundleID: String?, classification: QuitClassification
+    ) -> (level: KernovaLogLevel, message: LogMessage) {
+        let outcome = String(describing: classification)
+        guard let attributablePID else {
+            return (
+                .warning,
+                "Quit Apple Event sender could not be attributed (PID \(senderPID.map(String.init) ?? "none", privacy: .public)) — failing safe to \(outcome, privacy: .public)"
+            )
+        }
+        guard let bundleID else {
+            return (
+                .notice,
+                "Quit Apple Event from PID \(attributablePID, privacy: .public) (no bundle identifier) classified as \(outcome, privacy: .public)"
+            )
+        }
+        return (
+            .notice,
+            "Quit Apple Event from PID \(attributablePID, privacy: .public) (bundle: \(bundleID, privacy: .public)) classified as \(outcome, privacy: .public)"
+        )
     }
 
     // MARK: - Termination Gate
