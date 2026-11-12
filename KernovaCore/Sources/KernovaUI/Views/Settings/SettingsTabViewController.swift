@@ -100,6 +100,16 @@ enum SettingsPaneMetrics {
         return maxHeight(windowTop: windowTop, visibleFrame: visibleFrame, chrome: chrome)
     }
 
+    /// `frame` moved up just enough that its bottom edge is inside
+    /// `visibleFrame`, never so far that its top edge leaves it — where AppKit
+    /// puts a window as it orders in.
+    static func lifted(_ frame: NSRect, into visibleFrame: NSRect) -> NSRect {
+        guard frame.minY < visibleFrame.minY else { return frame }
+        var lifted = frame
+        lifted.origin.y = min(visibleFrame.minY, visibleFrame.maxY - frame.height)
+        return lifted
+    }
+
     /// The pane height that keeps a window whose top edge sits at `windowTop`
     /// — or the top of `visibleFrame` when `nil` — inside `visibleFrame`.
     static func maxHeight(windowTop: CGFloat?, visibleFrame: NSRect, chrome: CGFloat) -> CGFloat {
@@ -251,7 +261,9 @@ final class SettingsTabViewController: NSTabViewController {
     /// Resizes the window so its content area matches `pane`'s
     /// `preferredContentSize`, animated only while the window is on screen.
     ///
-    /// The top-left corner is kept anchored, matching the system apps' behavior.
+    /// The top-left corner is kept anchored, matching the system apps' behavior,
+    /// unless that leaves the bottom edge off screen: then the window moves up
+    /// as AppKit moves it when it orders in.
     ///
     /// No-ops until the window exists and the pane has published a size.
     private func resizeWindow(toFit pane: NSViewController) {
@@ -261,6 +273,9 @@ final class SettingsTabViewController: NSTabViewController {
         var frame = window.frame
         frame.origin.y += frame.height - targetSize.height
         frame.size = targetSize
+        if let visible = visibleFrame(window) {
+            frame = SettingsPaneMetrics.lifted(frame, into: visible)
+        }
         window.setFrame(frame, display: true, animate: window.isVisible)
     }
 

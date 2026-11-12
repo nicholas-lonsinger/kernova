@@ -177,6 +177,24 @@ struct SettingsTabViewControllerTests {
         #expect(!limited.tabViewItems.contains { $0.viewController is NetworksSettingsViewController })
     }
 
+    @Test("A window whose pane runs below the screen moves up just enough, never past the top")
+    func paneTallerThanTheRoomBelowLiftsTheWindow() {
+        // A 1512×949 visible area, as on a 14-inch MacBook Pro with the Dock hidden.
+        let visible = NSRect(x: 0, y: 0, width: 1_512, height: 949)
+        // Networks' 376-point window with its top at 288: 88 points below the bottom edge.
+        #expect(
+            SettingsPaneMetrics.lifted(NSRect(x: 822, y: -88, width: 520, height: 376), into: visible)
+                == NSRect(x: 822, y: 0, width: 520, height: 376))
+        // Taller than the whole visible area: the top edge stays at its top.
+        #expect(
+            SettingsPaneMetrics.lifted(NSRect(x: 822, y: -400, width: 520, height: 1_000), into: visible)
+                == NSRect(x: 822, y: -51, width: 520, height: 1_000))
+        // Already inside: unchanged.
+        #expect(
+            SettingsPaneMetrics.lifted(NSRect(x: 822, y: 56, width: 520, height: 233), into: visible)
+                == NSRect(x: 822, y: 56, width: 520, height: 233))
+    }
+
     @Test("A window sitting mid-screen caps its pane at the room below its top edge")
     func midScreenWindowCapsAtTheRoomBelowIt() {
         // A 1440×875 visible area above a 25-point Dock, the window's top
