@@ -78,4 +78,47 @@ struct ClipboardHostPasteboardItemsTests {
         #expect(url.lastPathComponent == "photo.png")
         #expect(try Data(contentsOf: url) == png)
     }
+
+    @Test("a directory payload is extracted into a real folder on the pasteboard")
+    func directoryPayloadExtracted() async throws {
+        let fm = FileManager.default
+        let staging = makeStaging()
+        defer { staging.sweep() }
+
+        // A folder rep arrives already unpacked: its transfer extracted the tree
+        // as the archive streamed, so the rep points at the tree itself.
+        let tree = TestScratchDirectory(prefix: "ClipboardHostPasteboardItemsTests").url
+            .appendingPathComponent("Project", isDirectory: true)
+        try fm.createDirectory(
+            at: tree.appendingPathComponent("sub"), withIntermediateDirectories: true)
+        try "readme".write(
+            to: tree.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        try "nested".write(
+            to: tree.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
+
+        let content = ClipboardContent(representations: [
+            .init(
+                uti: UTType.folder.identifier, fileURL: tree, byteCount: 1024,
+                filename: "Project", isDirectory: true)
+        ])
+        let specs = try await HostClipboardPublisher.hostPasteboardItems(
+            for: content, generation: 1, staging: staging)
+
+        #expect(specs.count == 1)
+        // A directory is file-only: a single `.fileURL`, no inline bytes.
+        #expect(specs[0].types == [fileURLType])
+        let dirURL = try #require(fileURL(in: specs[0]))
+        var isDir: ObjCBool = false
+        #expect(fm.fileExists(atPath: dirURL.path, isDirectory: &isDir) && isDir.boolValue)
+        // The pasted folder is served as-is, with no extract step inside the
+        // paste deadline.
+        #expect(dirURL == tree)
+        #expect(dirURL.lastPathComponent == "Project")
+        #expect(
+            try String(contentsOf: dirURL.appendingPathComponent("README.md"), encoding: .utf8)
+                == "readme")
+        #expect(
+            try String(contentsOf: dirURL.appendingPathComponent("sub/n.txt"), encoding: .utf8)
+                == "nested")
+    }
 }

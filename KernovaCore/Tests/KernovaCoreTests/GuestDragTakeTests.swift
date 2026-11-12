@@ -347,6 +347,25 @@ struct GuestDragTakeTests {
         #expect(finished.count == 1)
     }
 
+    @Test("a drop over the display before the catcher reports STOOD_DOWN releases only once it does")
+    func dropWaitsForTheCatcherToStandDown() throws {
+        let take = try carriedTake()
+        let point = CGPoint(x: 50, y: 60)
+        _ = take.hostSession(over: display, at: point)
+
+        #expect(take.hostSessionDropped(on: display, at: point))
+        #expect(take.phase == .carried(.dropped))
+        #expect(display.calls.last == .drag(point))
+        take.hostSessionEnded(dropped: true)
+        // A step about the catcher that is not its stand-down releases nothing.
+        transport.target()
+        #expect(!display.calls.contains(.release))
+
+        transport.report(.stoodDown)
+        #expect(take.phase == .released(at: .dropPoint))
+        #expect(display.calls.suffix(2) == [.drag(point), .release])
+    }
+
     @Test("a stand-down answers only its own: a drop after a second one waits for the second STOOD_DOWN")
     func eachStandDownIsAnswered() throws {
         let take = try carriedTake()
@@ -609,6 +628,23 @@ struct GuestDragTakeTests {
     }
 
     // MARK: - No timer ends a take
+
+    @Test("a take waiting on the guest waits until the take ends, which releases where the drag left the display")
+    func theTakesEndEndsAWait() async throws {
+        let take = try carriedTake()
+        _ = take.hostSession(over: display, at: CGPoint(x: 1, y: 1))
+        take.hostSessionLeft(display)
+        take.hostSessionEnded(dropped: true)
+        #expect(take.phase == .carried(.ended))
+
+        for _ in 0..<5 { await Task.yield() }
+        #expect(take.phase == .carried(.ended))
+        #expect(!display.calls.contains(.release))
+
+        transport.end(.closed(.connectionLost))
+        #expect(take.phase == .released(at: .exitPoint))
+        #expect(display.calls.suffix(2) == [.returnToExit, .release])
+    }
 
     // MARK: - The take's end
 

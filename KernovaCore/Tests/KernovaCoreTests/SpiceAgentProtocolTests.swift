@@ -135,6 +135,21 @@ struct SpiceAgentProtocolTests {
         #expect(results.count == 2)
     }
 
+    @Test("Parser ignores unknown message types gracefully")
+    func parseUnknownMessageType() {
+        let message = buildGuestMessage(type: .mouseState, payload: Data(repeating: 0, count: 16))
+
+        var parser = SpiceAgentParser()
+        let results = parser.feed(message)
+
+        #expect(results.count == 1)
+        if case .other(let type) = results[0] {
+            #expect(type == .mouseState)
+        } else {
+            Issue.record("Expected other message type")
+        }
+    }
+
     // MARK: - Buffer Overflow and Corruption Guards
 
     /// Must match SpiceAgentParser.maxBufferSize / maxChunkDataSize (both 1 MB).
@@ -187,6 +202,31 @@ struct SpiceAgentProtocolTests {
             #expect(types == [.utf8Text])
         } else {
             Issue.record("Expected clipboardGrab message after recovery")
+        }
+    }
+
+    @Test(
+        "Parser returns malformedChunk for invalid payloads",
+        arguments: [
+            Data(repeating: 0, count: 4),  // truncated: needs 20 bytes, only 4
+            Data(),  // empty payload
+        ])
+    func malformedPayloadReturnsMalformed(payload: Data) {
+        var parser = SpiceAgentParser()
+
+        let chunk = VDIChunkHeader(
+            port: SpiceConstants.serverPort,
+            dataSize: UInt32(payload.count)
+        )
+        let message = chunk.serialize() + payload
+
+        let results = parser.feed(message)
+
+        #expect(results.count == 1)
+        if case .malformedChunk = results[0] {
+            // pass
+        } else {
+            Issue.record("Expected malformedChunk")
         }
     }
 

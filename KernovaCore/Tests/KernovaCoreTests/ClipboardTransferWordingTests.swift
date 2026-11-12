@@ -104,6 +104,15 @@ struct ClipboardTransferWordingTests {
                 == "Clipboard preview from \(quotedVM) failed.")
     }
 
+    @Test("every arm names the VM in its headline")
+    func everyHeadlineNamesTheVM() throws {
+        for (failure, gesture) in everyArm {
+            let copy = try #require(wording(failure, gesture), "\(failure) / \(gesture)")
+            #expect(copy.headline.contains(quotedVM), "\(failure) / \(gesture)")
+            #expect(copy.headline.hasSuffix("."), "\(failure) / \(gesture)")
+        }
+    }
+
     // MARK: - Messages
 
     @Test("a disk-full message appends whichever figures the failure knew")
