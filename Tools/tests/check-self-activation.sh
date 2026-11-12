@@ -121,6 +121,11 @@ Timer(timeInterval: 1, target: window, selector: #selector(NSWindow.orderFront),
 window.perform(#selector(NSWindow.makeKeyAndOrderFront(_:)), with: nil)
 NSApp.perform(#selector(NSApplication.activate as (NSApplication) -> () -> Void))' 'KernovaCore/Sources/KernovaUI/App/Selectors.swift'
 
+expect bare-selectors '1 2 3 4' 'window.perform(#selector(NSWindow.makeKey))
+NSApp.perform(#selector(NSApplication.deactivate))
+perform(#selector(makeKeyAndOrderFront), with: nil)
+let read = NSApp.perform(#selector(NSApplication.unhideWithoutActivation))' 'KernovaCore/Sources/KernovaUI/App/BareSelectors.swift'
+
 expect sent-selectors-in-tests '1' 'NSApp.sendAction(#selector(NSApplication.unhide(_:)), to: nil, from: nil)
 window.perform(#selector(NSWindow.orderBack(_:)), with: nil)' 'KernovaUITests/Selectors.swift'
 

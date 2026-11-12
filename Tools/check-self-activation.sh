@@ -38,7 +38,7 @@
 #       `hideOtherApplications(`, `unhideAllApplications(`, `arrangeInFront(`,
 #       `miniaturizeAll(`, `orderFrontStandardAboutPanel(` or `showWindow(`,
 #       each of which changes what is on screen or which window is key;
-#     - a `#selector` naming any method above, or outside KernovaUITests/
+#     - a `#selector` naming any member above, or outside KernovaUITests/
 #       `orderFront` or `orderBack`, unless written as an `action:` argument or
 #       assigned to `.action`: that selector AppKit sends on the user's click
 #       or key equivalent, as the menu bar's Hide Others and Bring All to Front
@@ -88,11 +88,13 @@ findings=$(list_files "$@" \
         function ends(path) { return FILENAME == path || substr(FILENAME, length(FILENAME) - length(path)) == "/" path }
         BEGIN {
             app = "(NSApp[[:space:]]*\\??|(NS|Kernova)Application[[:space:]]*\\.[[:space:]]*shared)"
-            app_members = "(activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate|keyWindow|mainWindow)"
+            app_names = "activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate|keyWindow|mainWindow"
+            app_members = "(" app_names ")"
             current = "NSRunningApplication[[:space:]]*\\.[[:space:]]*current[[:space:]]*\\??"
             current_members = "(activate|hide|unhide|isActive|isHidden)"
-            keying = "(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|deminiaturize|orderWindow|setIsVisible|hideOtherApplications|unhideAllApplications|arrangeInFront|miniaturizeAll|orderFrontStandardAboutPanel|showWindow)"
-            selected = "(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|deminiaturize|orderWindow|setIsVisible|hideOtherApplications|unhideAllApplications|arrangeInFront|miniaturizeAll|orderFrontStandardAboutPanel|showWindow|activate|deactivate|hide|unhide|unhideWithoutActivation|setActivationPolicy"
+            keying_names = "makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|deminiaturize|orderWindow|setIsVisible|hideOtherApplications|unhideAllApplications|arrangeInFront|miniaturizeAll|orderFrontStandardAboutPanel|showWindow"
+            keying = "(" keying_names ")"
+            selected = keying_names "|" app_names
             end_word = "([^A-Za-z0-9_]|$)"
             member_start = "^[[:space:]]*\\??[[:space:]]*\\.[[:space:]]*"
         }
@@ -124,7 +126,7 @@ findings=$(list_files "$@" \
                     && scan ~ /\.[[:space:]]*activate[[:space:]]*\(/) \
                 || scan ~ ("(^|[^A-Za-z0-9_])frontmostApplication" end_word) \
                 || scan ~ ("(^|[^A-Za-z0-9_])" keying "[[:space:]]*\\(") \
-                || scan ~ ("#selector[[:space:]]*\\(([A-Za-z0-9_]+[[:space:]]*\\.[[:space:]]*)*" selected (in_tests ? "" : "|orderFront|orderBack") ")" end_word) \
+                || scan ~ ("#selector[[:space:]]*\\(([A-Za-z0-9_]+[[:space:]]*\\.[[:space:]]*)*(" selected (in_tests ? "" : "|orderFront|orderBack") ")" end_word) \
                 || scan ~ ("(^|[^A-Za-z0-9_])isMainWindow" end_word) \
                 || (!ends(emphasis) && scan ~ ("(^|[^A-Za-z0-9_])isKeyWindow" end_word))) {
                 report()
