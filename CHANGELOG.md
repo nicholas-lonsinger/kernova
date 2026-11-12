@@ -81,6 +81,7 @@ In progress since 2026-09-16: everything since 0.10.0 (TestFlight build 835). Th
 - **Two operations on one VM can no longer collide.** Force Stop during a snapshot revert, and renaming or changing settings during one, are refused as busy ([#1392](https://github.com/nicholas-lonsinger/kernova/pull/1392)).
 - **Duplicate machine ID and MAC address checks cover every way a VM comes up.** A revert to a live snapshot, a resume at wake and guest setup are checked like a plain Start instead of running an identical twin ([#1375](https://github.com/nicholas-lonsinger/kernova/pull/1375)).
 - **A stale "can't tell whether the guest is shutting down" alert no longer lingers.** It closes when the session it's about ends ([#1814](https://github.com/nicholas-lonsinger/kernova/pull/1814)).
+- **A VM that stops because of an error says so.** When Virtualization stops a VM with an error, as when its VirtualMachine process crashes, an alert titled "“VM” Stopped Because of an Error" gives the error, and `kernova events` reports the failure once, which ends a running `kernova wait` at exit 1. An Ephemeral VM, which goes straight back to its baseline, no longer looks like it stopped normally ([#1990](https://github.com/nicholas-lonsinger/kernova/pull/1990)).
 
 ### Networking
 
