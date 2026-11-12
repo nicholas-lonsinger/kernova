@@ -72,7 +72,7 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         let alerts = AppAlertPresenter(viewModel: viewModel, windows: windows)
         self.alerts = alerts
         viewModel.presenter = alerts
-        viewModel.savePendingEdits = PendingFieldEdits.save
+        viewModel.savePendingEdits = { [weak windows] in windows?.savePendingEdits() }
         let lifecycle = AppResidencyController(
             viewModel: viewModel, windows: windows, heldAlerts: alerts.held, focus: focus)
         self.lifecycle = lifecycle

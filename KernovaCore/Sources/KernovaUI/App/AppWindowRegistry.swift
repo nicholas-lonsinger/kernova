@@ -330,6 +330,14 @@ final class AppWindowRegistry {
         standing.isPresent && level == .normal && styleMask.contains(.titled)
     }
 
+    // MARK: - Pending Edits
+
+    /// Commits the text edit open in each window on this registry's stage
+    /// (``PendingFieldEdits/save(in:)``).
+    func savePendingEdits() {
+        PendingFieldEdits.save(in: stage.windows())
+    }
+
     // MARK: - Dismissal
 
     /// Closes every user-facing window, returning the agent to its headless
