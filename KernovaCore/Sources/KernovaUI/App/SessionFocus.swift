@@ -29,6 +29,7 @@ package enum WindowPresentation: Equatable {
 @MainActor
 package protocol SessionFocus: AnyObject {
     var activationPolicy: NSApplication.ActivationPolicy { get }
+    /// Sets the activation policy; does nothing when already at `policy`.
     func setActivationPolicy(_ policy: NSApplication.ActivationPolicy)
 
     /// Whether Kernova is the active app.

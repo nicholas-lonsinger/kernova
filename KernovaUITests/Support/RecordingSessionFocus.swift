@@ -60,6 +60,7 @@ final class RecordingSessionFocus: SessionFocus {
     }
 
     func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
+        guard policy != activationPolicy else { return }
         activationPolicy = policy
         record(.setActivationPolicy(policy))
     }

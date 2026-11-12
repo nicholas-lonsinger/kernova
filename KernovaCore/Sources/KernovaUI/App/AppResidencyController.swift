@@ -208,7 +208,7 @@ final class AppResidencyController: WindowResidencyHosting {
             // the auto-start pass rides along with it.
             presentSummonedInterface()
         case .headless:
-            setActivationPolicy(.accessory)
+            focus.setActivationPolicy(.accessory)
             host?.armAutoStartPass()
         }
     }
@@ -323,7 +323,7 @@ final class AppResidencyController: WindowResidencyHosting {
         // Only a windowless app is ever `.accessory`, and a windowless reopen
         // presents, so this is the policy any show lands on — asserted a tick
         // ahead of it for the menu-bar quirk (FB7743313).
-        setActivationPolicy(.regular)
+        focus.setActivationPolicy(.regular)
         Task { @MainActor in
             // A reopen can arrive before the system's own unhide (Chromium's
             // `FocusWindowSetOnCurrentSpace`: "this call races with the system
@@ -396,7 +396,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// Puts `target` on screen, and for a summon asks for activation once it is
     /// ordered front.
     private func presentSummonedInterface(showing target: SummonTarget, arrival: Arrival) {
-        setActivationPolicy(.regular)
+        focus.setActivationPolicy(.regular)
         // Defer the show to the next runloop tick so the menu bar has refreshed
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         Task { @MainActor in
@@ -470,7 +470,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// ``ActivationRequester/requestActivation()``, once the verb has passed
     /// its checks and is about to surface.
     private func prepareForExternalSurface() {
-        setActivationPolicy(.regular)
+        focus.setActivationPolicy(.regular)
         leaveHiddenState()
     }
 
@@ -495,7 +495,7 @@ final class AppResidencyController: WindowResidencyHosting {
         // passes through — a display window an `open` verb asked for, a
         // guest-agent status window, Settings.
         host?.armAutoStartPass()
-        setActivationPolicy(.regular)
+        focus.setActivationPolicy(.regular)
     }
 
     // MARK: - Soft Quit
@@ -516,7 +516,7 @@ final class AppResidencyController: WindowResidencyHosting {
         // `.regular` → `.accessory` flip lands 20–75ms later, which re-hosts the
         // menu-bar status item and tears the just-anchored popover down with it
         // (observed: the reminder flashed for a frame and vanished).
-        setActivationPolicy(.accessory)
+        focus.setActivationPolicy(.accessory)
         statusItemController?.showSoftQuitReminder()
     }
 
@@ -561,9 +561,9 @@ final class AppResidencyController: WindowResidencyHosting {
             hasUninterruptibleWork: viewModel.hasUninterruptibleWork
         ) {
         case .showDockIcon:
-            setActivationPolicy(.regular)
+            focus.setActivationPolicy(.regular)
         case .goHeadless:
-            setActivationPolicy(.accessory)
+            focus.setActivationPolicy(.accessory)
         case .waitForUnhide:
             break
         case .quit:
@@ -594,10 +594,10 @@ final class AppResidencyController: WindowResidencyHosting {
             keepInMenuBar: viewModel.keepInMenuBarOnQuit)
         switch outcome {
         case .showDockIcon:
-            setActivationPolicy(.regular)
+            focus.setActivationPolicy(.regular)
         case .goHeadless:
             Self.logger.log(.notice, "Unhidden with no window left — dropping to the status item")
-            setActivationPolicy(.accessory)
+            focus.setActivationPolicy(.accessory)
         case .presentLibrary:
             Self.logger.log(.notice, "Unhidden with no window left — showing the library")
             presentSummonedInterface()
@@ -608,12 +608,6 @@ final class AppResidencyController: WindowResidencyHosting {
     /// closing window has left the window list — so the window count is accurate.
     private func scheduleActivationPolicySync() {
         Task { @MainActor in self.syncActivationPolicy() }
-    }
-
-    /// Sets the activation policy; no-op when already at `policy`.
-    private func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
-        guard focus.activationPolicy != policy else { return }
-        focus.setActivationPolicy(policy)
     }
 }
 
