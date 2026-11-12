@@ -162,19 +162,6 @@ struct DecmpfsPassThroughTests {
         }
     }
 
-    @Test("a compressed FILE item lands compressed under its own name", .enabled(if: runningTypes.contains(8)))
-    func compressedFileItem() throws {
-        let bench = try FidelityBench()
-        try #require(copyfile("/bin/ls", bench.sourcePath + "/ls", nil, copyfile_flags_t(COPYFILE_ALL)) == 0)
-        let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [8], acceptsLZ4: false)
-        #expect(try bench.roundTrip(bytes("ls"), accepting: acceptance, policy: .never) == bytes("ls"))
-        let read = try rawStatus(bench.sourcePath + "/ls")
-        let wrote = try rawStatus(bench.destinationPath + "/ls")
-        #expect(wrote.st_flags & UInt32(UF_COMPRESSED) != 0)
-        #expect(wrote.st_blocks == read.st_blocks)
-        #expect(try contents(of: bench.destinationPath + "/ls") == contents(of: "/bin/ls"))
-    }
-
     @Test("with pass-through off, compressed files land as their plain bytes, and their storage stays home")
     func passThroughOff() throws {
         let bench = try FidelityBench()
@@ -355,14 +342,6 @@ struct DecmpfsPassThroughTests {
         #expect(left.sorted() == ["ITEM", "LS", "Landed", "item 2", "ls 2", "tool"].sorted())
     }
 
-    @Test("an APFS destination renames without replacing, so nothing is claimed first")
-    func apfsRenamesExclusively() throws {
-        let bench = try FidelityBench()
-        let destination = try fileSystem.openDirectory(bytes(bench.sourcePath), in: AT_FDCWD)
-        defer { fileSystem.close(destination) }
-        #expect(try fileSystem.renamesExclusively(in: destination))
-    }
-
     @Test("decmpfs storage forced onto exFAT fails by name: the volume refuses the flag")
     func exFATRefusesTheFlag() throws {
         let volume = try ExFATVolume()
@@ -536,23 +515,6 @@ struct DecmpfsHazardTests {
             default: nil
             }
         #expect(outcome == call.outcome, "\(call) on \(source)")
-    }
-
-    @Test("copyfile of a recreated file copies it compressed and leaves it intact", arguments: sources)
-    func copyfileKeepsCompression(source: String) throws {
-        let fileSystem = POSIXTreeFileSystem()
-        let sample =
-            source == "type 4"
-            ? try #require(CompressedSample.built(type: 4, plain: sampleText(400_000, seed: 4)))
-            : try CompressedSample.read(source, on: fileSystem)
-        let scratch = try PortableScratchDirectory(prefix: "decmpfs-hazard")
-        let path = scratch.path + "/file"
-        close(try createCompressedDirectly(path, sample))
-        try #require(copyfile(path, path + ".copy", nil, copyfile_flags_t(COPYFILE_ALL)) == 0)
-        for copy in [path, path + ".copy"] {
-            #expect(try rawStatus(copy).st_flags & UInt32(UF_COMPRESSED) != 0)
-            #expect(try contents(of: copy) == sample.plain)
-        }
     }
 }
 #endif

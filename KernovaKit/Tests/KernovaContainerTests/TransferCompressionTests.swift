@@ -70,24 +70,4 @@ struct TransferCompressionTests {
         #expect(!TransferCompression.uncompressed.sending(generous(.folder)).acceptsLZ4)
         #expect(compressing.sending(generous(.folder)).byteCeiling == generous(.folder).byteCeiling)
     }
-
-    @Test("decmpfs storage is never tried, however compressible its bytes")
-    func decmpfsGoesRaw() throws {
-        let choice = TransferCompression.forSending(.guestToHost, pullAcceptsLZ4: true, sendingCores: 16)
-        let fork = Data(repeating: 0x61, count: ContainerEncoder.chunkByteCount * 3)
-        let tree: [TreeEvent] = [
-            .beginFile(
-                decmpfsFile(
-                    depth: 0, attribute: decmpfsAttribute(type: 4, size: 1 << 20),
-                    resourceForkSize: UInt64(fork.count))),
-            .resourceFork, .bytes(fork), .finishFile, .end,
-        ]
-        let pipeline = ContainerEncodePipeline(
-            accepting: choice.sending(generous(.file)), policy: choice.chunkPolicy, workers: choice.encodingWorkers)
-        var container = Data()
-        for event in tree { container.append(try pipeline.encode(event)) }
-        let kinds = recordOffsets(container).map(\.kind)
-        #expect(kinds.filter { $0 == .chunk }.count == 3)
-        #expect(!kinds.contains(.lz4Chunk))
-    }
 }

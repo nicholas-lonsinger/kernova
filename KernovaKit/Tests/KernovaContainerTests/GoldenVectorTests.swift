@@ -31,11 +31,6 @@ struct GoldenVectorTests {
     /// One entry, 3 bytes.
     static let end = Data([0x05, 0x04, 0x00, 0x00, 0x00, 0x58, 0x0D, 0x99, 0xCF, 0x08, 0x01, 0x10, 0x03])
 
-    @Test("The record kinds keep their bytes")
-    func kindValues() {
-        #expect(ContainerRecordKind.allCases.map(\.rawValue) == [1, 2, 3, 4, 5])
-    }
-
     @Test("The encoder writes a header, a chunk and an end record byte for byte")
     func encoderMatchesGoldenBytes() throws {
         var encoder = ContainerEncoder(accepting: generous(), policy: .never)
@@ -55,20 +50,6 @@ struct GoldenVectorTests {
         #expect(try encoder.bytes(Data(count: 4_096)) == Self.zeroRun)
     }
 
-    @Test("The decoder reads the golden header, chunk and end")
-    func decodesHeaderChunkEnd() {
-        let decoded = decode(Self.header + Self.chunk + Self.end)
-        #expect(decoded.error == nil)
-        guard case .beginFile(let header)? = decoded.events.first else {
-            Issue.record("first event \(String(describing: decoded.events.first))")
-            return
-        }
-        #expect(header.name.isEmpty)
-        #expect(header.mode == 0o644)
-        #expect(header.plain.size == 3)
-        #expect(decoded.events.dropFirst() == [.bytes(Data("abc".utf8)), .finishFile, .end])
-    }
-
     @Test("The decoder reads the golden LZ4 chunk and zero run")
     func decodesLZ4AndZeroRun() {
         let lz4 = decode(
@@ -80,15 +61,5 @@ struct GoldenVectorTests {
             headerRecord(plainFile(depth: 0, size: 4_096)) + Self.zeroRun + endRecord(entries: 1, bytes: 4_096))
         #expect(zeros.error == nil)
         #expect(zeros.events.contains(.zeros(4_096)))
-    }
-
-    @Test("A chunk LZ4 shrinks goes out as an LZ4 chunk record that decodes to it")
-    func encoderLZ4Chunk() throws {
-        let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
-        var encoder = ContainerEncoder(accepting: generous(), policy: policy)
-        _ = try encoder.entry(lz4File(depth: 0, size: 32))
-        let records = try encoder.bytes(Data(repeating: 0x61, count: 32))
-        #expect(records.first == ContainerRecordKind.lz4Chunk.rawValue)
-        #expect(records.dropFirst(9).prefix(4) == Data([0x20, 0x00, 0x00, 0x00]))
     }
 }

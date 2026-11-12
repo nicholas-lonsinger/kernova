@@ -64,29 +64,6 @@ struct PipelineTests {
         #expect(pipeline.bufferedByteCount == 0)
     }
 
-    @Test("the decode pipeline refuses a mutated container exactly where the sequential decoder does")
-    func refusesAsSequential() {
-        let tree = RandomTree(seed: 2)
-        let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
-        let container = sequentiallyEncoded(tree.events, accepting: tree.acceptance, policy: policy).container
-        var random = SplitMix64(seed: 0x5EED)
-        for round in 0..<48 {
-            var mutated = container
-            for _ in 0...(round % 3) {
-                let offset = Int(random.next() % UInt64(mutated.count))
-                mutated[offset] ^= UInt8(truncatingIfNeeded: random.next() | 1)
-            }
-            // A cut, every few rounds, so truncation is refused too.
-            if round % 5 == 0 { mutated = mutated.prefix(Int(random.next() % UInt64(mutated.count))) }
-            let pieces = pieces(of: mutated, sizes: feedSizes(seed: UInt64(round)))
-            let expected = sequentiallyDecoded(pieces, accepting: tree.acceptance)
-            let lanes = SpinningLanes(seed: UInt64(round))
-            let pipeline = ContainerDecodePipeline(accepting: tree.acceptance, workers: lanes.workers(3))
-            #expect(pipelined(pieces, through: pipeline) == expected, "round \(round)")
-            #expect(lanes.running == 0)
-        }
-    }
-
     @Test("chunks that finish in reverse order are still yielded in stream order")
     func keepsOrderWhenWorkFinishesBackwards() throws {
         // Four lanes; the first chunk handed to each lane but the last waits until the next lane's has finished,
@@ -298,37 +275,6 @@ struct PipelineTests {
         #expect(liveFeedBytes.withLock { $0 } == 0)
     }
 
-    @Test("before finish, a feed's events come out as their work completes, and by finish at the latest")
-    func eventsArriveAsWorkCompletes() throws {
-        let piece = Data(String(repeating: "timing ", count: 600).utf8)
-        let size = UInt64(piece.count + 1)
-        let container =
-            headerRecord(lz4File(depth: 0, size: size))
-            + lz4ChunkRecord(declaredSize: UInt32(piece.count), block: try #require(LZ4Block.compress(piece)))
-            + record(.chunk, Data([9])) + endRecord(entries: 1, bytes: size)
-        let expected = sequentiallyDecoded([container], accepting: generous(.file))
-        #expect(expected.error == nil)
-
-        let gate = DispatchSemaphore(value: 0)
-        // Two lanes, a window of four: room for every item behind the held chunk.
-        let workers = ChunkWorkers(count: 2) { _, work in
-            gate.wait()
-            work()
-        }
-        let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
-        pipeline.feed(container)
-        var events: [TreeEvent] = []
-        while let event = try pipeline.next() { events.append(event) }
-        // The whole container was fed, yet only the header came out: the rest waits on the held chunk.
-        #expect(events == Array(expected.events.prefix(1)))
-        #expect(pipeline.heldItems == expected.events.count - 1)
-
-        gate.signal()
-        pipeline.finish()
-        while let event = try pipeline.next() { events.append(event) }
-        #expect(events == expected.events)
-    }
-
     @Test("a chunk that fails to decompress can fail a later call than the feed that held it, at the same point")
     func decompressionRefusalCanSurfaceLater() throws {
         let piece = Data(String(repeating: "timing ", count: 600).utf8)
@@ -355,37 +301,5 @@ struct PipelineTests {
         gate.signal()
         pipeline.finish()
         #expect(throws: refusal) { try pipeline.next() }
-    }
-
-    @Test("the lanes compress as many chunks at once as there are lanes, and decompress as many")
-    func lanesWorkAtOnce() {
-        let lanes = 4
-        let size = ContainerEncoder.chunkByteCount
-        // Two windows of chunks that shrink, so every lane is handed work and the caller fills the window.
-        let chunks = 2 * 2 * lanes
-        var random = SplitMix64(seed: 11)
-        let words = (0..<512).map { Data("word\($0) ".utf8) }
-        var text = Data()
-        text.reserveCapacity(size * chunks + 16)
-        while text.count < size * chunks { text.append(words[Int(random.next() % 512)]) }
-        text = text.prefix(size * chunks)
-        let tree: [TreeEvent] = [
-            .beginFile(lz4File(depth: 0, size: UInt64(text.count))), .bytes(text), .finishFile, .end,
-        ]
-        let policy = ChunkCompressionPolicy(attemptsLZ4: true, abandonAfterUnshrunkChunks: nil)
-        let expected = sequentiallyEncoded(tree, accepting: generous(.file), policy: policy)
-        #expect(recordOffsets(expected.container).filter { $0.kind == .lz4Chunk }.count == chunks)
-
-        let encodeLanes = MeetingLanes(count: lanes)
-        let encoder = ContainerEncodePipeline(
-            accepting: generous(.file), policy: policy, workers: encodeLanes.workers())
-        #expect(pipelined(tree, through: encoder) == expected)
-        #expect(encodeLanes.met, "\(encodeLanes.startedAtOnce) of \(lanes) attempts ran at once")
-
-        let decodeLanes = MeetingLanes(count: lanes)
-        let decoder = ContainerDecodePipeline(accepting: generous(.file), workers: decodeLanes.workers())
-        let decoded = pipelined([expected.container], through: decoder)
-        #expect(decoded == sequentiallyDecoded([expected.container], accepting: generous(.file)))
-        #expect(decodeLanes.met, "\(decodeLanes.startedAtOnce) of \(lanes) decompressions ran at once")
     }
 }

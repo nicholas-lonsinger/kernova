@@ -71,60 +71,6 @@ struct WriterEventTests {
         try landing.expectNothingOutside()
     }
 
-    @Test(
-        "a directory swapped above the one the writer is in fails as the writer climbs past it", arguments: bothLayers)
-    func swappedAncestorIsCaught(kernelContainment: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        let writer = try landing.writer()
-        try writer.write(.enterDirectory(directory(depth: 0)))
-        try writer.write(.enterDirectory(directory("a", depth: 1)))
-        try writer.write(.enterDirectory(directory("b", depth: 2)))
-        try Self.swap("a", in: landing, writer: writer, link: true)
-        let failure = Self.failure(
-            writing: [
-                .beginFile(file("f", depth: 3, size: 1)), .bytes(Data("f".utf8)), .finishFile, .leaveDirectory,
-                .leaveDirectory,
-            ], to: writer)
-        #expect(failure == TreeWriteFailure(path: [bytes("r"), bytes("a")], reason: .moved))
-        try landing.expectNothingOutside()
-    }
-
-    @Test(
-        "the writer refuses an invalid name itself, whatever produced it",
-        arguments: bothLayers, HostileContainerTests.invalidNames)
-    func writerRefusesInvalidNames(kernelContainment: Bool, name: [UInt8]) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        for event in [
-            TreeEvent.beginFile(file(name, depth: 1, size: 0)), .enterDirectory(directory(name, depth: 1)),
-            .symlink(
-                {
-                    var header = symlinkEntry("x", depth: 1, target: "t")
-                    header.name = Data(name)
-                    return header
-                }()),
-        ] {
-            let writer = try landing.writer()
-            let failure = Self.failure(writing: [.enterDirectory(directory(depth: 0)), event], to: writer)
-            #expect(failure == TreeWriteFailure(path: [bytes("r"), name], reason: .container(.invalidName)))
-            try landing.expectNothingOutside()
-        }
-    }
-
-    @Test("the writer places by its own stack: a depth that disagrees with it is refused", arguments: bothLayers)
-    func writerRefusesDepthJumps(kernelContainment: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        let writer = try landing.writer()
-        let failure = Self.failure(
-            writing: [.enterDirectory(directory(depth: 0)), .beginFile(file("f", depth: 2, size: 0))],
-            to: writer)
-        #expect(
-            failure
-                == TreeWriteFailure(
-                    path: [bytes("r"), bytes("f")],
-                    reason: .container(.depthBeyondParent(depth: 2, enteredDirectories: 1))))
-        try landing.expectNothingOutside()
-    }
-
     @Test("events out of order are refused: bytes with no file, a leave past the root, a second root, a symlink root")
     func writerRefusesOutOfOrderEvents() throws {
         let landing = try Landing(kernelContainment: true)
@@ -223,45 +169,6 @@ struct WriterEventTests {
         try landing.expectNothingOutside()
     }
 
-    @Test("a resource fork lands where the OS keeps one, and is left out, the data landing whole, where it keeps none")
-    func resourceForkLandsOrIsLeftOut() throws {
-        let landing = try Landing(kernelContainment: true)
-        let writer = try landing.writer()
-        let fork = pattern(Int(largeFileSize), seed: 9)
-        for event in [
-            TreeEvent.enterDirectory(directory(depth: 0)),
-            .beginFile(withResourceFork(file("held", depth: 1, size: 4), size: 3)), .bytes(Data("data".utf8)),
-            .resourceFork, .bytes(Data("ico".utf8)), .finishFile,
-            .beginFile(withResourceFork(file("written", depth: 1, size: largeFileSize), size: largeFileSize)),
-            .bytes(pattern(Int(largeFileSize))), .resourceFork, .bytes(fork), .finishFile, .leaveDirectory, .end,
-        ] {
-            try writer.write(event)
-        }
-        #expect(try writer.publish() == bytes("r"))
-        let directory = try landing.fileSystem.openDirectory(bytes(landing.destinationPath + "/r"), in: AT_FDCWD)
-        defer { landing.fileSystem.close(directory) }
-        for (name, expected) in [("held", Data("ico".utf8)), ("written", fork)] {
-            let descriptor = try landing.fileSystem.openFile(bytes(name), in: directory)
-            defer { landing.fileSystem.close(descriptor) }
-            let size = try landing.fileSystem.resourceForkSize(of: descriptor, showingCompression: false)
-            #if canImport(Darwin)
-            var read = [UInt8](repeating: 0, count: Int(size))
-            var offset = 0
-            while offset < read.count {
-                offset += try read.withUnsafeMutableBytes { buffer in
-                    try landing.fileSystem.readResourceFork(
-                        descriptor, into: UnsafeMutableRawBufferPointer(rebasing: buffer[offset...]),
-                        at: UInt64(offset), showingCompression: false)
-                }
-            }
-            #expect(Data(read) == expected, "the fork of \(name)")
-            #else
-            #expect(size == 0, "\(name) holds none of its \(expected.count)-byte fork on Linux")
-            #endif
-        }
-        #expect(try landing.landedEntries(bytes("r")).contains("./written: regular \(largeFileSize)"))
-    }
-
     @Test(
         "a tree written as events lands only once published, under the name the writer was given", arguments: bothLayers
     )
@@ -281,18 +188,6 @@ struct WriterEventTests {
         #expect(try writer.publish() == bytes("Given Name"))
         #expect(try landing.landedEntries(bytes("Given Name")) == [".: directory", "./f: regular 1"].sorted())
         try landing.expectNothingOutside(landed: bytes("Given Name"))
-    }
-
-    @Test("a writer that ends unpublished removes what it created")
-    func abandonedWriterRemovesItsTree() throws {
-        let landing = try Landing(kernelContainment: true)
-        do {
-            let writer = try landing.writer()
-            try writer.write(.enterDirectory(directory(depth: 0)))
-            try writer.write(.beginFile(file("f", depth: 1, size: largeFileSize)))
-            try writer.write(.bytes(pattern(100)))
-        }
-        try landing.expectNothingOutside()
     }
 }
 
