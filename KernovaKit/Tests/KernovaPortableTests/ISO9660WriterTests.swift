@@ -71,6 +71,19 @@ struct ISO9660WriterTests {
         #expect(reader.files.map { String(decoding: $0.bytes, as: UTF8.self) } == reader.files.map(\.name))
     }
 
+    @Test("A directory too long for one sector continues into the next, no record crossing the boundary")
+    func directorySpansSectors() throws {
+        let entries = (0..<40).map { index in
+            ISO9660Entry(
+                name: "file-\(index)-" + String(repeating: "x", count: 60), permissions: 0o600, bytes: [UInt8(index)])
+        }
+        let reader = try ISO9660Reader(try Self.write(entries))
+        #expect(reader.rootLength > 2048)
+        #expect(reader.files.count == 40)
+        #expect(Set(reader.files.map(\.name)) == Set(entries.map(\.name)))
+        #expect(reader.files.allSatisfy { $0.mode == 0o100600 && $0.bytes.count == 1 })
+    }
+
     @Test("An empty file takes no sector")
     func emptyFile() throws {
         let reader = try ISO9660Reader(

@@ -1,6 +1,10 @@
 import KernovaDigest
 import Testing
 
+#if canImport(CryptoKit)
+import CryptoKit
+#endif
+
 @Suite("SHA-256")
 struct SHA256Tests {
     /// FIPS 180-4's examples (NIST's SHA256.pdf, "Example Algorithms") and the long-message vectors of
@@ -30,5 +34,19 @@ struct SHA256Tests {
         #expect(bytes(fromHex: "") == [])
         #expect(bytes(fromHex: "abc") == nil)
         #expect(bytes(fromHex: "zz") == nil)
+    }
+
+    @Test("Every length across the padding boundaries hashes the same fed whole or byte by byte")
+    func boundaries() {
+        for length in 0...130 {
+            let message = (0..<length).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) }
+            var byByte = KernovaDigest.SHA256()
+            for byte in message { byByte.update([byte]) }
+            #expect(byByte.finalize() == KernovaDigest.SHA256.hash(message), "length \(length)")
+            #if canImport(CryptoKit)
+            #expect(
+                KernovaDigest.SHA256.hash(message) == Array(CryptoKit.SHA256.hash(data: message)), "length \(length)")
+            #endif
+        }
     }
 }
