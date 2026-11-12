@@ -21,6 +21,9 @@ public struct ItemFailureValue: Sendable, Equatable {
         self.posixErrno = posixErrno
         self.endedEarly = endedEarly
     }
+
+    /// The path's components as text, bytes that are not UTF-8 replaced.
+    public var pathNames: [String] { path.map { String(decoding: $0, as: UTF8.self) } }
 }
 
 /// The domain form of the wire's `Error`: a RESET's payload, or an outcome's error.

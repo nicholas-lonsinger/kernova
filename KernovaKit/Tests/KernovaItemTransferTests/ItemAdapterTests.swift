@@ -428,6 +428,7 @@ struct ItemAdapterTests {
             let error = try await bench.serveFailure(
                 .success(.tree(path: bench.path(content))), storage, logger: logger)
             #expect(error?.code == .readFailed, "\(content)")
+            #expect(error?.item?.pathNames.joined(separator: "/") == path, "\(content)")
             #expect(error?.debugDetail == reason.description, "\(content)")
             let logged = records.withLock { $0 }
             #expect(logged.count == 1, "\(content)")

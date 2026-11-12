@@ -1111,7 +1111,7 @@ package final class GuestDragTake: GuestDragTaking {
         case .itemRepresentationUnavailable: .peerReported(.dragItemUnavailable)
         case .writeFailed where error.posixErrno == ENOSPC: .diskFull(needed: nil, available: nil)
         case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .stagingFailed
-        case .readFailed: .sourceUnreadable
+        case .readFailed: .sourceUnreadable(item: ClipboardItemPath(error.item?.pathNames ?? []))
         default: .transferFailed
         }
     }

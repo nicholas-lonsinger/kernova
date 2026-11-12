@@ -148,14 +148,15 @@ public final class ItemSourceAdapter<FileSystem: TreeFileSystem & Sendable>: Ite
         _ id: ItemPullID, of feature: FeatureID, _ failure: ServeFailure, reporter: ItemSourceReporter,
         logger: KernovaLogger
     ) {
+        let error = failure.wireError
         if case .read(let unread) = failure {
-            let path = unread.path.map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")
+            let path = (error.item?.pathNames ?? []).joined(separator: "/")
             logger.log(
                 .error,
                 "A \(feature, privacy: .public) pull couldn't read '\(path, privacy: .private)': \(unread.reason.description, privacy: .public)"
             )
         }
-        reporter.report(.failed(id, failure.wireError))
+        reporter.report(.failed(id, error))
     }
 
     /// The events of `content`'s container, held to `acceptance`.

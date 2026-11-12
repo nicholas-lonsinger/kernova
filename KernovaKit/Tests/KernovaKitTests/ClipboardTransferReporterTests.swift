@@ -657,4 +657,13 @@ struct ClipboardTransferReporterTests {
         #expect(line(.withdrawnFilesRetracted) == "copy from 'macOS TEST' was partial: withdrawnFilesRetracted")
         #expect(line(.withdrawnCopyRetracted) == "copy from 'macOS TEST' failed: withdrawnCopyRetracted")
     }
+
+    @Test("The public log line of a failure that names an unreadable entry withholds the entry's names")
+    func unreadableEntryWithheldFromTheLog() {
+        let line = ClipboardTransferFinish(
+            gesture: .dragOut, outcome: .failed(.sourceUnreadable(item: ["Photos", "IMG_0001.jpg"])),
+            peerName: "macOS TEST"
+        ).logLine
+        #expect(line == "dragOut from 'macOS TEST' failed: sourceUnreadable(item: <private>)")
+    }
 }
