@@ -286,4 +286,21 @@ struct ClipboardTransferWordingTests {
                 try #require(wording(failure, gesture)).menuLine == line, "\(failure) / \(gesture)")
         }
     }
+
+    // MARK: - The Mac-clipboard aside
+
+    @Test("only the over-cap copy refusal may say the Mac clipboard is unchanged")
+    func staleContextIsCopyRefusalOnly() throws {
+        #expect(try #require(wording(.tooLarge(limitBytes: limit), .copy)).mentionsMacClipboardKept)
+        for (failure, gesture) in everyArm where !(gesture == .copy && isTooLarge(failure)) {
+            #expect(
+                !(try #require(wording(failure, gesture)).mentionsMacClipboardKept),
+                "\(failure) / \(gesture) must not claim it")
+        }
+    }
+
+    private func isTooLarge(_ failure: ClipboardTransferFailure) -> Bool {
+        guard case .tooLarge = failure else { return false }
+        return true
+    }
 }

@@ -315,6 +315,26 @@ struct HubDragOutTests {
         #expect(ClipboardProgressFormat.byteProgress(final)?.contains(" of ") == true)
     }
 
+    @Test("a promised name asked on the main thread waits on names the hub's queue gives without it")
+    func nameAskOnMainSettlesOffMain() async throws {
+        let take = try await carriedTake(Self.promiseAndFolder)
+        let owner = dragOut.owner
+        let (hub, display, peer, takeID) = (hub, display, peer, takeID)
+        // The hub's queue while the ask holds the main thread: the guest
+        // answers the ask, and once the release reached it, names the promise
+        // and never sizes the folder.
+        let hubQueue = Thread {
+            hub.delivering.wait()
+            owner.takes(peer, .report(takeID, .delivering))
+            display.releases.wait()
+            owner.takes(peer, .report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
+        }
+        hubQueue.start()
+
+        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
+        #expect(take.phase == .released(at: .catcher))
+    }
+
     @Test("a promise is filled by a pull of its item to exactly the promise URL")
     func writePullsIntoThePromiseURL() async throws {
         let take = try await droppedTake()

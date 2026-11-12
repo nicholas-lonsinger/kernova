@@ -690,6 +690,39 @@ struct GuestDragTakeTests {
         #expect(ran == 2)
     }
 
+    @Test("a destination that asked for some items holds the take until a newer session replaces its promises")
+    func partiallyAskedTakeRetires() async throws {
+        let take = try carriedTake(items: [Self.file, Self.file, Self.file])
+        var retired = false
+        take.whenRetired { retired = true }
+        take.hostSessionEnded(dropped: true)
+        transport.end(.caught(nil))
+        let folder = URL(fileURLWithPath: "/tmp/drag-out", isDirectory: true)
+
+        _ = take.filename(forItemAt: 0)
+        let first = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
+            $0.end(0, .success(()))
+        }
+        #expect(first == nil)
+        // Asked by name, which a destination does before it writes.
+        _ = take.filename(forItemAt: 1)
+        #expect(!retired, "retired while a destination could still ask")
+
+        take.newerTakeBegan()
+        #expect(!retired, "retired before a newer session replaced its promises")
+        take.promisesReplaced()
+        #expect(!retired, "retired before an item already asked for was written")
+
+        let second = try await write(take, item: 1, to: folder.appendingPathComponent("a 2.txt")) {
+            $0.end(1, .success(()))
+        }
+        #expect(second == nil)
+        #expect(retired)
+        #expect(transport.releases == 1)
+        #expect(finished.count == 1)
+        #expect(transport.pulls.count == 2)
+    }
+
     @Test("termination retires a take at once, mid-write, calling off its pull")
     func terminationRetiresMidWrite() async throws {
         let take = try carriedTake(items: [Self.file, Self.file])
