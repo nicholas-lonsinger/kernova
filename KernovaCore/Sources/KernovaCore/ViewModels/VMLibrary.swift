@@ -905,6 +905,9 @@ package final class VMLibrary: VMAdmissionPeers {
             guard let self, let instance else { return }
             self.onGuestPoweredOff?(instance)
         }
+        instance.onNetworkAttachmentChanged = { [weak self] in
+            self?.guestAddresses.watch()
+        }
         // An Ephemeral Mode VM's session ends in the return to its baseline.
         instance.activity.onUnsettledSession = { [weak self, weak instance] in
             guard let self, let instance else { return [] }

@@ -260,6 +260,9 @@ final class VMSettingsViewController: NSViewController {
                 // duplicate-MAC banner follows a change made on the *other*
                 // holder, and library membership changing under it.
                 _ = self.viewModel.vmNamesSharingMACAddress(with: self.instance)
+                // The network banner's other half: the live device off the
+                // network the user chose.
+                _ = self.instance.networkAttachmentNotice
                 // Same reach for the Startup capacity banner, which counts the
                 // marked macOS guests across the whole library. Registered on
                 // its own rather than riding the read above, which is free to

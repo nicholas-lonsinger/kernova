@@ -575,25 +575,31 @@ struct ConfigurationBuilder: Sendable {
         _ vzConfig: VZVirtualMachineConfiguration, config: VMConfiguration,
         vmnetNetworks: VmnetSessionNetworks
     ) throws {
-        guard let network = config.joinedNetwork else { return }
+        guard let choice = config.networkChoice else { return }
         // A configuration that arrived on a network this build cannot attach —
         // an imported bundle, or one set in a build that could — is refused
         // here; every write path refuses moving onto one.
-        guard let realization = entitlements.realization(of: network) else {
+        guard let plan = choice.plan(entitlements: entitlements, interfaces: bridgedInterfaces, holding: nil) else {
             Self.logger.log(
                 .error,
                 "'\(config.name, privacy: .public)' is set to a network a build without com.apple.vm.networking cannot attach"
             )
-            throw ConfigurationBuilderError.networkNotEntitled(network)
+            throw ConfigurationBuilderError.networkNotEntitled(choice.joinedNetwork)
         }
 
         let networkDevice = VZVirtioNetworkDeviceConfiguration()
-        switch realization {
-        case .systemNAT:
+        switch plan {
+        case .nat:
             networkDevice.attachment = VZNATNetworkDeviceAttachment()
-        case .bridged:
-            networkDevice.attachment = bridgedAttachment(config: config)
+        case .bridged(let identifier):
+            networkDevice.attachment = bridgedAttachment(over: identifier, config: config)
         case .vmnet(let selection):
+            if choice.joinedNetwork == .bridged {
+                Self.logger.log(
+                    .notice,
+                    "Bridged networking for '\(config.name, privacy: .public)' has no interface to bridge over (\(config.bridgedInterfaceIdentifier ?? "Automatic", privacy: .public)) — starting on its own NAT network"
+                )
+            }
             networkDevice.attachment = vmnetAttachment(selection, config: config, vmnetNetworks: vmnetNetworks)
         }
 
@@ -606,40 +612,25 @@ struct ConfigurationBuilder: Sendable {
         vzConfig.networkDevices = [networkDevice]
     }
 
-    /// Resolves the host interface a bridged VM attaches to.
-    ///
-    /// A persisted interface the host no longer offers narrows to Automatic — the
-    /// default-route interface. When neither resolves the device is built detached
-    /// (`nil`): the boot or restore succeeds, attachment recovery reattaches once
-    /// an interface is available, and the mode is never substituted — the VM
-    /// neither bridges over an arbitrary interface nor quietly becomes NAT
-    /// Network (docs/NETWORKING.md).
-    private func bridgedAttachment(config: VMConfiguration) -> VZBridgedNetworkDeviceAttachment? {
-        let available = bridgedInterfaces.interfaces()
+    /// The attachment bridged to the interface `identifier` names, `nil`
+    /// when the host stopped offering it after the plan was resolved: the
+    /// device is built detached, so the boot or restore succeeds and
+    /// attachment recovery reattaches once the session runs.
+    private func bridgedAttachment(
+        over identifier: String, config: VMConfiguration
+    ) -> VZBridgedNetworkDeviceAttachment? {
         guard
-            let chosen = BridgedInterfaceSelection.choose(
-                persisted: config.bridgedInterfaceIdentifier,
-                available: available.map(\.identifier),
-                primary: bridgedInterfaces.primaryInterfaceIdentifier()),
             let interface = VZBridgedNetworkInterface.networkInterfaces.first(where: {
-                $0.identifier == chosen
+                $0.identifier == identifier
             })
         else {
             Self.logger.log(
                 .warning,
-                "Bridged networking for '\(config.name, privacy: .public)' has no bridgeable host interface — starting detached"
+                "Bridged interface '\(identifier, privacy: .public)' for '\(config.name, privacy: .public)' left the host as the build ran — starting detached"
             )
             return nil
         }
-
-        if let persisted = config.bridgedInterfaceIdentifier, persisted != chosen {
-            Self.logger.log(
-                .warning,
-                "Bridged interface '\(persisted, privacy: .public)' is unavailable — bridging over '\(chosen, privacy: .public)' instead"
-            )
-        } else {
-            Self.logger.log(.info, "Bridging over '\(chosen, privacy: .public)'")
-        }
+        Self.logger.log(.info, "Bridging over '\(identifier, privacy: .public)'")
         return VZBridgedNetworkDeviceAttachment(interface: interface)
     }
 
@@ -648,10 +639,9 @@ struct ConfigurationBuilder: Sendable {
     ///
     /// A network that cannot be materialized — a process holds a bounded
     /// number — builds the device detached (`nil`) rather than failing the
-    /// build, for the same reason the bridged no-interface path does: a
-    /// throwing build fails a save-file restore. Attachment recovery retries
-    /// once the session runs, and never substitutes the common network for the
-    /// one chosen (docs/NETWORKING.md).
+    /// build, because a throwing build fails a save-file restore. Attachment
+    /// recovery retries once the session runs, and never substitutes the
+    /// common network for the one chosen (docs/NETWORKING.md).
     private func vmnetAttachment(
         _ selection: VmnetNetworkSelection, config: VMConfiguration,
         vmnetNetworks: VmnetSessionNetworks

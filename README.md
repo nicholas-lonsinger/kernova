@@ -86,7 +86,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **Display** | Resolution presets or custom size, **HiDPI**, size-to-fit at startup, live auto-resize. Inline, pop-out window, or **fullscreen** per VM; flip between the live display and its settings while running — settings that apply at boot lock, the rest stay live. |
 | **Input** | Mac or USB keyboard and pointer, picked by guest version or chosen per macOS VM. Per-VM choice of when **system hot keys** reach the guest: never, in full screen, or always — live-switchable. |
 | **Audio** | Guest audio to the host, on by default. **Microphone** passthrough opt-in per VM, off by default. |
-| **Network** | **NAT** and **Host Only**, each on its **Common** network, an **Isolated** network of the VM's own, or a **named network** shared only by the VMs you put on it · **Bridged** to a chosen interface or Automatic · None. A running or paused VM switches networks without a restart, except to or from None. Live **IP address** readout on NAT and Host Only — the address this Mac last saw the guest use; a bridged guest's comes from your network, so Kernova shows none. Persistent, editable **MAC address** with one-click regeneration and a duplicate warning; a VM never starts on a network where another VM already uses its address, and the refusal offers the fixes that apply. |
+| **Network** | **NAT** and **Host Only**, each on its **Common** network, an **Isolated** network of the VM's own, or a **named network** shared only by the VMs you put on it · **Bridged** to a chosen interface or Automatic · None. A running or paused VM switches networks without a restart, except to or from None. Live **IP address** readout on NAT and Host Only — the address this Mac last saw the guest use; a guest bridged to your network gets its address there, so Kernova shows none. Persistent, editable **MAC address** with one-click regeneration and a duplicate warning; a VM never starts on a network where another VM already uses its address, and the refusal offers the fixes that apply. |
 | **Serial** | Size-capped `serial.log` in the bundle, plus an opt-in **AF_UNIX socket** relay for `socat` / `nc -U`, hot-toggleable. |
 
 > [!NOTE]
@@ -159,7 +159,7 @@ tell application "Kernova"
     get name of every virtual machine whose state is running
 
     -- `IP address` is `missing value` until Kernova sees the guest use one —
-    -- never, for a bridged guest.
+    -- never, while the guest is bridged to your network.
     start virtual machine "Alpha"
     repeat until IP address of virtual machine "Alpha" is not missing value
         delay 1

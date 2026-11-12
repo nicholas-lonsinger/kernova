@@ -62,9 +62,8 @@ final class GuestAddressObserver {
     /// What `instance`'s guest is seen using for an address on the network it
     /// joins.
     func address(for instance: VMInstance) -> GuestIPAddress {
-        let config = instance.configuration
-        guard instance.hasLiveVirtualMachine, let key = key(for: config) else {
-            return Self.address(withNoLiveGuest: config)
+        guard instance.hasLiveVirtualMachine, let key = key(for: instance) else {
+            return Self.address(withNoLiveGuest: instance.configuration)
         }
         return observedAddresses[key].map(GuestIPAddress.observed) ?? .notObserved
     }
@@ -159,19 +158,28 @@ final class GuestAddressObserver {
         guard let roster else { return [] }
         return Set(
             roster.instances.compactMap { instance in
-                instance.hasLiveVirtualMachine ? key(for: instance.configuration) : nil
+                instance.hasLiveVirtualMachine ? key(for: instance) : nil
             })
     }
 
-    /// What `config` is watched under, `nil` where nothing here can see its
-    /// address: a process that cannot read the table, a network this build
-    /// realizes other than as an app-managed vmnet network (none, Bridged,
-    /// system NAT), or a MAC address that does not parse.
-    private func key(for config: VMConfiguration) -> Key? {
+    /// What a live `instance` is watched under, `nil` where nothing here can
+    /// see its address: a process that cannot read the table, a network this
+    /// build realizes other than as an app-managed vmnet network (none,
+    /// Bridged, system NAT), or a MAC address that does not parse.
+    ///
+    /// The network is the app-managed one the live device is attached to —
+    /// for a Bridged VM on its own NAT network, that one — and otherwise the
+    /// one the configuration joins.
+    private func key(for instance: VMInstance) -> Key? {
+        let config = instance.configuration
         guard entitlements.supportsGuestAddressObservation,
-            let joined = config.joinedNetwork, case .vmnet(let network) = joined,
-            case .vmnet? = entitlements.realization(of: joined),
             let mac = config.macAddress, let hardwareAddress = EthernetAddress(mac)
+        else { return nil }
+        if case .attached(.vmnet(let selection))? = instance.networkAttachment {
+            return Key(hardwareAddress: hardwareAddress, network: selection.network(of: config.id))
+        }
+        guard let joined = config.joinedNetwork, case .vmnet(let network) = joined,
+            case .vmnet? = entitlements.realization(of: joined)
         else { return nil }
         return Key(hardwareAddress: hardwareAddress, network: network)
     }

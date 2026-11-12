@@ -55,7 +55,7 @@ struct VMSessionContextTests {
         context.clipboardService = clipboard
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.warnedAgentScopes = [.login]
-        context.networkAttachmentPending = true
+        context.networkAttachment = .detached
 
         context.tearDown()
 
@@ -68,7 +68,7 @@ struct VMSessionContextTests {
         #expect(context.liveRemovableMedia.isEmpty)
         // What the run warned about is its record, which the run's end reads.
         #expect(context.warnedAgentScopes == [.login])
-        #expect(context.networkAttachmentPending == false)
+        #expect(context.networkAttachment == nil)
         #expect(context.session == nil)
         #expect(context.agentAbsenceTimer == nil)
     }
@@ -252,7 +252,7 @@ struct VMSessionContextTests {
 
         #expect(
             observationFires(reading: { _ = instance.networkAttachmentPending }) {
-                context.networkAttachmentPending = true
+                context.networkAttachment = .detached
             })
         #expect(
             observationFires(reading: { _ = instance.agentPresentation?.status }) {

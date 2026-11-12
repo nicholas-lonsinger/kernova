@@ -19,10 +19,18 @@ package protocol BridgedInterfaceProviding: Sendable {
 }
 
 package enum BridgedInterfaceSelection {
-    /// Chooses the interface to bridge over: the persisted identifier when it is
-    /// still available, else the primary interface; nil when neither resolves.
-    package static func choose(persisted: String?, available: [String], primary: String?) -> String? {
-        if let persisted, available.contains(persisted) { return persisted }
+    /// The interface a Bridged choice bridges over, `nil` when the host offers
+    /// none it may use — never another interface in place of the chosen one.
+    ///
+    /// A chosen interface (`persisted`) counts only while `available` lists
+    /// it. Automatic (`persisted` nil) keeps `held`, the interface a live
+    /// bridge is on, while it stays available, and otherwise takes `primary`,
+    /// the default-route interface, when that is bridgeable.
+    package static func interface(
+        persisted: String?, held: String?, available: [String], primary: String?
+    ) -> String? {
+        if let persisted { return available.contains(persisted) ? persisted : nil }
+        if let held, available.contains(held) { return held }
         if let primary, available.contains(primary) { return primary }
         return nil
     }

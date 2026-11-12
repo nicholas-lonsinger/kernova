@@ -55,7 +55,7 @@ extension VMInstance {
     ) async {
         context.networkAttachmentCoordinator?.stop()
         context.networkAttachmentCoordinator = nil
-        context.networkAttachmentPending = false
+        context.networkAttachment = nil
         guard configuration.networkEnabled, session.hasNetworkDevice else { return }
         let initialPlan = await session.inspectNetworkAttachment { attachment in
             VZNetworkDeviceHandle.plan(of: attachment, in: networks)
@@ -72,8 +72,9 @@ extension VMInstance {
             entitlements: recovery.entitlements,
             isEligible: { [weak self] in self?.hasLiveSession ?? false },
             choice: { [weak self] in self?.configuration.networkChoice },
-            onPendingChange: { [weak context] pending in
-                context?.networkAttachmentPending = pending
+            onAttachmentChange: { [weak self, weak context] state in
+                guard let context else { return }
+                self?.networkAttachmentReported(state, on: context)
             })
     }
 }

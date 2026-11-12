@@ -1042,11 +1042,35 @@ struct ConfigurationBuilderTests {
         #expect(device.macAddress.string != "not-a-mac")
     }
 
-    @Test("Bridged mode with no bridgeable host interface builds the device detached")
-    func bridgedModeWithoutAnInterfaceBuildsDetached() throws {
+    @Test("A Bridged VM whose interface is gone boots on its own NAT network, never the default-route interface")
+    func bridgedModeWithItsInterfaceGoneBootsOnOwnNAT() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        let networks = ScriptedVmnetNetworks()
+        let attachments = MockVmnetAttachments()
+        var builder = ConfigurationBuilder.testing(networks, attachments: attachments, entitlements: .entitled)
+        builder.bridgedInterfaces = MockBridgedInterfaceProvider(
+            available: [BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")], primary: "en0")
+        var config = makeBridgedConfig()
+        config.bridgedInterfaceIdentifier = "en9"
 
-        var builder = ConfigurationBuilder.testing(entitlements: .entitled)
+        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
+
+        let attachment = result.configuration.networkDevices[0].attachment
+        #expect(!(attachment is VZBridgedNetworkDeviceAttachment))
+        #expect(attachment.map(ObjectIdentifier.init) == attachments.madeIdentities.last)
+        #expect(networks.operations.createdKinds == [.nat])
+        // The session's view reads the built network back as the VM's own NAT
+        // network, so recovery's first pass finds the device already there.
+        let network = try #require(attachments.madeNetworks.last)
+        #expect(result.products.vmnetNetworks.selection(ofNetwork: network) == .own(.nat))
+    }
+
+    @Test("A Bridged VM with no interface and no NAT network of its own boots detached")
+    func bridgedModeWithoutAnInterfaceOrOwnNATBuildsDetached() throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+        let networks = ScriptedVmnetNetworks()
+        networks.operations.setCreateNetworkError(TestFailure("network limit reached"))
+        var builder = ConfigurationBuilder.testing(networks, entitlements: .entitled)
         builder.bridgedInterfaces = MockBridgedInterfaceProvider()
 
         // The boot (and a restore from saved state, which rebuilds the same
@@ -1056,6 +1080,7 @@ struct ConfigurationBuilderTests {
         ).configuration.networkDevices
         #expect(devices.count == 1)
         #expect(devices[0].attachment == nil)
+        #expect(networks.operations.createdKinds == [.nat])
     }
 
     @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")
@@ -1187,7 +1212,7 @@ struct ConfigurationBuilderTests {
                 vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
                 linkObserver: MockNetworkLinkObserver(), vmnetNetworks: result.products.vmnetNetworks,
                 entitlements: .entitled, isEligible: { true }, choice: { config.networkChoice },
-                onPendingChange: { _ in })
+                onAttachmentChange: { _ in })
             coordinator.activate()
             #expect(device.appliedPlans == [.vmnet(.own(kind))])
             #expect(networks.operations.createdKinds == [kind])

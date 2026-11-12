@@ -643,13 +643,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     package var joinedNetwork: VMJoinedNetwork? {
         guard networkEnabled else { return nil }
         guard let kind = VmnetNetworkKind(mode: networkMode) else { return .bridged }
-        let scope: VmnetNetworkID.Scope =
-            switch networkMembership {
-            case .common: .common
-            case .isolated: .vm(id)
-            case .network(let network): .named(network)
-            }
-        return .vmnet(VmnetNetworkID(kind: kind, scope: scope))
+        return .vmnet(VmnetNetworkSelection(kind: kind, membership: networkMembership).network(of: id))
     }
 
     /// Whether this VM's device joins a network of its own — what every
