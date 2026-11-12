@@ -256,7 +256,8 @@ final class VMDisplayPlacementController {
     /// The runtime mode is written synchronously, while the notification is
     /// still dispatching: the detail pane's placeholder reads it, and the
     /// registry entry has to survive the dispatch so the app's global
-    /// `willClose` observer can still recognize a pop-in.
+    /// `willClose` observer can still recognize a pop-in. Whether the window
+    /// was key is read then too, before it gives up key.
     ///
     /// Everything else is deferred to the next runloop turn, once the closing
     /// window has left `NSApp.windows`: run during `willClose` the window still
@@ -270,6 +271,7 @@ final class VMDisplayPlacementController {
         let placement = VMDisplayPlacement.placement(for: .closed(reason))
         instance.displayMode = placement.mode
         let appWasActive = focus.isActive
+        let wasKey = windows[vmID]?.window.map { $0 === focus.keyWindow } ?? false
 
         Task { @MainActor in
             self.pendingCloseReasons.removeValue(forKey: vmID)
@@ -293,7 +295,7 @@ final class VMDisplayPlacementController {
             case .restoreLibrary:
                 self.viewModel.selectRevealing(vmID)
                 switch VMDisplayPlacement.libraryRestore(
-                    wasKeyWindow: context.wasKeyWindow, appWasActive: appWasActive)
+                    wasKey: wasKey, appWasActive: appWasActive)
                 {
                 case .focusLibrary:
                     self.host?.showLibrary(bringToFront: true)

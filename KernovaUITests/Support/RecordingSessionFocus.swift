@@ -1,6 +1,7 @@
 import AppKit
 import KernovaTestSupport
 
+@testable import KernovaCore
 @testable import KernovaUI
 
 /// Stands in for the login session's focus, so no test changes the test host's
@@ -8,7 +9,8 @@ import KernovaTestSupport
 ///
 /// Holds the state a test gives it, and records every request in order. A
 /// presented window is ordered in behind the rest, where a stage window stays
-/// beyond every display; nothing else a request asks for is performed.
+/// beyond every display, and one presented key reads as key while it is
+/// visible; nothing else a request asks for is performed.
 @MainActor
 final class RecordingSessionFocus: SessionFocus {
     enum Request: Equatable {
@@ -32,6 +34,12 @@ final class RecordingSessionFocus: SessionFocus {
     /// Runs inside each request, once it is recorded — where AppKit would act
     /// on it.
     var onRequest: (Request) -> Void = { _ in }
+
+    private weak var recordedKeyWindow: NSWindow?
+    private weak var recordedMainWindow: NSWindow?
+    private let miniaturized = NSHashTable<NSWindow>.weakObjects()
+    private let center = NotificationCenter()
+    private let changed = Notification.Name("RecordingSessionFocus.focusChanged")
 
     init(
         activationPolicy: NSApplication.ActivationPolicy = .regular, isActive: Bool = false,
@@ -59,7 +67,13 @@ final class RecordingSessionFocus: SessionFocus {
 
     func present(_ window: NSWindow, _ presentation: WindowPresentation) {
         window.orderBack(nil)
+        miniaturized.remove(window)
+        if presentation == .keyAndFront {
+            recordedKeyWindow = window
+            if window.canBecomeMain { recordedMainWindow = window }
+        }
         record(.present(window, presentation))
+        if presentation == .keyAndFront { postFocusChanged() }
     }
 
     func toggleFullScreen(_ window: NSWindow) { record(.toggleFullScreen(window)) }
@@ -67,4 +81,27 @@ final class RecordingSessionFocus: SessionFocus {
     func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any]) { record(.showAboutPanel) }
 
     func cancelMenuBarTracking() { record(.cancelMenuBarTracking) }
+
+    var keyWindow: NSWindow? { recordedKeyWindow.flatMap { $0.isVisible ? $0 : nil } }
+
+    var mainWindow: NSWindow? { recordedMainWindow.flatMap { $0.isVisible ? $0 : nil } }
+
+    func standing(of window: NSWindow) -> WindowStanding {
+        WindowStanding(
+            isVisible: window.isVisible, isMiniaturized: miniaturized.contains(window), isOnActiveSpace: true)
+    }
+
+    var focusChanged: [HostNotification] { [HostNotification(center: center, name: changed)] }
+
+    /// The user miniaturizing `window`: it leaves the screen and reads as
+    /// miniaturized until it is presented again.
+    func miniaturize(_ window: NSWindow) {
+        window.orderOut(nil)
+        miniaturized.add(window)
+        postFocusChanged()
+    }
+
+    private func postFocusChanged() {
+        center.post(name: changed, object: nil)
+    }
 }

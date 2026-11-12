@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 import KernovaLogging
 import KernovaUI
 
@@ -50,4 +51,24 @@ final class AppKitSessionFocus: SessionFocus {
     func cancelMenuBarTracking() {
         NSApp.mainMenu?.cancelTracking()
     }
+
+    var keyWindow: NSWindow? { NSApp.keyWindow }
+
+    var mainWindow: NSWindow? { NSApp.mainWindow }
+
+    func standing(of window: NSWindow) -> WindowStanding {
+        WindowStanding(
+            isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
+            isOnActiveSpace: window.isOnActiveSpace)
+    }
+
+    let focusChanged: [HostNotification] =
+        [
+            NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
+            NSWindow.didDeminiaturizeNotification, NSApplication.didUnhideNotification,
+        ].map { HostNotification(center: .default, name: $0) }
+        + [
+            HostNotification(
+                center: NSWorkspace.shared.notificationCenter, name: NSWorkspace.activeSpaceDidChangeNotification)
+        ]
 }

@@ -4,7 +4,7 @@ import Testing
 @testable import KernovaCore
 
 /// Unit tests for
-/// `VMDisplayPlacement.libraryRestore(wasKeyWindow:appWasActive:)` —
+/// `VMDisplayPlacement.libraryRestore(wasKey:appWasActive:)` —
 /// how a pop-in brings the library back so the popped-in display is visible.
 ///
 /// The active-but-not-key case is the one that must do nothing: the user is
@@ -15,24 +15,24 @@ struct VMDisplayPlacementLibraryRestoreTests {
     @Test("Popping in from the key display window of an active app focuses the library")
     func keyAndActiveFocuses() {
         #expect(
-            VMDisplayPlacement.libraryRestore(wasKeyWindow: true, appWasActive: true)
+            VMDisplayPlacement.libraryRestore(wasKey: true, appWasActive: true)
                 == .focusLibrary)
     }
 
     @Test("Popping in while Kernova is not active shows the library in the background")
     func inactiveShowsInBackground() {
         #expect(
-            VMDisplayPlacement.libraryRestore(wasKeyWindow: true, appWasActive: false)
+            VMDisplayPlacement.libraryRestore(wasKey: true, appWasActive: false)
                 == .showInBackground)
         #expect(
-            VMDisplayPlacement.libraryRestore(wasKeyWindow: false, appWasActive: false)
+            VMDisplayPlacement.libraryRestore(wasKey: false, appWasActive: false)
                 == .showInBackground)
     }
 
     @Test("Popping in from another window of the active app restores nothing")
     func activeButNotKeyRestoresNothing() {
         #expect(
-            VMDisplayPlacement.libraryRestore(wasKeyWindow: false, appWasActive: true)
+            VMDisplayPlacement.libraryRestore(wasKey: false, appWasActive: true)
                 == VMDisplayPlacement.LibraryRestore.none)
     }
 }

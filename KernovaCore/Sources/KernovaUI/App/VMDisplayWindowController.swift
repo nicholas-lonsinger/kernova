@@ -18,7 +18,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         /// The display the window was on, which a fullscreen window has already
         /// left by the time its close is handled.
         let lastDisplayID: CGDirectDisplayID?
-        let wasKeyWindow: Bool
     }
 
     let instance: VMInstance
@@ -143,10 +142,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         }
         instanceObservation?.cancel()
         instanceObservation = nil
-        onWillClose?(
-            CloseContext(
-                lastDisplayID: lastDisplayID,
-                wasKeyWindow: window?.isKeyWindow ?? false))
+        onWillClose?(CloseContext(lastDisplayID: lastDisplayID))
     }
 
     func window(

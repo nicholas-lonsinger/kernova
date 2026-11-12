@@ -171,7 +171,7 @@ final class AppAlertPresenter {
     }
 
     private var slots: [ObjectIdentifier: WindowSlot] = [:]
-    private var observers: [(center: NotificationCenter, token: any NSObjectProtocol)] = []
+    private var windowEventObservations: [HostNotification.Observation] = []
 
     // MARK: - Sheets
 
@@ -224,10 +224,6 @@ final class AppAlertPresenter {
         observeWindowEvents()
     }
 
-    isolated deinit {
-        for observer in observers { observer.center.removeObserver(observer.token) }
-    }
-
     #if DEBUG
     /// Number of requests waiting for a window.
     var waitingCountForTesting: Int { queue.waiting.count }
@@ -250,41 +246,19 @@ final class AppAlertPresenter {
     /// the app unhidden, or the active Space changed — and handles a window
     /// closing, which the registry reports once the window takes no alert.
     private func observeWindowEvents() {
-        let center = NotificationCenter.default
-        for name in [
-            NSWindow.didBecomeKeyNotification, NSWindow.didBecomeMainNotification,
-            NSWindow.didDeminiaturizeNotification, NSWindow.didEndSheetNotification,
-            NSApplication.didUnhideNotification,
-        ] {
-            observe(name, in: center) { presenter, _ in presenter.pump() }
+        let sheetEnded = HostNotification(center: .default, name: NSWindow.didEndSheetNotification)
+        windowEventObservations = (windows.focus.focusChanged + [sheetEnded]).map { notification in
+            notification.observe { [weak self] in self?.pump() }
         }
-        observe(
-            NSWorkspace.activeSpaceDidChangeNotification, in: NSWorkspace.shared.notificationCenter
-        ) { presenter, _ in presenter.pump() }
         windows.onWindowShown = { [weak self] in self?.pump() }
         windows.onWindowWillClose = { [weak self] window in self?.windowWillClose(window) }
-    }
-
-    private func observe(
-        _ name: Notification.Name, in center: NotificationCenter,
-        _ handle: @escaping @MainActor (AppAlertPresenter, NSWindow?) -> Void
-    ) {
-        let token = center.addObserver(forName: name, object: nil, queue: .main) {
-            [weak self] notification in
-            let window = notification.object as? NSWindow
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                handle(self, window)
-            }
-        }
-        observers.append((center, token))
     }
 
     // MARK: - Routing
 
     /// The windows as they stand now.
     private func currentScene() -> AlertWindowScene<NSWindow> {
-        windows.alertScene(keyWindow: NSApp.keyWindow, mainWindow: NSApp.mainWindow)
+        windows.alertScene()
     }
 
     /// The VM `request` is about, or `nil` for one about no VM.

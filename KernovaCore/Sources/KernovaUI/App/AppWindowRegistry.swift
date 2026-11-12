@@ -35,7 +35,7 @@ final class AppWindowRegistry {
     /// notification carries for a window ordered in without becoming key.
     var onWindowShown: (@MainActor () -> Void)?
     /// Reports a window's `willClose`, once the window is out of
-    /// ``alertScene(keyWindow:mainWindow:)``.
+    /// ``alertScene()``.
     var onWindowWillClose: (@MainActor (NSWindow) -> Void)?
 
     /// The windows that began closing and that this registry has not shown
@@ -234,11 +234,25 @@ final class AppWindowRegistry {
             ?? guestAgentStatusWindows.values.first { $0.window === window }?.instance
     }
 
+    /// The window the user is working in: the key window, else the main one.
+    var workingWindow: NSWindow? { focus.keyWindow ?? focus.mainWindow }
+
+    /// The VM the user is working on, in the session's key and main windows.
+    var workingInstance: VMInstance? {
+        workingInstance(keyWindow: focus.keyWindow, mainWindow: focus.mainWindow)
+    }
+
     /// The VM the user is working on, found the way AppKit finds a menu
     /// action's target — the key window's VM, else the main window's
     /// (`NSApplication.sendAction(_:to:from:)`).
     func workingInstance(keyWindow: NSWindow?, mainWindow: NSWindow?) -> VMInstance? {
         keyWindow.flatMap(instance(shownIn:)) ?? mainWindow.flatMap(instance(shownIn:))
+    }
+
+    /// The windows an alert can go to now, from the session's key and main
+    /// windows.
+    func alertScene() -> AlertWindowScene<NSWindow> {
+        alertScene(keyWindow: focus.keyWindow, mainWindow: focus.mainWindow)
     }
 
     /// The windows an alert can go to, read from the key and main windows the
@@ -250,10 +264,10 @@ final class AppWindowRegistry {
             (window: Self.sheetRoot(of: window), vmIDs: vmIDs(actedOnIn: window))
         }
         let displayWindows = displayPlacement.windowsByVM
-        var states: [NSWindow: AlertWindowState] = [:]
+        var states: [NSWindow: WindowStanding] = [:]
         for window in working.map(\.window) + displayWindows.values + [libraryWindow].compactMap({ $0 })
         where !closedWindows.contains(window) {
-            states[window] = AlertWindowState(window)
+            states[window] = focus.standing(of: window)
         }
         return AlertWindowScene(
             working: working, displayWindows: displayWindows, library: libraryWindow, states: states)
@@ -274,7 +288,7 @@ final class AppWindowRegistry {
     var hasTrackedUserWindow: Bool {
         func isPresent(_ window: NSWindow?) -> Bool {
             guard let window else { return false }
-            return window.isVisible || window.isMiniaturized
+            return focus.standing(of: window).isPresent
         }
         if isPresent(libraryWindow) { return true }
         if displayPlacement.hasWindow(where: { isPresent($0) }) { return true }
@@ -295,21 +309,25 @@ final class AppWindowRegistry {
         if hasTrackedUserWindow { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
         // so a reconcile can't strip the Dock icon while one is the last visible.
-        return stage.windows().contains(where: Self.isUntrackedUserPanel)
+        return stage.windows().contains { window in
+            Self.isUntrackedUserPanel(
+                level: window.level, styleMask: window.styleMask, standing: focus.standing(of: window))
+        }
     }
 
-    /// Whether `window` is an untracked, AppKit-owned top-level panel whose
-    /// presence must keep the Dock icon.
+    /// Whether a window at `level` with `styleMask`, standing as `standing`, is
+    /// an untracked, AppKit-owned top-level panel whose presence must keep the
+    /// Dock icon.
     ///
     /// The standard About panel is the motivating example. The visible +
     /// normal-level + titled filter excludes chrome: the status item's backing
     /// `NSStatusBarWindow` is borderless and sits above `.normal`, so an
     /// unfiltered scan of the app's windows would pin the agent to `.regular`
     /// forever.
-    static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
-        (window.isVisible || window.isMiniaturized)
-            && window.level == .normal
-            && window.styleMask.contains(.titled)
+    nonisolated static func isUntrackedUserPanel(
+        level: NSWindow.Level, styleMask: NSWindow.StyleMask, standing: WindowStanding
+    ) -> Bool {
+        standing.isPresent && level == .normal && styleMask.contains(.titled)
     }
 
     // MARK: - Dismissal
@@ -336,13 +354,4 @@ extension AppWindowRegistry: VMDisplayPlacementHosting {
     var libraryScreen: NSScreen? { libraryWindow?.screen }
 
     func displayWindowShown(_ window: NSWindow) { shown(window) }
-}
-
-extension AlertWindowState {
-    @MainActor
-    init(_ window: NSWindow) {
-        self.init(
-            isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
-            isOnActiveSpace: window.isOnActiveSpace)
-    }
 }

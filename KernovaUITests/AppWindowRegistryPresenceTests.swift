@@ -40,21 +40,13 @@ struct AppWindowRegistryPresenceTests {
     }
 
     @Test("A miniaturized library window counts")
-    func libraryMiniaturized() async throws {
-        let registry = makeRegistry()
+    func libraryMiniaturized() throws {
+        let focus = RecordingSessionFocus()
+        let registry = makeRegistry(focus: focus)
         registry.showLibrary(bringToFront: true)
         let window = try #require(registry.libraryWindow)
 
-        // AppKit reports the miniaturize a runloop turn later — the window is
-        // still `isVisible` when `miniaturize(_:)` returns — so the wait is
-        // driven by the notification that reports it.
-        let gate = AsyncGate()
-        let observer = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMiniaturizeNotification, object: window, queue: .main
-        ) { _ in gate.notify() }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        window.miniaturize(nil)
-        try await gate.wait { window.isMiniaturized && !window.isVisible }
+        focus.miniaturize(window)
 
         #expect(registry.hasTrackedUserWindow)
     }

@@ -172,15 +172,7 @@ struct AppResidencySummonTests {
         let (controller, registry, _) = makeController(focus: focus)
         registry.showLibrary(bringToFront: true)
         let library = try #require(registry.libraryWindow)
-        // AppKit reports the miniaturize a runloop turn later, through the
-        // notification the wait is driven by.
-        let miniaturized = AsyncGate()
-        let observer = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMiniaturizeNotification, object: library, queue: .main
-        ) { _ in miniaturized.notify() }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        library.miniaturize(nil)
-        try await miniaturized.wait { library.isMiniaturized && !library.isVisible }
+        focus.miniaturize(library)
         let requestsBefore = focus.requests
         let presentations = PresentationCounter()
         registry.residency = presentations

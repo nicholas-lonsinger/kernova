@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// How a window goes on screen.
 package enum WindowPresentation: Equatable {
@@ -13,8 +14,8 @@ package enum WindowPresentation: Equatable {
 }
 
 /// The login session's focus as Kernova meets it: its activation policy
-/// (whether it has a Dock icon), whether it is hidden and frontmost, and every
-/// window Kernova puts on screen.
+/// (whether it has a Dock icon), whether it is hidden and frontmost, every
+/// window Kernova puts on screen, and which window has the keyboard.
 ///
 /// Every read and change of that state goes through the one instance the
 /// composition root builds, so a test host that builds its own stand-in never
@@ -41,4 +42,15 @@ package protocol SessionFocus: AnyObject {
     func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any])
     /// Ends whatever menu-bar tracking is in progress.
     func cancelMenuBarTracking()
+
+    /// The window that takes keyboard input.
+    var keyWindow: NSWindow? { get }
+    /// The window a menu action falls back to when the key window doesn't
+    /// take it.
+    var mainWindow: NSWindow? { get }
+    /// How `window` stands on screen.
+    func standing(of window: NSWindow) -> WindowStanding
+    /// Post when a window becomes key or main or is deminiaturized, the app is
+    /// unhidden, or the active Space changes.
+    var focusChanged: [HostNotification] { get }
 }

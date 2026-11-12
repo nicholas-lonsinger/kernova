@@ -473,7 +473,7 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
             VMConfigurationKeyRegistry.clipboardPassthrough.assigning(
                 !instance.configuration.clipboardPassthroughEnabled),
-            confirmingIn: NSApp.keyWindow ?? NSApp.mainWindow)
+            confirmingIn: windows.workingWindow)
     }
 
     @objc func showGuestAgentStatus(_ sender: Any?) {
