@@ -109,12 +109,12 @@ struct VMLibraryViewModelSnapshotTests {
     /// Lists `snapshots` on `instance` and records what each captured, so a
     /// revert finds the configuration a real snapshot directory would hold.
     private func seed(
-        _ harness: Harness, _ instance: VMInstance, _ snapshots: [VMSnapshot],
+        _ machineFiles: MockVMBundleMachineFiles, _ instance: VMInstance, _ snapshots: [VMSnapshot],
         currentID: UUID? = nil, capturedConfiguration: VMConfiguration? = nil
     ) {
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: snapshots, currentID: currentID))
         for snapshot in snapshots {
-            harness.snapshots.setCapturedConfiguration(
+            machineFiles.setCapturedConfiguration(
                 capturedConfiguration ?? instance.configuration, for: snapshot.id)
         }
     }
@@ -223,7 +223,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let earlier = makeSnapshot(name: "Earlier")
-        seed(harness, instance, [earlier], currentID: earlier.id)
+        seed(harness.snapshots, instance, [earlier], currentID: earlier.id)
 
         await harness.viewModel.takeSnapshot(
             instance, name: "Baseline", for: .ephemeralBaseline
@@ -300,7 +300,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        seed(harness.snapshots, instance, [snapshot])
 
         harness.viewModel.requestRevert(instance, to: snapshot)
 
@@ -313,7 +313,7 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files, phase: .stopped)
         var target = makeSnapshot()
         target.record.kind = .cold
-        seed(harness, instance, [target])
+        seed(harness.snapshots, instance, [target])
 
         await harness.viewModel.revert(instance, to: target, takingSnapshotFirst: true)
 
@@ -328,7 +328,7 @@ struct VMLibraryViewModelSnapshotTests {
         harness.virtualization.takeSnapshotError = VMSnapshotError.captureSourceMissing("Disk.asif")
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let target = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [target]))
+        seed(harness.snapshots, instance, [target])
 
         await harness.viewModel.revert(instance, to: target, takingSnapshotFirst: true)
 
@@ -345,7 +345,7 @@ struct VMLibraryViewModelSnapshotTests {
             in: harness.viewModel, files: harness.storage.files,
             phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let snapshot = makeSnapshot()
-        seed(harness, instance, [snapshot])
+        seed(harness.snapshots, instance, [snapshot])
 
         harness.viewModel.renameSnapshot(snapshot, newName: "Renamed", on: instance)
 
@@ -371,7 +371,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id))
+        seed(harness.snapshots, instance, [snapshot], currentID: snapshot.id)
         harness.snapshots.setDiscardError(CocoaError(.fileWriteNoPermission))
 
         await harness.viewModel.deleteSnapshot(instance, snapshot: snapshot, turningOffEphemeralMode: false).value
@@ -390,7 +390,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        seed(harness.snapshots, instance, [snapshot])
 
         harness.viewModel.renameSnapshot(snapshot, newName: "  Renamed  ", on: instance)
 
@@ -403,7 +403,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        seed(harness.snapshots, instance, [snapshot])
 
         harness.viewModel.renameSnapshot(snapshot, newName: "   ", on: instance)
         harness.viewModel.renameSnapshot(snapshot, newName: snapshot.name, on: instance)
@@ -418,7 +418,7 @@ struct VMLibraryViewModelSnapshotTests {
         let harness = makeHarness()
         let instance = makeInstance(in: harness.viewModel, files: harness.storage.files)
         let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        seed(harness.snapshots, instance, [snapshot])
 
         harness.viewModel.setSnapshotNotes(
             snapshot, notes: "  tools\nconfigured  ", on: instance)
@@ -434,7 +434,7 @@ struct VMLibraryViewModelSnapshotTests {
             in: harness.viewModel, files: harness.storage.files,
             phase: .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped))
         let snapshot = makeSnapshot()
-        seed(harness, instance, [snapshot])
+        seed(harness.snapshots, instance, [snapshot])
 
         harness.viewModel.setSnapshotNotes(snapshot, notes: "late", on: instance)
 
@@ -451,8 +451,7 @@ struct VMLibraryViewModelSnapshotTests {
         let instance = makeInstance(
             in: harness.viewModel, files: harness.storage.files, phase: .running(sessionID: UUID()))
         let snapshot = makeSnapshot()
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        harness.snapshots.setCapturedConfiguration(instance.configuration, for: snapshot.id)
+        seed(harness.snapshots, instance, [snapshot])
 
         let revertTask = Task { await harness.viewModel.revert(instance, to: snapshot) }
         // The revert is parked mid-copy, and the rename lands here — the
