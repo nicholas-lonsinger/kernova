@@ -16,26 +16,40 @@
 # tests share. Sheets, alerts, popovers and open and save panels go on screen
 # through AppKit's own calls, which this check does not flag.
 #
-# Flagged, on one line of code:
+# Flagged, on one line of code or a member at the start of the line after its
+# receiver:
 #   - any `openApplication(` call;
 #   - `withApplicationAt:` naming `Bundle.main.bundleURL`, the
 #     `open(_:withApplicationAt:configuration:)` route to the same request;
 #   - `.open(Bundle.main.bundleURL`, opening the bundle as a document;
 #   - outside Kernova/App/AppKitSessionFocus.swift:
-#     - `NSApp` (optional-chained or not) or `NSApplication.shared` reaching
-#       `activate`, `activationPolicy`, `setActivationPolicy`, `isActive`,
-#       `hide`, `unhide`, `unhideWithoutActivation`, `unhideAllApplications`,
-#       `isHidden`, `deactivate`, `keyWindow` or `mainWindow`, and
-#       `NSRunningApplication.current` reaching `activate` or `hide`;
+#     - `NSApp` (optional-chained or not), `NSApplication.shared` or
+#       `KernovaApplication.shared` reaching `activate`, `activationPolicy`,
+#       `setActivationPolicy`, `isActive`, `hide`, `unhide`,
+#       `unhideWithoutActivation`, `unhideAllApplications`, `isHidden`,
+#       `deactivate`, `keyWindow` or `mainWindow`;
+#       `NSRunningApplication.current` reaching `activate`, `hide`, `unhide`,
+#       `isActive` or `isHidden`; and an `.activate(` on a line naming
+#       `NSRunningApplication` or `runningApplications`;
+#     - a read of `frontmostApplication`;
 #     - a call to `makeKeyAndOrderFront(`, `makeKey(`, `makeMain(`,
 #       `orderFrontRegardless(`, `toggleFullScreen(`, `miniaturize(`,
-#       `orderFrontStandardAboutPanel(` or `showWindow(`, which makes the
-#       window key;
+#       `deminiaturize(`, `orderWindow(`, `setIsVisible(`,
+#       `hideOtherApplications(`, `unhideAllApplications(`, `arrangeInFront(`,
+#       `miniaturizeAll(`, `orderFrontStandardAboutPanel(` or `showWindow(`,
+#       each of which changes what is on screen or which window is key;
+#     - a `#selector` naming any method above, or `orderFront` or `orderBack`,
+#       unless written as an `action:` argument or assigned to `.action`: that
+#       selector AppKit sends on the user's click or key equivalent, as the
+#       menu bar's Hide Others and Bring All to Front do;
+#     - outside KernovaCore/Sources/KernovaUI/Views/Sidebar/SidebarViewController.swift,
+#       whose row emphasis draws from its window's key state, a read of
+#       `isKeyWindow`, and everywhere a read of `isMainWindow`;
 #     - outside KernovaUITests/, which orders its parked test windows in
 #       itself, a call to `orderFront(` or `orderBack(`, and a read of
 #       `.isOnActiveSpace`.
 # A URL bound to a local first and passed on a later line is not traced, nor is
-# an `NSApplication` bound to a local.
+# an `NSApplication` or `NSRunningApplication` bound to a local.
 #
 # Scope is every tracked Swift file the app or a test host runs as its own
 # code — Kernova/, KernovaCore/Sources/KernovaVirtualization/ (Virtualization
@@ -54,6 +68,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$lib_dir/lib/output.sh"
 
 focus_owner='Kernova/App/AppKitSessionFocus.swift'
+key_emphasis='KernovaCore/Sources/KernovaUI/Views/Sidebar/SidebarViewController.swift'
 
 if [ "$#" -gt 0 ]; then
     list_files() { printf '%s\n' "$@"; }
@@ -67,28 +82,54 @@ fi
 
 findings=$(list_files "$@" \
     | tr '\n' '\0' \
-    | xargs -0 awk -v owner="$focus_owner" '
+    | xargs -0 awk -v owner="$focus_owner" -v emphasis="$key_emphasis" '
         function report() { printf "%s:%d — %s\n", FILENAME, FNR, line }
+        function ends(path) { return FILENAME == path || substr(FILENAME, length(FILENAME) - length(path)) == "/" path }
+        BEGIN {
+            app = "(NSApp[[:space:]]*\\??|(NS|Kernova)Application[[:space:]]*\\.[[:space:]]*shared)"
+            app_members = "(activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate|keyWindow|mainWindow)"
+            current = "NSRunningApplication[[:space:]]*\\.[[:space:]]*current[[:space:]]*\\??"
+            current_members = "(activate|hide|unhide|isActive|isHidden)"
+            keying = "(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|deminiaturize|orderWindow|setIsVisible|hideOtherApplications|unhideAllApplications|arrangeInFront|miniaturizeAll|orderFrontStandardAboutPanel|showWindow)"
+            selected = "(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|deminiaturize|orderWindow|setIsVisible|hideOtherApplications|unhideAllApplications|arrangeInFront|miniaturizeAll|orderFrontStandardAboutPanel|showWindow|activate|deactivate|hide|unhide|unhideWithoutActivation|setActivationPolicy"
+            end_word = "([^A-Za-z0-9_]|$)"
+            member_start = "^[[:space:]]*\\??[[:space:]]*\\.[[:space:]]*"
+        }
+        FNR == 1 { chain = "" }
         {
             code = $0
             sub(/\/\/.*$/, "", code)
             line = code
             sub(/^[[:space:]]+/, "", line)
-            is_owner = FILENAME == owner || substr(FILENAME, length(FILENAME) - length(owner)) == "/" owner
+            is_owner = ends(owner)
             in_tests = FILENAME ~ /(^|\/)KernovaUITests\//
+            # A selector AppKit sends on a user action is not Kernova reaching the focus.
+            scan = code
+            gsub(/(action[[:space:]]*:|\.action[[:space:]]*=)[[:space:]]*#selector[[:space:]]*\([^()]*(\([^()]*\)[^()]*)*\)/, "", scan)
+            continued = scan ~ member_start
+            receiver = continued ? chain : ""
+            chain = continued ? chain scan : scan
             if (code ~ /openApplication[[:space:]]*\(/ \
                 || code ~ /withApplicationAt:[[:space:]]*Bundle\.main\.bundleURL/ \
                 || code ~ /\.open[[:space:]]*\([[:space:]]*Bundle\.main\.bundleURL/) {
                 report()
             } else if (is_owner) {
                 next
-            } else if (code ~ /(NSApp[[:space:]]*\??|NSApplication\.shared)[[:space:]]*\.[[:space:]]*(activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate|keyWindow|mainWindow)([^A-Za-z0-9_]|$)/ \
-                || code ~ /NSRunningApplication\.current[[:space:]]*\.[[:space:]]*(activate|hide)([^A-Za-z0-9_]|$)/ \
-                || code ~ /(^|[^A-Za-z0-9_])(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|orderFrontStandardAboutPanel|showWindow)[[:space:]]*\(/) {
+            } else if (scan ~ (app "[[:space:]]*\\.[[:space:]]*" app_members end_word) \
+                || scan ~ (current "[[:space:]]*\\.[[:space:]]*" current_members end_word) \
+                || (receiver ~ (app "[[:space:]]*$") && scan ~ (member_start app_members end_word)) \
+                || (receiver ~ (current "[[:space:]]*$") && scan ~ (member_start current_members end_word)) \
+                || ((scan ~ /(NSRunningApplication|runningApplications)/ || (continued && receiver ~ /(NSRunningApplication|runningApplications)/)) \
+                    && scan ~ /\.[[:space:]]*activate[[:space:]]*\(/) \
+                || scan ~ ("(^|[^A-Za-z0-9_])frontmostApplication" end_word) \
+                || scan ~ ("(^|[^A-Za-z0-9_])" keying "[[:space:]]*\\(") \
+                || scan ~ ("#selector[[:space:]]*\\(([A-Za-z0-9_]+[[:space:]]*\\.[[:space:]]*)*" selected (in_tests ? "" : "|orderFront|orderBack") ")" end_word) \
+                || scan ~ ("(^|[^A-Za-z0-9_])isMainWindow" end_word) \
+                || (!ends(emphasis) && scan ~ ("(^|[^A-Za-z0-9_])isKeyWindow" end_word))) {
                 report()
             } else if (!in_tests \
-                && (code ~ /(^|[^A-Za-z0-9_])(orderFront|orderBack)[[:space:]]*\(/ \
-                    || code ~ /\.[[:space:]]*isOnActiveSpace([^A-Za-z0-9_]|$)/)) {
+                && (scan ~ /(^|[^A-Za-z0-9_])(orderFront|orderBack)[[:space:]]*\(/ \
+                    || scan ~ /\.[[:space:]]*isOnActiveSpace([^A-Za-z0-9_]|$)/)) {
                 report()
             }
         }
