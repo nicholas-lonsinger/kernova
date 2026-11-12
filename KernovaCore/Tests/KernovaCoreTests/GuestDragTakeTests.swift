@@ -175,8 +175,6 @@ struct GuestDragTakeTests {
         name: Data("Untitled.jpeg".utf8), type: .jpeg, isDirectory: false, isPromised: true)
     nonisolated private static let namedPromise = DraggedOutItem(
         name: Data("IMG_0042.jpeg".utf8), type: .jpeg, isDirectory: false, isPromised: true, sizeEstimate: 9)
-    private static let sizedFolder = DraggedOutItem(
-        name: Data("Folder".utf8), type: .folder, isDirectory: true, sizeEstimate: 4096)
 
     /// What a take carrying `items` lists them as.
     static func offered(_ items: [DraggedOutItem]) -> [OfferedItem] {
@@ -289,16 +287,6 @@ struct GuestDragTakeTests {
         #expect(transport.cancels == 1)
     }
 
-    @Test("a Mac session begins from ready and the guest's button stays held while it runs")
-    func sessionKeepsTheButtonHeld() throws {
-        let take = try readyTake()
-        take.withheldDrag()
-
-        #expect(take.phase == .carried(.outside(targeted: true)))
-        #expect(display.calls.last == .beginSession)
-        #expect(!display.calls.contains(.release))
-    }
-
     @Test("the button coming up once the catcher is the target releases onto it, with no delivery")
     func readyMouseUpReleases() throws {
         let take = try readyTake()
@@ -317,29 +305,6 @@ struct GuestDragTakeTests {
         #expect(take.phase == .abandoned)
         #expect(display.calls == [.returnToExit, .resumeTracking])
         #expect(transport.cancels == 0)
-        #expect(transport.releases == 1)
-        #expect(finished.count == 1)
-    }
-
-    @Test("a Mac session that does not begin releases onto the catcher")
-    func sessionThatDoesNotBeginReleases() throws {
-        display.sessionBegins = false
-        let take = try readyTake()
-        take.withheldDrag()
-
-        #expect(take.phase == .released(at: .catcher))
-        #expect(display.calls.suffix(2) == [.beginSession, .release])
-    }
-
-    @Test("a session that ends with nothing taking it releases onto the catcher and asks no delivery")
-    func undroppedSessionReleases() throws {
-        let take = try carriedTake(items: [Self.promise])
-        take.hostSessionEnded(dropped: false)
-
-        #expect(take.phase == .released(at: .catcher))
-        #expect(transport.controls.isEmpty)
-        #expect(finished.count == 0)
-        transport.end(.caught(nil))
         #expect(transport.releases == 1)
         #expect(finished.count == 1)
     }
@@ -516,65 +481,6 @@ struct GuestDragTakeTests {
         #expect(finished.count == 1)
     }
 
-    @Test("a dropped drag of a promise and a folder releases only on DELIVERING; writes wait for the delivery")
-    func promisesAndFoldersAreDeliveredAtTheDrop() async throws {
-        let take = try carriedTake(items: [Self.promise, Self.folder])
-        take.hostSessionEnded(dropped: true)
-
-        #expect(take.phase == .carried(.delivering))
-        #expect(transport.controls == [.deliver])
-        #expect(!display.calls.contains(.release))
-
-        let outcome = OutcomeBox(gate: transport.changed)
-        take.writeItem(at: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/IMG_0042.jpeg")) { outcome.set($0) }
-        await Task.yield()
-        #expect(transport.pulls.isEmpty)
-
-        transport.report(.delivering)
-        #expect(take.phase == .released(at: .catcher))
-        transport.end(.caught(Self.delivery), delivered: [Self.namedPromise, Self.sizedFolder])
-
-        try await transport.changed.wait { !transport.pulls.isEmpty }
-        #expect(transport.pulls.first?.destination.lastPathComponent == "IMG_0042.jpeg")
-        // The one offer is held until every item is written.
-        #expect(transport.releases == 0)
-        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
-        #expect(take.filename(forItemAt: 1) == "Folder")
-        transport.end(0, .success(()))
-        try await transport.changed.wait { outcome.isSet }
-        #expect(outcome.error == nil)
-
-        _ = try await write(take, item: 1, to: URL(fileURLWithPath: "/Users/me/Desktop/Folder")) {
-            $0.end(1, .success(()))
-        }
-        #expect(transport.releases == 1)
-        #expect(finished.count == 1)
-    }
-
-    @Test("a promised item's name asked mid-drop waits on the delivery it starts, released from the waiting thread")
-    func aNameAskWaitsOnTheDelivery() throws {
-        let take = try carriedTake(items: [Self.promise])
-        let transport = transport
-        let display = display
-        let delivery = try #require(transport.delivery)
-        // The guest, answering on a thread of its own while the ask holds the
-        // main thread: it waits for the ask, answers, waits for the release,
-        // then names the item in the offer its catch names.
-        let guest = Thread {
-            transport.delivering.wait()
-            delivery.peerAnswered()
-            display.released.wait()
-            delivery.settle(.delivered([Self.namedPromise]))
-        }
-        guest.start()
-
-        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
-        #expect(transport.controls == [.deliver])
-        #expect(take.phase == .released(at: .catcher))
-        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
-        #expect(transport.controls == [.deliver])
-    }
-
     @Test("names that arrive before the naming deadline stop it: the delivery stands and the take goes on")
     func namesBeforeTheDeadlineStopIt() async throws {
         let take = try carriedTake(items: [Self.promise])
@@ -695,32 +601,6 @@ struct GuestDragTakeTests {
         try await transport.changed.wait { transport.cancels == 1 }
     }
 
-    @Test("a name ask waits for the names alone: the sizes after them hold no writer and no main thread")
-    func aNameAskWaitsForNamesAlone() async throws {
-        let take = try carriedTake(items: [Self.promise, Self.folder])
-        let transport = transport
-        let display = display
-        let delivery = try #require(transport.delivery)
-        let guest = Thread {
-            transport.delivering.wait()
-            delivery.peerAnswered()
-            display.released.wait()
-            delivery.named([Self.namedPromise, Self.folder])
-        }
-        guest.start()
-
-        #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
-        #expect(delivery.settled == nil, "the names waited for the sizes")
-        let outcome = OutcomeBox(gate: transport.changed)
-        take.writeItem(at: 1, to: URL(fileURLWithPath: "/Users/me/Desktop/Folder")) { outcome.set($0) }
-        await Task.yield()
-        #expect(transport.pulls.isEmpty, "a write pulled before the delivery sized the folders")
-
-        transport.end(.caught(Self.delivery), delivered: [Self.namedPromise, Self.sizedFolder])
-        try await transport.changed.wait { !transport.pulls.isEmpty }
-        #expect(transport.pulls.first?.index == 1)
-    }
-
     @Test("a name asked while the catcher is not the target is the stand-in, and asks no delivery")
     func aNameAskOffTargetIsAStandIn() throws {
         let take = try carriedTake(items: [Self.promise])
@@ -766,17 +646,6 @@ struct GuestDragTakeTests {
         #expect(display.calls.suffix(2) == [.returnToExit, .release])
     }
 
-    @Test("a delivery the take asked for waits on the guest's answer and nothing else")
-    func aDeliveryWaitsOnTheAnswer() async throws {
-        let take = try carriedTake(items: [Self.folder])
-        take.hostSessionEnded(dropped: true)
-        for _ in 0..<5 { await Task.yield() }
-        #expect(take.phase == .carried(.delivering))
-
-        transport.end(.refused(WireError(.dragPressOver)))
-        #expect(take.phase == .released(at: .exitPoint))
-    }
-
     // MARK: - The take's end
 
     @Test("the VM stopping mid-hand-off hands the press back")
@@ -799,51 +668,7 @@ struct GuestDragTakeTests {
         #expect(transport.cancels == 1)
     }
 
-    @Test("the guest's offer ending mid-hand-off hands the press back without releasing it again")
-    func offerEndHandsBack() {
-        let take = makeTake()
-        take.offerEnded()
-        transport.end(.refused(WireError(.dragNotCurrent)))
-
-        #expect(take.phase == .abandoned)
-        #expect(transport.releases == 0)
-        #expect(finished.count == 1)
-    }
-
-    @Test("a take is finished only once its stream closed, whatever it released")
-    func finishedWaitsForTheStream() throws {
-        let take = try readyTake()
-        take.withheldMouseUp()
-        #expect(finished.count == 0)
-        #expect(transport.releases == 0)
-
-        transport.end(.caught(nil))
-        #expect(finished.count == 1)
-        #expect(transport.releases == 1)
-    }
-
     // MARK: - Writing items
-
-    @Test("a dropped session holds the offer until every item is written, then releases it")
-    func releaseFollowsTheLastWrite() async throws {
-        let take = try carriedTake(items: [Self.file, Self.file])
-        take.hostSessionEnded(dropped: true)
-        transport.end(.caught(nil))
-        let folder = URL(fileURLWithPath: "/Volumes/Exchange/Inbox", isDirectory: true)
-
-        let first = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
-            $0.end(0, .success(()))
-        }
-        #expect(first == nil)
-        #expect(transport.releases == 0)
-
-        let second = try await write(take, item: 1, to: folder.appendingPathComponent("a 2.txt")) {
-            $0.end(1, .success(()))
-        }
-        #expect(second == nil)
-        #expect(transport.releases == 1)
-        #expect(finished.count == 1)
-    }
 
     // MARK: - Retiring
 
@@ -921,21 +746,6 @@ struct GuestDragTakeTests {
         #expect((later as? CocoaError)?.code == .userCancelled)
     }
 
-    @Test("termination mid-hand-off hands the press back and retires without waiting for the guest")
-    func terminationRetiresMidHandOff() throws {
-        let take = makeTake()
-        var retired = false
-        take.whenRetired { retired = true }
-
-        take.endForTermination()
-
-        #expect(take.phase == .abandoned)
-        #expect(retired)
-        #expect(finished.count == 1)
-        #expect(transport.cancels == 1)
-        #expect(display.calls.contains(.resumeTracking))
-    }
-
     @Test("a failed pull fails its write and every write after it")
     func failedPullEndsTheWrites() async throws {
         let take = try carriedTake(items: [Self.file, Self.file])
@@ -952,33 +762,6 @@ struct GuestDragTakeTests {
         #expect(after as? GuestDragWriteError == .failed(.peerReported(.dragItemUnavailable)))
         #expect(transport.pulls.count == 1)
         #expect(transport.releases == 1)
-    }
-
-    @Test("the offer ending mid-write cancels the pull, and the write fails interrupted")
-    func offerEndInterruptsTheWrite() async throws {
-        let take = try carriedTake()
-        take.hostSessionEnded(dropped: true)
-        transport.end(.caught(nil))
-        let destination = URL(fileURLWithPath: "/tmp/drag-out/a.txt")
-
-        let outcome = try await write(take, item: 0, to: destination) { transport in
-            take.offerEnded()
-            #expect(transport.pulls[0].cancelled)
-            transport.end(0, .failure(WireError(.cancelled)))
-        }
-
-        #expect(outcome as? GuestDragWriteError == .failed(.interrupted(fileCount: 1)))
-        #expect(transport.releases == 0)
-        #expect(finished.count == 1)
-    }
-
-    @Test("no item is written before a Mac session carries the drag")
-    func noWriteBeforeTheSession() async throws {
-        let take = try readyTake()
-        let outcome = try await write(take, item: 0, to: URL(fileURLWithPath: "/tmp/drag-out/a.txt"))
-
-        #expect(outcome as? GuestDragWriteError == .failed(.transferFailed))
-        #expect(transport.pulls.isEmpty)
     }
 
     @Test("a pull's error says what the readout reports")

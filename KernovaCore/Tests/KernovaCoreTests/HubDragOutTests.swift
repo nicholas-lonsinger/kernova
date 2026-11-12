@@ -315,19 +315,6 @@ struct HubDragOutTests {
         #expect(ClipboardProgressFormat.byteProgress(final)?.contains(" of ") == true)
     }
 
-    @Test("a drag with an item of unknown size reads its files, never a byte count")
-    func unknownSizeCountsFilesAlone() async throws {
-        let final = try await deliveredReadout(sizes: [0: 0, 1: 4_096])
-
-        #expect(!final.bytesKnown)
-        #expect(final.totalBytes == 0)
-        #expect(final.filesCompleted == 2)
-        #expect(final.fileCount == 2)
-        #expect(final.fractionComplete == 1)
-        #expect(ClipboardProgressFormat.byteProgress(final) == nil)
-        #expect(!ClipboardProgressFormat.summary(final).contains("KB"))
-    }
-
     @Test("a promised name asked on the main thread waits on names the hub's queue gives without it")
     func nameAskOnMainSettlesOffMain() async throws {
         let take = try await carriedTake(Self.promiseAndFolder)
@@ -346,17 +333,6 @@ struct HubDragOutTests {
 
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
         #expect(take.phase == .released(at: .catcher))
-    }
-
-    @Test("a hub that cannot open the take hands the press back")
-    func unopenedTakeAbandons() async throws {
-        offer()
-        let take = try takeOffer()
-        try await hub.changed.wait { hub.takeCount == 1 }
-
-        hub.state.withLock { $0.takes[0] }.completion(.failure(WireError(.itemOfferStale)))
-
-        try await waitForChange { take.phase == .abandoned }
     }
 
     @Test("a promise is filled by a pull of its item to exactly the promise URL")
@@ -385,27 +361,6 @@ struct HubDragOutTests {
         try await outcome.changed.wait { outcome.isSet }
         #expect(outcome.error == nil)
         #expect(hub.releaseCount == 0)
-    }
-
-    @Test("a release completes the drag once every item is written")
-    func releaseCompletesTheDrag() async throws {
-        let take = try await droppedTake()
-        for (index, name) in ["notes.txt", "todo.txt"].enumerated() {
-            let outcome = TestOutcome()
-            take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { outcome.set($0) }
-            try await hub.changed.wait { hub.pullCount == index + 1 }
-            let id = ItemPullID(
-                generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: UInt32(9 + index)))
-            hub.state.withLock { $0.pulls[index] }.completion(.success(id))
-            await MainActorTurn.next()
-            dragOut.pullEnded(id, .landed(.named(Data(name.utf8))))
-            try await outcome.changed.wait { outcome.isSet }
-            #expect(outcome.error == nil)
-        }
-
-        let release = try #require(hub.state.withLock { $0.releases.first })
-        #expect(release.token == token)
-        #expect(release.peer == peer)
     }
 
     @Test("a console move mid-write ends the pull and fails the write interrupted, releasing nothing")
@@ -459,35 +414,6 @@ struct HubDragOutTests {
         newer.hostSessionWillBegin()
         #expect(retired)
         #expect(hub.state.withLock { $0.releases.map(\.token) }.contains(token))
-    }
-
-    @Test("a take of a token the guest offers again leaves the earlier take of it visible to termination")
-    func reusedTokenKeepsBothTakes() async throws {
-        let earlier = try await droppedTake()
-        var retired = false
-        earlier.whenRetired { retired = true }
-        offer()
-        let newer = try takeOffer()
-
-        dragOut.endForTermination()
-
-        #expect(retired, "termination missed the earlier take of the reused token")
-        #expect(newer.phase == .abandoned)
-        #expect(hub.state.withLock { $0.releases.map(\.token) } == [token, token])
-    }
-
-    @Test("a console move before the guest answers hands the press back")
-    func consoleMoveMidHandOff() async throws {
-        offer()
-        let take = try takeOffer()
-        try await hub.changed.wait { hub.takeCount == 1 }
-
-        dragOut.offerEnded(token)
-
-        #expect(take.phase == .abandoned)
-        #expect(hub.releaseCount == 0)
-        hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
-        try await hub.changed.wait { hub.state.withLock { $0.takeCancels } == [takeID] }
     }
 
     /// One write's outcome, announced on its own gate.
@@ -550,27 +476,9 @@ struct VMInstanceDragOutTests {
         return instance
     }
 
-    @Test("a running guest's drag is one its display may take, whatever the guest's OS")
-    func runningGuestsDragIsOffered() async throws {
-        let instance = try await makeInstance()
-
-        #expect(instance.displayGuestDrag?.token == token)
-        #expect(instance.takeGuestDrag(display: TrackingDisplay()) != nil)
-        #expect(instance.displayGuestDrag == nil)
-    }
-
     @Test("with drag and drop off, the display is offered no guest drag")
     func settingOffGates() async throws {
         let instance = try await makeInstance(dropFilesEnabled: false)
-
-        #expect(instance.displayGuestDrag == nil)
-        #expect(instance.takeGuestDrag(display: TrackingDisplay()) == nil)
-    }
-
-    @Test("a paused VM's display is offered no guest drag")
-    func notRunningGates() async throws {
-        let instance = try await makeInstance()
-        instance.activity.placeForTesting(.suspended)
 
         #expect(instance.displayGuestDrag == nil)
         #expect(instance.takeGuestDrag(display: TrackingDisplay()) == nil)

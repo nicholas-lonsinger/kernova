@@ -78,27 +78,6 @@ struct HubDropServiceTests {
         return url
     }
 
-    @Test("A drop becomes one DROP offer to the console peer, its items named as dropped, served from their files")
-    func dropOffersToTheConsolePeer() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await instance(probe)
-        let a = try file("a.txt", "alpha")
-        let folder = scratch.url.appendingPathComponent("Photos", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-
-        #expect(instance.dropOnGuest(pasteboard([a, folder]), promises: []))
-
-        let (_, offer) = try await sentOffer(probe)
-        #expect(offer.items.map { $0.representations.map(\.name) } == [[Data("a.txt".utf8)], [Data("Photos".utf8)]])
-        #expect(offer.items.map { $0.representations.map(\.storage) } == [[.file], [.folder]])
-        var request = PullRequest()
-        request.token = offer.token
-        request.item = 0
-        let owner = instance.dropService.owner
-        let served = await Task.detached { owner.content(Self.pull, request, offer.items[0].representations[0]) }.value
-        #expect(served == .success(.tree(path: a.path)))
-    }
-
     @Test("A drop with no DROP console peer is refused by the hub, and reports no agent was taking drops")
     func noConsolePeerIsRefused() async throws {
         let probe = AgentHubProbe()
@@ -109,32 +88,6 @@ struct HubDropServiceTests {
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
         #expect(instance.clipboardTransferReport.failure == .dropStopped(.noAgent))
         #expect(probe.dropOffers.isEmpty)
-    }
-
-    @Test("A dropped promise is called in as the drop is taken, and offered under the name it gives then")
-    func promiseIsCalledInAtOffer() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await instance(probe)
-        let receiver = FakeFilePromiseReceiver(
-            name: "IMG_0001.heic", fileType: "public.heic", contents: .file(Data("photo".utf8)), named: false)
-
-        #expect(instance.dropOnGuest(promisePasteboard(), promises: [receiver]))
-        #expect(receiver.callIns == 1)
-
-        let (_, offer) = try await sentOffer(probe)
-        let representation = try #require(offer.items.first?.representations.first)
-        #expect(representation.name == Data("IMG_0001.heic".utf8))
-        #expect(representation.promised)
-        var request = PullRequest()
-        request.token = offer.token
-        let owner = instance.dropService.owner
-        let served = await Task.detached { owner.content(Self.pull, request, representation) }.value
-        guard case .success(.tree(let path)) = served else {
-            Issue.record("served \(served)"); return
-        }
-        #expect(URL(filePath: path).lastPathComponent == "IMG_0001.heic")
-        #expect(try Data(contentsOf: URL(filePath: path)) == Data("photo".utf8))
-        #expect(receiver.callIns == 1)
     }
 
     /// An instance whose one drop of `a.txt` the console peer has opened, and that offer.

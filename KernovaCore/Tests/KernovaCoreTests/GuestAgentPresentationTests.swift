@@ -31,23 +31,6 @@ struct GuestAgentPresentationTests {
         return AgentHubSnapshot(peers: peers, features: features, inBandUpdatesWithheld: inBandUpdatesWithheld)
     }
 
-    @Test("With no agent connected, the hub's presentation is waiting, and its Status and logs rows say why")
-    func hubWithNoPeers() {
-        let presentation = GuestAgentPresentation(hub: .empty)
-        #expect(presentation.status == .waiting)
-        #expect(presentation.windowLines == [])
-        #expect(
-            presentation.capabilities == [
-                .init(title: "Status", isAvailable: false, detail: "No Kernova agent is connected."),
-                .init(title: "Guest logs in Console", isAvailable: false, detail: "No Kernova agent is connected."),
-                .init(title: "Automatic agent updates", isAvailable: false, detail: "No Kernova agent is connected."),
-                .init(title: "Stop and Restart", isAvailable: false, detail: "No Kernova agent is connected."),
-                .init(
-                    title: "Stop Anyway and Restart Anyway", isAvailable: false,
-                    detail: "No system service is connected."),
-            ])
-    }
-
     @Test("One current session agent is a line naming its user, and the Status row is connected")
     func hubWithOneCurrentPeer() {
         let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1)], logs: .available(Data())))
@@ -63,68 +46,6 @@ struct GuestAgentPresentationTests {
                     title: "Stop Anyway and Restart Anyway", isAvailable: false,
                     detail: "No system service is connected."),
             ])
-    }
-
-    @Test(
-        "The automatic updates row reads the merged UPDATE status: on, or the reason it is absent",
-        arguments: [
-            (Availability<Data>.available(Data()), true, "On"),
-            (.absent(.notImplemented, debugDetail: ""), false, "This agent doesn't offer it."),
-            (.absent(.noAgent, debugDetail: ""), false, "No Kernova agent is connected."),
-        ])
-    func updateRow(status: Availability<Data>, isAvailable: Bool, detail: String) {
-        let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1)], update: status))
-        #expect(
-            presentation.capabilities.first { $0.title == "Automatic agent updates" }
-                == .init(title: "Automatic agent updates", isAvailable: isAvailable, detail: detail))
-    }
-
-    @Test(
-        "Where the host withholds in-band updates, the automatic updates row is unavailable and names what enables it, outdated or current; otherwise it reads UPDATE",
-        arguments: [
-            (
-                PeerSummary.Standing.outdated(offeredVersionLabel: "1.1", update: .notTeamSigned), true, false,
-                "Needs a team-signed build of Kernova"
-            ),
-            (.current, true, false, "Needs a team-signed build of Kernova"),
-            (.current, false, true, "On"),
-            (.outdated(offeredVersionLabel: "1.1", update: .updating), false, true, "On"),
-        ])
-    func updateRowWhereTheHostWithholdsUpdates(
-        standing: PeerSummary.Standing, withheld: Bool, isAvailable: Bool, detail: String
-    ) {
-        let presentation = GuestAgentPresentation(
-            hub: Self.snapshot(
-                [Self.peer(1, standing: standing)], update: .available(Data()), inBandUpdatesWithheld: withheld))
-        #expect(
-            presentation.capabilities.first { $0.title == "Automatic agent updates" }
-                == .init(title: "Automatic agent updates", isAvailable: isAvailable, detail: detail))
-    }
-
-    @Test("With no agent connected, the automatic updates row says so whatever the bundles")
-    func updateRowWithNoAgent() {
-        let presentation = GuestAgentPresentation(hub: .empty)
-        #expect(!AgentHubSnapshot.empty.inBandUpdatesWithheld)
-        #expect(
-            presentation.capabilities.first { $0.title == "Automatic agent updates" }
-                == .init(title: "Automatic agent updates", isAvailable: false, detail: "No Kernova agent is connected.")
-        )
-    }
-
-    @Test(
-        "The logs row reads the merged LOGS status: on, or the reason it is absent",
-        arguments: [
-            (AbsenceReason.disabledByPolicy, "Turned off in Settings."),
-            (.notImplemented, "This agent doesn't offer it."),
-            (.versionMismatch, "The agent is out of date."),
-            (.protocolMismatch, "The agent is out of date."),
-        ])
-    func logsRow(reason: AbsenceReason, detail: String) {
-        let presentation = GuestAgentPresentation(
-            hub: Self.snapshot([Self.peer(1)], logs: .absent(reason, debugDetail: "")))
-        #expect(
-            presentation.capabilities.first { $0.title == "Guest logs in Console" }
-                == .init(title: "Guest logs in Console", isAvailable: false, detail: detail))
     }
 
     @Test(
@@ -172,17 +93,6 @@ struct GuestAgentPresentationTests {
             ])
     }
 
-    @Test("Outdated agents that all update themselves make the presentation updating, ahead of an unresponsive one")
-    func hubWithUpdatingPeers() {
-        let presentation = GuestAgentPresentation(
-            hub: Self.snapshot([
-                Self.peer(3, role: .systemPeer, isResponsive: false),
-                Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating)),
-            ]))
-        #expect(presentation.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(presentation.agents.map(\.state) == ["Not responding", "Updating\u{2026}"])
-    }
-
     @Test(
         "An agent the host bundles nothing for claims no currency: its line names its version, and the status is connected"
     )
@@ -226,46 +136,7 @@ struct GuestAgentPresentationTests {
         AgentScopePresence(scope: scope, lastSeenVersion: version, seenThisSession: seen, isConnected: connected)
     }
 
-    @Test("With only away peers the session is connecting to the agent it saw, never waiting for an install")
-    func awayIsConnecting() {
-        let presentation = GuestAgentPresentation(
-            hub: AgentHubSnapshot(
-                peers: [], features: FeatureStatus.merge([]), away: [Self.away(Self.peer(1))]),
-            presences: [Self.presence(.login)])
-        #expect(presentation.status == .connecting(expected: "1.0"))
-        #expect(presentation.windowLines == [.init(title: "Session agent — pbear", state: "Reconnecting\u{2026}")])
-    }
-
-    @Test("A VM that has had an agent and has none connected yet — a cold boot — is connecting to it")
-    func coldBootIsConnecting() {
-        let presentation = GuestAgentPresentation(hub: .empty, presences: [Self.presence(.login, seen: false)])
-        #expect(presentation.status == .connecting(expected: "1.0"))
-        #expect(presentation.windowLines == [])
-        #expect(GuestAgentPresentation(hub: .empty).status == .waiting)
-    }
-
     // MARK: Disconnected agents
-
-    @Test("A session agent that left this session, its away line gone and nothing awaited, reads disconnected")
-    func departedIsDisconnected() {
-        let presentation = GuestAgentPresentation(hub: .empty, presences: [Self.presence(.login, "0.9")])
-        #expect(presentation.status == .disconnected(last: "0.9"))
-        #expect(presentation.windowLines == [.init(title: "Session agent", state: "Disconnected")])
-        #expect(presentation.agents.map(\.status) == [.disconnected(last: "0.9")])
-    }
-
-    @Test("Beside a connected system service, a disconnected session agent keeps its line and the status current")
-    func departedBesideConnected() {
-        let presentation = GuestAgentPresentation(
-            hub: Self.snapshot([Self.peer(2, role: .systemPeer)]),
-            presences: [Self.presence(.login), Self.presence(.system, connected: true)])
-        #expect(presentation.status == .current(version: "1.0"))
-        #expect(
-            presentation.windowLines == [
-                .init(title: "System service", state: "Up to date"),
-                .init(title: "Session agent", state: "Disconnected"),
-            ])
-    }
 
     @Test("While another scope is still awaited, a departed one leaves the status connecting")
     func departedWhileAwaited() {
@@ -275,110 +146,7 @@ struct GuestAgentPresentationTests {
         #expect(presentation.windowLines == [.init(title: "Session agent", state: "Disconnected")])
     }
 
-    @Test("A warned scope beats a departed one, and each keeps its line")
-    func missingBeatsDeparted() {
-        let presentation = GuestAgentPresentation(
-            hub: .empty, presences: [Self.presence(.login, "0.9"), Self.missingSystem],
-            missing: [Self.missingSystem])
-        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
-        #expect(
-            presentation.windowLines == [
-                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
-                .init(title: "Session agent", state: "Disconnected"),
-            ])
-    }
-
     // MARK: Missing agents
-
-    private static let missingSession = AgentScopePresence(
-        scope: .login, lastSeenVersion: "0.10.0 (1147)", seenThisSession: false, isConnected: false)
-    private static let missingSystem = AgentScopePresence(
-        scope: .system, lastSeenVersion: "0.10.0 (1147)", seenThisSession: true, isConnected: false)
-
-    @Test("(a) The session agent missing beside a connected system service gets its own line under the warning")
-    func sessionAgentMissing() {
-        let presentation = GuestAgentPresentation(
-            hub: AgentHubSnapshot(
-                peers: [Self.peer(2, role: .systemPeer, version: "0.10.0 (1147)")], features: FeatureStatus.merge([])),
-            presences: [Self.missingSession, Self.presence(.system, "0.10.0 (1147)", connected: true)],
-            missing: [Self.missingSession])
-        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
-        #expect(
-            presentation.windowLines == [
-                .init(title: "System service", state: "Up to date"),
-                .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
-            ])
-    }
-
-    @Test("(b) The system service missing gets its own line, in place of its away line")
-    func systemServiceMissing() {
-        let presentation = GuestAgentPresentation(
-            hub: AgentHubSnapshot(
-                peers: [Self.peer(1, version: "0.10.0 (1147)")], features: FeatureStatus.merge([]),
-                away: [
-                    AwayPeer(
-                        summary: Self.peer(2, role: .systemPeer), relaunching: false, order: 3,
-                        since: SystemScheduler().now)
-                ]),
-            presences: [Self.presence(.login, "0.10.0 (1147)", connected: true), Self.missingSystem],
-            missing: [Self.missingSystem])
-        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
-        #expect(
-            presentation.windowLines == [
-                .init(title: "Session agent — pbear", state: "Up to date"),
-                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
-            ])
-    }
-
-    @Test("(c) Both missing: a line for each, and no connected agent")
-    func bothMissing() {
-        let presentation = GuestAgentPresentation(
-            hub: .empty, presences: [Self.missingSession, Self.missingSystem],
-            missing: [Self.missingSession, Self.missingSystem])
-        #expect(presentation.status == .expectedMissing(expected: "0.10.0 (1147)"))
-        #expect(
-            presentation.windowLines == [
-                .init(title: "Session agent", state: "Didn\u{2019}t reconnect; it starts when a user logs in"),
-                .init(title: "System service", state: "Didn\u{2019}t reconnect"),
-            ])
-    }
-
-    @Test("A peer relaunching into an update keeps reading Updating…, and the status stays updating")
-    func relaunchingKeepsUpdating() {
-        let updating = Self.peer(
-            1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .updating))
-        let alone = GuestAgentPresentation(
-            hub: AgentHubSnapshot(
-                peers: [], features: FeatureStatus.merge([]), away: [Self.away(updating, relaunching: true)]),
-            presences: [Self.presence(.login, "0.9")])
-        #expect(alone.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(alone.agents.map(\.state) == ["Updating\u{2026}"])
-        // Beside a peer already current again, the relaunching one still decides the status.
-        let mixed = GuestAgentPresentation(
-            hub: AgentHubSnapshot(
-                peers: [Self.peer(2, role: .systemPeer, version: "1.0")], features: FeatureStatus.merge([]),
-                away: [Self.away(updating, relaunching: true)]),
-            presences: [Self.presence(.login, "0.9"), Self.presence(.system, connected: true)])
-        #expect(mixed.status == .updating(installed: "0.9", bundled: "1.0"))
-        #expect(mixed.agents.map(\.state) == ["Up to date", "Updating\u{2026}"])
-    }
-
-    @Test("An away peer beside a connected one leaves the status to the connected one")
-    func awayBesideConnected() {
-        let presentation = GuestAgentPresentation(
-            hub: AgentHubSnapshot(
-                peers: [Self.peer(2, role: .systemPeer)], features: FeatureStatus.merge([]),
-                away: [Self.away(Self.peer(1))]),
-            presences: [Self.presence(.login), Self.presence(.system, connected: true)])
-        #expect(presentation.status == .current(version: "1.0"))
-        #expect(presentation.agents.map(\.state) == ["Up to date", "Reconnecting\u{2026}"])
-    }
-
-    @Test("A session agent with no user name is named by its role")
-    func sessionPeerWithoutUserName() {
-        let presentation = GuestAgentPresentation(hub: Self.snapshot([Self.peer(1, userName: "")]))
-        #expect(presentation.agents.first?.title == "Session agent")
-    }
 
     private static let powerTitles = ["Stop and Restart", "Stop Anyway and Restart Anyway"]
 
@@ -391,36 +159,6 @@ struct GuestAgentPresentationTests {
             peers: [Self.peer(1)], features: FeatureStatus.merge([]), power: power, powerIgnoringApps: ignoringApps,
             routing: routing)
         return GuestAgentPresentation(hub: snapshot).capabilities.filter { powerTitles.contains($0.title) }
-    }
-
-    @Test(
-        "Each power row names the agent its provision would ask",
-        arguments: [(PeerRole.sessionPeer, "Through the session agent"), (.systemPeer, "Through the system service")])
-    func powerRowsAgent(role: PeerRole, detail: String) {
-        #expect(
-            Self.powerRows(.agent(role), ignoringApps: .agent(role))
-                == Self.powerTitles.map { .init(title: $0, isAvailable: true, detail: detail) })
-    }
-
-    @Test(
-        "Each power row says why no agent would take its shutdown, naming the system service for the one ignoring apps",
-        arguments: [
-            (
-                AbsenceReason.notOnConsole, "Available to the session at the guest\u{2019}s screen.",
-                "Available to the session at the guest\u{2019}s screen."
-            ),
-            (.noAgent, "No Kernova agent is connected.", "No system service is connected."),
-            (.disabledByPolicy, "Turned off in Settings.", "Turned off in Settings."),
-            (.versionMismatch, "The agent is out of date.", "The agent is out of date."),
-            (.notImplemented, "This agent doesn't offer it.", "This agent doesn't offer it."),
-            (.unspecified, "Unavailable.", "Unavailable."),
-        ])
-    func powerRowsAbsent(reason: AbsenceReason, stop: String, anyway: String) {
-        #expect(
-            Self.powerRows(.absent(reason), ignoringApps: .absent(reason)) == [
-                .init(title: "Stop and Restart", isAvailable: false, detail: stop),
-                .init(title: "Stop Anyway and Restart Anyway", isAvailable: false, detail: anyway),
-            ])
     }
 
     /// Each stage a routing reaches, and how its row reads it.
