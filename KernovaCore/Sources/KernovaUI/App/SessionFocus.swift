@@ -7,7 +7,7 @@ package enum WindowPresentation: Equatable {
     case keyAndFront
     /// In front of the app's other windows, leaving key where it is.
     case front
-    /// Behind the app's other windows.
+    /// Behind every other window at its level.
     case back
     /// In front whether or not the app is active.
     case frontRegardless
@@ -57,7 +57,7 @@ package protocol SessionFocus: AnyObject {
     var mainWindow: NSWindow? { get }
     /// How `window` stands on screen.
     func standing(of window: NSWindow) -> WindowStanding
-    /// Post when a window becomes key or main or is deminiaturized, the app is
-    /// unhidden, or the active Space changes.
+    /// Notifications posted when a window becomes key or main or is
+    /// deminiaturized, the app is unhidden, or the active Space changes.
     var focusChanged: [HostNotification] { get }
 }
