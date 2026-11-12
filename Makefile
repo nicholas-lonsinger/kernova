@@ -203,9 +203,9 @@ locked-clean:
 	esac
 
 test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan); a passing run is recorded for `make attest`
-	$(LOCKED) Tools/attest.sh record -- xcodebuild $(XCODEBUILD_FLAGS) test
+	$(LOCKED) Tools/attest.sh record test -- xcodebuild $(XCODEBUILD_FLAGS) test
 
-attest: check-hooks ## Post the `Test Attestation` status on the pushed HEAD, reusing a passing `make test` of the same content or running one
+attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint` and `make test` of the same content or running them
 	@Tools/attest.sh
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild
@@ -273,7 +273,10 @@ format: ## Rewrite Swift sources in place via swift-format
 # merges rather than silently skipping. Project-wide directives live in
 # .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
 # error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, logging only through KernovaLogger, the app's Launch Services self-activation and SessionFocus routing, the local package references, remote packages only from allowed GitHub organizations, KernovaCore's import allowlist, the portable targets' Foundation imports, and the checked-in protobuf Swift against its schemas
+lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, logging only through KernovaLogger, the app's Launch Services self-activation and SessionFocus routing, the local package references, remote packages only from allowed GitHub organizations, KernovaCore's import allowlist, the portable targets' Foundation imports, and the checked-in protobuf Swift against its schemas; a passing run is recorded for `make attest`
+	@Tools/attest.sh record lint -- $(MAKE) --no-print-directory lint-checks
+
+lint-checks:
 	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
 	@if command -v shellcheck >/dev/null 2>&1; then \
 		shellcheck $(SHELL_SOURCES); \

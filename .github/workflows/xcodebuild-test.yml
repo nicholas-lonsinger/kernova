@@ -1,9 +1,9 @@
-name: Build & Test
+name: Lint, Build & Test
 
 on:
   push:
     branches: [main]
-  # A PR is tested only while it carries the `ci` label.
+  # A PR is linted and tested only while it carries the `ci` label.
   pull_request:
     types: [labeled, synchronize]
   workflow_dispatch:
@@ -173,8 +173,30 @@ jobs:
           path: artifacts/
           retention-days: 7
 
-      - name: Post the Test Attestation status
+      # Lint runs whatever the build and tests did, so one run reports both.
+      # The macOS runner images ship shellcheck; install it only if a future
+      # image drops it, so `make lint` never silently skips static analysis
+      # here (it hard-fails on CI without it).
+      - name: Ensure shellcheck
+        if: success() || failure()
+        run: Tools/brew-install.sh shellcheck
+
+      # The protoc and protoc-gen-swift Tools/check-generated-protos.sh builds
+      # for the pinned swift-protobuf revision; a cold build takes minutes.
+      - name: Restore the protobuf generators
+        if: success() || failure()
+        uses: actions/cache@v5
+        with:
+          path: ~/Library/Caches/kernova-dev/swift-protobuf-*
+          key: swift-protobuf-tools-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      - name: make lint
+        if: success() || failure()
+        timeout-minutes: 10
+        run: make lint
+
+      - name: Post the Commit Attestation status
         if: success() || failure()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: Tools/attest.sh post "${{ job.status }}" "Build & Test on Xcode ${XCODE_BUILD}" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: Tools/attest.sh post "${{ job.status }}" "Lint, Build & Test on Xcode ${XCODE_BUILD}" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

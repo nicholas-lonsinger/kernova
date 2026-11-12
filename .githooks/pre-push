@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 #
-# Run `make lint` before pushing. CI's lint job (.github/workflows/lint.yml)
-# runs only on `main` and on PRs labeled `ci`. Bypass with
-# `git push --no-verify`.
+# Run `make lint` before pushing. Bypass with `git push --no-verify`.
 
 set -euo pipefail
 
