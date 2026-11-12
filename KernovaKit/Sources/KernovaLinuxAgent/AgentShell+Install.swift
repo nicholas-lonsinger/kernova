@@ -12,6 +12,7 @@ import Foundation
 #endif
 
 import KernovaAgentInstall
+import KernovaConsole
 
 extension AgentShell {
     /// Installs or uninstalls `request`'s scope from this binary, printing each step as it takes it, then
@@ -34,18 +35,19 @@ extension AgentShell {
             if request.dryRun {
                 let verb = uninstalling ? "uninstall" : "install"
                 let heading = "kernova-agent \(verb)\(request.scope == .system ? " --system" : "") will:"
-                for line in InstallPlan.dryRun(plan, heading: heading) { print(line) }
+                for line in InstallPlan.dryRun(plan, heading: heading) { Console.out(line) }
                 exit(0)
             }
             // A staging root is not the live tree the account owns, and the account need not exist there.
             let account = request.scope == .system && request.root == nil ? InstallLayout.systemAccount : nil
             let installer = LinuxInstall.installer(
                 stagingRoot: request.root ?? "", runsSystemd: request.runsSystemd, label: label, account: account)
-            try installer.run(plan) { print("kernova-agent: \($0)") }
-            print(uninstalling ? "kernova-agent: removed \(scope)." : "kernova-agent: installed \(scope), \(label).")
+            try installer.run(plan) { Console.out("kernova-agent: \($0)") }
+            Console.out(
+                uninstalling ? "kernova-agent: removed \(scope)." : "kernova-agent: installed \(scope), \(label).")
             exit(0)
         } catch {
-            writeError("kernova-agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")
+            Console.notice("kernova-agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")
             exit(1)
         }
     }

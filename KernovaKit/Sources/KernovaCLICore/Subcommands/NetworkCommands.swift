@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 
 extension KernovaCommand {
     /// `kernova network` — the library's named networks.

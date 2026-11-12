@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 
 extension GroupTargetOptions {
     /// The group a lifecycle verb acts on, `nil` when it names a virtual

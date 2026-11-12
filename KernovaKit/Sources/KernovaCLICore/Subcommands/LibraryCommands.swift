@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 
 extension KernovaCommand {
     /// What `kernova clone` makes of the source.

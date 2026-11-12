@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 
 extension KernovaCommand {
     /// `kernova get <vm> [key ...]` — what a virtual machine's settings hold.

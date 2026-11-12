@@ -16,8 +16,13 @@ trap 'rm -rf "$tmp"' EXIT
 
 app='KernovaCore/Sources/KernovaCore/Fixture.swift'
 agent_runtime='KernovaKit/Sources/KernovaAgentRuntime/Fixture.swift'
-cli='KernovaKit/Sources/KernovaCLICore/Fixture.swift'
+cli='KernovaCLI/Fixture.swift'
+cli_core='KernovaKit/Sources/KernovaCLICore/Fixture.swift'
+linux_agent='KernovaKit/Sources/KernovaLinuxAgent/Fixture.swift'
+darwin_agent='KernovaKit/Sources/KernovaPlatformDarwin/Fixture.swift'
 mac_agent='KernovaMacOSAgent/Fixture.swift'
+console='KernovaKit/Sources/KernovaConsole/Fixture.swift'
+bench='KernovaKit/Sources/KernovaBench/Fixture.swift'
 logging='KernovaKit/Sources/KernovaLogging/Fixture.swift'
 test_file='KernovaKit/Tests/KernovaPortableTests/Fixture.swift'
 test_support='KernovaKit/Sources/KernovaTestSupport/Fixture.swift'
@@ -71,22 +76,33 @@ debugPrint(value)
 dump(value)'
 expect standard-handles "$agent_runtime" '1 2' 'FileHandle.standardError.write(data)
 FileHandle.standardOutput.write(data)'
-expect c-streams "$agent_runtime" '1 2 3 4' 'fputs("x", stderr)
+expect c-streams "$agent_runtime" '1 2 3 4 5 6' 'fputs("x", stderr)
 _ = write(STDERR_FILENO, buffer, count)
 printf("x")
-perror("x")'
+perror("x")
+_ = write(1, buffer, count)
+_ = _write(2, buffer, count)'
 expect member-calls "$app" '' 'view.print(sender)
 process.standardError = pipe
 printer.dump(tree)
-self.puts(x)'
+self.puts(x)
+socket.write(2, buffer)
+_ = write(fd, buffer, 12)'
 
 # Scope.
 
-expect cli-may-print "$cli" '' 'print("x")
-FileHandle.standardError.write(data)'
-expect cli-may-not-log "$cli" '1' 'NSLog("x")'
-expect agent-app-may-print "$mac_agent" '' 'FileHandle.standardError.write(data)'
+expect console-may-write "$console" '' 'print("x")
+_ = write(STDERR_FILENO, buffer, count)'
+expect console-may-not-log "$console" '1' 'NSLog("x")'
+expect bench-may-print "$bench" '' 'print("x")'
 expect tools-may-print "$tool" '' 'print("x")'
+expect cli-may-not-print "$cli" '1' 'print("x")'
+expect cli-core-may-not-print "$cli_core" '1 2' 'print("x")
+FileHandle.standardError.write(data)'
+expect linux-agent-may-not-print "$linux_agent" '1 2' 'print("x")
+_ = write(2, buffer, count)'
+expect darwin-agent-may-not-print "$darwin_agent" '1' 'print("x")'
+expect agent-app-may-not-print "$mac_agent" '1' 'FileHandle.standardError.write(data)'
 expect logging-module "$logging" '' 'let logger = os.Logger(subsystem: "s", category: "c")
 FileHandle.standardError.write(data)'
 expect tests-read-the-log "$test_file" '' 'let log = OSLog(subsystem: "s", category: "c")

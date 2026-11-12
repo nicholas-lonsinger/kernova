@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 
 extension KernovaCommand {
     /// `kernova snapshot` — the verbs that address a virtual machine's restore

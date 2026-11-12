@@ -15,13 +15,10 @@
 # - Console output: a bare or `Swift.`-qualified `print`, `debugPrint` or
 #   `dump`, `FileHandle.standardOutput`/`.standardError`, C's `stdout`,
 #   `stderr`, `STDOUT_FILENO`, `STDERR_FILENO`, `printf`, `puts`, `putchar`,
-#   `perror`. Console output is a command-line program's interface, so the
-#   targets that hold a command-line mode are exempt from this finding: the
-#   `kernova` CLI (KernovaCLI, KernovaCLICore), `kernova-bench`
-#   (KernovaBench), Tools/, and the guest agents' version, self-test and
-#   install modes (KernovaLinuxAgent, KernovaPlatformDarwin, KernovaMacOSAgent).
-#   The agents' targets hold runtime code beside those modes, which the
-#   exemption leaves unchecked for console output.
+#   `perror`, and `write` or `_write` to descriptor 1 or 2. A command-line
+#   mode answers through KernovaConsole's `Console`, the one way to the
+#   process's streams, so this finding exempts only KernovaConsole,
+#   `kernova-bench` (KernovaBench) and Tools/.
 #
 # A member call (`view.print(`, `process.standardError = …`) is not matched.
 # String literals and comments are blanked before matching, so prose may name
@@ -70,9 +67,7 @@ findings=$(perl -e '
     }x;
     my $console_exempt = qr{
         ^Tools/
-      | ^KernovaCLI/
-      | ^KernovaMacOSAgent/
-      | ^KernovaKit/Sources/(?:KernovaCLICore|KernovaBench|KernovaLinuxAgent|KernovaPlatformDarwin)/
+      | ^KernovaKit/Sources/(?:KernovaBench|KernovaConsole)/
     }x;
 
     my $log_api = qr{
@@ -87,6 +82,7 @@ findings=$(perl -e '
       | \b FileHandle \s* \. \s* standard (?: Output | Error ) \b
       | (?<![\w.]) (?: stdout | stderr | STDOUT_FILENO | STDERR_FILENO ) \b
       | (?<![\w.]) (?: printf | puts | putchar | perror ) \s* \(
+      | (?<![\w.]) _?write \s* \( \s* [12] \s* ,
     }x;
 
     sub line_at { my ($code, $offset) = @_; return (substr($code, 0, $offset) =~ tr/\n//) + 1 }
@@ -120,7 +116,7 @@ findings=$(perl -e '
         }
         if ($check_console) {
             while ($code =~ m{$console}g) {
-                $found{line_at($code, $-[0])} //= "console output outside a command-line interface; log through KernovaLogger.log(_:_:)";
+                $found{line_at($code, $-[0])} //= "console output; log through KernovaLogger.log(_:_:), or answer a command line through Console";
             }
         }
         print "$arg:$_ — $found{$_}\n" for sort { $a <=> $b } keys %found;
@@ -142,4 +138,4 @@ fi
 
 [ -z "$findings" ] || exit 1
 
-pass "logging: outside tests, only KernovaLogging emits to the platform log, and console output stays in command-line targets"
+pass "logging: outside tests, only KernovaLogging emits to the platform log, and beside kernova-bench and Tools/ only Console writes to the console"

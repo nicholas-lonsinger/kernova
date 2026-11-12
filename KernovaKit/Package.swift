@@ -58,6 +58,11 @@ var targets: [Target] = [
         dependencies: ["KernovaSynchronization"],
         swiftSettings: sharedSwiftSettings
     ),
+    // The one way to standard output and standard error, for the targets that hold a command-line mode.
+    .target(
+        name: "KernovaConsole",
+        swiftSettings: sharedSwiftSettings
+    ),
     // A leaf, so `KernovaLogging` can hold its process sink in a `Locked`.
     .target(
         name: "KernovaSynchronization",
@@ -125,7 +130,8 @@ var targets: [Target] = [
         name: "KernovaLinuxAgent",
         dependencies: [
             "KernovaAgentInstall", "KernovaPlatformLinux", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaDBus",
-            "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaWire", "CKernovaAgentVersion",
+            "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaWire", "KernovaConsole",
+            "CKernovaAgentVersion",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -441,6 +447,7 @@ if declaresAppleTargets {
             dependencies: [
                 "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
                 "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaItemTransfer", "KernovaFileTree",
+                "KernovaConsole",
             ],
             swiftSettings: sharedSwiftSettings
         ),
@@ -470,6 +477,7 @@ if declaresAppleTargets {
                 "KernovaCommandModel",
                 "KernovaAppRegistry",
                 "KernovaSynchronization",
+                "KernovaConsole",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: sharedSwiftSettings
@@ -485,6 +493,7 @@ if declaresAppleTargets {
                 "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
                 "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
                 "KernovaFileTree", "KernovaWire", "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime",
+                "KernovaConsole",
             ],
             swiftSettings: sharedSwiftSettings
         ),
