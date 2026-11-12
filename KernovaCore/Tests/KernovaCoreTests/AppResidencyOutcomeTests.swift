@@ -25,6 +25,11 @@ struct AppResidencyOutcomeTests {
         #expect(outcome(hasVisibleUserWindow: true, keepInMenuBar: keepInMenuBar) == .showDockIcon)
     }
 
+    @Test("the last window closing with the toggle off quits")
+    func lastWindowWithKeepOffQuits() {
+        #expect(outcome() == .quit)
+    }
+
     // MARK: - Hiding
 
     @Test("a hidden app is left as it is, whatever the toggle says", arguments: [true, false])

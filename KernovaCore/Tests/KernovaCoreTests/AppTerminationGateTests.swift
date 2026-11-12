@@ -94,6 +94,22 @@ struct AppTerminationGateTests {
         #expect(spy.replyWhenEnded == .now)
     }
 
+    @Test("A second full quit joins the pass already running rather than starting another")
+    func secondFullQuitJoinsTheFirst() async throws {
+        let spy = EndingSpy()
+        let (controller, viewModel) = makeController(endings: spy)
+        viewModel.keepInMenuBarOnQuit = true
+
+        controller.requestFullQuit()
+        controller.requestFullQuit()
+
+        try await spy.ended.wait { spy.endings.count == 1 }
+        // A second pass's save would be refused as busy on the VM the first
+        // one holds, and force-stop it mid-write, so exactly one pass runs and
+        // ends.
+        #expect(spy.endings == [.terminate])
+    }
+
     @Test("A quit AppKit begins while the pass runs is answered by the pass, not left waiting")
     func deferredQuitIsAnsweredByThePass() async throws {
         let spy = EndingSpy()
