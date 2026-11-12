@@ -68,6 +68,7 @@ struct SettingsTabViewControllerTests {
         pane.loadViewIfNeeded()
         // Measure detached first, then give the window that size, standing in for
         // the container's own `resizeWindow(toFit:)`.
+        pane.refreshContent()
         pane.viewWillAppear()
         showInTestWindow(pane.view, size: pane.preferredContentSize)
         pane.view.layoutSubtreeIfNeeded()
@@ -138,6 +139,25 @@ struct SettingsTabViewControllerTests {
         let tabs = try tabs(of: registry)
         #expect(tabs.selectedPaneForTesting == .networks)
         #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
+    }
+
+    /// AppKit fits a window onto its screen as it orders in, so a window still
+    /// at a provisional height there moves when its saved top-left puts its
+    /// bottom off screen.
+    @Test("Settings has its pane's height when it orders in", arguments: [nil, SettingsDestination.pane(.reminders)])
+    func settingsHasItsPaneHeightWhenItOrdersIn(destination: SettingsDestination?) throws {
+        let focus = RecordingSessionFocus()
+        let registry = makeWindowRegistry(makeSettingsViewModel(preferences: preferences), focus: focus)
+        var heightAtOrderIn: CGFloat?
+        focus.willOrderIn = { window in
+            heightAtOrderIn = window.contentRect(forFrameRect: window.frame).height
+        }
+
+        registry.showSettings(at: destination)
+
+        let pane = try #require(try tabs(of: registry).tabView.selectedTabViewItem?.viewController)
+        #expect(pane.preferredContentSize.height > 0)
+        #expect(heightAtOrderIn == pane.preferredContentSize.height)
     }
 
     @Test("Each pane is a destination, and one the build does not offer leaves the selection")

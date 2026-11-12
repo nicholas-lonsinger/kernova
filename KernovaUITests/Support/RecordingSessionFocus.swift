@@ -37,6 +37,9 @@ final class RecordingSessionFocus: SessionFocus {
     /// Runs inside each request, once it is recorded — where AppKit would act
     /// on it.
     var onRequest: (Request) -> Void = { _ in }
+    /// Runs as each presented window is about to be ordered in — where AppKit
+    /// fits it onto its screen.
+    var willOrderIn: (NSWindow) -> Void = { _ in }
 
     private weak var recordedKeyWindow: NSWindow?
     private weak var recordedMainWindow: NSWindow?
@@ -70,6 +73,7 @@ final class RecordingSessionFocus: SessionFocus {
     func unhideWithoutActivation() { record(.unhideWithoutActivation) }
 
     func present(_ window: NSWindow, _ presentation: WindowPresentation) {
+        willOrderIn(window)
         window.orderBack(nil)
         miniaturized.remove(window)
         if presentation == .keyAndFront {

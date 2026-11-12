@@ -22,14 +22,14 @@ import KernovaLogging
 /// macOS VM, are backed by each VM's host state and written through
 /// `VMLibraryViewModel.setAgentInstallNudgeDismissed(_:for:)`.
 ///
-/// `viewWillAppear()` rebuilds the per-VM rows from `viewModel.instances` and
+/// `refreshContent()` rebuilds the per-VM rows from `viewModel.instances` and
 /// refreshes every switch from current state; an `observeRecurring` loop, live
 /// for as long as the pane is on screen, redoes both whenever the VM list or a
 /// VM's nudge flag changes. Settings is a separate window from the main one, so
 /// VMs can be created or deleted — and the same nudge dismissed from the sidebar
 /// popover or VM Settings — while this pane is visible.
 @MainActor
-final class RemindersSettingsViewController: NSViewController, SettingsPaneScrollCueing {
+final class RemindersSettingsViewController: NSViewController, SettingsPaneScrollCueing, SettingsPaneContent {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RemindersSettingsViewController")
 
     private let viewModel: VMLibraryViewModel
@@ -173,7 +173,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         // added, the override caption appearing — overflows in place; the flash
         // is what says so.
         // Not armed at birth: the tab container cues every arrival explicitly,
-        // and a born-armed flash fires from `viewWillAppear`'s layout churn — in
+        // and a born-armed flash fires from the arrival's layout churn — in
         // the already-visible window, behind the tab transition — so the first
         // visit would meet a scroller already at full alpha.
         scrollMoreIndicator = ScrollMoreIndicator(
@@ -195,10 +195,12 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         view = SettingsPaneRootView(content: scrollView)
     }
 
+    func refreshContent() {
+        refreshVMRows()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        // Publishes the pane's size, clamped by the height cap.
-        refreshVMRows()
         startVMObservation()
     }
 

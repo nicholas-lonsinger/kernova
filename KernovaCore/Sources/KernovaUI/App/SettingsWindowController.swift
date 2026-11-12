@@ -25,12 +25,16 @@ final class SettingsWindowController: NSWindowController {
         window.isReleasedWhenClosed = false
         self.tabs = tabs
         super.init(window: window)
-        // A saved frame also restores a height, which for this non-resizable window
-        // goes stale when the pane list or a pane's content changes (observed
-        // stretching the first pane's cards over the excess). AppKit has no
-        // position-only autosave, so `SettingsTabViewController` re-asserts the
-        // height on appear.
+        // The saved frame restores the top-left at the window's current,
+        // provisional height; `prepareToShow(at:)` gives it the pane's height.
         windowFrameAutosaveName = stage.autosave.settingsFrame
+    }
+
+    /// Readies the window to go on screen: on `destination`, or on the pane it
+    /// was last left on when `nil`, at that pane's height.
+    func prepareToShow(at destination: SettingsDestination?) {
+        if let destination { tabs.show(destination) }
+        tabs.prepareToShow()
     }
 
     @available(*, unavailable)

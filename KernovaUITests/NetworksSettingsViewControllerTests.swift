@@ -24,6 +24,7 @@ struct NetworksSettingsViewControllerTests {
     private func makePane(_ viewModel: VMLibraryViewModel) -> NetworksSettingsViewController {
         let pane = NetworksSettingsViewController(viewModel: viewModel)
         pane.loadViewIfNeeded()
+        pane.refreshContent()
         pane.viewWillAppear()
         return pane
     }

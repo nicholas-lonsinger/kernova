@@ -17,7 +17,7 @@ struct KeyboardSettingsViewControllerTests {
     ) -> KeyboardSettingsViewController {
         let controller = KeyboardSettingsViewController(viewModel: viewModel)
         _ = controller.view
-        controller.viewWillAppear()
+        controller.refreshContent()
         controller.view.setFrameSize(controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
         return controller
