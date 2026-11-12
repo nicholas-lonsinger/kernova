@@ -2,7 +2,7 @@ import Foundation
 
 /// How one window stands on screen.
 package struct WindowStanding: Equatable {
-    var isVisible: Bool
+    package var isVisible: Bool
     var isMiniaturized: Bool
     var isOnActiveSpace: Bool
 

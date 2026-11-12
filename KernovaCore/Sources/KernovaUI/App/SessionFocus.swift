@@ -13,13 +13,19 @@ package enum WindowPresentation: Equatable {
     case frontRegardless
 }
 
-/// The login session's focus as Kernova meets it: its activation policy
-/// (whether it has a Dock icon), whether it is hidden and frontmost, every
-/// window Kernova puts on screen, and which window has the keyboard.
+/// The login session's focus as Kernova reads and changes it: the app's
+/// activation, activation policy (whether it has a Dock icon) and hidden
+/// state; the windows the window registry, display placement, residency and
+/// alert presenter put on screen, and how each goes there; the key and main
+/// window; how a window stands on screen; and the events that change these.
 ///
-/// Every read and change of that state goes through the one instance the
-/// composition root builds, so a test host that builds its own stand-in never
-/// reaches the session.
+/// Sheets, alerts, popovers and open and save panels go on screen and become
+/// key through AppKit, outside this type; so do AppKit's own dispatch of an
+/// action along the responder chain and a view's key-window emphasis.
+///
+/// The one instance the composition root builds is the only reader and writer
+/// of what this type covers, so a test host that builds its own stand-in never
+/// reaches the session through it.
 @MainActor
 package protocol SessionFocus: AnyObject {
     var activationPolicy: NSApplication.ActivationPolicy { get }

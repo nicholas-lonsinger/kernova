@@ -7,13 +7,14 @@
 # up. Bringing this copy forward is `SessionFocus.activate()` for an in-app
 # click, and the requester's job for a request from outside the process.
 #
-# And the app reads and changes the login session's focus — its own
-# activation policy, hidden state and activation, which window is key or main,
-# and how a window goes on screen — only through `SessionFocus`, whose AppKit
-# implementation lives in the app target alone: the unit tests run KernovaUI
-# and KernovaUITests inside KernovaTestHost, and a call that skips the stand-in
-# a test hands in gives the host a Dock icon, asks for the front, or puts a
-# window on the desktop the tests share.
+# And the app reaches its activation, activation policy and hidden state, the
+# key and main window, and the calls below that order a window in or make it
+# key only through `SessionFocus`, whose AppKit implementation lives in the app
+# target alone: the unit tests run KernovaUI and KernovaUITests inside
+# KernovaTestHost, and a call that skips the stand-in a test hands in gives the
+# host a Dock icon, asks for the front, or puts a window on the desktop the
+# tests share. Sheets, alerts, popovers and open and save panels go on screen
+# through AppKit's own calls, which this check does not flag.
 #
 # Flagged, on one line of code:
 #   - any `openApplication(` call;

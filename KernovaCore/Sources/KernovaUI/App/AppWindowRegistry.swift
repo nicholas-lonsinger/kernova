@@ -131,7 +131,9 @@ final class AppWindowRegistry {
 
     /// The library window's sidebar while that window is on screen.
     var librarySidebar: SidebarViewController? {
-        guard let mainWindowController, mainWindowController.window?.isVisible == true else { return nil }
+        guard let mainWindowController, let window = mainWindowController.window,
+            focus.standing(of: window).isVisible
+        else { return nil }
         return mainWindowController.sidebarViewController
     }
 
@@ -213,7 +215,7 @@ final class AppWindowRegistry {
     func instance(shownIn window: NSWindow) -> VMInstance? {
         let window = Self.sheetRoot(of: window)
         if let instance = ownInstance(of: window) { return instance }
-        guard window === libraryWindow, window.isVisible else { return nil }
+        guard window === libraryWindow, focus.standing(of: window).isVisible else { return nil }
         return viewModel.selectedInstance
     }
 
@@ -224,7 +226,7 @@ final class AppWindowRegistry {
     func vmIDs(actedOnIn window: NSWindow) -> Set<UUID> {
         let window = Self.sheetRoot(of: window)
         if let instance = ownInstance(of: window) { return [instance.id] }
-        guard window === libraryWindow, window.isVisible else { return [] }
+        guard window === libraryWindow, focus.standing(of: window).isVisible else { return [] }
         return Set(viewModel.instances.map(\.id))
     }
 
