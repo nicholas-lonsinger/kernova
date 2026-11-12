@@ -286,6 +286,22 @@ struct VMCommandCoreArrivalTests {
         #expect(GuestMACAddress.normalized(mac) == mac)
     }
 
+    @Test("A New Machine of a macOS guest gets its own machine identifier")
+    func newMachineOfAMacOSGuestGetsItsOwnMachineIdentifier() async throws {
+        let harness = makeHarness()
+        let source = RegisteredVMInstanceFixture.register(
+            name: "Source", phase: .stopped, guestOS: .macOS, library: harness.library,
+            preferences: preferences
+        ) {
+            $0.machineIdentifierData = Data("source machine identifier".utf8)
+        }
+        let row = try await harness.core.clone(
+            .id(source.id), outcome: .newMachine, waitForOutcome: true)
+        let clone = try #require(harness.library.instances.first { $0.id == row.id })
+        let identity = try #require(clone.machineIdentity)
+        #expect(identity != source.machineIdentity)
+    }
+
     @Test("A New Machine of a networked source with no address gets one")
     func newMachineOfNetworkedAddresslessSourceGetsOne() async throws {
         let config = try await clonedConfiguration(
