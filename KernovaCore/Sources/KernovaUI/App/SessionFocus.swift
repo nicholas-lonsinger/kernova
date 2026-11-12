@@ -23,9 +23,13 @@ package enum WindowPresentation: Equatable {
 /// key through AppKit, outside this type; so do AppKit's own dispatch of an
 /// action along the responder chain and a view's key-window emphasis.
 ///
-/// The one instance the composition root builds is the only reader and writer
-/// of what this type covers, so a test host that builds its own stand-in never
-/// reaches the session through it.
+/// Apart from those, the one instance the composition root builds is the only
+/// way the app's code changes its activation, activation policy or hidden
+/// state, or puts a window on screen or makes it key, and the only way it reads
+/// that state and the key and main window; the window registry and alert
+/// presenter also read a window's standing and the events that change it
+/// through it. A test host that builds its own stand-in therefore never reaches
+/// the session through it.
 @MainActor
 package protocol SessionFocus: AnyObject {
     var activationPolicy: NSApplication.ActivationPolicy { get }
