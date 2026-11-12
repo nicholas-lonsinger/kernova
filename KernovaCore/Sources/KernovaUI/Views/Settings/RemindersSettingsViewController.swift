@@ -195,8 +195,11 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
         view = SettingsPaneRootView(content: scrollView)
     }
 
+    /// Rebuilds the rows and switches without re-arming the flash: the tab
+    /// container cues each arrival once the window has the pane's height.
     func refreshContent() {
-        refreshVMRows()
+        rebuildVMRows()
+        _ = mirrorSwitches()
     }
 
     override func viewWillAppear() {
@@ -249,12 +252,19 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
             writing: String(instance.hostState.agentInstallNudgeDismissed), on: instance)
     }
 
-    /// Rebuilds the per-VM rows and mirrors every switch to current state.
+    /// Rebuilds the per-VM rows and mirrors every switch to current state while
+    /// the pane is on screen, re-arming the flash when the content height changed.
     private func refreshVMRows() {
         let previousRowCount = vmSwitches.count
         rebuildVMRows()
-        refreshSwitches()
-        if previousRowCount != vmSwitches.count { rearmScrollFlash() }
+        let captionChanged = mirrorSwitches()
+        if previousRowCount != vmSwitches.count || captionChanged { rearmScrollFlash() }
+    }
+
+    /// Mirrors every switch to current state while the pane is on screen,
+    /// re-arming the flash when the override caption changed the content height.
+    private func refreshSwitches() {
+        if mirrorSwitches() { rearmScrollFlash() }
     }
 
     /// Publishes the pane's size for the window to follow.
@@ -279,13 +289,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// content that grows past it overflows with nothing else to say so. Layout
     /// has to settle first: overflow is measured against the document's real
     /// height, and an un-laid-out subtree still reports the old one.
-    ///
-    /// Skipped before the pane has a height, which is where the first row build
-    /// runs: every content height beats a zero-height viewport, so re-arming
-    /// there would latch the flash against geometry the user never sees and
-    /// spend the cue the pane's actual appearance needs.
     private func rearmScrollFlash() {
-        guard view.frame.height > 0 else { return }
         view.layoutSubtreeIfNeeded()
         scrollMoreIndicator?.rearmFlash()
     }
@@ -330,7 +334,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// install reminder is off; it just can't be changed until that goes back on.
     /// A row is enabled exactly when the `agent.installReminder` key would take
     /// its flip (``takesReminderChange(_:)``).
-    private func refreshSwitches() {
+    ///
+    /// Returns whether the override caption changed the pane's content height.
+    private func mirrorSwitches() -> Bool {
         menuBarQuitSwitch.state = viewModel.menuBarQuitReminderDismissed ? .off : .on
         duplicateIDQuestionSwitch.state = viewModel.duplicateMachineIDQuestionDismissed ? .off : .on
         applyGroupedFormRowEnabled(
@@ -352,7 +358,7 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
 
         // The override caption is a note of the per-VM card, so it changes the
         // pane's height only while that card exists.
-        if hasVMs, wasShowingOverrideCaption != overridden { rearmScrollFlash() }
+        return hasVMs && wasShowingOverrideCaption != overridden
     }
 
     // MARK: - Info
