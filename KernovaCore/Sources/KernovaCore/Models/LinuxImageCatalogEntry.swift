@@ -49,6 +49,68 @@ package struct LinuxImageCatalogEntry: Codable, Sendable, Identifiable, Equatabl
     /// What the resolved image's digest comes from.
     package var digestSource: DigestSource { .checksumList(manifestURL) }
 
+    // MARK: - Admission
+
+    /// Why an entry may not name a host to contact or a file to read.
+    enum AdmissionError: LocalizedError, Equatable {
+        /// ``directoryURL`` or ``manifestDirectory`` is not an HTTPS URL.
+        case insecureDirectory(url: URL)
+        /// ``isoPattern`` is not a wildcard `.iso` filename.
+        case invalidISOPattern(pattern: String)
+        /// ``checksumManifest`` does not name a file in its directory.
+        case invalidManifestName(manifest: String)
+
+        var errorDescription: String? {
+            switch self {
+            case .insecureDirectory(let url):
+                "The saved image source isn't an HTTPS address ('\(url.absoluteString)')."
+            case .invalidISOPattern(let pattern):
+                "The saved image source doesn't name an ISO to look for ('\(pattern)')."
+            case .invalidManifestName(let manifest):
+                "The saved image source doesn't name a checksum list to read ('\(manifest)')."
+            }
+        }
+    }
+
+    /// Throws when the entry may not be used, before it names a host to contact
+    /// or a file to read.
+    ///
+    /// The bundled catalog admits each entry as it loads, and the resolver
+    /// admits it again because the entry it receives comes off a `config.json`
+    /// a user can edit.
+    ///
+    /// There is no host allowlist to check the way the macOS catalog checks for
+    /// Apple: an ISO is fetched from whatever address a distribution publishes
+    /// for downloads, mirror network included, and a list of those written here
+    /// would go stale without anything noticing. What the entry pins instead is
+    /// the host its *manifest* is read from — see ``manifestDirectoryURL``.
+    func admit() throws(AdmissionError) {
+        guard directoryURL.scheme?.lowercased() == "https" else {
+            throw .insecureDirectory(url: directoryURL)
+        }
+        guard manifestDirectory.scheme?.lowercased() == "https" else {
+            throw .insecureDirectory(url: manifestDirectory)
+        }
+        guard Self.isFilenameGlob(isoPattern) else {
+            throw .invalidISOPattern(pattern: isoPattern)
+        }
+        guard Self.isFilename(checksumManifest) else {
+            throw .invalidManifestName(manifest: checksumManifest)
+        }
+    }
+
+    /// Whether a string names one file inside the entry's directory.
+    private static func isFilename(_ candidate: String) -> Bool {
+        !candidate.isEmpty && !candidate.contains("/")
+    }
+
+    /// Whether a string is a usable ISO glob: a filename, carrying at least one
+    /// `*` to absorb the version, and ending in the extension the resolved file
+    /// must have.
+    private static func isFilenameGlob(_ candidate: String) -> Bool {
+        isFilename(candidate) && candidate.contains("*") && candidate.hasSuffix(".iso")
+    }
+
     /// The order distributions are offered in, which is neither alphabetical
     /// nor derivable from the entries.
     static let distributionOrder = [

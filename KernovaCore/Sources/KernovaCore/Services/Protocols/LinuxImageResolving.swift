@@ -1,13 +1,7 @@
 import Foundation
 
-/// Why a catalog entry did not resolve to an image to download.
+/// Why an admitted catalog entry did not resolve to an image to download.
 enum LinuxImageResolveError: LocalizedError, Equatable {
-    /// The entry's directory is not an HTTPS URL.
-    case insecureDirectory(url: URL)
-    /// The entry's ISO pattern is not a wildcard `.iso` filename.
-    case invalidISOPattern(pattern: String)
-    /// The entry's checksum manifest does not name a file in the directory.
-    case invalidManifestName(manifest: String)
     /// The checksum manifest was not served. `statusCode` is `nil` when nothing
     /// HTTP came back at all.
     case manifestUnreachable(manifest: String, statusCode: Int?)
@@ -27,12 +21,6 @@ enum LinuxImageResolveError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .insecureDirectory(let url):
-            "The saved image source isn't an HTTPS address ('\(url.absoluteString)')."
-        case .invalidISOPattern(let pattern):
-            "The saved image source doesn't name an ISO to look for ('\(pattern)')."
-        case .invalidManifestName(let manifest):
-            "The saved image source doesn't name a checksum list to read ('\(manifest)')."
         case .manifestUnreachable(let manifest, let statusCode?):
             "This distribution's site didn't serve its checksum list, \(manifest) (HTTP \(statusCode))."
         case .manifestUnreachable(let manifest, nil):

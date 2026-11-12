@@ -112,12 +112,13 @@ struct LinuxImageCatalogServiceTests {
         let result = LinuxImageCatalogService.parse(json(images: insecure))
         let catalog = try #require(result.catalog)
         #expect(catalog.images.isEmpty)
-        #expect(result.rejections.count == 1)
-        if case .insecureURL(let id, _) = result.rejections[0] {
-            #expect(id == "debian-13")
-        } else {
-            Issue.record("Expected an insecureURL rejection, got \(result.rejections[0])")
-        }
+        #expect(
+            result.rejections == [
+                .inadmissible(
+                    id: "debian-13",
+                    .insecureDirectory(
+                        url: URL(string: "http://cdimage.debian.org/debian-cd/current/arm64/iso-cd/")!))
+            ])
     }
 
     @Test("A non-HTTPS manifest directory is rejected")
@@ -132,9 +133,10 @@ struct LinuxImageCatalogServiceTests {
         #expect(catalog.images.isEmpty)
         #expect(
             result.rejections == [
-                .insecureURL(
+                .inadmissible(
                     id: "debian-13",
-                    url: URL(string: "http://kali.download/base-images/kali-2026.2/")!)
+                    .insecureDirectory(
+                        url: URL(string: "http://kali.download/base-images/kali-2026.2/")!))
             ])
     }
 
@@ -152,7 +154,10 @@ struct LinuxImageCatalogServiceTests {
             let result = LinuxImageCatalogService.parse(json(images: bad))
             let catalog = try #require(result.catalog)
             #expect(catalog.images.isEmpty)
-            #expect(result.rejections == [.invalidPattern(id: "debian-13", pattern: pattern)])
+            #expect(
+                result.rejections == [
+                    .inadmissible(id: "debian-13", .invalidISOPattern(pattern: pattern))
+                ])
         }
     }
 
@@ -165,7 +170,9 @@ struct LinuxImageCatalogServiceTests {
             let catalog = try #require(result.catalog)
             #expect(catalog.images.isEmpty)
             #expect(
-                result.rejections == [.invalidManifestName(id: "debian-13", manifest: manifest)])
+                result.rejections == [
+                    .inadmissible(id: "debian-13", .invalidManifestName(manifest: manifest))
+                ])
         }
     }
 
@@ -188,19 +195,14 @@ struct LinuxImageCatalogServiceTests {
         #expect(!service.entries.isEmpty)
         #expect(service.generatedAt != nil)
 
-        // Every shipped invariant the parser enforces, asserted against the real
-        // resource rather than a fixture. No count is asserted: the catalog is
+        // What the parser does not enforce, asserted against the real resource
+        // rather than a fixture. No count is asserted: the catalog is
         // regenerated whenever a distribution ships.
-        #expect(Set(service.entries.map(\.id)).count == service.entries.count)
         for entry in service.entries {
-            #expect(entry.directoryURL.scheme == "https")
             // Written with a trailing slash throughout, which is what the
             // picker shows; the resolver appends to it either way.
             #expect(entry.directoryURL.absoluteString.hasSuffix("/"))
-            #expect(entry.manifestDirectory.scheme == "https")
             #expect(entry.manifestDirectory.absoluteString.hasSuffix("/"))
-            #expect(LinuxImageCatalogService.isFilenameGlob(entry.isoPattern))
-            #expect(LinuxImageCatalogService.isFilename(entry.checksumManifest))
             #expect(entry.approxSizeBytes > 0)
         }
         let sorted = service.entries.sorted(by: LinuxImageCatalogEntry.isOrderedBefore)
