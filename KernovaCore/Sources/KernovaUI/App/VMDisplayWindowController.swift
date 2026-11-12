@@ -84,7 +84,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
         super.init(window: window)
         window.delegate = self
-        window.setFrameAutosaveName(stage.autosave.displayFrame(for: instance.instanceID))
+        windowFrameAutosaveName = stage.autosave.displayFrame(for: instance.instanceID)
 
         let toolbar = NSToolbar(identifier: stage.autosave.displayToolbar)
         toolbar.delegate = self

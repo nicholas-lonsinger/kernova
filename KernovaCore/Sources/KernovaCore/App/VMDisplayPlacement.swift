@@ -137,6 +137,20 @@ package enum VMDisplayPlacement {
         return .none
     }
 
+    /// Where a display window opening into fullscreen moves before it enters,
+    /// or `nil` to leave it where it is. AppKit enters fullscreen on the
+    /// window's screen and, on leaving, returns the window to the frame it had
+    /// before, so a window already on `targetFrame`'s screen keeps its windowed
+    /// position and one elsewhere is centred on that screen.
+    package static func originBeforeFullscreen(
+        windowFrame: CGRect, isOnTarget: Bool, targetFrame: CGRect
+    ) -> CGPoint? {
+        if isOnTarget { return nil }
+        return CGPoint(
+            x: targetFrame.origin.x + (targetFrame.size.width - windowFrame.size.width) / 2,
+            y: targetFrame.origin.y + (targetFrame.size.height - windowFrame.size.height) / 2)
+    }
+
     /// The screen a VM enters fullscreen on: the display it was last
     /// fullscreen on while that display is connected, else the library
     /// window's screen, else the first of `screens`.

@@ -531,7 +531,7 @@ extension AppDelegate {
         switch instance.hostState.displayPreference {
         case .popOut:
             // `start` opens the display window before consulting this, and
-            // `setFrameAutosaveName` restores the saved frame at init, so the
+            // its frame autosave name restores the saved frame at init, so the
             // content view already carries the size the guest will fill.
             guard let window = windows.displayPlacement.window(for: instance.instanceID),
                 let content = window.contentView

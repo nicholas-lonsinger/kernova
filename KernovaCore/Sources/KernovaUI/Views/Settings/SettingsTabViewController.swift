@@ -199,7 +199,7 @@ final class SettingsTabViewController: NSTabViewController {
     /// `tabView(_:didSelect:)` only fires on a tab *switch*, and not for the
     /// initial selection (during `viewDidLoad` there is no window yet). Without
     /// this hook the first pane shown is sized by whatever frame the window
-    /// already has — including the stale height `setFrameAutosaveName` restores
+    /// already has — including the stale height its frame autosave name restores
     /// from a previous session's taller tab — and the pane's four-edge pin
     /// stretches its cards over the excess. No animation: the window has not
     /// been shown yet, so there is nothing to animate from.

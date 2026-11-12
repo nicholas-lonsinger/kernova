@@ -85,7 +85,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             contentViewController: splitViewController
         )
-        // First-launch position; a saved frame restored by setFrameAutosaveName
+        // First-launch position; a saved frame restored by the autosave name
         // below overrides both the size and this placement.
         window.center()
         window.title = "Kernova"
@@ -113,7 +113,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         window.toolbar = toolbar
         window.toolbarStyle = .unified
 
-        window.setFrameAutosaveName(stage.autosave.mainWindowFrame)
+        windowFrameAutosaveName = stage.autosave.mainWindowFrame
 
         // Finder-style snap: while dragging the divider, magnetize it to the
         // width that fully shows the longest VM name.

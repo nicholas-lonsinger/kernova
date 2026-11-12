@@ -23,14 +23,14 @@ final class SettingsWindowController: NSWindowController {
         // The controller is a singleton reused across opens, so the window must
         // survive being closed (don't deallocate it out from under the reference).
         window.isReleasedWhenClosed = false
+        self.tabs = tabs
+        super.init(window: window)
         // A saved frame also restores a height, which for this non-resizable window
         // goes stale when the pane list or a pane's content changes (observed
         // stretching the first pane's cards over the excess). AppKit has no
         // position-only autosave, so `SettingsTabViewController` re-asserts the
         // height on appear.
-        window.setFrameAutosaveName(stage.autosave.settingsFrame)
-        self.tabs = tabs
-        super.init(window: window)
+        windowFrameAutosaveName = stage.autosave.settingsFrame
     }
 
     @available(*, unavailable)
