@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// The decisions ``VMDisplayPlacementController`` carries out: where each
@@ -135,6 +136,20 @@ package enum VMDisplayPlacement {
         if wasKey && appWasActive { return .focusLibrary }
         if !appWasActive { return .showInBackground }
         return .none
+    }
+
+    /// Where a display window opening into fullscreen moves before it enters,
+    /// or `nil` to leave it where it is. AppKit enters fullscreen on the
+    /// window's screen and, on leaving, returns the window to the frame it had
+    /// before, so a window already on `targetFrame`'s screen keeps its windowed
+    /// position and one elsewhere is centred on that screen.
+    package static func originBeforeFullscreen(
+        windowFrame: CGRect, isOnTarget: Bool, targetFrame: CGRect
+    ) -> CGPoint? {
+        if isOnTarget { return nil }
+        return CGPoint(
+            x: targetFrame.midX - windowFrame.width / 2,
+            y: targetFrame.midY - windowFrame.height / 2)
     }
 
     /// The screen a VM enters fullscreen on: the display it was last

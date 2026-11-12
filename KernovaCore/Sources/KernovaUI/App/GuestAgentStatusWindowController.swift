@@ -42,7 +42,7 @@ final class GuestAgentStatusWindowController: NSWindowController, NSWindowDelega
         fitContent()
         window.center()
         // Restores the saved frame, whose size the content then overrides.
-        window.setFrameAutosaveName(stage.autosave.guestAgentStatusFrame(for: instance.instanceID))
+        windowFrameAutosaveName = stage.autosave.guestAgentStatusFrame(for: instance.instanceID)
         fitContent()
         observe()
     }

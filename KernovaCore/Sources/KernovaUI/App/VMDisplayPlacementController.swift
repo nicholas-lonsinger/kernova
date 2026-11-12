@@ -193,19 +193,12 @@ final class VMDisplayPlacementController {
         }
         windows[vmID] = controller
 
-        // For fullscreen: position on the remembered display so entering fullscreen
-        // picks the correct screen.
-        if enterFullscreen {
-            if let screen = preferredScreenForFullscreen(of: instance),
-                let window = controller.window
-            {
-                let frame = screen.frame
-                let centeredOrigin = NSPoint(
-                    x: frame.midX - window.frame.width / 2,
-                    y: frame.midY - window.frame.height / 2
-                )
-                window.setFrameOrigin(centeredOrigin)
-            }
+        if enterFullscreen, let screen = preferredScreenForFullscreen(of: instance),
+            let window = controller.window,
+            let origin = VMDisplayPlacement.originBeforeFullscreen(
+                windowFrame: window.frame, isOnTarget: window.screen == screen, targetFrame: screen.frame)
+        {
+            window.setFrameOrigin(origin)
         }
 
         apply(VMDisplayPlacement.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
