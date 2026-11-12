@@ -195,7 +195,7 @@ jobs:
         timeout-minutes: 10
         run: make lint
 
-      - name: Post the Test Attestation status
+      - name: Post the Commit Attestation status
         if: success() || failure()
         env:
           GH_TOKEN: ${{ github.token }}

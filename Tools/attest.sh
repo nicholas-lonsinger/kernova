@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Records passing lint and test runs and posts the `Test Attestation` commit
+# Records passing lint and test runs and posts the `Commit Attestation` commit
 # status on HEAD.
 #
 #     Tools/attest.sh record <lint|test> -- <command> [<arg>...]
@@ -22,9 +22,9 @@
 
 set -uo pipefail
 
-# The "Require Tests" ruleset requires this context by name: renaming it means
+# The "Require Attestation" ruleset requires this context by name: renaming it means
 # editing the ruleset.
-CONTEXT='Test Attestation'
+CONTEXT='Commit Attestation'
 
 usage() {
     echo 'usage: Tools/attest.sh [record <lint|test> -- <command> [<arg>...] | post <success|failure> <description> [<target-url>]]' >&2
