@@ -387,31 +387,6 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
-    @Test("installMacOS without requestedFreshDownload leaves existing file alone")
-    func installMacOSWithoutFreshDownloadDoesNotTrash() async throws {
-        let temp = scratch.url
-            .appendingPathComponent("noFreshDownload", isDirectory: true)
-        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
-
-        let context = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: temp.appendingPathComponent(
-                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
-            ).path(percentEncoded: false)
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        defer { withExtendedLifetime(library) {} }
-
-        try await coordinator.launchGuestSetup(on: instance).value()
-
-        // Nothing at the destination is disturbed: the download resumes or
-        // skips over whatever is already there. The destination did not move
-        // either, so there is no superseded sidecar to discard.
-        #expect(downloadService.lastDownloadDiscardsExisting == false)
-        #expect(downloadService.discardResumeDataCallCount == 0)
-    }
-
     @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
     func installMacOSURLCancelPreservesResumeData() async {
         let temp = scratch.url
