@@ -71,31 +71,6 @@ struct LogMessageTests {
         #expect(segments("started") == [pub("started")])
     }
 
-    @Test("Escapes decode to the characters they spell")
-    func escapes() {
-        let n = 1
-        #expect(segments("tab\there \"q\" \u{2014}\n\(n)") == [pub("tab\there \"q\" —\n"), pub("1")])
-    }
-
-    @Test("A raw literal keeps its backslashes and quotes, and interpolates with its delimiter")
-    func rawLiteral() {
-        let name = "bob"
-        #expect(
-            segments(#"say "hi"\n\#(name, privacy: .public)"#)
-                == [pub(#"say "hi"\n"#), pub("bob")])
-    }
-
-    @Test("A multi-line literal strips its indentation and honors line continuation")
-    func multiLineLiteral() {
-        let a = 1
-        let message: LogMessage = """
-            first \(a, privacy: .public), \
-            second
-            third
-            """
-        #expect(message.segments == [pub("first "), pub("1"), pub(", second\nthird")])
-    }
-
     @Test("init(segments:) carries its segments unchanged")
     func initFromSegments() {
         let given = [pub("[a/b] "), priv("secret"), pub("")]

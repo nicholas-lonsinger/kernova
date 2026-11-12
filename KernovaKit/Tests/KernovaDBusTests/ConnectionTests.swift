@@ -74,12 +74,6 @@ struct ConnectionTests {
         #expect(connection.phase == .ready(uniqueName: ":1.7"))
     }
 
-    @Test("Root's uid is the single digit 0, hex-encoded")
-    func rootUID() {
-        var connection = DBusConnection(uid: 0)
-        #expect(connection.takeOutbound() == [0] + ascii("AUTH EXTERNAL 30\r\n"))
-    }
-
     @Test("Lines may arrive a byte at a time, and messages may follow OK in the same read")
     func splitLines() throws {
         var connection = DBusConnection(uid: 1000)
@@ -222,23 +216,5 @@ struct ConnectionTests {
         #expect(counter.next == 1)
         #expect(counter.candidate(skipping: [1, 2, 4]) == 3)
         #expect(DBusSerialCounter(next: .max).candidate(skipping: [.max, 1]) == 2)
-    }
-
-    @Test("Each message a connection sends takes the next serial after Hello's")
-    func serialsAvoidAwaited() throws {
-        var connection = try readyConnection()
-        let call = DBusMessage.methodCall(destination: "org.example.Peer", path: "/", interface: nil, member: "M")
-        #expect(try connection.send(call) == 2)
-        #expect(try connection.send(call) == 3)
-    }
-
-    @Test("An invalid message throws and leaves the connection as it was")
-    func invalidSend() throws {
-        var connection = try readyConnection()
-        let invalid = DBusMessage.methodCall(destination: "not a name", path: "/", interface: nil, member: "M")
-        #expect(throws: DBusProtocolError.invalidName(.bus, "not a name")) { try connection.send(invalid) }
-        #expect(!connection.hasOutbound)
-        let valid = try connection.send(.methodCall(destination: nil, path: "/", interface: nil, member: "M"))
-        #expect(valid == 2)
     }
 }

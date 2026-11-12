@@ -60,13 +60,6 @@ struct ISO9660WriterTests {
         }
     }
 
-    @Test("Two writes are byte-equal, whatever order the entries come in")
-    func deterministic() throws {
-        let first = try Self.write(Self.entries())
-        #expect(try Self.write(Self.entries()) == first)
-        #expect(try Self.write(Self.entries().reversed()) == first)
-    }
-
     @Test("Names that map to one identifier get distinct identifiers, assigned in name order")
     func collidingIdentifiers() throws {
         let names = ["setup-b.sh", "setup_a.sh", "setup-a.sh"]

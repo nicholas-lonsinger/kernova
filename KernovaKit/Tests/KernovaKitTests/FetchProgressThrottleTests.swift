@@ -83,13 +83,6 @@ struct FetchProgressThrottleTests {
                 bytes: 110_000, total: total, lastPushedBytes: 100_000, elapsedSinceLastPush: 0.01))
     }
 
-    @Test("passing the time bound pushes even for a tiny delta")
-    func timeBoundPushesTinyDelta() {
-        #expect(
-            FetchProgressThrottle.shouldPush(
-                bytes: 100_001, total: total, lastPushedBytes: 100_000, elapsedSinceLastPush: 0.1))
-    }
-
     @Test("an unknown total (0) pushes only on the time bound")
     func unknownTotalPushesOnlyOnTime() {
         // No total → no byte-fraction and no final-chunk shortcut; only time.

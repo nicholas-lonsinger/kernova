@@ -8,9 +8,8 @@ import System
 ///
 /// `man 2 flock` shares a lock only through `dup(2)` or `fork(2)`, and each
 /// acquire is a separate `open`, so a second acquire of the same path from this
-/// process is refused exactly as another process's is (pinned by
-/// `ExclusiveFileLockTests`). The kernel releases the lock when its process
-/// exits, a crash included, and the descriptor is close-on-exec so a spawned
+/// process is refused exactly as another process's is. The kernel releases the
+/// lock when its process exits, a crash included, and the descriptor is close-on-exec so a spawned
 /// child never keeps it past the parent — both observed in "`F_GETLK` sees another process's `flock`"
 /// (docs/research/2026-09-24-file-coordination-rename-and-flock.md).
 public final class ExclusiveFileLock: Sendable {

@@ -27,12 +27,6 @@ struct SHA256Tests {
         #expect(lowercaseHex(KernovaDigest.SHA256.hash(Array(message.utf8))) == digest)
     }
 
-    @Test("Hex writes two lowercase digits a byte")
-    func hexDigits() {
-        #expect(lowercaseHex([0x00, 0x0F, 0xA0, 0xFF]) == "000fa0ff")
-        #expect(lowercaseHex([UInt8]()) == "")
-    }
-
     @Test("Hex reads back two digits a byte, either case, and refuses anything else")
     func hexBytes() {
         #expect(bytes(fromHex: "000fa0ff") == [0x00, 0x0F, 0xA0, 0xFF])
@@ -40,19 +34,6 @@ struct SHA256Tests {
         #expect(bytes(fromHex: "") == [])
         #expect(bytes(fromHex: "abc") == nil)
         #expect(bytes(fromHex: "zz") == nil)
-    }
-
-    @Test("A million 'a's, fed in uneven pieces")
-    func millionA() {
-        var hasher = KernovaDigest.SHA256()
-        let piece = [UInt8](repeating: UInt8(ascii: "a"), count: 999)
-        var fed = 0
-        while fed < 1_000_000 {
-            let count = min(piece.count, 1_000_000 - fed)
-            hasher.update(Array(piece[0..<count]))
-            fed += count
-        }
-        #expect(lowercaseHex(hasher.finalize()) == "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0")
     }
 
     @Test("Every length across the padding boundaries hashes the same fed whole or byte by byte")

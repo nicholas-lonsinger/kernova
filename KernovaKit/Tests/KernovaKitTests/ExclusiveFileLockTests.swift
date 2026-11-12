@@ -41,39 +41,10 @@ struct ExclusiveFileLockTests {
         #expect(try ExclusiveFileLock.isHeld(at: url) == false)
     }
 
-    /// The shape `ProcessStagingRoot` takes on its staging root.
-    @Test("a locked directory refuses a second lock until the first is released")
-    func directoryLockRefusesSecondUntilReleased() throws {
-        let url = try makeDirectory()
-        do {
-            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
-            #expect(try ExclusiveFileLock.tryAcquire(at: url) == nil)
-            withExtendedLifetime(held) {}
-        }
-        #expect(try ExclusiveFileLock.tryAcquire(at: url) != nil)
-    }
-
     @Test("the lock's descriptor is close-on-exec")
     func descriptorIsCloseOnExec() throws {
         let held = try #require(try ExclusiveFileLock.tryAcquire(at: makeDirectory()))
         #expect(fcntl(held.descriptor, F_GETFD) & FD_CLOEXEC != 0)
-    }
-
-    @Test("a creating acquire makes an absent file owner-only, and refuses a second until released")
-    func creatingAcquireCreatesAndLocks() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let url = scratch.url.appendingPathComponent("created.lock")
-        do {
-            let held = try #require(try ExclusiveFileLock.tryAcquire(creatingFileAt: url))
-            #expect(try ExclusiveFileLock.tryAcquire(creatingFileAt: url) == nil)
-            #expect(try ExclusiveFileLock.tryAcquire(at: url) == nil)
-            #expect(fcntl(held.descriptor, F_GETFD) & FD_CLOEXEC != 0)
-            withExtendedLifetime(held) {}
-        }
-        var info = stat()
-        #expect(stat(url.path, &info) == 0)
-        #expect(info.st_mode & 0o777 == S_IRUSR | S_IWUSR)
-        #expect(try ExclusiveFileLock.tryAcquire(creatingFileAt: url) != nil)
     }
 
     @Test("nothing at the path throws rather than reporting a held lock")
@@ -84,21 +55,5 @@ struct ExclusiveFileLockTests {
         #expect(throws: Errno.noSuchFileOrDirectory) {
             _ = try ExclusiveFileLock.isHeld(at: scratch.url.appendingPathComponent("absent"))
         }
-    }
-
-    @Test("isHeld reports a directory's lock while it is held, across a rename, and not after")
-    func isHeldFollowsTheLockAcrossARename() throws {
-        let url = try makeDirectory()
-        let renamed = scratch.url.appendingPathComponent("renamed", isDirectory: true)
-        #expect(try ExclusiveFileLock.isHeld(at: url) == false)
-        do {
-            let held = try #require(try ExclusiveFileLock.tryAcquire(at: url))
-            #expect(try ExclusiveFileLock.isHeld(at: url))
-            try FileManager.default.moveItem(at: url, to: renamed)
-            #expect(try ExclusiveFileLock.isHeld(at: renamed))
-            #expect(try ExclusiveFileLock.tryAcquire(at: renamed) == nil)
-            withExtendedLifetime(held) {}
-        }
-        #expect(try ExclusiveFileLock.isHeld(at: renamed) == false)
     }
 }

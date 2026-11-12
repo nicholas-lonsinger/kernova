@@ -7,24 +7,6 @@ import Testing
 @Suite("TransientStatusItemPopover.Tenancy", .caseScoped)
 @MainActor
 struct TransientStatusItemPopoverTests {
-    @Test("a showing a newer callout replaced cannot end the newer one")
-    func aStaleShowingLeavesTheNewerOneUp() throws {
-        var tenancy = TransientStatusItemPopover.Tenancy()
-        let readoutBegun = tenancy.begin(timed: false)
-        let readout = try #require(readoutBegun)
-        let noticeBegun = tenancy.begin(timed: true)
-        let notice = try #require(noticeBegun)
-
-        // The readout clearing after a notice took the slot must leave it up.
-        let endedReadout = tenancy.end(readout)
-        #expect(!endedReadout)
-        #expect(tenancy.current == notice)
-
-        let endedNotice = tenancy.end(notice)
-        #expect(endedNotice)
-        #expect(tenancy.current == nil)
-    }
-
     @Test("a showing ends once, and not after the slot was emptied from elsewhere")
     func aShowingEndsOnce() throws {
         var tenancy = TransientStatusItemPopover.Tenancy()

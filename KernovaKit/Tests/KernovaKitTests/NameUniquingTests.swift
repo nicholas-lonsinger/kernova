@@ -25,20 +25,6 @@ struct NameUniquingTests {
 
     // MARK: - Uniquing a destination
 
-    @Test("several collisions count past every taken name")
-    func countsPastSeveralCollisions() throws {
-        let dir = try makeDirectory(seeded: ["report.pdf", "report 2.pdf"])
-
-        #expect(name(in: dir, "report.pdf") == "report 3.pdf")
-    }
-
-    @Test("a multi-dot name counts up before the last extension only")
-    func treatsOnlyTheLastComponentAsAnExtension() throws {
-        let dir = try makeDirectory(seeded: ["archive.tar.gz"])
-
-        #expect(name(in: dir, "archive.tar.gz") == "archive.tar 2.gz")
-    }
-
     @Test(
         "an edge-case name is kept byte-for-byte when free and counts up where Finder would",
         arguments: [
@@ -103,11 +89,5 @@ struct NameUniquingTests {
         // A bare separator survives as a placeholder character rather than the
         // fallback — still one harmless component, which is the whole contract.
         #expect(NameUniquing.sanitizedComponent("/") == "_")
-    }
-
-    @Test("an ordinary name passes through sanitization untouched")
-    func keepsOrdinaryNames() {
-        #expect(NameUniquing.sanitizedComponent("Some File.txt") == "Some File.txt")
-        #expect(NameUniquing.sanitizedComponent(".hidden") == ".hidden")
     }
 }

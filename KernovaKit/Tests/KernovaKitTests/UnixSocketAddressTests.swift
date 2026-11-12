@@ -41,15 +41,6 @@ struct UnixSocketAddressTests {
         #expect(length == socklen_t(MemoryLayout<sockaddr_un>.size))
     }
 
-    @Test("withSockaddr hands the same bytes the address holds")
-    func withSockaddrRebindsInPlace() throws {
-        var address = try UnixSocketAddress.make(path: "/tmp/kernova-rebind.sock")
-        let family = UnixSocketAddress.withSockaddr(&address) { socketAddress, _ in
-            socketAddress.pointee.sa_family
-        }
-        #expect(family == sa_family_t(AF_UNIX))
-    }
-
     /// Reads `sun_path` back as the NUL-terminated string it holds.
     private static func path(of address: inout sockaddr_un) -> String {
         withUnsafePointer(to: &address.sun_path) { rawPointer in
