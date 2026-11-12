@@ -140,6 +140,34 @@ struct VMLifecycleCoordinatorTests {
 
     // MARK: - macOS Installation
 
+    @Test("installMacOS with downloadLatest context downloads the resolved image, named after it")
+    func installMacOSDownload() async throws {
+        let downloads = scratch.url
+            .appendingPathComponent("installLatest", isDirectory: true)
+        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator(
+            downloadsDirectory: downloads)
+        let persisted = downloads.appendingPathComponent(Self.olderBuildFilename)
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: persisted.path(percentEncoded: false)
+        )
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
+        defer { withExtendedLifetime(library) {} }
+
+        try await coordinator.launchGuestSetup(on: instance).value()
+
+        let expected = downloads.appendingPathComponent(
+            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
+        #expect(ipswService.fetchCallCount == 1)
+        #expect(downloadService.downloadCallCount == 1)
+        #expect(downloadService.lastDownloadRemoteURL == ipswService.fetchResult.url)
+        #expect(downloadService.lastDownloadDestinationURL == expected)
+        #expect(downloadService.lastDownloadExpectedSizeBytes == nil)
+        #expect(installService.installCallCount == 1)
+        #expect(installService.lastRestoreImageURL == expected)
+    }
+
     @Test("A Download Latest VM created after a failed lookup is named, and its name kept, at Start")
     func installMacOSLatestWithNoStoredDestination() async throws {
         // Read on the failure path: a successful install clears the context.
