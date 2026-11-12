@@ -68,10 +68,11 @@ struct ClipboardTransferWordingTests {
             (.stagingFailed, .dragOut),
             (.peerReported(.pasteFailed), .dragOut),
             (.peerReported(.dragItemUnavailable), .dragOut),
-            (.sourceUnreadable, .dragOut),
-            (.sourceUnreadable, .paste),
-            (.sourceUnreadable, .preview),
-            (.sourceUnreadable, .drop),
+            (.sourceUnreadable(item: []), .dragOut),
+            (.sourceUnreadable(item: ["Photos", "2024", "IMG_0001.jpg"]), .dragOut),
+            (.sourceUnreadable(item: []), .paste),
+            (.sourceUnreadable(item: []), .preview),
+            (.sourceUnreadable(item: []), .drop),
         ]
     }
 
@@ -132,7 +133,7 @@ struct ClipboardTransferWordingTests {
         // paste from the tail of one whose earlier files already landed.
         for failure in [
             ClipboardTransferFailure.interrupted(fileCount: nil), .timedOut, .transferFailed, .stagingFailed,
-            .sourceUnreadable,
+            .sourceUnreadable(item: []),
         ] {
             let message = try #require(wording(failure, .paste)).message
             #expect(message.hasSuffix("so the paste didn't finish."), "\(failure)")
@@ -148,7 +149,7 @@ struct ClipboardTransferWordingTests {
     @Test("a failed preview never claims a paste happened")
     func previewNeverSpeaksOfAPaste() throws {
         for failure in [
-            ClipboardTransferFailure.timedOut, .transferFailed, .sourceUnreadable,
+            ClipboardTransferFailure.timedOut, .transferFailed, .sourceUnreadable(item: []),
         ] {
             let copy = try #require(wording(failure, .preview))
             #expect(copy.message == "The preview from the guest couldn't be loaded.", "\(failure)")
@@ -189,19 +190,36 @@ struct ClipboardTransferWordingTests {
 
     @Test("an item that couldn't be read is worded by the side that read it")
     func unreadableItemWording() throws {
-        let dragOut = try #require(wording(.sourceUnreadable, .dragOut))
+        let dragOut = try #require(wording(.sourceUnreadable(item: []), .dragOut))
         #expect(dragOut.headline == "Files not copied from \(quotedVM).")
         #expect(dragOut.message == "The VM couldn't read one of the items, so the drag didn't finish.")
         #expect(dragOut.menuLine == "Drag: the VM couldn't read an item")
 
-        let paste = try #require(wording(.sourceUnreadable, .paste))
+        let paste = try #require(wording(.sourceUnreadable(item: []), .paste))
         #expect(paste.headline == "Clipboard not pasted from \(quotedVM).")
         #expect(paste.message == "The VM couldn't read one of the items, so the paste didn't finish.")
         #expect(paste.menuLine == "Clipboard: the VM couldn't read an item")
 
-        let drop = try #require(wording(.sourceUnreadable, .drop))
+        let drop = try #require(wording(.sourceUnreadable(item: []), .drop))
         #expect(drop.message == "This Mac couldn't read one of the items, so the drop didn't finish.")
         #expect(drop.menuLine == "Drop: this Mac couldn't read an item")
+    }
+
+    @Test("an unreadable entry the failure names is named: its path from the carried item, the menu line its own name")
+    func unreadableEntryNamed() throws {
+        let nested = try #require(wording(.sourceUnreadable(item: ["Photos", "2024", "IMG_0001.jpg"]), .dragOut))
+        #expect(
+            nested.message
+                == "The VM couldn't read \u{201C}Photos/2024/IMG_0001.jpg\u{201D}, so the drag didn't finish.")
+        #expect(nested.menuLine == "Drag: the VM couldn't read \u{201C}IMG_0001.jpg\u{201D}")
+
+        let carried = try #require(wording(.sourceUnreadable(item: ["report.pdf"]), .dragOut))
+        #expect(carried.message == "The VM couldn't read \u{201C}report.pdf\u{201D}, so the drag didn't finish.")
+        #expect(carried.menuLine == "Drag: the VM couldn't read \u{201C}report.pdf\u{201D}")
+
+        let drop = try #require(wording(.sourceUnreadable(item: ["Folder", "a.txt"]), .drop))
+        #expect(drop.message == "This Mac couldn't read \u{201C}Folder/a.txt\u{201D}, so the drop didn't finish.")
+        #expect(drop.menuLine == "Drop: this Mac couldn't read \u{201C}a.txt\u{201D}")
     }
 
     @Test(

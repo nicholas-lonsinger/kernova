@@ -89,8 +89,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The transfer aborted for a reason with no more specific case.
     case transferFailed
     /// The sending side could not read what it was sending, so the transfer
-    /// stopped there.
-    case sourceUnreadable
+    /// stopped there, at `item`.
+    case sourceUnreadable(item: ClipboardItemPath)
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
     /// Items the sending side did not send whole, and the rest crossed whole;
@@ -118,6 +118,29 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// The source's clipboard held no text, the one thing a text-only transport
     /// carries.
     case noTextToCopy
+}
+
+/// An entry of what a gesture carried, by its path from the carried item, that item's own name first.
+///
+/// Its descriptions withhold the names, which are the user's: a failure interpolated into a public log line
+/// names no file.
+public struct ClipboardItemPath: Equatable, Sendable, ExpressibleByArrayLiteral, CustomStringConvertible,
+    CustomDebugStringConvertible
+{
+    /// The path's components; empty when the failure named no entry.
+    public let components: [String]
+
+    /// The entry at `components`.
+    public init(_ components: [String]) { self.components = components }
+
+    /// The entry at `components`.
+    public init(arrayLiteral components: String...) { self.init(components) }
+
+    /// Whether an entry is named, never its names.
+    public var description: String { components.isEmpty ? "none" : "<private>" }
+
+    /// The same as ``description``: an enum's description prints its payload's debug description.
+    public var debugDescription: String { description }
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.

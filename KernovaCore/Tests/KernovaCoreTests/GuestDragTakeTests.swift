@@ -771,6 +771,10 @@ struct GuestDragTakeTests {
             GuestDragTake.failure(for: WireError(.writeFailed, posixErrno: ENOSPC), owed: 1)
                 == .diskFull(needed: nil, available: nil))
         #expect(GuestDragTake.failure(for: WireError(.writeFailed), owed: 1) == .stagingFailed)
-        #expect(GuestDragTake.failure(for: WireError(.readFailed), owed: 1) == .sourceUnreadable)
+        #expect(GuestDragTake.failure(for: WireError(.readFailed), owed: 1) == .sourceUnreadable(item: []))
+        let unread = ItemFailureValue(path: [Data("Photos".utf8), Data("IMG_0001.jpg".utf8)], posixErrno: EACCES)
+        #expect(
+            GuestDragTake.failure(for: WireError(.readFailed, item: unread, posixErrno: EACCES), owed: 2)
+                == .sourceUnreadable(item: ["Photos", "IMG_0001.jpg"]))
     }
 }

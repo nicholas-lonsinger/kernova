@@ -301,13 +301,12 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: paste from the guest failed",
                 mentionsMacClipboardKept: false)
 
-        case (.sourceUnreadable, let gesture):
-            let reader = gesture.readsOnThisMac ? "This Mac" : "The VM"
-            let prefix = gesture == .drop ? "Drop" : "Clipboard"
+        case (.sourceUnreadable(let item), let gesture):
+            let unread = unreadable(item, reader: gesture.readsOnThisMac ? "This Mac" : "The VM")
             return ClipboardTransferWording(
                 headline: headline(for: gesture, vm: vm),
-                message: "\(reader) couldn't read one of the items, so \(unfinished(gesture)) didn't finish.",
-                menuLine: "\(prefix): \(reader.lowercasedFirst) couldn't read an item",
+                message: "\(unread.clause), so \(unfinished(gesture)) didn't finish.",
+                menuLine: "\(gesture == .drop ? "Drop" : "Clipboard"): \(unread.menuFragment)",
                 mentionsMacClipboardKept: false)
 
         case (.stagingFailed, _):
@@ -433,9 +432,10 @@ package struct ClipboardTransferWording: Equatable {
         case .peerReported:
             message = "The VM couldn't send the files, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
-        case .sourceUnreadable:
-            message = "The VM couldn't read one of the items, so the drag didn't finish."
-            menuLine = "Drag: the VM couldn't read an item"
+        case .sourceUnreadable(let item):
+            let unread = unreadable(item, reader: "The VM")
+            message = "\(unread.clause), so the drag didn't finish."
+            menuLine = "Drag: \(unread.menuFragment)"
         case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
             .withdrawnFilesRetracted, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
             .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
@@ -457,6 +457,18 @@ package struct ClipboardTransferWording: Equatable {
         }
     }
 
+    /// The message's clause and the menu line's fragment saying `reader` could not read `item`: the message
+    /// names the entry by its path from the carried item, the menu line by its own name.
+    private static func unreadable(_ item: ClipboardItemPath, reader: String) -> (
+        clause: String, menuFragment: String
+    ) {
+        guard let name = item.components.last else {
+            return ("\(reader) couldn't read one of the items", "\(reader.lowercasedFirst) couldn't read an item")
+        }
+        let path = quoted(item.components.joined(separator: "/"))
+        return ("\(reader) couldn't read \(path)", "\(reader.lowercasedFirst) couldn't read \(quoted(name))")
+    }
+
     /// The needed and free byte counts a disk-full refusal knows, joined, or
     /// empty when it knows neither.
     private static func diskFullDetail(needed: UInt64?, available: Int64?) -> String {
@@ -474,8 +486,7 @@ package struct ClipboardTransferWording: Equatable {
             ? "Clipboard: preview from the guest failed" : "Clipboard: paste from the guest failed"
     }
 
-    /// The sentence for `count` unreadable items left out of a send whose rest
-    /// crossed; `item` names one of them.
+    /// `name` in curly quotes.
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
 }
 

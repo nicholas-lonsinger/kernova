@@ -114,7 +114,7 @@ public struct ItemFeatureRouter<Peer: Sendable>: Sendable {
                 "A \(feature, privacy: .public) pull this side served ended: \(String(describing: closure), privacy: .public)"
             )
         }
-        let path = (error.item?.path ?? []).map { String(decoding: $0, as: UTF8.self) }.joined(separator: "/")
+        let path = (error.item?.pathNames ?? []).joined(separator: "/")
         let reason = "\(error.code), errno \(error.posixErrno)"
         let detail = "\(path) (\(error.debugDetail))"
         logger.log(
