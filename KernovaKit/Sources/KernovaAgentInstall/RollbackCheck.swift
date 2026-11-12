@@ -3,10 +3,10 @@ import KernovaAgentCore
 import KernovaLogging
 
 /// The agent's `rollback-check`: one run of the check that reverts an update the new version does not
-/// confirm (spec §8.4). The service manager runs it every `UpdateRollbackPolicy.checkIntervalSeconds` from
+/// confirm. The service manager runs it every `UpdateRollbackPolicy.checkIntervalSeconds` from
 /// ``InstallRoot/rollback``, the previous slot's agent, so it never runs inside the version it judges.
 ///
-/// It counts its own runs rather than reading a clock (decision M2): a guest powered off, or a VM paused,
+/// It counts its own runs rather than reading a clock: a guest powered off, or a VM paused,
 /// mid-switch spends no runs, so no wall-clock leap reverts a good update.
 public struct RollbackCheck {
     /// The run that reverts a switch still unconfirmed (`UpdateRollbackPolicy`).

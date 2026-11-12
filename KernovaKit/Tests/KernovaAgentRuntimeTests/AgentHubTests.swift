@@ -372,9 +372,9 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    // MARK: Identity conflicts (spec §4.5)
+    // MARK: Identity conflicts
 
-    @Test("Row 1: the same process's new connection supersedes its old one")
+    @Test("The same process's new connection supersedes its old one")
     func sameInstanceSupersedes() async {
         let harness = HubHarness()
         await harness.attached()
@@ -392,7 +392,7 @@ struct AgentHubTests {
     }
 
     @Test(
-        "Row 2: of two session peers of different scope rank, the lower closes DUPLICATE_PEER, 60 s",
+        "Of two session peers of different scope rank, the lower closes DUPLICATE_PEER, 60 s",
         arguments: [
             (existing: InstallScope.user, incoming: InstallScope.unspecified),
             (existing: InstallScope.unspecified, incoming: InstallScope.user),
@@ -418,7 +418,7 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("Row 3: an unresponsive existing peer is superseded by an incoming one of equal rank")
+    @Test("An unresponsive existing peer is superseded by an incoming one of equal rank")
     func unresponsiveExistingSuperseded() async {
         var policy = ReceiverPolicy.production
         policy.pingInterval = .milliseconds(50)
@@ -440,7 +440,7 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("Row 4: a responsive existing peer stays; the incoming one closes DUPLICATE_PEER, 20 s")
+    @Test("A responsive existing peer stays; the incoming one closes DUPLICATE_PEER, 20 s")
     func responsiveExistingStays() async {
         let harness = HubHarness()
         await harness.attached()

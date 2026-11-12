@@ -114,7 +114,7 @@ extension Connection {
     }
 
     /// The owning machine finished with `byteCount` raw bytes of `id`.
-    /// Ignored once the stream has closed (R5).
+    /// Ignored once the stream has closed.
     public mutating func consumed(_ byteCount: Int, on id: StreamID) {
         guard isAcceptingInput, let index = index(of: id), streams[index].phase != .closed else { return }
         guard byteCount >= 0, byteCount <= streams[index].heldRaw else {

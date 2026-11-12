@@ -178,7 +178,7 @@ extension CoreUnits {
                     == Limits.initialConnectionWindow)
         }
 
-        @Test("R3: the opener of a bulk direction puts one WINDOW of 8 MiB − 256 KiB right after its OPEN")
+        @Test("The opener of a bulk direction puts one WINDOW of 8 MiB − 256 KiB right after its OPEN")
         func bulkWindowOpener() {
             var wire = Wire.peer()
             wire.establish()
@@ -190,7 +190,7 @@ extension CoreUnits {
             #expect(frames.last.map { Unit.window($0.payload) } == UInt32(8_388_608 - 262_144))
         }
 
-        @Test("R3: a message-only direction stays at 256 KiB, no WINDOW after the OPEN")
+        @Test("A message-only direction stays at 256 KiB, no WINDOW after the OPEN")
         func messageDirectionStaysAtInitialWindow() {
             var wire = Wire.peer()
             wire.establish()
@@ -199,7 +199,7 @@ extension CoreUnits {
             #expect(wire.flush().shape == ["\(stream.rawValue):open"])
         }
 
-        @Test("R3: the acceptor of a bulk direction queues the raising WINDOW with its first frames")
+        @Test("The acceptor of a bulk direction queues the raising WINDOW with its first frames")
         func bulkWindowAcceptor() {
             let kind = StreamKind.UNRECOGNIZED(9100)
             var wire = Wire.host {

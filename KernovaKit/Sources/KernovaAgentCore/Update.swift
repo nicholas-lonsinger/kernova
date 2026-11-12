@@ -9,7 +9,7 @@ import KernovaWire
 /// When an installed update that has not connected is reverted: the guest's rollback check runs every
 /// ``checkIntervalSeconds`` while a switch is unconfirmed, and its ``checksToRevert``th run reverts it. The
 /// first run comes anywhere up to one interval after the switch, so the reverting one comes 120–150 s after
-/// it: never before the 120 s spec §8.4 gives the new version. Installer policy, so it can grow with no
+/// it: a new version gets at least 120 s to connect. Installer policy, so it can grow with no
 /// protocol change; the host waits out ``latestRevertSeconds`` before it stops expecting a relaunching peer.
 public enum UpdateRollbackPolicy {
     /// The rollback timer's period.

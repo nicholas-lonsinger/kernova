@@ -114,7 +114,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.storageDisks == nil)
     }
 
-    @Test("R1(b): a configuration edit, a Start or a delete during a disk's image write is refused busy")
+    @Test("A configuration edit, a Start or a delete during a disk's image write is refused busy")
     func createStorageDiskHoldsTheVM() async throws {
         let diskImages = MockDiskImageService()
         diskImages.holdCreateDiskImage()
@@ -457,7 +457,7 @@ struct VMCommandCoreAttachmentTests {
         }
     }
 
-    @Test("R1(c): a Suspend during a live removable-disk creation is refused; an edit is taken and both land")
+    @Test("A Suspend during a live removable-disk creation is refused; an edit is taken and both land")
     func createRemovableMediaHoldsALiveVM() async throws {
         let diskImages = MockDiskImageService()
         diskImages.holdCreateDiskImage()

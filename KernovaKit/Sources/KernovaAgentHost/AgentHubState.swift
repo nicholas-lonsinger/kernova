@@ -95,7 +95,7 @@ struct AgentHubState: Sendable {
     private var nextAwayOrder: UInt64 = 0
 
     /// Adds the peer whose Hello `handle`'s connection read, resolving it against the one peer that can
-    /// already hold its identity (spec §4.5): every Hello is resolved as it arrives, so no two peers in
+    /// already hold its identity: every Hello is resolved as it arrives, so no two peers in
     /// the set share a key.
     mutating func helloReceived(_ handle: PeerHandle, claim: PeerClaim, state: PeerSessionState) -> HelloOutcome? {
         guard connections[handle] != nil else { return nil }

@@ -406,7 +406,7 @@ struct VMLibraryTests {
         #expect(library.heldGuestAccountPassword(for: instance) == nil)
     }
 
-    // MARK: - Eviction (F16)
+    // MARK: - Eviction
 
     @Test("A cold-suspended VM whose bundle is removed is evicted")
     func aColdSuspendedVMWhoseBundleIsRemovedIsEvicted() {

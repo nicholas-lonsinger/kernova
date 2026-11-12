@@ -11,7 +11,7 @@ import SwiftProtobuf
 import Testing
 
 extension CoreUnits {
-    @Suite("PowerResponder: every row of its table")
+    @Suite("PowerResponder")
     struct PowerResponderUnitTests {
         static let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 2)
 
@@ -396,7 +396,7 @@ extension CoreUnits {
         #expect(PowerRequesterUnitTests.results(run) == [.indeterminate])
     }
 
-    @Suite("PowerRequester: every row of its table")
+    @Suite("PowerRequester")
     struct PowerRequesterUnitTests {
         static let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 7)
 

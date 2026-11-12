@@ -7,7 +7,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaWire
 
-/// How a power action the hub routed ended (spec §6.4).
+/// How a power action the hub routed ended.
 public enum PowerRoutingOutcome: Sendable, Equatable {
     /// A peer took it, and the guest is going down.
     case handedOff
@@ -82,7 +82,7 @@ struct HubPowerRouting: Sendable {
     var requests: [PowerRequestID: PeerHandle] = [:]
     private var nextRequest: UInt64 = 0
 
-    /// The id for the next request to a connection of `generation` (spec §9.7.4): the hub's own number,
+    /// The id for the next request to a connection of `generation`: the hub's own number,
     /// unique across its connections.
     mutating func drawID(_ generation: ConnectionGeneration) -> PowerRequestID {
         nextRequest += 1

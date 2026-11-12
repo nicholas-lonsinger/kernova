@@ -10,7 +10,7 @@ import KernovaWire
 import SwiftProtobuf
 import Testing
 
-/// The machine-by-machine unit suites: each pins one table of the phase 2 spec.
+/// The agent core's unit suites, one per machine or helper.
 @Suite("Agent core units")
 struct CoreUnits {}
 

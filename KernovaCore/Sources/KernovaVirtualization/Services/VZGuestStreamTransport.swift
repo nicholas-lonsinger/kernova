@@ -64,7 +64,7 @@ final class AgentListenerHost: NSObject, VZVirtioSocketListenerDelegate {
     }
 
     // On the VM's queue. The acceptor decides before the connection is
-    // touched, so a refused one is never read (spec §9.7.1), and logs its
+    // touched, so a refused one is never read, and logs its
     // refusals.
     func listener(
         _ listener: VZVirtioSocketListener,
