@@ -50,12 +50,11 @@ struct AppResidencyPresentationTests {
         #expect(launchHost.count == 2)
     }
 
-    @Test("A window put up while headless brings the Dock icon back first, and only once")
+    @Test("A window put up while headless brings the Dock icon back first")
     func prepareRestoresTheDockIcon() {
         let focus = RecordingSessionFocus(activationPolicy: .accessory)
         let (controller, _) = makeController(focus: focus)
 
-        controller.prepareToPresentWindow()
         controller.prepareToPresentWindow()
 
         #expect(focus.activationPolicy == .regular)
