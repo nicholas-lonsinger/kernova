@@ -38,10 +38,11 @@
 #       `hideOtherApplications(`, `unhideAllApplications(`, `arrangeInFront(`,
 #       `miniaturizeAll(`, `orderFrontStandardAboutPanel(` or `showWindow(`,
 #       each of which changes what is on screen or which window is key;
-#     - a `#selector` naming any method above, or `orderFront` or `orderBack`,
-#       unless written as an `action:` argument or assigned to `.action`: that
-#       selector AppKit sends on the user's click or key equivalent, as the
-#       menu bar's Hide Others and Bring All to Front do;
+#     - a `#selector` naming any method above, or outside KernovaUITests/
+#       `orderFront` or `orderBack`, unless written as an `action:` argument or
+#       assigned to `.action`: that selector AppKit sends on the user's click
+#       or key equivalent, as the menu bar's Hide Others and Bring All to Front
+#       do;
 #     - outside KernovaCore/Sources/KernovaUI/Views/Sidebar/SidebarViewController.swift,
 #       whose row emphasis draws from its window's key state, a read of
 #       `isKeyWindow`, and everywhere a read of `isMainWindow`;
