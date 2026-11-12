@@ -49,11 +49,12 @@ package final class VMActivity {
 
     var errorMessage: String? { phase.errorMessage }
 
-    /// The last Start or Resume operation on this VM that failed
-    /// (``VMOperationKind/startOrResumeVerb``), recorded at its ending commit
-    /// whoever asked for it — where the failure stays when the phase it rests
-    /// in carries no message.
-    private(set) var lastStartFailure: VMStartFailure?
+    /// This VM's last failure: a Start, Resume or Suspend operation that ran
+    /// and failed (``VMOperationKind/recordedFailureVerb``), recorded at its
+    /// ending commit whoever asked for it, or a session Virtualization stopped
+    /// with an error, recorded as the session ends — where the failure stays
+    /// whatever phase the VM goes on to rest in.
+    private(set) var lastFailure: VMFailure?
 
     /// Whose copy of Kernova holds the VM's bundle run lock, as this copy last
     /// learned it — written only through ``setHold(_:)``.
@@ -107,6 +108,13 @@ package final class VMActivity {
     ///
     /// Wired by `VMLibrary.wireHooks(for:)`.
     @ObservationIgnored var onRunLockReleased: (@MainActor () -> Void)?
+
+    /// Fired once for each session a phase held that ends because
+    /// Virtualization stopped it with an error, with the error's description,
+    /// wherever the VM goes on to rest.
+    ///
+    /// Wired by `VMLibrary.wireHooks(for:)`.
+    @ObservationIgnored var onSessionStoppedWithError: (@MainActor (_ message: String) -> Void)?
 
     /// Runs at an operation's ending commit, after the VM rests and before
     /// the outcome resolves, answering the follow-ups the ending owes.
@@ -1106,8 +1114,8 @@ package final class VMActivity {
         case .failed(let target, let error):
             rest = target
             result = .failure(error)
-            if let verb = operation.kind.startOrResumeVerb, !(error is CancellationError) {
-                lastStartFailure = VMStartFailure(verb: verb, error: error)
+            if let verb = operation.kind.recordedFailureVerb, !(error is CancellationError) {
+                lastFailure = VMFailure(cause: .operation(verb: verb, error: error))
             }
         }
         let resting = resolve(rest, for: operation)
@@ -1502,6 +1510,9 @@ package final class VMActivity {
         case .stopped, .initialBoot, .failed, .suspended, .removed:
             return
         }
+        guard case .stoppedWithError(let message) = end else { return }
+        lastFailure = VMFailure(cause: .sessionStoppedWithError(message: message))
+        onSessionStoppedWithError?(message)
     }
 
     /// Marks the operation's session `sessionID` ended, keeping the operation,
@@ -2067,30 +2078,42 @@ package enum VMOperationEnding<T> {
     case failed(VMOperationRest, any Error)
 }
 
-/// A Start or Resume operation that failed, as its ending commit recorded it.
+/// A failure of a VM, as the step that saw it recorded it
+/// (``VMActivity/lastFailure``).
 ///
 /// Equal by identity: each failure is recorded once, so a reader comparing two
 /// records tells a new failure from one it already saw.
-struct VMStartFailure: Equatable {
-    let id = UUID()
-    /// The verb whose work failed: ``VMVerb/start`` or ``VMVerb/resume``.
-    let verb: VMVerb
-    let error: any Error
+struct VMFailure: Equatable {
+    /// What failed.
+    enum Cause {
+        /// An operation run for `verb` — ``VMVerb/start``, ``VMVerb/resume``
+        /// or ``VMVerb/suspend`` — ended with `error`.
+        case operation(verb: VMVerb, error: any Error)
+        /// Virtualization stopped the VM's session with an error described by
+        /// `message`.
+        case sessionStoppedWithError(message: String)
+    }
 
-    static func == (lhs: VMStartFailure, rhs: VMStartFailure) -> Bool { lhs.id == rhs.id }
+    let id = UUID()
+    let cause: Cause
+
+    static func == (lhs: VMFailure, rhs: VMFailure) -> Bool { lhs.id == rhs.id }
 }
 
 extension VMOperationKind {
-    /// The verb whose work this is when the Start or Resume verb runs it — a
-    /// guest start, a guest setup, or a hot resume — and `nil` for any other
-    /// operation.
-    var startOrResumeVerb: VMVerb? {
+    /// The verb whose work this is when its failure is recorded
+    /// (``VMActivity/lastFailure``) — Start for a guest start or setup, Resume
+    /// for a restore or hot resume, Suspend for a save — and `nil` for any
+    /// other operation.
+    var recordedFailureVerb: VMVerb? {
         switch self {
         case .bringUp(.guestStart(.starting)), .bringUp(.settingUp):
             .start
         case .bringUp(.guestStart(.restoringSavedState)), .resuming:
             .resume
-        case .bringUp(.reverting), .pausing, .saving, .capturingSnapshot, .deletingSnapshot,
+        case .saving:
+            .suspend
+        case .bringUp(.reverting), .pausing, .capturingSnapshot, .deletingSnapshot,
             .attachingUSB, .detachingUSB, .reconcilingMedia, .forceStopping, .discardingSavedState,
             .deleting, .creatingStorageDisk, .removingStorageDisk, .creatingRemovableMedia, .copyingOut:
             nil

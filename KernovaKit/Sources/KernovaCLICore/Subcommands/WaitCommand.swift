@@ -165,10 +165,10 @@ struct StateWait {
         case .event(.agentStatusChanged(let id, _, let status)) where id == vm:
             return until.isSatisfied(byAgentStatus: status) ?? false
         case .event(.failure(let id, _, let message)) where id == vm:
-            // What a VM entering the error status reports, and the only frame
-            // carrying why: the status change beside it says `error` and no
-            // more, and `VMInfo` holds no such field. Ends every condition —
-            // a VM that failed reaches no state a script waits for.
+            // The only frame carrying why a VM failed: a status change says
+            // where it rests and no more, and `VMInfo` holds no such field.
+            // Ends every condition: whatever a VM reaches after it failed is
+            // not the state a script was waiting for.
             throw CLIFailure(.operationFailed, message)
         case .event(.removed(let id, let name)) where id == vm:
             // The VM left the library, so no state it could reach is
