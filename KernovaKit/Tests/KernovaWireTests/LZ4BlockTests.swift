@@ -157,4 +157,34 @@ struct LZ4BlockTests {
             try LZ4Block.decompress(Data(shape.block), decompressedSize: shape.size, ceiling: 1 << 20)
         }
     }
+
+    @Test("Mutated blocks either throw or decode to exactly the declared size")
+    func hostileBlocks() throws {
+        var generator = SplitMix64(seed: 0xBAD_B10C)
+        let sources = [LZ4Corpus.text(3_000, seed: 1), LZ4Corpus.mixed(3_000, seed: 2)]
+        for source in sources {
+            let block = try #require(LZ4Block.compress(source))
+            for _ in 0..<1_500 {
+                var mutated = block
+                switch Int.random(in: 0..<3, using: &generator) {
+                case 0:
+                    for _ in 0...Int.random(in: 0..<4, using: &generator) {
+                        let index = Int.random(in: 0..<mutated.count, using: &generator)
+                        mutated[index] = UInt8.random(in: 0...255, using: &generator)
+                    }
+                case 1:
+                    mutated = mutated.prefix(Int.random(in: 0..<mutated.count, using: &generator))
+                default:
+                    mutated.append(generator.bytes(Int.random(in: 1...8, using: &generator)))
+                }
+                let size = Bool.random(using: &generator) ? source.count : Int.random(in: 0...6_000, using: &generator)
+                do {
+                    let output = try LZ4Block.decompress(mutated, decompressedSize: size, ceiling: 1 << 16)
+                    #expect(output.count == size)
+                } catch {
+                    // Refusing is the other acceptable outcome.
+                }
+            }
+        }
+    }
 }

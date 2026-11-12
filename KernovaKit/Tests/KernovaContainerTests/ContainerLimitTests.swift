@@ -192,6 +192,12 @@ struct ContainerLimitTests {
         #expect(decodingError(record(.header, Data([0xFF]))) == .headerUndecodable)
     }
 
+    @Test("An end record that is not an EndRecord is refused")
+    func undecodableEnd() {
+        let container = headerRecord(plainFile(depth: 0, size: 0)) + record(.end, Data([0xFF]))
+        #expect(decodingError(container) == .endUndecodable)
+    }
+
     @Test("Symlink targets: present, without NUL, and only on symlinks")
     func symlinkTargets() {
         #expect(decodingError(Self.inFolder(symlink("s", depth: 1, target: ""))) == .invalidSymlinkTarget)
@@ -277,6 +283,11 @@ struct DecmpfsStorageTests {
     func attributePayload(type: UInt32) {
         #expect(Self.container(Self.inline(type, payload: 0), accepting: [type]) == .decmpfsPayloadMissing(type))
         #expect(Self.container(Self.inline(type, payload: 1), accepting: [type]) == nil)
+    }
+
+    @Test("A type of no known layout is refused, whatever it carries", arguments: [UInt32(0), 2, 5, 6, 17, 255, 256])
+    func unknownType(type: UInt32) {
+        #expect(Self.container(Self.inline(type), fork: 1, accepting: [type]) == .decmpfsTypeUnknown(type))
     }
 
     @Test("decmpfs storage is for regular files only")

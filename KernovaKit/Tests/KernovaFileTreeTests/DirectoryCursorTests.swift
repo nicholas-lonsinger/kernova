@@ -25,6 +25,23 @@ struct DirectoryCursorTests {
         #expect(stayed == at && frame == "b")
         #expect(fileSystem.open.keys.sorted() == [at])
     }
+
+    @Test("a parent that cannot be reopened is the call's failure, and the cursor stays")
+    func unreachableParentStops() throws {
+        let fileSystem = MemoryFileSystem()
+        fileSystem.root.add("a")
+        var cursor = DirectoryCursor(
+            fileSystem: fileSystem, descriptor: fileSystem.hand(fileSystem.root), status: fileSystem.root.status,
+            frame: "top")
+        let child = try fileSystem.openDirectory(Array("a".utf8), in: cursor.descriptor)
+        cursor.descend(into: child, status: try fileSystem.status(of: child), frame: "a")
+        fileSystem.parentRefusal = MemoryFileSystem.denied
+
+        #expect(throws: DirectoryCursorFailure.system(MemoryFileSystem.denied)) { _ = try cursor.ascend() }
+        let stayed = cursor.descriptor
+        #expect(stayed == child)
+        #expect(fileSystem.open.keys.sorted() == [child])
+    }
 }
 
 /// A tree of directories held in memory, handing out descriptors and counting
@@ -32,6 +49,7 @@ struct DirectoryCursorTests {
 private final class MemoryFileSystem: TreeFileSystem {
     static let missing = TreeFileSystemError(code: 2)
     static let badDescriptor = TreeFileSystemError(code: 9)
+    static let denied = TreeFileSystemError(code: 13)
 
     final class Node {
         let inode: UInt64
@@ -62,6 +80,8 @@ private final class MemoryFileSystem: TreeFileSystem {
     private(set) var open: [Int32: Node] = [:]
     private(set) var mostOpen = 0
     private(set) lazy var root = Node(fileSystem: self)
+    /// What reopening a parent fails with.
+    var parentRefusal: TreeFileSystemError?
 
     fileprivate func mintInode() -> UInt64 {
         defer { nextInode += 1 }
@@ -93,6 +113,7 @@ private final class MemoryFileSystem: TreeFileSystem {
     }
 
     func openParent(of directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        if let parentRefusal { throw parentRefusal }
         let node = try node(directory)
         guard let up = node.parentOverride ?? node.parent else { throw Self.missing }
         return hand(up)
