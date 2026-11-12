@@ -38,14 +38,14 @@ struct AppAlertPresenterTests {
         let viewModel: VMLibraryViewModel
         let registry: AppWindowRegistry
         let presenter: AppAlertPresenter
-        let presence = TestAppPresence()
+        let focus = RecordingSessionFocus()
         let storage = MockVMStorageService()
         let fileSystem = MockFileSystem()
 
         init(preferences: AppPreferences) {
             viewModel = makeLibraryViewModel(
                 preferences: preferences, storageService: storage, fileSystem: fileSystem)
-            registry = makeWindowRegistry(viewModel, presence: presence)
+            registry = makeWindowRegistry(viewModel, focus: focus)
             presenter = AppAlertPresenter(viewModel: viewModel, windows: registry)
         }
 
@@ -604,7 +604,7 @@ struct AppAlertPresenterTests {
         #expect(second.answered == [.answered(.cancelled)])
         #expect(first.answered.isEmpty)
         #expect(h.isShowingAlert)
-        #expect(h.presence.requests == [.activate])
+        #expect(h.focus.requests == [.activate])
     }
 
     @Test("A pairing prompt on screen when the window goes is answered as a hold")

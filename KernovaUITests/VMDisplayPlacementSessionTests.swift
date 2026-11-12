@@ -35,7 +35,7 @@ struct VMDisplayPlacementSessionTests {
         arguments: NextSession.allCases)
     func poppedOutDisplayCarriesIntoTheNextSession(next: NextSession) async throws {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: RecordingSessionFocus())
         let residency = ForegroundResidency()
         placement.residency = residency
         viewModel.onReadyDisplay = { placement.readyDisplay(for: $0, presence: $1) }

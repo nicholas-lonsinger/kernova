@@ -8,16 +8,16 @@ import Testing
 /// view model they build over is `makeLibraryViewModel(preferences:)`.
 
 /// The app's window registry over `viewModel`, its windows off the desktop
-/// and its activation requests going to `presence`.
+/// and its requests of the session's focus going to `focus`.
 @MainActor
 func makeWindowRegistry(
-    _ viewModel: VMLibraryViewModel, presence: TestAppPresence = TestAppPresence()
+    _ viewModel: VMLibraryViewModel, focus: RecordingSessionFocus = RecordingSessionFocus()
 ) -> AppWindowRegistry {
     let stage = WindowStage.offDesktop()
     return AppWindowRegistry(
         viewModel: viewModel,
-        displayPlacement: VMDisplayPlacementController(viewModel: viewModel, stage: stage),
-        stage: stage, presence: presence)
+        displayPlacement: VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: focus),
+        stage: stage, focus: focus)
 }
 
 /// One menu item carrying `action`, as the menu bar builds it.

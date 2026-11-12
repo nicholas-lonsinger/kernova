@@ -24,8 +24,9 @@ final class AppWindowRegistry {
     }
 
     private let stage: WindowStage
-    /// The app's activation, which a window the user asked for brings forward.
-    let presence: any AppPresence
+    /// The login session's focus, which a window the user asked for brings
+    /// forward.
+    let focus: any SessionFocus
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var guestAgentStatusWindows: [UUID: GuestAgentStatusWindowController] = [:]
@@ -50,12 +51,12 @@ final class AppWindowRegistry {
         viewModel: VMLibraryViewModel,
         displayPlacement: VMDisplayPlacementController,
         stage: WindowStage,
-        presence: any AppPresence
+        focus: any SessionFocus
     ) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
         self.stage = stage
-        self.presence = presence
+        self.focus = focus
         displayPlacement.host = self
         // Synchronous on the posting thread (`queue: nil`), so the window is
         // out of the scene before anything else hears of the close.
@@ -146,7 +147,7 @@ final class AppWindowRegistry {
             ?? SettingsWindowController(viewModel: viewModel, stage: stage)
         settingsWindowController = controller
         if let destination { controller.tabs.show(destination) }
-        presence.activate()
+        focus.activate()
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
     }
@@ -169,7 +170,7 @@ final class AppWindowRegistry {
         configCheckWindowController = controller
         switch request {
         case .user:
-            presence.activate()
+            focus.activate()
             controller.showAndCheck(makingKey: true)
         case .automatic:
             controller.showAndCheck(makingKey: false)

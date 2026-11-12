@@ -26,8 +26,8 @@ struct AppWindowRegistryPresenceTests {
         func syncActivationPolicy() { syncCount += 1 }
     }
 
-    private func makeRegistry(presence: TestAppPresence = TestAppPresence()) -> AppWindowRegistry {
-        makeWindowRegistry(makeLibraryViewModel(preferences: preferences), presence: presence)
+    private func makeRegistry(focus: RecordingSessionFocus = RecordingSessionFocus()) -> AppWindowRegistry {
+        makeWindowRegistry(makeLibraryViewModel(preferences: preferences), focus: focus)
     }
 
     @Test("An untracked titled panel on the stage counts as a user window")
@@ -69,16 +69,16 @@ struct AppWindowRegistryPresenceTests {
 
     @Test("An automatic config check shows its window without bringing Kernova forward; the user's does both")
     func configCheckActivatesOnlyForTheUser() throws {
-        let presence = TestAppPresence()
-        let registry = makeRegistry(presence: presence)
+        let focus = RecordingSessionFocus()
+        let registry = makeRegistry(focus: focus)
 
         registry.showConfigCheck(.automatic)
         let window = try #require(registry.configCheckWindow)
         #expect(window.isVisible)
-        #expect(presence.requests.isEmpty)
+        #expect(focus.requests.isEmpty)
 
         registry.showConfigCheck(.user)
         #expect(window.isVisible)
-        #expect(presence.requests == [.activate])
+        #expect(focus.requests == [.activate])
     }
 }

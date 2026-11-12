@@ -1,13 +1,14 @@
 import AppKit
+import KernovaTestSupport
 
 @testable import KernovaUI
 
-/// Stands in for `NSApp`'s activation policy, hidden state and activation,
-/// so no test changes the test host's Dock presence or asks for the front.
+/// Stands in for the login session's focus, so no test changes the test host's
+/// Dock presence or asks for the front.
 ///
 /// Holds the state a test gives it, and records every request in order.
 @MainActor
-final class TestAppPresence: AppPresence {
+final class RecordingSessionFocus: SessionFocus {
     enum Request: Equatable {
         case setActivationPolicy(NSApplication.ActivationPolicy)
         case activate
@@ -20,6 +21,11 @@ final class TestAppPresence: AppPresence {
     /// its own request.
     let isHidden: Bool
     private(set) var requests: [Request] = []
+    /// Notified after each request is recorded.
+    let gate = AsyncGate()
+    /// Runs inside each request, once it is recorded — where AppKit would act
+    /// on it.
+    var onRequest: (Request) -> Void = { _ in }
 
     init(
         activationPolicy: NSApplication.ActivationPolicy = .regular, isActive: Bool = false,
@@ -30,12 +36,18 @@ final class TestAppPresence: AppPresence {
         self.isHidden = isHidden
     }
 
-    func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
-        activationPolicy = policy
-        requests.append(.setActivationPolicy(policy))
+    private func record(_ request: Request) {
+        requests.append(request)
+        onRequest(request)
+        gate.notify()
     }
 
-    func activate() { requests.append(.activate) }
+    func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
+        activationPolicy = policy
+        record(.setActivationPolicy(policy))
+    }
 
-    func unhideWithoutActivation() { requests.append(.unhideWithoutActivation) }
+    func activate() { record(.activate) }
+
+    func unhideWithoutActivation() { record(.unhideWithoutActivation) }
 }

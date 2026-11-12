@@ -38,7 +38,7 @@ struct VMDisplayPlacementBringUpTests {
             preferences: preferences, virtualizationService: virtualization)
         let presenter = MockVMLibraryPresenting()
         viewModel.presenter = presenter
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: RecordingSessionFocus())
         let residency = BackgroundResidency()
         placement.residency = residency
         viewModel.onReadyDisplay = { placement.readyDisplay(for: $0, presence: $1) }

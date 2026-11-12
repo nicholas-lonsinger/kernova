@@ -75,19 +75,19 @@ final class AppResidencyController: WindowResidencyHosting {
     /// change ``hasVisibleUserWindow`` (``windowCloseAffectsActivationPolicy(_:)``).
     private var globalWindowCloseObserver: Any?
 
-    /// The app's activation policy, hidden state and activation.
-    private let presence: any AppPresence
+    /// The login session's focus.
+    private let focus: any SessionFocus
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppResidency")
 
     init(
         viewModel: VMLibraryViewModel, windows: AppWindowRegistry, heldAlerts: HeldAlerts,
-        presence: any AppPresence
+        focus: any SessionFocus
     ) {
         self.viewModel = viewModel
         self.windows = windows
         self.heldAlerts = heldAlerts
-        self.presence = presence
+        self.focus = focus
     }
 
     // MARK: - Automation front doors
@@ -319,7 +319,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// remains once the app is out of hiding. Never requests activation — the
     /// reopen's deliverer already did.
     func handleReopen() {
-        let wasHidden = presence.isHidden
+        let wasHidden = focus.isHidden
         // Only a windowless app is ever `.accessory`, and a windowless reopen
         // presents, so this is the policy any show lands on — asserted a tick
         // ahead of it for the menu-bar quirk (FB7743313).
@@ -363,7 +363,7 @@ final class AppResidencyController: WindowResidencyHosting {
         let eventAge = event.map { ProcessInfo.processInfo.systemUptime - $0.timestamp }
         Self.logger.log(
             .debug,
-            "Summon: isActive=\(self.presence.isActive, privacy: .public) hasCurrentEvent=\(event != nil, privacy: .public) eventAge=\(eventAge.map { String(format: "%.3f", $0) } ?? "n/a", privacy: .public)"
+            "Summon: isActive=\(self.focus.isActive, privacy: .public) hasCurrentEvent=\(event != nil, privacy: .public) eventAge=\(eventAge.map { String(format: "%.3f", $0) } ?? "n/a", privacy: .public)"
         )
         presentSummonedInterface(showing: target, arrival: .summoned)
     }
@@ -405,7 +405,7 @@ final class AppResidencyController: WindowResidencyHosting {
             // After the order-front: WindowServer denies an activation request
             // from an app presenting no window (`CPS: … presents 0 windows …
             // Denying the request`, #1377's macOS 27 probe).
-            if arrival == .summoned { self.presence.activate() }
+            if arrival == .summoned { self.focus.activate() }
             // Summoning from the status-item menu leaves the freshly-appeared menu
             // bar with its first menu highlighted: the status menu's dismissal
             // bleeds into the menu bar the morph just installed. Clear it.
@@ -455,9 +455,9 @@ final class AppResidencyController: WindowResidencyHosting {
     /// reads the window list, where a surface not yet shown would read as a
     /// window closed during the hide.
     private func leaveHiddenState() {
-        guard presence.isHidden else { return }
+        guard focus.isHidden else { return }
         Self.logger.log(.notice, "Surfacing while hidden — unhiding")
-        presence.unhideWithoutActivation()
+        focus.unhideWithoutActivation()
     }
 
     /// Readies the app to put up a surface something outside the process asked
@@ -484,8 +484,8 @@ final class AppResidencyController: WindowResidencyHosting {
     /// ``presentSummonedInterface()``. ``syncActivationPolicy()`` then keeps
     /// the two in step for the life of the process.
     var guiPosture: GUIPosture {
-        guard presence.activationPolicy == .regular else { return .absent }
-        return presence.isActive ? .foreground : .background
+        guard focus.activationPolicy == .regular else { return .absent }
+        return focus.isActive ? .foreground : .background
     }
 
     /// Re-asserts `.regular` before a window is shown, so a window can never be
@@ -556,7 +556,7 @@ final class AppResidencyController: WindowResidencyHosting {
     func syncActivationPolicy() {
         switch AppResidencyPolicy.residencyOutcome(
             hasVisibleUserWindow: hasVisibleUserWindow,
-            isHidden: presence.isHidden,
+            isHidden: focus.isHidden,
             keepInMenuBar: viewModel.keepInMenuBarOnQuit,
             hasUninterruptibleWork: viewModel.hasUninterruptibleWork
         ) {
@@ -610,17 +610,10 @@ final class AppResidencyController: WindowResidencyHosting {
         Task { @MainActor in self.syncActivationPolicy() }
     }
 
-    /// Sets the activation policy, logging the transition.
-    ///
-    /// No-op when already at `policy`.
+    /// Sets the activation policy; no-op when already at `policy`.
     private func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
-        let current = presence.activationPolicy
-        guard current != policy else { return }
-        presence.setActivationPolicy(policy)
-        Self.logger.log(
-            .notice,
-            "Activation policy \(current.rawValue, privacy: .public) → \(policy.rawValue, privacy: .public) (hasVisibleWindow=\(self.hasVisibleUserWindow, privacy: .public))"
-        )
+        guard focus.activationPolicy != policy else { return }
+        focus.setActivationPolicy(policy)
     }
 }
 

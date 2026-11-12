@@ -37,7 +37,7 @@ struct VMDisplayPlacementReadyDisplayTests {
         -> (VMDisplayPlacementController, StubResidency)
     {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: RecordingSessionFocus())
         let residency = StubResidency(posture: posture)
         placement.residency = residency
         return (placement, residency)
@@ -65,7 +65,7 @@ struct VMDisplayPlacementReadyDisplayTests {
     @Test("A group start from the foreground puts each detached display up without taking key")
     func groupStartReadiesBehind() async throws {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: RecordingSessionFocus())
         let residency = StubResidency(posture: .foreground)
         placement.residency = residency
         let popOut = viewModel.library.admitFixture(

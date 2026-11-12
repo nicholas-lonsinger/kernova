@@ -4,20 +4,21 @@
 # and brings forward whichever running copy it picks — the oldest, in every
 # trial of #1377's probe — so an app opening its own bundle can activate a
 # different copy of Kernova, which also receives a reopen and puts its library
-# up. Bringing this copy forward is `AppPresence.activate()` for an in-app
+# up. Bringing this copy forward is `SessionFocus.activate()` for an in-app
 # click, and the requester's job for a request from outside the process.
 #
 # And the app reads and changes its own activation policy, hidden state and
-# activation only through `AppPresence`: the unit tests run inside this app as
-# their host, and a call that skips the stand-in a test hands in gives the
-# host a Dock icon or asks for the front on the desktop the tests share.
+# activation only through `SessionFocus`, whose AppKit implementation lives in
+# the app target alone: the unit tests run KernovaUI inside KernovaTestHost,
+# and a call that skips the stand-in a test hands in gives the host a Dock
+# icon or asks for the front on the desktop the tests share.
 #
 # Flagged, on one line of code:
 #   - any `openApplication(` call;
 #   - `withApplicationAt:` naming `Bundle.main.bundleURL`, the
 #     `open(_:withApplicationAt:configuration:)` route to the same request;
 #   - `.open(Bundle.main.bundleURL`, opening the bundle as a document;
-#   - outside KernovaCore/Sources/KernovaUI/App/AppPresence.swift, `NSApp`
+#   - outside Kernova/App/AppKitSessionFocus.swift, `NSApp`
 #     (optional-chained or not) or `NSApplication.shared` reaching
 #     `activate`, `activationPolicy`,
 #     `setActivationPolicy`, `isActive`, `hide`, `unhide`,
@@ -43,7 +44,7 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-presence_owner='KernovaCore/Sources/KernovaUI/App/AppPresence.swift'
+focus_owner='Kernova/App/AppKitSessionFocus.swift'
 
 if [ "$#" -gt 0 ]; then
     list_files() { printf '%s\n' "$@"; }
@@ -57,7 +58,7 @@ fi
 
 findings=$(list_files "$@" \
     | tr '\n' '\0' \
-    | xargs -0 awk -v owner="$presence_owner" '
+    | xargs -0 awk -v owner="$focus_owner" '
         {
             code = $0
             sub(/\/\/.*$/, "", code)
@@ -80,7 +81,7 @@ if [ -n "$findings" ]; then
     printf '%s\n' "$findings" | while IFS= read -r line; do
         echo "check-self-activation: $line" >&2
     done
-    echo "check-self-activation: the app asks Launch Services to open an application, which activates whichever running copy it picks, or reaches its own activation, policy or hidden state around AppPresence" >&2
+    echo "check-self-activation: the app asks Launch Services to open an application, which activates whichever running copy it picks, or reaches its own activation, policy or hidden state around SessionFocus" >&2
     exit 1
 fi
 
@@ -89,4 +90,4 @@ if [ "$scan_status" -ne 0 ]; then
     exit 1
 fi
 
-pass "self-activation: the app, KernovaUI and the test host call no openApplication, opens Bundle.main.bundleURL neither as a document nor withApplicationAt:, and reaches its own activation only through AppPresence"
+pass "self-activation: the app, KernovaUI and the test host call no openApplication, opens Bundle.main.bundleURL neither as a document nor withApplicationAt:, and reaches its own activation only through SessionFocus"

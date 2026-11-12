@@ -11,8 +11,6 @@ protocol VMDisplayPlacementHosting: AnyObject {
     func showLibrary(bringToFront: Bool)
     /// `window`, a display window, was put on screen.
     func displayWindowShown(_ window: NSWindow)
-    /// The app's activation policy and activation.
-    var presence: any AppPresence { get }
 }
 
 /// The one owner of where each VM's display lives.
@@ -27,6 +25,7 @@ protocol VMDisplayPlacementHosting: AnyObject {
 final class VMDisplayPlacementController {
     private let viewModel: VMLibraryViewModel
     private let stage: WindowStage
+    private let focus: any SessionFocus
     weak var host: (any VMDisplayPlacementHosting)?
     /// The residency decisions a display window's placement needs but cannot
     /// make.
@@ -38,9 +37,10 @@ final class VMDisplayPlacementController {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
 
-    init(viewModel: VMLibraryViewModel, stage: WindowStage) {
+    init(viewModel: VMLibraryViewModel, stage: WindowStage, focus: any SessionFocus) {
         self.viewModel = viewModel
         self.stage = stage
+        self.focus = focus
     }
 
     // MARK: - Registry
@@ -264,7 +264,7 @@ final class VMDisplayPlacementController {
         let reason = pendingCloseReasons[vmID] ?? .userClose
         let placement = VMDisplayPlacement.placement(for: .closed(reason))
         instance.displayMode = placement.mode
-        let appWasActive = host?.presence.isActive ?? false
+        let appWasActive = focus.isActive
 
         Task { @MainActor in
             self.pendingCloseReasons.removeValue(forKey: vmID)
@@ -276,7 +276,7 @@ final class VMDisplayPlacementController {
             if let preference = placement.persistPreference {
                 self.viewModel.recordDisplayPreference(preference, for: instance)
             }
-            let policy = self.host.map { String($0.presence.activationPolicy.rawValue) } ?? "-"
+            let policy = String(self.focus.activationPolicy.rawValue)
             Self.logger.log(
                 .notice,
                 "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: reason), privacy: .public), policy=\(policy, privacy: .public))"
