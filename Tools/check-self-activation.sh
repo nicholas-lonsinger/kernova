@@ -23,14 +23,14 @@
 #     `open(_:withApplicationAt:configuration:)` route to the same request;
 #   - `.open(Bundle.main.bundleURL`, opening the bundle as a document;
 #   - outside Kernova/App/AppKitSessionFocus.swift:
-#     - `NSApp` (optional-chained or not), `NSApplication.shared` or
-#       `KernovaApplication.shared` reaching `activate`, `activationPolicy`,
-#       `setActivationPolicy`, `isActive`, `hide`, `unhide`,
-#       `unhideWithoutActivation`, `unhideAllApplications`, `isHidden`,
-#       `deactivate`, `keyWindow` or `mainWindow`;
-#       `NSRunningApplication.current` reaching `activate`, `hide`, `unhide`,
-#       `isActive` or `isHidden`; and an `.activate(` on a line naming
-#       `NSRunningApplication` or `runningApplications`;
+#     - `NSApp`, `NSApplication.shared` or `KernovaApplication.shared` —
+#       optional-chained, force-unwrapped or neither, and bare or in
+#       parentheses with or without an `as` cast — reaching `activate`,
+#       `activationPolicy`, `setActivationPolicy`, `isActive`, `hide`,
+#       `unhide`, `unhideWithoutActivation`, `isHidden`, `deactivate`,
+#       `keyWindow` or `mainWindow`; `NSRunningApplication.current` reaching
+#       `hide`, `unhide`, `isActive` or `isHidden`; and an `.activate(` on a
+#       line naming `NSRunningApplication` or `runningApplications`;
 #     - a read of `frontmostApplication`;
 #     - a call to `makeKeyAndOrderFront(`, `makeKey(`, `makeMain(`,
 #       `orderFrontRegardless(`, `toggleFullScreen(`, `miniaturize(`,
@@ -38,11 +38,12 @@
 #       `hideOtherApplications(`, `unhideAllApplications(`, `arrangeInFront(`,
 #       `miniaturizeAll(`, `orderFrontStandardAboutPanel(` or `showWindow(`,
 #       each of which changes what is on screen or which window is key;
-#     - a `#selector` naming any member above, or outside KernovaUITests/
-#       `orderFront` or `orderBack`, unless written as an `action:` argument or
-#       assigned to `.action`: that selector AppKit sends on the user's click
-#       or key equivalent, as the menu bar's Hide Others and Bring All to Front
-#       do;
+#     - a `#selector`, or a `Selector(…)` or `NSSelectorFromString(…)` of a
+#       string literal, naming any app member or call above, or outside
+#       KernovaUITests/ `orderFront` or `orderBack`, unless written as an
+#       `action:` argument or assigned to `.action`: that selector AppKit sends
+#       on the user's click or key equivalent, as the menu bar's Hide Others
+#       and Bring All to Front do;
 #     - outside KernovaCore/Sources/KernovaUI/Views/Sidebar/SidebarViewController.swift,
 #       whose row emphasis draws from its window's key state, a read of
 #       `isKeyWindow`, and everywhere a read of `isMainWindow`;
@@ -87,16 +88,18 @@ findings=$(list_files "$@" \
         function report() { printf "%s:%d — %s\n", FILENAME, FNR, line }
         function ends(path) { return FILENAME == path || substr(FILENAME, length(FILENAME) - length(path)) == "/" path }
         BEGIN {
-            app = "(NSApp[[:space:]]*\\??|(NS|Kernova)Application[[:space:]]*\\.[[:space:]]*shared)"
-            app_names = "activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate|keyWindow|mainWindow"
+            app_core = "(NSApp|(NS|Kernova)Application[[:space:]]*\\.[[:space:]]*shared)"
+            app = "(^|[^A-Za-z0-9_])(" app_core "|\\([[:space:]]*" app_core "([[:space:]]+as[?!]?[[:space:]]+[A-Za-z0-9_.]+)?[[:space:]]*\\))[[:space:]]*[?!]?"
+            app_names = "activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|isHidden|deactivate|keyWindow|mainWindow"
             app_members = "(" app_names ")"
-            current = "NSRunningApplication[[:space:]]*\\.[[:space:]]*current[[:space:]]*\\??"
-            current_members = "(activate|hide|unhide|isActive|isHidden)"
+            current = "NSRunningApplication[[:space:]]*\\.[[:space:]]*current"
+            current_members = "(hide|unhide|isActive|isHidden)"
             keying_names = "makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|deminiaturize|orderWindow|setIsVisible|hideOtherApplications|unhideAllApplications|arrangeInFront|miniaturizeAll|orderFrontStandardAboutPanel|showWindow"
             keying = "(" keying_names ")"
             selected = keying_names "|" app_names
             end_word = "([^A-Za-z0-9_]|$)"
-            member_start = "^[[:space:]]*\\??[[:space:]]*\\.[[:space:]]*"
+            string_selector = "(^|[^A-Za-z0-9_])(Selector[[:space:]]*\\([[:space:]]*\\(?|NSSelectorFromString[[:space:]]*\\()[[:space:]]*\""
+            member_start = "^[[:space:]]*\\.[[:space:]]*"
         }
         FNR == 1 { chain = "" }
         {
@@ -108,7 +111,8 @@ findings=$(list_files "$@" \
             in_tests = FILENAME ~ /(^|\/)KernovaUITests\//
             # A selector AppKit sends on a user action is not Kernova reaching the focus.
             scan = code
-            gsub(/(action[[:space:]]*:|\.action[[:space:]]*=)[[:space:]]*#selector[[:space:]]*\([^()]*(\([^()]*\)[^()]*)*\)/, "", scan)
+            gsub(/(action[[:space:]]*:|\.action[[:space:]]*=)[[:space:]]*(#selector|Selector|NSSelectorFromString)[[:space:]]*\([^()]*(\([^()]*\)[^()]*)*\)/, "", scan)
+            sent = selected (in_tests ? "" : "|orderFront|orderBack")
             continued = scan ~ member_start
             receiver = continued ? chain : ""
             chain = continued ? chain scan : scan
@@ -126,7 +130,8 @@ findings=$(list_files "$@" \
                     && scan ~ /\.[[:space:]]*activate[[:space:]]*\(/) \
                 || scan ~ ("(^|[^A-Za-z0-9_])frontmostApplication" end_word) \
                 || scan ~ ("(^|[^A-Za-z0-9_])" keying "[[:space:]]*\\(") \
-                || scan ~ ("#selector[[:space:]]*\\(([A-Za-z0-9_]+[[:space:]]*\\.[[:space:]]*)*(" selected (in_tests ? "" : "|orderFront|orderBack") ")" end_word) \
+                || scan ~ ("#selector[[:space:]]*\\(([A-Za-z0-9_]+[[:space:]]*\\.[[:space:]]*)*(" sent ")" end_word) \
+                || scan ~ (string_selector "(" sent ")(:|\"|[A-Z][A-Za-z0-9_]*:)") \
                 || scan ~ ("(^|[^A-Za-z0-9_])isMainWindow" end_word) \
                 || (!ends(emphasis) && scan ~ ("(^|[^A-Za-z0-9_])isKeyWindow" end_word))) {
                 report()
