@@ -23,11 +23,12 @@
 # Reports every violation before failing, so one run fixes them all, and fails
 # when a file cannot be parsed rather than passing it unread.
 #
-# The agent hub KernovaCore drives, `KernovaAgentHost`, is held to spec §9.7
-# the same way: its state lives on its own queue and every hop is `async`, so
-# its code names no blocking form — no `.sync`, `asyncAndWait`, `.wait(`
-# (semaphores, groups, conditions) or `DispatchSemaphore` — and no `MainActor`
-# in any spelling (`@MainActor`, `MainActor.run`, `MainActor.assumeIsolated`).
+# The agent hub KernovaCore drives, `KernovaAgentHost`, never waits on another
+# queue or reaches the main actor, and this script holds it there: its state
+# lives on its own queue and every hop is `async`, so its code names no
+# blocking form — no `.sync`, `asyncAndWait`, `.wait(` (semaphores, groups,
+# conditions) or `DispatchSemaphore` — and no `MainActor` in any spelling
+# (`@MainActor`, `MainActor.run`, `MainActor.assumeIsolated`).
 # Line comments are stripped first, so prose may name what it forbids. A grep
 # is a backstop: the hub's own API offers drivers only `async` posts.
 #
@@ -55,7 +56,7 @@ check_hub() {
         return 1
     fi
     if [ -n "$findings" ]; then
-        echo "check-core-imports: $label blocks on a queue or reaches the main actor (spec §9.7):" >&2
+        echo "check-core-imports: $label blocks on a queue or reaches the main actor:" >&2
         printf '%s' "$findings" >&2
         return 1
     fi

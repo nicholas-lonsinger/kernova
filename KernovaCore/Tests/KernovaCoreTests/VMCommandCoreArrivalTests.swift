@@ -66,7 +66,7 @@ struct VMCommandCoreArrivalTests {
         return url
     }
 
-    // MARK: - R9: One Report per Failure
+    // MARK: - One Report per Failure
 
     @Test("A failed import with a waiter throws to the waiter and never reaches the report hook")
     func failedImportWithAWaiterThrowsToTheWaiterAndNeverReports() async throws {
@@ -120,7 +120,7 @@ struct VMCommandCoreArrivalTests {
         #expect(events.failures.first?.message == failure.message)
     }
 
-    // MARK: - F2: An Arrival Is Not a VM
+    // MARK: - An Arrival Is Not a VM
 
     @Test("An arrival's storage disks answer the list its write was asked for, unmeasured")
     func storageDisksOfAnArrivalAreUnmeasured() async throws {
@@ -145,7 +145,7 @@ struct VMCommandCoreArrivalTests {
         await arrival.settle()
     }
 
-    // MARK: - F14: Cancel Around the Rename
+    // MARK: - Cancel Around the Rename
 
     @Test("A cancel during the rename of a create that starts after creating trashes it and starts nothing")
     func aCancelDuringPublishingOfAStartingCreateTrashesItAndStartsNothing() async throws {

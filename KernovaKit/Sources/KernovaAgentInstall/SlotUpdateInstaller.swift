@@ -24,7 +24,7 @@ import KernovaWire
 
 /// The update installer of the install the agent runs from: it lands a pull's payload in the spare slot through
 /// its format's ``PayloadLander``, verifies it, switches `current` to it, and — run as the new version — confirms
-/// the switch (spec §8.4; the layout and the markers are ``SlotRoot``'s).
+/// the switch (the layout and the markers are ``SlotRoot``'s).
 ///
 /// A verified payload is switched to before the installer reports it installed, so `STAGED` means the
 /// next start runs it; `onSwitched` then relaunches the process. The rollback check reverts a switch the

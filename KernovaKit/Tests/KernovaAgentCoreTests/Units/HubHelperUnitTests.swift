@@ -363,7 +363,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("PeerConflict: each row of the identity-conflict table")
+    @Suite("PeerConflict")
     struct PeerConflictUnitTests {
         static let instanceA = Data(repeating: 0xAA, count: 16)
         static let instanceB = Data(repeating: 0xBB, count: 16)

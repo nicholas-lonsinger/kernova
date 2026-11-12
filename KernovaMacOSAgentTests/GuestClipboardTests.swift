@@ -1242,7 +1242,7 @@ struct GuestClipboardTests {
     }
 
     @Test(
-        "The Mac's concealed copy reset as the feature going is cleared as a link's end, unannounced; a later reset of it changes nothing (M3)"
+        "The Mac's concealed copy reset as the feature going is cleared as a link's end, unannounced; a later reset of it changes nothing"
     )
     func concealedHostCopyEndedByTheFeatureGoing() async throws {
         let rig = rig()

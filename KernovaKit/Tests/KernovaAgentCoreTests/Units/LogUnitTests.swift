@@ -174,7 +174,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("LogForwarder: every row of its table")
+    @Suite("LogForwarder")
     struct LogForwarderUnitTests {
         /// A real session peer with the host's Hello read and, unless nil, a first policy.
         static func peer(logs: Bool? = true) -> HostileRun {
@@ -439,7 +439,7 @@ extension CoreUnits {
         }
     }
 
-    @Suite("LogReceiver: every row of its table")
+    @Suite("LogReceiver")
     struct LogReceiverUnitTests {
         /// A real host with an established session peer and LOG_FORWARD open on stream 1.
         static func host() -> HostileRun {

@@ -202,7 +202,7 @@ enum AgentShell {
     }
 
     /// Rewrites the user scope's units and autostart entry that differ from what this binary writes, logging
-    /// each one it wrote (spec §8.3).
+    /// each one it wrote.
     private static func refreshUserUnits(root: String, label: String) {
         let environment = ProcessInfo.processInfo.environment
         guard let config = InstallLayout.configHome(environment: environment) else {

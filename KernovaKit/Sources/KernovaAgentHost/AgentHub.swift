@@ -21,7 +21,7 @@ public protocol BundledPayloadProvider: UpdatePayloadSource {
 }
 
 /// What a host connection is built with, as of now: read at accept, so a connection's Hello is
-/// answered from the configuration current when it was accepted (spec §4.1.5).
+/// answered from the configuration current when it was accepted.
 struct HostConfigurationTemplate: Sendable {
     var policy: PolicySnapshot
     var bundles: [BundledPayload] = []
@@ -66,7 +66,7 @@ extension HostConnection: HostConnectionHandle {}
 ///
 /// The state lives on the hub's own serial queue. Every method returns at once, posting its work there;
 /// drivers deliver events there and take commands from it, both with `async`, so no queue ever waits on
-/// another (spec §9.7). Snapshots reach `publish` on the publishing queue, coalesced: at most one is
+/// another. Snapshots reach `publish` on the publishing queue, coalesced: at most one is
 /// pending, and a newer one replaces it. Item events and the answers to item calls run on the hub's queue,
 /// in the order the connections emitted them, so a call's answer comes before any event it caused.
 public final class AgentHub: Sendable {
@@ -176,8 +176,8 @@ public final class AgentHub: Sendable {
 
     // MARK: Power
 
-    /// Routes `action`, performed without waiting for apps when `ignoringApps`, across the peers that offer it
-    /// (spec §6.4) — `ConsoleAuthority`'s console peers newest first, then the system peer — and calls
+    /// Routes `action`, performed without waiting for apps when `ignoringApps`, across the peers that offer it —
+    /// `ConsoleAuthority`'s console peers newest first, then the system peer — and calls
     /// `completion` once, on the hub's queue, with how it ended. The hub never presses the ACPI button:
     /// `.untaken` hands that back to the caller.
     public func requestPower(
@@ -629,7 +629,7 @@ public final class AgentHub: Sendable {
         state.withLock { $0.connections[handle]?.connection }?.send(.close(code, retryAfter: retryAfter))
     }
 
-    /// Republishes `delivery` behind its peer's source, `session <id>` or `system` (spec §7.4), a drop
+    /// Republishes `delivery` behind its peer's source, `session <id>` or `system`, a drop
     /// report included, so everything a guest's ring sends stays in the guest namespace under its VM.
     private func republish(_ delivery: LogDelivery, from handle: PeerHandle) {
         let (peer, republisher) = state.withLock { ($0.connections[handle]?.peer, $0.republisher) }

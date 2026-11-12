@@ -16,7 +16,7 @@ public protocol GuestStreamTransport: Sendable {
 /// the hub.
 ///
 /// A slot is taken before the connection is touched and given back only when its stream releases its
-/// descriptor, so the cap counts exactly the connections that hold memory (spec §9.7.1). A refusal at the
+/// descriptor, so the cap counts exactly the connections that hold memory. A refusal at the
 /// cap is logged once per run of refusals, when the run starts and when a slot next frees, so a guest
 /// redialing in a loop costs the host log two records.
 public final class GuestStreamAcceptor: Sendable {

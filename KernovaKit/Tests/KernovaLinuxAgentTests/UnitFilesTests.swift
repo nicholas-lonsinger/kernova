@@ -66,7 +66,7 @@ struct UnitFilesTests {
                 """)
     }
 
-    @Test("The rollback timer fires every 30 s to the second (R7)", arguments: [user, system])
+    @Test("The rollback timer fires every 30 s to the second", arguments: [user, system])
     func rollbackTimer(layout: InstallLayout) {
         let header =
             layout.scope == .system

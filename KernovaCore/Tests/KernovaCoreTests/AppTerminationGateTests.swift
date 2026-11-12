@@ -157,7 +157,7 @@ struct AppTerminationGateTests {
         await drainMainQueue()
     }
 
-    @Test("R6: a quit waits out a snapshot trash")
+    @Test("A quit waits out a snapshot trash")
     func quitWaitsOutASnapshotTrash() async throws {
         let (controller, viewModel, spy) = makeFullQuit()
         let instance = admitPeer(named: "Trashing", to: viewModel)
