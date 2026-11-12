@@ -4,6 +4,7 @@ import KernovaAgentRuntime
 import KernovaKit
 import KernovaLogging
 import KernovaPlatformDarwin
+import KernovaTransferProgress
 
 // Guest-side agent for macOS VMs managed by Kernova. Run with no arguments, or
 // `session`, it is the session peer: an `.accessory` menu-bar app holding the
@@ -121,8 +122,14 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let stagingRoot = ClipboardFileStaging.processRoot
         stagingRoot.reclaimAbandonedRoots()
 
+        // This side's one transfer report, which every owner that lands the host's items reports on, so the one
+        // status item never has two sources deciding what it shows.
+        let transfers = ClipboardTransferReporter()
+        transfers.onReportChanged = { [weak self] report in
+            self?.statusItemController?.transferReportChanged(report)
+        }
         let clipboard = GuestClipboard(
-            stagingRoot: stagingRoot,
+            stagingRoot: stagingRoot, transfers: transfers,
             onNotice: { [weak self] in
                 DispatchQueue.main.async {
                     self?.statusItemController?.clipboardNoticeRaised()
@@ -134,6 +141,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         let dragOut = GuestDragOut(peer: dragPeer, system: .live, stagingRoot: stagingRoot)
         let peer = MacAgentPeer(
             role: .sessionPeer, label: Self.versionLabel, logs: logs, state: state, dialer: Self.dialer,
+            transfers: transfers,
             hostConnectionChanged: { [weak self] _ in
                 // The controller re-reads the state, so the hops' order doesn't matter.
                 Task { @MainActor in self?.statusItemController?.connectionStateChanged() }
@@ -170,6 +178,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             connectionState: { peer.hostConnection },
             logForwardingEnabled: { logs.isForwarding },
             clipboardActivity: { [weak clipboard] in clipboard?.activity ?? .disabled },
+            onCancelTransfer: { transfers.cancel($0) },
             onQuit: stop
         )
 

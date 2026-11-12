@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// The far side's clipboard offer as this side received it, its items read whole, and the pulls that land its
@@ -14,6 +15,10 @@ import KernovaWire
 /// the offer ended still serves after. Its pulls together land no more than the paste ceiling as it stood at
 /// the first of them: one budget the sink charges each landed byte to. Ending the offer
 /// here cancels every pull still running and fails everyone waiting on one.
+///
+/// Its pulls report on one readout while they run, each pull a unit its landing feeds; the readout ends once no
+/// pull has run for its idle gap, since nothing says a paste is done asking. Its Cancel stops every pull in
+/// flight and leaves the offer open, so a later ask pulls again on a readout of its own.
 ///
 /// Safe from any thread: a paste asks on whatever thread the pasteboard fires its provider on, and a pull ends
 /// on the connection's queue, so neither waits for the main actor.
@@ -39,7 +44,17 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private let logger: KernovaLogger
     private let landed: @Sendable () -> Void
     private let failed: @Sendable (WireError) -> Void
+    private let progress: Progress
     private let state = Locked(State())
+
+    /// What the offer's readout reports: the gesture its pulls serve, the side's reporter, the far side's name,
+    /// and the clock the readout is measured on.
+    struct Progress: Sendable {
+        var gesture: ClipboardTransferGesture
+        var transfers: ClipboardTransferReporter
+        var peerName: String
+        var clock: any EngineClock
+    }
 
     /// One representation of one item.
     private struct Key: Hashable, Sendable {
@@ -104,6 +119,8 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         /// Where it lands in staging; nil for a pull landing in memory.
         var directory: URL?
         var isInline: Bool
+        /// What it reports on the readout.
+        var unit: ClipboardTransferOperation.Unit?
     }
 
     private struct State {
@@ -119,14 +136,16 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var closed = false
         /// Hear the offer close.
         var endHandlers: [@Sendable () -> Void] = []
+        /// The readout the pulls report on, from the first pull after the last one ended.
+        var readout: ClipboardTransferOperation?
     }
 
     init(
         header: ItemSetHeaderValue, items: [OfferedItem], link: any ClipboardItemLink,
         connection: ClipboardConnectionID, staging: ClipboardFileStaging, generation: UInt64,
         ceiling: @escaping @Sendable () -> UInt64,
-        registry: ClipboardPullRegistry, logger: KernovaLogger, landed: @escaping @Sendable () -> Void,
-        failed: @escaping @Sendable (WireError) -> Void
+        registry: ClipboardPullRegistry, logger: KernovaLogger, progress: Progress,
+        landed: @escaping @Sendable () -> Void, failed: @escaping @Sendable (WireError) -> Void
     ) {
         token = header.token
         concealed = header.concealed
@@ -141,6 +160,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         self.logger = logger
         self.landed = landed
         self.failed = failed
+        self.progress = progress
     }
 
     // MARK: ClipboardItemPulling
@@ -277,18 +297,58 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     // MARK: Lifecycle
 
     /// Ends the offer here: what landed stays servable, nothing more is pulled, every pull in flight is
-    /// cancelled, and everyone waiting on one hears nil now.
+    /// cancelled, everyone waiting on one hears nil now, and the readout goes without a finish.
     func close() {
-        let (ids, asks, ended) = state.withLock { state -> ([ItemPullID], [Ask], [@Sendable () -> Void]) in
+        let (ids, asks, ended, readout) = state.withLock {
+            state -> ([ItemPullID], [Ask], [@Sendable () -> Void], ClipboardTransferOperation?) in
             state.closed = true
             let pulling = state.pulling.values
             state.pulling = [:]
-            defer { state.endHandlers = [] }
-            return (pulling.compactMap(\.id), pulling.flatMap(\.asks), state.endHandlers)
+            defer {
+                state.endHandlers = []
+                state.readout = nil
+            }
+            return (pulling.compactMap(\.id), pulling.flatMap(\.asks), state.endHandlers, state.readout)
         }
+        readout?.abandon()
         for id in ids { link.cancelPull(id) }
         for ask in asks { ask.completion(nil) }
         for handler in ended { handler() }
+    }
+
+    /// The readout's Cancel: every pull in flight is cancelled and everyone waiting on one hears nil now, but the
+    /// offer stays open, so a later ask pulls again.
+    private func cancelPulls() {
+        let (ids, asks, readout) = state.withLock { state -> ([ItemPullID], [Ask], ClipboardTransferOperation?) in
+            let pulling = state.pulling.values
+            state.pulling = [:]
+            defer { state.readout = nil }
+            return (pulling.compactMap(\.id), pulling.flatMap(\.asks), state.readout)
+        }
+        readout?.finish(.cancelled)
+        for id in ids { link.cancelPull(id) }
+        for ask in asks { ask.completion(nil) }
+    }
+
+    /// A pull's unit on the readout the offer's pulls report on: the one running, or a new one when the last has
+    /// ended.
+    private func readoutUnit(name: String?, expectedBytes: UInt64) -> ClipboardTransferOperation.Unit? {
+        state.withLock { state in
+            if let unit = state.readout?.unit(name: name, expectedBytes: expectedBytes) { return unit }
+            let readout = ClipboardTransferOperation(
+                gesture: progress.gesture, direction: .inbound, peerName: progress.peerName,
+                clock: progress.clock,
+                onCancelRequested: { [weak self] in self?.cancelPulls() },
+                reporter: progress.transfers)
+            state.readout = readout
+            return readout.unit(name: name, expectedBytes: expectedBytes)
+        }
+    }
+
+    /// A pull of the offer ended, reporting on `unit`: the readout ends once no pull has run for its idle gap.
+    private func pullEnded(_ unit: ClipboardTransferOperation.Unit?, landed: Bool) {
+        unit?.ended(succeeded: landed)
+        state.withLock(\.readout)?.finishWhenIdle()
     }
 
     /// Ends the offer here and tells the far side, over the connection it arrived on, that this side pulls
@@ -311,6 +371,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     func ended(_ id: ItemPullID, _ result: ItemPullResult) {
         guard let opened = state.withLock({ $0.opened.removeValue(forKey: id) }) else { return }
         var landed: Landed?
+        defer { pullEnded(opened.unit, landed: landed != nil) }
         switch result {
         case .landed(.named(let name)):
             guard let url = opened.directory?.appendingPathComponent(String(decoding: name, as: UTF8.self)) else {
@@ -386,6 +447,9 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private func start(_ key: Key, _ attempt: UInt64, ceiling: UInt64?) {
         let representation = items[key.item].representations[key.representation]
         let isInline = representation.storage == .inline
+        let unit = readoutUnit(
+            name: representation.name.isEmpty ? nil : String(decoding: representation.name, as: UTF8.self),
+            expectedBytes: representation.sizeEstimate)
         let directory: URL?
         let order: ItemPullOrder
         do {
@@ -405,9 +469,10 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             order = try link.order(
                 token: token, item: UInt32(key.item), representation: UInt32(key.representation),
                 byteCeiling: min(budget.remaining, ceiling ?? .max), landing: landing,
-                budget: budget)
+                budget: budget, progress: unit)
         } catch {
             logger.log(.error, "Cannot land a clipboard pull: \(String(describing: error), privacy: .public)")
+            pullEnded(unit, landed: false)
             return settle(key, attempt, failedWith: nil)
         }
         link.pullItem(order) { [self] result in
@@ -416,13 +481,18 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 let wanted = state.withLock { state -> Bool in
                     guard state.pulling[key]?.attempt == attempt else { return false }
                     state.pulling[key]?.id = id
-                    state.opened[id] = Opened(key: key, attempt: attempt, directory: directory, isInline: isInline)
+                    state.opened[id] = Opened(
+                        key: key, attempt: attempt, directory: directory, isInline: isInline, unit: unit)
                     return true
                 }
-                guard wanted else { return link.cancelPull(id) }
+                guard wanted else {
+                    pullEnded(unit, landed: false)
+                    return link.cancelPull(id)
+                }
                 registry.register(id, self)
             case .failure(let error):
                 logger.log(.notice, "A clipboard pull did not open: \(String(describing: error), privacy: .public)")
+                pullEnded(unit, landed: false)
                 settle(key, attempt, failedWith: error)
             }
         }

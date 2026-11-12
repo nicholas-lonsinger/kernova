@@ -21,6 +21,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaPortableTestSupport
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 import Testing
 
@@ -35,6 +36,9 @@ struct DropReceiverTests {
         let runtime: PeerAgentRuntime
         let hostEvents = Recorder<ItemTransferEvent>()
         let landed = Recorder<[String]>()
+        /// Each report the receiver's transfers published, in order.
+        let reports = Recorder<ClipboardTransferReport>()
+        let transfers: ClipboardTransferReporter
         /// The name of each entry the host was asked to serve, as it was asked.
         let served = Recorder<String>()
         /// While held, each serve waits for `releaseServes()`.
@@ -71,8 +75,13 @@ struct DropReceiverTests {
                 itemEvents: { hostRouter.deliver($0) })
             await harness.attached()
             let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+            let transfers = ClipboardTransferReporter(clock: SteppingClock())
+            self.transfers = transfers
+            let reports = reports
+            await MainActor.run { transfers.onReportChanged = { reports.record($0) } }
             let receiver = DropReceiver(
-                directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger
+                directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger,
+                transfers: transfers, peerName: "Mac", transferClock: SteppingClock()
             ) { names in landed.record(names.map { String(decoding: $0, as: UTF8.self) }) }
             let peerRouter = ItemFeatureRouter<Void>(drop: receiver.owner, logger: Fixture.logger)
             runtime = PeerAgentRuntime(
@@ -207,6 +216,67 @@ struct DropReceiverTests {
         await bench.close()
     }
 
+    @Test("A drop reports on one readout, its bar counting every item's landed bytes, and completes at its release")
+    func reportsOneReadout() async throws {
+        let bench = try await Bench()
+        try bench.write("abc", to: "a.txt")
+        try bench.write("hello", to: "b.txt")
+
+        _ = try await bench.drop(["a.txt", "b.txt"]).get()
+
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
+        var reports = bench.reports.waiter()
+        let ended = await reports.next { if case .finished = $0 { true } else { false } }
+        guard case .finished(let finish) = ended, case .completed(let final) = finish.outcome else {
+            Issue.record("the readout ended \(ended)"); return
+        }
+        #expect(finish.gesture == .drop)
+        #expect(final.fileCount == 2)
+        #expect(final.filesCompleted == 2)
+        #expect(final.bytesTransferred == 8)
+        #expect(final.totalBytes == 8)
+        let operations = Set(
+            bench.reports.elements.compactMap { report -> ClipboardTransferOperationID? in
+                if case .running(let snapshot, _) = report { snapshot.operationID } else { nil }
+            })
+        #expect(operations == [final.operationID])
+        await bench.close()
+    }
+
+    @Test("The readout's Cancel refuses the drop CANCELLED mid-pull, landing nothing more")
+    func cancelRefusesTheDrop() async throws {
+        let bench = try await Bench(holdingServes: true)
+        try bench.write("a", to: "a.txt")
+        try bench.write("b", to: "b.txt")
+        _ = try await bench.drop(["a.txt", "b.txt"]).get()
+        var served = bench.served.waiter()
+        _ = await served.next { _ in true }
+        var reports = bench.reports.waiter()
+        let running = await reports.next { if case .running = $0 { true } else { false } }
+        guard case .running(let readout, _) = running else { return }
+        #expect(readout.isCancellable)
+        #expect(readout.fileCount == 2)
+
+        let transfers = bench.transfers
+        #expect(await MainActor.run { transfers.cancel(readout.operationID) })
+
+        guard case .resetByPeer(let error) = await bench.offerEnd() else {
+            Issue.record("the drop ended otherwise"); return
+        }
+        #expect(error.code == .cancelled)
+        let ended = await reports.next { if case .finished = $0 { true } else { false } }
+        guard case .finished(let finish) = ended, case .cancelled = finish.outcome else {
+            Issue.record("the readout ended \(ended)"); return
+        }
+        bench.releaseServes()
+        await bench.harness.settled()
+        await flush(bench.runtime.queue)
+        #expect(bench.landed.elements.isEmpty)
+        #expect(bench.read("a.txt") == nil)
+        #expect(bench.served.elements == ["a.txt"])
+        await bench.close()
+    }
+
     @Test("A drop the host withdraws mid-drop lands nothing more and reveals nothing")
     func withdrawnDropStops() async throws {
         let bench = try await Bench(holdingServes: true)
@@ -228,6 +298,27 @@ struct DropReceiverTests {
         #expect(bench.read("a.txt") == nil)
         #expect(bench.served.elements == ["a.txt"])
         await bench.close()
+    }
+}
+
+/// A clock each reading of which is a second past the last, so a readout is past its reveal gate at its first
+/// event; nothing it schedules comes due within a test.
+private final class SteppingClock: EngineClock {
+    private let readings = Locked<UInt64>(0)
+
+    var now: EngineInstant {
+        EngineInstant(
+            nanoseconds: readings.withLock {
+                $0 += 1
+                return $0 * 1_000_000_000
+            })
+    }
+
+    /// Returns only once the task is cancelled.
+    func sleep(for interval: TimeInterval) async throws {
+        for await _ in AsyncStream<Void>(unfolding: { nil }) {}
+        try Task.checkCancellation()
+        throw CancellationError()
     }
 }
 #endif

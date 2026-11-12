@@ -1,4 +1,9 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
+
 import KernovaLogging
 
 /// One peer's clipboard transfer state, as every surface renders it — the host
@@ -18,11 +23,9 @@ import KernovaLogging
 /// once; the running operation's next emission takes the readout back. When that
 /// operation then ends, its terminal clears the refusal only where it disproves
 /// it: a completion answers the failures that stood before it began, which is
-/// what lets a retry clear the line it is retrying, and nothing a gesture the
-/// *peer* made ends with — completion, cancellation, or a refusal of its own —
-/// clears a refusal this side's user is owed.
+/// what lets a retry clear the line it is retrying.
 ///
-/// Not `@Observable` — KernovaKit deploys to macOS 12, which has no Observation.
+/// Not `@Observable` — the guest agent deploys to macOS 12, which has no Observation.
 /// It notifies through ``onReportChanged`` instead, and the host mirrors that
 /// into an observed property on `VMInstance`.
 @MainActor
@@ -184,12 +187,12 @@ public final class ClipboardTransferReporter {
         record(finish, startedAt: nil)
     }
 
-    /// Records that `gesture`, begun at `startedAt`, delivered everything it
+    /// Records that a gesture begun at `startedAt` delivered everything it
     /// asked for with no readout to dwell on: it clears the refusal a
     /// completion of it would displace.
-    public func completed(_ gesture: ClipboardTransferGesture, startedAt: Date) {
+    public func completed(startedAt: Date) {
         guard let standing = lastFinish, standing.failure != nil,
-            !Self.keeps(standing, against: gesture, failed: false, startedAt: startedAt)
+            !Self.keeps(standing, failed: false, startedAt: startedAt)
         else { return }
         clearFinished()
     }
@@ -249,15 +252,15 @@ public final class ClipboardTransferReporter {
     /// announced in between is a later one, so its repeat is announced again.
     ///
     /// `startedAt` is when the finishing operation began, for the finishes that
-    /// must not install themselves over a standing refusal — either because they
-    /// disprove nothing about it, or because they are not the same user's news.
+    /// must not install themselves over a standing refusal because they disprove
+    /// nothing about it.
     private func record(_ finish: ClipboardTransferFinish, startedAt: Date?) {
         if absorbsRepeats, let standing = lastFinish, standing.isSameNews(as: finish) {
             recompute()
             return
         }
         if let standing = lastFinish, standing.failure != nil,
-            Self.keeps(standing, against: finish.gesture, failed: finish.failure != nil, startedAt: startedAt)
+            Self.keeps(standing, failed: finish.failure != nil, startedAt: startedAt)
         {
             recompute()
             return
@@ -265,28 +268,19 @@ public final class ClipboardTransferReporter {
         lastFinish = finish
         absorbsRepeats = true
         failureAwaitsDisplacement = finish.failure != nil
-        if let line = finish.logLine, finish.gesture.isMadeHere {
+        if let line = finish.logLine {
             Self.logger.log(.notice, "\(line, privacy: .public)")
         }
         recompute()
     }
 
-    /// Whether the refusal `standing` stands over a finish of `gesture` —
-    /// `failed` or not, by an operation begun at `startedAt` when it ran one.
-    private static func keeps(
-        _ standing: ClipboardTransferFinish, against gesture: ClipboardTransferGesture, failed: Bool,
-        startedAt: Date?
-    ) -> Bool {
-        // A gesture the peer made answers the peer's user, so nothing it ends
-        // with disproves what this side's user is owed — including a refusal
-        // of its own, which the surfaces that interrupt would not present
-        // here anyway.
-        let answersTheOtherUser = !gesture.isMadeHere && standing.gesture.isMadeHere
+    /// Whether the refusal `standing` stands over a finish — `failed` or not, by
+    /// an operation begun at `startedAt` when it ran one.
+    private static func keeps(_ standing: ClipboardTransferFinish, failed: Bool, startedAt: Date?) -> Bool {
         // Running to the end says nothing about a transfer that failed
         // alongside; a refusal older than the operation is one the operation
         // retried, so that one is cleared.
-        let raisedDuringTheOperation = !failed && (startedAt.map { standing.date >= $0 } ?? false)
-        return answersTheOtherUser || raisedDuringTheOperation
+        !failed && (startedAt.map { standing.date >= $0 } ?? false)
     }
 
     /// The one running readout every surface shows.

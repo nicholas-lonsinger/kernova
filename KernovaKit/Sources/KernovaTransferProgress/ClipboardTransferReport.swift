@@ -1,13 +1,14 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// The user action a transfer serves, from the reporting side's point of view.
 public enum ClipboardTransferGesture: Equatable, Sendable {
     /// This side's user pasted the peer's offer — a pasteboard promise firing and
     /// pulling the bytes it advertised.
     case paste
-    /// The peer's user pasted and this side serves the pull. The app pasted into
-    /// sits blocked until the bytes land.
-    case peerPaste
     /// This side's clipboard window is filling in a preview of the peer's offer.
     case preview
     /// The guest's clipboard written to the Mac's — Copy Guest Clipboard to Mac,
@@ -23,31 +24,20 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// host receives.
     case dragOut
 
-    /// Whether the user owed the message is on this side.
-    ///
-    /// A refusal is reported on the side that made the gesture, so this is
-    /// everything but `peerPaste`, which refuses the *peer* user's paste and is
-    /// theirs to be told about.
-    public var isMadeHere: Bool { self != .peerPaste }
-
     /// Whether someone is waiting in front of a screen for this gesture to end,
     /// which is what earns its readout the callout that shows by itself.
     ///
-    /// A peer's paste holds the app it is pasting into; a drop or a drag out
-    /// leaves the files missing where the user put them until it lands. The rest
-    /// run behind whatever the user is doing.
-    public var isAwaited: Bool { self == .peerPaste || self == .drop || self == .dragOut }
+    /// A drop or a drag out leaves the files missing where the user put them
+    /// until it lands. The rest run behind whatever the user is doing.
+    public var isAwaited: Bool { self == .drop || self == .dragOut }
 
     /// Which of several concurrent readouts a single-value surface shows —
     /// higher wins, ties settled by which opened its bar last.
     ///
-    /// The order ``isAwaited`` implies, with the paste that holds an app ahead
-    /// of the drop or drag whose files have not landed yet: a drop started
-    /// mid-paste never takes the bar off the transfer someone is sitting in
-    /// front of, and a preview fetch never takes it off either.
+    /// The order ``isAwaited`` implies: a paste or a preview fetch never takes
+    /// the bar off the drop or drag whose files have not landed yet.
     public var readoutRank: Int {
         switch self {
-        case .peerPaste: 2
         case .drop, .dragOut: 1
         case .paste, .preview, .copy, .forward, .send: 0
         }
@@ -64,7 +54,7 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// when it could be read.
     case diskFull(needed: UInt64?, available: Int64?)
     /// Over the transfer ceiling in force when the refusal was raised — the copy
-    /// budget under `.copy`, the peer's paste cap under `.peerPaste`.
+    /// budget under `.copy`.
     case tooLarge(limitBytes: Int)
     /// The peer reported a failure of its own.
     case peerReported(ClipboardErrorCode)

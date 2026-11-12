@@ -1,5 +1,6 @@
 import AppKit
 import KernovaKit
+import KernovaTransferProgress
 
 /// The live readout of a transfer running in the background, laid out for the
 /// status item's dropdown or its callout.

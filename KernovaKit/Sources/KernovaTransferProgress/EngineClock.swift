@@ -1,10 +1,13 @@
-import Darwin
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
+
+import CKernovaShims
 
 /// A point on the one timeline every `EngineClock` reads: nanoseconds of
-/// Darwin's `CLOCK_MONOTONIC`.
-///
-/// Darwin's `CLOCK_MONOTONIC` advances across system sleep (unlike Linux's),
+/// `kernova_monotonic_nanoseconds()`, which advances across system sleep,
 /// matching `ContinuousClock`; `CLOCK_UPTIME_RAW`/`mach_absolute_time` do not.
 /// Concrete rather than per-conformance so a holder stores `any EngineClock`,
 /// and every conformance — a manually advanced test clock included — measures
@@ -33,7 +36,7 @@ public struct EngineInstant: Comparable, Sendable {
 
     /// The current reading of the shared timeline.
     static var now: EngineInstant {
-        EngineInstant(nanoseconds: clock_gettime_nsec_np(CLOCK_MONOTONIC))
+        EngineInstant(nanoseconds: kernova_monotonic_nanoseconds())
     }
 }
 
@@ -99,8 +102,8 @@ extension EngineClock {
     }
 }
 
-/// The platform-default engine clock — `ContinuousClock` on macOS 13+,
-/// `CLOCK_MONOTONIC` below.
+/// The platform-default engine clock — `ContinuousClock` on macOS 13+ and
+/// off Apple platforms, the shared timeline's slices on macOS 12.
 ///
 /// The one clock-selection `#available` in production code.
 public func makePlatformEngineClock() -> any EngineClock {
@@ -137,7 +140,7 @@ public struct MonotonicEngineClock: EngineClock {
     /// The current reading of the shared timeline.
     public var now: EngineInstant { .now }
 
-    /// Suspends until `interval` seconds of `CLOCK_MONOTONIC` time have passed.
+    /// Suspends until `interval` seconds of the shared timeline have passed.
     ///
     /// `Task.sleep(nanoseconds:)` counts uptime and freezes across system
     /// sleep, so a single call would violate this protocol's counts-time-asleep

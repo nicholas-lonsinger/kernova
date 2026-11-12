@@ -5,6 +5,7 @@ import Testing
 
 @testable import KernovaAppKitShared
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for how the presenter drives the status item's callout slot.
 @Suite("ClipboardProgressStatusItemPresenter", .caseScoped)
@@ -88,7 +89,7 @@ struct ClipboardProgressStatusItemPresenterTests {
             ClipboardProgressSnapshot(
                 direction: .outbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
                 fileCount: 1, bytesTransferred: 100, totalBytes: 1_000, bytesPerSecond: 100,
-                secondsRemaining: 10, gesture: .peerPaste, elapsedSeconds: elapsed,
+                secondsRemaining: 10, gesture: .drop, elapsedSeconds: elapsed,
                 isCancellable: true, operationID: operation),
             since: Date())
     }

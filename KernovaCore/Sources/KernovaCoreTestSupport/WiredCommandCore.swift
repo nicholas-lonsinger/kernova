@@ -3,6 +3,7 @@ import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport

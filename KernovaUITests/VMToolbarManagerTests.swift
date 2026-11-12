@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaKit
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 import Testing
 

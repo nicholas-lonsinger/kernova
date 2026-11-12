@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// Handle to a recurring observation started by ``observeRecurring(track:apply:)``.
 ///

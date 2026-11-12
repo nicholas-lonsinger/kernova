@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// The sentences one refused clipboard or drop transfer is rendered with,
 /// derived once from the failure and the gesture that produced it.
@@ -396,7 +397,6 @@ package struct ClipboardTransferWording: Equatable {
         case .forward, .send: return "Clipboard not copied to \(vm)."
         case .drop: return "Files not copied to \(vm)."
         case .dragOut: return "Files not copied from \(vm)."
-        case .peerPaste: return "Clipboard not pasted into \(vm)."
         case .paste: return "Clipboard not pasted from \(vm)."
         }
     }
@@ -453,7 +453,7 @@ package struct ClipboardTransferWording: Equatable {
         case .drop: "the drop"
         case .dragOut: "the drag"
         case .copy, .forward, .send: "the copy"
-        case .paste, .peerPaste, .preview: "the paste"
+        case .paste, .preview: "the paste"
         }
     }
 
@@ -484,7 +484,7 @@ extension ClipboardTransferGesture {
     /// them — rather than in the VM.
     fileprivate var readsOnThisMac: Bool {
         switch self {
-        case .drop, .forward, .send, .peerPaste: true
+        case .drop, .forward, .send: true
         case .paste, .preview, .copy, .dragOut: false
         }
     }

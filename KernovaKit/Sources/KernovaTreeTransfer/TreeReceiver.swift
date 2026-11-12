@@ -38,6 +38,12 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     /// The name the item is created under: in the destination until it is published, or its exact path.
     public var stagingName: [UInt8] { writer.stagingName }
 
+    /// The logical bytes landed so far, the unit of the container's `EndRecord.bytes`.
+    public var landedByteCount: UInt64 { writer.landedByteCount }
+
+    /// The bytes the entries landed so far declare their chunks carry.
+    public var declaredByteCount: UInt64 { writer.declaredByteCount }
+
     /// A receiver landing what `acceptance` admits in `destination`, as the item `name`.
     ///
     /// - Parameters:

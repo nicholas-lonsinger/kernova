@@ -1,6 +1,7 @@
 import AppKit
 import KernovaCore
 import KernovaKit
+import KernovaTransferProgress
 
 /// One row of the status-item dropdown's VM section.
 struct StatusMenuVMRow: Equatable {

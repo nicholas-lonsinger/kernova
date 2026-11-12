@@ -10,6 +10,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaLogging
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// This process's v2 peer: its claim, its connection to the host through `PeerAgentRuntime`, its power adapter
@@ -22,6 +23,9 @@ import KernovaWire
 public final class MacAgentPeer: Sendable {
     /// The status a peer exits with to relaunch.
     public static let relaunchStatus: Int32 = 75
+
+    /// What a guest's readouts call the host they receive from.
+    public static let hostName = "Mac"
 
     /// The lander of the macOS agent's payloads: the app bundle, an update's checked against the running agent's
     /// launch requirement and then self-tested through its executable.
@@ -43,12 +47,14 @@ public final class MacAgentPeer: Sendable {
 
     /// The peer of `role`, labelled `label`, its records forwarded through `logs`. It dials once
     /// `setPeerState(_:)` gives it a session to serve, or at once with `state`. A session peer lands what the
-    /// host drops in the user's Downloads folder and hands each drop's items to `revealDrop`, and serves the
+    /// host drops in the user's Downloads folder, reporting each drop to `transfers`, and hands each drop's items
+    /// to `revealDrop`, and serves the
     /// other item features `owners` builds owners for, each calling into the connection through the calls it
     /// is handed. Each change of ``hostConnection`` reaches `hostConnectionChanged`, on the runtime's queue.
     /// It reaches the host through `dialer`.
     public init(
         role: PeerRole, label: String, logs: LogForwarding, state: PeerSessionState?, dialer: any TransportDialer,
+        transfers: ClipboardTransferReporter = ClipboardTransferReporter(),
         hostConnectionChanged: @escaping @Sendable (HostConnectionState) -> Void = { _ in },
         revealDrop: @escaping @Sendable ([URL]) -> Void = { _ in },
         owners: (PeerItemCalls) -> ItemFeatureOwners = { _ in ItemFeatureOwners() }
@@ -66,7 +72,8 @@ public final class MacAgentPeer: Sendable {
         self.power = power
         // A system peer serves no items: `ItemFeatureAvailability.advertised(by:)` says why.
         let built = role == .sessionPeer ? owners(calls) : ItemFeatureOwners()
-        let drop = role == .sessionPeer ? Self.dropReceiver(sink: sink, reveal: revealDrop) : nil
+        let drop =
+            role == .sessionPeer ? Self.dropReceiver(sink: sink, transfers: transfers, reveal: revealDrop) : nil
         let itemLogger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "ItemSource")
         let itemRouter = ItemFeatureRouter<Void>(
             clipboard: built.clipboard, drop: drop?.owner, drag: built.drag, logger: itemLogger)
@@ -148,16 +155,18 @@ public final class MacAgentPeer: Sendable {
     }
 
     /// DROP's receiver: it lands each drop in the user's Downloads folder, which the agent, unsandboxed, reads
-    /// as the real one, and hands what landed to `reveal`.
+    /// as the real one, reports it to `transfers`, and hands what landed to `reveal`.
     private static func dropReceiver(
-        sink: ItemSinkAdapter<POSIXTreeFileSystem>, reveal: @escaping @Sendable ([URL]) -> Void
+        sink: ItemSinkAdapter<POSIXTreeFileSystem>, transfers: ClipboardTransferReporter,
+        reveal: @escaping @Sendable ([URL]) -> Void
     ) -> DropReceiver<POSIXTreeFileSystem> {
         let downloads =
             FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads", isDirectory: true)
         return DropReceiver(
             directory: downloads.path, sink: sink,
-            logger: KernovaLogger(subsystem: "app.kernova.macosagent", category: "Drop")
+            logger: KernovaLogger(subsystem: "app.kernova.macosagent", category: "Drop"), transfers: transfers,
+            peerName: hostName
         ) { names in
             reveal(
                 names.map { name in
@@ -311,11 +320,11 @@ public final class PeerItemCalls: Sendable {
     /// ``ItemSinkAdapter/order(token:item:representation:byteCeiling:landing:budget:)`` builds it.
     public func order(
         token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
-        budget: ByteBudget?
+        budget: ByteBudget?, progress: (any ItemLandingProgress)?
     ) throws(WireError) -> ItemPullOrder {
         try sink.order(
             token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
-            budget: budget)
+            budget: budget, progress: progress)
     }
 }
 

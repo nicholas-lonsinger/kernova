@@ -7,6 +7,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 
 /// The VM display's current hosting location.
@@ -498,12 +499,13 @@ package final class VMInstance {
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
         self.itemSink = itemSink
-        let hubClipboard = HubClipboardService(
-            sink: itemSink, stagingRoot: stagingRoot,
-            stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes })
-        self.hubClipboard = hubClipboard
         let clipboardTransfers = ClipboardTransferReporter()
         self.clipboardTransfers = clipboardTransfers
+        let hubClipboard = HubClipboardService(
+            sink: itemSink, stagingRoot: stagingRoot,
+            stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes },
+            reporter: clipboardTransfers, label: { [snapshots] in snapshots.instance?.name ?? "VM" })
+        self.hubClipboard = hubClipboard
         let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService
         let dragOut = HubDragOut(sink: itemSink, reporter: clipboardTransfers) { [snapshots] in
@@ -544,7 +546,6 @@ package final class VMInstance {
     private func wireHubClipboard() {
         let publisher = hostClipboardPublisher
         hubClipboard.hub = agentHub
-        hubClipboard.reporter = clipboardTransfers
         publisher.onPasteRefused = { [weak self] in
             guard let self else { return }
             Self.logger.log(
@@ -554,7 +555,6 @@ package final class VMInstance {
             clipboardTransfers.finish(
                 ClipboardTransferFinish(gesture: .paste, outcome: .failed(.transferFailed), peerName: name))
         }
-        hubClipboard.label = { [weak self] in self?.name ?? "VM" }
         hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0, withdrawing: $1) }
         hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
         hubClipboard.passthroughRuns = { [weak self] in

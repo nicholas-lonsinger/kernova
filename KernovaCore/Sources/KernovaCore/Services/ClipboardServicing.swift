@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 import KernovaWire
 
 /// Common surface shared by every clipboard transport.

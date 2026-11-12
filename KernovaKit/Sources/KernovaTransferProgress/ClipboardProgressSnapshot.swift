@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// One clipboard operation's aggregate transfer progress — the single value every
 /// Kernova progress surface renders.

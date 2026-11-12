@@ -8,6 +8,7 @@ import KernovaItemTransfer
 import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 import Testing
 
@@ -290,6 +291,76 @@ struct GuestClipboardTests {
         #expect(
             AgentMenuText.clipboardLine(clipboard.activity)
                 == "Clipboard: too large to paste — over the \(ClipboardPasteLimit.displayLimit(limit)) transfer limit")
+    }
+
+    @Test("A paste of the host's files reports on one readout, whose Cancel stops every pull and keeps the offer")
+    func pasteReportsOneReadout() async throws {
+        let pasteboard = FakePasteboard()
+        // The dwell never passes, so the readout's end stands for the whole test.
+        let transfers = ClipboardTransferReporter(clock: GatedEngineClock())
+        let reports = Locked<[ClipboardTransferReport]>([])
+        let reported = AsyncGate()
+        transfers.onReportChanged = { report in
+            reports.withLock { $0.append(report) }
+            reported.notify()
+        }
+        let clock = GatedEngineClock()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, transfers: transfers, transferClock: clock)
+        let items = ["a.bin", "b.bin"].map { name -> OfferedItem in
+            var item = OfferedItem()
+            var representation = Representation()
+            representation.type = TypeDescriptor(appleUTI: "public.data")
+            representation.storage = .file
+            representation.name = Data(name.utf8)
+            representation.sizeEstimate = 100
+            item.representations = [representation]
+            return item
+        }
+        let link = RecordingLink(items: items, sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        clipboard.setLink(link)
+        clipboard.exchange.handle(
+            .offerReceived(
+                ItemSetHeaderValue(
+                    feature: .clipboard, token: Data(repeating: 9, count: 16), concealed: false, count: 2)),
+            on: link)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
+
+        let first = Task.detached { pasteboard.invokeProvider(forType: .fileURL, itemIndex: 0) }
+        let second = Task.detached { pasteboard.invokeProvider(forType: .fileURL, itemIndex: 1) }
+        try await link.changed.wait { link.opened.count == 2 }
+        clock.advance(seconds: 1)
+        link.pulls[0].order.progress?.advanced(landed: 40, declared: 100)
+        link.pulls[1].order.progress?.advanced(landed: 60, declared: 100)
+
+        func running() -> ClipboardProgressSnapshot? {
+            guard case .running(let snapshot, _)? = reports.withLock({ $0.last }) else { return nil }
+            return snapshot
+        }
+        try await reported.wait { running()?.bytesTransferred == 100 }
+        let readout = try #require(running())
+        #expect(readout.totalBytes == 200)
+        #expect(readout.fileCount == 2)
+        #expect(readout.gesture == .paste)
+        #expect(readout.peerName == "Mac")
+
+        #expect(transfers.cancel(readout.operationID))
+        #expect(await first.value == nil)
+        #expect(await second.value == nil)
+        #expect(Set(link.cancelled) == Set(link.opened))
+        guard case .finished(let finish)? = reports.withLock({ $0.last }), case .cancelled = finish.outcome else {
+            Issue.record("the readout ended \(reports.withLock { $0 })"); return
+        }
+
+        // The offer stays open: the next paste pulls again, on a readout of its own.
+        let again = Task.detached { pasteboard.invokeProvider(forType: .fileURL, itemIndex: 0) }
+        try await link.changed.wait { link.opened.count == 3 }
+        clock.advance(seconds: 1)
+        link.pulls[2].order.progress?.advanced(landed: 10, declared: 100)
+        try await reported.wait { running() != nil }
+        #expect(running()?.operationID != readout.operationID)
+        clipboard.exchange.pullEnded(link.opened[2], .failed(WireError(.readFailed)))
+        #expect(await again.value == nil)
     }
 
     @Test("A paste of the host's concealed text lands it in memory, creating nothing under the staging root")

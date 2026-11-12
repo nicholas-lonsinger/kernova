@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for `ClipboardProgressFormat` — the wording the host app and the guest
 /// agent both render for a clipboard transfer (#643, #652).
@@ -13,7 +14,7 @@ struct ClipboardProgressFormatTests {
         direction: ClipboardProgressSnapshot.Direction = .outbound, peerName: String = "VM",
         currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
         bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000,
-        gesture: ClipboardTransferGesture = .peerPaste, pendingBehind: Int = 0
+        gesture: ClipboardTransferGesture = .paste, pendingBehind: Int = 0
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
             direction: direction, peerName: peerName, currentItemName: currentItemName,
@@ -25,13 +26,6 @@ struct ClipboardProgressFormatTests {
 
     @Test("the headline names the peer in quotes and says what is happening")
     func headlineNamesPeer() {
-        // A paste is named as such: the bytes are leaving for an app on the other
-        // machine that is blocked until they land, which is the whole reason the
-        // readout interrupted.
-        #expect(
-            ClipboardProgressFormat.headline(
-                direction: .outbound, peerName: "macOS TEST", gesture: .peerPaste)
-                == "Pasting into “macOS TEST”…")
         #expect(
             ClipboardProgressFormat.headline(
                 direction: .outbound, peerName: "macOS TEST", gesture: .paste)
@@ -131,13 +125,13 @@ struct ClipboardProgressFormatTests {
     func summaryMultipleItems() {
         let snapshot = Self.snapshot(
             currentItemName: "big.mov", filesCompleted: 1, fileCount: 5, bytesTransferred: 500)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting into “VM”… — 50% — 2 of 5")
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Sending to “VM”… — 50% — 2 of 5")
     }
 
     @Test("the summary falls back to the file's name for a single-file paste")
     func summarySingleItem() {
         let snapshot = Self.snapshot(currentItemName: "big.mov", bytesTransferred: 250)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting into “VM”… — 25% — big.mov")
+        #expect(ClipboardProgressFormat.summary(snapshot) == "Sending to “VM”… — 25% — big.mov")
     }
 
     @Test("the summary carries the direction for a transfer that is not a paste")

@@ -70,6 +70,9 @@ public struct ContainerDecoder {
     /// The input bytes held and not yet decoded.
     public var bufferedByteCount: Int { buffer.count }
 
+    /// The bytes the entries decoded so far declare their chunks carry: `TreeEventSequence.declaredBytes`.
+    public var declaredByteCount: UInt64 { grammar.sequence.declaredBytes }
+
     /// Takes the container's next bytes.
     ///
     /// - Parameter bytes: The bytes following those fed before.

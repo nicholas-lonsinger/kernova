@@ -13,6 +13,7 @@ import Foundation
 #endif
 import KernovaAgentCore
 import KernovaAgentRuntime
+import KernovaContainer
 import KernovaContainerPipeline
 import KernovaFileTree
 import KernovaItemTransfer
@@ -194,6 +195,56 @@ struct ItemAdapterTests {
         sink.discardForTermination()
 
         #expect(try bench.names("landed").isEmpty, "discardForTermination returned with a landing still on disk")
+    }
+
+    @Test(
+        "the sink reports the logical bytes it landed as it lands them, ending at the content's size",
+        arguments: [Representation.Storage.file, .folder, .inline], [0, 2])
+    func reportsLogicalBytes(_ storage: Representation.Storage, decodingWorkers: Int) async throws {
+        let bench = try Bench()
+        // Compressible past one chunk, with one whole chunk of zeros, so LZ4 blocks and a zero run both land.
+        let big = Data(
+            (0..<700_000).map {
+                (ContainerEncoder.chunkByteCount..<2 * ContainerEncoder.chunkByteCount).contains($0)
+                    ? 0 : UInt8(truncatingIfNeeded: $0 / 7)
+            })
+        let content: ItemContent
+        let landing: ItemLanding
+        let size: UInt64
+        switch storage {
+        case .folder:
+            try bench.write(Data("a".utf8), to: "source/Folder/a.txt")
+            try bench.write(big, to: "source/Folder/sub/b.bin")
+            content = .tree(path: bench.path("source/Folder"))
+            landing = .staged(directory: bench.path("landed"), name: .exactly(Data("Folder".utf8)))
+            size = 700_001
+        case .inline:
+            content = .inline(big)
+            landing = .memory
+            size = 700_000
+        default:
+            try bench.write(big, to: "source/b.bin")
+            content = .tree(path: bench.path("source/b.bin"))
+            landing = .staged(directory: bench.path("landed"), name: .exactly(Data("b.bin".utf8)))
+            size = 700_000
+        }
+        let progress = LandingRecord()
+        let consumed = Locked(0)
+
+        let result = try await bench.transfer(
+            content, storage, landing, decodingWorkers: decodingWorkers, progress: progress, consumed: consumed)
+
+        guard case .published? = result else {
+            Issue.record("\(String(describing: result))")
+            return
+        }
+        let reports = progress.reports
+        #expect(reports.last?.landed == size)
+        #expect(reports.last?.declared == size)
+        #expect(reports.allSatisfy { $0.landed <= $0.declared })
+        #expect(zip(reports, reports.dropFirst()).allSatisfy { $0.landed <= $1.landed && $0.declared <= $1.declared })
+        // The stream's credit counts the container's compressed bytes, a different unit.
+        #expect(UInt64(consumed.withLock { $0 }) < size)
     }
 
     @Test("a pull begun after a termination discard opens nothing")
@@ -533,6 +584,17 @@ struct ItemAdapterTests {
 }
 
 /// A scratch directory, and a source and a sink moving one pull through it.
+/// Every report a pull's landing made, in order.
+final class LandingRecord: ItemLandingProgress {
+    private let all = Locked<[(landed: UInt64, declared: UInt64)]>([])
+
+    var reports: [(landed: UInt64, declared: UInt64)] { all.withLock { $0 } }
+
+    func advanced(landed: UInt64, declared: UInt64) {
+        all.withLock { $0.append((landed, declared)) }
+    }
+}
+
 final class Bench: Sendable {
     static let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
     /// A logger that records nothing.
@@ -571,7 +633,8 @@ final class Bench: Sendable {
     /// The sink accepts `sinkByteCeiling` bytes, by default what the source is asked for.
     func transfer(
         _ content: ItemContent, _ storage: Representation.Storage, _ landing: ItemLanding,
-        servedBy server: PeerRole = .sessionPeer, sinkByteCeiling: UInt64 = 1 << 30, budget: ByteBudget? = nil
+        servedBy server: PeerRole = .sessionPeer, sinkByteCeiling: UInt64 = 1 << 30, budget: ByteBudget? = nil,
+        decodingWorkers: Int = 2, progress: (any ItemLandingProgress)? = nil, consumed: Locked<Int>? = nil
     ) async throws -> ItemSinkInput? {
         if case .staged(let directory, _) = landing {
             try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -580,12 +643,12 @@ final class Bench: Sendable {
         let source = ItemSourceAdapter(fileSystem: fileSystem, sendingCores: 8, logger: Self.logger) { _, _, _, _ in
             .success(content)
         }
-        let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: 2)
+        let sink = ItemSinkAdapter(fileSystem: fileSystem, decodingWorkers: decodingWorkers)
         let order = try sink.order(
             token: Data(count: 16), item: 0, representation: 0, byteCeiling: 1 << 30, landing: landing)
         let sinkOrder = try sink.order(
             token: Data(count: 16), item: 0, representation: 0, byteCeiling: sinkByteCeiling, landing: landing,
-            budget: budget)
+            budget: budget, progress: progress)
         var representation = Representation()
         representation.storage = storage
         let puller: PeerRole = server == .host ? .sessionPeer : .host
@@ -602,7 +665,8 @@ final class Bench: Sendable {
             case .bytes(_, let bytes)?:
                 sink.handle(.bytes(Self.id, bytes), reporter: sinkReporter)
                 let report = await sinks.next()
-                guard case .consumed? = report else { return report }
+                guard case .consumed(_, let count)? = report else { return report }
+                consumed?.withLock { $0 += count }
             case .finished?:
                 break reading
             default:

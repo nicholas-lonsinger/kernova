@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentCore
+import KernovaTransferProgress
 import Synchronization
 import KernovaKit
 import KernovaLogging
@@ -102,10 +103,10 @@ package protocol GuestDragTransport: AnyObject {
     func cancel()
 
     /// Pulls `item`, item `index` of the taken offer, to exactly
-    /// `destination`, calling `ended` once with how the pull ended, and
-    /// returns what cancels it.
+    /// `destination`, its landing reporting to `progress`, calling `ended`
+    /// once with how the pull ended, and returns what cancels it.
     func pull(
-        _ item: DraggedOutItem, at index: Int, to destination: URL,
+        _ item: DraggedOutItem, at index: Int, to destination: URL, progress: (any ItemLandingProgress)?,
         ended: @escaping @MainActor (Result<Void, WireError>) -> Void
     ) -> @MainActor () -> Void
 
@@ -1001,26 +1002,24 @@ package final class GuestDragTake: GuestDragTaking {
     }
 
     private func pull(_ index: Int, to destination: URL, _ completion: @escaping @Sendable ((any Error)?) -> Void) {
-        let operation = liveReadout()
         guard offerOpen, let item = source(of: index) else {
             let failure = ClipboardTransferFailure.peerReported(.dragItemUnavailable)
-            operation.unitBegan(id: UInt64(index), expectedBytes: 0, name: items[index].filename)
-            operation.unitFailed(id: UInt64(index), failure)
+            readoutUnit(name: items[index].filename, expectedBytes: 0)?.failed(failure)
             endWrites(failure)
             return completion(GuestDragWriteError.failed(failure))
         }
-        operation.unitBegan(id: UInt64(index), expectedBytes: item.sizeEstimate, name: item.filename)
+        let unit = readoutUnit(name: item.filename, expectedBytes: item.sizeEstimate)
         var ended = false
-        let cancel = transport.pull(item, at: index, to: destination) { [weak self] result in
+        let cancel = transport.pull(item, at: index, to: destination, progress: unit) { [weak self] result in
             ended = true
-            self?.endWrite(index, result, operation: operation, completion)
+            self?.endWrite(index, result, unit: unit, completion)
         }
         // A pull refused before it opened has already ended.
         if !ended { inFlight[index] = cancel }
     }
 
     private func endWrite(
-        _ index: Int, _ result: Result<Void, WireError>, operation: ClipboardTransferOperation,
+        _ index: Int, _ result: Result<Void, WireError>, unit: ClipboardTransferOperation.Unit?,
         _ completion: @escaping @Sendable ((any Error)?) -> Void
     ) {
         inFlight[index] = nil
@@ -1028,12 +1027,12 @@ package final class GuestDragTake: GuestDragTaking {
         switch result {
         case .success:
             written.insert(index)
-            operation.unitEnded(id: UInt64(index), succeeded: true)
-            if written.count == items.count { operation.finish(.completed) } else { operation.finishWhenIdle() }
+            unit?.ended(succeeded: true)
+            if written.count == items.count { readout?.finish(.completed) } else { readout?.finishWhenIdle() }
             completion(nil)
         case .failure(let error):
+            unit?.ended(succeeded: false)
             if let terminal {
-                operation.unitEnded(id: UInt64(index), succeeded: false)
                 return completion(Self.error(for: terminal))
             }
             let failure = Self.failure(for: error, owed: items.count - written.count)
@@ -1041,7 +1040,7 @@ package final class GuestDragTake: GuestDragTaking {
                 .error,
                 "Could not write dragged item \(index, privacy: .public) from '\(self.peerName, privacy: .public)': \(String(describing: error.code), privacy: .public) \(error.debugDetail, privacy: .public)"
             )
-            operation.unitFailed(id: UInt64(index), failure)
+            unit?.failed(failure)
             endWrites(failure)
             completion(GuestDragWriteError.failed(failure))
         }
@@ -1051,7 +1050,9 @@ package final class GuestDragTake: GuestDragTaking {
     private func endWrites(_ failure: ClipboardTransferFailure) {
         guard terminal == nil else { return }
         terminal = .failed(failure)
-        liveReadout().finish(.failed(failure))
+        // A refusal is owed an answer whether or not a readout is running.
+        let operation = readout.flatMap { $0.isLive ? $0 : nil } ?? newReadout()
+        operation.finish(.failed(failure))
         for cancel in inFlight.values { cancel() }
         failOwed()
     }
@@ -1074,11 +1075,16 @@ package final class GuestDragTake: GuestDragTaking {
         for write in waiting.values { write.completion(Self.error(for: terminal)) }
     }
 
-    /// The readout the writes report on — the one running, or a new one when
-    /// the last has ended — sized by the delivered items when there are any,
-    /// and counting files alone unless every item has a size.
-    private func liveReadout() -> ClipboardTransferOperation {
-        if let readout, readout.isLive { return readout }
+    /// A write's unit on the readout the writes report on — the one running,
+    /// or a new one when the last has ended.
+    private func readoutUnit(name: String, expectedBytes: UInt64) -> ClipboardTransferOperation.Unit? {
+        if let unit = readout?.unit(name: name, expectedBytes: expectedBytes) { return unit }
+        return newReadout().unit(name: name, expectedBytes: expectedBytes)
+    }
+
+    /// A new readout for the writes, sized by the delivered items when there
+    /// are any, and counting files alone unless every item has a size.
+    private func newReadout() -> ClipboardTransferOperation {
         let sized: [DraggedOutItem]
         if case .delivered(let delivered)? = delivery.settled { sized = delivered } else { sized = items }
         let operation = ClipboardTransferOperation(

@@ -2,6 +2,7 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// The IPv4 address the host last saw each running VM use on its app-managed
 /// network, read from the host's ARP table by the VM's MAC address — the one

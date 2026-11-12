@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for `ClipboardProgressAutoReveal` — the rules that let a transfer
 /// someone is waiting on show its readout in the status item's callout by
@@ -14,11 +15,10 @@ struct ClipboardProgressAutoRevealTests {
 
     /// A readout that clears every gate, so each test varies only what it is about.
     ///
-    /// Outbound, the shape a paste readout has: this side is streaming the bytes
-    /// an app on the peer is blocked on.
+    /// A drop's, whose files someone is waiting on.
     private func readout(
         elapsed: TimeInterval = 5, secondsRemaining: Double? = 10, bytesTransferred: UInt64 = 100,
-        totalBytes: UInt64 = 1_000, gesture: ClipboardTransferGesture = .peerPaste,
+        totalBytes: UInt64 = 1_000, gesture: ClipboardTransferGesture = .drop,
         of other: ClipboardTransferOperationID? = nil
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(

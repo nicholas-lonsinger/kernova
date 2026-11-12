@@ -7,6 +7,7 @@ import KernovaCommandModel
 import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 import Testing
 

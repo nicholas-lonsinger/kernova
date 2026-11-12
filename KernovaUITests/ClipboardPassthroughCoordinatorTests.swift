@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 import Synchronization
 import Testing

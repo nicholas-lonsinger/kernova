@@ -1,6 +1,7 @@
 import AppKit
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// Presents a transfer's progress readout inside a menu-bar status item's
 /// dropdown, and reveals it once in the status item's callout so it is seen
@@ -253,9 +254,9 @@ public final class ClipboardProgressStatusItemPresenter {
             """
             Readout callout \(String(describing: decision), privacy: .public)\(skipped, privacy: .public) — \
             gesture=\(String(describing: readout.gesture), privacy: .public), \
-            elapsed=\(ClipboardProgressFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
-            remaining=\(ClipboardProgressFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
-            \(ClipboardProgressFormat.logBytes(transferred: readout.bytesTransferred, total: readout.totalBytes, known: readout.bytesKnown), privacy: .public), \
+            elapsed=\(ClipboardProgressLog.seconds(readout.elapsedSeconds), privacy: .public), \
+            remaining=\(ClipboardProgressLog.seconds(readout.secondsRemaining), privacy: .public), \
+            \(ClipboardProgressLog.bytes(transferred: readout.bytesTransferred, total: readout.totalBytes, known: readout.bytesKnown), privacy: .public), \
             menuOpen=\(dropdownOpen, privacy: .public)
             """
         )

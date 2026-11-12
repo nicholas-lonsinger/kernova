@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaTestSupport
+import KernovaTransferProgress
 import Testing
 
 @testable import KernovaCore

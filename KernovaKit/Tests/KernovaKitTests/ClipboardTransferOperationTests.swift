@@ -4,6 +4,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Records every report an operation drives its reporter to.
 @MainActor
@@ -79,13 +80,13 @@ struct ClipboardTransferOperationTests {
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitProgressed(id: 1, bytesTransferred: 50)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.advanced(landed: 50, declared: 0)
         await settle()
         #expect(recorder.reports.isEmpty)
 
         clock.advance(seconds: Self.revealDelay)
-        operation.unitProgressed(id: 1, bytesTransferred: 60)
+        unit1?.advanced(landed: 60, declared: 0)
         await settle()
         #expect(recorder.runningSnapshot?.bytesTransferred == 60)
     }
@@ -96,8 +97,8 @@ struct ClipboardTransferOperationTests {
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.ended(succeeded: true)
         operation.finish(.completed)
         await settle()
         #expect(recorder.reports.isEmpty)
@@ -109,7 +110,7 @@ struct ClipboardTransferOperationTests {
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         operation.finish(.failed(.timedOut))
         await settle()
         #expect(recorder.finish?.failure == .timedOut)
@@ -125,8 +126,8 @@ struct ClipboardTransferOperationTests {
             recorder: recorder, clock: clock, gesture: .dragOut, expectedBytes: nil, expectedItems: 4)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 0, expectedBytes: 2_048)
-        operation.unitEnded(id: 0, succeeded: true)
+        let unit0 = operation.unit(expectedBytes: 2_048)
+        unit0?.ended(succeeded: true)
         await settle()
         let running = try #require(recorder.runningSnapshot)
         #expect(!running.bytesKnown)
@@ -149,12 +150,12 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitBegan(id: 2, expectedBytes: 300)
-        operation.unitProgressed(id: 1, bytesTransferred: 100)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.unitProgressed(id: 2, bytesTransferred: 300)
-        operation.unitEnded(id: 2, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 100)
+        let unit2 = operation.unit(expectedBytes: 300)
+        unit1?.advanced(landed: 100, declared: 0)
+        unit1?.ended(succeeded: true)
+        unit2?.advanced(landed: 300, declared: 0)
+        unit2?.ended(succeeded: true)
         operation.finish(.completed)
         await settle()
 
@@ -165,35 +166,59 @@ struct ClipboardTransferOperationTests {
         #expect(snapshot.fileCount == 2)
     }
 
-    @Test("a retry that restarts its own byte count never walks the aggregate back")
+    @Test("a landing report below an earlier one never walks the aggregate back")
     func clampsMonotonically() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 800)
-        operation.unitProgressed(id: 1, bytesTransferred: 0)
+        let unit1 = operation.unit(expectedBytes: 1_000)
+        unit1?.advanced(landed: 800, declared: 0)
+        unit1?.advanced(landed: 0, declared: 0)
         operation.finish(.completed)
         await settle()
 
         #expect(try #require(recorder.finish?.finalSnapshot).bytesTransferred == 800)
     }
 
-    @Test("the streamed total replaces what the transfer advertised")
-    func totalIsWireAuthoritative() async throws {
+    @Test("what a landing declares raises its transfer's estimate and never lowers it")
+    func declaredRaisesTheEstimate() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 400, totalBytes: 500)
+        let overEstimated = operation.unit(expectedBytes: 1_000)
+        let underEstimated = operation.unit(expectedBytes: 100)
+        overEstimated?.advanced(landed: 400, declared: 500)
+        underEstimated?.advanced(landed: 50, declared: 300)
         operation.finish(.completed)
         await settle()
 
-        #expect(try #require(recorder.finish?.finalSnapshot).totalBytes == 500)
+        let snapshot = try #require(recorder.finish?.finalSnapshot)
+        #expect(snapshot.totalBytes == 1_300)
+        #expect(snapshot.bytesTransferred == 450)
+    }
+
+    @Test("what a landing reports after its owner ended the transfer is not counted")
+    func dropsLandingReportsAfterTheEnd() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let operation = makeOperation(recorder: recorder, clock: clock)
+        clock.advance(seconds: Self.revealDelay)
+
+        let unit = operation.unit(expectedBytes: 1_000)
+        unit?.advanced(landed: 300, declared: 1_000)
+        unit?.ended(succeeded: false)
+        // The pull's lane drains what it was handed before the abort.
+        unit?.advanced(landed: 900, declared: 1_000)
+        operation.finish(.completed)
+        await settle()
+
+        let snapshot = try #require(recorder.finish?.finalSnapshot)
+        #expect(snapshot.bytesTransferred == 300)
+        #expect(snapshot.filesCompleted == 0)
     }
 
     @Test("a transfer that succeeded reads as complete even with its last chunks throttled")
@@ -203,9 +228,9 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 10)
-        operation.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 1_000)
+        unit1?.advanced(landed: 10, declared: 0)
+        unit1?.ended(succeeded: true)
         operation.finish(.completed)
         await settle()
 
@@ -221,11 +246,11 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 999)
+        let unit1 = operation.unit(expectedBytes: 1_000)
+        unit1?.advanced(landed: 999, declared: 0)
         await settle()
         let beforeFinalChunk = recorder.reports.count
-        operation.unitProgressed(id: 1, bytesTransferred: 1_000)
+        unit1?.advanced(landed: 1_000, declared: 0)
         await settle()
 
         #expect(recorder.reports.count == beforeFinalChunk + 1)
@@ -239,9 +264,9 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100, name: "first.txt")
-        operation.unitBegan(id: 2, expectedBytes: 100, name: "second.txt")
-        operation.unitProgressed(id: 2, bytesTransferred: 50)
+        _ = operation.unit(name: "first.txt", expectedBytes: 100)
+        let unit2 = operation.unit(name: "second.txt", expectedBytes: 100)
+        unit2?.advanced(landed: 50, declared: 0)
         await settle()
 
         #expect(recorder.runningSnapshot?.currentItemName == "second.txt")
@@ -255,15 +280,15 @@ struct ClipboardTransferOperationTests {
             recorder: recorder, clock: clock, expectedBytes: 500, expectedItems: 3)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         await settle()
         // One transfer of the three has begun: the whole drop is the denominator.
         #expect(recorder.runningSnapshot?.totalBytes == 500)
         #expect(recorder.runningSnapshot?.fileCount == 3)
 
-        operation.unitBegan(id: 2, expectedBytes: 400)
-        operation.unitBegan(id: 3, expectedBytes: 400)
-        operation.unitBegan(id: 4, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 400)
+        _ = operation.unit(expectedBytes: 400)
+        _ = operation.unit(expectedBytes: 100)
         operation.finish(.completed)
         await settle()
 
@@ -281,14 +306,14 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 300)
+        let unit1 = operation.unit(expectedBytes: 1_000)
+        unit1?.advanced(landed: 300, declared: 0)
         operation.finish(.cancelled)
         await settle()
         let settled = recorder.reports.count
 
-        operation.unitProgressed(id: 1, bytesTransferred: 900)
-        operation.unitEnded(id: 1, succeeded: true)
+        unit1?.advanced(landed: 900, declared: 0)
+        unit1?.ended(succeeded: true)
         await settle()
 
         #expect(recorder.reports.count == settled)
@@ -305,7 +330,7 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         operation.finish(.failed(.timedOut))
         operation.finish(.completed)
         await settle()
@@ -321,7 +346,7 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         await settle()
         #expect(recorder.runningSnapshot != nil)
 
@@ -338,11 +363,11 @@ struct ClipboardTransferOperationTests {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+            recorder: recorder, clock: clock, gesture: .paste)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.ended(succeeded: true)
         operation.finishWhenIdle()
         await settle()
         // Still running: the gap is what tells the end from the pause between two
@@ -354,7 +379,7 @@ struct ClipboardTransferOperationTests {
         clock.release(gap)
         try await recorder.changed.wait { recorder.finish != nil }
         let finish = try #require(recorder.finish)
-        #expect(finish.gesture == .peerPaste)
+        #expect(finish.gesture == .paste)
         #expect(finish.finalSnapshot?.fractionComplete == 1)
     }
 
@@ -363,16 +388,16 @@ struct ClipboardTransferOperationTests {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+            recorder: recorder, clock: clock, gesture: .paste)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.ended(succeeded: true)
         operation.finishWhenIdle()
         #expect(clock.parked.count == 1)
 
         // The terminal armed for that gap is called off, not left to fire.
-        operation.unitBegan(id: 2, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         try await clock.parkedChanged.wait { clock.parked.isEmpty }
         await settle()
 
@@ -385,18 +410,18 @@ struct ClipboardTransferOperationTests {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+            recorder: recorder, clock: clock, gesture: .paste)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.ended(succeeded: true)
         operation.finishWhenIdle()
         let gap = try #require(clock.parked.first)
 
         // The gap passes, and before the terminal takes the lock the peer's next
         // pull begins.
         clock.releaseHeld(gap)
-        operation.unitBegan(id: 2, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         clock.resume(gap)
         await clock.completion(of: gap)
         await settle()
@@ -410,14 +435,14 @@ struct ClipboardTransferOperationTests {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+            recorder: recorder, clock: clock, gesture: .paste)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.ended(succeeded: true)
         operation.finishWhenIdle()
-        operation.unitBegan(id: 2, expectedBytes: 100)
-        operation.unitEnded(id: 2, succeeded: true)
+        let unit2 = operation.unit(expectedBytes: 100)
+        unit2?.ended(succeeded: true)
         operation.finishWhenIdle()
         try await clock.parkedChanged.wait { clock.parked.count == 1 }
 
@@ -436,8 +461,8 @@ struct ClipboardTransferOperationTests {
             recorder: recorder, clock: clock, gesture: .dragOut, direction: .outbound)
         clock.advance(seconds: Self.revealDelay)
 
-        operation?.unitBegan(id: 1, expectedBytes: 100)
-        operation?.unitEnded(id: 1, succeeded: true)
+        let unit1 = operation?.unit(expectedBytes: 100)
+        unit1?.ended(succeeded: true)
         operation?.finishWhenIdle()
         await settle()
         #expect(recorder.runningSnapshot != nil)
@@ -470,7 +495,7 @@ struct ClipboardTransferOperationTests {
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 100)
+        _ = operation.unit(expectedBytes: 100)
         await settle()
         #expect(recorder.runningSnapshot?.isCancellable == false)
         // A no-op rather than a crash for a caller that asks anyway.
@@ -503,8 +528,8 @@ struct ClipboardTransferOperationTests {
 
         operation.markQueued()
         clock.advance(seconds: Self.revealDelay)
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitProgressed(id: 1, bytesTransferred: 40)
+        let unit1 = operation.unit(expectedBytes: 100)
+        unit1?.advanced(landed: 40, declared: 0)
         await settle()
 
         #expect(recorder.runningSnapshot?.bytesTransferred == 40)

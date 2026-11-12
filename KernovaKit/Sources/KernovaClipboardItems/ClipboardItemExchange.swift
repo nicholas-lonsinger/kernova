@@ -5,6 +5,7 @@ import KernovaAgentRuntime
 import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// One end's clipboard over CLIPBOARD items, the same at the host and the macOS guest agent, over whichever
@@ -158,17 +159,26 @@ public final class ClipboardItemExchange {
     private let pulls = ClipboardPullRegistry()
     private let serves = ClipboardServeWaits()
     private let logger: KernovaLogger
+    private let transfers: ClipboardTransferReporter
+    private let peerName: () -> String
+    private let transferClock: any EngineClock
 
     /// An exchange landing the far side's representations in clipboard staging labelled `stagingLabel` under
-    /// `stagingRoot`, reading the paste ceiling from `pasteCeiling` each time a pull needs it.
+    /// `stagingRoot`, reading the paste ceiling from `pasteCeiling` each time a pull needs it, and reporting each
+    /// offer's pulls to `transfers` as from the far side `peerName` names when the offer arrives, measured on
+    /// `transferClock`.
     public init(
         side: Side, stagingLabel: String, stagingRoot: ProcessStagingRoot,
-        pasteCeiling: @escaping @Sendable () -> Int, logger: KernovaLogger
+        pasteCeiling: @escaping @Sendable () -> Int, logger: KernovaLogger, transfers: ClipboardTransferReporter,
+        peerName: @escaping () -> String, transferClock: any EngineClock = makePlatformEngineClock()
     ) {
         self.side = side
         staging = ClipboardFileStaging(label: stagingLabel, root: stagingRoot)
         self.pasteCeiling = pasteCeiling
         self.logger = logger
+        self.transfers = transfers
+        self.peerName = peerName
+        self.transferClock = transferClock
     }
 
     /// Whether a connection can carry the clipboard now.
@@ -740,17 +750,26 @@ public final class ClipboardItemExchange {
         }
     }
 
-    /// The far side's offer `header` of `items`, its pulls landing in a staging generation of its own.
+    /// The far side's offer `header` of `items`, its pulls landing in a staging generation of its own and
+    /// reporting as a paste of it, or as the copy it is: the host's Copy Guest Clipboard to Mac, a guest's
+    /// Copy Mac Clipboard to Guest.
     private func remoteOffer(
         _ header: ItemSetHeaderValue, _ items: [OfferedItem], on link: any ClipboardItemLink
     ) -> ClipboardRemoteOffer {
         let generation = nextGeneration
         nextGeneration += 1
         let ceiling = pasteCeiling
+        let gesture: ClipboardTransferGesture =
+            switch (header.copy, side) {
+            case (.notACopy, _): .paste
+            case (_, .host): .copy
+            case (_, .guest): .send
+            }
         return ClipboardRemoteOffer(
             header: header, items: items, link: link, connection: connection, staging: staging,
             generation: generation,
             ceiling: { UInt64(clamping: max(ceiling(), 0)) }, registry: pulls, logger: logger,
+            progress: .init(gesture: gesture, transfers: transfers, peerName: peerName(), clock: transferClock),
             landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } },
             failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } })
     }

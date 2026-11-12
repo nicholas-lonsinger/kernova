@@ -26,7 +26,8 @@ import KernovaWire
 /// FOLDER, through a `TreeReceiver` staging beside its landing's directory and publishing under the landing's
 /// name, or creating it at its landing's exact path, its landed bytes charged to the order's budget when it has
 /// one; an INLINE one landing in memory decoded there, charged to that budget likewise, and published as its
-/// bytes. Each pull's work runs on a queue of its own.
+/// bytes. Each pull's work runs on a queue of its own, which tells the order's progress, when it has one, how far
+/// the landing has come after each step.
 public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink {
     private enum Pull {
         case receiving(TreeReceiver<FileSystem>)
@@ -35,9 +36,28 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         case refused
     }
 
+    /// One pull's landing, and what it reports its progress to.
+    private struct Landing {
+        var pull: Pull
+        let progress: (any ItemLandingProgress)?
+
+        /// Tells the progress how far the landing has come.
+        func report() {
+            guard let progress else { return }
+            switch pull {
+            case .receiving(let receiver):
+                progress.advanced(landed: receiver.landedByteCount, declared: receiver.declaredByteCount)
+            case .inline(let receiver):
+                progress.advanced(landed: UInt64(receiver.bytes.count), declared: receiver.declaredByteCount)
+            case .refused:
+                break
+            }
+        }
+    }
+
     private let fileSystem: FileSystem
     private let decodingWorkers: Int
-    private let pulls = PullLanes<Pull>(label: "app.kernova.item-sink")
+    private let pulls = PullLanes<Landing>(label: "app.kernova.item-sink")
 
     /// A sink landing through `fileSystem`, decompressing LZ4 chunks on `decodingWorkers` lanes per pull.
     ///
@@ -55,9 +75,9 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
     }
 
     /// The pull of representation `representation` of item `item` of the far side's offer `token`, to land as
-    /// `landing` says, its landed bytes charged to `budget` beside `byteCeiling`: it decodes every codec this
-    /// sink does, and lands compressed the decmpfs types the volume holding the landing reads back
-    /// (`DecmpfsMatrix.acceptedTypes`); a memory landing takes none.
+    /// `landing` says, its landed bytes charged to `budget` beside `byteCeiling` and reported to `progress` as
+    /// they land: it decodes every codec this sink does, and lands compressed the decmpfs types the volume
+    /// holding the landing reads back (`DecmpfsMatrix.acceptedTypes`); a memory landing takes none.
     ///
     /// The volume is asked through the landing's directory, or, for an exact path, through an empty file created
     /// at that path and removed again: the path is the one thing on the volume an exact-path landing may open.
@@ -66,7 +86,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
     ///   cannot be created, or its volume asked.
     public func order(
         token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
-        budget: ByteBudget? = nil
+        budget: ByteBudget? = nil, progress: (any ItemLandingProgress)? = nil
     ) throws(WireError) -> ItemPullOrder {
         var request = PullRequest()
         request.token = token
@@ -88,7 +108,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
         case .exactPath(let path):
             request.decmpfsTypes = try Self.acceptedTypes(at: Array(path.utf8), on: fileSystem).sorted()
         }
-        return ItemPullOrder(request, landing: landing, budget: budget)
+        return ItemPullOrder(request, landing: landing, budget: budget, progress: progress)
     }
 
     /// The decmpfs types a pull landing at exactly `path` accepts, asked through an empty file created there
@@ -126,53 +146,56 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
             pulls.open(PullKey(connection: reporter.connection, id: id)) { [fileSystem, decodingWorkers] in
                 switch Self.begin(acceptance, order, fileSystem: fileSystem, decodingWorkers: decodingWorkers) {
                 case .success(let pull):
-                    return pull
+                    return Landing(pull: pull, progress: order.progress)
                 case .failure(let error):
                     reporter.report(.refused(id, error))
-                    return .refused
+                    return Landing(pull: .refused, progress: order.progress)
                 }
             }
         case .bytes(let id, let bytes):
-            pulls.run(PullKey(connection: reporter.connection, id: id)) { pull in
+            pulls.run(PullKey(connection: reporter.connection, id: id)) { landing in
                 do throws(WireError) {
-                    switch pull {
+                    switch landing.pull {
                     case .receiving(let receiver):
                         try Self.wire { () throws(TreeWriteFailure) in try receiver.receive(bytes) }
                     case .inline(var receiver):
                         // Its bytes then have one owner, so appending to them never copies them.
-                        pull = .refused
+                        landing.pull = .refused
                         try receiver.receive(bytes)
-                        pull = .inline(receiver)
+                        landing.pull = .inline(receiver)
                     case .refused: return
                     }
+                    landing.report()
                     reporter.report(.consumed(id, bytes.count))
                 } catch {
-                    pull = .refused
+                    landing.pull = .refused
                     reporter.report(.refused(id, error))
                 }
             }
         case .finish(let id):
-            pulls.run(PullKey(connection: reporter.connection, id: id)) { pull in
+            pulls.run(PullKey(connection: reporter.connection, id: id)) { landing in
                 do throws(WireError) {
-                    switch pull {
+                    switch landing.pull {
                     case .receiving(let receiver):
                         try Self.wire { () throws(TreeWriteFailure) in try receiver.finish() }
                     case .inline(var receiver):
                         // Its bytes then have one owner, so appending to them never copies them.
-                        pull = .refused
+                        landing.pull = .refused
                         try receiver.finish()
-                        pull = .inline(receiver)
+                        landing.pull = .inline(receiver)
                     case .refused: return
                     }
+                    // Entries still decompressing land in the finish.
+                    landing.report()
                     reporter.report(.verified(id))
                 } catch {
-                    pull = .refused
+                    landing.pull = .refused
                     reporter.report(.refused(id, error))
                 }
             }
         case .commit(let id):
-            pulls.close(PullKey(connection: reporter.connection, id: id)) { pull in
-                switch pull {
+            pulls.close(PullKey(connection: reporter.connection, id: id)) { landing in
+                switch landing?.pull {
                 case .receiving(let receiver):
                     do throws(WireError) {
                         let landed = try Self.wire { () throws(TreeWriteFailure) in try receiver.publish() }
@@ -260,6 +283,9 @@ struct InlineReceiver {
     private let account: ByteBudget.Account?
     /// The DATA entry's bytes so far.
     private(set) var bytes = Data()
+
+    /// The bytes the DATA entry declares, once its header decoded.
+    var declaredByteCount: UInt64 { decoder.declaredByteCount }
 
     init(accepting acceptance: ContainerAcceptance, budget: ByteBudget? = nil) {
         decoder = ContainerDecoder(accepting: acceptance)
