@@ -248,6 +248,23 @@ struct VMLifecycleCoordinatorTests {
         #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
+    @Test("installMacOS rejects a catalog context with no pinned URL")
+    func installMacOSCatalogWithoutURLThrows() async {
+        let (coordinator, _, _, ipswService, _, _) = makeCoordinator()
+        let context = MacOSInstallContext(
+            source: .catalogVersion,
+            downloadDestinationPath: scratch.url
+                .appendingPathComponent("test-restore.ipsw").path(percentEncoded: false)
+        )
+        let instance = VMInstanceFixture.make { $0.installContext = context }
+
+        await #expect(throws: IPSWError.self) {
+            try await coordinator.launchGuestSetup(on: instance).value()
+        }
+        // Never silently falls back to resolving the latest image.
+        #expect(ipswService.fetchCallCount == 0)
+    }
+
     @Test("installMacOS clears installContext on successful completion")
     func installMacOSClearsInstallContextOnSuccess() async throws {
         let (coordinator, _, installService, _, _, _) = makeCoordinator()
@@ -829,6 +846,47 @@ struct VMLifecycleCoordinatorTests {
         #expect(try Data(contentsOf: usersFile) == usersBytes)
         #expect(fixture.fileSystem.trashedURLs.isEmpty)
         #expect(instance.status == .stopped)
+    }
+
+    @Test("A refused adoption falls through to the download and its verify step")
+    func downloadLinuxImageDownloadsWhenAdoptionIsRefused() async throws {
+        let fixture = try makeLinuxFixture()
+        // What a transfer already streaming to the destination looks like from
+        // here: the file matches, and the adoption is refused anyway.
+        fixture.downloadService.setAdoptExistingFileResult(false)
+        let resolved = fixture.resolveService.resolveResult
+        try fixture.contents.write(
+            to: fixture.downloads.appendingPathComponent(resolved.filename))
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context, in: fixture)
+
+        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+
+        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
+        #expect(fixture.downloadService.adoptExistingFileCallCount == 1)
+        #expect(fixture.downloadService.downloadCallCount == 1)
+        #expect(
+            instance.configuration.storageDisks?.first?.path
+                == destination.path(percentEncoded: false))
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(instance.status == .stopped)
+    }
+
+    @Test("downloadLinuxImage throws CancellationError from the resolve step and keeps the context")
+    func downloadLinuxImageCancelDuringResolve() async throws {
+        let fixture = try makeLinuxFixture()
+        fixture.resolveService.resolveError = CancellationError()
+        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
+        let instance = makeLinuxInstance(context: context, in: fixture)
+
+        await #expect(throws: CancellationError.self) {
+            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        }
+
+        #expect(fixture.downloadService.downloadCallCount == 0)
+        #expect(instance.configuration.linuxInstallContext == context)
+        // A cancel must leave the partial download alone for the next Start.
+        #expect(fixture.downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("A cancelled download surfaces as CancellationError however URLSession words it")

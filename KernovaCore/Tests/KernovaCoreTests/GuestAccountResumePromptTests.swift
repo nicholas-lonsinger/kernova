@@ -107,6 +107,24 @@ struct GuestAccountResumePromptTests {
     }
 
     @available(macOS 27.0, *)
+    @Test("Skipping setup re-issues the start, which boots with no account")
+    func skippingBootsWithoutTheAccount() async {
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(
+            in: viewModel, intent: makeIntent(), installPending: false)
+        presenter.guestAccountPasswordAnswer = .answered(.skip)
+
+        await viewModel.start(instance)
+
+        #expect(virtualization.lastStartProvisioning == nil)
+        #expect(virtualization.startCallCount == 1)
+        #expect(presenter.guestAccountPasswordRequests.count == 1)
+        #expect(presenter.errors.isEmpty)
+        // Skipping is about the VM: it ends the account there and then.
+        #expect(instance.configuration.pendingGuestAccount == nil)
+    }
+
+    @available(macOS 27.0, *)
     @Test("Cancelling the sheet starts nothing and says nothing")
     func cancellingStartsNothing() async {
         let (viewModel, virtualization) = makeViewModel()
@@ -124,5 +142,68 @@ struct GuestAccountResumePromptTests {
         #expect(viewModel.capabilities.guestAccountState(of: instance).isOwed)
     }
 
+    @available(macOS 27.0, *)
+    @Test("A sheet that could not be shown leaves the account refusal standing, shown as an error")
+    func anUnaskedSheetShowsTheRefusal() async {
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
+        presenter.guestAccountPasswordAnswer = .unasked
+
+        await viewModel.start(instance)
+
+        #expect(virtualization.startCallCount == 0)
+        #expect(presenter.errorTitles == ["Couldn\u{2019}t Start \u{201C}\(instance.name)\u{201D}"])
+        #expect(instance.configuration.pendingGuestAccount == makeIntent())
+        #expect(instance.setupOperationTask == nil)
+        #expect(presenter.errors.contains { $0.contains("ada") })
+    }
+
     // MARK: - A start that never reached a boot
+
+    @available(macOS 27.0, *)
+    @Test("A start-failed recovery whose removal refuses starts nothing")
+    func aRefusedRecoveryRemovalStartsNothing() async {
+        let (viewModel, virtualization) = makeViewModel()
+        let sole = StorageDisk(path: "/tmp/missing.img", label: "Scratch", isInternal: false)
+        let instance = makeVM(
+            in: viewModel, intent: makeIntent(), installPending: false
+        ) { $0.storageDisks = [sole] }
+        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
+
+        // A VM keeps at least one storage disk, so the removal is refused.
+        await viewModel.removeStartFailedAttachmentAndStart(
+            StartFailedAttachment(
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: sole.id,
+                label: "Scratch",
+                message: "It would not open."),
+            on: instance)
+
+        #expect(instance.configuration.storageDisks?.map(\.id) == [sole.id])
+        #expect(virtualization.startCallCount == 0)
+        // The attachment is still attached, so the refusal is what the user sees
+        // rather than an account question about a start that cannot happen.
+        #expect(!presenter.errors.isEmpty)
+        #expect(presenter.guestAccountPasswordRequests.isEmpty)
+    }
+
+    @available(macOS 27.0, *)
+    @Test("A start-failed recovery for a VM that left the library starts nothing")
+    func aRecoveryForADepartedVMStartsNothing() async {
+        let (viewModel, virtualization) = makeViewModel()
+        let instance = makeVM(in: viewModel, intent: makeIntent())
+        viewModel.library.evict(instance)
+
+        await viewModel.removeStartFailedAttachmentAndStart(
+            StartFailedAttachment(
+                verb: .start, kind: .storageDisk, reason: .attachRefused, id: UUID(),
+                label: "Scratch",
+                message: "It would not open."),
+            on: instance)
+
+        // Neither half runs, and a VM the user deleted is nothing to read an
+        // alert about.
+        #expect(virtualization.startCallCount == 0)
+        #expect(presenter.guestAccountPasswordRequests.isEmpty)
+        #expect(presenter.errors.isEmpty)
+    }
 }

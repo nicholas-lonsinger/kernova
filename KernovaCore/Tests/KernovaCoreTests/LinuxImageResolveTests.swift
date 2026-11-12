@@ -341,6 +341,19 @@ struct LinuxImageResolveServiceTests {
         #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
     }
 
+    @Test("A checksum manifest that is not a filename is refused before any request")
+    func refusesInvalidManifestName() async throws {
+        serve(manifest: ubuntuManifest)
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(
+            throws: LinuxImageResolveError.invalidManifestName(manifest: "../../etc/passwd")
+        ) {
+            _ = try await makeService().resolve(editedEntry(checksumManifest: "../../etc/passwd"))
+        }
+        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
+    }
+
     @Test("The newest match in the manifest becomes the image, with its digest and size")
     func resolvesUbuntuManifest() async throws {
         serve(manifest: ubuntuManifest)
@@ -452,6 +465,18 @@ struct LinuxImageResolveServiceTests {
         }
     }
 
+    @Test("A body carrying no checksum at all is refused rather than searched")
+    func refusesUnparseableManifest() async {
+        serve(manifest: "<html><body>Index of /ubuntu/releases/noble/release/</body></html>")
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(
+            throws: LinuxImageResolveError.manifestUnparseable(manifest: "SHA256SUMS")
+        ) {
+            _ = try await makeService().resolve(ubuntuEntry)
+        }
+    }
+
     @Test("A manifest that keeps arriving past the cap is dropped, not parsed")
     func refusesOversizedManifest() async {
         // A valid line first, so what fails is the size and not the parse.
@@ -475,6 +500,43 @@ struct LinuxImageResolveServiceTests {
         await #expect(
             throws: LinuxImageResolveError.noMatchingImage(
                 pattern: "ubuntu-24.04*-desktop-arm64.iso")
+        ) {
+            _ = try await makeService().resolve(ubuntuEntry)
+        }
+    }
+
+    @Test("A filename that could not be saved is refused before it reaches a path")
+    func refusesUnusableFilename() async {
+        serve(
+            manifest:
+                "93b805a2e39d472e51117ac4ac21b1110f05d4c5365ae4b90d23f5e4e44e53f9  .hidden.iso")
+        defer { ResolveStubURLProtocol.reset() }
+
+        var entry = ubuntuEntry
+        entry.isoPattern = "*.iso"
+
+        await #expect(throws: LinuxImageResolveError.unusableFilename(".hidden.iso")) {
+            _ = try await makeService().resolve(entry)
+        }
+    }
+
+    @Test("A mirror that will not state the ISO's size resolves to nothing")
+    func refusesWhenSizeIsUnavailable() async {
+        ResolveStubURLProtocol.reset()
+        ResolveStubURLProtocol.setHandler { request in
+            guard request.url?.lastPathComponent.hasSuffix(".iso") == true else {
+                return ResolveStubURLProtocol.Reply(
+                    statusCode: 200, body: Data(ubuntuManifest.utf8))
+            }
+            // HEAD refused, and the ranged GET fallback fails too.
+            return ResolveStubURLProtocol.Reply(
+                statusCode: request.httpMethod == "HEAD" ? 405 : 500, body: Data())
+        }
+        defer { ResolveStubURLProtocol.reset() }
+
+        await #expect(
+            throws: LinuxImageResolveError.sizeUnavailable(
+                filename: "ubuntu-24.04.4-desktop-arm64.iso")
         ) {
             _ = try await makeService().resolve(ubuntuEntry)
         }
@@ -514,6 +576,28 @@ struct LinuxImageResolveServiceTests {
             ResolveStubURLProtocol.Reply(
                 statusCode: statusCode, body: Data(), headers: ["Content-Length": "\(size)"])
         }
+    }
+
+    @Test("A pasted URL resolves to itself, its filename and the size the server states")
+    func resolvesPastedURL() async throws {
+        serveISO()
+        defer { ResolveStubURLProtocol.reset() }
+        let pasted = try CustomLinuxImage.make(
+            urlText: "https://mirror.example/alpine-3.22-aarch64.iso",
+            checksumText: String(repeating: "a", count: 64))
+
+        let image = try await makeService().resolve(pasted)
+
+        #expect(image.isoURL == pasted.url)
+        #expect(image.filename == "alpine-3.22-aarch64.iso")
+        // The destination is unique to the URL, so it can never land on a file
+        // the user happens to already have under the link's own name.
+        #expect(image.destinationFilename != image.filename)
+        #expect(image.destinationFilename.hasPrefix("alpine-3.22-aarch64-"))
+        #expect(image.destinationFilename.hasSuffix(".iso"))
+        #expect(image.sizeBytes == 1_073_741_824)
+        // No manifest is read: the URL names the file outright.
+        #expect(ResolveStubURLProtocol.requestedURLs.allSatisfy { $0 == pasted.url })
     }
 
     @Test("A URL nothing is hosted at is reported with its status")

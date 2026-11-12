@@ -106,6 +106,20 @@ struct LinuxImageCatalogServiceTests {
         #expect(result.rejections == [.undecodableDocument])
     }
 
+    @Test("A non-HTTPS directory URL is rejected")
+    func rejectsInsecureURL() throws {
+        let insecure = goodEntry.replacingOccurrences(of: "https://", with: "http://")
+        let result = LinuxImageCatalogService.parse(json(images: insecure))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.isEmpty)
+        #expect(result.rejections.count == 1)
+        if case .insecureURL(let id, _) = result.rejections[0] {
+            #expect(id == "debian-13")
+        } else {
+            Issue.record("Expected an insecureURL rejection, got \(result.rejections[0])")
+        }
+    }
+
     @Test("A non-HTTPS manifest directory is rejected")
     func rejectsInsecureManifestDirectory() throws {
         let insecure = goodEntry.replacingOccurrences(
@@ -153,6 +167,14 @@ struct LinuxImageCatalogServiceTests {
             #expect(
                 result.rejections == [.invalidManifestName(id: "debian-13", manifest: manifest)])
         }
+    }
+
+    @Test("A repeated id is kept once")
+    func rejectsDuplicateID() throws {
+        let result = LinuxImageCatalogService.parse(json(images: "\(goodEntry), \(goodEntry)"))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.count == 1)
+        #expect(result.rejections == [.duplicateID(id: "debian-13")])
     }
 
     @Test("The catalog the core ships parses clean")

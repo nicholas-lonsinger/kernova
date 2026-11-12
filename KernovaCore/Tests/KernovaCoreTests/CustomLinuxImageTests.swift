@@ -51,6 +51,15 @@ struct CustomLinuxImageTests {
         }
     }
 
+    @Test("Text that names no host is not a URL")
+    func refusesMalformedURL() {
+        for text in ["", "   ", "not a url", "https:///alpine.iso"] {
+            #expect(throws: LinuxImageURLError.malformedURL) {
+                try CustomLinuxImage.make(urlText: text, checksumText: "")
+            }
+        }
+    }
+
     @Test("A percent-encoded name that decodes to a path is refused")
     func refusesEscapingFilename() {
         // `URL.lastPathComponent` percent-decodes, so this arrives as
@@ -62,4 +71,24 @@ struct CustomLinuxImageTests {
     }
 
     // MARK: - Re-admission at use time
+
+    @Test("A hand-edited context is held to the same rules at use time")
+    func validatesEditedValues() {
+        // These bypass `make` the way an edited `config.json` does.
+        #expect(throws: LinuxImageURLError.insecureURL) {
+            try CustomLinuxImage(
+                url: URL(string: "http://mirror.example/alpine.iso")!, sha256: nil
+            ).admittedFilename()
+        }
+        #expect(throws: LinuxImageURLError.malformedChecksum) {
+            try CustomLinuxImage(
+                url: URL(string: "https://mirror.example/alpine.iso")!, sha256: "deadbeef"
+            ).admittedFilename()
+        }
+        #expect(throws: LinuxImageURLError.notAnISOLink) {
+            try CustomLinuxImage(
+                url: URL(string: "https://mirror.example/alpine.img")!, sha256: nil
+            ).admittedFilename()
+        }
+    }
 }
