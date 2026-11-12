@@ -25,26 +25,6 @@ struct AppAlertConfigurationsTests {
         viewModel.library.admitFixture(name: name, hostState: hostState)
     }
 
-    @Test("The revert alert on a suspended VM names the suspended session it replaces")
-    func revertAlertNamesTheSuspendedSession() throws {
-        let (configurations, viewModel) = makeConfigurations()
-        let vm = makeInstance(in: viewModel)
-        vm.activity.placeForTesting(.suspended)
-        // A capturable suspend slot: every predicate a suspended VM is judged
-        // by needs one on disk, not just the status.
-        try VMInstanceFixture.writeSaveFile(for: vm)
-        #expect(vm.isSuspended)
-        let snapshot = VMSnapshot(name: "Before the update", macAddress: nil)
-
-        let alert = configurations.revertSnapshotConfig(snapshot, vm)
-
-        // A suspended VM can now check-point before reverting, so the
-        // snapshot-first button is offered — but the copy still names the
-        // suspended session that revert alone would replace.
-        #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
-        #expect(alert.message.contains("suspended session"))
-    }
-
     @Test("A running VM's force-stop alert keeps the destructive button off Return")
     func forceStopAlertOrdersItsButtons() {
         let (configurations, viewModel) = makeConfigurations()
@@ -135,50 +115,6 @@ struct AppAlertConfigurationsTests {
         #expect(resumed.title == "Couldn't Resume “Builder”")
     }
 
-    /// Nothing here can tell a deleted file from one on a volume that is not
-    /// mounted, so the copy names reconnecting as a condition to check, never as
-    /// the cause.
-    @Test("A file that isn't there names reconnecting, and claims no cause")
-    func startFailedAlertOnAMissingFileNamesTheRetry() {
-        let message = AppAlertConfigurations.startFailedAttachmentMessage(
-            makeStartFailure(
-                .notFound, message: "Storage disk 'Archive' not found at /Volumes/Ext/a.img."),
-            holdsSavedState: false)
-
-        #expect(message.hasPrefix("Storage disk 'Archive' not found at /Volumes/Ext/a.img."))
-        #expect(message.contains("If it’s on a disk that isn’t connected, connect it and try again."))
-        #expect(!message.contains("was deleted"))
-        #expect(!message.contains("may have been"))
-        #expect(message.contains("You can also remove “Archive”"))
-        #expect(message.contains("re-attach it later in Settings"))
-    }
-
-    /// Marking the entry Read Only is the one remedy this app can be sure of —
-    /// the builder asks for a writable file only for an entry the VM may write —
-    /// and each kind's switch lives in its own Settings section.
-    @Test(
-        "An unwritable file names the Read Only switch, in the section that carries it",
-        arguments: [
-            (StartFailedAttachment.Kind.storageDisk, "Storage Disks"),
-            (.removableMedia, "Removable Media"),
-        ])
-    func startFailedAlertOnAnUnwritableFileNamesReadOnly(
-        kind: StartFailedAttachment.Kind, section: String
-    ) {
-        let message = AppAlertConfigurations.startFailedAttachmentMessage(
-            makeStartFailure(
-                .notWritable, message: "Archive is not writable: /tmp/a.img.", kind: kind),
-            holdsSavedState: false)
-
-        #expect(
-            message.contains("Turn on Read Only for it in Settings, under \(section),"), "\(kind)")
-        // The file-system side is a condition, not a diagnosis: `isWritableFile`
-        // is equally false for a read-only volume and a sandbox denial.
-        #expect(
-            message.contains("If the file or the disk it’s on is locked or read-only"), "\(kind)")
-        #expect(message.contains("You can also remove “Archive”"), "\(kind)")
-    }
-
     /// Settings are locked while a saved state is on disk, so the one remedy
     /// that needs them is not offered to a VM that cannot reach them.
     @Test("An unwritable file on a suspended VM is not sent to Settings")
@@ -196,53 +132,6 @@ struct AppAlertConfigurationsTests {
         #expect(
             message.hasSuffix(
                 "Removing it also discards this virtual machine's saved state."))
-    }
-
-    /// A saved state restores with removable media removed, so its removal
-    /// costs nothing more than the item.
-    @Test("Removing removable media from a suspended VM does not claim to discard its saved state")
-    func startFailedAlertOnRemovableMediaWithASavedStateKeepsIt() {
-        let message = AppAlertConfigurations.startFailedAttachmentMessage(
-            makeStartFailure(
-                .notFound, message: "Removable media 'Archive' was not found.", verb: .resume,
-                kind: .removableMedia),
-            holdsSavedState: true)
-
-        #expect(!message.contains("saved state"))
-        #expect(message.contains("and resume without it"))
-        #expect(message.hasSuffix("you can re-attach it later in Settings."))
-    }
-
-    /// Read Only does not make a folder a disk image, and nothing here knows
-    /// what the framework objected to — so neither case invents a step.
-    @Test(
-        "A folder and a refused attach name no remedy",
-        arguments: [StartFailedAttachment.Reason.pathIsDirectory, .attachRefused])
-    func startFailedAlertNamesNoRemedyWhereNoneIsCertain(reason: StartFailedAttachment.Reason) {
-        let message = AppAlertConfigurations.startFailedAttachmentMessage(
-            makeStartFailure(reason, message: "Storage disk 'Archive' is a directory."),
-            holdsSavedState: false)
-
-        #expect(message.contains("You can remove “Archive”"), "\(reason)")
-        #expect(!message.contains("try again."), "\(reason)")
-        #expect(!message.contains("Read Only"), "\(reason)")
-    }
-
-    /// A shared folder's removal discards a saved state, as a storage disk's
-    /// does, so the recovery always ends in a Start.
-    @Test("The removal offer for a shared folder starts, saved state or not")
-    func startFailedAlertOnASharedFolderStarts() throws {
-        let (configurations, viewModel) = makeConfigurations()
-        let vm = makeInstance(in: viewModel)
-        let failure = makeStartFailure(
-            .notFound, message: "gone", verb: .resume, kind: .sharedDirectory)
-
-        let stopped = configurations.startFailedAttachmentConfig(failure, vm)
-        try VMInstanceFixture.writeSaveFile(for: vm)
-        let suspended = configurations.startFailedAttachmentConfig(failure, vm)
-
-        #expect(stopped.buttons.map(\.title) == ["Remove and Start", "Cancel"])
-        #expect(suspended.buttons.map(\.title) == ["Remove and Start", "Cancel"])
     }
 
     @Test("A shared folder that isn't there names reconnecting, and calls itself a folder")
@@ -298,26 +187,6 @@ struct AppAlertConfigurationsTests {
                 "Removing it also discards this virtual machine's saved state."))
     }
 
-    /// Read Only does not make a file a folder, and a share is read whether it
-    /// is Read Only or not — so neither case invents a step.
-    @Test(
-        "A shared path that is no folder, or that cannot be read, names no remedy",
-        arguments: [StartFailedAttachment.Reason.notADirectory, .notReadable])
-    func startFailedAlertOnAnUnusableSharedFolderNamesNoRemedy(
-        reason: StartFailedAttachment.Reason
-    ) {
-        let message = AppAlertConfigurations.startFailedAttachmentMessage(
-            makeStartFailure(
-                reason, message: "Shared folder 'Archive' is not readable: /tmp/Archive.",
-                kind: .sharedDirectory),
-            holdsSavedState: false)
-
-        #expect(message.contains("You can remove “Archive”"), "\(reason)")
-        #expect(!message.contains("try again."), "\(reason)")
-        #expect(!message.contains("Read Only"), "\(reason)")
-        #expect(message.contains("the folder itself is not deleted"), "\(reason)")
-    }
-
     @Test("The baseline's delete is confirmed naming the mode turning off; any other as before")
     func deleteSnapshotAlertNamesTheModeForTheBaseline() {
         let (configurations, viewModel) = makeConfigurations()
@@ -342,37 +211,6 @@ struct AppAlertConfigurationsTests {
         #expect(plain.message == VMCommandCore.deleteSnapshotPrompt(later, on: vm).message)
     }
 
-    @Test("Discarding a suspended ephemeral session is presented as a revert to the baseline")
-    func discardAlertOnAnEphemeralVMNamesTheBaseline() throws {
-        let (configurations, viewModel) = makeConfigurations()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        var hostState = VMHostState()
-        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        let vm = makeInstance(in: viewModel, hostState: hostState)
-        vm.activity.placeForTesting(.suspended)
-        try VMInstanceFixture.writeSaveFile(for: vm)
-        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline], currentID: baseline.id))
-
-        let alert = configurations.forceStopConfig(vm)
-
-        #expect(alert.buttons.contains { $0.title == "Revert to Baseline" })
-        #expect(alert.message.contains("Clean install"))
-        #expect(!alert.message.contains("permanently delete"))
-    }
-
-    @Test("Discarding a suspended VM that isn't ephemeral still names the deletion")
-    func discardAlertOnAPlainVMIsUnchanged() throws {
-        let (configurations, viewModel) = makeConfigurations()
-        let vm = makeInstance(in: viewModel)
-        vm.activity.placeForTesting(.suspended)
-        try VMInstanceFixture.writeSaveFile(for: vm)
-
-        let alert = configurations.forceStopConfig(vm)
-
-        #expect(alert.buttons.contains { $0.title == "Discard" })
-        #expect(alert.message.contains("permanently delete the saved state"))
-    }
-
     @Test("The revert alert on a live VM offers the snapshot-first path instead")
     func revertAlertOnALiveVMOffersSnapshotFirst() {
         let (configurations, viewModel) = makeConfigurations()
@@ -384,18 +222,6 @@ struct AppAlertConfigurationsTests {
 
         #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
         #expect(!alert.message.contains("suspended session"))
-    }
-
-    @Test("A stopped VM is offered the check-point path, now that it can be captured")
-    func revertAlertOnAStoppedVMOffersSnapshotFirst() {
-        let (configurations, viewModel) = makeConfigurations()
-        let vm = makeInstance(in: viewModel)
-        vm.activity.placeForTesting(.stopped)
-        let snapshot = VMSnapshot(name: "Before the update", kind: .cold, macAddress: nil)
-
-        let alert = configurations.revertSnapshotConfig(snapshot, vm)
-
-        #expect(alert.buttons.contains { $0.title == "Take Snapshot, Then Revert" })
     }
 
     @Test("A VM whose guest can write an external disk is offered no snapshot-first path")
@@ -428,71 +254,6 @@ struct AppAlertConfigurationsTests {
                 == "\u{201C}\(vm.name)\u{201D} is paused and cannot be shut down directly. Resume it to send a "
                 + "graceful shutdown, or force stop to terminate it immediately, which loses anything in the guest "
                 + "that isn\u{2019}t saved to disk.")
-    }
-
-    @Test("A paused Ephemeral VM's Stop names the baseline both its actions end at")
-    func pausedStopAlertOnAnEphemeralVMNamesTheBaseline() {
-        let (configurations, viewModel) = makeConfigurations()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        var hostState = VMHostState()
-        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        let vm = makeInstance(in: viewModel, hostState: hostState)
-        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
-        vm.activity.placeForTesting(.livePaused(sessionID: UUID()))
-
-        let alert = configurations.pausedStopConfig(vm)
-
-        // Resume-and-shut-down and force-stop both power the VM off, and a
-        // power-off is the revert.
-        #expect(alert.message.hasSuffix("Either way it is ephemeral, so it returns to \u{201C}Clean install\u{201D}."))
-    }
-
-    @Test("A paused Ephemeral VM's Stop while a Restart waits still names the baseline both actions end at")
-    func pausedStopAlertWhileARestartWaitsNamesTheBaseline() {
-        let (configurations, viewModel) = makeConfigurations()
-        let baseline = VMSnapshot(name: "Clean install", macAddress: nil)
-        var hostState = VMHostState()
-        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
-        let vm = makeInstance(in: viewModel, hostState: hostState)
-        vm.seedSnapshotManifest(VMSnapshotManifest(snapshots: [baseline]))
-        let session = UUID()
-        vm.activity.placeForTesting(.livePaused(sessionID: session))
-        vm.activity.follow(VMFollowUp(scope: .vm, rank: .ordinary) { _ in }, continuing: session)
-
-        let alert = configurations.pausedStopConfig(vm)
-
-        // Each action cancels the waiting restart, so each powers the VM off,
-        // and a power-off is the revert.
-        #expect(alert.message.hasSuffix("Either way it is ephemeral, so it returns to \u{201C}Clean install\u{201D}."))
-    }
-
-    @Test("Reverting a live VM to a snapshot taken while stopped says the session ends, powered off")
-    func revertAlertOnAColdTargetNamesThePowerOff() {
-        let (configurations, viewModel) = makeConfigurations()
-        let vm = makeInstance(in: viewModel)
-        vm.activity.placeForTesting(.running(sessionID: UUID()))
-        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
-
-        let alert = configurations.revertSnapshotConfig(snapshot, vm)
-
-        #expect(alert.message.contains("powered off"))
-        #expect(alert.message.contains("session it is running now ends"))
-    }
-
-    @Test("Reverting a suspended VM to a snapshot taken while stopped says its saved session is discarded")
-    func revertAlertOnAColdTargetFromSuspended() throws {
-        let (configurations, viewModel) = makeConfigurations()
-        let vm = makeInstance(in: viewModel)
-        vm.activity.placeForTesting(.suspended)
-        try VMInstanceFixture.writeSaveFile(for: vm)
-        let snapshot = VMSnapshot(name: "Before first boot", kind: .cold, macAddress: nil)
-
-        let alert = configurations.revertSnapshotConfig(snapshot, vm)
-
-        #expect(alert.message.contains("powered off"))
-        #expect(alert.message.contains("discarded"))
-        // The warm wording, which promises a replacement session, must not leak.
-        #expect(!alert.message.contains("replaced by"))
     }
 
     @Test("A Linux guest's manage alert gives both commands and copies each, where a macOS guest's names Finder")

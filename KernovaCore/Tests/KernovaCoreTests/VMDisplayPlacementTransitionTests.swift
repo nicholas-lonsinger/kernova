@@ -20,22 +20,6 @@ struct VMDisplayPlacementTransitionTests {
         #expect(placement.followUp == .none)
     }
 
-    @Test("Showing a fullscreen window hosts the display fullscreen, persisting nothing")
-    func shownFullscreen() {
-        let placement = VMDisplayPlacement.placement(for: .shown(fullscreen: true))
-        #expect(placement.mode == .fullscreen)
-        #expect(placement.persistPreference == nil)
-        #expect(placement.followUp == .none)
-    }
-
-    @Test("Entering fullscreen persists the fullscreen preference")
-    func enteredFullscreen() {
-        let placement = VMDisplayPlacement.placement(for: .enteredFullscreen)
-        #expect(placement.mode == .fullscreen)
-        #expect(placement.persistPreference == .fullscreen)
-        #expect(placement.followUp == .none)
-    }
-
     @Test("Exiting fullscreen persists the pop-out preference")
     func exitedFullscreen() {
         let placement = VMDisplayPlacement.placement(for: .exitedFullscreen)

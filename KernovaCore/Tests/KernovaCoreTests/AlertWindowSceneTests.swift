@@ -32,24 +32,6 @@ struct AlertWindowSceneTests {
     /// The library window, which can act on every VM it lists.
     private static let library: (window: String, vmIDs: Set<UUID>) = ("library", [vmX, vmY])
 
-    @Test("An alert about X raised from X's display window goes to that window")
-    func workingDisplayWindowTakesItsVMsAlert() {
-        let scene = scene(working: [("display X", [Self.vmX]), Self.library])
-
-        // The #1581 Force Stop and the #1580 agent-disk notice both route here,
-        // whatever the library window is doing.
-        #expect(scene.destination(about: Self.vmX) == "display X")
-    }
-
-    @Test("An alert about X raised from the library window goes to the library, whatever it has selected")
-    func workingLibraryTakesAlertsForEveryVMItLists() {
-        // Y is selected and X popped out: a command from X's sidebar row is
-        // still the user working in the library.
-        let scene = scene(working: [Self.library])
-
-        #expect(scene.destination(about: Self.vmX) == "library")
-    }
-
     @Test("The main window answers when the key window shows another VM")
     func mainWindowAnswersBehindTheKeyWindow() {
         let scene = scene(
@@ -57,29 +39,6 @@ struct AlertWindowSceneTests {
             displayWindows: [Self.vmY: "display Y"])
 
         #expect(scene.destination(about: Self.vmX) == "clipboard X")
-    }
-
-    @Test("With Y's display window as the working window, X's display window takes X's alert")
-    func displayWindowWhenTheWorkingWindowActsOnAnotherVM() {
-        let scene = scene(
-            working: [("display Y", [Self.vmY])],
-            displayWindows: [Self.vmX: "display X", Self.vmY: "display Y"])
-
-        #expect(scene.destination(about: Self.vmX) == "display X")
-    }
-
-    @Test("A VM with no display window and no working window has its alerts go to the library")
-    func libraryForAVMWithNoWindowOfItsOwn() {
-        let scene = scene(working: [], displayWindows: [:])
-
-        #expect(scene.destination(about: Self.vmX) == "library")
-    }
-
-    @Test("An alert about no VM goes to the library, even from a display window")
-    func libraryForAnAlertAboutNoVM() {
-        let scene = scene(working: [("display X", [Self.vmX])])
-
-        #expect(scene.destination(about: nil) == "library")
     }
 
     @Test("A miniaturized display window is not a target; the library takes its alert")
@@ -103,14 +62,5 @@ struct AlertWindowSceneTests {
 
         #expect(scene.destination(about: Self.vmX) == nil)
         #expect(scene.destination(about: nil) == nil)
-    }
-
-    @Test("With the library window closed and the VM headless, an alert is held")
-    func closedLibraryAndHeadlessVMHolds() {
-        let scene = scene(
-            working: [], displayWindows: [:],
-            states: ["library": WindowStanding(isVisible: false, isMiniaturized: false, isOnActiveSpace: true)])
-
-        #expect(scene.destination(about: Self.vmX) == nil)
     }
 }

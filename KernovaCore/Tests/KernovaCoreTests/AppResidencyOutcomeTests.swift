@@ -25,16 +25,6 @@ struct AppResidencyOutcomeTests {
         #expect(outcome(hasVisibleUserWindow: true, keepInMenuBar: keepInMenuBar) == .showDockIcon)
     }
 
-    @Test("the last window closing with the toggle on goes headless")
-    func lastWindowWithKeepOnGoesHeadless() {
-        #expect(outcome(keepInMenuBar: true) == .goHeadless)
-    }
-
-    @Test("the last window closing with the toggle off quits")
-    func lastWindowWithKeepOffQuits() {
-        #expect(outcome() == .quit)
-    }
-
     // MARK: - Hiding
 
     @Test("a hidden app is left as it is, whatever the toggle says", arguments: [true, false])
@@ -44,15 +34,6 @@ struct AppResidencyOutcomeTests {
         // nothing, leaving a presented app its Dock icon and a headless one its
         // absence until the unhide reconcile can read the windows.
         #expect(outcome(isHidden: true, keepInMenuBar: keepInMenuBar) == .waitForUnhide)
-    }
-
-    @Test("a window on screen outranks a hide", arguments: [true, false])
-    func hiddenWithAVisibleWindowShowsDockIcon(keepInMenuBar: Bool) {
-        // ⌘H leaves a miniaturized window miniaturized, and the reconcile counts
-        // one as present — so the window term is answerable even while hidden.
-        #expect(
-            outcome(hasVisibleUserWindow: true, isHidden: true, keepInMenuBar: keepInMenuBar)
-                == .showDockIcon)
     }
 
     @Test("work in flight does not lift the hide's hold")

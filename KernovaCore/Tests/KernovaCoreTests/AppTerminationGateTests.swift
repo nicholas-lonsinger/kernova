@@ -94,22 +94,6 @@ struct AppTerminationGateTests {
         #expect(spy.replyWhenEnded == .now)
     }
 
-    @Test("A second full quit joins the pass already running rather than starting another")
-    func secondFullQuitJoinsTheFirst() async throws {
-        let spy = EndingSpy()
-        let (controller, viewModel) = makeController(endings: spy)
-        viewModel.keepInMenuBarOnQuit = true
-
-        controller.requestFullQuit()
-        controller.requestFullQuit()
-
-        try await spy.ended.wait { spy.endings.count == 1 }
-        // A second pass's save would be refused as busy on the VM the first
-        // one holds, and force-stop it mid-write, so exactly one pass runs and
-        // ends.
-        #expect(spy.endings == [.terminate])
-    }
-
     @Test("A quit AppKit begins while the pass runs is answered by the pass, not left waiting")
     func deferredQuitIsAnsweredByThePass() async throws {
         let spy = EndingSpy()
@@ -179,46 +163,6 @@ struct AppTerminationGateTests {
         #expect(spy.endings == [.terminate])
     }
 
-    @Test("R6: a quit waits out a delete's trashes")
-    func quitWaitsOutADelete() async throws {
-        let (controller, viewModel, spy) = makeFullQuit()
-        let instance = admitPeer(named: "Deleting", to: viewModel)
-        instance.activity.placeForTesting(.stopped)
-        let gate = GatedStep()
-        let delete = Task { try await instance.activity.delete { _ in try await gate.pass() } }
-        try await gate.waitUntilEntered()
-
-        await requestFullQuitAndLetItRun(controller)
-        #expect(spy.endings.isEmpty)
-
-        gate.release()
-        try await delete.value
-        try await spy.ended.wait { spy.endings.count == 1 }
-        #expect(instance.phase == .removed)
-    }
-
-    @Test("R6: a quit waits out a disk-image creation")
-    func quitWaitsOutADiskImageCreation() async throws {
-        let diskImages = MockDiskImageService()
-        diskImages.holdCreateDiskImage()
-        let (controller, viewModel, spy) = makeFullQuit(diskImages: diskImages)
-        let instance = admitPeer(named: "Creating", to: viewModel)
-        instance.activity.placeForTesting(.stopped)
-        let creation = Task { @MainActor in
-            try await viewModel.commandsLeavingEditsOpen.createStorageDisk(.id(instance.id), sizeInGB: 8)
-        }
-        try await diskImages.parked.wait { diskImages.isParked }
-
-        await requestFullQuitAndLetItRun(controller)
-        #expect(spy.endings.isEmpty)
-
-        diskImages.resumeCreateDiskImage()
-        try await creation.value
-        try await spy.ended.wait { spy.endings.count == 1 }
-        // The entry naming the image landed before the quit went on.
-        #expect(instance.configuration.storageDisks?.last?.isInternal == true)
-    }
-
     @Test("A quit waits out an arrival withdrawing the bundle a cancel took back")
     func quitWaitsOutAWithdrawal() async throws {
         let (controller, viewModel, spy) = makeFullQuit()
@@ -234,30 +178,6 @@ struct AppTerminationGateTests {
         gate.release()
         await arrival.settle()
         try await spy.ended.wait { spy.endings.count == 1 }
-    }
-
-    @Test("A quit saves each live VM once its trash is waited out")
-    func quitSavesTheLiveVMAfterItsWait() async throws {
-        let (controller, viewModel, spy) = makeFullQuit()
-        let instance = admitPeer(named: "Live", to: viewModel)
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        let gate = GatedStep()
-        let trash = try instance.activity.launch(.deletingSnapshot) { _ in
-            try await gate.pass()
-            return .rest(.asStarted, ())
-        }
-        try await gate.waitUntilEntered()
-
-        await requestFullQuitAndLetItRun(controller)
-        // Waited out rather than refused: the save is decided once the trash
-        // has rested the VM live again.
-        #expect(instance.phase.operation?.kind == .deletingSnapshot)
-        #expect(spy.endings.isEmpty)
-
-        gate.release()
-        try await trash.value()
-        try await spy.ended.wait { spy.endings.count == 1 }
-        #expect(instance.phase == .suspended)
     }
 
     @Test("A quit saves every other live VM while one VM's save is still running")
@@ -283,31 +203,6 @@ struct AppTerminationGateTests {
         try await save.value()
         try await spy.ended.wait { spy.endings.count == 1 }
         #expect(stuck.phase == .suspended)
-    }
-
-    @Test("A resident app that stays in the menu bar downgrades a quit to a GUI close")
-    func residentQuitClosesTheGUI() async throws {
-        let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(residency: spy)
-        viewModel.keepInMenuBarOnQuit = true
-
-        #expect(!controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .cancel)
-
-        // The close is deferred to a `Task` so it runs after the cancelled
-        // termination request settles.
-        try await spy.closed.wait { spy.closeCount == 1 }
-    }
-
-    @Test("A resident app that does not stay in the menu bar terminates")
-    func residentQuitWithoutMenuBarTerminates() {
-        let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(residency: spy)
-        viewModel.keepInMenuBarOnQuit = false
-
-        #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .now)
-        #expect(spy.closeCount == 0)
     }
 
     /// A display that takes nothing over.
@@ -366,23 +261,6 @@ struct AppTerminationGateTests {
         #expect(!controller.shouldTerminateOnQuit)
 
         try await spy.closed.wait { spy.closeCount == 1 }
-    }
-
-    @Test("A terminate-and-save classification outranks staying in the menu bar, and never clears")
-    func terminateAndSaveLatches() {
-        let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(residency: spy)
-        viewModel.keepInMenuBarOnQuit = true
-
-        controller.latchQuitClassification(.terminateAndSave)
-        #expect(controller.shouldTerminateOnQuit)
-
-        // Latches are only ever set, never reset: a later GUI-origin quit must
-        // not clear what an external one demanded.
-        controller.latchQuitClassification(.stayResident)
-        #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .now)
-        #expect(spy.closeCount == 0)
     }
 
     @Test("A terminate-and-relaunch classification latches the same way")

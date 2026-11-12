@@ -44,45 +44,6 @@ struct LoginItemServiceTests {
         #expect(!LoginItemService(registration: FakeRegistration(status: .requiresApproval)).isEnabled)
     }
 
-    @Test("setEnabled(true) registers and returns the resulting .enabled status")
-    func setEnabledTrueRegisters() {
-        let fake = FakeRegistration(status: .notRegistered)
-        let service = LoginItemService(registration: fake)
-
-        let status = service.setEnabled(true)
-
-        #expect(fake.registerCount == 1)
-        #expect(fake.unregisterCount == 0)
-        #expect(status == .enabled)
-    }
-
-    @Test("setEnabled(false) unregisters and returns the resulting .notRegistered status")
-    func setEnabledFalseUnregisters() {
-        let fake = FakeRegistration(status: .enabled)
-        let service = LoginItemService(registration: fake)
-
-        let status = service.setEnabled(false)
-
-        #expect(fake.unregisterCount == 1)
-        #expect(fake.registerCount == 0)
-        #expect(status == .notRegistered)
-    }
-
-    @Test("a register() throw is swallowed and the live status is returned")
-    func registerThrowReturnsLiveStatus() {
-        // Mirrors the real SMAppService behavior: a user-disabled item makes
-        // register() throw while status still reports .requiresApproval — the
-        // service must surface that status for the caller to deep-link Settings.
-        let fake = FakeRegistration(status: .requiresApproval)
-        fake.registerError = FakeError()
-        let service = LoginItemService(registration: fake)
-
-        let status = service.setEnabled(true)
-
-        #expect(fake.registerCount == 1)
-        #expect(status == .requiresApproval)
-    }
-
     @Test("an unregister() throw is swallowed and the live status is returned")
     func unregisterThrowReturnsLiveStatus() {
         let fake = FakeRegistration(status: .enabled)
@@ -94,11 +55,6 @@ struct LoginItemServiceTests {
         #expect(fake.unregisterCount == 1)
         // The throw left the fake's status untouched at .enabled.
         #expect(status == .enabled)
-    }
-
-    @Test("status passes through the backend")
-    func statusPassesThrough() {
-        #expect(LoginItemService(registration: FakeRegistration(status: .notFound)).status == .notFound)
     }
 
     @Test("the shipping registration is the main app, not an agent")

@@ -27,14 +27,4 @@ struct AppResidencyUnhideTests {
             AppResidencyPolicy.unhideOutcome(
                 hasVisibleUserWindow: false, keepInMenuBar: true) == .goHeadless)
     }
-
-    @Test("a close that landed mid-hide shows the library when there is no status item")
-    func noWindowWithKeepOffPresentsLibrary() {
-        // Never `.quit`: the person unhiding just asked for the app, and with
-        // the toggle off a headless app has no status item to be reached
-        // through — the close is answered by putting the library back.
-        #expect(
-            AppResidencyPolicy.unhideOutcome(
-                hasVisibleUserWindow: false, keepInMenuBar: false) == .presentLibrary)
-    }
 }

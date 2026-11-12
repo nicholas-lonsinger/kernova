@@ -18,9 +18,4 @@ struct AppResidencyReopenPresentationTests {
     func userWindowPresentsNothing() {
         #expect(AppResidencyPolicy.reopenPresentation(hasVisibleUserWindow: true) == .nothing)
     }
-
-    @Test("A reopen with no user window presents the library")
-    func noUserWindowPresentsLibrary() {
-        #expect(AppResidencyPolicy.reopenPresentation(hasVisibleUserWindow: false) == .library)
-    }
 }

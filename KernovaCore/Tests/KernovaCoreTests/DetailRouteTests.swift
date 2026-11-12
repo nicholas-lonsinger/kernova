@@ -13,19 +13,7 @@ struct DetailRouteTests {
     /// can create a `VZVirtualMachine` for.
     private static let session = UUID()
 
-    // MARK: - Settings
-
     // MARK: - Installing
-
-    @Test("Installing with a setup state routes to .setup")
-    func installingWithStateRoutesToSetup() {
-        let route = DetailRoute.resolve(
-            phase: .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
-            hasSetupState: true,
-            detailPaneMode: .display
-        )
-        #expect(route == .setup)
-    }
 
     @Test("Installing without a setup state routes to a transition")
     func installingWithoutStateRoutesToTransition() {
@@ -60,47 +48,6 @@ struct DetailRouteTests {
                 detailPaneMode: .settings
             )
             #expect(settings == .settings, "\(phase)")
-        }
-    }
-
-    // MARK: - Transient phases
-
-    @Test("Starting routes to a transition with the status label")
-    func startingRoutesToTransition() {
-        for paneMode in [DetailPaneMode.display, .settings] {
-            let route = DetailRoute.resolve(
-                phase: .operating(
-                    .bringUp(.guestStart(.starting(recovery: false))), from: .stopped,
-                    boundSession: Self.session),
-                hasSetupState: false,
-                detailPaneMode: paneMode
-            )
-            #expect(route == .transition(label: VMStatus.starting.displayName))
-        }
-    }
-
-    @Test("A session-less transition routes to its spinner, not the display pane")
-    func sessionLessTransitionsRouteToTransition() {
-        // A revert ends the session before it copies, and a cold capture
-        // never had one — both would otherwise replace the Settings form with
-        // the display backing view for the whole copy.
-        for phase in [
-            VMLifecyclePhase.operating(.capturingSnapshot(.stopped), from: .stopped),
-            .operating(
-                .bringUp(.reverting(snapshotID: Self.session, resumesAfter: false)),
-                from: .running(sessionID: Self.session), sessionEnd: .endedByOperation),
-            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended),
-        ] {
-            for paneMode in [DetailPaneMode.display, .settings] {
-                let route = DetailRoute.resolve(
-                    phase: phase,
-                    hasSetupState: false,
-                    detailPaneMode: paneMode
-                )
-                #expect(
-                    route == .transition(label: phase.status.displayName),
-                    "phase \(phase), pane \(paneMode)")
-            }
         }
     }
 

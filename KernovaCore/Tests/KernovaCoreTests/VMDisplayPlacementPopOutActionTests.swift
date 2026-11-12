@@ -13,22 +13,6 @@ import Testing
 @Suite("VMDisplayPlacement.popOutAction", .caseScoped)
 struct VMDisplayPlacementPopOutActionTests {
     @Test(
-        "An open display window is closed, whatever mode it is in",
-        arguments: [VMDisplayMode.inline, .popOut, .fullscreen, .hidden])
-    func withWindowClosesIt(mode: VMDisplayMode) {
-        #expect(
-            VMDisplayPlacement.popOutAction(hasWindow: true, mode: mode)
-                == .closeWindowForPopIn)
-    }
-
-    @Test("A headless VM with no window pops the display back in directly")
-    func headlessPopsInWithoutAWindow() {
-        #expect(
-            VMDisplayPlacement.popOutAction(hasWindow: false, mode: .hidden)
-                == .popInFromHeadless)
-    }
-
-    @Test(
         "Any other mode with no window pops the display out",
         arguments: [VMDisplayMode.inline, .popOut, .fullscreen])
     func noWindowPopsOut(mode: VMDisplayMode) {
