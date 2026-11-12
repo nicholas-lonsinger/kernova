@@ -1560,6 +1560,23 @@ struct VMCommandCoreTests {
         }
     }
 
+    @Test("A Suspend whose save fails reports one failure, worded as its caller was told")
+    func suspendFailureIsReportedOnce() async throws {
+        let harness = makeHarness()
+        harness.virtualization.saveError = NSError(
+            domain: "VZErrorDomain", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "The virtual machine's state could not be saved."])
+        let instance = makeInstance(in: harness, name: "Broken", phase: .running(sessionID: UUID()))
+        let events = harness.core.events()
+
+        let thrown = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id))
+        }
+
+        let failures = try await harness.wired.failureMessages(of: instance, on: events)
+        #expect(failures == [thrown.message])
+    }
+
     @Test("A clone whose copy fails reports the failure directly, then the arrival's removal")
     func cloneFailureReportsFailureThenRemoval() async throws {
         let harness = makeHarness()
