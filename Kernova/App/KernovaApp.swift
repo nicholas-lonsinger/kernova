@@ -22,12 +22,12 @@ enum KernovaApp {
         // subclass that takes Kernova's reserved shortcuts.
         let app = KernovaApplication.shared
         precondition(app is KernovaApplication, "NSApp was created before KernovaApplication")
-        let presence = SystemAppPresence()
+        let focus = AppKitSessionFocus()
 
         // `NSApplication.delegate` is weak, so the local binding retains the
         // delegate for the process lifetime (`run()` never returns).
         let delegate = AppDelegate(
-            viewModel: makeLibrary(products: products), copyClaim: copyClaim, presence: presence)
+            viewModel: makeLibrary(products: products), copyClaim: copyClaim, focus: focus)
         app.delegate = delegate
         app.run()
     }

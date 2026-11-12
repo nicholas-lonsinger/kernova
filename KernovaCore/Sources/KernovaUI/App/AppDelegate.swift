@@ -40,9 +40,9 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
     /// process and handed to the command socket when the automation front
     /// doors open.
     private let copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>
-    /// The app's activation policy, hidden state and activation, shared with
-    /// every owner that reads or changes them.
-    private let presence: any AppPresence
+    /// The login session's focus, shared with every owner that reads or
+    /// changes it.
+    private let focus: any SessionFocus
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppDelegate")
 
@@ -58,23 +58,23 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
     /// (`KernovaApp`) built over the production services.
     package init(
         viewModel: VMLibraryViewModel, copyClaim: Result<AppCopyClaim, AppCopyClaim.Unavailable>,
-        presence: any AppPresence
+        focus: any SessionFocus
     ) {
         self.copyClaim = copyClaim
-        self.presence = presence
+        self.focus = focus
         self.viewModel = viewModel
         let windows = AppWindowRegistry(
             viewModel: viewModel,
-            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, stage: .app),
+            displayPlacement: VMDisplayPlacementController(viewModel: viewModel, stage: .app, focus: focus),
             stage: .app,
-            presence: presence)
+            focus: focus)
         self.windows = windows
         let alerts = AppAlertPresenter(viewModel: viewModel, windows: windows)
         self.alerts = alerts
         viewModel.presenter = alerts
-        viewModel.savePendingEdits = PendingFieldEdits.save
+        viewModel.savePendingEdits = { [weak windows] in windows?.savePendingEdits() }
         let lifecycle = AppResidencyController(
-            viewModel: viewModel, windows: windows, heldAlerts: alerts.held, presence: presence)
+            viewModel: viewModel, windows: windows, heldAlerts: alerts.held, focus: focus)
         self.lifecycle = lifecycle
         self.mainMenu = MainMenuController(viewModel: viewModel, windows: windows)
         self.termination = AppTerminationController(viewModel: viewModel, residency: lifecycle)
@@ -161,10 +161,10 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
                     && descriptor.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
                         == keyAELaunchedAsLogInItem
             } ?? false
-        let isHiddenLaunch = presence.isHidden
+        let isHiddenLaunch = focus.isHidden
         Self.logger.log(
             .notice,
-            "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(self.presence.isActive, privacy: .public)"
+            "Launch signals — loginItem=\(isLoginItem, privacy: .public) hidden=\(isHiddenLaunch, privacy: .public) active=\(self.focus.isActive, privacy: .public)"
         )
 
         return AppResidencyPolicy.LaunchProvenance(
@@ -318,9 +318,9 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         #if DEBUG
         let buildNumber = viewModel.library.bundleProducts.buildNumber ?? ""
         let versionAnnotation = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
-        NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
+        focus.showAboutPanel(options: [.version: versionAnnotation])
         #else
-        NSApp.orderFrontStandardAboutPanel(sender)
+        focus.showAboutPanel(options: [:])
         #endif
     }
 
@@ -473,7 +473,7 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         ConsentedSettingWrite(instance: instance, viewModel: viewModel, refresh: {}).write(
             VMConfigurationKeyRegistry.clipboardPassthrough.assigning(
                 !instance.configuration.clipboardPassthroughEnabled),
-            confirmingIn: NSApp.keyWindow ?? NSApp.mainWindow)
+            confirmingIn: windows.workingWindow)
     }
 
     @objc func showGuestAgentStatus(_ sender: Any?) {

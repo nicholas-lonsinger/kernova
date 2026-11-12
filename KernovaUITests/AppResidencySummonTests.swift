@@ -9,8 +9,8 @@ import Testing
 
 /// Covers the summon an in-app click runs —
 /// ``AppResidencyController/summonUserInterface()`` — and the reopen leg —
-/// ``AppResidencyController/handleReopen()`` — against an ``AppPresence`` that
-/// records its calls instead of unhiding or activating the test host.
+/// ``AppResidencyController/handleReopen()`` — against a ``SessionFocus`` that
+/// records its requests instead of unhiding or activating the test host.
 ///
 /// The controller is exercised without ``AppResidencyController/start(provenance:)``,
 /// for the reason `AppResidencyPresentationTests` gives.
@@ -18,54 +18,6 @@ import Testing
 @MainActor
 struct AppResidencySummonTests {
     private let preferences = makeTestPreferences()
-
-    /// Stands in for `NSApp`'s hidden state and activation, recording each
-    /// unhide and activation in order.
-    @MainActor
-    private final class RecordingForeground: AppPresence {
-        enum Step: Equatable {
-            case unhide
-            case activate(libraryOnScreen: Bool)
-            /// A main-actor job the unhide enqueued has run.
-            case laterJob
-        }
-
-        var activationPolicy = NSApplication.ActivationPolicy.regular
-        let isActive = false
-        /// Held across an unhide, so every presentation that would unhide
-        /// records its own.
-        let isHidden: Bool
-        private(set) var steps: [Step] = []
-        let gate = AsyncGate()
-        /// Runs inside the unhide call, where AppKit could deliver
-        /// `applicationDidUnhide` at the earliest.
-        var onUnhide: () -> Void = {}
-        weak var registry: AppWindowRegistry?
-
-        init(isHidden: Bool) { self.isHidden = isHidden }
-
-        func record(_ step: Step) {
-            steps.append(step)
-            gate.notify()
-        }
-
-        var activations: Int {
-            steps.filter { if case .activate = $0 { true } else { false } }.count
-        }
-
-        func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
-            activationPolicy = policy
-        }
-
-        func unhideWithoutActivation() {
-            record(.unhide)
-            onUnhide()
-        }
-
-        func activate() {
-            record(.activate(libraryOnScreen: registry?.libraryWindow?.isVisible == true))
-        }
-    }
 
     /// Counts the windows the registry puts up, standing in for the residency
     /// that answers ``WindowResidencyHosting/prepareToPresentWindow()``.
@@ -77,54 +29,82 @@ struct AppResidencySummonTests {
         func syncActivationPolicy() {}
     }
 
+    /// A main-actor job enqueued from inside the one under test, so it runs
+    /// once that job has ended: what it finds recorded is everything that job
+    /// asked for.
+    @MainActor
+    private final class LaterJob {
+        private(set) var requestsSeen: [RecordingSessionFocus.Request]?
+        let gate = AsyncGate()
+
+        func enqueue(reading focus: RecordingSessionFocus) {
+            Task { @MainActor in
+                self.requestsSeen = focus.requests
+                self.gate.notify()
+            }
+        }
+    }
+
     private func makeController(
-        foreground: RecordingForeground
+        focus: RecordingSessionFocus
     ) -> (AppResidencyController, AppWindowRegistry, VMLibraryViewModel) {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let registry = makeWindowRegistry(viewModel)
-        foreground.registry = registry
+        let registry = makeWindowRegistry(viewModel, focus: focus)
         let controller = AppResidencyController(
-            viewModel: viewModel, windows: registry, heldAlerts: HeldAlerts(),
-            presence: foreground)
+            viewModel: viewModel, windows: registry, heldAlerts: HeldAlerts(), focus: focus)
         return (controller, registry, viewModel)
     }
 
     @Test("A hidden summon unhides, shows and activates in one main-actor job")
     func hiddenSummonIsOneJob() async throws {
-        let foreground = RecordingForeground(isHidden: true)
-        foreground.onUnhide = { [foreground] in
-            Task { @MainActor in foreground.record(.laterJob) }
+        let focus = RecordingSessionFocus(isHidden: true)
+        let (controller, registry, _) = makeController(focus: focus)
+        let laterJob = LaterJob()
+        focus.onRequest = { [focus] request in
+            if request == .unhideWithoutActivation { laterJob.enqueue(reading: focus) }
         }
-        let (controller, _, _) = makeController(foreground: foreground)
 
         controller.summonUserInterface()
         // The unhide belongs to the deferred show, never to the call itself.
-        #expect(foreground.steps.isEmpty)
-        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+        #expect(focus.requests.isEmpty)
+        try await laterJob.gate.wait { laterJob.requestsSeen != nil }
 
-        #expect(foreground.steps == [.unhide, .activate(libraryOnScreen: true), .laterJob])
+        let library = try #require(registry.libraryWindow)
+        #expect(
+            laterJob.requestsSeen == [
+                .unhideWithoutActivation, .present(library, .keyAndFront), .present(library, .frontRegardless),
+                .activate, .cancelMenuBarTracking,
+            ])
     }
 
     @Test("A delivered presentation neither unhides nor asks for activation")
     func deliveredPresentationAsksNothing() async throws {
-        let foreground = RecordingForeground(isHidden: true)
-        let (controller, registry, _) = makeController(foreground: foreground)
+        let focus = RecordingSessionFocus(isHidden: true)
+        let (controller, registry, _) = makeController(focus: focus)
         registry.showLibrary(bringToFront: true)
+        let library = try #require(registry.libraryWindow)
+        let shown: [RecordingSessionFocus.Request] = [
+            .present(library, .keyAndFront), .present(library, .frontRegardless),
+        ]
 
         // The summon's job runs behind the delivered one, so once the summon has
         // asked, anything the delivered one did is recorded ahead of it — and
         // the fake stays hidden, so an unhide by both would record two.
         controller.presentSummonedInterface()
         controller.summonUserInterface()
-        try await foreground.gate.wait { foreground.activations > 0 }
+        try await focus.gate.wait {
+            focus.requests.last == .cancelMenuBarTracking && focus.requests.contains(.activate)
+        }
 
-        #expect(foreground.steps == [.unhide, .activate(libraryOnScreen: true)])
+        #expect(
+            focus.requests == [.present(library, .keyAndFront)] + shown + [.cancelMenuBarTracking]
+                + [.unhideWithoutActivation] + shown + [.activate, .cancelMenuBarTracking])
     }
 
     @Test("A status-item row for an arrival selects it and summons the library")
     func arrivalRowSelectsTheArrival() async throws {
-        let foreground = RecordingForeground(isHidden: false)
-        let (controller, _, viewModel) = makeController(foreground: foreground)
+        let focus = RecordingSessionFocus(isHidden: false)
+        let (controller, registry, viewModel) = makeController(focus: focus)
         let arrival = VMArrival.inert(
             .importing,
             configuration: VMConfiguration(
@@ -134,77 +114,74 @@ struct AppResidencySummonTests {
         viewModel.selection = nil
 
         controller.summonStatusItemTarget(for: arrival.id)
-        try await foreground.gate.wait { foreground.activations > 0 }
+        try await focus.gate.wait { focus.requests.last == .cancelMenuBarTracking }
 
         #expect(viewModel.selectedID == arrival.id)
-        #expect(foreground.steps == [.activate(libraryOnScreen: true)])
+        let library = try #require(registry.libraryWindow)
+        #expect(
+            focus.requests == [
+                .present(library, .keyAndFront), .present(library, .frontRegardless), .activate,
+                .cancelMenuBarTracking,
+            ])
     }
 
     @Test("A reopen with no user window on screen shows the library")
     func windowlessReopenShowsTheLibrary() async throws {
-        let foreground = RecordingForeground(isHidden: false)
-        let (controller, registry, _) = makeController(foreground: foreground)
+        let focus = RecordingSessionFocus(isHidden: false)
+        let (controller, registry, _) = makeController(focus: focus)
         let presentations = PresentationCounter()
         registry.residency = presentations
 
         controller.handleReopen()
-        // Enqueued behind the reopen's job, so it records once that job has run.
-        Task { @MainActor in foreground.record(.laterJob) }
-        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+        // The reopen's job is already queued, so it runs ahead of the barrier.
+        await drainMainQueue()
 
         #expect(presentations.count == 1)
-        #expect(registry.libraryWindow?.isVisible == true)
+        let library = try #require(registry.libraryWindow)
+        #expect(focus.requests == [.present(library, .keyAndFront), .present(library, .frontRegardless)])
     }
 
     @Test("A reopen while hidden leaves the hidden state before it decides")
     func hiddenReopenUnhidesBeforeDeciding() async throws {
-        let foreground = RecordingForeground(isHidden: true)
-        let (controller, registry, _) = makeController(foreground: foreground)
+        let focus = RecordingSessionFocus(isHidden: true)
+        let (controller, registry, _) = makeController(focus: focus)
         registry.showLibrary(bringToFront: true)
         let library = try #require(registry.libraryWindow)
         // A hidden app's windows read `isVisible == false` until the unhide
         // brings them back.
         library.orderOut(nil)
-        foreground.onUnhide = { [foreground] in
-            library.orderFront(nil)
-            Task { @MainActor in foreground.record(.laterJob) }
+        let requestsBefore = focus.requests
+        focus.onRequest = { request in
+            if request == .unhideWithoutActivation { library.orderFront(nil) }
         }
         let presentations = PresentationCounter()
         registry.residency = presentations
 
         controller.handleReopen()
         // The unhide belongs to the deferred decision, never to the call itself.
-        #expect(foreground.steps.isEmpty)
-        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+        #expect(focus.requests == requestsBefore)
+        await drainMainQueue()
 
-        #expect(foreground.steps == [.unhide, .laterJob])
+        #expect(focus.requests == requestsBefore + [.unhideWithoutActivation])
         #expect(presentations.count == 0)
     }
 
     @Test("A reopen whose only user window is miniaturized shows no library")
     func miniaturizedWindowOwnsTheReopen() async throws {
-        let foreground = RecordingForeground(isHidden: false)
-        let (controller, registry, _) = makeController(foreground: foreground)
+        let focus = RecordingSessionFocus(isHidden: false)
+        let (controller, registry, _) = makeController(focus: focus)
         registry.showLibrary(bringToFront: true)
         let library = try #require(registry.libraryWindow)
-        // AppKit reports the miniaturize a runloop turn later, through the
-        // notification the wait is driven by.
-        let miniaturized = AsyncGate()
-        let observer = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMiniaturizeNotification, object: library, queue: .main
-        ) { _ in miniaturized.notify() }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        library.miniaturize(nil)
-        try await miniaturized.wait { library.isMiniaturized && !library.isVisible }
+        focus.minimize(library)
+        let requestsBefore = focus.requests
         let presentations = PresentationCounter()
         registry.residency = presentations
 
         controller.handleReopen()
-        // Enqueued behind the reopen's job, so it records once that job has run.
-        Task { @MainActor in foreground.record(.laterJob) }
-        try await foreground.gate.wait { foreground.steps.contains(.laterJob) }
+        // The reopen's job is already queued, so it runs ahead of the barrier.
+        await drainMainQueue()
 
         #expect(presentations.count == 0)
-        #expect(foreground.steps == [.laterJob])
+        #expect(focus.requests == requestsBefore)
     }
 }

@@ -37,15 +37,10 @@ struct VMDisplayPlacementReadyDisplayTests {
         -> (VMDisplayPlacementController, StubResidency)
     {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: RecordingSessionFocus())
         let residency = StubResidency(posture: posture)
         placement.residency = residency
         return (placement, residency)
-    }
-
-    /// Whether the display window `window` last went up in front.
-    private func shownInFront(_ window: NSWindow) throws -> Bool? {
-        try #require(window.windowController as? VMDisplayWindowController).shownInFrontForTesting
     }
 
     @Test("A bring-up while the app presents no GUI opens no window")
@@ -65,7 +60,8 @@ struct VMDisplayPlacementReadyDisplayTests {
     @Test("A group start from the foreground puts each detached display up without taking key")
     func groupStartReadiesBehind() async throws {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage)
+        let focus = RecordingSessionFocus()
+        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: focus)
         let residency = StubResidency(posture: .foreground)
         placement.residency = residency
         let popOut = viewModel.library.admitFixture(
@@ -83,10 +79,12 @@ struct VMDisplayPlacementReadyDisplayTests {
 
         #expect(popOut.status == .running && fullscreen.status == .running)
         #expect(presences == [.unattended, .unattended])
+        // Each put up in front of Kernova's other windows alone, and none
+        // asked into fullscreen.
+        #expect(focus.requests.count == 2)
         for instance in [popOut, fullscreen] {
             let window = try #require(placement.window(for: instance.instanceID))
-            #expect(window.isVisible)
-            #expect(try shownInFront(window) == false)
+            #expect(focus.requests.contains(.present(window, .front)))
         }
         // Put up behind, the fullscreen VM runs in a pop-out window with its
         // preference kept — a front readying would have entered fullscreen.

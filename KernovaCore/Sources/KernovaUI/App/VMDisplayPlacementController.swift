@@ -11,8 +11,6 @@ protocol VMDisplayPlacementHosting: AnyObject {
     func showLibrary(bringToFront: Bool)
     /// `window`, a display window, was put on screen.
     func displayWindowShown(_ window: NSWindow)
-    /// The app's activation policy and activation.
-    var presence: any AppPresence { get }
 }
 
 /// The one owner of where each VM's display lives.
@@ -27,6 +25,7 @@ protocol VMDisplayPlacementHosting: AnyObject {
 final class VMDisplayPlacementController {
     private let viewModel: VMLibraryViewModel
     private let stage: WindowStage
+    private let focus: any SessionFocus
     weak var host: (any VMDisplayPlacementHosting)?
     /// The residency decisions a display window's placement needs but cannot
     /// make.
@@ -38,9 +37,10 @@ final class VMDisplayPlacementController {
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayPlacementController")
 
-    init(viewModel: VMLibraryViewModel, stage: WindowStage) {
+    init(viewModel: VMLibraryViewModel, stage: WindowStage, focus: any SessionFocus) {
         self.viewModel = viewModel
         self.stage = stage
+        self.focus = focus
     }
 
     // MARK: - Registry
@@ -114,8 +114,8 @@ final class VMDisplayPlacementController {
     }
 
     func toggleFullscreen(for instance: VMInstance) {
-        if let existing = windows[instance.instanceID] {
-            existing.window?.toggleFullScreen(nil)
+        if let window = windows[instance.instanceID]?.window {
+            focus.toggleFullScreenMode(of: window)
             return
         }
         viewModel.recordDisplayPreference(.fullscreen, for: instance)
@@ -160,11 +160,10 @@ final class VMDisplayPlacementController {
         // Already open (e.g. resuming a live-paused VM from the library):
         // surface the existing window so keyboard input lands in the guest.
         if let existing = windows[vmID] {
-            switch show {
-            case .front: existing.window?.makeKeyAndOrderFront(nil)
-            case .behind: existing.window?.orderFront(nil)
+            if let window = existing.window {
+                focus.present(window, Self.presentation(of: show))
+                host?.displayWindowShown(window)
             }
-            if let window = existing.window { host?.displayWindowShown(window) }
             return
         }
         residency?.prepareToPresentWindow()
@@ -172,7 +171,6 @@ final class VMDisplayPlacementController {
         let controller = VMDisplayWindowController(
             instance: instance,
             capabilities: viewModel.capabilities,
-            enterFullscreen: enterFullscreen,
             stage: stage,
             onResume: { [weak self] in
                 guard let self else { return }
@@ -195,7 +193,7 @@ final class VMDisplayPlacementController {
         }
         windows[vmID] = controller
 
-        // For fullscreen: position on the remembered display so toggleFullScreen
+        // For fullscreen: position on the remembered display so entering fullscreen
         // picks the correct screen.
         if enterFullscreen {
             if let screen = preferredScreenForFullscreen(of: instance),
@@ -211,11 +209,18 @@ final class VMDisplayPlacementController {
         }
 
         apply(VMDisplayPlacement.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
+        controller.prepareToShow(front: show != .behind)
+        guard let window = controller.window else { return }
+        focus.present(window, Self.presentation(of: show))
+        if enterFullscreen { focus.toggleFullScreenMode(of: window) }
+        host?.displayWindowShown(window)
+    }
+
+    private static func presentation(of show: VMDisplayPlacement.WindowShow) -> WindowPresentation {
         switch show {
-        case .front: controller.showWindow(nil)
-        case .behind: controller.showWindowBehind()
+        case .front: .keyAndFront
+        case .behind: .front
         }
-        if let window = controller.window { host?.displayWindowShown(window) }
     }
 
     /// The screen ``VMDisplayPlacement/fullscreenScreen(lastDisplayID:screens:libraryScreen:displayID:)``
@@ -251,7 +256,8 @@ final class VMDisplayPlacementController {
     /// The runtime mode is written synchronously, while the notification is
     /// still dispatching: the detail pane's placeholder reads it, and the
     /// registry entry has to survive the dispatch so the app's global
-    /// `willClose` observer can still recognize a pop-in.
+    /// `willClose` observer can still recognize a pop-in. Whether the window
+    /// was key is read then too, before it gives up key.
     ///
     /// Everything else is deferred to the next runloop turn, once the closing
     /// window has left `NSApp.windows`: run during `willClose` the window still
@@ -264,7 +270,8 @@ final class VMDisplayPlacementController {
         let reason = pendingCloseReasons[vmID] ?? .userClose
         let placement = VMDisplayPlacement.placement(for: .closed(reason))
         instance.displayMode = placement.mode
-        let appWasActive = host?.presence.isActive ?? false
+        let appWasActive = focus.isActive
+        let wasKey = windows[vmID]?.window.map { $0 === focus.keyWindow } ?? false
 
         Task { @MainActor in
             self.pendingCloseReasons.removeValue(forKey: vmID)
@@ -276,7 +283,7 @@ final class VMDisplayPlacementController {
             if let preference = placement.persistPreference {
                 self.viewModel.recordDisplayPreference(preference, for: instance)
             }
-            let policy = self.host.map { String($0.presence.activationPolicy.rawValue) } ?? "-"
+            let policy = String(self.focus.activationPolicy.rawValue)
             Self.logger.log(
                 .notice,
                 "Display window closed for '\(instance.name, privacy: .public)' (reason=\(String(describing: reason), privacy: .public), policy=\(policy, privacy: .public))"
@@ -288,7 +295,7 @@ final class VMDisplayPlacementController {
             case .restoreLibrary:
                 self.viewModel.selectRevealing(vmID)
                 switch VMDisplayPlacement.libraryRestore(
-                    wasKeyWindow: context.wasKeyWindow, appWasActive: appWasActive)
+                    wasKey: wasKey, appWasActive: appWasActive)
                 {
                 case .focusLibrary:
                     self.host?.showLibrary(bringToFront: true)

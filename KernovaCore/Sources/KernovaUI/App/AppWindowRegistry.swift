@@ -24,8 +24,9 @@ final class AppWindowRegistry {
     }
 
     private let stage: WindowStage
-    /// The app's activation, which a window the user asked for brings forward.
-    let presence: any AppPresence
+    /// The login session's focus, which a window the user asked for brings
+    /// forward.
+    let focus: any SessionFocus
     private var mainWindowController: MainWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var guestAgentStatusWindows: [UUID: GuestAgentStatusWindowController] = [:]
@@ -34,7 +35,7 @@ final class AppWindowRegistry {
     /// notification carries for a window ordered in without becoming key.
     var onWindowShown: (@MainActor () -> Void)?
     /// Reports a window's `willClose`, once the window is out of
-    /// ``alertScene(keyWindow:mainWindow:)``.
+    /// ``alertScene()``.
     var onWindowWillClose: (@MainActor (NSWindow) -> Void)?
 
     /// The windows that began closing and that this registry has not shown
@@ -50,12 +51,12 @@ final class AppWindowRegistry {
         viewModel: VMLibraryViewModel,
         displayPlacement: VMDisplayPlacementController,
         stage: WindowStage,
-        presence: any AppPresence
+        focus: any SessionFocus
     ) {
         self.viewModel = viewModel
         self.displayPlacement = displayPlacement
         self.stage = stage
-        self.presence = presence
+        self.focus = focus
         displayPlacement.host = self
         // Synchronous on the posting thread (`queue: nil`), so the window is
         // out of the scene before anything else hears of the close.
@@ -83,6 +84,11 @@ final class AppWindowRegistry {
         onWindowShown?()
     }
 
+    private func present(_ controller: NSWindowController, _ presentation: WindowPresentation) {
+        guard let window = controller.window else { return }
+        focus.present(window, presentation)
+    }
+
     // MARK: - Library
 
     var libraryWindow: NSWindow? { mainWindowController?.window }
@@ -97,20 +103,16 @@ final class AppWindowRegistry {
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
                 Self.logger.log(.debug, "showLibrary: focusing existing window")
-                existingWindow.makeKeyAndOrderFront(nil)
+                focus.present(existingWindow, .keyAndFront)
             } else {
                 Self.logger.log(.debug, "showLibrary: showing existing window in background")
-                existingWindow.orderBack(nil)
+                focus.present(existingWindow, .back)
             }
         } else {
             Self.logger.log(.notice, "showLibrary: recreating main window controller")
             let windowController = MainWindowController(
                 viewModel: viewModel, stage: stage)
-            if bringToFront {
-                windowController.showWindow(nil)
-            } else {
-                windowController.showWindowInBackground()
-            }
+            present(windowController, bringToFront ? .keyAndFront : .back)
             mainWindowController = windowController
         }
         shown(mainWindowController?.window)
@@ -129,7 +131,9 @@ final class AppWindowRegistry {
 
     /// The library window's sidebar while that window is on screen.
     var librarySidebar: SidebarViewController? {
-        guard let mainWindowController, mainWindowController.window?.isVisible == true else { return nil }
+        guard let mainWindowController, let window = mainWindowController.window,
+            focus.standing(of: window).isVisible
+        else { return nil }
         return mainWindowController.sidebarViewController
     }
 
@@ -146,9 +150,8 @@ final class AppWindowRegistry {
             ?? SettingsWindowController(viewModel: viewModel, stage: stage)
         settingsWindowController = controller
         if let destination { controller.tabs.show(destination) }
-        presence.activate()
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
+        focus.activate()
+        present(controller, .keyAndFront)
     }
 
     // MARK: - Config check
@@ -169,11 +172,12 @@ final class AppWindowRegistry {
         configCheckWindowController = controller
         switch request {
         case .user:
-            presence.activate()
-            controller.showAndCheck(makingKey: true)
+            focus.activate()
+            present(controller, .keyAndFront)
         case .automatic:
-            controller.showAndCheck(makingKey: false)
+            present(controller, .front)
         }
+        controller.checkAgain()
     }
 
     // MARK: - Guest Agent Status
@@ -185,7 +189,7 @@ final class AppWindowRegistry {
         let vmID = instance.instanceID
         if let existing = guestAgentStatusWindows[vmID] {
             residency?.prepareToPresentWindow()
-            existing.window?.makeKeyAndOrderFront(nil)
+            present(existing, .keyAndFront)
             shown(existing.window)
             return
         }
@@ -196,7 +200,7 @@ final class AppWindowRegistry {
             self?.guestAgentStatusWindows.removeValue(forKey: vmID)
         }
         guestAgentStatusWindows[vmID] = controller
-        controller.showWindow(nil)
+        present(controller, .keyAndFront)
         shown(controller.window)
     }
 
@@ -211,7 +215,7 @@ final class AppWindowRegistry {
     func instance(shownIn window: NSWindow) -> VMInstance? {
         let window = Self.sheetRoot(of: window)
         if let instance = ownInstance(of: window) { return instance }
-        guard window === libraryWindow, window.isVisible else { return nil }
+        guard window === libraryWindow, focus.standing(of: window).isVisible else { return nil }
         return viewModel.selectedInstance
     }
 
@@ -222,7 +226,7 @@ final class AppWindowRegistry {
     func vmIDs(actedOnIn window: NSWindow) -> Set<UUID> {
         let window = Self.sheetRoot(of: window)
         if let instance = ownInstance(of: window) { return [instance.id] }
-        guard window === libraryWindow, window.isVisible else { return [] }
+        guard window === libraryWindow, focus.standing(of: window).isVisible else { return [] }
         return Set(viewModel.instances.map(\.id))
     }
 
@@ -232,11 +236,25 @@ final class AppWindowRegistry {
             ?? guestAgentStatusWindows.values.first { $0.window === window }?.instance
     }
 
+    /// The window the user is working in: the key window, else the main one.
+    var workingWindow: NSWindow? { focus.keyWindow ?? focus.mainWindow }
+
+    /// The VM the user is working on, in the session's key and main windows.
+    var workingInstance: VMInstance? {
+        workingInstance(keyWindow: focus.keyWindow, mainWindow: focus.mainWindow)
+    }
+
     /// The VM the user is working on, found the way AppKit finds a menu
     /// action's target — the key window's VM, else the main window's
     /// (`NSApplication.sendAction(_:to:from:)`).
     func workingInstance(keyWindow: NSWindow?, mainWindow: NSWindow?) -> VMInstance? {
         keyWindow.flatMap(instance(shownIn:)) ?? mainWindow.flatMap(instance(shownIn:))
+    }
+
+    /// The windows an alert can go to now, from the session's key and main
+    /// windows.
+    func alertScene() -> AlertWindowScene<NSWindow> {
+        alertScene(keyWindow: focus.keyWindow, mainWindow: focus.mainWindow)
     }
 
     /// The windows an alert can go to, read from the key and main windows the
@@ -248,10 +266,10 @@ final class AppWindowRegistry {
             (window: Self.sheetRoot(of: window), vmIDs: vmIDs(actedOnIn: window))
         }
         let displayWindows = displayPlacement.windowsByVM
-        var states: [NSWindow: AlertWindowState] = [:]
+        var states: [NSWindow: WindowStanding] = [:]
         for window in working.map(\.window) + displayWindows.values + [libraryWindow].compactMap({ $0 })
         where !closedWindows.contains(window) {
-            states[window] = AlertWindowState(window)
+            states[window] = focus.standing(of: window)
         }
         return AlertWindowScene(
             working: working, displayWindows: displayWindows, library: libraryWindow, states: states)
@@ -272,7 +290,7 @@ final class AppWindowRegistry {
     var hasTrackedUserWindow: Bool {
         func isPresent(_ window: NSWindow?) -> Bool {
             guard let window else { return false }
-            return window.isVisible || window.isMiniaturized
+            return focus.standing(of: window).isPresent
         }
         if isPresent(libraryWindow) { return true }
         if displayPlacement.hasWindow(where: { isPresent($0) }) { return true }
@@ -293,21 +311,33 @@ final class AppWindowRegistry {
         if hasTrackedUserWindow { return true }
         // Untracked AppKit-owned panels are genuine on-screen windows: count them
         // so a reconcile can't strip the Dock icon while one is the last visible.
-        return stage.windows().contains(where: Self.isUntrackedUserPanel)
+        return stage.windows().contains { window in
+            Self.isUntrackedUserPanel(
+                level: window.level, styleMask: window.styleMask, standing: focus.standing(of: window))
+        }
     }
 
-    /// Whether `window` is an untracked, AppKit-owned top-level panel whose
-    /// presence must keep the Dock icon.
+    /// Whether a window at `level` with `styleMask`, standing as `standing`, is
+    /// an untracked, AppKit-owned top-level panel whose presence must keep the
+    /// Dock icon.
     ///
     /// The standard About panel is the motivating example. The visible +
     /// normal-level + titled filter excludes chrome: the status item's backing
     /// `NSStatusBarWindow` is borderless and sits above `.normal`, so an
     /// unfiltered scan of the app's windows would pin the agent to `.regular`
     /// forever.
-    static func isUntrackedUserPanel(_ window: NSWindow) -> Bool {
-        (window.isVisible || window.isMiniaturized)
-            && window.level == .normal
-            && window.styleMask.contains(.titled)
+    nonisolated static func isUntrackedUserPanel(
+        level: NSWindow.Level, styleMask: NSWindow.StyleMask, standing: WindowStanding
+    ) -> Bool {
+        standing.isPresent && level == .normal && styleMask.contains(.titled)
+    }
+
+    // MARK: - Pending Edits
+
+    /// Commits the text edit open in each window on this registry's stage
+    /// (``PendingFieldEdits/save(in:)``).
+    func savePendingEdits() {
+        PendingFieldEdits.save(in: stage.windows())
     }
 
     // MARK: - Dismissal
@@ -334,13 +364,4 @@ extension AppWindowRegistry: VMDisplayPlacementHosting {
     var libraryScreen: NSScreen? { libraryWindow?.screen }
 
     func displayWindowShown(_ window: NSWindow) { shown(window) }
-}
-
-extension AlertWindowState {
-    @MainActor
-    init(_ window: NSWindow) {
-        self.init(
-            isVisible: window.isVisible, isMiniaturized: window.isMiniaturized,
-            isOnActiveSpace: window.isOnActiveSpace)
-    }
 }

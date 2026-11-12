@@ -11,7 +11,7 @@ struct AlertWindowSceneTests {
     private static let vmX = UUID()
     private static let vmY = UUID()
 
-    private static let seen = AlertWindowState(isVisible: true, isMiniaturized: false, isOnActiveSpace: true)
+    private static let seen = WindowStanding(isVisible: true, isMiniaturized: false, isOnActiveSpace: true)
 
     /// A scene with X's display window popped out and the library window open,
     /// every window visible to the user unless `states` says otherwise.
@@ -19,9 +19,9 @@ struct AlertWindowSceneTests {
         working: [(window: String, vmIDs: Set<UUID>)],
         displayWindows: [UUID: String] = [vmX: "display X"],
         library: String? = "library",
-        states: [String: AlertWindowState] = [:]
+        states: [String: WindowStanding] = [:]
     ) -> AlertWindowScene<String> {
-        var all: [String: AlertWindowState] = [:]
+        var all: [String: WindowStanding] = [:]
         for window in working.map(\.window) + displayWindows.values + [library].compactMap({ $0 }) {
             all[window] = states[window] ?? Self.seen
         }
@@ -86,19 +86,19 @@ struct AlertWindowSceneTests {
     func miniaturizedWindowIsNoTarget() {
         let scene = scene(
             working: [],
-            states: ["display X": AlertWindowState(isVisible: true, isMiniaturized: true, isOnActiveSpace: true)])
+            states: ["display X": WindowStanding(isVisible: true, isMiniaturized: true, isOnActiveSpace: true)])
 
         #expect(scene.destination(about: Self.vmX) == "library")
     }
 
     @Test("With no window the user can see, an alert is held")
     func noVisibleWindowHolds() {
-        let hidden = AlertWindowState(isVisible: true, isMiniaturized: false, isOnActiveSpace: false)
+        let hidden = WindowStanding(isVisible: true, isMiniaturized: false, isOnActiveSpace: false)
         let scene = scene(
             working: [],
             states: [
                 "display X": hidden,
-                "library": AlertWindowState(isVisible: true, isMiniaturized: true, isOnActiveSpace: true),
+                "library": WindowStanding(isVisible: true, isMiniaturized: true, isOnActiveSpace: true),
             ])
 
         #expect(scene.destination(about: Self.vmX) == nil)
@@ -109,7 +109,7 @@ struct AlertWindowSceneTests {
     func closedLibraryAndHeadlessVMHolds() {
         let scene = scene(
             working: [], displayWindows: [:],
-            states: ["library": AlertWindowState(isVisible: false, isMiniaturized: false, isOnActiveSpace: true)])
+            states: ["library": WindowStanding(isVisible: false, isMiniaturized: false, isOnActiveSpace: true)])
 
         #expect(scene.destination(about: Self.vmX) == nil)
     }

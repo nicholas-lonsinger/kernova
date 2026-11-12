@@ -21,7 +21,8 @@ and the `VMLibraryViewModel` over them, and hands that to `AppDelegate.init`,
 which builds the App-layer owners (`KernovaCore/Sources/KernovaUI/App/`). What
 those owners decide lives in the AppKit-free types of
 `KernovaCore/Sources/KernovaCore/App/`. Every window controller builds its
-window through a `WindowStage`.
+window through a `WindowStage`, and that window goes on screen through the
+`SessionFocus` the composition root builds.
 
 ## Front doors
 

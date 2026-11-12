@@ -20,11 +20,13 @@ struct GuestAgentStatusWindowTests {
     private struct Fixture {
         let viewModel: VMLibraryViewModel
         let registry: AppWindowRegistry
+        let focus: RecordingSessionFocus
     }
 
     private func makeFixture(bundleProducts: AppBundleProducts = .testing) -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences, bundleProducts: bundleProducts)
-        return Fixture(viewModel: viewModel, registry: makeWindowRegistry(viewModel))
+        let focus = RecordingSessionFocus()
+        return Fixture(viewModel: viewModel, registry: makeWindowRegistry(viewModel, focus: focus), focus: focus)
     }
 
     /// A Linux VM, selected, whose running session has a channel to the agent hub.
@@ -63,7 +65,7 @@ struct GuestAgentStatusWindowTests {
         fixture.registry.showGuestAgentStatus(for: target)
 
         let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
-        #expect(window.isVisible)
+        #expect(fixture.focus.requests == [.present(library, .back), .present(window, .keyAndFront)])
         #expect(window.title == "Selected — Guest Agent Status")
         let status = try content(of: window)
         #expect(status.presentation == instance.agentPresentation)

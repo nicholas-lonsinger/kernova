@@ -109,11 +109,9 @@ final class MainMenuController: NSObject, NSMenuDelegate {
     // MARK: - Command Target
 
     /// The VM a command no item names acts on: the one the working window
-    /// shows (``AppWindowRegistry/workingInstance(keyWindow:mainWindow:)``),
-    /// `nil` — every VM command disabled — when it shows none.
-    var activeInstance: VMInstance? {
-        windows.workingInstance(keyWindow: NSApp.keyWindow, mainWindow: NSApp.mainWindow)
-    }
+    /// shows (``AppWindowRegistry/workingInstance``), `nil` — every VM
+    /// command disabled — when it shows none.
+    var activeInstance: VMInstance? { windows.workingInstance }
 
     /// The VM a nil-target action acts on: the one the sending item names, else
     /// ``activeInstance``.

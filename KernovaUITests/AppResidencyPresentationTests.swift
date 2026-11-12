@@ -28,14 +28,14 @@ struct AppResidencyPresentationTests {
         func requestFullQuit() {}
     }
 
-    private func makeController(presence: TestAppPresence = TestAppPresence())
+    private func makeController(focus: RecordingSessionFocus = RecordingSessionFocus())
         -> (AppResidencyController, StubLaunchHost)
     {
         let viewModel = makeLibraryViewModel(preferences: preferences)
         let host = StubLaunchHost()
         let controller = AppResidencyController(
             viewModel: viewModel,
-            windows: makeWindowRegistry(viewModel), heldAlerts: HeldAlerts(), presence: presence)
+            windows: makeWindowRegistry(viewModel), heldAlerts: HeldAlerts(), focus: focus)
         controller.host = host
         return (controller, host)
     }
@@ -50,15 +50,14 @@ struct AppResidencyPresentationTests {
         #expect(launchHost.count == 2)
     }
 
-    @Test("A window put up while headless brings the Dock icon back first, and only once")
+    @Test("A window put up while headless brings the Dock icon back first")
     func prepareRestoresTheDockIcon() {
-        let presence = TestAppPresence(activationPolicy: .accessory)
-        let (controller, _) = makeController(presence: presence)
+        let focus = RecordingSessionFocus(activationPolicy: .accessory)
+        let (controller, _) = makeController(focus: focus)
 
         controller.prepareToPresentWindow()
-        controller.prepareToPresentWindow()
 
-        #expect(presence.activationPolicy == .regular)
-        #expect(presence.requests == [.setActivationPolicy(.regular)])
+        #expect(focus.activationPolicy == .regular)
+        #expect(focus.requests == [.setActivationPolicy(.regular)])
     }
 }

@@ -156,7 +156,7 @@ struct SidebarNameSearchTests {
 
     /// `subject`'s search field holding the keyboard, and its field editor.
     private func editField(of subject: Window) throws -> NSTextView {
-        subject.window.makeKeyAndOrderFront(nil)
+        subject.window.orderFront(nil)
         subject.controller.sidebarViewController.focusSearchField()
         return try #require(subject.field.currentEditor() as? NSTextView)
     }
@@ -181,7 +181,7 @@ struct SidebarNameSearchTests {
     func outsideWriteShowsWhenIdle() throws {
         let viewModel = makeViewModel()
         let subject = try makeWindow(viewModel)
-        subject.window.makeKeyAndOrderFront(nil)
+        subject.window.orderFront(nil)
         let sidebar = subject.controller.sidebarViewController
         sidebar.viewDidAppear()
         try #require(!subject.fieldShown)
@@ -202,7 +202,7 @@ struct SidebarNameSearchTests {
     @Test("New VM and Search share one glass capsule")
     func searchSharesNewVMGlass() throws {
         let subject = try makeWindow(makeViewModel())
-        subject.window.makeKeyAndOrderFront(nil)
+        subject.window.orderFront(nil)
         func glass(behind action: Selector) throws -> NSGlassEffectView {
             let control: NSView = try subject.toolbarControl(sending: action)
             return try #require(
@@ -221,7 +221,7 @@ struct SidebarNameSearchTests {
     func searchButtonTogglesTheField() throws {
         let viewModel = makeViewModel()
         let subject = try makeWindow(viewModel)
-        subject.window.makeKeyAndOrderFront(nil)
+        subject.window.orderFront(nil)
 
         try subject.clickSearchButton()
         #expect(subject.fieldShown)

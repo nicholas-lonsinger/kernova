@@ -130,9 +130,9 @@ package enum VMDisplayPlacement {
 
     /// Decides how a pop-in brings the library back.
     package static func libraryRestore(
-        wasKeyWindow: Bool, appWasActive: Bool
+        wasKey: Bool, appWasActive: Bool
     ) -> LibraryRestore {
-        if wasKeyWindow && appWasActive { return .focusLibrary }
+        if wasKey && appWasActive { return .focusLibrary }
         if !appWasActive { return .showInBackground }
         return .none
     }

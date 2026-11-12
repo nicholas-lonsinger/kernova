@@ -20,7 +20,7 @@ final class GeneralSettingsViewController: NSViewController {
     private let viewModel: VMLibraryViewModel
     private let openAtLoginSwitch = NSSwitch()
     private let keepInMenuBarSwitch = NSSwitch()
-    private var focusObserver: (any NSObjectProtocol)?
+    private var activationObservation: HostNotification.Observation?
     /// Says the login item waits on the user while `SMAppService` reports it
     /// needs approval — the switch reads off until they give it.
     private lazy var loginApprovalNote = GroupedFormStateNote(
@@ -107,22 +107,16 @@ final class GeneralSettingsViewController: NSViewController {
         refreshFromStatus()
         // Refresh when the app regains focus — e.g. returning from System Settings
         // after approving/toggling the login item there.
-        if focusObserver == nil {
-            focusObserver = NotificationCenter.default.addObserver(
-                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-            ) { [weak self] _ in
-                // queue: .main guarantees main-thread delivery, so this is safe.
-                MainActor.assumeIsolated { self?.refreshFromStatus() }
+        if activationObservation == nil {
+            activationObservation = viewModel.hostNotifications.appDidBecomeActive.observe {
+                [weak self] in self?.refreshFromStatus()
             }
         }
     }
 
     override func viewDidDisappear() {
         super.viewDidDisappear()
-        if let focusObserver {
-            NotificationCenter.default.removeObserver(focusObserver)
-            self.focusObserver = nil
-        }
+        activationObservation = nil
     }
 
     /// Mirrors the switch and the approval note to the live `SMAppService` status

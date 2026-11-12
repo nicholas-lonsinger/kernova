@@ -26,8 +26,8 @@ struct AppWindowRegistryPresenceTests {
         func syncActivationPolicy() { syncCount += 1 }
     }
 
-    private func makeRegistry(presence: TestAppPresence = TestAppPresence()) -> AppWindowRegistry {
-        makeWindowRegistry(makeLibraryViewModel(preferences: preferences), presence: presence)
+    private func makeRegistry(focus: RecordingSessionFocus = RecordingSessionFocus()) -> AppWindowRegistry {
+        makeWindowRegistry(makeLibraryViewModel(preferences: preferences), focus: focus)
     }
 
     @Test("An untracked titled panel on the stage counts as a user window")
@@ -40,45 +40,38 @@ struct AppWindowRegistryPresenceTests {
     }
 
     @Test("A miniaturized library window counts")
-    func libraryMiniaturized() async throws {
-        let registry = makeRegistry()
+    func libraryMiniaturized() throws {
+        let focus = RecordingSessionFocus()
+        let registry = makeRegistry(focus: focus)
         registry.showLibrary(bringToFront: true)
         let window = try #require(registry.libraryWindow)
 
-        // AppKit reports the miniaturize a runloop turn later — the window is
-        // still `isVisible` when `miniaturize(_:)` returns — so the wait is
-        // driven by the notification that reports it.
-        let gate = AsyncGate()
-        let observer = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMiniaturizeNotification, object: window, queue: .main
-        ) { _ in gate.notify() }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        window.miniaturize(nil)
-        try await gate.wait { window.isMiniaturized && !window.isVisible }
+        focus.minimize(window)
 
         #expect(registry.hasTrackedUserWindow)
     }
 
-    @Test("The Settings window counts on its own")
+    @Test("The Settings window brings Kernova forward and counts on its own")
     func settingsShown() throws {
-        let registry = makeRegistry()
+        let focus = RecordingSessionFocus()
+        let registry = makeRegistry(focus: focus)
         registry.showSettings()
 
+        let window = try #require(registry.settingsWindow)
+        #expect(focus.requests == [.activate, .present(window, .keyAndFront)])
         #expect(registry.hasTrackedUserWindow)
     }
 
     @Test("An automatic config check shows its window without bringing Kernova forward; the user's does both")
     func configCheckActivatesOnlyForTheUser() throws {
-        let presence = TestAppPresence()
-        let registry = makeRegistry(presence: presence)
+        let focus = RecordingSessionFocus()
+        let registry = makeRegistry(focus: focus)
 
         registry.showConfigCheck(.automatic)
         let window = try #require(registry.configCheckWindow)
-        #expect(window.isVisible)
-        #expect(presence.requests.isEmpty)
+        #expect(focus.requests == [.present(window, .front)])
 
         registry.showConfigCheck(.user)
-        #expect(window.isVisible)
-        #expect(presence.requests == [.activate])
+        #expect(focus.requests == [.present(window, .front), .activate, .present(window, .keyAndFront)])
     }
 }

@@ -23,6 +23,7 @@ struct PendingEditBeforeCommandTests {
         let window: NSWindow
         let instance: VMInstance
         let viewModel: VMLibraryViewModel
+        let registry: AppWindowRegistry
         let presenter: MockVMLibraryPresenting
         let virtualization: MockVirtualizationService
     }
@@ -53,7 +54,8 @@ struct PendingEditBeforeCommandTests {
             hostNotifications: .isolated(),
             hostPasteboard: FakePasteboard(), bundleProducts: .testing)
         viewModel.presenter = presenter
-        viewModel.savePendingEdits = PendingFieldEdits.save
+        let registry = makeWindowRegistry(viewModel)
+        viewModel.savePendingEdits = { [weak registry] in registry?.savePendingEdits() }
         let instance = viewModel.library.registerFixture(guestOS: .linux) {
             $0.displaySizesToWindow = false
         }
@@ -64,7 +66,7 @@ struct PendingEditBeforeCommandTests {
         let window = makeTestWindow(styleMask: [.titled])
         window.contentView = pane.view
         return Fixture(
-            pane: pane, window: window, instance: instance, viewModel: viewModel,
+            pane: pane, window: window, instance: instance, viewModel: viewModel, registry: registry,
             presenter: presenter, virtualization: virtualization)
     }
 
