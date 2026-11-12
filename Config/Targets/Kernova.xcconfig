@@ -1,9 +1,8 @@
 // The Kernova app target, both configurations.
 //
-// No signing identity, team, or entitlement path is assigned here: a target
-// xcconfig outranks Config/Local.xcconfig, so an assignment would silently
-// revert a developer to ad-hoc signing. CODE_SIGN_ENTITLEMENTS below is a
-// reference, and the variable it reads still resolves from the project layer.
+// No signing identity or team is assigned here: a target xcconfig outranks
+// Config/Local.xcconfig, so an assignment would silently revert a developer to
+// ad-hoc signing.
 
 PRODUCT_NAME = $(TARGET_NAME)
 PRODUCT_BUNDLE_IDENTIFIER = app.kernova
@@ -26,6 +25,11 @@ SWIFT_PACKAGE_NAME = kernovacore
 LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/../Frameworks
 
 CODE_SIGN_STYLE = Automatic
-CODE_SIGN_ENTITLEMENTS = $(KERNOVA_APP_ENTITLEMENTS)
+// Debug reads a project-layer variable Config/Local.xcconfig can set. Release,
+// which Archive builds, names the full set at this layer, out of
+// Local.xcconfig's reach: an archive carries every restricted key or fails to
+// sign.
+CODE_SIGN_ENTITLEMENTS[config=Debug] = $(KERNOVA_DEBUG_APP_ENTITLEMENTS)
+CODE_SIGN_ENTITLEMENTS[config=Release] = Kernova/Resources/Kernova.entitlements
 PROVISIONING_PROFILE_SPECIFIER =
 ENABLE_HARDENED_RUNTIME[config=Release] = YES
