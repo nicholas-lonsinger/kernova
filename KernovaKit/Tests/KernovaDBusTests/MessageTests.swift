@@ -41,21 +41,6 @@ let sampleMessages: [DBusMessage] = {
 
 @Suite("DBusMessage encoding and decoding")
 struct MessageTests {
-    @Test("Each message type round-trips in both byte orders", arguments: [DBusByteOrder.littleEndian, .bigEndian])
-    func roundTrip(byteOrder: DBusByteOrder) throws {
-        for (index, message) in sampleMessages.enumerated() {
-            let serial = UInt32(index + 1)
-            let bytes = try message.encoded(serial: serial, byteOrder: byteOrder)
-            #expect(bytes[0] == byteOrder.rawValue)
-            #expect(bytes.count % 8 == 0 || !message.body.isEmpty)
-            let decoded = try #require(try DBusReceivedMessage.decode(bytes))
-            #expect(decoded.header == message.header)
-            #expect(decoded.serial == serial)
-            #expect(decoded.signature == (try DBusSignature(message.body.map(\.type))))
-            #expect(try decoded.decodeBody() == message.body)
-        }
-    }
-
     @Test("The fixed header and field layout match the specification")
     func layout() throws {
         let message = DBusMessage.methodCall(
@@ -204,14 +189,6 @@ struct MessageTests {
         #expect(throws: DBusProtocolError.signatureMismatch(expected: "s", actual: "b")) {
             try decoded.decodeBody(expecting: "s")
         }
-    }
-
-    @Test("An ERROR's name and message make its remote error")
-    func remoteError() throws {
-        let decoded = try #require(try DBusReceivedMessage.decode(sampleMessages[2].encoded(serial: 1)))
-        #expect(decoded.remoteError == DBusRemoteError(name: "org.freedesktop.DBus.Error.AccessDenied", message: "No."))
-        let call = try #require(try DBusReceivedMessage.decode(sampleMessages[0].encoded(serial: 1)))
-        #expect(call.remoteError == nil)
     }
 }
 

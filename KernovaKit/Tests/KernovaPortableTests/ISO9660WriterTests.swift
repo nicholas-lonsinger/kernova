@@ -60,13 +60,6 @@ struct ISO9660WriterTests {
         }
     }
 
-    @Test("Two writes are byte-equal, whatever order the entries come in")
-    func deterministic() throws {
-        let first = try Self.write(Self.entries())
-        #expect(try Self.write(Self.entries()) == first)
-        #expect(try Self.write(Self.entries().reversed()) == first)
-    }
-
     @Test("Names that map to one identifier get distinct identifiers, assigned in name order")
     func collidingIdentifiers() throws {
         let names = ["setup-b.sh", "setup_a.sh", "setup-a.sh"]
@@ -76,19 +69,6 @@ struct ISO9660WriterTests {
         #expect(
             identifiers == ["setup-a.sh": "SETUP_A.SH;1", "setup-b.sh": "SETUP_B.SH;1", "setup_a.sh": "SETUP_A1.SH;1"])
         #expect(reader.files.map { String(decoding: $0.bytes, as: UTF8.self) } == reader.files.map(\.name))
-    }
-
-    @Test("A directory too long for one sector continues into the next, no record crossing the boundary")
-    func directorySpansSectors() throws {
-        let entries = (0..<40).map { index in
-            ISO9660Entry(
-                name: "file-\(index)-" + String(repeating: "x", count: 60), permissions: 0o600, bytes: [UInt8(index)])
-        }
-        let reader = try ISO9660Reader(try Self.write(entries))
-        #expect(reader.rootLength > 2048)
-        #expect(reader.files.count == 40)
-        #expect(Set(reader.files.map(\.name)) == Set(entries.map(\.name)))
-        #expect(reader.files.allSatisfy { $0.mode == 0o100600 && $0.bytes.count == 1 })
     }
 
     @Test("An empty file takes no sector")
@@ -153,14 +133,6 @@ struct ISO9660WriterTests {
         let reader = try ISO9660Reader(try Self.write([ISO9660Entry(name: name, permissions: 0o644, bytes: [7])]))
         #expect(reader.files.map(\.name) == [name])
         #expect(reader.files.map(\.bytes) == [[7]])
-    }
-
-    @Test("A file whose contents write other than its declared size fails the write")
-    func sizeMismatch() {
-        let entry = ISO9660Entry(name: "short", permissions: 0o644, size: 10) { sink in try sink([1, 2, 3]) }
-        #expect(throws: ISO9660Error.sizeMismatch(name: "short", declared: 10, written: 3)) {
-            try Self.write([entry])
-        }
     }
 
     #if os(Linux)

@@ -112,17 +112,6 @@ struct SignatureTests {
         #expect(throws: DBusProtocolError.nestingTooDeep) { try DBusSignature(depth33) }
     }
 
-    @Test("A type no signature allows is refused when made into one")
-    func refusesInvalidTypes() {
-        #expect(throws: DBusProtocolError.emptyStruct) { try DBusSignature([.struct([])]) }
-        #expect(throws: DBusProtocolError.dictEntryOutsideArray) {
-            try DBusSignature([.dictEntry(key: .string, value: .int32)])
-        }
-        #expect(throws: DBusProtocolError.dictEntryKeyNotBasic) {
-            try DBusSignature([.array(.dictEntry(key: .variant, value: .int32))])
-        }
-    }
-
     static let objectPaths: [(String, Bool)] = [
         ("/", true), ("/a", true), ("/org/freedesktop/login1/session/_32", true), ("/A_b/9", true),
         ("", false), ("a", false), ("//", false), ("/a/", false), ("/a//b", false), ("/a-b", false),

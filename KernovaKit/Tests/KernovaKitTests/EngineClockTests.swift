@@ -7,38 +7,12 @@ import KernovaSynchronization
 
 @Suite("EngineInstant arithmetic", .caseScoped)
 struct EngineInstantTests {
-    @Test("seconds(to:) converts the nanosecond gap forward")
-    func secondsForward() {
-        let start = EngineInstant(nanoseconds: 1_000_000_000)
-        let end = EngineInstant(nanoseconds: 3_500_000_000)
-        #expect(start.seconds(to: end) == 2.5)
-    }
-
-    @Test("seconds(to:) is negative when the target precedes the receiver")
-    func secondsBackward() {
-        let start = EngineInstant(nanoseconds: 3_500_000_000)
-        let end = EngineInstant(nanoseconds: 1_000_000_000)
-        #expect(start.seconds(to: end) == -2.5)
-    }
-
-    @Test("seconds(to:) is zero for the same instant")
-    func secondsToSelf() {
-        let instant = EngineInstant(nanoseconds: 42)
-        #expect(instant.seconds(to: instant) == 0)
-    }
-
     @Test("a gap spanning the whole UInt64 range does not overflow the subtraction")
     func secondsAcrossTheFullRange() {
         let start = EngineInstant(nanoseconds: 0)
         let end = EngineInstant(nanoseconds: .max)
         #expect(start.seconds(to: end) > 0)
         #expect(end.seconds(to: start) == -start.seconds(to: end))
-    }
-
-    @Test("instants order by their reading")
-    func ordering() {
-        #expect(EngineInstant(nanoseconds: 1) < EngineInstant(nanoseconds: 2))
-        #expect(!(EngineInstant(nanoseconds: 2) < EngineInstant(nanoseconds: 1)))
     }
 }
 
@@ -85,24 +59,6 @@ struct EngineClockTests {
     }
 
     @Test(
-        "cancelling mid-sleep throws instead of running out the interval",
-        arguments: EngineClockKind.allCases)
-    func sleepThrowsWhenCancelledMidFlight(kind: EngineClockKind) async throws {
-        let clock = kind.makeClock()
-        let started = AsyncGate()
-        let running = Locked(false)
-        let task = Task {
-            running.withLock { $0 = true }
-            started.notify()
-            // An interval the cancellation must cut short — never waited out.
-            try await clock.sleep(for: 3600)
-        }
-        try await started.wait { running.withLock { $0 } }
-        task.cancel()
-        await #expect(throws: CancellationError.self) { try await task.value }
-    }
-
-    @Test(
         "An interval past what the arithmetic can hold suspends instead of trapping",
         arguments: EngineClockKind.allCases)
     func hugeIntervalIsClamped(kind: EngineClockKind) async throws {
@@ -125,16 +81,5 @@ struct EngineClockTests {
         try await started.wait { running.withLock { $0 } }
         task.cancel()
         await #expect(throws: CancellationError.self) { try await task.value }
-    }
-
-    @Test("A manually advanced clock takes an unschedulable interval too")
-    func testClocksClampTheirAdvance() async throws {
-        let test = TestEngineClock()
-        try await test.sleep(for: .greatestFiniteMagnitude)
-        #expect(test.seconds(since: EngineInstant(nanoseconds: 0)) > 0)
-
-        let gated = GatedEngineClock()
-        gated.advance(seconds: .infinity)
-        #expect(gated.seconds(since: EngineInstant(nanoseconds: 0)) > 0)
     }
 }

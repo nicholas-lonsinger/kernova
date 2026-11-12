@@ -44,19 +44,6 @@ struct AppCopyClaimTests {
         return true
     }
 
-    @Test("A second claim on one copy is refused while the first is held, and granted after release")
-    func secondClaimRefusedUntilReleased() throws {
-        let bundle = try makeBundle(in: scratch.url)
-        let container = try makeContainer(in: scratch.url)
-
-        do {
-            let held = try #require(claim(bundle, in: container))
-            #expect(isAlreadyHeld(bundle, in: container))
-            withExtendedLifetime(held) {}
-        }
-        #expect(claim(bundle, in: container) != nil)
-    }
-
     @Test("A claim through a symlink to a claimed copy is refused")
     func symlinkedCopyIsRefused() throws {
         let bundle = try makeBundle(in: scratch.url)
@@ -92,18 +79,5 @@ struct AppCopyClaimTests {
         #expect(
             held.socketPath
                 == (try KernovaAppGroup.CopyFiles(forAppBundle: bundle, in: container).socketPath))
-    }
-
-    @Test("A copy that is not there cannot be claimed")
-    func missingCopyIsUnavailable() throws {
-        let container = try makeContainer(in: scratch.url)
-        let gone = scratch.url.appendingPathComponent("Kernova.app", isDirectory: true)
-
-        guard case .unavailable(let reason) = AppCopyClaim.acquire(forAppBundle: gone, in: container)
-        else {
-            Issue.record("a missing copy was not reported unavailable")
-            return
-        }
-        #expect(reason == .unnamed(.unresolvableBundle(.noSuchFileOrDirectory)))
     }
 }

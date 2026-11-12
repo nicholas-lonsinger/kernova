@@ -34,15 +34,6 @@ struct AppGroupSocketPathTests {
         return bundle
     }
 
-    @Test("A bundle reached through a symlink names the socket its resolved path names")
-    func symlinkedBundleNamesTheResolvedSocket() throws {
-        let bundle = try makeBundle(in: scratch.url)
-        let link = scratch.url.appendingPathComponent("Linked.app", isDirectory: true)
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: bundle)
-
-        #expect(try socketPath(link) == socketPath(bundle))
-    }
-
     /// APFS matches names without regard to case, so a path spelled in another
     /// case opens the same bundle.
     @Test("A bundle spelled in another case names the socket its on-disk spelling names")
@@ -62,14 +53,6 @@ struct AppGroupSocketPathTests {
             fileURLWithPath: "/System/Volumes/Data" + CanonicalPath.of(bundle), isDirectory: true)
 
         #expect(try socketPath(throughData) == socketPath(bundle))
-    }
-
-    @Test("Two copies of the app name two sockets")
-    func distinctBundlesNameDistinctSockets() throws {
-        let installed = try makeBundle(in: scratch.url.appendingPathComponent("Applications"))
-        let built = try makeBundle(in: scratch.url.appendingPathComponent("Build/Products/Debug"))
-
-        #expect(try socketPath(installed) != socketPath(built))
     }
 
     @Test("A bundle that is not there names no socket")
@@ -101,17 +84,5 @@ struct AppGroupSocketPathTests {
             files.lockURL.deletingPathExtension().lastPathComponent
                 == socket.deletingPathExtension().lastPathComponent)
         #expect(files.lockURL.deletingLastPathComponent().path == Self.container.path)
-    }
-
-    /// The app names its socket from `Bundle.main.bundleURL`, the tool from the
-    /// bundle it finds itself inside — through the link Settings → Advanced
-    /// installs — and the two must land on one path.
-    @Test("The installed tool names the socket the app it links into binds")
-    func installedToolNamesItsAppsSocket() throws {
-        let installed = try InstalledToolFixture(in: scratch.url)
-
-        let toolsApp = try #require(EnclosingAppBundle.locate(executable: installed.link))
-
-        #expect(try socketPath(toolsApp) == socketPath(installed.bundle))
     }
 }

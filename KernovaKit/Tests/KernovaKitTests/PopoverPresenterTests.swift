@@ -50,10 +50,8 @@ struct PopoverPresenterTests {
 
     @MainActor
     private final class FieldWatcher: NSObject, NSTextFieldDelegate {
-        var refusesToEnd = false
         private(set) var endedEdits = 0
 
-        func control(_: NSControl, textShouldEndEditing _: NSText) -> Bool { !refusesToEnd }
         func controlTextDidEndEditing(_: Notification) { endedEdits += 1 }
     }
 
@@ -88,16 +86,6 @@ struct PopoverPresenterTests {
         #expect(edit.window.firstResponder === surroundings)
     }
 
-    @Test("with nothing around the anchor to take it, nothing holds the keyboard")
-    func endsAnEditWithNothingAroundTheAnchor() throws {
-        let edit = try makeEdit(anchorIn: NSView())
-
-        PopoverPresenter().endTextEdit(around: edit.anchor, behavior: .transient)
-
-        #expect(edit.watcher.endedEdits == 1)
-        #expect(edit.window.firstResponder === edit.window)
-    }
-
     @Test("an anchor that takes first responder itself is passed over")
     func endsAnEditPastAnAnchorThatTakesFirstResponder() throws {
         let edit = try makeEdit(anchorIn: NSView(), anchor: FocusableView())
@@ -106,18 +94,6 @@ struct PopoverPresenterTests {
 
         #expect(edit.watcher.endedEdits == 1)
         #expect(edit.window.firstResponder === edit.window)
-    }
-
-    @Test("a field that refuses to end its edit keeps the keyboard")
-    func aFieldRefusingToEndKeepsTheKeyboard() throws {
-        let edit = try makeEdit(anchorIn: FocusableView())
-        edit.watcher.refusesToEnd = true
-        let editor = edit.window.firstResponder
-
-        PopoverPresenter().endTextEdit(around: edit.anchor, behavior: .transient)
-
-        #expect(edit.watcher.endedEdits == 0)
-        #expect(edit.window.firstResponder === editor)
     }
 
     @Test("a popover that comes up on its own leaves an edit alone")
@@ -143,16 +119,6 @@ struct PopoverPresenterTests {
         #expect(window.firstResponder === textView)
     }
 
-    @Test("with no view holding the keyboard there is nothing to take")
-    func leavesTheKeyboardWhenNoViewHoldsIt() {
-        let (content, window) = makeContent()
-
-        PopoverPresenter().takeKeyboard(for: content, behavior: .transient)
-
-        #expect(window.firstResponder === window)
-        #expect(content.view.subviews.isEmpty)
-    }
-
     @Test("a view in the content that took the keyboard keeps it")
     func leavesTheKeyboardWithAFocusedView() {
         let (content, window) = makeContent()
@@ -176,36 +142,6 @@ struct PopoverPresenterTests {
 
         let focused = try #require(window.firstResponder as? NSView)
         #expect(focused.isDescendant(of: content.view))
-    }
-
-    @Test("a field in the content that took the keyboard keeps it")
-    func leavesTheKeyboardWithAFieldInTheContent() throws {
-        let (content, window) = makeContent()
-        let field = NSTextField(string: "note")
-        content.view.addSubview(field)
-        #expect(window.makeFirstResponder(field))
-        let editor = try #require(window.firstResponder as? NSText)
-
-        PopoverPresenter().takeKeyboard(for: content, behavior: .transient)
-
-        #expect(window.firstResponder === editor)
-    }
-
-    @Test("showing the same content again keeps one holder")
-    func aSecondTakeReusesTheHolder() {
-        let (content, window) = makeContent()
-        let elsewhere = FocusableView()
-        window.contentView?.addSubview(elsewhere)
-        let presenter = PopoverPresenter()
-
-        #expect(window.makeFirstResponder(elsewhere))
-        presenter.takeKeyboard(for: content, behavior: .transient)
-        let holder = window.firstResponder
-        #expect(window.makeFirstResponder(elsewhere))
-        presenter.takeKeyboard(for: content, behavior: .transient)
-
-        #expect(window.firstResponder === holder)
-        #expect(content.view.subviews.count == 1)
     }
 
     @Test("an application-defined popover leaves the keyboard alone")

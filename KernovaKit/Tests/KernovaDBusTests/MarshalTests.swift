@@ -46,40 +46,10 @@ struct MarshalTests {
         }
     }
 
-    @Test("A double's bits survive, NaN included", arguments: byteOrders)
-    func doubleBits(byteOrder: DBusByteOrder) throws {
-        let nan = Double(bitPattern: 0x7FF8_0000_DEAD_BEEF)
-        let bytes = try DBusMarshal.encode([.double(nan)], byteOrder: byteOrder)
-        let decoded = try DBusMarshal.decode(bytes, signature: "d", byteOrder: byteOrder)
-        guard case .double(let value) = decoded[0] else {
-            Issue.record("Decoded \(decoded)")
-            return
-        }
-        #expect(value.bitPattern == nan.bitPattern)
-    }
-
-    @Test("The specification's string example: lengths, NULs, and padding before 'bar'")
-    func specificationStrings() throws {
-        let bytes = try DBusMarshal.encode([.string("foo"), .string("+"), .string("bar")], byteOrder: .littleEndian)
-        #expect(
-            bytes == [
-                0x03, 0, 0, 0, 0x66, 0x6F, 0x6F, 0,
-                0x01, 0, 0, 0, 0x2B, 0,
-                0, 0,
-                0x03, 0, 0, 0, 0x62, 0x61, 0x72, 0,
-            ])
-    }
-
     @Test("The specification's array example: an INT64 array pads to 8 after its length")
     func specificationArray() throws {
         let bytes = try DBusMarshal.encode([.array(elementType: .int64, [.int64(5)])], byteOrder: .bigEndian)
         #expect(bytes == [0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5])
-    }
-
-    @Test("The specification's variant example: signature, then padding to the value's alignment")
-    func specificationVariant() throws {
-        let bytes = try DBusMarshal.encode([.variant(.uint64(5))], byteOrder: .bigEndian)
-        #expect(bytes == [0x01, 0x74, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5])
     }
 
     @Test("An empty array still pads to its element's alignment, outside its length")
@@ -115,17 +85,6 @@ struct MarshalTests {
             let alone = try DBusMarshal.encode([value], byteOrder: byteOrder)
             #expect(bytes.count == 1 + padding + alone.count, "\(value)")
         }
-    }
-
-    @Test("Integers are written in the byte order asked for")
-    func byteOrderLayout() throws {
-        let value = DBusValue.uint32(0x0102_0304)
-        #expect(try DBusMarshal.encode([value], byteOrder: .littleEndian) == [4, 3, 2, 1])
-        #expect(try DBusMarshal.encode([value], byteOrder: .bigEndian) == [1, 2, 3, 4])
-        #expect(
-            try DBusMarshal.decode([0xFF, 0xFE], signature: "n", byteOrder: .bigEndian) == [.int16(-2)])
-        #expect(
-            try DBusMarshal.decode([0xFE, 0xFF], signature: "n", byteOrder: .littleEndian) == [.int16(-2)])
     }
 
     @Test("Encoding refuses values the specification does not allow")

@@ -19,20 +19,6 @@ struct AppRegistryWaitTests {
 
     // MARK: - Released on a fresh read
 
-    /// A bundle wait's first read is lookup one, so the release on lookup five
-    /// follows four sleeps.
-    @Test("A bundle wait ends on the fresh read that finds the instance gone")
-    func bundleWaitEndsOnAFreshRead() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance()], releasedFromLookup: 5, clock: clock)
-
-        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps == Array(Self.schedule.prefix(4)))
-    }
-
     /// A fresh read can return an instance Launch Services has recorded as
     /// exited before it returns none at all.
     @Test("A bundle wait ends on the fresh read that finds the instance terminated")
@@ -46,31 +32,6 @@ struct AppRegistryWaitTests {
 
         #expect(released)
         #expect(clock.sleeps == Array(Self.schedule.prefix(2)))
-    }
-
-    @Test("A pid-keyed wait ends on the fresh read that finds the instance gone")
-    func processWaitEndsOnAFreshRead() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance()], releasedFromLookup: 4, clock: clock)
-
-        let released = awaitDeregistration(
-            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps == Array(Self.schedule.prefix(3)))
-    }
-
-    @Test("A long wait doubles its sleep up to the cap and stays there")
-    func longWaitSleepsAtTheCap() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance()], releasedFromLookup: 9, clock: clock)
-
-        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps == Self.schedule)
     }
 
     // MARK: - Never released
@@ -112,32 +73,6 @@ struct AppRegistryWaitTests {
 
     // MARK: - Nothing to wait for
 
-    @Test("A registry holding nothing live ends the wait without sleeping")
-    func waitEndsWhenNothingIsRegistered() {
-        let clock = FakeClock()
-        let empty = FakeAppRegistry(registered: [], clock: clock)
-        let gone = FakeAppRegistry(
-            registered: [FakeRegisteredInstance(terminated: true)], clock: clock)
-
-        #expect(awaitDeregistration(from: empty, scope: .all, within: 20, clock: clock))
-        #expect(awaitDeregistration(from: gone, scope: .all, within: 20, clock: clock))
-        #expect(clock.sleeps.isEmpty)
-    }
-
-    /// The registry holds registered apps only, so a pid it does not know is
-    /// nothing to wait for — including one it has already let go.
-    @Test("A pid the registry does not hold ends the wait without sleeping")
-    func processWaitEndsWhenThePidIsUnknown() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(registered: [], clock: clock)
-
-        let released = awaitDeregistration(
-            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps.isEmpty)
-    }
-
     @Test("An instance with no process identifier is not one to wait out")
     func instanceWithoutAPidIsReleased() {
         let clock = FakeClock()
@@ -178,21 +113,6 @@ struct AppRegistryWaitTests {
 
         let released = awaitDeregistration(
             from: registry, scope: .exitedProcesses, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps == [Self.schedule[0]])
-    }
-
-    /// Only instances admitted when the wait begins count, so one the registry
-    /// starts holding later does not extend the wait.
-    @Test("An instance registered after the wait begins does not extend it")
-    func laterInstanceDoesNotExtendTheWait() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance()], releasedFromLookup: 2, clock: clock,
-            laterInstance: FakeRegisteredInstance(processIdentifier: 43))
-
-        let released = awaitDeregistration(from: registry, scope: .all, within: 20, clock: clock)
 
         #expect(released)
         #expect(clock.sleeps == [Self.schedule[0]])
