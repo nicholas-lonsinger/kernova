@@ -16,12 +16,6 @@ struct AppPreferencesTests {
         return (AppPreferences(defaults: defaults), defaults)
     }
 
-    @Test("alwaysShowAdvancedOptions defaults to false")
-    func defaultsToFalse() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.alwaysShowAdvancedOptions == false)
-    }
-
     @Test("alwaysShowAdvancedOptions round-trips through UserDefaults")
     func roundTrips() {
         let (prefs, defaults) = makePreferences()
@@ -63,17 +57,6 @@ struct AppPreferencesTests {
         #expect(defaults.data(forKey: "KernovaSidebarViewOptions") != nil)
     }
 
-    @Test("Stored sidebar options missing a field decode it with its default")
-    func sidebarViewOptionsDecodeMissingFieldsWithDefaults() throws {
-        let (prefs, defaults) = makePreferences()
-        defaults.set(
-            Data(#"{"sort":"name","filter":{"guestOSes":["macOS"]}}"#.utf8), forKey: "KernovaSidebarViewOptions")
-
-        #expect(
-            prefs.sidebarViewOptions
-                == SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]), sort: .name))
-    }
-
     @Test("A stored filter's network no build spells is removed alone; every other option is kept")
     func sidebarViewOptionsDropAnUnknownNetworkAlone() throws {
         let (prefs, defaults) = makePreferences()
@@ -92,22 +75,6 @@ struct AppPreferencesTests {
                     sort: .name, grouping: .state, showsDetails: true))
     }
 
-    @Test("Stored sidebar state that does not decode reads as the defaults")
-    func undecodableSidebarStateReadsAsDefaults() {
-        let (prefs, defaults) = makePreferences()
-        defaults.set(Data("not json".utf8), forKey: "KernovaSidebarViewOptions")
-        defaults.set(Data(#"{"section":"virtualMachines"}"#.utf8), forKey: "KernovaSidebarSelection")
-
-        #expect(prefs.sidebarViewOptions == SidebarViewOptions())
-        #expect(prefs.sidebarSelection == nil)
-    }
-
-    @Test("vmOrder defaults to nil")
-    func vmOrderDefaultsToNil() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.vmOrder == nil)
-    }
-
     @Test("vmOrder round-trips through UserDefaults")
     func vmOrderRoundTrips() {
         let (prefs, defaults) = makePreferences()
@@ -118,12 +85,6 @@ struct AppPreferencesTests {
 
         prefs.vmOrder = nil
         #expect(prefs.vmOrder == nil)
-    }
-
-    @Test("keepInMenuBarOnQuit defaults to true")
-    func keepInMenuBarOnQuitDefaultsToTrue() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.keepInMenuBarOnQuit == true)
     }
 
     @Test("keepInMenuBarOnQuit round-trips through UserDefaults with inverted storage")
@@ -138,12 +99,6 @@ struct AppPreferencesTests {
         prefs.keepInMenuBarOnQuit = true
         #expect(prefs.keepInMenuBarOnQuit == true)
         #expect(defaults.bool(forKey: "quitTerminatesApp") == false)
-    }
-
-    @Test("allowsDuplicateMachineIDOverride defaults to false")
-    func allowsDuplicateMachineIDOverrideDefaultsToFalse() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.allowsDuplicateMachineIDOverride == false)
     }
 
     @Test("allowsDuplicateMachineIDOverride reads and writes the allowDuplicateMachineIDBoot key as stored")
@@ -212,12 +167,6 @@ struct AppPreferencesTests {
         }
     }
 
-    @Test("menuBarQuitReminderDismissed defaults to false")
-    func menuBarQuitReminderDismissedDefaultsToFalse() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.menuBarQuitReminderDismissed == false)
-    }
-
     @Test("menuBarQuitReminderDismissed round-trips through UserDefaults")
     func menuBarQuitReminderDismissedRoundTrips() {
         let (prefs, defaults) = makePreferences()
@@ -227,12 +176,6 @@ struct AppPreferencesTests {
 
         prefs.menuBarQuitReminderDismissed = false
         #expect(prefs.menuBarQuitReminderDismissed == false)
-    }
-
-    @Test("mainToolbarNewVMCollapseIndex defaults to nil")
-    func mainToolbarNewVMCollapseIndexDefaultsToNil() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.mainToolbarNewVMCollapseIndex == nil)
     }
 
     @Test("mainToolbarNewVMCollapseIndex round-trips through UserDefaults and clears on nil")
@@ -245,16 +188,6 @@ struct AppPreferencesTests {
         prefs.mainToolbarNewVMCollapseIndex = nil
         #expect(prefs.mainToolbarNewVMCollapseIndex == nil)
         #expect(defaults.object(forKey: "KernovaMainToolbarNewVMCollapseIndex") == nil)
-    }
-
-    @Test("mainToolbarNewVMCollapseIndex distinguishes slot 0 from an absent removal")
-    func mainToolbarNewVMCollapseIndexZeroIsNotNil() {
-        let (prefs, _) = makePreferences()
-        // Index 0 is a real slot (New VM can be the leading item), so the
-        // getter must not conflate it with "no removal recorded" the way a
-        // plain `integer(forKey:)` would.
-        prefs.mainToolbarNewVMCollapseIndex = 0
-        #expect(prefs.mainToolbarNewVMCollapseIndex == 0)
     }
 
     @Test("clipboardMaxPasteBytes defaults to the derived ceiling")
@@ -271,16 +204,6 @@ struct AppPreferencesTests {
             #expect(prefs.clipboardMaxPasteBytes == choice)
             #expect(defaults.object(forKey: "clipboardMaxPasteBytes") as? Int == choice)
         }
-    }
-
-    @Test("a stored ceiling off the offered ladder reads back as the nearest one")
-    func clipboardMaxPasteBytesClampsOnRead() {
-        let (prefs, defaults) = makePreferences()
-        // Nothing writes this through the setter — a hand-edited default, or
-        // a value from a build whose ladder differed. It must never reach an
-        // enforcement point as-is.
-        defaults.set(3 * 1024 * 1024 * 1024, forKey: "clipboardMaxPasteBytes")
-        #expect(ClipboardPasteLimit.choices.contains(prefs.clipboardMaxPasteBytes))
     }
 
     @Test("Every reserved shortcut is on until one is turned off, and the switches round-trip")

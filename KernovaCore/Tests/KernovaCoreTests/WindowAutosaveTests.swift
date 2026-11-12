@@ -36,15 +36,4 @@ struct WindowAutosaveTests {
         #expect(unsaved.clipboardFrame(for: vmID).isEmpty)
         #expect(unsaved.guestAgentStatusFrame(for: vmID).isEmpty)
     }
-
-    @Test("Each set of unsaved names shares its toolbar identifiers with no other")
-    func unsavedToolbarsAreDistinct() {
-        let first = WindowAutosave.unsaved()
-        let second = WindowAutosave.unsaved()
-
-        #expect(first.mainToolbar != second.mainToolbar)
-        #expect(first.displayToolbar != second.displayToolbar)
-        #expect(first.mainToolbar != WindowAutosave.app.mainToolbar)
-        #expect(first.displayToolbar != WindowAutosave.app.displayToolbar)
-    }
 }

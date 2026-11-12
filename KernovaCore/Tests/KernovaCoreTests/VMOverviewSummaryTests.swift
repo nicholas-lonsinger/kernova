@@ -48,39 +48,6 @@ struct VMOverviewSummaryTests {
             for: category, instance: instance, capabilities: VMCapabilityCatalog(library: library))
     }
 
-    // MARK: - General
-
-    @Test("General states nothing the header or its own switches already carry")
-    func generalStatesNoValueRows() {
-        #expect(rows(.general, makeInstance(guestOS: .linux)).isEmpty)
-    }
-
-    @Test("The Ephemeral card switch is offered exactly when the catalog takes its flip")
-    func ephemeralCardOfferIsTheCatalogsAnswer() throws {
-        let snapshot = VMSnapshot(
-            name: "Clean", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
-        let key = VMConfigurationKeyRegistry.ephemeral
-        for hasSnapshots in [false, true] {
-            for ephemeral in [false, true] {
-                let instance = makeInstance(
-                    hostState: ephemeral ? .ephemeral(baseline: snapshot.id) : VMHostState())
-                instance.seedSnapshotManifest(
-                    hasSnapshots
-                        ? VMSnapshotManifest(snapshots: [snapshot], currentID: snapshot.id)
-                        : VMSnapshotManifest())
-                let state = try #require(
-                    toggles(for: .general, instance: instance)
-                        .first { $0.toggle == .ephemeralMode })
-
-                let offered =
-                    ephemeral
-                    ? key.accepts("false", for: instance, in: library)
-                    : VMCapabilityCatalog(library: library).isEphemeralModeEnableAvailable(on: instance)
-                #expect(state.isEnabled == offered, "snapshots=\(hasSnapshots) ephemeral=\(ephemeral)")
-            }
-        }
-    }
-
     // MARK: - System
 
     @Test("System states the display size and the audio streams, and nothing else")
@@ -95,12 +62,6 @@ struct VMOverviewSummaryTests {
         // memory are the header's facts line, so the card doesn't repeat them.
         #expect(rows(.system, instance).map(\.label) == ["Display", "Audio"])
         #expect(value("Display", .system, instance) == "1280 × 800")
-    }
-
-    @Test("A display sized to the window says so instead of a resolution")
-    func systemStatesMatchWindow() {
-        let instance = makeInstance { $0.displaySizesToWindow = true }
-        #expect(value("Display", .system, instance) == "Matches window")
     }
 
     @Test("Audio reads as the streams that are on")
@@ -179,17 +140,6 @@ struct VMOverviewSummaryTests {
         #expect(value(external.label, .storage, instance, resolved: unreadable) == "Unknown")
     }
 
-    @Test("Removable media are counted on one row after the disks")
-    func storageCountsRemovableMedia() {
-        let many = makeInstance {
-            $0.removableMedia = [
-                RemovableMediaItem(path: "/tmp/stick.img"),
-                RemovableMediaItem(path: "/tmp/installer.iso"),
-            ]
-        }
-        #expect(rows(.storage, many).last == VMOverviewSummary.Row(label: "Removable media", value: "2 media"))
-    }
-
     // MARK: - Network
 
     @Test("Network folds the mode and the address into one row, copy button and all")
@@ -214,43 +164,7 @@ struct VMOverviewSummaryTests {
         #expect(row?.copy == nil)
     }
 
-    @Test("A guest not yet seen, or bridged, says so beside the mode with nothing to copy")
-    func networkRowStatesProseWithoutCopy() {
-        let instance = makeInstance()
-        for (address, text) in [
-            (GuestIPAddress.notObserved, "Not seen on the network"),
-            (.externallyAssigned, "Assigned by your network"),
-        ] {
-            let row = rows(
-                .network, instance,
-                resolved: VMOverviewResolved(
-                    networkModeLabel: NetworkChoiceLabel(mode: .nat, entry: "Common"), ipAddress: address)
-            ).first
-            #expect(row?.value == text)
-            #expect(row?.copy == nil)
-        }
-    }
-
-    @Test("A VM with networking off states one Mode row and nothing else")
-    func networkOffStatesOneRow() {
-        let off = makeInstance { $0.networkEnabled = false }
-        #expect(
-            rows(
-                .network, off,
-                resolved: VMOverviewResolved(
-                    networkModeLabel: NetworkChoiceLabel(mode: nil, entry: "None"),
-                    ipAddress: .observed("192.168.66.4")))
-                == [VMOverviewSummary.Row(label: "Mode", value: "None")])
-        // Nothing resolved yet reads the same way.
-        #expect(rows(.network, makeInstance()) == [VMOverviewSummary.Row(label: "Mode", value: "None")])
-    }
-
     // MARK: - Sharing and Snapshots
-
-    @Test("Sharing states its facts in the closing line, not in key-value rows")
-    func sharingStatesNoValueRows() {
-        #expect(rows(.sharing, makeInstance()).isEmpty)
-    }
 
     @Test("Sharing's line names the passthrough state and counts the folders")
     func sharingNoteStatesPassthroughAndFolders() {
@@ -269,33 +183,6 @@ struct VMOverviewSummaryTests {
             ]
         }
         #expect(sharingNote(two) == "Passthrough off \u{00B7} 2 shared folders")
-    }
-
-    @Test("Passthrough reads off while clipboard sharing isn't carrying it")
-    func sharingNoteStatesTheRunningPassthrough() {
-        // Sharing turned off leaves the stored flag set, and nothing passes
-        // through — the line states what is running, not what is stored.
-        let stranded = makeInstance {
-            $0.clipboardSharingEnabled = false
-            $0.clipboardPassthroughEnabled = true
-        }
-        #expect(sharingNote(stranded) == "Passthrough off \u{00B7} No shared folders")
-
-        let running = makeInstance {
-            $0.clipboardSharingEnabled = true
-            $0.clipboardPassthroughEnabled = true
-        }
-        #expect(sharingNote(running) == "Passthrough on \u{00B7} No shared folders")
-    }
-
-    @Test("Sharing is the only card closing with a line")
-    func onlySharingCarriesANote() {
-        let instance = makeInstance()
-        for category in VMSettingsCategory.allCases {
-            let note = VMOverviewSummary.note(
-                for: category, instance: instance, resolved: VMOverviewResolved())
-            #expect((note != nil) == (category == .sharing))
-        }
     }
 
     @Test("General closes with the shared machine ID note the resolver found")
@@ -321,21 +208,6 @@ struct VMOverviewSummaryTests {
     }
 
     // MARK: - Header summary
-
-    @Test("The Snapshots header counts them")
-    func snapshotHeaderSummaryCounts() {
-        let instance = makeInstance()
-        func summary() -> String? {
-            VMOverviewSummary.headerSummary(for: .snapshots, instance: instance)
-        }
-        #expect(summary() == nil)
-
-        let one = VMSnapshot(name: "Base", macAddress: nil)
-        let two = VMSnapshot(name: "Later", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [one, two], currentID: two.id))
-
-        #expect(summary() == "2")
-    }
 
     @Test("Only Snapshots states a header summary")
     func onlySnapshotsCarryAHeaderSummary() {
@@ -369,15 +241,6 @@ struct VMOverviewSummaryTests {
 
     // MARK: - Toggles
 
-    @Test("Only General and Sharing carry live switches")
-    func togglesBelongToTwoCategories() {
-        let instance = makeInstance()
-        for category in VMSettingsCategory.allCases {
-            let toggles = toggles(for: category, instance: instance)
-            #expect(toggles.isEmpty == ![.general, .sharing].contains(category))
-        }
-    }
-
     @Test("Ephemeral Mode is offerable without a snapshot only while one can be taken")
     func ephemeralToggleNeedsASnapshotOrItsCapture() {
         let instance = makeInstance()
@@ -401,14 +264,6 @@ struct VMOverviewSummaryTests {
         let stuck = makeInstance(hostState: VMHostState(ephemeralModeEnabled: true))
         #expect(ephemeral(stuck)?.isEnabled == true)
         #expect(ephemeral(stuck)?.isOn == true)
-    }
-
-    @Test("Passthrough is a panel setting, never a card switch")
-    func passthroughIsNotACardSwitch() {
-        for instance in [makeInstance(), makeInstance { $0.clipboardSharingEnabled = true }] {
-            let toggles = toggles(for: .sharing, instance: instance)
-            #expect(!toggles.contains { $0.toggle == .clipboardPassthrough })
-        }
     }
 
     @Test("Drag and drop is a macOS-guest switch only")

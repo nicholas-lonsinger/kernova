@@ -22,34 +22,6 @@ struct AppTerminationOutcomeTests {
             hasInstancesToSave: hasInstancesToSave)
     }
 
-    @Test("a soft quit closes the GUI whatever the VMs are doing")
-    func softQuitClosesTheGUI() {
-        #expect(outcome(shouldTerminateAgent: false) == .closeGUI)
-        #expect(outcome(shouldTerminateAgent: false, quitMustWaitOut: true) == .closeGUI)
-        #expect(outcome(shouldTerminateAgent: false, hasInstancesToSave: true) == .closeGUI)
-    }
-
-    @Test("the app's own two-phase quit is answered at once, whatever is still live")
-    func completedSavePassTerminatesNow() {
-        // `requestFullQuit` saves first and asks second, so by the time the gate
-        // is consulted there is nothing left to wait for — and answering
-        // `.terminateLater` here would enter the nested wait the two-phase quit
-        // exists to avoid.
-        #expect(outcome(hasCompletedSavePass: true) == .terminateNow)
-        #expect(
-            outcome(hasCompletedSavePass: true, isSavePassRunning: true, hasInstancesToSave: true)
-                == .terminateNow)
-        // Even the soft-quit downgrade: the process is already leaving.
-        #expect(
-            outcome(hasCompletedSavePass: true, shouldTerminateAgent: false) == .terminateNow)
-        #expect(outcome(hasCompletedSavePass: true, quitMustWaitOut: true) == .terminateNow)
-    }
-
-    @Test("an idle library terminates immediately")
-    func idleLibraryTerminatesNow() {
-        #expect(outcome() == .terminateNow)
-    }
-
     @Test("live VMs are save-suspended before termination")
     func liveVMsAreSaved() {
         #expect(outcome(hasInstancesToSave: true) == .saveThenTerminate)

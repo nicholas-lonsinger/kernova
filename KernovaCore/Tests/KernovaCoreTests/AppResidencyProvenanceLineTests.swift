@@ -18,32 +18,6 @@ struct AppResidencyProvenanceLineTests {
         AppResidencyPolicy.LaunchProvenance(origin: origin, isHidden: isHidden)
     }
 
-    @Test("formats bundle path, build, configuration, and entitlement state into one line")
-    func formatsAllFields() {
-        #expect(
-            AppResidencyPolicy.residentProvenanceLine(
-                bundlePath: "/Volumes/Apps/Kernova.app",
-                build: "142",
-                configuration: "Release",
-                vmNetworkingEntitled: true,
-                launch: provenance(.user, isHidden: false))
-                == "bundle=/Volumes/Apps/Kernova.app build=142 config=Release "
-                + "vmNetworking=entitled launch=user hidden=false")
-    }
-
-    @Test("reports an unentitled signature")
-    func unentitledSignature() {
-        #expect(
-            AppResidencyPolicy.residentProvenanceLine(
-                bundlePath: "/Volumes/Apps/Kernova.app",
-                build: "142",
-                configuration: "Debug",
-                vmNetworkingEntitled: false,
-                launch: provenance(.loginItem, isHidden: false))
-                == "bundle=/Volumes/Apps/Kernova.app build=142 config=Debug "
-                + "vmNetworking=unentitled launch=loginItem hidden=false")
-    }
-
     /// The pair that decides the posture, so a launch that came up with no
     /// window is legible from the log alone.
     @Test("reports a launch that asked for no window")

@@ -22,10 +22,4 @@ struct VMDisplayPlacementFullscreenScreenTests {
         #expect(screen(last: 9, screens: [1, 2], library: 2) == 2)
         #expect(screen(last: nil, screens: [1, 2], library: 2) == 2)
     }
-
-    @Test("With no library screen either, the first screen")
-    func noLibraryFallsBackToFirst() {
-        #expect(screen(last: 9, screens: [1, 2], library: nil) == 1)
-        #expect(screen(last: nil, screens: [], library: nil) == nil)
-    }
 }

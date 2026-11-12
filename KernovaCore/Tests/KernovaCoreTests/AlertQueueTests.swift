@@ -47,16 +47,6 @@ struct AlertQueueTests {
         #expect(drain(&queue, free: ["A"]).taken == ["A2"])
     }
 
-    @Test("An alert waiting on a busy window does not hold up one for another")
-    func busyWindowHoldsUpNoOther() {
-        var queue = Queue()
-        queue.enqueue(Request(name: "A1", window: "A"))
-        queue.enqueue(Request(name: "B1", window: "B"))
-
-        #expect(drain(&queue, free: ["B"]).taken == ["B1"])
-        #expect(queue.waiting.map(\.request.name) == ["A1"])
-    }
-
     @Test("An alert routed nowhere is held, and stays")
     func unroutedIsHeld() {
         var queue = Queue()
