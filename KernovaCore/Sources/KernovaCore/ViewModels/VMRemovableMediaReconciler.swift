@@ -9,6 +9,10 @@ import KernovaLogging
 ///
 /// Headless: the configuration write and the alert both leave through hooks,
 /// so every configuration write stays ``VMLibrary``'s.
+///
+/// An image another active VM has open never reaches a pass: the commit that
+/// would list it is refused first
+/// (``VMLiveIdentities/diskImageConflict(on:movingFrom:to:)``).
 @MainActor
 final class VMRemovableMediaReconciler {
     nonisolated private static let logger = KernovaLogger(

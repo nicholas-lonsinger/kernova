@@ -1349,7 +1349,16 @@ struct VirtualizationServiceTests {
             id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
             underlying: makeFileLockContentionError())
         #expect(VirtualizationFailure.isFileLockContention(wrapped))
-        #expect(VirtualizationFailure.isTransientStartError(wrapped))
+    }
+
+    @Test("A lock still held when the retries run out is transient, though no builder error is")
+    func lockHeldIsTransient() {
+        let held = VirtualizationError.fileLockHeld(
+            label: "Main Disk",
+            underlying: ConfigurationBuilderError.storageDiskAttachFailed(
+                id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
+                underlying: makeFileLockContentionError()))
+        #expect(VirtualizationFailure.isTransientStartError(held))
     }
 
     @Test("a non-contention attach failure stays permanent")

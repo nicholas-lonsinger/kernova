@@ -3,8 +3,18 @@ import KernovaCommandModel
 import KernovaLogging
 
 /// Which identity another VM already claims — the identity term admission
-/// decides every bring-up against (``VMAdmission/Facts/identityConflict``). A
-/// claim is ``VMInstance/claimsIdentity``.
+/// decides every bring-up against (``VMAdmission/Facts/identityConflict``),
+/// and the disk images a running VM's live edit may not open. A claim is
+/// ``VMInstance/claimsIdentity``: a machine identity, a MAC address, and each
+/// external disk image the VM has open (``VMInstance/claimedDiskImages``).
+///
+/// An external disk image is open in at most one active VM, except that
+/// several may each have it read-only: VZ locks a writable image exclusively
+/// and a read-only one shared
+/// (`docs/research/2026-09-23-two-instances-same-vm.md`). Identity is the
+/// path — the stored one on both sides, and the holder's resolved one too —
+/// so two spellings of one file that neither bookmark exposes are left to
+/// VZ's lock.
 @MainActor
 final class VMLiveIdentities {
     nonisolated private static let logger = KernovaLogger(
@@ -38,20 +48,26 @@ final class VMLiveIdentities {
     ///
     /// Every other VM's claim is first caught up with another copy of Kernova
     /// (``VMActivity/refreshClaim()``), so a VM that copy holds claims the
-    /// identity its bundle carries now. A shared machine identity is answered
-    /// first: waived only while ``AppPreferences/allowsDuplicateMachineIDOverride``
-    /// is on, by a confirmed override or by the standing choice not to be
-    /// asked (``AppPreferences/duplicateMachineIDQuestionDismissed``), and
-    /// otherwise offered for confirmation only to a request that can ask. A MAC address is
-    /// never waived, and is answered only once nothing else stands in the way,
-    /// so the change of network its refusal routes through is the last step
-    /// the bring-up needs.
+    /// identity its bundle carries now. A disk image is answered first: never
+    /// waived and offering no route, so a start it refuses asks no question
+    /// and changes no network. A shared machine identity is next: waived only
+    /// while ``AppPreferences/allowsDuplicateMachineIDOverride`` is on, by a
+    /// confirmed override or by the standing choice not to be asked
+    /// (``AppPreferences/duplicateMachineIDQuestionDismissed``), and otherwise
+    /// offered for confirmation only to a request that can ask. A MAC address
+    /// is never waived, and is answered only once nothing else stands in the
+    /// way, so the change of network its refusal routes through is the last
+    /// step the bring-up needs.
     func conflict(
         for instance: VMInstance, bringingUp configuration: VMConfiguration,
         override: VMIdentityOverride
     ) -> VMIdentityConflict? {
         for other in instances where other !== instance {
             other.activity.refreshClaim()
+        }
+        let candidates = Self.diskImages(of: configuration, on: instance)
+        if let conflict = diskImageConflict(for: instance, opening: candidates, under: configuration) {
+            return conflict
         }
         let identityTwin = instances.first {
             $0 !== instance && $0.claimsIdentity && instance.sharesMachineIdentity(with: $0)
@@ -81,6 +97,82 @@ final class VMLiveIdentities {
         }
         return nil
     }
+
+    /// The VM another active VM's disk image refuses a live edit of `instance`
+    /// moving `old` to `new` on, or `nil` when nothing collides or `instance`
+    /// is not live.
+    ///
+    /// Judges only the removable media the edit adds — an entry added,
+    /// re-pointed, or turned writable — since only removable media reaches a
+    /// running VM; a VM already in a collision stays editable to leave it.
+    /// Runs inside the coordinated write, so it reads each claim as it stands
+    /// and catches none up with another copy.
+    func diskImageConflict(
+        on instance: VMInstance, movingFrom old: VMConfiguration, to new: VMConfiguration
+    ) -> VMIdentityConflict? {
+        guard instance.holdsLiveIdentity else { return nil }
+        let before = Dictionary(
+            Self.diskImages(of: old, on: instance).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let added = Self.diskImages(of: new, on: instance).filter { reference in
+            guard reference.kind == .removableMedia else { return false }
+            guard let prior = before[reference.id] else { return true }
+            return prior.path != reference.path || (prior.readOnly && !reference.readOnly)
+        }
+        return diskImageConflict(for: instance, opening: added, under: new)
+    }
+
+    /// The external disk images `configuration` has `instance` open, a
+    /// guest-agent installer entry aside: each VM is attached its own copy.
+    private static func diskImages(
+        of configuration: VMConfiguration, on instance: VMInstance
+    ) -> [ExternalFileReference] {
+        let agents = instance.bundleProducts.guestAgents
+        return configuration.externalFileReferences.filter {
+            $0.kind.isDiskImage && !agents.isInstallerDisk(path: $0.path)
+        }
+    }
+
+    /// The first claim, in candidate order and then library order, that
+    /// another active VM holds on one of `candidates` with either side
+    /// writable.
+    ///
+    /// A candidate is named by its stored path alone, so nothing resolves a
+    /// bookmark or touches the file on the main actor.
+    private func diskImageConflict(
+        for instance: VMInstance, opening candidates: [ExternalFileReference],
+        under configuration: VMConfiguration
+    ) -> VMIdentityConflict? {
+        guard !candidates.isEmpty else { return nil }
+        let holders = instances.lazy.filter { $0 !== instance }.map { ($0, $0.claimedDiskImages) }
+            .filter { !$0.1.isEmpty }
+        for candidate in candidates {
+            let identities = ExternalFileReference.fileIdentities(forPath: candidate.path, resolvedTarget: nil)
+            for (other, claims) in holders {
+                guard
+                    let claim = claims.first(where: {
+                        !$0.identities.isDisjoint(with: identities) && ($0.writable || !candidate.readOnly)
+                    })
+                else { continue }
+                return VMIdentityConflict(
+                    vm: instance, other: other,
+                    reason: .diskImage(
+                        label: candidate.label, writableHere: !candidate.readOnly,
+                        writableThere: claim.writable),
+                    configuration: configuration)
+            }
+        }
+        return nil
+    }
+}
+
+/// One external disk image an active VM has open
+/// (``VMInstance/claimedDiskImages``).
+struct DiskImageClaim {
+    /// The canonical paths that name the file
+    /// (``ExternalFileReference/fileIdentities(forPath:resolvedTarget:)``).
+    let identities: Set<String>
+    /// Whether the VM has it open for writing.
+    let writable: Bool
 }
 
 /// What a bring-up's request can do about another active VM claiming its
@@ -137,7 +229,7 @@ package struct VMIdentityConflict: LocalizedError {
     /// Whether the request can be asked to start anyway beside a VM sharing
     /// its machine identity
     /// (``ConfirmationKind/startBesideSharedMachineIdentity``); always `false`
-    /// for a MAC address, which is never overridden.
+    /// for a MAC address or a disk image, which are never overridden.
     let asks: Bool
     /// The sentence every surface words this refusal in, fixed at the refusal
     /// because the names it carries — and whether the claim is another copy of

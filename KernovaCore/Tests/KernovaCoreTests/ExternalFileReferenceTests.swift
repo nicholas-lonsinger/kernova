@@ -172,7 +172,7 @@ struct ExternalFileReferenceTests {
     /// The kind is irrelevant to identity, so every case here uses one.
     private func makeReference(path: String, bookmark: Data? = nil) -> ExternalFileReference {
         ExternalFileReference(
-            id: UUID(), kind: .storageDisk, label: "Disk", path: path, bookmark: bookmark)
+            id: UUID(), kind: .storageDisk, label: "Disk", path: path, bookmark: bookmark, readOnly: false)
     }
 
     @Test("A bookmark pointing elsewhere adds the resolved target to the identity")

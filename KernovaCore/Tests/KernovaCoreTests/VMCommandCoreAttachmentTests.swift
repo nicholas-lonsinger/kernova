@@ -416,6 +416,78 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.configuration.removableMedia?[0].bookmark == Data([2]))
     }
 
+    /// Two running VMs, "A" listing `item` and "B" listing `bItems`.
+    private func makeRunningPair(
+        in harness: Harness, a item: RemovableMediaItem, b bItems: [RemovableMediaItem] = []
+    ) -> (a: VMInstance, b: VMInstance) {
+        let a = makeInstance(in: harness, name: "A", phase: .running(sessionID: UUID())) {
+            $0.removableMedia = [item]
+        }
+        a.beginSessionContextForTesting()
+        let b = makeInstance(in: harness, name: "B", phase: .running(sessionID: UUID())) {
+            $0.removableMedia = bItems.isEmpty ? nil : bItems
+        }
+        b.beginSessionContextForTesting()
+        return (a, b)
+    }
+
+    @Test("Attaching an image another running VM has open writable is refused before the commit")
+    func attachRefusesAnImageAnotherVMWrites() throws {
+        let harness = makeHarness()
+        let path = externalPath("w.img")
+        let (a, b) = makeRunningPair(in: harness, a: RemovableMediaItem(path: path, readOnly: false, label: "W"))
+
+        let refusal = try #require(throws: CommandError.self) {
+            try harness.core.attachRemovableMedia(.id(b.id), paths: [PickedFile(path: path, bookmark: nil)])
+        }
+
+        guard case .conflict(let vm, let other, .diskImage(_, writableHere: false, writableThere: true)) = refusal
+        else {
+            Issue.record("refused with \(refusal)")
+            return
+        }
+        #expect(vm.id == b.id)
+        #expect(other.id == a.id)
+        #expect(b.configuration.removableMedia == nil)
+        #expect(harness.removableMedia.attachCallCount == 0)
+    }
+
+    @Test("An image two running VMs both have read-only is attached")
+    func attachTakesAnImageBothHaveReadOnly() async throws {
+        let harness = makeHarness()
+        let path = externalPath("r.img")
+        let (_, b) = makeRunningPair(in: harness, a: RemovableMediaItem(path: path, readOnly: true, label: "R"))
+
+        try harness.core.attachRemovableMedia(.id(b.id), paths: [PickedFile(path: path, bookmark: nil)])
+
+        #expect(b.configuration.removableMedia?.map(\.path) == [path])
+        try await waitForChange { b.phase.operation == nil && harness.removableMedia.attachCallCount == 1 }
+        #expect(b.liveRemovableMedia.map(\.path) == [path])
+    }
+
+    @Test("Making writable an image another running VM has read-only is refused, and it stays read-only")
+    func readWriteRefusesAnImageAnotherVMHas() throws {
+        let harness = makeHarness()
+        let path = externalPath("r.img")
+        let mine = RemovableMediaItem(path: path, readOnly: true, label: "Mine")
+        let (a, b) = makeRunningPair(
+            in: harness, a: RemovableMediaItem(path: path, readOnly: true, label: "R"), b: [mine])
+
+        let refusal = try #require(throws: CommandError.self) {
+            try harness.core.setRemovableMediaReadOnly(.id(b.id), item: mine.id, readOnly: false)
+        }
+
+        guard
+            case .conflict(_, let other, .diskImage("Mine", writableHere: true, writableThere: false)) = refusal
+        else {
+            Issue.record("refused with \(refusal)")
+            return
+        }
+        #expect(other.id == a.id)
+        #expect(b.configuration.removableMedia?.first?.readOnly == true)
+        #expect(harness.removableMedia.attachCallCount == 0)
+    }
+
     @Test("Creating a removable disk attaches the written file read-write")
     func createRemovableMediaAttaches() async throws {
         let harness = makeHarness()

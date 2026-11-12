@@ -216,6 +216,12 @@ public enum ConflictReason: Codable, Sendable, Hashable {
     /// every further VM that does, in library order.
     case macAddressInUse(
         address: String, holding: MACAddressHolding, otherHolders: [MACAddressHolder])
+    /// The VM being refused would open a disk image `other` has open, and
+    /// several active VMs may have one open at once only when each has it
+    /// read-only. `label` is the entry's label on the VM being refused;
+    /// `writableHere` and `writableThere` are whether that VM and `other`
+    /// have it writable.
+    case diskImage(label: String, writableHere: Bool, writableThere: Bool)
 }
 
 /// How one VM holds a MAC address: in its configuration, in snapshots taken

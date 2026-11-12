@@ -94,16 +94,20 @@ package final class VirtualizationService {
     // MARK: - Cold Boot
 
     /// Cold-boots `instance`, retrying with bounded backoff when the start fails on
-    /// VZ file-lock contention (see ``VirtualizationFailure/isFileLockContention(_:)``).
+    /// VZ file-lock contention (see ``VirtualizationFailure/isFileLockContention(_:)``),
+    /// and throwing ``VirtualizationError/fileLockHeld(label:underlying:)`` once
+    /// the retries run out.
     ///
-    /// The contention it answers is this copy's own: a previous `VZVirtualMachine`
-    /// on the same bundle releases its advisory lock on the auxiliary-storage and
+    /// The contention it waits out is a session still deallocating: a previous
+    /// `VZVirtualMachine` releases its advisory lock on the auxiliary-storage and
     /// disk-image files only when fully *deallocated*, which lags
     /// `vm.state == .stopped` by more the more guest memory there is to tear down.
     /// No public VZ API observes the release, so gating on state cannot be
     /// airtight; a bounded retry against the ground-truth failure is. Another
-    /// copy of Kernova running the VM holds the same files, but the bundle's run
-    /// lock refuses that bring-up at admission, before VZ is asked.
+    /// active VM holding the same files, in this copy of Kernova or another, is
+    /// refused at admission (``VMLiveIdentities``), so a lock still held when the
+    /// retries run out belongs to a session still deallocating or to a process
+    /// outside Kernova.
     private func coldBootRetryingLockContention(
         _ instance: VMInstance, _ context: borrowing VMBringUpContext, bootIntoRecovery: Bool,
         provisioning: GuestProvisioningCredentials?
@@ -116,9 +120,10 @@ package final class VirtualizationService {
                     provisioning: provisioning)
                 return
             } catch let startError {
-                guard VirtualizationFailure.isFileLockContention(startError),
-                    let delay = Self.fileLockRetryDelay(forAttempt: attempt)
-                else { throw startError }
+                guard VirtualizationFailure.isFileLockContention(startError) else { throw startError }
+                guard let delay = Self.fileLockRetryDelay(forAttempt: attempt) else {
+                    throw Self.lockHeld(startError)
+                }
                 attempt += 1
                 Self.logger.log(
                     .warning,
@@ -128,13 +133,27 @@ package final class VirtualizationService {
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
-                    // Cancelled mid-backoff: surface the original lock failure
-                    // rather than leak a `CancellationError` into the status/alert
+                    // Cancelled mid-backoff: surface the lock failure rather
+                    // than leak a `CancellationError` into the status/alert
                     // classification paths, which aren't shaped for it.
-                    throw startError
+                    throw Self.lockHeld(startError)
                 }
             }
         }
+    }
+
+    /// `contention` — a ``VirtualizationFailure/isFileLockContention(_:)``
+    /// failure — as the lock-held error a start ends on, naming the attachment
+    /// whose open met the lock.
+    private static func lockHeld(_ contention: any Error) -> VirtualizationError {
+        let label: String? =
+            switch contention as? ConfigurationBuilderError {
+            case .storageDiskAttachFailed(_, _, let label, _), .removableMediaAttachFailed(_, _, let label, _):
+                label
+            default:
+                nil
+            }
+        return .fileLockHeld(label: label, underlying: contention)
     }
 
     /// Builds a fresh configuration and `VZVirtualMachine`, wires the session
@@ -610,7 +629,9 @@ package final class VirtualizationService {
     /// A restore or resume failure surfaces as
     /// ``VirtualizationError/restoreFailed(underlying:hostLocked:)`` with the save file
     /// left in place — a cold boot over a suspended session destroys it, so
-    /// discarding the saved state stays an explicit user action.
+    /// discarding the saved state stays an explicit user action. Contention that
+    /// outlasts the retries is one too, wrapping
+    /// ``VirtualizationError/fileLockHeld(label:underlying:)``.
     private func restoreFromSaveFile(
         _ instance: VMInstance, _ context: borrowing VMBringUpContext
     ) async throws {
@@ -620,11 +641,16 @@ package final class VirtualizationService {
                 try await restoreFromSaveFileAttempt(instance, context)
                 return
             } catch let attemptError {
-                guard
-                    VirtualizationFailure.isFileLockContention(
-                        VirtualizationFailure.unwrappedRestoreFailure(attemptError)),
-                    let delay = Self.fileLockRetryDelay(forAttempt: attempt)
-                else { throw attemptError }
+                let contention = VirtualizationFailure.unwrappedRestoreFailure(attemptError)
+                guard VirtualizationFailure.isFileLockContention(contention) else { throw attemptError }
+                guard let delay = Self.fileLockRetryDelay(forAttempt: attempt) else {
+                    // The restore failure logs itself only when the restore ran.
+                    Self.logger.log(
+                        .error,
+                        "Restore of '\(instance.name, privacy: .public)' still hit file-lock contention after \(attempt, privacy: .public) retries: \(contention.localizedDescription, privacy: .public)"
+                    )
+                    throw Self.restoreLockHeld(attemptError, contention)
+                }
                 attempt += 1
                 Self.logger.log(
                     .warning,
@@ -634,13 +660,19 @@ package final class VirtualizationService {
                 do {
                     try await Task.sleep(for: delay)
                 } catch {
-                    // Cancelled mid-backoff: surface the original lock failure
-                    // rather than leak a `CancellationError` into the status/alert
-                    // classification paths, which aren't shaped for it.
-                    throw attemptError
+                    // Cancelled mid-backoff, as the cold boot's retry is.
+                    throw Self.restoreLockHeld(attemptError, contention)
                 }
             }
         }
+    }
+
+    /// The restore failure a restore attempt that failed with `attemptError` on
+    /// `contention` ends on, keeping the attempt's `hostLocked`.
+    private static func restoreLockHeld(_ attemptError: any Error, _ contention: any Error) -> VirtualizationError {
+        var hostLocked = false
+        if case .restoreFailed(_, let locked)? = attemptError as? VirtualizationError { hostLocked = locked }
+        return .restoreFailed(underlying: lockHeld(contention), hostLocked: hostLocked)
     }
 
     /// One restore attempt: build, attach, restore, resume. A configuration
