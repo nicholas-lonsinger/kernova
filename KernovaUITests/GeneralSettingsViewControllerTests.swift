@@ -21,12 +21,13 @@ struct GeneralSettingsViewControllerTests {
         func unregister() throws {}
     }
 
+    private let viewModel = makeLibraryViewModel(preferences: makeTestPreferences())
+
     private static let approvalText = "Needs approval in System Settings › General › Login Items."
 
     private func makeController(registration: StubRegistration) -> GeneralSettingsViewController {
         let controller = GeneralSettingsViewController(
-            loginItem: LoginItemService(registration: registration),
-            viewModel: makeLibraryViewModel(preferences: makeTestPreferences()))
+            loginItem: LoginItemService(registration: registration), viewModel: viewModel)
         _ = controller.view
         controller.viewWillAppear()
         return controller
@@ -52,7 +53,7 @@ struct GeneralSettingsViewControllerTests {
         #expect(without.height > 0)
 
         registration.status = .requiresApproval
-        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        viewModel.hostNotifications.appDidBecomeActive.post()
         await drainMainQueue()
         let with = controller.preferredContentSize
         #expect(approvalNote(in: controller) != nil)
@@ -60,7 +61,7 @@ struct GeneralSettingsViewControllerTests {
         #expect(with.width == without.width)
 
         registration.status = .enabled
-        NotificationCenter.default.post(name: NSApplication.didBecomeActiveNotification, object: nil)
+        viewModel.hostNotifications.appDidBecomeActive.post()
         await drainMainQueue()
         #expect(approvalNote(in: controller) == nil)
         #expect(controller.preferredContentSize == without)
