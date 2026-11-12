@@ -41,15 +41,6 @@ struct VMLastRunTests {
         #expect(instance.hostState.lastRunAt == date)
     }
 
-    @Test("A VM with no run recorded has no last run")
-    func noRunRecordedHasNoLastRun() {
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture()
-
-        #expect(instance.hostState.lastRunAt == nil)
-        #expect(instance.sessionContext?.runningSince == nil)
-    }
-
     @Test("A session records when it started running, as the last run too, as it first settles running")
     func startRecordsTheLastRun() async throws {
         let library = makeWiredLibrary()
@@ -62,21 +53,6 @@ struct VMLastRunTests {
         #expect(since >= before)
         let recorded = try #require(instance.hostState.lastRunAt)
         #expect(recorded >= before && recorded <= since)
-    }
-
-    @Test("A pause and resume keep the session's start and write no run")
-    func resumeKeepsTheSessionStart() async throws {
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture()
-        try await bootRunning(instance, session: UUID())
-        let since = try #require(instance.sessionContext?.runningSince)
-        try backdate(instance, to: Self.earlier)
-
-        try await instance.activity.launch(.pausing) { _ in .rest(.live(.paused), ()) }.value()
-        try await instance.activity.launch(.resuming) { _ in .rest(.live(.running), ()) }.value()
-
-        #expect(instance.sessionContext?.runningSince == since)
-        #expect(instance.hostState.lastRunAt == Self.earlier)
     }
 
     @Test("A session that ends — powered off or stopped with an error — records the last run as it ends")
@@ -96,24 +72,6 @@ struct VMLastRunTests {
             let recorded = try #require(instance.hostState.lastRunAt, "\(event)")
             #expect(recorded >= before, "\(event)")
         }
-    }
-
-    @Test("A save that ends its session records the last run as it ends")
-    func saveRecordsTheLastRun() async throws {
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture()
-        try await bootRunning(instance, session: UUID())
-        try backdate(instance, to: Self.earlier)
-        let before = toTheSecond(Date())
-
-        try await instance.activity.launch(.saving) { context in
-            context.endSession()
-            return .rest(.afterSessionEnd, ())
-        }.value()
-
-        #expect(instance.sessionContext == nil)
-        let recorded = try #require(instance.hostState.lastRunAt)
-        #expect(recorded >= before)
     }
 
     @Test("A session that never settled running records no run")

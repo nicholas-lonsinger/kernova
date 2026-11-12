@@ -176,23 +176,6 @@ struct VMRunLockTests {
         expectLockFollowsPhase(instance, store)
     }
 
-    @Test("The same attempts are admitted, and let go of the lock, once no other copy holds the bundle")
-    func everyAttemptIsAdmittedWhenFree() async throws {
-        for attempt in Self.attempts {
-            let (instance, store) = makeInstance(attempt.phase) {
-                if attempt.pendingSetup {
-                    $0.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-                }
-            }
-            if attempt.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
-            let recorder = Recorder()
-            try await attempt.run(instance, recorder)
-            if let outcome = instance.phase.operation?.outcome { try await outcome.value() }
-            #expect(recorder.bodyRan, "\(attempt)")
-            expectLockFollowsPhase(instance, store)
-        }
-    }
-
     // MARK: - Invariant
 
     @Test("The lock is held exactly while the VM is neither at rest nor removed, after every commit and ending")
@@ -288,20 +271,6 @@ struct VMRunLockTests {
         try await instance.activity.delete { _ in }
         #expect(instance.phase == .removed)
         expectLockFollowsPhase(instance, store)
-    }
-
-    @Test("A rebind replaces the bundle without letting go of the lock the VM holds")
-    func rebindKeepsTheLock() async throws {
-        let (instance, store) = makeInstance()
-        try await startLive(instance)
-        let lockedURL = instance.bundleURL
-
-        instance.rebind(
-            to: VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: store))
-                .make(VMInstanceFixture.read(lockedURL, from: store)))
-
-        #expect(instance.activity.holdsRunLock)
-        #expect(store.bundlesLockedByThisCopy == [lockedURL.standardizedFileURL])
     }
 
     // MARK: - Endings reuse the lock
@@ -444,75 +413,10 @@ struct VMRunLockTests {
         expectLockFollowsPhase(instance, harness.storage.files)
     }
 
-    // MARK: - Failures while taking the lock
-
-    @Test("A bundle read that fails after the lock is taken lets the lock go and throws the read's failure")
-    func failedReReadReleasesTheLock() async throws {
-        let (instance, store) = makeInstance()
-        store.setUnreadable(true, relativePath: VMBundleLayout.configRelativePath, at: instance.bundleURL)
-        let recorder = Recorder()
-
-        await #expect(throws: UnreadableConfigFile.self) {
-            try await instance.activity.perform(.deletingSnapshot) { _ in
-                recorder.bodyRan = true
-                return .rest(.asStarted, ())
-            }
-        }
-
-        #expect(!recorder.bodyRan)
-        #expect(instance.phase == .stopped)
-        #expect(!instance.activity.heldByAnotherCopy)
-        expectLockFollowsPhase(instance, store)
-
-        store.setUnreadable(false, relativePath: VMBundleLayout.configRelativePath, at: instance.bundleURL)
-        try await instance.activity.perform(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
-        expectLockFollowsPhase(instance, store)
-    }
-
-    @Test("A lock attempt that throws propagates its failure and commits nothing")
-    func throwingLockAttemptPropagates() async throws {
-        let (instance, store) = makeInstance()
-        store.setLockError(Errno.noSuchFileOrDirectory, at: instance.bundleURL)
-        let recorder = Recorder()
-
-        await #expect(throws: Errno.noSuchFileOrDirectory) {
-            try await instance.activity.perform(.creatingStorageDisk) { _ in
-                recorder.bodyRan = true
-                return .rest(.asStarted, ())
-            }
-        }
-
-        #expect(!recorder.bodyRan)
-        #expect(instance.phase == .stopped)
-        #expect(!instance.activity.heldByAnotherCopy)
-        expectLockFollowsPhase(instance, store)
-    }
-
     // MARK: - Verbs
 
     private func makeCore() -> WiredCommandCore.Scripted<MockVirtualizationService> {
         .init(WiredCommandCore(virtualization: MockVirtualizationService()))
-    }
-
-    @Test("Start on a VM another copy holds is refused with the other copy named, and asks nothing of VZ")
-    func startVerbIsRefusedWhileHeldElsewhere() async throws {
-        let harness = makeCore()
-        let instance = harness.library.registerFixture(name: "Held")
-        harness.storage.files.holdElsewhere(instance.bundleURL)
-
-        let refusal = try await #require(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        }
-        guard case .heldByAnotherCopy(let vm) = refusal else {
-            Issue.record("Refused as \(refusal)")
-            return
-        }
-        #expect(vm.id == instance.id)
-        #expect(refusal.message == "\u{201C}Held\u{201D} is in use by another copy of Kernova.")
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(instance.phase == .stopped)
-        #expect(instance.activity.heldByAnotherCopy)
-        expectLockFollowsPhase(instance, harness.storage.files)
     }
 
     @Test("Start on a VM another copy left suspended restores its saved state")

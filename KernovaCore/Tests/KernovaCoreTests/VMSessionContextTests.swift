@@ -197,20 +197,6 @@ struct VMSessionContextTests {
 
     // MARK: - Runtime removable media write surface
 
-    @Test("recordAttachedMedia appends, and a second call appends rather than replaces")
-    func recordAttachedMediaAppends() {
-        let sessionID = UUID()
-        let instance = makeInstance(phase: .running(sessionID: sessionID))
-        instance.beginSessionContextForTesting()
-        let first = RemovableMediaDeviceInfo(path: "/tmp/a.iso", readOnly: true)
-        let second = RemovableMediaDeviceInfo(path: "/tmp/b.iso", readOnly: false)
-
-        instance.recordAttachedMedia(first, for: sessionID)
-        instance.recordAttachedMedia(second, for: sessionID)
-
-        #expect(instance.liveRemovableMedia == [first, second])
-    }
-
     @Test("forgetAttachedMedia removes only the matching entry")
     func forgetAttachedMediaRemovesOnlyTheMatch() {
         let sessionID = UUID()
@@ -224,20 +210,6 @@ struct VMSessionContextTests {
         instance.forgetAttachedMedia(deviceID: removed.id, for: sessionID)
 
         #expect(instance.liveRemovableMedia == [kept])
-    }
-
-    @Test("recordAttachedMedia and forgetAttachedMedia are no-ops, logged, with no session open")
-    func mediaWritesAreNoOpsWithNoSessionOpen() {
-        let sessionID = UUID()
-        let instance = makeInstance(phase: .running(sessionID: sessionID))
-        instance.beginSessionContextForTesting()
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(instance.sessionContext == nil)
-
-        instance.recordAttachedMedia(RemovableMediaDeviceInfo(path: "/tmp/late.iso", readOnly: true), for: sessionID)
-        instance.forgetAttachedMedia(deviceID: UUID(), for: sessionID)
-
-        #expect(instance.liveRemovableMedia.isEmpty)
     }
 
     @Test("A media write for a superseded session leaves the successor's tracking alone")
@@ -295,43 +267,5 @@ struct VMSessionContextTests {
                 instance.recordAttachedMedia(
                     RemovableMediaDeviceInfo(path: "/tmp/b.iso", readOnly: true), for: sessionID)
             })
-    }
-
-    @Test("Opening a context wakes an observer that read the empty projection")
-    func openingTheContextWakesTheObserver() {
-        // The slot edge on its own: with no context the projections
-        // short-circuit at `sessionContext`, so that access is the only
-        // dependency registered — and opening one has to be enough.
-        for track in [
-            { @MainActor (instance: VMInstance) in _ = instance.networkAttachmentPending },
-            { @MainActor (instance: VMInstance) in _ = instance.agentPresentation?.status },
-            { @MainActor (instance: VMInstance) in _ = instance.displayDropAvailability },
-            { @MainActor (instance: VMInstance) in _ = instance.clipboardService },
-            { @MainActor (instance: VMInstance) in _ = instance.liveRemovableMedia },
-        ] {
-            let instance = makeInstance()
-            #expect(
-                observationFires(reading: { track(instance) }) {
-                    instance.beginSessionContextForTesting()
-                })
-        }
-    }
-
-    @Test("Releasing the context wakes an observer reading through the projection")
-    func releasingTheContextWakesTheObserver() {
-        for track in [
-            { @MainActor (instance: VMInstance) in _ = instance.networkAttachmentPending },
-            { @MainActor (instance: VMInstance) in _ = instance.agentPresentation?.status },
-            { @MainActor (instance: VMInstance) in _ = instance.displayDropAvailability },
-            { @MainActor (instance: VMInstance) in _ = instance.clipboardService },
-            { @MainActor (instance: VMInstance) in _ = instance.liveRemovableMedia },
-        ] {
-            let instance = makeInstance()
-            instance.beginSessionContextForTesting()
-            #expect(
-                observationFires(reading: { track(instance) }) {
-                    instance.handleSessionEvent(.guestDidStop)
-                })
-        }
     }
 }

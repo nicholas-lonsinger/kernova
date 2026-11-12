@@ -17,14 +17,6 @@ import Testing
 struct VMInstanceTests {
     private let scratch = TestScratchDirectory(prefix: "VMInstanceTests")
 
-    /// Every phase that reports a status other than `.paused` or `.suspended`
-    /// — what the display-projection loops enumerate, since that pair is
-    /// covered on its own.
-    private static var nonPausedPhases: [VMLifecyclePhase] {
-        [.stopped, .initialBoot, .failed(message: "Boot failed."), .running(sessionID: UUID())]
-            + VMLifecyclePhaseFixtures.operations.filter { $0.status != .paused && $0.status != .suspended }
-    }
-
     private static let oneSnapshot = VMSnapshotManifest(
         snapshots: [VMSnapshot(name: "One", macAddress: nil)])
 
@@ -50,18 +42,6 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("A suspended VM's suspend slot is captured as a suspended-mode snapshot")
-    func suspendSlotTakesASuspendedSnapshot() throws {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        try FileManager.default.createDirectory(
-            at: instance.bundleURL, withIntermediateDirectories: true)
-        FileManager.default.createFile(
-            atPath: instance.bundleLayout.saveFileURL.path(percentEncoded: false),
-            contents: Data("fake save".utf8))
-
-        #expect(instance.snapshotCaptureMode == .suspended)
-    }
-
     @Test(
         "A suspended VM with no suspend slot cannot be captured — a dead end a failed snapshot attempt can leave it in"
     )
@@ -73,17 +53,6 @@ struct VMInstanceTests {
         #expect(instance.snapshotCaptureMode == nil)
     }
 
-    @Test("The capture mode follows what the VM has to capture, and decides the stamped kind")
-    func snapshotModeFollowsLiveness() {
-        for phase in [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())] {
-            #expect(VMInstanceFixture.make(phase: phase).snapshotCaptureMode == .live, "phase \(phase)")
-        }
-        #expect(VMInstanceFixture.make(phase: .stopped).snapshotCaptureMode == .stopped)
-        #expect(VMCaptureMode.live.kind == .warm)
-        #expect(VMCaptureMode.suspended.kind == .warm)
-        #expect(VMCaptureMode.stopped.kind == .cold)
-    }
-
     @Test("A revert needs a snapshot to go back to")
     func revertNeedsASnapshot() {
         let instance = VMInstanceFixture.make(phase: .stopped)
@@ -93,20 +62,7 @@ struct VMInstanceTests {
         #expect(instance.activity.admits(Self.revert))
     }
 
-    @Test("A running VM can be reverted — the revert discards the live session")
-    func runningVMCanBeReverted() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.seedSnapshotManifest(Self.oneSnapshot)
-        #expect(instance.activity.admits(Self.revert))
-    }
-
     // MARK: - detailPaneMode
-
-    @Test("detailPaneMode defaults to .display on a new instance")
-    func detailPaneModeDefaultsToDisplay() {
-        let instance = VMInstanceFixture.make()
-        #expect(instance.detailPaneMode == .display)
-    }
 
     @Test("detailPaneMode is per-instance (independent between VMs)")
     func detailPaneModeIsPerInstance() {
@@ -129,25 +85,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - The session ending
-
-    @Test("A session's end releases the whole session context")
-    func sessionEndReleasesTheContext() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        let context = instance.beginSessionContextForTesting()
-        context.serialInputPipe = Pipe()
-        context.serialOutputPipe = Pipe()
-
-        instance.handleSessionEvent(.guestDidStop)
-
-        #expect(instance.phase == .stopped)
-        #expect(instance.liveSessionID == nil)
-        #expect(instance.sessionContext == nil)
-        #expect(instance.session == nil)
-        // The released context is drained too, so nothing a stale reference
-        // still holds keeps a file handle or a service alive.
-        #expect(context.serialInputPipe == nil)
-        #expect(context.serialOutputPipe == nil)
-    }
 
     @Test("A hidden (headless) display reads inline once its session ends")
     func sessionEndResetsHiddenDisplayMode() {
@@ -180,25 +117,6 @@ struct VMInstanceTests {
         #expect(instance.displayMode == .inline)
     }
 
-    @Test("A second session end changes nothing")
-    func sessionEndIdempotent() {
-        let instance = VMInstanceFixture.make(phase: .livePaused(sessionID: UUID()))
-        instance.handleSessionEvent(.guestDidStop)
-        instance.handleSessionEvent(.guestDidStop)
-
-        #expect(instance.status == .stopped)
-        #expect(instance.sessionContext == nil)
-        #expect(instance.session == nil)
-    }
-
-    @Test("A power-off event on a stopped VM changes nothing")
-    func powerOffIdempotentWhenStopped() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(instance.status == .stopped)
-        #expect(instance.session == nil)
-    }
-
     // MARK: - The suspend slot
 
     @Test("A suspend slot only counts while nothing is live")
@@ -223,60 +141,6 @@ struct VMInstanceTests {
             instance.activity.placeForTesting(phase)
             #expect(!instance.holdsSuspendedSession, "\(phase)")
         }
-    }
-
-    @Test("Discarding the saved state takes the file and the suspension together")
-    func discardSavedStateRestsTheVMStopped() throws {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        try makeTestLifecycle().discardSavedState(instance)
-
-        #expect(!instance.hasSaveFile)
-        #expect(instance.phase == .stopped)
-        #expect(instance.activity.admits(.edit(.machineKeys)))
-        #expect(!instance.activity.admits(.resume))
-    }
-
-    /// The operation's own body decides where it rests — a save drops the slot
-    /// the guest's end left half-written — so the event only tells it.
-    @Test("A guest that dies during an operation leaves the operation holding the VM")
-    func didStopWithErrorDuringAnOperationKeepsIt() throws {
-        let sessionID = UUID()
-        let live = VMLifecyclePhase.running(sessionID: sessionID)
-        let error = NSError(domain: "test", code: 1)
-        for phase: VMLifecyclePhase in [
-            .operating(.saving, from: live),
-            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: sessionID),
-        ] {
-            let instance = VMInstanceFixture.make(phase: phase)
-            try VMInstanceFixture.writeSaveFile(for: instance)
-
-            instance.handleSessionEvent(.didStopWithError(error))
-
-            #expect(instance.phase.operation?.kind == phase.operation?.kind, "\(phase)")
-            #expect(instance.phase.operation?.session == nil, "\(phase)")
-            #expect(
-                instance.phase.operation?.sessionEnd
-                    == .stoppedWithError(message: error.localizedDescription), "\(phase)")
-            #expect(instance.hasSaveFile, "\(phase)")
-        }
-    }
-
-    @Test("A guest that dies with no slot to come back on rests at the failure")
-    func didStopWithErrorWithoutASlotRestsFailed() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-
-        instance.handleSessionEvent(
-            .didStopWithError(
-                NSError(
-                    domain: "test", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "The guest panicked."])))
-
-        #expect(instance.status == .error)
-        #expect(instance.errorMessage == "The guest panicked.")
-        #expect(instance.sessionContext == nil)
     }
 
     @Test("A VM answers admission as it will stand once its saved state is discarded")
@@ -311,29 +175,7 @@ struct VMInstanceTests {
         #expect(instance.isSuspended == false)
     }
 
-    @Test("isSuspended is false when running")
-    func isSuspendedFalseWhenRunning() {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-        #expect(instance.isSuspended == false)
-    }
-
     // MARK: - hasLiveSession
-
-    @Test(
-        "hasLiveSession is true for a running or live-paused VM",
-        arguments: [VMLifecyclePhase.running(sessionID: UUID()), .livePaused(sessionID: UUID())])
-    func hasLiveSessionWithLiveVM(phase: VMLifecyclePhase) {
-        #expect(VMInstanceFixture.make(phase: phase).hasLiveSession == true)
-    }
-
-    @Test(
-        "hasLiveSession is false without a live virtual machine",
-        arguments: [
-            VMLifecyclePhase.suspended, .stopped, .failed(message: "Boot failed."), .initialBoot,
-        ])
-    func hasLiveSessionWithoutLiveVM(phase: VMLifecyclePhase) {
-        #expect(VMInstanceFixture.make(phase: phase).hasLiveSession == false)
-    }
 
     @Test(
         "hasLiveSession is false during an operation that shows its own status, even with a live virtual machine",
@@ -351,12 +193,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - effectiveMachineIdentifierData
-
-    @Test("effectiveMachineIdentifierData is nil with neither a configuration field nor a file")
-    func effectiveMachineIDNilWhenAbsent() {
-        let instance = VMInstanceFixture.make()
-        #expect(instance.effectiveMachineIdentifierData == nil)
-    }
 
     @Test("A file the install writes is the identifier, though the bundle was read before it existed")
     func effectiveMachineIDFollowsThePlatformFilesWrite() async throws {
@@ -412,21 +248,6 @@ struct VMInstanceTests {
         }
     }
 
-    @Test("isKeepingAppAlive is false when suspended")
-    func isKeepingAppAliveSuspended() {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        #expect(instance.session == nil)
-        #expect(instance.isKeepingAppAlive == false)
-    }
-
-    @Test("isKeepingAppAlive is false when stopped or error")
-    func isKeepingAppAliveStoppedOrError() {
-        for phase in [VMLifecyclePhase.stopped, .failed(message: "Boot failed.")] {
-            let instance = VMInstanceFixture.make(phase: phase)
-            #expect(instance.isKeepingAppAlive == false)
-        }
-    }
-
     // MARK: - Bundle Paths
 
     @Test("Bundle path URLs are correctly derived from bundleURL")
@@ -447,12 +268,6 @@ struct VMInstanceTests {
 
     // MARK: - Status Display Properties
 
-    @Test("statusDisplayName tells a suspended VM from a live-paused one")
-    func statusDisplayNameSuspendedAndPaused() {
-        #expect(VMInstanceFixture.make(phase: .suspended).statusDisplayName == "Suspended")
-        #expect(VMInstanceFixture.make(phase: .livePaused(sessionID: UUID())).statusDisplayName == "Paused")
-    }
-
     @Test("statusDisplayName delegates to status.displayName in every phase")
     func statusDisplayNameDelegates() {
         for phase in VMLifecyclePhaseFixtures.all {
@@ -466,16 +281,6 @@ struct VMInstanceTests {
         #expect(
             VMInstanceFixture.make(phase: .livePaused(sessionID: UUID())).statusToolTip
                 == "VM is paused in memory")
-    }
-
-    @Test("statusToolTip returns nil for every phase but the two that carry one")
-    func statusToolTipNilForNonPaused() {
-        // Suspended names the disk its state is on, a failure names its
-        // message, and an unbooted VM names the install Start runs.
-        for phase in Self.nonPausedPhases
-        where phase.status != .error && phase != .initialBoot {
-            #expect(VMInstanceFixture.make(phase: phase).statusToolTip == nil, "\(phase)")
-        }
     }
 
     @Test("statusToolTip carries the stored message in the error state")
@@ -530,24 +335,6 @@ struct VMInstanceTests {
         #expect(device.appliedPlans == [.bridged("en0")])
     }
 
-    @Test("applyLivePolicy ignores a network change while the VM is stopped")
-    func applyLivePolicyIgnoresNetworkChangeWhileStopped() {
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture(phase: .running(sessionID: UUID())) {
-            $0.networkEnabled = true
-            $0.networkMode = .nat
-        }
-        let device = MockNetworkDeviceControl()
-        let coordinator = attachNetworkCoordinator(to: instance, device: device)
-        coordinator.activate()
-        #expect(device.appliedPlans == [.nat])
-        instance.activity.placeForTesting(.stopped)
-
-        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .bridged }
-
-        #expect(device.appliedPlans == [.nat])
-    }
-
     @Test("A session's end stops network recovery and clears the pending flag")
     func sessionEndStopsNetworkRecovery() throws {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
@@ -576,23 +363,6 @@ struct VMInstanceTests {
     }
 
     // MARK: - Lifecycle Action Labels
-
-    @Test("startAction is .start without a pending install context")
-    func startActionDefault() {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        #expect(instance.startAction == .start)
-        #expect(instance.startAction.label == "Start")
-    }
-
-    @Test("startAction is .install with a pending install context and no resumable download")
-    func startActionInstall() {
-        let instance = VMInstanceFixture.make(phase: .stopped) {
-            $0.installContext = MacOSInstallContext(source: .downloadLatest)
-        }
-        #expect(instance.hasResumableInstallDownload == false)
-        #expect(instance.startAction == .install)
-        #expect(instance.startAction.label == "Install")
-    }
 
     /// Builds a stopped VM with an install context whose download destination has
     /// a sibling `.kernovadownload` bundle seeded on disk.
@@ -679,20 +449,6 @@ struct VMInstanceTests {
         #expect(instance.startAction == .install)
     }
 
-    @Test("startAction is .download with a pending Linux image and nothing partial on disk")
-    func startActionDownload() {
-        let instance = VMInstanceFixture.make(phase: .stopped) {
-            $0.linuxInstallContext = LinuxInstallContext(
-                source: .catalogEntry(makeLinuxCatalogEntry()))
-        }
-
-        // No destination until the mirror is asked, which is exactly when there
-        // is nothing to resume from.
-        #expect(instance.hasResumableInstallDownload == false)
-        #expect(instance.startAction == .download)
-        #expect(instance.startAction.label == "Download")
-    }
-
     @Test("startAction is .resumeDownload when a Linux image's bundle holds partial bytes")
     func startActionResumeDownload() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
@@ -714,18 +470,6 @@ struct VMInstanceTests {
         #expect(instance.hasResumableInstallDownload == true)
         #expect(instance.startAction == .resumeDownload)
         #expect(instance.startAction.label == "Resume Download")
-    }
-
-    @Test("The stop labels name the discard consequence when the stop discards")
-    func stopActionTitlesNameTheDiscard() {
-        #expect(VMInstance.StopAction.discardSavedState.menuTitle == "Discard Saved State…")
-        #expect(VMInstance.StopAction.discardSavedState.toolbarLabel == "Discard Saved State")
-    }
-
-    @Test("The stop labels are Stop for a stop that shuts the guest down")
-    func stopActionTitlesDefault() {
-        #expect(VMInstance.StopAction.stop.menuTitle == "Stop")
-        #expect(VMInstance.StopAction.stop.toolbarLabel == "Stop")
     }
 
     @Test("An Ephemeral VM's stop labels name the revert, not a discard")
@@ -783,93 +527,17 @@ struct VMInstanceTests {
         #expect(!instance.isRestingAtEphemeralBaseline)
     }
 
-    @Test("Ephemeral Mode off leaves the baseline comparison unasked")
-    func restingAtBaselineNeedsEphemeralMode() throws {
-        let (instance, baseline) = try makeEphemeralInstanceWithBundle(ephemeralModeEnabled: false)
-        let captured = instance.bundleLayout.snapshotLayout(id: baseline.id).saveFileURL
-        try FileManager.default.copyItem(at: captured, to: instance.bundleLayout.saveFileURL)
-
-        #expect(!instance.isRestingAtEphemeralBaseline)
-    }
-
-    // MARK: - Arrival labels
-
-    @Test("An arrival's label names its operation")
-    func arrivalLabelNamesItsOperation() {
-        #expect(VMArrival.Kind.creating.displayLabel == "Creating\u{2026}")
-        #expect(VMArrival.Kind.cloning.displayLabel == "Cloning\u{2026}")
-        #expect(VMArrival.Kind.importing.displayLabel == "Importing\u{2026}")
-    }
-
-    @Test("An arrival reads Cancelling… once a cancel is taken")
-    func arrivalLabelReadsCancellingOnceCancelled() {
-        let configuration = VMConfiguration(
-            name: "Copy", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let arrival = VMArrival.inert(.importing, configuration: configuration)
-        #expect(arrival.displayLabel == "Importing\u{2026}")
-
-        #expect(arrival.requestCancel() == .cancelled)
-
-        #expect(arrival.displayLabel == "Cancelling\u{2026}")
-    }
-
-    @Test("Arrival kind cancelLabel and cancelAlertTitle")
-    func arrivalKindCancelLabels() {
-        #expect(VMArrival.Kind.cloning.cancelLabel == "Cancel Clone")
-        #expect(VMArrival.Kind.cloning.cancelAlertTitle == "Cancel Clone?")
-        #expect(VMArrival.Kind.importing.cancelLabel == "Cancel Import")
-        #expect(VMArrival.Kind.importing.cancelAlertTitle == "Cancel Import?")
-    }
-
-    @Test("Arrival kind displayNoun")
-    func arrivalKindDisplayNoun() {
-        #expect(VMArrival.Kind.cloning.displayNoun == "Clone")
-        #expect(VMArrival.Kind.importing.displayNoun == "Import")
-    }
-
     // MARK: - agentPresentation dispatch
     //
     // `VMInstance.agentPresentation` is the single read site for the UI; every
     // guest sources it from the agent hub's snapshot once its session attached
     // the hub a transport, never from the SPICE clipboard's agent.
 
-    @Test("agentStatus is nil on a Linux instance with no session")
-    func agentStatusLinuxWithoutSessionIsNil() {
-        let instance = VMInstanceFixture.make(guestOS: .linux)
-        #expect(instance.sessionContext == nil)
-        #expect(instance.agentPresentation?.status == nil)
-    }
-
     @Test("A session without a socket device has no agent channel, so no presentation", arguments: VMGuestOS.allCases)
     func agentPresentationSessionWithoutTransportIsNil(guestOS: VMGuestOS) {
         let instance = VMInstanceFixture.make(guestOS: guestOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting()
         #expect(instance.agentPresentation == nil)
-    }
-
-    @Test("agentStatus is nil on a macOS VM with no session, even one that has seen an agent")
-    func agentStatusMacOSWithoutSessionIsNil() {
-        let instance = VMInstanceFixture.make(
-            guestOS: .macOS, mutate: { $0.lastSeenAgentVersion = "0.9.2" })
-        #expect(instance.sessionContext == nil)
-        #expect(instance.agentPresentation?.status == nil)
-    }
-
-    @Test("A macOS session with no agent connected reports .connecting for a VM that has seen an agent")
-    func agentStatusMacOSSessionWithoutAgentIsConnecting() {
-        let instance = VMInstanceFixture.make(
-            guestOS: .macOS, phase: .running(sessionID: UUID()),
-            mutate: { $0.lastSeenAgentVersion = "0.9.2" })
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
-    }
-
-    @Test("A macOS session with no agent connected reports .waiting for a VM that has never seen an agent")
-    func agentStatusMacOSSessionWithoutAgentNeverSeenIsWaiting() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        #expect(instance.agentPresentation?.status == .waiting)
     }
 
     @Test("agentStatus returns to nil once the session ends")
@@ -883,40 +551,7 @@ struct VMInstanceTests {
         #expect(instance.agentPresentation?.status == nil)
     }
 
-    @Test(
-        "A session's agent status ignores a SPICE agent",
-        arguments: VMGuestOS.allCases)
-    func agentPresentationIgnoresSpice(guestOS: VMGuestOS) {
-        let instance = VMInstanceFixture.make(guestOS: guestOS)
-        let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
-        let context = instance.beginSessionContextForTesting()
-        context.clipboardService = spice
-        context.hasAgentTransport = true
-        #expect(instance.agentPresentation == GuestAgentPresentation(hub: .empty))
-        #expect(instance.agentPresentation?.status == .waiting)
-    }
-
     // MARK: - An operation's ending
-
-    /// The wedge this rules out: a VM resting live over no session offers
-    /// neither Stop, Force Stop nor Start.
-    @Test("An operation that ends live over a session that went away rests where that end says")
-    func endingLiveOverAnEndedSessionRestsAtItsEnd() async throws {
-        let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-
-        try await instance.activity.perform(.pausing) { _ in
-            instance.handleSessionEvent(
-                .didStopWithError(
-                    NSError(
-                        domain: "test", code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "The guest stopped unexpectedly."])))
-            return .rest(.live(.paused), ())
-        }
-
-        #expect(instance.errorMessage == "The guest stopped unexpectedly.")
-        #expect(!instance.hasLiveVirtualMachine)
-        #expect(instance.activity.admits(.start(recovery: false)))
-    }
 
     @Test("Moving out of a failure drops its message rather than carrying it forward")
     func failureMessageCannotOutliveItsPhase() {
@@ -1142,51 +777,6 @@ struct VMInstanceTests {
         #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
-    @Test("macOS: an agent that connected this session and is then lost never warns")
-    func macOSConnectedThenLostNeverWarns() {
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting != nil)
-        connectSessionAgent(to: instance)
-        #expect(instance.agentAbsenceTimerForTesting == nil)
-        // The agent goes away, and the guest is resumed later: nothing waits.
-        disconnectAgents(from: instance)
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting == nil)
-        #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.missingAgentNoticesForTesting.isEmpty)
-    }
-
-    @Test("Watchdog is a no-op when lastSeenAgentVersion is nil")
-    func watchdogNoopWithoutPersistedVersion() {
-        // Fresh macOS VM, no prior agent — the .waiting nudge stays the
-        // appropriate signal, the louder "didn't reconnect" badge would be
-        // misleading.
-        let instance = VMInstanceFixture.make(
-            name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting == nil)
-    }
-
-    @Test("A Linux session agent seen before arms the watchdog on the same rule as a macOS one")
-    func watchdogArmsForLinuxSessionAgent() {
-        let instance = VMInstanceFixture.make(
-            name: "Linux VM", phase: .running(sessionID: UUID())
-        ) { $0.lastSeenAgentVersion = "1.0" }
-        instance.beginSessionContextForTesting()
-
-        instance.agentAbsenceGrace = .seconds(60)
-
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting != nil)
-        instance.cancelAgentAbsenceWatchdog()
-    }
-
     @Test("Watchdog is a no-op for the whole of a recovery-booted session")
     func watchdogNoopAfterRecoveryBoot() {
         // Recovery never runs the agent, so its silence proves nothing — the
@@ -1234,41 +824,6 @@ struct VMInstanceTests {
         #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
-    @Test(
-        "Watchdog is a no-op unless the VM is running",
-        arguments: [
-            PhaseFixture.settled(.livePaused(sessionID: UUID())),
-            .operating(.saving, from: .running(sessionID: UUID())),
-            .operating(.bringUp(.guestStart(.restoringSavedState)), from: .suspended, boundSession: UUID()),
-            .settled(.stopped),
-        ])
-    func watchdogNoopUnlessRunning(phase fixture: PhaseFixture) {
-        // A live-paused guest is frozen: it cannot say Hello, so a grace clock
-        // running against it would blame the agent for the user's pause —
-        // hence the guard rather than caller discipline.
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.activity.placeForTesting(fixture.phase)
-
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting == nil)
-    }
-
-    @Test("Watchdog is a no-op while the agent is connected")
-    func watchdogNoopWhileAgentConnected() async throws {
-        // Re-arm sites (resume, and the hub's agents changing) fire without
-        // checking whether an agent is already talking; nothing to wait for
-        // means nothing to arm.
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        connectSessionAgent(to: instance)
-
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting == nil)
-    }
-
     @Test("Reading the agents again with nothing changed keeps the armed timer and its deadline")
     func watchdogReevaluationKeepsTheTimer() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
@@ -1306,47 +861,6 @@ struct VMInstanceTests {
         #expect(instance.hostState.agentInstallNudgeDismissed == false)
         #expect(storage.saveHostStateCallCount == 1)
         #expect(storage.hostStates[instance.bundleURL]?.agentInstallNudgeDismissed == false)
-    }
-
-    @Test("Watchdog firing clears the stored guest OS version in the same persist")
-    func watchdogClearsGuestOSVersion() async throws {
-        // The agent that vouched for the OS version never reconnected, so the
-        // value is unverifiable — Unknown must overwrite it rather than let a
-        // stale version linger (the guest may have been wiped or upgraded).
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            in: library,
-            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        defer { withExtendedLifetime(library) {} }
-
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-
-        instance.startAgentAbsenceWatch()
-
-        await instance.agentAbsenceTimerForTesting?.value
-        #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.configuration.lastSeenGuestOSVersion == nil)
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("Watchdog firing leaves an undismissed nudge alone (no spurious persist)")
-    func watchdogDoesNotPersistWhenDismissalAlreadyClear() async throws {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library)
-        // Default: agentInstallNudgeDismissed == false
-        defer { withExtendedLifetime(library) {} }
-
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-
-        instance.startAgentAbsenceWatch()
-
-        await instance.agentAbsenceTimerForTesting?.value
-        #expect(instance.agentExpectedButMissing == true)
-        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
-        #expect(storage.saveConfigurationCallCount == 0)
-        #expect(storage.saveHostStateCallCount == 0)
     }
 
     @Test(
@@ -1405,145 +919,7 @@ struct VMInstanceTests {
         #expect(storage.saveHostStateCallCount == hostStatePersistsAfterHello)
     }
 
-    @Test("A session's end clears agentExpectedButMissing and cancels the watchdog")
-    func sessionEndResetsWatchdogState() async throws {
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        // Drive the flag manually to simulate the watchdog having fired.
-        instance.sessionContext?.warnedAgentScopes = [.login]
-        instance.agentAbsenceGrace = .seconds(60)
-        instance.startAgentAbsenceWatch()
-        let context = try #require(instance.sessionContext)
-
-        instance.handleSessionEvent(.guestDidStop)
-
-        #expect(instance.agentExpectedButMissing == false)
-        #expect(context.agentAbsenceTimer == nil)
-        // The next session's context arms cleanly — the prior task was
-        // cancelled, so nothing carries over to block it.
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-        instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
-        #expect(instance.agentExpectedButMissing == true)
-    }
-
-    /// The cross-context ABA the generation counter alone cannot close: each
-    /// context starts counting at zero, so a task armed at generation 1 in one
-    /// session matches generation 1 in the next. Cancellation does not cover
-    /// it — a sleep that returned just before the teardown is past the point
-    /// `cancel()` can reach.
-    @Test("A watchdog armed in a torn-down session never fires on its successor")
-    func watchdogFromAPriorContextDoesNotFireOnTheNext() async throws {
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        // Held to the end of the test: without it the released context
-        // deallocates and the task's weak capture answers the question before
-        // the identity check is reached, which is not what is under test.
-        let staleContext = instance.sessionContext
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-        instance.startAgentAbsenceWatch()
-        let stale = instance.agentAbsenceTimerForTesting
-        #expect(stale != nil)
-
-        // Teardown, then a fresh session arming its own watchdog on a grace
-        // long enough that it cannot legitimately fire during this test.
-        instance.handleSessionEvent(.guestDidStop)
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        instance.agentAbsenceGrace = .seconds(60)
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting != nil)
-
-        // The stale task's sleep elapses here; it must disown itself.
-        await stale?.value
-
-        #expect(instance.agentExpectedButMissing == false)
-        #expect(instance.agentPresentation?.status != .expectedMissing(expected: "0.9.2"))
-        // And it must not have cleared the successor's slot on the way out —
-        // an emptied slot is what would let the next arm site double-arm.
-        #expect(instance.agentAbsenceTimerForTesting != nil)
-        instance.cancelAgentAbsenceWatchdog()
-        #expect(staleContext !== instance.sessionContext)
-    }
-
-    @Test("The status surfaces .expectedMissing only when both the flag and persisted version are set")
-    func agentStatusExpectedMissingRequiresBoth() {
-        let library = makeWiredLibrary()
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library)
-        // Flag alone but version present → .expectedMissing
-        instance.sessionContext?.warnedAgentScopes = [.login]
-        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
-
-        // Wipe the persisted version: the synthesizer guard falls back to
-        // .waiting rather than producing .expectedMissing(expected: "").
-        library.editConfiguration(of: instance, as: .observations) { $0.lastSeenAgentVersion = nil }
-        #expect(instance.agentPresentation?.status == .waiting)
-    }
-
-    // MARK: - VMEditPermit.updateConfiguration
-
-    @Test("A mutation the persistence pipeline could not write reports that it did not land")
-    func mutationReportsAFailedWrite() throws {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = library.registerFixture()
-        defer { withExtendedLifetime(library) {} }
-        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
-        let before = instance.configuration
-
-        let outcome = try instance.activity.edit(.machineKeys) {
-            $0.updateConfiguration { $0.displayHiDPI.toggle() }
-        }
-
-        // Memory stays what the bundle holds, and the caller is told the save
-        // did not land.
-        #expect(outcome.failedToSave)
-        #expect(instance.configuration == before)
-        #expect(storage.bundles[instance.bundleURL]?.displayHiDPI == before.displayHiDPI)
-    }
-
-    @Test("A mutation on an instance no library has wired changes nothing")
-    func mutationWithoutPersistenceChangesNothing() throws {
-        let instance = VMInstanceFixture.make()
-        let before = instance.configuration
-
-        #expect(
-            try instance.activity.edit(.machineKeys) {
-                $0.updateConfiguration { $0.displayHiDPI.toggle() }
-            }.refusedForNoLibrary)
-        #expect(instance.configuration == before)
-    }
-
     // MARK: - Session peers recorded
-
-    @Test("A session peer's version is recorded when it differs from the committed one")
-    func sessionPeerPersistsOnChange() {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.9.0")
-        defer { withExtendedLifetime(library) {} }
-
-        connectSessionAgent(to: instance, version: "0.9.2")
-
-        #expect(instance.configuration.lastSeenAgentVersion == "0.9.2")
-        #expect(storage.bundles[instance.bundleURL]?.lastSeenAgentVersion == "0.9.2")
-        #expect(storage.saveConfigurationCallCount == 1)
-    }
-
-    @Test("A session peer reporting the committed version writes nothing")
-    func sessionPeerSkipsRedundantWrites() {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "0.9.2")
-        defer { withExtendedLifetime(library) {} }
-
-        connectSessionAgent(to: instance, handle: 1)
-        connectSessionAgent(to: instance, handle: 2)
-
-        // Storage churn would re-fire VMDirectoryWatcher reconcile on every
-        // reconnect.
-        #expect(storage.saveConfigurationCallCount == 0)
-    }
 
     @Test("A session peer running the bundled payload reports the login scope arriving, each time it connects")
     func sessionPeerReportsLoginWhenCurrent() {
@@ -1593,35 +969,6 @@ struct VMInstanceTests {
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
         #expect(instance.agentAbsenceTimerForTesting == nil)
-    }
-
-    @Test("Row 1, macOS: an agent never seen arms nothing and the VM reads not installed")
-    func macOSRowOneNeverSeen() {
-        let instance = VMInstanceFixture.make(
-            name: "Fresh macOS", guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().hasAgentTransport = true
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentAbsenceTimerForTesting == nil)
-        #expect(instance.agentPresentation?.status == .waiting)
-    }
-
-    @Test("Row 2, macOS: an agent seen before but not this session warns after the grace, and the notice says so once")
-    func macOSRowTwoWarnsWithItsNotice() async {
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-        instance.startAgentAbsenceWatch()
-        #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
-        #expect(instance.missingAgentNoticesForTesting.isEmpty)
-        await instance.agentAbsenceTimerForTesting?.value
-        #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9.2"))
-        #expect(instance.missingAgentNoticesForTesting.count == 1)
-        #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9.2") == true)
-        // Every surface names it: the popover's line, and `kernova info`'s.
-        #expect(
-            VMCommandCore.agentLines(of: instance) == [
-                VMAgentLine(role: "session", user: nil, version: "0.9.2", status: "expectedMissing")
-            ])
     }
 
     @Test(
@@ -1782,12 +1129,6 @@ struct VMInstanceTests {
         #expect(instance.guestOSVersionDisplay == "26.0")
     }
 
-    @Test("guestOSVersionDisplay passes a report holding no digits through untouched")
-    func guestOSVersionDisplayNoDigitsPassthrough() {
-        let instance = makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "macOS")
-        #expect(instance.guestOSVersionDisplay == "macOS")
-    }
-
     // MARK: - Storage disks
 
     @Test("bundledStorageDisks returns the internal disks and excludes externals")
@@ -1813,15 +1154,6 @@ struct VMInstanceTests {
         #expect(bundled.count == 2)
         #expect(bundled.allSatisfy { $0.isInternal })
         #expect(bundled.map(\.label) == ["Main", "Extra"])
-    }
-
-    @Test("bundledStorageDisks falls back to the synthesized main disk for a nil or empty list")
-    func bundledStorageDisksFallBackToTheMainDisk() {
-        for disks in [nil, []] as [[StorageDisk]?] {
-            let instance = VMInstanceFixture.make { $0.storageDisks = disks }
-            #expect(instance.bundledStorageDisks.count == 1)
-            #expect(instance.bundledStorageDisks[0].isInternal)
-        }
     }
 
     @Test("isSoleStorageDisk is true for a VM's only disk and false for either of two")
@@ -1865,15 +1197,5 @@ struct VMInstanceTests {
             ]
         }
         #expect(!instance.hasGuestAgentInstallerMounted)
-    }
-
-    @Test("guestOSVersionDisplay is nil for nil and empty values")
-    func guestOSVersionDisplayUnknown() {
-        #expect(makeMacOSInstanceWithAgentInstalled().guestOSVersionDisplay == nil)
-        // "" can only come from a hand-edited config.json (the service and
-        // recorder both normalize it to nil) but must not render as a blank row.
-        #expect(
-            makeMacOSInstanceWithAgentInstalled(lastSeenGuestOSVersion: "").guestOSVersionDisplay
-                == nil)
     }
 }

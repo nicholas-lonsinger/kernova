@@ -58,4 +58,30 @@ struct ForceRestartTests {
         #expect(harness.virtualization.forceStopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
     }
+
+    @Test("A Force Stop that joins a Force Restart's termination in flight cancels its boot")
+    func joiningForceStopCancelsTheBoot() async throws {
+        let harness = makeHarness()
+        let instance = harness.wired.register(name: "Joined", phase: .running(sessionID: UUID()))
+        let boot = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) { _ in
+            Issue.record("The cancelled Force Restart booted")
+        }
+        let termination = GatedStep()
+        let forceRestartStop = Task { @MainActor in
+            try await instance.activity.forceStop(continuingWith: boot) { try await termination.pass() }
+        }
+        try await termination.waitUntilEntered()
+        #expect(instance.activity.liveSessionContinues)
+
+        let forceStop = Task { @MainActor in
+            try await instance.activity.forceStop { Issue.record("A joined Force Stop terminated again") }
+        }
+        await #expect(throws: VMContinuationStopped.self) { try await boot.outcome.value() }
+        termination.release()
+        try await forceRestartStop.value
+        try await forceStop.value
+
+        #expect(!instance.activity.liveSessionContinues)
+        #expect(instance.status == .stopped)
+    }
 }

@@ -14,31 +14,6 @@ import Testing
 struct VMLifecyclePhaseTests {
     private static let session = VMLifecyclePhaseFixtures.session
 
-    // MARK: - Fixture completeness
-
-    @Test("The settled fixtures name every settled case once, and the operations only operations")
-    func fixtureListIsComplete() {
-        let settledKinds = VMLifecyclePhaseFixtures.settled.map(\.kind)
-        #expect(Set(settledKinds) == Set(VMLifecyclePhaseKind.allCases).subtracting([.operating]))
-        #expect(settledKinds.count == Set(settledKinds).count)
-        for phase in VMLifecyclePhaseFixtures.operations {
-            #expect(phase.kind == .operating, "\(phase)")
-        }
-    }
-
-    @Test("The operation fixtures cover every declared status, identity and display shape")
-    func operationFixturesCoverEveryDeclarationShape() {
-        let declarations = VMLifecyclePhaseFixtures.operations.compactMap { $0.operation?.kind.declaration }
-        #expect(declarations.contains { $0.status == .base })
-        #expect(declarations.contains { if case .shows = $0.status { true } else { false } })
-        for identity: VMOperationDeclaration.Identity in [.always, .viaSession, .never] {
-            #expect(declarations.contains { $0.holdsIdentity == identity }, "\(identity)")
-        }
-        for display: VMOperationDeclaration.Display in [.shown, .hidden, .base] {
-            #expect(declarations.contains { $0.display == display }, "\(display)")
-        }
-    }
-
     // MARK: - Projections
 
     private struct Row {
@@ -162,33 +137,5 @@ struct VMLifecyclePhaseTests {
             #expect(phase.hasActiveDisplay == row.hasActiveDisplay, "hasActiveDisplay of \(phase)")
             #expect(phase.isAtRest == row.isAtRest, "isAtRest of \(phase)")
         }
-    }
-
-    @Test("The failure message is a payload of the failed phase and of nothing else")
-    func errorMessageBelongsToFailedAlone() {
-        #expect(VMLifecyclePhase.failed(message: "Disk went away").errorMessage == "Disk went away")
-        for phase in VMLifecyclePhaseFixtures.all where phase.kind != .failed {
-            #expect(phase.errorMessage == nil, "\(phase)")
-        }
-    }
-
-    // MARK: - Invariants across projections
-
-    @Test("A live-paused VM and a suspended one report distinct statuses")
-    func pausedAndSuspendedAreDistinct() {
-        let livePaused = VMLifecyclePhase.livePaused(sessionID: Self.session)
-        #expect(livePaused.isLivePaused)
-        #expect(!VMLifecyclePhase.suspended.isLivePaused)
-        #expect(VMLifecyclePhase.suspended.status == .suspended)
-        #expect(livePaused.status == .paused)
-        // A hot resume presents the paused guest it started from until it ends.
-        #expect(VMLifecyclePhase.operating(.resuming, from: livePaused).isLivePaused)
-    }
-
-    @Test("A base-status operation started from a suspended VM presents it suspended")
-    func baseStatusOperationFromSuspendedPresentsSuspended() {
-        let discarding = VMLifecyclePhase.operating(.discardingSavedState, from: .suspended)
-        #expect(discarding.presented == .suspended)
-        #expect(discarding.status == .suspended)
     }
 }

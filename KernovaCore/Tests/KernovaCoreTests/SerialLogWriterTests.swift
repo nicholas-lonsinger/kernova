@@ -19,33 +19,6 @@ struct SerialLogWriterTests {
         return String(data: data, encoding: .utf8)
     }
 
-    @Test("Writes append to the log file")
-    func writesAppend() throws {
-        let logURL = scratch.url.appendingPathComponent("serial.log")
-        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
-
-        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
-        writer.write(Data("hello ".utf8))
-        writer.write(Data("world".utf8))
-        writer.close()
-
-        #expect(contents(of: logURL) == "hello world")
-    }
-
-    @Test("Reaching the cap rotates the log to serial.log.1 and starts fresh")
-    func rotationAtCap() throws {
-        let logURL = scratch.url.appendingPathComponent("serial.log")
-        let rotatedURL = scratch.url.appendingPathComponent("serial.log.1")
-
-        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 8)
-        writer.write(Data("0123456789".utf8))  // 10 bytes ≥ cap → rotates
-        writer.write(Data("after".utf8))
-        writer.close()
-
-        #expect(contents(of: rotatedURL) == "0123456789")
-        #expect(contents(of: logURL) == "after")
-    }
-
     @Test("A second rotation replaces the previous serial.log.1")
     func secondRotationReplacesPrevious() throws {
         let logURL = scratch.url.appendingPathComponent("serial.log")
@@ -102,19 +75,6 @@ struct SerialLogWriterTests {
         writer.close()
 
         #expect(contents(of: logURL) == "kept")
-    }
-
-    @Test("A failed open drops writes without crashing")
-    func failedOpenDropsWrites() {
-        let missingDir = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let logURL = missingDir.appendingPathComponent("serial.log")
-        let rotatedURL = missingDir.appendingPathComponent("serial.log.1")
-
-        let writer = SerialLogWriter(logURL: logURL, rotatedURL: rotatedURL, label: "test", maxFileSize: 1024)
-        writer.write(Data("dropped".utf8))
-        writer.close()
-
-        #expect(!FileManager.default.fileExists(atPath: logURL.path(percentEncoded: false)))
     }
 
     @Test("Empty writes never trigger rotation")

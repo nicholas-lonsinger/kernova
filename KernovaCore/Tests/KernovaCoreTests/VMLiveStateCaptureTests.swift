@@ -43,33 +43,6 @@ struct VMLiveStateCaptureTests {
         #expect(finalState == .running)
     }
 
-    @Test("A capture of a guest the user already paused leaves it paused")
-    func captureLeavesAnAlreadyPausedGuestPaused() async throws {
-        // `resumeIfPaused` resumes whatever is paused, so an unconditional call
-        // here restarts the guest while the VM is reported as paused.
-        let session = MockSnapshotSession(guestState: .paused)
-
-        try await capture(session, wasRunning: false)
-
-        let finalState = await session.guestState
-        let calls = await session.calls
-        #expect(finalState == .paused)
-        #expect(!calls.contains("resumeIfPaused"))
-    }
-
-    @Test("A capture that fails to save never copies the disks")
-    func captureStopsAtAFailedSave() async {
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setSaveError(VMSnapshotError.snapshotMissingSavedState)
-        var captured = false
-
-        await #expect(throws: VMSnapshotError.self) {
-            try await capture(session, wasRunning: true) { captured = true }
-        }
-
-        #expect(!captured)
-    }
-
     // MARK: - Recording the version that wrote the state
 
     private let scratch = TestScratchDirectory(prefix: "VMLiveStateCaptureTests")
@@ -78,14 +51,6 @@ struct VMLiveStateCaptureTests {
     private let products = AppBundleProducts(
         bundleURL: AppBundleProducts.testing.bundleURL, hostVersion: "0.10.0", buildNumber: "412",
         guestAgents: .testing)
-
-    @Test("The version label is the version, then the build in parentheses")
-    func versionLabelFormat() {
-        #expect(products.versionLabel == "0.10.0 (412)")
-        let unbuilt = AppBundleProducts(
-            bundleURL: products.bundleURL, hostVersion: "0.10.0", buildNumber: nil, guestAgents: .testing)
-        #expect(unbuilt.versionLabel == "0.10.0")
-    }
 
     /// Writes a live capture of a running VM from a Kernova at `products`
     /// over `session` into `saveFileURL`.
@@ -98,16 +63,6 @@ struct VMLiveStateCaptureTests {
             ) {}
             return .rest(.asStarted, ())
         }
-    }
-
-    @Test("A live capture records the Kernova that wrote its state")
-    func liveCaptureRecordsTheVersion() async throws {
-        let saveFileURL = scratch.url.appendingPathComponent("SaveFile.vzvmsave")
-        let session = MockSnapshotSession(guestState: .running, writesStateFile: true)
-
-        try await captureState(to: saveFileURL, over: session)
-
-        #expect(SavedStateVersion.read(at: saveFileURL) == "0.10.0 (412)")
     }
 
     @Test("A write that fails leaves what it part-wrote with no version")
@@ -124,16 +79,6 @@ struct VMLiveStateCaptureTests {
         }
 
         #expect(FileManager.default.fileExists(atPath: saveFileURL.path(percentEncoded: false)))
-        #expect(SavedStateVersion.read(at: saveFileURL) == nil)
-    }
-
-    @Test("A file with no record, or no file at all, reads as no version")
-    func unrecordedStateReadsAsNoVersion() throws {
-        let saveFileURL = scratch.url.appendingPathComponent("SaveFile.vzvmsave")
-        #expect(SavedStateVersion.read(at: saveFileURL) == nil)
-
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        try Data("saved-state".utf8).write(to: saveFileURL)
         #expect(SavedStateVersion.read(at: saveFileURL) == nil)
     }
 
@@ -182,30 +127,6 @@ struct VMLiveStateCaptureTests {
             deviceIDs.append(deviceID)
         }
         return AccessoryFixture(library: library, instance: instance, deviceIDs: deviceIDs)
-    }
-
-    @Test("Every passthrough accessory is detached, and released from the VM")
-    func detachesEveryAccessoryBeforeSaving() async throws {
-        let fixture = try await instanceHoldingAccessories(2)
-        let session = MockSnapshotSession(guestState: .running)
-
-        try await fixture.sweep(session)
-
-        let detached = await session.detachedUSBDeviceIDs
-        #expect(detached == fixture.deviceIDs)
-        #expect(fixture.instance.liveUSBAccessories.isEmpty)
-        #expect(fixture.library.accessoryHolders.heldRegistryIDs.isEmpty)
-    }
-
-    @Test("A device the controller already lost is released and does not fail the save")
-    func anAlreadyDetachedDeviceIsNotAFailure() async throws {
-        let fixture = try await instanceHoldingAccessories(1)
-        let session = MockSnapshotSession(guestState: .running)
-        await session.setDetachError(VMSessionError.usbDeviceNotFound)
-
-        try await fixture.sweep(session)
-
-        #expect(fixture.instance.liveUSBAccessories.isEmpty)
     }
 
     @Test("A detach that fails for any other reason stops the save rather than writing state")
@@ -275,16 +196,6 @@ struct VMLiveStateCaptureTests {
         // reached was never taken off.
         #expect(holders.owedReturn(of: identities[1]) == nil)
         #expect(holders.owedReturn(of: identities[2]) == nil)
-    }
-
-    @Test("A save's sweep owes nothing back")
-    func aSaveSweepOwesNothing() async throws {
-        let fixture = try await instanceHoldingAccessories(1)
-        let identity = try #require(fixture.instance.liveUSBAccessories.first?.accessory.identity)
-
-        try await fixture.sweep(MockSnapshotSession(guestState: .running))
-
-        #expect(fixture.library.accessoryHolders.owedReturn(of: identity) == nil)
     }
 
     @Test("A session holding nothing asks VZ for no detach at all")

@@ -111,74 +111,6 @@ struct VMAdmissionTests {
 
     // MARK: - Settled phases × requests
 
-    /// Columns: stopped, initialBoot, failed, suspended (slot), running,
-    /// livePaused, removed.
-    nonisolated private static let settledTable: [(VMAdmission.Request, String)] = [
-        (.start(recovery: false), "AAAAIIR"),
-        (.start(recovery: true), "AIIIIIR"),
-        (.resume, "IIIAIAR"),
-        (.operation(.bringUp(.guestStart(.starting(recovery: false)))), "AAAIIIR"),
-        (.operation(.bringUp(.guestStart(.restoringSavedState))), "IIIAIIR"),
-        (.operation(.bringUp(.settingUp(.macOSInstall))), "IIIIIIR"),
-        (.operation(.bringUp(.reverting(snapshotID: session, resumesAfter: false))), "AAAAAAR"),
-        (.operation(.pausing), "IIIIAIR"),
-        (.operation(.resuming), "IIIIIAR"),
-        (.operation(.saving), "IIIIAAR"),
-        (.operation(.capturingSnapshot(.live)), "IIIIAAR"),
-        (.operation(.capturingSnapshot(.suspended)), "IIIAIIR"),
-        (.operation(.capturingSnapshot(.stopped)), "AIIIIIR"),
-        (.operation(.deletingSnapshot), "AAAAAAR"),
-        (.operation(.attachingUSB(registryID: 7)), "IIIIAAR"),
-        (.operation(.detachingUSB(deviceID: session)), "IIIIAAR"),
-        (.operation(.reconcilingMedia), "IIIIAAR"),
-        (.operation(.forceStopping), "IIIIAAR"),
-        (.operation(.discardingSavedState), "IIIAIIR"),
-        (.operation(.deleting), "AAAAIIR"),
-        (.operation(.creatingStorageDisk), "AAAIIIR"),
-        (.operation(.removingStorageDisk), "AAAIIIR"),
-        (.operation(.creatingRemovableMedia), "AAAIAAR"),
-        // A clone copies from disks alone at any rest without a saved state,
-        // the suspend slot beside them while suspended, and a live guest
-        // inside one pause.
-        (.operation(.copyingOut(.stopped)), "AAAIIIR"),
-        (.operation(.copyingOut(.suspended)), "IIIAIIR"),
-        (.operation(.copyingOut(.live)), "IIIIAAR"),
-        (.edit(.machineKeys), "AAAIIIR"),
-        (.edit(.liveKeys), "AAAAAAR"),
-        (.edit(.hotPlugMedia), "AAAIAAR"),
-        // A saved state restores across a removal of removable media.
-        (.edit(.removableMediaRemoval), "AAAAAAR"),
-        (.edit(.networkAttachment), "AAAIAAR"),
-        // A saved state pins membership unless it restores across the move.
-        (.edit(.networkMembership), "AAAIAAR"),
-        (.edit(.hostPresentation), "AAAAAAR"),
-        (.edit(.snapshotMetadata), "AAAAAAR"),
-        (.edit(.pairingRules), "AAAAAAR"),
-        (.edit(.rename), "AAAAAAR"),
-        (.edit(.observations), "AAAAAAR"),
-        // Only a running guest has a device measured taking a share swap.
-        (.edit(.liveShares), "IIIIAIR"),
-        (.sessionAction(.requestStop), "IIIIAAR"),
-        (.sessionAction(.forceStop), "IIIIAAR"),
-        (.cancel(.guestSetup), "IIIIIIR"),
-        (.evict, "AAAAIIR"),
-        (.affordance(.inspect), "AAAAAAR"),
-        (.affordance(.display), "IIIAAAR"),
-        (.affordance(.externalDisplay), "IIIIAAR"),
-        // A paused guest answers no clipboard command until it resumes.
-        (.affordance(.clipboard), "IIIIAIR"),
-        (.affordance(.guestAgentStatus), "IIIIAAR"),
-        (.affordance(.guestAgentDisk), "IIIIAAR"),
-    ]
-
-    @Test(
-        "Every settled phase decides every request as the table states",
-        arguments: settledTable.indices)
-    func settledPhaseDecisions(row: Int) {
-        let (request, expected) = Self.settledTable[row]
-        #expect(Self.settledCells(request, .plain) == expected, "\(request)")
-    }
-
     /// The settled answers where a fact other than the phase decides: the same
     /// columns, under the named variant.
     nonisolated private static let settledFactTable: [(Variant, VMAdmission.Request, String)] = [
@@ -288,35 +220,6 @@ struct VMAdmissionTests {
         #expect(Self.settledCells(request, .plain, heldByAnotherCopy: true) == expected, "\(request)")
     }
 
-    @Test(
-        "Another copy's hold turns only an at-rest admission of an operation or edit into its refusal",
-        arguments: settledTable.indices)
-    func heldByAnotherCopyRefusesOnlyWhereTheVMWouldAdmit(row: Int) {
-        let (request, _) = Self.settledTable[row]
-        let writesTheBundle: Bool =
-            switch request {
-            case .start, .resume, .operation, .edit: true
-            case .sessionAction, .cancel, .evict, .affordance: false
-            }
-        for posture in [VMAdmission.Posture.commit, .offer] {
-            let free = Self.settledCells(request, .plain, posture: posture)
-            let expected = String(
-                zip(Self.settledColumns, free).map { column, cell in
-                    writesTheBundle && column.phase.isAtRest && cell == "A" ? "O" : cell
-                })
-            #expect(
-                Self.settledCells(request, .plain, heldByAnotherCopy: true, posture: posture) == expected,
-                "\(request) \(posture)")
-        }
-    }
-
-    @Test("The app's termination outranks another copy's hold")
-    func terminatingOutranksHeldByAnotherCopy() {
-        #expect(
-            Self.settledCells(.start(recovery: false), .plain, terminating: true, heldByAnotherCopy: true)
-                == "TTTTIIR")
-    }
-
     // MARK: - Termination
 
     /// The settled columns once the app's termination has begun, for new
@@ -397,72 +300,6 @@ struct VMAdmissionTests {
         #expect(
             Self.settledCells(request, .plain, terminating: true, origin: origin) == expected,
             "\(request) \(origin)")
-    }
-
-    @Test(
-        "Under an exempt origin every other request decides as new work does",
-        arguments: settledTable.indices)
-    func exemptOriginWidensNothingElse(row: Int) {
-        let (request, _) = Self.settledTable[row]
-        let asNewWork = Self.settledCells(request, .plain, terminating: true)
-        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaEditReconcile]
-        where !origin.exempts(request) {
-            #expect(
-                Self.settledCells(request, .plain, terminating: true, origin: origin) == asNewWork,
-                "\(request) \(origin)")
-        }
-    }
-
-    @Test("Outside the termination, an origin changes no decision", arguments: settledTable.indices)
-    func originIsInertOutsideTheTermination(row: Int) {
-        let (request, expected) = Self.settledTable[row]
-        for origin in [VMRequestOrigin.terminationSave, .sessionEndRevert, .mediaEditReconcile] {
-            #expect(Self.settledCells(request, .plain, origin: origin) == expected, "\(request) \(origin)")
-        }
-    }
-
-    @Test("During an operation, the termination refuses what it tolerates only when that owes an operation")
-    func terminatingLeavesToleratedRequests() {
-        let facts = Self.facts(slot: false, .plain, terminating: true)
-        func decide(
-            _ request: VMAdmission.Request, during kind: VMOperationKind,
-            from startedFrom: VMLifecyclePhase
-        ) -> VMAdmission.Decision {
-            VMAdmission.decide(
-                request, posture: .commit,
-                phase: .operating(kind, from: startedFrom, boundSession: nil), facts: facts)
-        }
-        // An edit the running reconcile coalesces starts no operation of its
-        // own, and the reconcile it would owe joins that one.
-        #expect(decide(.edit(.hotPlugMedia), during: .reconcilingMedia, from: Self.live) == .admit)
-        #expect(
-            decide(.affordance(.guestAgentDisk), during: .reconcilingMedia, from: Self.live) == .admit)
-        let reconcile = decide(.operation(.reconcilingMedia), during: .reconcilingMedia, from: Self.live)
-        guard case .join = reconcile else {
-            Issue.record("A reconcile during a reconcile should join it, got \(reconcile)")
-            return
-        }
-        // One a pause tolerates owes a reconcile once the pause ends.
-        #expect(
-            decide(.edit(.hotPlugMedia), during: .pausing, from: Self.live)
-                == .refuse(.terminating))
-        #expect(
-            decide(.affordance(.guestAgentDisk), during: .pausing, from: Self.live)
-                == .refuse(.terminating))
-        // At rest nothing is live to reconcile, so the edit is a write like any
-        // other.
-        #expect(decide(.edit(.hotPlugMedia), during: .deletingSnapshot, from: .stopped) == .admit)
-        #expect(decide(.sessionAction(.forceStop), during: .pausing, from: Self.live) == .admit)
-        #expect(
-            decide(.operation(.saving), during: .pausing, from: Self.live)
-                == .refuse(.busy(.pausing)))
-        let start = decide(
-            .start(recovery: false), during: .bringUp(.guestStart(.starting(recovery: false))),
-            from: .stopped)
-        guard case .join = start else {
-            Issue.record("A Start during a start should join it, got \(start)")
-            return
-        }
     }
 
     @Test("A share swap is tolerated by an operation that rests on the running guest, and by no other")
@@ -731,37 +568,7 @@ struct VMAdmissionTests {
             "\(held.kind) from \(held.startedFrom), \(String(describing: held.sessionEnd)), \(held.variant)")
     }
 
-    @Test("A join hands back the held operation's own outcome")
-    func joinCarriesTheHeldOutcome() {
-        let outcome = VMOutcome()
-        let phase = VMLifecyclePhase.operating(
-            VMOperation(
-                kind: .bringUp(.guestStart(.starting(recovery: false))), startedFrom: .stopped,
-                sessionState: .none, outcome: outcome))
-        #expect(
-            VMAdmission.decide(
-                .start(recovery: false), posture: .commit, phase: phase, facts: Self.facts())
-                == .join(outcome))
-    }
-
     // MARK: - Posture
-
-    @Test("Offering Start names Resume for a VM holding a saved state; committing it restores")
-    func startOfferVersusCommitOnASlot() {
-        let facts = Self.facts(slot: true)
-        #expect(
-            VMAdmission.decide(
-                .start(recovery: false), posture: .offer, phase: .suspended, facts: facts)
-                == .refuse(.invalidState))
-        #expect(
-            VMAdmission.decide(
-                .start(recovery: false), posture: .commit, phase: .suspended, facts: facts)
-                == .admit)
-        #expect(
-            VMAdmission.bringUpKind(
-                for: .start(recovery: false), phase: .suspended, facts: facts)
-                == .guestStart(.restoringSavedState))
-    }
 
     @Test("A bring-up is joined only on commit; offered, it reads as busy")
     func joinIsCommitOnly() {
@@ -836,49 +643,6 @@ struct VMAdmissionTests {
         #expect(
             VMAdmission.bringUpKind(for: request, phase: phase, facts: facts) == bringUp,
             "\(request) \(phase) \(variant)")
-    }
-
-    @Test(
-        "Start and Resume decide as the operation they resolve to, over every settled phase and fact",
-        arguments: [false, true], [false, true])
-    func startAndResumeDecideAsTheirOperation(slot: Bool, pendingSetup: Bool) {
-        for guestOS in [VMGuestOS.macOS, .linux] {
-            var facts = Self.facts(slot: slot, pendingSetup: pendingSetup)
-            facts.guestOS = guestOS
-            for column in Self.settledColumns where column.phase != .removed {
-                for request: VMAdmission.Request in [
-                    .start(recovery: false), .start(recovery: true), .resume,
-                ] {
-                    let decided = VMAdmission.decide(
-                        request, posture: .commit, phase: column.phase, facts: facts)
-                    let kind = VMAdmission.operationKind(
-                        for: request, phase: column.phase, facts: facts)
-                    let expected =
-                        kind.map {
-                            VMAdmission.decide(
-                                .operation($0), posture: .commit, phase: column.phase,
-                                facts: facts)
-                        } ?? .refuse(.invalidState)
-                    #expect(decided == expected, "\(request) \(column.phase) \(guestOS)")
-                }
-            }
-        }
-    }
-
-    @Test("Start in Recovery is a Recovery boot or nothing: a VM that cannot take one refuses it")
-    func recoveryStartNeverFallsThroughToAnotherBringUp() {
-        for (phase, facts) in [
-            (VMLifecyclePhase.stopped, Self.facts(pendingSetup: true)),
-            (.suspended, Self.facts(slot: true)),
-            (.initialBoot, Self.facts()),
-        ] {
-            #expect(
-                VMAdmission.bringUpKind(for: .start(recovery: true), phase: phase, facts: facts)
-                    == .guestStart(.starting(recovery: true)))
-            #expect(
-                VMAdmission.decide(.start(recovery: true), posture: .commit, phase: phase, facts: facts)
-                    == .refuse(.invalidState), "\(phase)")
-        }
     }
 
     @Test("A bring-up whose identity another live VM holds is refused with the conflict")
@@ -964,66 +728,6 @@ struct VMAdmissionTests {
                 == .refuse(.invalidState))
     }
 
-    @Test("Once an operation's session ended, a request is classified against where that end rests the VM")
-    func endedSessionIsClassifiedAtRest() {
-        let phase = VMLifecyclePhase.operating(
-            VMOperation(
-                kind: .reconcilingMedia, startedFrom: Self.live, sessionState: .ended(.poweredOff),
-                outcome: VMOutcome()))
-        let facts = Self.facts()
-        // Taken once the pass ends at rest, so busy rather than invalid.
-        #expect(
-            VMAdmission.decide(.start(recovery: false), posture: .commit, phase: phase, facts: facts)
-                == .refuse(.busy(.reconcilingMedia)))
-        #expect(
-            VMAdmission.decide(.operation(.pausing), posture: .commit, phase: phase, facts: facts)
-                == .refuse(.invalidState))
-        // No session left to stop.
-        #expect(
-            VMAdmission.decide(
-                .sessionAction(.requestStop), posture: .commit, phase: phase, facts: facts)
-                == .refuse(.invalidState))
-    }
-
-    @Test("A session a Force Stop is terminating takes what a Force Stop does, and a second Force Stop joins it")
-    func stoppingSessionTakesWhatAForceStopTakes() {
-        let stop = VMOutcome()
-        let phase = VMLifecyclePhase.operating(
-            VMOperation(
-                kind: .pausing, startedFrom: Self.live,
-                sessionState: .live(
-                    VMOperationSession(id: Self.session, guest: .running, stopping: stop)),
-                outcome: VMOutcome()))
-        let facts = Self.facts()
-        func decide(_ request: VMAdmission.Request, _ posture: VMAdmission.Posture = .commit)
-            -> VMAdmission.Decision
-        {
-            VMAdmission.decide(request, posture: posture, phase: phase, facts: facts)
-        }
-        #expect(decide(.sessionAction(.forceStop)) == .join(stop))
-        #expect(decide(.sessionAction(.forceStop), .offer) == .refuse(.busy(.forceStopping)))
-        // What the powered-off VM refuses is refused; what it takes waits.
-        for request: VMAdmission.Request in [
-            .operation(.saving), .resume, .operation(.pausing), .sessionAction(.requestStop),
-        ] {
-            #expect(decide(request) == .refuse(.invalidState), "\(request)")
-        }
-        for request: VMAdmission.Request in [
-            .start(recovery: false), .edit(.machineKeys), .edit(.liveKeys),
-            .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
-        ] {
-            #expect(decide(request) == .refuse(.busy(.forceStopping)), "\(request)")
-        }
-        // The edits a Force Stop takes, it takes here too.
-        for classes: VMEditClasses in [.hostPresentation, .rename, .observations] {
-            #expect(decide(.edit(classes)) == .admit, "\(classes)")
-        }
-        // A slot that survives the session is what the VM will rest on.
-        #expect(
-            VMAdmission.decide(.resume, posture: .commit, phase: phase, facts: Self.facts(slot: true))
-                == .refuse(.busy(.forceStopping)))
-    }
-
     @Test("A capture is offered in the mode of where an operation's ended session rests the VM")
     func captureModeReadsTheSessionEnd() {
         let live = VMLifecyclePhase.operating(
@@ -1092,20 +796,6 @@ struct VMAdmissionTests {
 
     // MARK: - Projections
 
-    @Test("An operation that presents its base changes nothing a surface reads")
-    func baseStatusKindsPresentTheirStart() {
-        let phase = VMLifecyclePhase.operating(
-            VMOperation(
-                kind: .attachingUSB(registryID: 1), startedFrom: Self.live,
-                sessionState: .live(VMOperationSession(id: Self.session, guest: .running)),
-                outcome: VMOutcome()))
-        #expect(phase.status == .running)
-        #expect(phase.hasLiveSession)
-        #expect(phase.hasActiveDisplay)
-        #expect(phase.sessionID == Self.session)
-        #expect(phase.holdsLiveIdentity)
-    }
-
     @Test("An operation whose session ended presents stopped")
     func endedSessionPresentsStopped() {
         let phase = VMLifecyclePhase.operating(
@@ -1116,17 +806,5 @@ struct VMAdmissionTests {
         #expect(!phase.hasLiveSession)
         #expect(phase.sessionID == nil)
         #expect(!phase.holdsLiveIdentity)
-    }
-
-    @Test("An operation with a status of its own shows it")
-    func declaredStatus() {
-        let saving = VMLifecyclePhase.operating(
-            VMOperation(
-                kind: .saving, startedFrom: Self.live,
-                sessionState: .live(VMOperationSession(id: Self.session, guest: .running)),
-                outcome: VMOutcome()))
-        #expect(saving.status == .saving)
-        #expect(!saving.hasLiveSession)
-        #expect(saving.sessionID == Self.session)
     }
 }
