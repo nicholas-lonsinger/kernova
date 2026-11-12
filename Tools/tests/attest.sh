@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Fixture tests for Tools/attest.sh: `record` passes its command through and
 # records only a passing run whose fingerprint held, the clean-tree content
-# tree is HEAD's, `attest` refuses a dirty or unpushed HEAD before any test,
-# reuses a record or runs `make test` and posts only on a record, and `post`
-# takes only success or failure. Runs in a fixture clone with stub xcodebuild,
+# tree is HEAD's, `attest` refuses a dirty or unpushed HEAD before any run,
+# reuses a lint and a test record or runs `make lint` and `make test` for the
+# ones missing and posts success only on both, and `post` takes only success or
+# failure. Runs in a fixture clone with stub xcodebuild,
 # sw_vers, gh, and make.
 
 set -uo pipefail
@@ -31,7 +32,7 @@ printf 'Config/Local.xcconfig\n' >"$clone/.gitignore"
 echo one >"$clone/file"
 git -C "$clone" add -A && git -C "$clone" commit -q -m init
 attest="$clone/Tools/attest.sh"
-records="$clone/.git/kernova-tests"
+records="$clone/.git/kernova-attest"
 
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
@@ -51,13 +52,13 @@ case "$*" in
     'api repos/{owner}/{repo}/commits/'*) [ -e "$FIXTURE/pushed" ] ;;
 esac
 EOF
-# make test as $FIXTURE/make.mode says: a recorded pass, a failure, or a pass
-# that records nothing.
+# make <kind> as $FIXTURE/<kind>.mode says: a recorded pass, a failure, or a
+# pass that records nothing.
 cat >"$stubs/make" <<'EOF'
 #!/bin/bash
 echo "$*" >>"$FIXTURE/make.log"
-case "$(cat "$FIXTURE/make.mode")" in
-    record) exec "$ATTEST" record -- true ;;
+case "$(cat "$FIXTURE/$1.mode")" in
+    record) exec "$ATTEST" record "$1" -- true ;;
     fail) exit 2 ;;
     norecord) exit 0 ;;
 esac
@@ -65,16 +66,20 @@ EOF
 chmod +x "$stubs"/*
 export FIXTURE="$tmp" ATTEST="$attest" MAKE="$stubs/make" PATH="$stubs:$PATH"
 
-reset() { rm -rf "$records" "$tmp/gh.log" "$tmp/make.log"; }
+reset() {
+    rm -rf "$records" "$tmp/gh.log" "$tmp/make.log"
+    echo record >"$tmp/lint.mode"
+    echo record >"$tmp/test.mode"
+}
 record_count() { find "$records" -type f 2>/dev/null | wc -l | tr -d ' '; }
-record_line() { awk -v key="$1" '$1 == key { print $2 }' "$records"/* 2>/dev/null; }
+record_line() { awk -v key="$1" '$1 == key { print $2 }' "$records"/*/* 2>/dev/null; }
 calls() { cat "$tmp/$1.log" 2>/dev/null; }
 in_clone() { (cd "$clone" && "$@"); }
 
 # ---- record ---------------------------------------------------------------------
 
 reset
-out=$(in_clone "$attest" record -- sh -c 'echo out; echo err >&2' 2>"$tmp/err")
+out=$(in_clone "$attest" record test -- sh -c 'echo out; echo err >&2' 2>"$tmp/err")
 check "record passes stdout through" "$out" out
 check "record passes stderr through" "$(cat "$tmp/err")" err
 check "a passing run is recorded" "$(record_count)" 1
@@ -85,12 +90,12 @@ check "the record without Config/Local.xcconfig" "$(record_line local-xcconfig)"
 check "the record's date" "$(record_line date | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T')" 1
 
 reset
-in_clone "$attest" record -- sh -c 'exit 3'
+in_clone "$attest" record test -- sh -c 'exit 3'
 check "a failing run's status" "$?" 3
 check "a failing run is not recorded" "$(record_count)" 0
 
 reset
-in_clone "$attest" record -- sh -c 'echo changed >file' 2>"$tmp/err"
+in_clone "$attest" record test -- sh -c 'echo changed >file' 2>"$tmp/err"
 check "a run that changes files keeps its status" "$?" 0
 check "a run that changes files is not recorded" "$(record_count)" 0
 check "a run that changes files says so" "$(cat "$tmp/err")" 'attest: the files changed during the run, so it is not recorded'
@@ -99,7 +104,7 @@ git -C "$clone" checkout -q -- file
 reset
 echo dirty >"$clone/untracked"
 index_before=$(shasum "$clone/.git/index")
-in_clone "$attest" record -- true
+in_clone "$attest" record test -- true
 check "a dirty tree is recorded" "$(record_count)" 1
 check "a dirty tree's content tree" "$(record_line tree)" \
     "$(cd "$clone" && cp .git/index "$tmp/index" && GIT_INDEX_FILE="$tmp/index" git add -A && GIT_INDEX_FILE="$tmp/index" git write-tree)"
@@ -109,20 +114,20 @@ rm "$clone/untracked"
 
 reset
 echo 'DEVELOPMENT_TEAM = X' >"$clone/Config/Local.xcconfig"
-in_clone "$attest" record -- true
+in_clone "$attest" record test -- true
 check "the record with Config/Local.xcconfig" "$(record_line local-xcconfig)" "$(git hash-object "$clone/Config/Local.xcconfig")"
 rm "$clone/Config/Local.xcconfig"
 
 reset
 mkdir -p "$records"
 touch -t 202001010000 "$records/stale"
-in_clone "$attest" record -- true
+in_clone "$attest" record lint -- true
 check "a write prunes records over 30 days old" "$([ -e "$records/stale" ] && echo kept || echo pruned)" pruned
 check "a write keeps its own record" "$(record_count)" 1
 
 reset
 touch "$records"
-in_clone "$attest" record -- true 2>"$tmp/err"
+in_clone "$attest" record test -- true 2>"$tmp/err"
 check "a run whose record cannot be written keeps its status" "$?" 0
 check "a run whose record cannot be written says so" "$(grep -c 'cannot write the record' "$tmp/err")" 1
 rm -f "$records"
@@ -151,31 +156,54 @@ check "an unpushed HEAD runs make" "$(calls make)" ''
 touch "$tmp/pushed"
 
 reset
-in_clone "$attest" record -- true
+in_clone "$attest" record lint -- true
+in_clone "$attest" record test -- true
 out=$(in_clone "$attest")
 check "a recorded HEAD's attest status" "$?" 0
-check "a recorded HEAD says it reused the run" "$(printf '%s\n' "$out" | grep -c '^attest: reusing the passing make test of ')" 1
+check "a recorded HEAD says it reused the lint run" "$(printf '%s\n' "$out" | grep -c '^attest: reusing the passing make lint of ')" 1
+check "a recorded HEAD says it reused the test run" "$(printf '%s\n' "$out" | grep -c '^attest: reusing the passing make test of ')" 1
 check "a recorded HEAD runs make" "$(calls make)" ''
 check "a recorded HEAD posts success" "$(calls gh | tail -1)" "$(status_call success)"
 
 reset
-echo record >"$tmp/make.mode"
+in_clone "$attest" record test -- true
+in_clone "$attest" >/dev/null
+check "a HEAD with only a test record: attest status" "$?" 0
+check "a HEAD with only a test record runs make lint" "$(calls make)" lint
+check "a HEAD with only a test record posts success" "$(calls gh | tail -1)" "$(status_call success)"
+
+reset
 in_clone "$attest" >/dev/null
 check "an unrecorded HEAD's attest status" "$?" 0
-check "an unrecorded HEAD runs make test" "$(calls make)" test
+check "an unrecorded HEAD runs make lint, then make test" "$(calls make | tr '\n' ' ')" 'lint test '
 check "a passing run posts success" "$(calls gh | tail -1)" "$(status_call success)"
 
 reset
-echo fail >"$tmp/make.mode"
+in_clone "$attest" record test -- true
+echo fail >"$tmp/lint.mode"
 in_clone "$attest" >/dev/null
-check "a failing run's attest status" "$?" 1
-check "a failing run posts failure" "$(calls gh | tail -1)" "$(status_call failure)"
+check "a failing lint's attest status" "$?" 1
+check "a failing lint posts failure" "$(calls gh | tail -1)" "$(status_call failure)"
+check "a failing lint posts once" "$(calls gh | grep -c statuses)" 1
 
 reset
-echo norecord >"$tmp/make.mode"
+echo fail >"$tmp/test.mode"
+in_clone "$attest" >/dev/null
+check "a failing test run's attest status" "$?" 1
+check "a failing test run posts failure" "$(calls gh | tail -1)" "$(status_call failure)"
+
+reset
+echo norecord >"$tmp/lint.mode"
+err=$(in_clone "$attest" 2>&1 >/dev/null)
+check "a lint that recorded nothing: attest status" "$?" 1
+check "a lint that recorded nothing: refusal" "$err" 'attest: make lint recorded nothing; did files change during it?'
+check "a lint that recorded nothing posts" "$(calls gh | grep -c statuses)" 0
+
+reset
+echo norecord >"$tmp/test.mode"
 err=$(in_clone "$attest" 2>&1 >/dev/null)
 check "a run that recorded nothing: attest status" "$?" 1
-check "a run that recorded nothing: refusal" "$err" 'attest: the run recorded nothing; did files change during it?'
+check "a run that recorded nothing: refusal" "$err" 'attest: make test recorded nothing; did files change during it?'
 check "a run that recorded nothing posts" "$(calls gh | grep -c statuses)" 0
 
 # ---- post -----------------------------------------------------------------------
@@ -183,6 +211,9 @@ check "a run that recorded nothing posts" "$(calls gh | grep -c statuses)" 0
 reset
 in_clone "$attest" post pending 'x' 2>/dev/null
 check "post rejects another state" "$?" 2
+in_clone "$attest" record build -- true 2>/dev/null
+check "record rejects another kind" "$?" 2
+check "a rejected kind records nothing" "$(record_count)" 0
 check "a rejected state calls GitHub" "$(calls gh)" ''
 
 in_clone "$attest" post success 'Build & Test' https://example.invalid/run >/dev/null
