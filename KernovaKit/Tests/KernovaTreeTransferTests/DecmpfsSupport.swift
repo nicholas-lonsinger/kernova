@@ -197,9 +197,9 @@ func createCompressedDirectly(_ path: String, _ sample: CompressedSample) throws
 
 /// A 64 MB exFAT disk image attached under a scratch directory, detached and deleted when this goes.
 ///
-/// A detach that fails records an issue with hdiutil's message and the processes then holding the image's
-/// device nodes: a forced detach unmounts past descriptors open on the volume, and fails only while a process
-/// holds a device node, which no test opens.
+/// A detach that fails records a warning, not an error, with hdiutil's message and the processes then holding
+/// the image's device nodes: a forced detach unmounts past descriptors open on the volume and fails only while a
+/// process holds a device node, which no code under test opens, so the failure says nothing about the test.
 final class ExFATVolume {
     let scratch: PortableScratchDirectory
     var mountPoint: String { scratch.path + "/mount" }
@@ -226,9 +226,11 @@ final class ExFATVolume {
         do {
             let detached = try Self.hdiutil(["detach", "-force", mountPoint])
             guard detached.status != 0 else { return }
-            Issue.record("\(detached.failure); holding \(devices.joined(separator: " ")): \(Self.holders(of: devices))")
+            Issue.record(
+                "\(detached.failure); holding \(devices.joined(separator: " ")): \(Self.holders(of: devices))",
+                severity: .warning)
         } catch {
-            Issue.record(error, "hdiutil detach -force \(mountPoint)")
+            Issue.record("hdiutil detach -force \(mountPoint) did not run: \(error)", severity: .warning)
         }
     }
 
