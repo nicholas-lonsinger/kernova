@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// One macOS restore image in the bundled catalog.
 ///
@@ -30,12 +31,10 @@ package struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equata
         lastModified.flatMap { Self.rfc1123Formatter.date(from: $0) }
     }
 
-    /// `version` split into numeric components, zero-padded to three.
-    ///
-    /// A component that is not a number yields `nil` — the entry is then
+    /// ``version`` parsed, or `nil` when it does not parse — the entry is then
     /// unusable for host comparison and the service drops it.
-    var versionComponents: [Int]? {
-        MacOSVersion(version)?.components
+    var parsedVersion: MacOSVersion? {
+        MacOSVersion(version)
     }
 
     /// Whether this guest can run on the given host.
@@ -43,21 +42,20 @@ package struct RestoreImageCatalogEntry: Codable, Sendable, Identifiable, Equata
     /// An unparseable version answers `false`: the catalog service drops such
     /// entries at decode time, so no pickable entry reaches this.
     package func isSupported(onHost host: OperatingSystemVersion) -> Bool {
-        MacOSVersion(version)?.isSupported(onHost: host) ?? false
+        parsedVersion?.isSupported(onHost: host) ?? false
     }
 
-    /// Newest first, comparing version components numerically so 26.10 sorts
-    /// above 26.9.
+    /// Newest first, comparing versions numerically so 26.10 sorts above 26.9.
     ///
-    /// Equal versions fall back to `build` so the order is total.
+    /// A version that parses sorts above one that does not, and equal versions
+    /// fall back to `build` so the order is total.
     static func isDescending(_ lhs: Self, _ rhs: Self) -> Bool {
-        let left = lhs.versionComponents ?? []
-        let right = rhs.versionComponents ?? []
-        for (leftPart, rightPart) in zip(left, right) where leftPart != rightPart {
-            return leftPart > rightPart
+        switch (lhs.parsedVersion, rhs.parsedVersion) {
+        case (let left?, let right?) where left != right: left > right
+        case (.some, nil): true
+        case (nil, .some): false
+        default: lhs.build > rhs.build
         }
-        if left.count != right.count { return left.count > right.count }
-        return lhs.build > rhs.build
     }
 
     /// Whether the entry matches a picker search term, over version and build.

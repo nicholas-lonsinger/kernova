@@ -64,9 +64,6 @@ struct GuestAgentDiskDeliveryTests {
             // The agent's report outranks the install record, both directions.
             Case("12.7.6", "12.0.1", .usb),
             Case("12.0.1", "12.7.6", .virtio),
-            // Localized free-form reports still read as a version.
-            Case("Versión 12.2.1 (Compilación 21D62)", nil, .virtio),
-            Case("Version 12.3 (Build 21E230)", nil, .usb),
             // A report that parses to nothing falls through rather than
             // erasing the install record's vote.
             Case("macOS", "12.0.1", .virtio),

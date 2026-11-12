@@ -109,7 +109,7 @@ package struct RestoreImageCatalogService {
                 rejections.append(.foreignHost(build: entry.build, url: entry.url))
                 continue
             }
-            guard entry.versionComponents != nil else {
+            guard entry.parsedVersion != nil else {
                 rejections.append(
                     .unparseableVersion(build: entry.build, version: entry.version))
                 continue

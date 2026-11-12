@@ -414,12 +414,12 @@ struct VMSettingsSharingPanelTests {
         #expect(!Self.mentionsResume(info.paragraphs))
 
         viewModel.library.editConfiguration(of: instance, as: .observations) {
-            $0.lastSeenGuestOSVersion = "Version 13.7.8 (Build 22H730)"
+            $0.lastSeenGuestOSVersion = "13.7.8"
         }
         #expect(Self.mentionsResume(info.paragraphs))
 
         viewModel.library.editConfiguration(of: instance, as: .observations) {
-            $0.lastSeenGuestOSVersion = "Version 14.8.9 (Build 23J100)"
+            $0.lastSeenGuestOSVersion = "14.8.9"
         }
         #expect(!Self.mentionsResume(info.paragraphs))
     }

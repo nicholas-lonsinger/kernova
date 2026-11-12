@@ -36,6 +36,14 @@ struct DarwinPeerTests {
         #expect(scope("/Applications" + Self.executable) == .unspecified)
     }
 
+    @Test("The OS version is the one the system names its own release with")
+    func osVersionMatchesTheSystemsOwnName() throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: "/System/Library/CoreServices/SystemVersion.plist"))
+        let plist = try #require(
+            try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        #expect(DarwinIdentity.osVersion == plist["ProductVersion"] as? String)
+    }
+
     @Test("The system peer reports the console off at the login window or with no user, on with a user")
     func systemPeerState() {
         #expect(DarwinSessionState.systemPeer(consoleUser: nil) == PeerSessionState(console: .off))

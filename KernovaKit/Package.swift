@@ -447,7 +447,7 @@ if declaresAppleTargets {
             dependencies: [
                 "KernovaAgentInstall", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaPlatformPOSIX", "KernovaWire",
                 "KernovaDigest", "KernovaLogging", "KernovaSynchronization", "KernovaItemTransfer", "KernovaFileTree",
-                "KernovaConsole",
+                "KernovaConsole", "KernovaKit",
             ],
             swiftSettings: sharedSwiftSettings
         ),

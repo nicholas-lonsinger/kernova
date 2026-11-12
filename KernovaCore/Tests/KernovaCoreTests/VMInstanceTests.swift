@@ -785,7 +785,7 @@ struct VMInstanceTests {
         // not a per-call flag: a pause/resume inside a Recovery session reaches
         // the same arm site with no idea a Recovery boot happened.
         let instance = makeMacOSInstanceWithAgentInstalled(
-            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)",
+            lastSeenGuestOSVersion: "26.0",
             bootedIntoRecovery: true)
 
         instance.agentAbsenceGrace = Self.testWatchdogGrace
@@ -871,7 +871,7 @@ struct VMInstanceTests {
         let library = makeWiredLibrary(storage: storage)
         let instance = makeMacOSInstanceWithAgentInstalled(
             in: library,
-            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)", agentInstallNudgeDismissed: true)
+            lastSeenGuestOSVersion: "26.0", agentInstallNudgeDismissed: true)
         defer { withExtendedLifetime(library) {} }
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
         let held = instance.settings
@@ -899,7 +899,7 @@ struct VMInstanceTests {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
         let instance = makeMacOSInstanceWithAgentInstalled(
-            in: library, lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)", agentInstallNudgeDismissed: true)
+            in: library, lastSeenGuestOSVersion: "26.0", agentInstallNudgeDismissed: true)
         defer { withExtendedLifetime(library) {} }
 
         connectSessionAgent(to: instance)
@@ -914,7 +914,7 @@ struct VMInstanceTests {
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.hostState.agentInstallNudgeDismissed == true)
-        #expect(instance.configuration.lastSeenGuestOSVersion == "Version 26.0 (Build 25A123)")
+        #expect(instance.configuration.lastSeenGuestOSVersion == "26.0")
         #expect(storage.saveConfigurationCallCount == persistsAfterHello)
         #expect(storage.saveHostStateCallCount == hostStatePersistsAfterHello)
     }
@@ -1118,15 +1118,6 @@ struct VMInstanceTests {
         #expect(instance.seenAgentScopes == [.system])
         #expect(LinuxAgentInstallChoice(seen: instance.seenAgentScopes) == .systemService)
         #expect(library.sidebarContext.subject(of: instance).guestAgent == .upToDate)
-    }
-
-    // MARK: - guestOSVersionDisplay
-
-    @Test("guestOSVersionDisplay reduces an operatingSystemVersionString report to its version")
-    func guestOSVersionDisplayReducesDisplayStringReport() {
-        let instance = makeMacOSInstanceWithAgentInstalled(
-            lastSeenGuestOSVersion: "Version 26.0 (Build 25A123)")
-        #expect(instance.guestOSVersionDisplay == "26.0")
     }
 
     // MARK: - Storage disks

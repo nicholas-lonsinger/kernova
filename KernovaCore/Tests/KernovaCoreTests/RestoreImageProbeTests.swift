@@ -71,10 +71,6 @@ struct RestoreImageFilenameTests {
     }
 }
 
-@Suite("MacOSVersion Tests", .caseScoped)
-struct MacOSVersionTests {
-}
-
 /// Stub for the probe's requests.
 ///
 /// Its own class rather than `StubURLProtocol`: that one's handler is a

@@ -923,14 +923,11 @@ extension VMConfiguration {
     ///
     /// ``lastSeenGuestOSVersion`` wins: it is what the guest itself reported,
     /// so it survives an in-guest upgrade that leaves ``installedImage``
-    /// describing a release no longer installed. It
-    /// is peer-supplied free text, though, so a report that parses to nothing
-    /// falls through to the install record rather than erasing its vote.
+    /// describing a release no longer installed. It is peer-supplied, though,
+    /// so a report that is not a ``MacOSVersion`` falls through to the install
+    /// record rather than erasing its vote.
     var effectiveGuestMacOSVersion: MacOSVersion? {
-        if let reported = lastSeenGuestOSVersion,
-            let numeric = KernovaOSVersion.numericVersion(in: reported),
-            let version = MacOSVersion(numeric)
-        {
+        if let reported = lastSeenGuestOSVersion, let version = MacOSVersion(reported) {
             return version
         }
         if case .macOSRestoreImage(let version, _) = installedImage {
@@ -946,7 +943,7 @@ extension VMConfiguration {
     /// in #698.
     var offersNewMachineClone: Bool {
         guard guestOS == .macOS, let version = effectiveGuestMacOSVersion else { return true }
-        return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
+        return version >= MacOSVersion(major: 13, minor: 0)
     }
 
     /// Whether the guest is known to run macOS 13, where a shared directory can
@@ -955,8 +952,8 @@ extension VMConfiguration {
     /// 27.0.0, in #1440.
     package var sharedDirectoriesBreakOnResume: Bool {
         guard guestOS == .macOS, let version = effectiveGuestMacOSVersion else { return false }
-        return version.isAtLeast(MacOSVersion(major: 13, minor: 0))
-            && !version.isAtLeast(MacOSVersion(major: 14, minor: 0))
+        return version >= MacOSVersion(major: 13, minor: 0)
+            && version < MacOSVersion(major: 14, minor: 0)
     }
 
     /// Whether the guest can write to a disk outside the bundle: an external

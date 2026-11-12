@@ -16,7 +16,7 @@ package struct IPSWService: Sendable {
         let restoreImage = try await VZMacOSRestoreImage.latestSupported
         return LatestRestoreImage(
             url: restoreImage.url,
-            version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
+            version: MacOSVersion(restoreImage.operatingSystemVersion).description,
             build: restoreImage.buildVersion
         )
     }

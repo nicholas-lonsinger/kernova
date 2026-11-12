@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// The single pointing/keyboard device pair a macOS guest's configuration
 /// carries.
@@ -32,7 +33,7 @@ package enum GuestInputDevices: Equatable, Sendable {
         case .usb: return .usb
         case .automatic:
             guard let version = config.effectiveGuestMacOSVersion else { return .mac }
-            return version.isAtLeast(macInputFloor) ? .mac : .usb
+            return version >= macInputFloor ? .mac : .usb
         }
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
