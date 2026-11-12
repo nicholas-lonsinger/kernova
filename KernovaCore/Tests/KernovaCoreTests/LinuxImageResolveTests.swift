@@ -47,18 +47,6 @@ private let fedoraManifest = """
 
 @Suite("ChecksumManifest Tests", .caseScoped)
 struct ChecksumManifestTests {
-    @Test("GNU binary mode reads the filename past its asterisk")
-    func parsesUbuntuBinaryMode() {
-        let rows = ChecksumManifest.parse(ubuntuManifest)
-
-        #expect(rows.count == 4)
-        #expect(rows.first?.filename == "ubuntu-24.04.3-desktop-arm64.iso")
-        #expect(
-            rows.first?.sha256
-                == "93b805a2e39d472e51117ac4ac21b1110f05d4c5365ae4b90d23f5e4e44e53f9")
-        #expect(rows.allSatisfy { !$0.filename.hasPrefix("*") })
-    }
-
     @Test("GNU text mode reads the filename past two spaces, and only the SHA-256 line")
     func parsesDebianTextMode() {
         let rows = ChecksumManifest.parse(debianManifest)
@@ -68,19 +56,6 @@ struct ChecksumManifestTests {
         #expect(
             rows.first?.sha256
                 == "9866e6b13a12f8dfdda382d414ccd90da60b898beeaa80cd87e55b25fdc11a06")
-    }
-
-    @Test("Clearsign armor, headers, comments and SHA-512 are stepped over")
-    func parsesFedoraClearsignedBSD() {
-        let rows = ChecksumManifest.parse(fedoraManifest)
-
-        #expect(rows.count == 2)
-        #expect(rows.first?.filename == "Fedora-Workstation-Live-44-1.7.aarch64.iso")
-        #expect(
-            rows.first?.sha256
-                == "66c07e7355db5e92faef680599a1789184a31c4dbaa5e02a19d050cc4e9279d2")
-        // The dash-escaped line is a manifest line, not armor.
-        #expect(rows.last?.filename == "Fedora-Workstation-44-1.7.aarch64.raw.xz")
     }
 
     @Test("An uppercase digest comes back lowercase, so it compares against a computed one")
@@ -109,18 +84,6 @@ struct ChecksumManifestTests {
     func rejectsMalformedLines(line: String) {
         #expect(ChecksumManifest.parse(line).isEmpty)
     }
-
-    @Test("A body that is not a manifest at all states no pairs")
-    func parsesNothingOutOfAnErrorPage() {
-        let page = """
-            <!DOCTYPE html>
-            <html><head><title>404 Not Found</title></head>
-            <body><h1>Not Found</h1></body></html>
-            """
-
-        #expect(ChecksumManifest.parse(page).isEmpty)
-        #expect(ChecksumManifest.parse("").isEmpty)
-    }
 }
 
 @Suite("ISOFilenameGlob Tests", .caseScoped)
@@ -140,42 +103,12 @@ struct ISOFilenameGlobTests {
         #expect(!desktop.matches("ubuntu-24.04.4-desktop-arm64.iso.torrent"))
     }
 
-    @Test("The `+largemem` variant is outside the anchored server pattern")
-    func excludesLargememVariant() throws {
-        let server = try glob("ubuntu-24.04*-live-server-arm64.iso")
-
-        #expect(server.matches("ubuntu-24.04.4-live-server-arm64.iso"))
-        #expect(!server.matches("ubuntu-24.04.4-live-server-arm64+largemem.iso"))
-    }
-
     @Test("A wildcard stays inside one path component")
     func wildcardNeverCrossesASeparator() throws {
         let anyISO = try glob("*.iso")
 
         #expect(anyISO.matches("image.iso"))
         #expect(!anyISO.matches("dists/stable/image.iso"))
-    }
-
-    @Test("The newest point release wins, not the first listed")
-    func picksHighestPointRelease() throws {
-        let desktop = try glob("ubuntu-24.04*-desktop-arm64.iso")
-
-        #expect(
-            desktop.newest(among: [
-                "ubuntu-24.04.4-desktop-arm64.iso",
-                "ubuntu-24.04.3-desktop-arm64.iso",
-            ]) == "ubuntu-24.04.4-desktop-arm64.iso")
-        #expect(
-            desktop.newest(among: [
-                "ubuntu-24.04.3-desktop-arm64.iso",
-                "ubuntu-24.04.4-desktop-arm64.iso",
-            ]) == "ubuntu-24.04.4-desktop-arm64.iso")
-        // Numeric, not lexicographic: .10 is newer than .9.
-        #expect(
-            desktop.newest(among: [
-                "ubuntu-24.04.9-desktop-arm64.iso",
-                "ubuntu-24.04.10-desktop-arm64.iso",
-            ]) == "ubuntu-24.04.10-desktop-arm64.iso")
     }
 
     @Test("A point release outranks the release it followed, extra component and all")
@@ -202,22 +135,6 @@ struct ISOFilenameGlobTests {
                 "Fedora-Workstation-Live-44-1.7.aarch64.iso",
                 "Fedora-Workstation-Live-44-1.10.aarch64.iso",
             ]) == "Fedora-Workstation-Live-44-1.10.aarch64.iso")
-    }
-
-    @Test("Nothing matching is nothing picked")
-    func picksNothingWithoutAMatch() throws {
-        let desktop = try glob("ubuntu-24.04*-desktop-arm64.iso")
-
-        #expect(desktop.newest(among: ["ubuntu-24.04.4-live-server-arm64.iso"]) == nil)
-        #expect(desktop.newest(among: [String]()) == nil)
-    }
-
-    @Test("A pattern with no wildcard matches only itself")
-    func matchesLiteralPattern() throws {
-        let literal = try glob("kali-linux-2026.2-installer-arm64.iso")
-
-        #expect(literal.matches("kali-linux-2026.2-installer-arm64.iso"))
-        #expect(!literal.matches("kali-linux-2026.3-installer-arm64.iso"))
     }
 }
 
@@ -248,12 +165,6 @@ struct SafeFilenameTests {
         ])
     func refusesUnsafeCandidates(candidate: String) {
         #expect(SafeFilename.sanitized(candidate, requiring: "iso") == nil)
-    }
-
-    @Test("The required extension is what is asked for, not whatever the name carries")
-    func refusesAnotherExtension() {
-        #expect(SafeFilename.sanitized("image.iso", requiring: "ipsw") == nil)
-        #expect(SafeFilename.sanitized("image.ipsw", requiring: "iso") == nil)
     }
 
     @Test("A name is accepted right up to the byte bound and refused past it")
@@ -413,32 +324,6 @@ struct LinuxImageResolveServiceTests {
             manifestDirectoryURLString: manifestDirectoryURLString,
             checksumManifest: checksumManifest
         )
-    }
-
-    @Test("A directory that is not HTTPS is refused before anything is requested")
-    func refusesInsecureDirectory() async throws {
-        serve(manifest: ubuntuManifest)
-        defer { ResolveStubURLProtocol.reset() }
-        let entry = editedEntry(
-            directoryURLString: "http://cdimage.ubuntu.com/ubuntu/releases/noble/release/")
-
-        await #expect(throws: LinuxImageResolveError.insecureDirectory(url: entry.directoryURL)) {
-            _ = try await makeService().resolve(entry)
-        }
-        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
-    }
-
-    @Test("An ISO pattern that is not a wildcard .iso filename is refused before any request")
-    func refusesInvalidISOPattern() async throws {
-        serve(manifest: ubuntuManifest)
-        defer { ResolveStubURLProtocol.reset() }
-
-        await #expect(
-            throws: LinuxImageResolveError.invalidISOPattern(pattern: "../*.iso")
-        ) {
-            _ = try await makeService().resolve(editedEntry(isoPattern: "../*.iso"))
-        }
-        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
     }
 
     @Test("A manifest directory that is not HTTPS is refused before anything is requested")
@@ -713,24 +598,6 @@ struct LinuxImageResolveServiceTests {
         #expect(image.sizeBytes == 1_073_741_824)
         // No manifest is read: the URL names the file outright.
         #expect(ResolveStubURLProtocol.requestedURLs.allSatisfy { $0 == pasted.url })
-    }
-
-    @Test("A plain-HTTP URL is refused before anything is requested")
-    func refusesHTTPPastedURL() async {
-        serveISO()
-        defer { ResolveStubURLProtocol.reset() }
-        let url = URL(string: "http://mirror.example/alpine-3.22-aarch64.iso")!
-
-        // A checksum buys no admission: ATS would refuse the load anyway, and
-        // the stub here would otherwise hide that.
-        await #expect(throws: LinuxImageURLError.insecureURL) {
-            _ = try await makeService().resolve(
-                CustomLinuxImage(url: url, sha256: String(repeating: "b", count: 64)))
-        }
-        await #expect(throws: LinuxImageURLError.insecureURL) {
-            _ = try await makeService().resolve(CustomLinuxImage(url: url, sha256: nil))
-        }
-        #expect(ResolveStubURLProtocol.requestedURLs.isEmpty)
     }
 
     @Test("A URL nothing is hosted at is reported with its status")

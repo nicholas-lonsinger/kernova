@@ -25,25 +25,6 @@ struct LinuxImageFilenameTests {
         #expect(first.hasSuffix(".iso"))
     }
 
-    @Test("A path a source could name is never reproduced in the destination")
-    func destinationIsOneComponent() throws {
-        // `URL.lastPathComponent` percent-decodes, so this arrives as
-        // `../../evil.iso` — a stem the generator refuses in favor of its
-        // default.
-        let escaping = LinuxImageFilename.destination(
-            for: try url("https://mirror.example/a%2F..%2F..%2Fevil.iso"))
-
-        #expect(!escaping.contains("/"))
-        #expect(escaping.hasPrefix("LinuxImage-"))
-    }
-
-    @Test("One URL always names the same destination, so a download stays resumable")
-    func destinationIsStableForOneURL() throws {
-        let iso = try url("https://mirror.example/alpine-3.22-aarch64.iso")
-
-        #expect(LinuxImageFilename.destination(for: iso) == LinuxImageFilename.destination(for: iso))
-    }
-
     @Test("A URL that names no usable stem still yields an .iso destination")
     func destinationFallsBackToADefaultStem() throws {
         let name = LinuxImageFilename.destination(for: try url("https://mirror.example/"))

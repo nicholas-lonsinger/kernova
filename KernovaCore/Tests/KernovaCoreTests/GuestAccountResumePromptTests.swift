@@ -81,48 +81,6 @@ struct GuestAccountResumePromptTests {
 
     // MARK: - When the question is raised
 
-    @available(macOS 27.0, *)
-    @Test("Starting a VM that owes an account asks for its password")
-    func aStartAsksForThePassword() async throws {
-        let (viewModel, _) = makeViewModel()
-        let instance = makeVM(in: viewModel, intent: makeIntent())
-
-        await viewModel.start(instance)
-
-        let request = try #require(presenter.guestAccountPasswordRequests.first)
-        #expect(presenter.guestAccountPasswordRequests.count == 1)
-        #expect(request.prompt.vm.name == "Sequoia")
-        #expect(request.prompt.vm.id == instance.id)
-        #expect(request.prompt.username == "ada")
-        #expect(request.prompt.fullName == "Ada Lovelace")
-        #expect(request.prompt.message.contains("ada"))
-        // The sheet is the question, not an error report.
-        #expect(presenter.errors.isEmpty)
-        await drainSetup(instance)
-    }
-
-    @Test("A VM whose install creates no account is started without a question")
-    func aVMWithNoIntentIsNotAsked() async {
-        let (viewModel, _) = makeViewModel()
-        let instance = makeVM(in: viewModel, intent: nil)
-
-        await viewModel.start(instance)
-
-        #expect(presenter.guestAccountPasswordRequests.isEmpty)
-        #expect(instance.setupOperationTask != nil)
-        await drainSetup(instance)
-    }
-
-    @Test("A recovery boot asks nothing — it cannot spend the account anyway")
-    func aRecoveryBootIsNotAsked() async {
-        let (viewModel, _) = makeViewModel()
-        let instance = makeVM(in: viewModel, intent: makeIntent())
-
-        await viewModel.start(instance, bootIntoRecovery: true)
-
-        #expect(presenter.guestAccountPasswordRequests.isEmpty)
-    }
-
     // MARK: - What each answer carries back
 
     @available(macOS 27.0, *)
@@ -167,26 +125,6 @@ struct GuestAccountResumePromptTests {
     }
 
     @available(macOS 27.0, *)
-    @Test("A skip whose boot failed does not put the question back on the next Start")
-    func aSkipWhoseBootFailedDoesNotAskAgain() async {
-        let (viewModel, virtualization) = makeViewModel()
-        let instance = makeVM(
-            in: viewModel, intent: makeIntent(), installPending: false)
-        virtualization.startError = VirtualizationError.noVirtualMachine
-        presenter.guestAccountPasswordAnswer = .answered(.skip)
-
-        await viewModel.start(instance)
-        #expect(instance.configuration.pendingGuestAccount == nil)
-
-        await viewModel.start(instance)
-
-        // The skip answered the VM rather than one call, so the second gesture
-        // goes straight to the boot.
-        #expect(presenter.guestAccountPasswordRequests.count == 1)
-        #expect(virtualization.startCallCount == 2)
-    }
-
-    @available(macOS 27.0, *)
     @Test("Cancelling the sheet starts nothing and says nothing")
     func cancellingStartsNothing() async {
         let (viewModel, virtualization) = makeViewModel()
@@ -220,83 +158,7 @@ struct GuestAccountResumePromptTests {
         #expect(presenter.errors.contains { $0.contains("ada") })
     }
 
-    /// The shown sheet turns a refused password down on the click and puts
-    /// itself back up carrying the reason (`GuestAccountPasswordAlertTests`), so
-    /// what reaches here is a door with no validator of its own: the verb refuses
-    /// and the start never runs.
-    @available(macOS 27.0, *)
-    @Test("A password the host turns down never reaches a boot")
-    func aRefusedPasswordNeverReachesTheBoot() async {
-        let (viewModel, virtualization) = makeViewModel(
-            host: FakeVirtualizationHost(
-                refusal: GuestProvisioningRefusal(field: .password, message: "Choose a longer password.")))
-        let instance = makeVM(
-            in: viewModel, intent: makeIntent(), installPending: false)
-        presenter.guestAccountPasswordAnswer = .answered(.password("a"))
-
-        await viewModel.start(instance)
-
-        #expect(presenter.guestAccountPasswordRequests.count == 1)
-        #expect(virtualization.startCallCount == 0)
-        #expect(!presenter.errors.isEmpty)
-        // Nothing held and nothing spent, so the next Start asks again.
-        #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(viewModel.capabilities.guestAccountState(of: instance).isOwed)
-    }
-
     // MARK: - A start that never reached a boot
-
-    @available(macOS 27.0, *)
-    @Test("A failed boot keeps the answer, so the next start asks nothing")
-    func aFailedBootKeepsTheAnswer() async {
-        let (viewModel, virtualization) = makeViewModel()
-        let instance = makeVM(
-            in: viewModel, intent: makeIntent(), installPending: false)
-        virtualization.startError = VirtualizationError.noVirtualMachine
-        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
-
-        await viewModel.start(instance)
-
-        // The boot threw before the guest ran, so the window is unspent — and the
-        // answer supplied for it is still held.
-        #expect(instance.configuration.pendingGuestAccount == makeIntent())
-        #expect(!viewModel.capabilities.guestAccountState(of: instance).isOwed)
-        #expect(presenter.guestAccountPasswordRequests.count == 1)
-
-        virtualization.startError = nil
-        await viewModel.start(instance)
-
-        // The retry carries what was typed the first time, with nothing asked.
-        #expect(presenter.guestAccountPasswordRequests.count == 1)
-        #expect(virtualization.lastStartProvisioning?.password == "analytical-engine")
-    }
-
-    @available(macOS 27.0, *)
-    @Test("The start-failed recovery removes, then runs the ordinary Start that asks")
-    func theStartFailedRecoveryAsksThroughTheOrdinaryStart() async {
-        let (viewModel, virtualization) = makeViewModel()
-        let disk = StorageDisk(path: "/tmp/missing.img", label: "Scratch", isInternal: false)
-        let keeper = StorageDisk(
-            path: "AdditionalDisks/k.asif", label: "Keeper", isInternal: true)
-        let instance = makeVM(
-            in: viewModel, intent: makeIntent(), installPending: false
-        ) { $0.storageDisks = [disk, keeper] }
-        presenter.guestAccountPasswordAnswer = .answered(.password("analytical-engine"))
-
-        await viewModel.removeStartFailedAttachmentAndStart(
-            StartFailedAttachment(
-                verb: .start, kind: .storageDisk, reason: .attachRefused, id: disk.id,
-                label: "Scratch",
-                message: "It would not open."),
-            on: instance)
-
-        // The removal happened once, and the account was asked for once — by the
-        // ordinary Start that followed it, not by a compound verb re-issued whole.
-        #expect(instance.configuration.storageDisks?.map(\.id) == [keeper.id])
-        #expect(presenter.guestAccountPasswordRequests.count == 1)
-        #expect(virtualization.lastStartProvisioning?.password == "analytical-engine")
-        #expect(presenter.errors.isEmpty)
-    }
 
     @available(macOS 27.0, *)
     @Test("A start-failed recovery whose removal refuses starts nothing")

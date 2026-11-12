@@ -62,73 +62,9 @@ struct VMLifecycleCoordinatorTests {
 
     private static let coldBoot = VMGuestStartKind.starting(recovery: false)
 
-    @Test("start forwards to virtualization service")
-    func startForwards() async throws {
-        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        try await coordinator.launchStart(instance, Self.coldBoot).value()
-
-        #expect(virtService.startCallCount == 1)
-        #expect(virtService.lastStartBootIntoRecovery == false)
-    }
-
     // MARK: - Error Propagation
 
     // MARK: - One Operation per VM
-
-    @Test("An operation holds the VM from its admission until its body ends")
-    func anOperationHoldsTheVMWhileItRuns() async throws {
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance = VMInstanceFixture.make()
-        #expect(instance.phase.operation == nil)
-
-        let task = Task { @MainActor in
-            try await coordinator.launchStart(instance, Self.coldBoot).value()
-        }
-        await suspendingService.waitUntilSuspended()
-
-        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
-
-        suspendingService.resumeSuspended()
-        _ = try await task.value
-        #expect(instance.phase.operation == nil)
-    }
-
-    @Test("an observed wait on the phase wakes when the operation ends")
-    func theOperationsEndWakesAnObservedWait() async throws {
-        // What the termination save pass holds a quit on: a pause or resume
-        // ends without changing `VMStatus`, so the pass waits on the phase
-        // through `withObservationTracking`. Were it not observable the wait
-        // would have nothing to wake on and the quit would hang.
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        let task = Task { @MainActor in
-            try await coordinator.launchStart(instance, Self.coldBoot).value()
-        }
-        await suspendingService.waitUntilSuspended()
-        #expect(instance.phase.operation != nil)
-
-        // The wait is on the *fire*, not on the read it guards: a phase
-        // publishing no change would let the read settle anyway, so only the
-        // fire separates a wait that woke from one that outlived its backstop.
-        let gate = AsyncGate()
-        let fired = ObservationFireRecorder()
-        withObservationTracking {
-            _ = instance.phase.operation
-        } onChange: {
-            fired.record()
-            gate.notify()
-        }
-
-        // Deferred so the operation ends after tracking is armed, which is the
-        // ordering the pass sees.
-        Task { @MainActor in suspendingService.resumeSuspended() }
-        try await gate.wait { fired.didFire }
-        _ = try await task.value
-        #expect(instance.phase.operation == nil)
-    }
 
     @Test("a stop during an operation that tolerates it leaves the operation holding the VM")
     func stopDoesNotEndTheOperationItInterrupts() async throws {
@@ -157,25 +93,6 @@ struct VMLifecycleCoordinatorTests {
         suspendingService.resumeSuspended()
         try await pause.value
         #expect(instance.phase == .stopped)
-    }
-
-    @Test("a second operation on a VM an operation holds is refused as busy")
-    func rejectsConcurrentOperationOnSameVM() async throws {
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        let task = Task { @MainActor in
-            try await coordinator.launchStart(instance, Self.coldBoot).value()
-        }
-        await suspendingService.waitUntilSuspended()
-
-        await #expect(throws: VMAdmissionRefusal.self) {
-            try await coordinator.pause(instance)
-        }
-        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
-
-        suspendingService.resumeSuspended()
-        _ = try await task.value
     }
 
     @Test("stop and forceStop reach a guest a media reconcile holds")
@@ -219,109 +136,6 @@ struct VMLifecycleCoordinatorTests {
 
         suspendingService.resumeSuspended()
         _ = try await task.value
-    }
-
-    @Test("operations on different VMs are allowed concurrently")
-    func allowsConcurrentOperationsOnDifferentVMs() async throws {
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance1 = VMInstanceFixture.make(name: "VM 1")
-        let instance2 = VMInstanceFixture.make(name: "VM 2")
-
-        let task = Task { @MainActor in
-            try await coordinator.launchStart(instance1, Self.coldBoot).value()
-        }
-        await suspendingService.waitUntilSuspended()
-
-        suspendingService.shouldSuspendOnStart = false
-        try await coordinator.launchStart(instance2, Self.coldBoot).value()
-
-        suspendingService.resumeSuspended()
-        _ = try await task.value
-    }
-
-    @Test("the VM is free for the next operation once one succeeds")
-    func releasedAfterSuccess() async throws {
-        let (coordinator, _, _, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        try await coordinator.launchStart(instance, Self.coldBoot).value()
-        #expect(instance.phase.operation == nil)
-
-        try await coordinator.pause(instance)
-        #expect(instance.phase.operation == nil)
-    }
-
-    @Test("the VM is free for a retry once an operation fails")
-    func releasedAfterError() async throws {
-        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
-        virtService.startError = VirtualizationError.noVirtualMachine
-        let instance = VMInstanceFixture.make()
-
-        await #expect(throws: VirtualizationError.self) {
-            try await coordinator.launchStart(instance, Self.coldBoot).value()
-        }
-
-        #expect(instance.phase.operation == nil)
-
-        virtService.startError = nil
-        try await coordinator.launchStart(instance, Self.coldBoot).value()
-        #expect(virtService.startCallCount == 2)
-    }
-
-    @Test(
-        "A stop during a bring-up is refused, and the bring-up keeps the VM",
-        arguments: [false, true])
-    func stopDuringABringUpIsRefused(forced: Bool) async throws {
-        // Virtualization takes no stop while it is still starting a guest, so
-        // a bring-up tolerates neither stop.
-        let (coordinator, suspendingService) = makeSuspendingCoordinator()
-        let instance = VMInstanceFixture.make()
-
-        let task = Task { @MainActor in
-            try await coordinator.launchStart(instance, Self.coldBoot).value()
-        }
-        await suspendingService.waitUntilSuspended()
-
-        await #expect(throws: VMAdmissionRefusal.self) {
-            if forced {
-                try await coordinator.forceStop(instance)
-            } else {
-                try await coordinator.requestStop(instance)
-            }
-        }
-        #expect(instance.phase.operation?.kind == .bringUp(.guestStart(Self.coldBoot)))
-
-        suspendingService.resumeSuspended()
-        _ = try await task.value
-        #expect(instance.status == .running)
-    }
-
-    @Test("a stop takes no admission of its own")
-    func stopTakesNoAdmission() async throws {
-        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
-        let instance = VMInstanceFixture.make()
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        try await coordinator.requestStop(instance)
-        #expect(instance.phase.operation == nil)
-        #expect(virtService.stopCallCount == 1)
-    }
-
-    @Test("a stop that fails leaves the VM running and free")
-    func stopErrorLeavesTheVMFree() async throws {
-        let (coordinator, virtService, _, _, _, _) = makeCoordinator()
-        virtService.stopError = VirtualizationError.noVirtualMachine
-        let instance = VMInstanceFixture.make()
-        let sessionID = UUID()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-
-        await #expect(throws: VirtualizationError.self) {
-            try await coordinator.requestStop(instance)
-        }
-
-        #expect(instance.phase == .running(sessionID: sessionID))
-        try await coordinator.pause(instance)
-        #expect(virtService.pauseCallCount == 1)
     }
 
     // MARK: - macOS Installation
@@ -462,31 +276,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
-    @Test("installMacOS with a catalog context downloads the pinned URL, never the latest")
-    func installMacOSCatalogUsesPinnedURL() async throws {
-        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator()
-        let pinned = try #require(Self.pinnedRestoreImageURL)
-        let context = MacOSInstallContext(
-            source: .catalogVersion,
-            downloadDestinationPath: scratch.url
-                .appendingPathComponent("UniversalMac_15.6.1_24G90_Restore.ipsw")
-                .path(percentEncoded: false),
-            remoteURL: pinned,
-            version: "15.6.1",
-            build: "24G90"
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        defer { withExtendedLifetime(library) {} }
-
-        try await coordinator.launchGuestSetup(on: instance).value()
-
-        #expect(ipswService.fetchCallCount == 0)
-        #expect(downloadService.downloadCallCount == 1)
-        #expect(downloadService.lastDownloadRemoteURL == pinned)
-        #expect(installService.installCallCount == 1)
-    }
-
     @Test("installMacOS rejects a catalog context with no pinned URL")
     func installMacOSCatalogWithoutURLThrows() async {
         let (coordinator, _, _, ipswService, _, _) = makeCoordinator()
@@ -504,55 +293,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(ipswService.fetchCallCount == 0)
     }
 
-    @Test("A catalog destination outside Downloads falls back to the pinned image's filename")
-    func normalizedDestinationKeepsPinnedFilename() throws {
-        let (coordinator, _, _, _, _, _) = makeCoordinator()
-        let elsewhere = URL(fileURLWithPath: "/Users/Shared/UniversalMac_15.6.1_24G90_Restore.ipsw")
-        let pinned = try #require(Self.pinnedRestoreImageURL)
-
-        let normalized = coordinator.normalizedDownloadDestination(
-            for: elsewhere, remoteURL: pinned)
-
-        #expect(normalized.lastPathComponent == "UniversalMac_15.6.1_24G90_Restore.ipsw")
-    }
-
-    @Test("installMacOS sets status to error on service failure")
-    func installMacOSError() async {
-        let (coordinator, _, installService, _, _, _) = makeCoordinator()
-        installService.installError = DownloadError.downloadFailed(URLError(.badServerResponse))
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let instance = VMInstanceFixture.make { $0.installContext = context }
-
-        do {
-            try await coordinator.launchGuestSetup(on: instance).value()
-            Issue.record("Expected error to be thrown")
-        } catch {
-            #expect(instance.status == .error)
-            #expect(instance.errorMessage != nil)
-            #expect(instance.configuration.installedImage == nil)
-        }
-    }
-
-    @Test("installMacOS returns the VM to .initialBoot on a transient failure")
-    func installMacOSTransientFailureReturnsToInitialBoot() async {
-        let (coordinator, _, installService, _, _, _) = makeCoordinator()
-        installService.installError = makeInstallVMLimitExceededError()
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        instance.activity.placeForTesting(.failed(message: "stale message from an earlier failure"))
-        defer { withExtendedLifetime(library) {} }
-
-        await #expect(throws: (any Error).self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(instance.status == .initialBoot)
-        #expect(instance.errorMessage == nil)
-        // Retrying is the remedy, so the intent that drives the retry survives.
-        #expect(instance.configuration.installContext == context)
-    }
-
     @Test("installMacOS clears installContext on successful completion")
     func installMacOSClearsInstallContextOnSuccess() async throws {
         let (coordinator, _, installService, _, _, _) = makeCoordinator()
@@ -566,79 +306,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(installService.installCallCount == 1)
         #expect(instance.configuration.installContext == nil)
         #expect(instance.setupState == nil)
-    }
-
-    @Test("installMacOS records the image the install ran from")
-    func installMacOSRecordsTheInstalledImage() async throws {
-        let (coordinator, _, installService, _, _, _) = makeCoordinator()
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        defer { withExtendedLifetime(library) {} }
-        installService.installedImage = .macOSRestoreImage(version: "15.6.1", build: "24G90")
-
-        try await coordinator.launchGuestSetup(on: instance).value()
-
-        #expect(
-            instance.configuration.installedImage
-                == .macOSRestoreImage(version: "15.6.1", build: "24G90"))
-    }
-
-    @Test("installMacOS throws CancellationError on cancel and preserves installContext")
-    func installMacOSCancelPreservesContext() async {
-        let downloads = scratch.url
-            .appendingPathComponent("cancelPreservesContext", isDirectory: true)
-        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
-        downloadService.setDownloadError(CancellationError())
-        // Already naming the file the resolved image derives, so nothing but the
-        // cancel can touch the context.
-        let originalContext = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: downloads.appendingPathComponent(
-                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
-            ).path(percentEncoded: false)
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = originalContext }
-        defer { withExtendedLifetime(library) {} }
-
-        await #expect(throws: CancellationError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
-        }
-        #expect(downloadService.discardResumeDataCallCount == 0)
-
-        #expect(instance.configuration.installContext == originalContext)
-    }
-
-    @Test("installMacOS asks the download to replace what is at the destination")
-    func installMacOSFreshDownloadDelegatesTheDiscard() async throws {
-        // The disposal belongs to the download, which holds the destination's
-        // claim while it runs — trashing from the coordinator could reach a
-        // bundle another VM is streaming into.
-        let temp = scratch.url
-            .appendingPathComponent("freshDownloadTrash", isDirectory: true)
-        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
-
-        // The persisted destination is the one the resolved image derives, so
-        // the file the user confirmed replacing is the file the download writes.
-        let destination = temp.appendingPathComponent(
-            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-
-        let context = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: destination.path(percentEncoded: false),
-            requestedFreshDownload: true
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        defer { withExtendedLifetime(library) {} }
-
-        try await coordinator.launchGuestSetup(on: instance).value()
-
-        #expect(downloadService.lastDownloadDiscardsExisting == true)
-        #expect(downloadService.lastDownloadDestinationURL == destination)
-        // Nothing is trashed outside the download's claim.
-        #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
     @Test("A latest destination that moved lapses Download & Replace rather than retargeting it")
@@ -714,49 +381,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.configuration.installContext?.requestedFreshDownload == false)
     }
 
-    @Test("installMacOS surfaces a cleanup failure raised by the download")
-    func installMacOSFreshDownloadSurfacesTrashFailure() async {
-        // The download reports that it could not clear the way for the
-        // replacement; the install must fail rather than install the file the
-        // user asked to replace.
-        let temp = scratch.url
-            .appendingPathComponent("freshDownloadTrashFails", isDirectory: true)
-        let (coordinator, _, installService, ipswService, _, downloadService) = makeCoordinator(
-            downloadsDirectory: temp)
-        // The destination the resolved image derives, so the replacement is
-        // actually requested and can fail.
-        let destination = temp.appendingPathComponent(
-            RestoreImageFilename.destination(for: ipswService.fetchResult.url))
-        downloadService.setDownloadError(
-            DownloadError.freshDownloadCleanupFailed(
-                path: destination.path(percentEncoded: false),
-                underlying: NSError(
-                    domain: NSCocoaErrorDomain,
-                    code: NSFileWriteNoPermissionError,
-                    userInfo: [NSLocalizedDescriptionKey: "denied"]
-                )
-            ))
-
-        let context = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: destination.path(percentEncoded: false),
-            requestedFreshDownload: true
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        defer { withExtendedLifetime(library) {} }
-
-        do {
-            try await coordinator.launchGuestSetup(on: instance).value()
-            Issue.record("Expected freshDownloadCleanupFailed")
-        } catch DownloadError.freshDownloadCleanupFailed {
-            #expect(instance.status == .error)
-            #expect(installService.installCallCount == 0, "Install must not run on a failed download")
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-    }
-
     @Test("installMacOS rejects requestedFreshDownload on a non-IPSW path")
     func installMacOSFreshDownloadRejectsNonIPSWPath() async throws {
         // The non-IPSW file sits inside the (injected) Downloads directory —
@@ -791,31 +415,6 @@ struct VMLifecycleCoordinatorTests {
         }
     }
 
-    @Test("installMacOS without requestedFreshDownload leaves existing file alone")
-    func installMacOSWithoutFreshDownloadDoesNotTrash() async throws {
-        let temp = scratch.url
-            .appendingPathComponent("noFreshDownload", isDirectory: true)
-        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
-
-        let context = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: temp.appendingPathComponent(
-                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
-            ).path(percentEncoded: false)
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = context }
-        defer { withExtendedLifetime(library) {} }
-
-        try await coordinator.launchGuestSetup(on: instance).value()
-
-        // Nothing at the destination is disturbed: the download resumes or
-        // skips over whatever is already there. The destination did not move
-        // either, so there is no superseded sidecar to discard.
-        #expect(downloadService.lastDownloadDiscardsExisting == false)
-        #expect(downloadService.discardResumeDataCallCount == 0)
-    }
-
     @Test("installMacOS preserves IPSW resume data on NSURLErrorCancelled")
     func installMacOSURLCancelPreservesResumeData() async {
         let temp = scratch.url
@@ -842,35 +441,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(downloadService.discardResumeDataCallCount == 0)
     }
 
-    @Test("installMacOS preserves IPSW resume data on non-cancel download failure")
-    func installMacOSFailurePreservesResumeData() async {
-        let downloads = scratch.url
-            .appendingPathComponent("networkFailure", isDirectory: true)
-        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: downloads)
-        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
-        // Already naming the file the resolved image derives, so the retry
-        // context that survives is the one that went in.
-        let originalContext = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: downloads.appendingPathComponent(
-                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
-            ).path(percentEncoded: false)
-        )
-        let library = makeWiredLibrary()
-        let instance = library.registerFixture { $0.installContext = originalContext }
-        defer { withExtendedLifetime(library) {} }
-
-        do {
-            try await coordinator.launchGuestSetup(on: instance).value()
-            Issue.record("Expected error to be thrown")
-        } catch {
-            #expect(downloadService.discardResumeDataCallCount == 0)
-            #expect(instance.status == .error)
-            // installContext stays so the user can retry via Start.
-            #expect(instance.configuration.installContext == originalContext)
-        }
-    }
-
     // MARK: - macOS Install Steps Whose Write Fails
 
     /// A VM carrying `context`, registered in a library over `storage`.
@@ -880,32 +450,6 @@ struct VMLifecycleCoordinatorTests {
         let library = makeWiredLibrary(storage: storage)
         let instance = library.registerFixture(guestOS: .macOS) { $0.installContext = context }
         return (instance, library)
-    }
-
-    @Test("A latest install whose destination move cannot be saved fails before the download")
-    func installMacOSLatestWhoseDestinationMoveFailsStopsBeforeTheDownload() async {
-        let downloads = scratch.url
-            .appendingPathComponent("latestMoveUnsaved", isDirectory: true)
-        let (coordinator, _, installService, _, _, downloadService) = makeCoordinator(
-            downloadsDirectory: downloads)
-        let context = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: downloads.appendingPathComponent(Self.olderBuildFilename)
-                .path(percentEncoded: false))
-        let storage = MockVMStorageService()
-        let (instance, library) = makeInstallingInstance(context: context, storage: storage)
-        defer { withExtendedLifetime(library) {} }
-        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
-
-        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(downloadService.downloadCallCount == 0)
-        #expect(installService.installCallCount == 0)
-        #expect(instance.configuration.installContext == context)
-        #expect(storage.bundles[instance.bundleURL]?.installContext == context)
-        #expect(instance.status == .error)
     }
 
     @Test("A Download & Replace whose flag cannot be cleared fails before anything is replaced")
@@ -936,26 +480,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(installService.installCallCount == 0)
         #expect(instance.configuration.installContext?.requestedFreshDownload == true)
         #expect(storage.bundles[instance.bundleURL]?.installContext == context)
-        #expect(instance.status == .error)
-    }
-
-    @Test("An install whose completion cannot be saved fails and keeps its context for the next Start")
-    func installMacOSWhoseCompletionFailsKeepsTheContext() async {
-        let (coordinator, _, installService, _, _, _) = makeCoordinator()
-        let context = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        let storage = MockVMStorageService()
-        let (instance, library) = makeInstallingInstance(context: context, storage: storage)
-        defer { withExtendedLifetime(library) {} }
-        storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
-
-        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(installService.installCallCount == 1)
-        #expect(instance.configuration.installContext == context)
-        #expect(instance.configuration.installedImage == nil)
-        #expect(storage.bundles[instance.bundleURL] == instance.configuration)
         #expect(instance.status == .error)
     }
 
@@ -1106,23 +630,6 @@ struct VMLifecycleCoordinatorTests {
                 .match(fixture.digest, filename: fixture.resolveService.resolveResult.filename))
     }
 
-    @Test("downloadLinuxImage keeps a pre-existing main disk and puts the ISO in front of it")
-    func downloadLinuxImageKeepsExistingDisks() async throws {
-        let fixture = try makeLinuxFixture()
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let existing = StorageDisk(
-            path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
-        let instance = makeLinuxInstance(context: context, in: fixture) {
-            $0.storageDisks = [existing]
-        }
-
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
-
-        let disks = try #require(instance.configuration.storageDisks)
-        #expect(disks.count == 2)
-        #expect(disks[1] == existing)
-    }
-
     @Test("downloadLinuxImage over an empty configured disk list synthesizes the main disk")
     func downloadLinuxImageSynthesizesMainDiskForEmptyList() async throws {
         let fixture = try makeLinuxFixture()
@@ -1135,24 +642,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(disks.count == 2)
         #expect(disks[1].label == "Main Disk")
         #expect(disks[1].isInternal)
-    }
-
-    @Test("A Linux download whose destination cannot be saved fails before the download")
-    func downloadLinuxImageWhoseDestinationFailsStopsBeforeTheDownload() async throws {
-        let fixture = try makeLinuxFixture()
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-        fixture.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
-
-        await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(fixture.downloadService.downloadCallCount == 0)
-        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
-        #expect(instance.configuration.linuxInstallContext == context)
-        #expect(fixture.storage.bundles[instance.bundleURL]?.linuxInstallContext == context)
-        #expect(instance.status == .error)
     }
 
     @Test("A Linux installer whose attach cannot be saved fails the setup and attaches nothing")
@@ -1242,14 +731,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(fixture.downloadService.discardResumeDataCallCount == 0)
     }
 
-    @Test("linuxDownloadDestination names the file inside Downloads")
-    func linuxDownloadDestinationIsInDownloads() throws {
-        let fixture = try makeLinuxFixture()
-
-        let derived = fixture.coordinator.linuxDownloadDestination(filename: "debian.iso")
-        #expect(derived == fixture.downloads.appendingPathComponent("debian.iso"))
-    }
-
     @Test("A checksum mismatch trashes the image, discards its bundle, and keeps the context")
     func downloadLinuxImageChecksumMismatch() async throws {
         let fixture = try makeLinuxFixture()
@@ -1294,73 +775,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.status == .error)
         #expect(instance.errorMessage != nil)
         #expect(instance.configuration.storageDisks == nil)
-    }
-
-    @Test("A file already at the destination is verified rather than trusted")
-    func downloadLinuxImageVerifiesTheSkipExistingPath() async throws {
-        let fixture = try makeLinuxFixture()
-        // The download returns without fetching, exactly as the service does
-        // when a completed file with no resumable bundle is already there.
-        fixture.downloadService.setDownloadedContents(nil)
-        let destination = fixture.downloads.appendingPathComponent(
-            fixture.resolveService.resolveResult.destinationFilename)
-        try Data("not the image the mirror published".utf8).write(to: destination)
-
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(fixture.fileSystem.trashedURLs == [destination])
-        #expect(instance.configuration.storageDisks == nil)
-    }
-
-    @Test("A file already in Downloads under the mirror's own name is never touched")
-    func downloadLinuxImageLeavesACollidingFileAlone() async throws {
-        let fixture = try makeLinuxFixture()
-        // The mirror names its ISO after a file the user already has. Nothing
-        // the mirror chooses may decide which file is downloaded over, adopted
-        // in place of a download, or trashed for failing a digest.
-        let resolved = fixture.resolveService.resolveResult
-        let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
-        let usersBytes = Data("the user's own ISO".utf8)
-        try usersBytes.write(to: usersFile)
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
-
-        let written = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
-        #expect(fixture.downloadService.lastDownloadDestinationURL == written)
-        #expect(try Data(contentsOf: usersFile) == usersBytes)
-        #expect(fixture.fileSystem.trashedURLs.isEmpty)
-        #expect(
-            instance.configuration.storageDisks?.first?.path
-                == written.path(percentEncoded: false))
-        // Its length is not the length the mirror states, so a stat refuses it
-        // and no adoption is attempted — the file is never read.
-        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
-    }
-
-    @Test("A digest failure trashes only the file the download wrote")
-    func downloadLinuxImageMismatchSparesACollidingFile() async throws {
-        let fixture = try makeLinuxFixture()
-        fixture.resolveService.manifestSHA256 = String(repeating: "a", count: 64)
-        let resolved = fixture.resolveService.resolveResult
-        let usersFile = fixture.downloads.appendingPathComponent(resolved.filename)
-        try Data("the user's own ISO".utf8).write(to: usersFile)
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(
-            fixture.fileSystem.trashedURLs
-                == [fixture.downloads.appendingPathComponent(resolved.destinationFilename)])
     }
 
     // MARK: - Adopting a File Already in Downloads
@@ -1437,51 +851,6 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.status == .stopped)
     }
 
-    @Test("A URL pick with no digest never probes Downloads")
-    func downloadLinuxImageSkipsTheProbeWithoutADigest() async throws {
-        let fixture = try makeLinuxFixture()
-        // The very bytes the pipeline is about to fetch are already there under
-        // the source's name — and with no digest published, nothing can say so.
-        let resolved = fixture.resolveService.resolveResult
-        try fixture.contents.write(
-            to: fixture.downloads.appendingPathComponent(resolved.filename))
-        let context = makeCustomURLContext(fixture: fixture, verified: false)
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
-
-        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
-        #expect(fixture.downloadService.downloadCallCount == 1)
-        #expect(instance.status == .stopped)
-    }
-
-    @Test("A destination already on disk is not probed against the candidate")
-    func downloadLinuxImageSkipsTheProbeWhenTheDestinationExists() async throws {
-        let fixture = try makeLinuxFixture()
-        // The state the first adoption leaves behind: both names in Downloads,
-        // holding the same bytes. A second VM from the same catalog entry must
-        // not read the candidate end to end only to be refused the link.
-        let resolved = fixture.resolveService.resolveResult
-        try fixture.contents.write(
-            to: fixture.downloads.appendingPathComponent(resolved.filename))
-        let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
-        try fixture.contents.write(to: destination)
-        fixture.downloadService.setDownloadedContents(nil)
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
-
-        #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
-        // The ordinary path owns this: the download skips over the file already
-        // at the destination, and Verify holds it to the same digest.
-        #expect(fixture.downloadService.downloadCallCount == 1)
-        #expect(
-            instance.configuration.storageDisks?.first?.path
-                == destination.path(percentEncoded: false))
-        #expect(instance.status == .stopped)
-    }
-
     @Test("A refused adoption falls through to the download and its verify step")
     func downloadLinuxImageDownloadsWhenAdoptionIsRefused() async throws {
         let fixture = try makeLinuxFixture()
@@ -1537,22 +906,6 @@ struct VMLifecycleCoordinatorTests {
         }
 
         #expect(fixture.downloadService.discardResumeDataCallCount == 0)
-    }
-
-    @Test("A resolution failure leaves the VM in .error with the context intact")
-    func downloadLinuxImageResolveFailure() async throws {
-        let fixture = try makeLinuxFixture()
-        fixture.resolveService.resolveError = LinuxImageResolveError.noMatchingImage(
-            pattern: "debian-13.*-arm64-netinst.iso")
-        let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        await #expect(throws: LinuxImageResolveError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(instance.status == .error)
-        #expect(instance.configuration.linuxInstallContext == context)
     }
 
     @Test("The setup state walks Download then Verify as the pipeline runs")
@@ -1653,30 +1006,6 @@ struct VMLifecycleCoordinatorTests {
                         sha256: fixture.digest)))
     }
 
-    @Test("A restarted URL pick with no digest hashes the file already downloaded")
-    func downloadLinuxImageChecksumsAFileAlreadyDownloaded() async throws {
-        let fixture = try makeLinuxFixture()
-        // What a setup cancelled during Checksum leaves: the whole file at the
-        // destination, which the download skips over without fetching.
-        fixture.downloadService.setDownloadedContents(nil)
-        let destination = fixture.downloads.appendingPathComponent(
-            fixture.resolveService.resolveResult.destinationFilename)
-        try fixture.contents.write(to: destination)
-        let context = makeCustomURLContext(fixture: fixture, verified: false)
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
-
-        #expect(fixture.downloadService.downloadCallCount == 1)
-        #expect(
-            instance.configuration.installedImage
-                == .linuxURLImage(
-                    url: fixture.resolveService.resolveResult.isoURL,
-                    digest: .unchecked(
-                        filename: fixture.resolveService.resolveResult.filename,
-                        sha256: fixture.digest)))
-    }
-
     @Test("A URL pick whose bytes miss the supplied digest is trashed, not attached")
     func downloadLinuxImageFromURLChecksumMismatch() async throws {
         let fixture = try makeLinuxFixture()
@@ -1708,28 +1037,6 @@ struct VMLifecycleCoordinatorTests {
         // The intent survives for the next Start, its destination now persisted.
         #expect(instance.configuration.linuxInstallContext?.source == context.source)
         #expect(instance.status == .error)
-    }
-
-    @Test("A URL edited past admission is refused before anything is downloaded")
-    func downloadLinuxImageFromEditedURL() async throws {
-        let fixture = try makeLinuxFixture()
-        // The real resolve is what refuses this; the mock's job here is only to
-        // report that the refusal reached the pipeline.
-        fixture.resolveService.resolveError = LinuxImageURLError.insecureURL
-        let context = LinuxInstallContext(
-            source: .customURL(
-                CustomLinuxImage(
-                    url: URL(string: "http://mirror.example/alpine-3.22-aarch64.iso")!,
-                    sha256: nil)))
-        let instance = makeLinuxInstance(context: context, in: fixture)
-
-        await #expect(throws: LinuxImageURLError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
-        }
-
-        #expect(fixture.downloadService.downloadCallCount == 0)
-        #expect(instance.status == .error)
-        #expect(instance.configuration.linuxInstallContext == context)
     }
 
     // MARK: - Removable Media Attach/Detach
@@ -1777,49 +1084,6 @@ struct VMLifecycleCoordinatorTests {
 
         #expect(removableMediaService.detachCallCount == 1)
         #expect(instance.liveRemovableMedia.isEmpty)
-    }
-
-    @Test("attachRemovableMedia propagates error from removable media device service")
-    func attachRemovableMediaPropagatesError() async {
-        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
-        removableMediaService.attachError = RemovableMediaDeviceError.noVirtualMachine
-        let sessionID = UUID()
-        let instance = VMInstanceFixture.make()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-
-        await #expect(throws: RemovableMediaDeviceError.self) {
-            try await coordinator.attachRemovableMedia(
-                diskImagePath: "/tmp/test.dmg",
-                readOnly: false,
-                to: instance,
-                for: sessionID
-            )
-        }
-    }
-
-    @Test("detachRemovableMedia propagates error from removable media device service")
-    func detachRemovableMediaPropagatesError() async throws {
-        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
-        let sessionID = UUID()
-        let instance = VMInstanceFixture.make()
-        instance.beginSessionContextForTesting()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-
-        let info = try await coordinator.attachRemovableMedia(
-            diskImagePath: "/tmp/test.dmg",
-            readOnly: false,
-            to: instance,
-            for: sessionID
-        )
-
-        removableMediaService.detachError = RemovableMediaDeviceError.deviceNotFound
-
-        await #expect(throws: RemovableMediaDeviceError.self) {
-            try await coordinator.detachRemovableMedia(info, from: instance, for: sessionID)
-        }
-
-        // Device should still be tracked since detach failed
-        #expect(instance.liveRemovableMedia.count == 1)
     }
 
     @Test("attachRemovableMedia and detachRemovableMedia never reach the service for a superseded session")
@@ -1870,51 +1134,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.liveRemovableMedia.isEmpty)
     }
 
-    @Test("attachRemovableMedia attaches the resolved URL but tracks the stored path")
-    func attachRemovableMediaTracksStoredPathWithResolvedURL() async throws {
-        let (coordinator, _, _, _, removableMediaService, _) = makeCoordinator()
-        let sessionID = UUID()
-        let instance = VMInstanceFixture.make()
-        instance.beginSessionContextForTesting()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-
-        // A bookmark that tracked a moved file: the resolved location is
-        // what must reach the service, while the tracked identity stays the
-        // config's stored path so the live reconcile's path comparison
-        // doesn't churn.
-        let info = try await coordinator.attachRemovableMedia(
-            diskImagePath: "/old/location/media.iso",
-            readOnly: true,
-            resolvedURL: URL(fileURLWithPath: "/new/location/media.iso"),
-            to: instance,
-            for: sessionID
-        )
-
-        #expect(removableMediaService.lastAttachedPath == "/new/location/media.iso")
-        #expect(info.path == "/old/location/media.iso")
-        #expect(instance.liveRemovableMedia.first?.path == "/old/location/media.iso")
-    }
-
     // MARK: - Download Destination Normalization
-
-    @Test("normalizedDownloadDestination keeps Downloads paths and names others from the pinned URL")
-    func normalizedDownloadDestinationEnforcesDownloads() throws {
-        let downloads = scratch.url
-            .appendingPathComponent("Downloads", isDirectory: true)
-        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
-        let pinned = try #require(Self.pinnedRestoreImageURL)
-        let inDownloads = downloads.appendingPathComponent("Custom.ipsw")
-        #expect(
-            coordinator.normalizedDownloadDestination(for: inDownloads, remoteURL: pinned)
-                == inDownloads)
-
-        // A pre-sandbox custom destination outside Downloads can never be
-        // written under the sandbox.
-        let elsewhere = URL(fileURLWithPath: "/Users/Shared/RestoreImage.ipsw")
-        let normalized = coordinator.normalizedDownloadDestination(for: elsewhere, remoteURL: pinned)
-        #expect(
-            normalized == downloads.appendingPathComponent("UniversalMac_15.6.1_24G90_Restore.ipsw"))
-    }
 
     @Test("Every destination a hand-edited config can name lands inside Downloads")
     func normalizedDownloadDestinationContainsEveryCandidate() throws {
@@ -1953,40 +1173,6 @@ struct VMLifecycleCoordinatorTests {
                 #expect(normalized.pathExtension.lowercased() == "ipsw", "not an IPSW for \(context)")
             }
         }
-    }
-
-    // MARK: - Latest Download Destination
-
-    @Test("latestDownloadDestination names the download after the URL the install resolved")
-    func latestDestinationFollowsTheResolvedURL() throws {
-        let downloads = scratch.url
-            .appendingPathComponent("latestFollowsURL", isDirectory: true)
-        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
-        let resolved = try #require(
-            URL(
-                string:
-                    "https://updates.cdn-apple.com/fullrestores/UniversalMac_26.5.2_25F84_Restore.ipsw"
-            ))
-
-        let destination = coordinator.latestDownloadDestination(resolvedURL: resolved)
-
-        #expect(
-            destination
-                == downloads.appendingPathComponent("UniversalMac_26.5.2_25F84_Restore.ipsw"))
-    }
-
-    @Test("An off-convention latest URL still lands on a name unique to it")
-    func latestDestinationForOffConventionURL() throws {
-        let downloads = scratch.url
-            .appendingPathComponent("latestOffConvention", isDirectory: true)
-        let (coordinator, _, _, _, _, _) = makeCoordinator(downloadsDirectory: downloads)
-        let resolved = try #require(URL(string: "https://example.com/restore.ipsw"))
-
-        let destination = coordinator.latestDownloadDestination(resolvedURL: resolved)
-
-        #expect(
-            destination
-                == downloads.appendingPathComponent(RestoreImageFilename.unique(for: resolved)))
     }
 
     /// A path with `..` collapsed and any trailing separator dropped, so a

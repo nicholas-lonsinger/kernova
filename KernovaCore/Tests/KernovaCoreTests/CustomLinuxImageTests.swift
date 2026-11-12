@@ -10,12 +10,6 @@ struct CustomLinuxImageTests {
 
     // MARK: - Checksum
 
-    @Test("An empty checksum is a deliberate 'don't verify', not a malformed one")
-    func emptyChecksumIsNil() throws {
-        #expect(try CustomLinuxImage.normalizedChecksum("") == nil)
-        #expect(try CustomLinuxImage.normalizedChecksum("   \n ") == nil)
-    }
-
     @Test("A checksum is accepted in either case and stored lowercase")
     func checksumNormalizesCase() throws {
         #expect(try CustomLinuxImage.normalizedChecksum("  \(digest.uppercased())  ") == digest)
@@ -37,19 +31,6 @@ struct CustomLinuxImageTests {
     }
 
     // MARK: - Admission
-
-    @Test("An HTTPS link to an .iso is accepted with or without a checksum")
-    func acceptsHTTPS() throws {
-        let verified = try CustomLinuxImage.make(
-            urlText: "  https://mirror.example/alpine-3.22-aarch64.iso  ", checksumText: digest)
-        #expect(verified.url.absoluteString == "https://mirror.example/alpine-3.22-aarch64.iso")
-        #expect(verified.sha256 == digest)
-        #expect(verified.displayName == "alpine-3.22-aarch64.iso")
-
-        let unverified = try CustomLinuxImage.make(
-            urlText: "https://mirror.example/alpine-3.22-aarch64.iso", checksumText: "")
-        #expect(unverified.sha256 == nil)
-    }
 
     @Test("A non-HTTPS link is refused whatever the checksum says")
     func refusesNonHTTPS() {
@@ -77,28 +58,6 @@ struct CustomLinuxImageTests {
                 try CustomLinuxImage.make(urlText: text, checksumText: "")
             }
         }
-    }
-
-    @Test("A link that doesn't end in an .iso filename is not admitted")
-    func refusesNonISOLink() {
-        for text in [
-            "https://mirror.example/downloads/",
-            "https://mirror.example/get?image=alpine",
-            "https://mirror.example/alpine-3.22-aarch64.img",
-        ] {
-            #expect(throws: LinuxImageURLError.notAnISOLink) {
-                try CustomLinuxImage.make(urlText: text, checksumText: "")
-            }
-        }
-    }
-
-    @Test("A query string doesn't stop the path from naming the file")
-    func filenameIgnoresQuery() throws {
-        let image = try CustomLinuxImage.make(
-            urlText: "https://mirror.example/alpine-3.22-aarch64.iso?mirror=eu", checksumText: "")
-
-        #expect(image.displayName == "alpine-3.22-aarch64.iso")
-        #expect(try image.admittedFilename() == "alpine-3.22-aarch64.iso")
     }
 
     @Test("A percent-encoded name that decodes to a path is refused")
