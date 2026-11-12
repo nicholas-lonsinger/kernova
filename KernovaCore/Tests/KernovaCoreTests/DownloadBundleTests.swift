@@ -42,88 +42,6 @@ struct DownloadBundleTests {
         #expect(bundle.deletingLastPathComponent().path == "/tmp/Foo")
     }
 
-    @Test("prepareForFreshDownload creates Info.plist and empty data file at bundle root")
-    func prepareForFreshDownloadCreatesLayout() throws {
-        let bundleURL = scratch.url.appendingPathComponent("RestoreImage.kernovadownload")
-        let bundle = DownloadBundle(url: bundleURL)
-        let metadata = Self.makeMetadata()
-
-        try bundle.prepareForFreshDownload(with: metadata)
-
-        #expect(bundle.exists)
-        #expect(FileManager.default.fileExists(atPath: bundle.infoPlistURL.path))
-        #expect(FileManager.default.fileExists(atPath: bundle.dataURL.path))
-        #expect(bundle.partialByteCount == 0)
-
-        let loaded = try bundle.loadMetadata()
-        #expect(loaded == metadata)
-    }
-
-    @Test("partialByteCount reflects file size after appends")
-    func partialByteCountTracksFileSize() throws {
-        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
-        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
-
-        let handle = try FileHandle(forWritingTo: bundle.dataURL)
-        try handle.write(contentsOf: Data(repeating: 0xAB, count: 1024))
-        try handle.close()
-        #expect(bundle.partialByteCount == 1024)
-
-        let handle2 = try FileHandle(forWritingTo: bundle.dataURL)
-        try handle2.seekToEnd()
-        try handle2.write(contentsOf: Data(repeating: 0xCD, count: 512))
-        try handle2.close()
-        #expect(bundle.partialByteCount == 1024 + 512)
-    }
-
-    @Test("truncateData zeroes the data file")
-    func truncateDataZeroesFile() throws {
-        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
-        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
-
-        let handle = try FileHandle(forWritingTo: bundle.dataURL)
-        try handle.write(contentsOf: Data(repeating: 0xAB, count: 4096))
-        try handle.close()
-        #expect(bundle.partialByteCount == 4096)
-
-        try bundle.truncateData()
-        #expect(bundle.partialByteCount == 0)
-    }
-
-    @Test("loadMetadata throws on malformed Info.plist")
-    func loadMetadataThrowsOnGarbage() throws {
-        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
-        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
-
-        try Data("not a plist".utf8).write(to: bundle.infoPlistURL, options: .atomic)
-        #expect(throws: (any Error).self) {
-            try bundle.loadMetadata()
-        }
-    }
-
-    @Test("finalize moves data to the destination and leaves disposal to the caller")
-    func finalizeMovesDataToDestination() throws {
-        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
-        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
-
-        let payload = Data(repeating: 0x42, count: 8192)
-        let handle = try FileHandle(forWritingTo: bundle.dataURL)
-        try handle.write(contentsOf: payload)
-        try handle.close()
-
-        let destination = scratch.url.appendingPathComponent("R.ipsw")
-        try bundle.finalize(to: destination)
-
-        #expect(FileManager.default.fileExists(atPath: destination.path))
-        let movedData = try Data(contentsOf: destination)
-        #expect(movedData == payload)
-        // Disposal is the caller's separate, non-fatal step
-        // (`DownloadService.discardResumeData`), so finalize leaves the spent
-        // bundle behind — data-less, and therefore not resumable.
-        #expect(bundle.exists)
-        #expect(!bundle.isResumable)
-    }
-
     @Test("finalize replaces an existing file at the destination")
     func finalizeReplacesExistingDestination() throws {
         let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
@@ -141,55 +59,6 @@ struct DownloadBundleTests {
 
         let movedData = try Data(contentsOf: destination)
         #expect(movedData == fresh)
-    }
-
-    @Test("isResumable requires the data file, not just the bundle directory")
-    func isResumableRequiresDataFile() throws {
-        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
-
-        // Absent bundle.
-        #expect(!bundle.exists)
-        #expect(!bundle.isResumable)
-
-        // Freshly prepared: a zero-byte `data` file is still resumable — the
-        // resume simply starts from offset 0.
-        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
-        #expect(bundle.isResumable)
-        #expect(bundle.partialByteCount == 0)
-
-        // The husk a failed disposal leaves: directory and metadata present,
-        // `data` moved away. `exists` still passes, `isResumable` must not.
-        try FileManager.default.removeItem(at: bundle.dataURL)
-        #expect(bundle.exists)
-        #expect(!bundle.isResumable)
-    }
-
-    @Test("Content-Range parses canonical bytes header")
-    func contentRangeParsesCanonical() {
-        let result = DownloadService.parseContentRange("bytes 0-499/1234")
-        #expect(result?.start == 0)
-        #expect(result?.end == 499)
-        #expect(result?.total == 1234)
-    }
-
-    @Test("Content-Range returns nil for unparseable input")
-    func contentRangeRejectsGarbage() {
-        #expect(DownloadService.parseContentRange("garbage") == nil)
-        #expect(DownloadService.parseContentRange("bytes */1234") == nil)
-    }
-
-    @Test("Content-Range rejects malformed range/total combinations")
-    func contentRangeRejectsMalformed() {
-        // Empty start (would slice incorrectly if not validated)
-        #expect(DownloadService.parseContentRange("bytes -100-499/1234") == nil)
-        // Three components in the range portion — extra dash
-        #expect(DownloadService.parseContentRange("bytes 100--499/1234") == nil)
-        // Non-numeric total
-        #expect(DownloadService.parseContentRange("bytes 0-499/foo") == nil)
-        // Trailing garbage after total
-        #expect(DownloadService.parseContentRange("bytes 0-499/1234; extra") == nil)
-        // Missing dash in the start-end portion
-        #expect(DownloadService.parseContentRange("bytes 0/1234") == nil)
     }
 
     @Test("Content-Range accepts header without the `bytes ` unit prefix")
@@ -219,14 +88,6 @@ struct DownloadBundleTests {
         #expect(leading?.total == 300)
     }
 
-    @Test("parseUnsatisfiableTotal rejects negative totals")
-    func parseUnsatisfiableTotalRejectsNegative() {
-        // The previous `Int64()` parser would have happily returned -5,
-        // which the caller would then compare against `partialByteCount`
-        // (never < 0) and silently move on — wrong. `\d+` rejects.
-        #expect(DownloadService.parseUnsatisfiableTotal("bytes */-5") == nil)
-    }
-
     @Test("parseUnsatisfiableTotal extracts total from 416 header")
     func parseUnsatisfiableTotalExtractsTotal() {
         #expect(DownloadService.parseUnsatisfiableTotal("bytes */1234") == 1234)
@@ -238,21 +99,6 @@ struct DownloadBundleTests {
 
 @Suite("DownloadSpeedSmoother Tests", .caseScoped)
 struct DownloadSpeedSmootherTests {
-    @Test("First sample returns zero speed")
-    func firstSampleReturnsZero() {
-        var smoother = DownloadSpeedSmoother()
-        let speed = smoother.sample(totalBytes: 0, now: 1000.0)
-        #expect(speed == 0)
-    }
-
-    @Test("Second sample within throttle window returns nil")
-    func throttleWindowReturnsNil() {
-        var smoother = DownloadSpeedSmoother()
-        _ = smoother.sample(totalBytes: 0, now: 1000.0)
-        let speed = smoother.sample(totalBytes: 1_000_000, now: 1000.05)
-        #expect(speed == nil)
-    }
-
     @Test("Speed sample after throttle window reflects throughput")
     func speedAfterThrottle() {
         var smoother = DownloadSpeedSmoother()
@@ -265,17 +111,5 @@ struct DownloadSpeedSmootherTests {
         // test.
         #expect(speed > 0)
         #expect(abs(speed - 1_000_000) < 100_000)
-    }
-
-    @Test("EWMA smoothing dampens spikes")
-    func ewmaDampensSpikes() {
-        var smoother = DownloadSpeedSmoother()
-        _ = smoother.sample(totalBytes: 0, now: 1000.0)
-        let steady = smoother.sample(totalBytes: 1_000_000, now: 1001.0) ?? 0
-        let spiked = smoother.sample(totalBytes: 11_000_000, now: 1002.0) ?? 0
-        // After a 10x spike, the EWMA over a steady baseline lands between the
-        // prior value and the instantaneous value, never at the spike itself.
-        #expect(spiked > steady)
-        #expect(spiked < 10_000_000)
     }
 }

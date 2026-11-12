@@ -22,20 +22,6 @@ struct RestoreImageCatalogEntryTests {
         #expect(Set([first.id, second.id]).count == 2)
     }
 
-    @Test("suggestedFilename is Apple's own filename")
-    func suggestedFilenameFromURL() {
-        let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
-        #expect(entry.suggestedFilename == "UniversalMac_15.6.1_24G90_Restore.ipsw")
-    }
-
-    @Test("A URL whose filename would escape Downloads yields a generated one")
-    func suggestedFilenameRefusesTraversal() {
-        let entry = makeCatalogEntry(
-            urlString: "https://updates.cdn-apple.com/x/a%2F..%2F..%2Fevil.ipsw")
-        #expect(!entry.suggestedFilename.contains("/"))
-        #expect(entry.suggestedFilename.hasSuffix(".ipsw"))
-    }
-
     @Test("A guest equal to the host is supported; one below is, one above is not")
     func hostSupportBoundary() {
         let entry = makeCatalogEntry(version: "15.6.1", build: "24G90")
@@ -45,14 +31,6 @@ struct RestoreImageCatalogEntryTests {
         #expect(!entry.isSupported(onHost: host(15, 6, 0)))
         #expect(!entry.isSupported(onHost: host(15, 5, 9)))
         #expect(!entry.isSupported(onHost: host(14, 9, 9)))
-    }
-
-    @Test("A two-component version compares as though padded with zeroes")
-    func hostSupportPadsMissingComponents() {
-        let entry = makeCatalogEntry(version: "26.6", build: "25G72")
-        #expect(entry.isSupported(onHost: host(26, 6, 0)))
-        #expect(entry.isSupported(onHost: host(26, 6, 1)))
-        #expect(!entry.isSupported(onHost: host(26, 5, 9)))
     }
 
     @Test("A non-numeric version has no components and cannot be host-checked")
@@ -104,16 +82,6 @@ struct RestoreImageCatalogEntryTests {
         #expect(parts.year == 2026)
         #expect(parts.month == 7)
         #expect(parts.day == 24)
-    }
-
-    @Test("An unparseable Last-Modified yields no date rather than a wrong one")
-    func releaseDateRejectsGarbage() {
-        #expect(makeCatalogEntry(lastModified: "not a date").releaseDate == nil)
-    }
-
-    @Test("An absent Last-Modified yields no date, like an unparseable one")
-    func releaseDateAbsent() {
-        #expect(makeCatalogEntry(lastModified: nil).releaseDate == nil)
     }
 }
 

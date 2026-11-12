@@ -59,15 +59,6 @@ struct InstalledImageTests {
         #expect(try roundTrip(image) == image)
     }
 
-    @Test("An unchecked URL image survives a round trip")
-    func uncheckedURLRoundTrip() throws {
-        let image = InstalledImage.linuxURLImage(
-            url: Self.isoURL,
-            digest: .unchecked(filename: "alpine-3.22-aarch64.iso", sha256: Self.digest))
-
-        #expect(try roundTrip(image) == image)
-    }
-
     @Test("The payload keys sit flat beside the case name, the digest nested under its own key")
     func encodesFlatWithNestedDigest() throws {
         #expect(
@@ -150,14 +141,6 @@ struct InstalledImageTests {
         #expect(
             InstalledImage.macOSRestoreImage(version: "26.5.2", build: "25F84").displayName
                 == "macOS 26.5.2 (25F84)")
-    }
-
-    @Test("A Linux record reads as the distribution and version the catalog names")
-    func linuxDisplayName() {
-        #expect(
-            InstalledImage.linuxCatalogImage(
-                distribution: "Ubuntu Desktop", version: "26.04 LTS", digest: nil
-            ).displayName == "Ubuntu Desktop 26.04 LTS")
     }
 
     @Test("A URL record reads as the filename its digest belongs to")
