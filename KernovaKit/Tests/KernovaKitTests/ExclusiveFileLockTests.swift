@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import KernovaTestSupport
+import System
 import Testing
 
 @testable import KernovaKit
@@ -44,5 +45,15 @@ struct ExclusiveFileLockTests {
     func descriptorIsCloseOnExec() throws {
         let held = try #require(try ExclusiveFileLock.tryAcquire(at: makeDirectory()))
         #expect(fcntl(held.descriptor, F_GETFD) & FD_CLOEXEC != 0)
+    }
+
+    @Test("nothing at the path throws rather than reporting a held lock")
+    func missingPathThrows() {
+        #expect(throws: Errno.noSuchFileOrDirectory) {
+            _ = try ExclusiveFileLock.tryAcquire(at: scratch.url.appendingPathComponent("absent"))
+        }
+        #expect(throws: Errno.noSuchFileOrDirectory) {
+            _ = try ExclusiveFileLock.isHeld(at: scratch.url.appendingPathComponent("absent"))
+        }
     }
 }

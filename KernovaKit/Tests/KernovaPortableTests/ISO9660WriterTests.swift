@@ -135,6 +135,14 @@ struct ISO9660WriterTests {
         #expect(reader.files.map(\.bytes) == [[7]])
     }
 
+    @Test("A file whose contents write other than its declared size fails the write")
+    func sizeMismatch() {
+        let entry = ISO9660Entry(name: "short", permissions: 0o644, size: 10) { sink in try sink([1, 2, 3]) }
+        #expect(throws: ISO9660Error.sizeMismatch(name: "short", declared: 10, written: 3)) {
+            try Self.write([entry])
+        }
+    }
+
     #if os(Linux)
     /// xorriso, the reference reader on Linux CI, lists the names and modes, and extracts the bytes.
     @Test("xorriso lists the names and modes, and osirrox extracts the same bytes and modes")

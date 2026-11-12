@@ -11,6 +11,14 @@ import Testing
 /// exit with.
 @Suite("KernovaLogger's process sink", .caseScoped)
 struct KernovaLoggerProcessSinkTests {
+    @Test("A second bootstrap of the process sink stops the process")
+    func secondBootstrapTraps() async {
+        await #expect(processExitsWith: .failure) {
+            KernovaLogger.bootstrapProcessSink { _, _, _, _ in }
+            KernovaLogger.bootstrapProcessSink { _, _, _, _ in }
+        }
+    }
+
     @Test("A logger with no sink of its own forwards to the process sink")
     func loggerWithoutASinkReachesTheProcessSink() async {
         await #expect(processExitsWith: .exitCode(42)) {

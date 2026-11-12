@@ -35,4 +35,18 @@ struct MalformedInputTests {
         guard let message = try? DBusReceivedMessage.decode(bytes) else { return }
         _ = try message.decodeBody()
     }
+
+    @Test("A connection fed a corrupted stream fails, and stays failed", arguments: corpus)
+    func connectionFailsOnCorruption(bytes: [UInt8]) throws {
+        var corrupted = bytes
+        corrupted[3] = 2  // A protocol version this side does not speak.
+        var connection = try readyConnection()
+        #expect(throws: DBusConnectionError.protocolViolation(.unsupportedProtocolVersion(2))) {
+            try connection.receive(corrupted)
+        }
+        #expect(throws: DBusConnectionError.protocolViolation(.unsupportedProtocolVersion(2))) {
+            try connection.receive(bytes)
+        }
+        #expect(connection.phase == .failed(.protocolViolation(.unsupportedProtocolVersion(2))))
+    }
 }

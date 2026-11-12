@@ -80,4 +80,17 @@ struct AppCopyClaimTests {
             held.socketPath
                 == (try KernovaAppGroup.CopyFiles(forAppBundle: bundle, in: container).socketPath))
     }
+
+    @Test("A copy that is not there cannot be claimed")
+    func missingCopyIsUnavailable() throws {
+        let container = try makeContainer(in: scratch.url)
+        let gone = scratch.url.appendingPathComponent("Kernova.app", isDirectory: true)
+
+        guard case .unavailable(let reason) = AppCopyClaim.acquire(forAppBundle: gone, in: container)
+        else {
+            Issue.record("a missing copy was not reported unavailable")
+            return
+        }
+        #expect(reason == .unnamed(.unresolvableBundle(.noSuchFileOrDirectory)))
+    }
 }

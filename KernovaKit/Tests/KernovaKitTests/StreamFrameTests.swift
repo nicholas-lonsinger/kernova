@@ -17,6 +17,19 @@ struct StreamFrameTests {
         #expect(framed.suffix(payload.count) == payload)
     }
 
+    @Test("encode rejects payloads above maxPayloadSize")
+    func encodeRejectsOversize() {
+        let oversize = Data(count: StreamFrame.maxPayloadSize + 1)
+        #expect(
+            throws: StreamFrameError.frameTooLarge(
+                declaredSize: StreamFrame.maxPayloadSize + 1,
+                maxAllowed: StreamFrame.maxPayloadSize
+            )
+        ) {
+            try StreamFrame.encode(oversize)
+        }
+    }
+
     // MARK: - decode
 
     @Test("decoder reassembles a frame split across many feeds")
@@ -54,6 +67,16 @@ struct StreamFrameTests {
         decoder.feed(Data([0x00, 0x00, 0x00, 0x00]))
         #expect(try decoder.nextFrame() == Data())
         #expect(decoder.isEmpty)
+    }
+
+    @Test("decoder throws frameTooLarge when declared size exceeds the cap")
+    func decoderRejectsOversize() {
+        var decoder = StreamFrameDecoder()
+        // 0xFFFFFFFF declared length — way over the 16 MiB cap.
+        decoder.feed(Data([0xFF, 0xFF, 0xFF, 0xFF]))
+        #expect(throws: StreamFrameError.self) {
+            _ = try decoder.nextFrame()
+        }
     }
 
     // MARK: - chunk-sized frames (#377)
