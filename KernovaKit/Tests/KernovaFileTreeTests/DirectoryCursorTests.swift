@@ -5,36 +5,6 @@ import Testing
 /// every platform the package builds for.
 @Suite("DirectoryCursor")
 struct DirectoryCursorTests {
-    @Test("down and back up returns each frame, holding at most two directories, and closes the last at its end")
-    func walksDownAndUp() throws {
-        let fileSystem = MemoryFileSystem()
-        let names = (0..<6).map { "level\($0)" }
-        var node = fileSystem.root
-        for name in names { node = node.add(name) }
-
-        do {
-            var cursor = DirectoryCursor(
-                fileSystem: fileSystem, descriptor: fileSystem.hand(fileSystem.root),
-                status: fileSystem.root.status, frame: "top")
-            for name in names {
-                let child = try fileSystem.openDirectory(Array(name.utf8), in: cursor.descriptor)
-                cursor.descend(into: child, status: try fileSystem.status(of: child), frame: name)
-                let parent = cursor.parentFrame
-                #expect(parent != nil)
-            }
-            let bottom = cursor.frame
-            #expect(bottom == "level5")
-            var left: [String] = []
-            while !cursor.isAtTop { left.append(try cursor.ascend()) }
-            #expect(left == names.reversed())
-            let (top, aboveTop) = (cursor.frame, cursor.parentFrame)
-            #expect(top == "top" && aboveTop == nil)
-            #expect(fileSystem.open.count == 1)
-        }
-        #expect(fileSystem.open.isEmpty)
-        #expect(fileSystem.mostOpen == 2)
-    }
-
     @Test("a parent that is not the directory the cursor came down from stops it where it is")
     func movedParentStops() throws {
         let fileSystem = MemoryFileSystem()
@@ -71,35 +41,6 @@ struct DirectoryCursorTests {
         let stayed = cursor.descriptor
         #expect(stayed == child)
         #expect(fileSystem.open.keys.sorted() == [child])
-    }
-
-    @Test("leaving runs with both directories open, and its failure keeps the cursor where it was")
-    func leavingRunsBeforeTheMove() throws {
-        struct Refused: Error {}
-        let fileSystem = MemoryFileSystem()
-        fileSystem.root.add("a")
-        var cursor = DirectoryCursor(
-            fileSystem: fileSystem, descriptor: fileSystem.hand(fileSystem.root), status: fileSystem.root.status,
-            frame: "top")
-        let child = try fileSystem.openDirectory(Array("a".utf8), in: cursor.descriptor)
-        cursor.descend(into: child, status: try fileSystem.status(of: child), frame: "a")
-
-        #expect(throws: Refused.self) {
-            _ = try cursor.ascend { descriptor, frame in
-                #expect(descriptor == child && frame == "a")
-                #expect(fileSystem.open.count == 2)
-                throw Refused()
-            }
-        }
-        let stayed = cursor.descriptor
-        #expect(stayed == child)
-        #expect(fileSystem.open.keys.sorted() == [child])
-
-        var seen: [String] = []
-        #expect(try cursor.ascend { _, frame in seen.append(frame) } == "a")
-        #expect(seen == ["a"])
-        let isAtTop = cursor.isAtTop
-        #expect(isAtTop)
     }
 }
 

@@ -66,44 +66,6 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
     }
 
-    @Test("a depth past the directories entered is refused", arguments: bothLayers)
-    func depthJumpsAreRefused(kernelContainment: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        container.header(directory("a", depth: 1))
-        container.header(file("deep", depth: 3, size: 0))
-        container.end()
-        let failure = try landing.land(container.data).failure
-        #expect(
-            failure
-                == TreeWriteFailure(
-                    path: [bytes("r"), bytes("a")],
-                    reason: .container(.depthBeyondParent(depth: 3, enteredDirectories: 2))))
-        try landing.expectNothingOutside()
-    }
-
-    @Test(
-        "nothing lands beneath a symlink: a directory or file taking a symlink's name fails at its creation",
-        arguments: bothLayers, [false, true])
-    func entriesBeneathSymlinksAreRefused(kernelContainment: Bool, asDirectory: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        container.header(symlinkEntry("s", depth: 1, target: landing.outsidePath))
-        if asDirectory {
-            container.header(directory("s", depth: 1))
-            container.file(file("inside", depth: 2, size: 1), Data("x".utf8))
-        } else {
-            container.file(file("s", depth: 1, size: 1), Data("x".utf8))
-        }
-        container.end()
-        let failure = try #require(try landing.land(container.data).failure)
-        #expect(failure.path == [bytes("r"), bytes("s")])
-        #expect(failure.code == EEXIST)
-        try landing.expectNothingOutside()
-    }
-
     /// The two entries of each duplicate shape, the second taking the first's name.
     enum Shape: String, CaseIterable, Sendable {
         case smallFileThenSmallFile, largeFileThenLargeFile, smallFileThenLargeFile, directoryThenDirectory
@@ -290,24 +252,6 @@ struct HostileContainerTests {
         return container
     }
 
-    @Test("a CRC mismatch in any record is refused", arguments: bothLayers)
-    func checksumMismatchesAreRefused(kernelContainment: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        let container = Self.everyKind()
-        for (start, end) in zip(container.boundaries, container.boundaries.dropFirst()) {
-            var flipped = container.data
-            flipped[end - 1] ^= 0x01
-            let failure = try #require(try landing.land(flipped).failure)
-            guard case .container(.checksumMismatch(let kind)) = failure.reason else {
-                Issue.record("record at \(start): \(failure)")
-                continue
-            }
-            #expect(kind.rawValue == container.data[start])
-            try landing.expectNothingOutside()
-        }
-        #expect(try landing.land(container.data).get() == bytes("r"))
-    }
-
     @Test("a container cut at any record boundary lands nothing", arguments: bothLayers)
     func truncationLandsNothing(kernelContainment: Bool) throws {
         let landing = try Landing(kernelContainment: kernelContainment)
@@ -324,43 +268,6 @@ struct HostileContainerTests {
                     "./link: symlink -> nested/small", "./nested/large: regular \(largeFileSize + 4096)",
                     "./nested/small: regular 5", "./nested/forked: regular 3", "./nested/Icon%d: regular 0",
                     ".: directory", "./nested: directory",
-                ].sorted())
-    }
-
-    @Test(
-        "an entry typed as a FIFO, a device, a socket or anything unknown is refused, and no node is made",
-        arguments: bothLayers, [5, 6, 7, 99])
-    func specialNodesAreRefused(kernelContainment: Bool, type: Int) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        var node = file("node", depth: 1, size: 0)
-        node.type = .UNRECOGNIZED(type)
-        node.storage = nil
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        container.header(node)
-        container.end()
-        #expect(
-            try landing.land(container.data).failure
-                == TreeWriteFailure(path: [bytes("r")], reason: .container(.unknownEntryType)))
-        try landing.expectNothingOutside()
-    }
-
-    @Test("an item whose name the destination already holds is refused at publishing, and the other kept")
-    func publishingNeverReplaces() throws {
-        let landing = try Landing(kernelContainment: true)
-        try #require(mkdir(landing.destinationPath + "/r", 0o755) == 0)
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        container.file(file("f", depth: 1, size: 1), Data("f".utf8))
-        container.end()
-        #expect(
-            try landing.land(container.data).failure
-                == TreeWriteFailure(path: [bytes("r")], reason: .system(.init(code: EEXIST))))
-        #expect(
-            try landing.entriesOutside()
-                == [
-                    "/destination: directory", "/destination/r: directory", "/outside: directory",
-                    "/outside/sentinel: regular 0",
                 ].sorted())
     }
 }

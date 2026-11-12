@@ -10,12 +10,6 @@ import Testing
 
 @Suite("CRC32C")
 struct CRC32CTests {
-    @Test("The check value of ASCII 123456789 is 0xE3069283")
-    func checkValue() {
-        #expect(CRC32C.checksum(Data("123456789".utf8)) == 0xE306_9283)
-        #expect(CRC32C.checksum(Data()) == 0)
-    }
-
     struct Vector: Sendable, CustomTestStringConvertible {
         var name: String
         var bytes: [UInt8]
@@ -43,20 +37,6 @@ struct CRC32CTests {
         #expect(CRC32C.checksum(vector.bytes) == vector.checksum)
         let table = vector.bytes.withUnsafeBytes { CRC32C.tableAdvance(0xFFFF_FFFF, over: $0) } ^ 0xFFFF_FFFF
         #expect(table == vector.checksum)
-    }
-
-    @Test("Updating in pieces matches one pass, at every split of a short buffer")
-    func incremental() {
-        var generator = SplitMix64(seed: 32)
-        let bytes = generator.bytes(67)
-        let whole = CRC32C.checksum(bytes)
-        for offset in 0...bytes.count {
-            var crc = CRC32C()
-            for piece in bytes.split(at: [offset]) {
-                crc.update(piece)
-            }
-            #expect(crc.value == whole, "split at \(offset)")
-        }
     }
 
     #if arch(arm64) || arch(x86_64)

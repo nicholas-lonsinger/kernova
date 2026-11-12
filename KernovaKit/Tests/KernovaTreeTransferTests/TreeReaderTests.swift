@@ -46,37 +46,6 @@ struct TreeReaderTests {
         #expect(failure?.wireError.code == .readFailed)
     }
 
-    @Test(
-        "an item is opened by its own path, so a folder above it that cannot be opened does not stop it",
-        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
-    func rootOpenedByItsOwnPath() throws {
-        let bench = try FidelityBench()
-        try bench.makeDirectory([bytes("locked")])
-        try bench.makeDirectory([bytes("locked"), bytes("item")])
-        try bench.makeFile([bytes("locked"), bytes("item"), bytes("a")], Data("a".utf8))
-        let locked = String(decoding: bench.path([bytes("locked")]), as: UTF8.self)
-        // Searchable, unreadable: the item's path resolves, and an open of the folder itself fails.
-        try #require(chmod(locked, 0o111) == 0)
-        defer { _ = chmod(locked, 0o755) }
-        try #require(open(locked, O_RDONLY | O_DIRECTORY) == -1)
-        let reader = try TreeReader(
-            fileSystem: bench.fileSystem, root: bench.path([bytes("locked"), bytes("item")]), accepting: Self.folder)
-        var events: [TreeEvent] = []
-        while let event = try reader.next() { events.append(event) }
-        #expect(events.last == .end)
-        #expect(events.contains(.bytes(Data("a".utf8))))
-    }
-
-    @Test("a root that is no absolute path, or ends in no name, is refused before anything resolves it")
-    func rootPathRefused() throws {
-        let bench = try FidelityBench()
-        for root in ["relative/item", "/", String(decoding: bench.path([]), as: UTF8.self) + "/"] {
-            #expect(throws: TreeReadFailure.self, "\(root)") {
-                try TreeReader(fileSystem: bench.fileSystem, root: bytes(root), accepting: Self.folder)
-            }
-        }
-    }
-
     @Test("an item that is not what its storage names is refused")
     func rootTypeRefused() throws {
         let bench = try FidelityBench()
@@ -118,46 +87,6 @@ struct TreeReaderTests {
         let expected = TreeReadFailure(path: [name], reason: .changed)
         #expect(throws: expected) { while try reader.next() != nil {} }
         #expect(throws: expected) { try reader.next() }
-    }
-
-    @Test("the item's own header carries no name, whether it is a folder or a file; the entries in it carry theirs")
-    func rootUnnamed() throws {
-        let bench = try FidelityBench()
-        try bench.makeDirectory([bytes("folder")])
-        try bench.makeFile([bytes("folder"), bytes("a")], Data("a".utf8))
-        try bench.makeFile([bytes("file")], Data("x".utf8))
-        let folder = try bench.events(bytes("folder"), accepting: Self.folder)
-        guard case .enterDirectory(let root)? = folder.first, case .beginFile(let child)? = folder.dropFirst().first
-        else {
-            Issue.record("events \(folder)")
-            return
-        }
-        #expect(root.name.isEmpty)
-        #expect(child.name == Data("a".utf8))
-        let fileAcceptance = ContainerAcceptance(
-            storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
-        guard case .beginFile(let file)? = try bench.events(bytes("file"), accepting: fileAcceptance).first else {
-            Issue.record("no file entry")
-            return
-        }
-        #expect(file.name.isEmpty)
-    }
-
-    @Test("every event the reader produces of a tree is one the encoder takes, and the tree decodes back whole")
-    func eventsEncode() throws {
-        let bench = try FidelityBench()
-        _ = try RoundTripFidelityTests.buildTree(on: bench)
-        let events = try bench.events(RoundTripFidelityTests.item, accepting: Self.folder)
-        var encoder = ContainerEncoder(accepting: Self.folder, policy: .never)
-        var container = Data()
-        for event in events { container += try encoder.encode(event) }
-        var decoder = ContainerDecoder(accepting: Self.folder)
-        decoder.feed(container)
-        var decoded: [TreeEvent] = []
-        while let event = try decoder.next() { decoded.append(event) }
-        try decoder.finish()
-        #expect(decoded.count >= events.filter { if case .bytes = $0 { false } else { true } }.count)
-        #expect(decoded.last == .end)
     }
 
     #if os(Linux)

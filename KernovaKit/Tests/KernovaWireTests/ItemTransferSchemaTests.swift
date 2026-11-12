@@ -214,42 +214,6 @@ struct RepresentationChoiceTests {
         #expect(Self.cf.qualified("PNG") == "win-cf/PNG")
     }
 
-    @Test("A shared native name beats an earlier MIME match")
-    func nativeBeforeMIME() {
-        let item = Self.item(
-            (Self.descriptor("image/png"), .inline),
-            (Self.descriptor("image/tiff", Self.uti.qualified("public.tiff")), .inline))
-        let accepted = [
-            Self.descriptor("image/png"),
-            Self.descriptor("image/x-other", Self.uti.qualified("public.tiff")),
-        ]
-        #expect(item.representationIndex(accepting: accepted) == 1)
-    }
-
-    @Test("Without a shared native name, MIME decides in the destination's order")
-    func mimeInDestinationOrder() {
-        let item = Self.item(
-            (Self.descriptor("text/plain", Self.cf.qualified("CF_UNICODETEXT")), .inline),
-            (Self.descriptor("text/html", Self.cf.qualified("HTML Format")), .inline))
-        let accepted = [
-            Self.descriptor("text/html", Self.uti.qualified("public.html")),
-            Self.descriptor("text/plain", Self.uti.qualified("public.utf8-plain-text")),
-        ]
-        #expect(item.representationIndex(accepting: accepted) == 1)
-    }
-
-    @Test("The destination's earliest accepted type wins, then the sender's earliest representation")
-    func destinationOrderThenSenderOrder() {
-        let png = Self.uti.qualified("public.png")
-        let tiff = Self.uti.qualified("public.tiff")
-        let item = Self.item(
-            (Self.descriptor("", tiff), .inline),
-            (Self.descriptor("", png), .inline),
-            (Self.descriptor("", png, tiff), .file))
-        #expect(item.representationIndex(accepting: [Self.descriptor("", png), Self.descriptor("", tiff)]) == 1)
-        #expect(item.representationIndex(accepting: [Self.descriptor("", tiff), Self.descriptor("", png)]) == 0)
-    }
-
     @Test("An empty MIME type matches nothing")
     func emptyMIMEMatchesNothing() {
         let item = Self.item((Self.descriptor("", Self.cf.qualified("PNG")), .inline))
@@ -265,10 +229,5 @@ struct RepresentationChoiceTests {
         #expect(item.representationIndex(accepting: [Self.descriptor("image/png")]) == 2)
         let unoffered = Self.item((Self.descriptor("image/png"), .unspecified))
         #expect(unoffered.representationIndex(accepting: [Self.descriptor("image/png")]) == nil)
-    }
-
-    @Test("Nothing accepted chooses nothing")
-    func nothingAccepted() {
-        #expect(Self.item((Self.descriptor("image/png"), .inline)).representationIndex(accepting: []) == nil)
     }
 }

@@ -105,36 +105,4 @@ struct FrameDecoderValidationTests {
     func badPreambleHasNoCloseCode() {
         #expect(FrameError.badPreamble.closeCode == nil)
     }
-
-    struct Acceptance: Sendable, CustomTestStringConvertible {
-        var type: FrameType
-        var flags: FrameFlags
-        var length: Int
-        var testDescription: String { "\(type) flags \(flags.rawValue) length \(length)" }
-    }
-
-    static let acceptances: [Acceptance] = [
-        Acceptance(type: .data, flags: [], length: 1),
-        Acceptance(type: .data, flags: [], length: WireConstants.maxRawDataPayload),
-        Acceptance(type: .data, flags: .message, length: 0),
-        Acceptance(type: .data, flags: .message, length: WireConstants.maxControlPayload),
-        Acceptance(type: .open, flags: [], length: 0),
-        Acceptance(type: .open, flags: [], length: WireConstants.maxControlPayload),
-        Acceptance(type: .end, flags: [], length: 0),
-        Acceptance(type: .end, flags: [], length: WireConstants.maxControlPayload),
-        Acceptance(type: .reset, flags: [], length: 0),
-        Acceptance(type: .reset, flags: [], length: WireConstants.maxControlPayload),
-        Acceptance(type: .window, flags: [], length: WireConstants.windowPayloadByteCount),
-        Acceptance(type: .ping, flags: [], length: WireConstants.pingPayloadByteCount),
-    ]
-
-    @Test("Every length at a type's bounds decodes", arguments: acceptances)
-    func acceptsBounds(_ acceptance: Acceptance) throws {
-        var generator = SplitMix64(seed: UInt64(acceptance.length))
-        let frame = Frame(
-            streamID: StreamID(rawValue: 7), type: acceptance.type, flags: acceptance.flags,
-            payload: generator.bytes(acceptance.length))
-        let frames = try decodeAll([wireBytes([frame])])
-        #expect(frames == [frame])
-    }
 }

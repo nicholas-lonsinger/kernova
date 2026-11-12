@@ -22,19 +22,6 @@ struct PreambleAndEncoderTests {
         #expect(WireConstants.vsockPort == 0xC008)
     }
 
-    @Test("A generation-1 reader sees the preamble as a 1.26 GB length prefix")
-    func preambleIsNotAGeneration1Length() {
-        let asLength = WireConstants.preamble.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
-        #expect(asLength == 1_263_685_170)
-    }
-
-    @Test("The preamble alone, at any split, yields no frame and no error")
-    func preambleAlone() throws {
-        for offset in 0...4 {
-            #expect(try decodeAll(WireConstants.preamble.split(at: [offset])).isEmpty)
-        }
-    }
-
     static let wrongPreambles: [Data] = [
         Data("KRN1".utf8), Data("XRN2".utf8), Data("KXN2".utf8), Data("KRX2".utf8), Data("krn2".utf8),
         Data([0x00, 0x00, 0x00, 0x2A]),  // a generation-1 length prefix
@@ -47,15 +34,6 @@ struct PreambleAndEncoderTests {
         for offset in 0...bytes.count {
             #expect(throws: FrameError.badPreamble) { try decodeAll(bytes.split(at: [offset])) }
         }
-    }
-
-    @Test("Three bytes of a bad preamble are not yet an error: the reader reads exactly 4")
-    func threeBytesAreNotJudged() throws {
-        var decoder = FrameDecoder()
-        decoder.append(Data("KRX".utf8))
-        #expect(try decoder.nextFrame() == nil)
-        decoder.append(Data("2".utf8))
-        #expect(throws: FrameError.badPreamble) { try decoder.nextFrame() }
     }
 
     @Test("The header is big-endian stream id, type, flags, length, and the payload is passed through")

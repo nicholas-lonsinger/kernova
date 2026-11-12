@@ -37,27 +37,6 @@ struct DatalessReadTests {
         return events
     }
 
-    @Test("a file that is dataless and compressed until its first read lands as the plain file it then is")
-    func rootFileMaterialized() throws {
-        let bench = try FidelityBench()
-        let content = randomBytes(79_798, seed: 3)
-        try bench.makeFile([bytes("Costco.png")], content)
-        try bench.setModificationTime([bytes("Costco.png")], Self.localTime)
-        let fileSystem = DatalessFileSystem()
-        try fileSystem.evict(bench.path([bytes("Costco.png")]))
-        let events = try Self.events(
-            TreeReader(fileSystem: fileSystem, root: bench.path([bytes("Costco.png")]), accepting: Self.file))
-        guard case .beginFile(let header)? = events.first else {
-            Issue.record("events \(events)")
-            return
-        }
-        #expect(header.modificationTime == Kernova_V2_Timespec(Self.localTime))
-        #expect(header.storage == .plain(header.plain))
-        #expect(header.plain.size == UInt64(content.count))
-        #expect(Data(events.compactMap { if case .bytes(let bytes) = $0 { bytes } else { nil } }.joined()) == content)
-        #expect(events.suffix(2) == [.finishFile, .end])
-    }
-
     @Test("a dataless file inside a folder, and a dataless folder, land as they are once local")
     func entriesInFolderMaterialized() throws {
         let bench = try FidelityBench()

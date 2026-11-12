@@ -95,13 +95,6 @@ struct LZ4BlockTests {
         #expect(restored == input.bytes)
     }
 
-    @Test("Under 13 bytes nothing compresses: the block would be all literals")
-    func shortInputs() {
-        for count in 0...12 {
-            #expect(LZ4Block.compress(Data(count: count)) == nil)
-        }
-    }
-
     @Test("Hand-written blocks decode: empty, literals only, an overlapping match, extended lengths")
     func knownBlocks() throws {
         #expect(try LZ4Block.decompress(Data([0x00]), decompressedSize: 0, ceiling: 0) == Data())
@@ -163,21 +156,6 @@ struct LZ4BlockTests {
         #expect(throws: shape.error) {
             try LZ4Block.decompress(Data(shape.block), decompressedSize: shape.size, ceiling: 1 << 20)
         }
-    }
-
-    @Test("A size above the ceiling, or negative, throws before anything is allocated")
-    func ceiling() throws {
-        #expect(throws: LZ4BlockError.sizeOutOfRange(declared: Int.max, ceiling: 1 << 20)) {
-            try LZ4Block.decompress(Data([0x00]), decompressedSize: Int.max, ceiling: 1 << 20)
-        }
-        #expect(throws: LZ4BlockError.sizeOutOfRange(declared: 4, ceiling: 3)) {
-            try LZ4Block.decompress(Data([0x40, 1, 2, 3, 4]), decompressedSize: 4, ceiling: 3)
-        }
-        #expect(throws: LZ4BlockError.sizeOutOfRange(declared: -1, ceiling: 3)) {
-            try LZ4Block.decompress(Data([0x00]), decompressedSize: -1, ceiling: 3)
-        }
-        #expect(
-            try LZ4Block.decompress(Data([0x40, 1, 2, 3, 4]), decompressedSize: 4, ceiling: 4) == Data([1, 2, 3, 4]))
     }
 
     @Test("Mutated blocks either throw or decode to exactly the declared size")

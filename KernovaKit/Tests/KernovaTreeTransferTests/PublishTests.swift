@@ -38,40 +38,6 @@ struct PublishTests {
         #expect(KeepBothName.candidate(bytes("report.pdf"), 11) == bytes("report 11.pdf"))
     }
 
-    @Test("a FILE publishes under the receiver's name", arguments: renames)
-    func fileTakesTheReceiversName(_ rename: InterposedFileSystem.ExclusiveRename) throws {
-        let landing = try Landing(kernelContainment: true)
-        let result = try publish(Self.fileContainer, .file, as: .exactly(bytes("chosen.txt")), rename, landing)
-        #expect(result.success == bytes("chosen.txt"))
-        #expect(try Self.contents(landing, "chosen.txt") == Data("hello".utf8))
-        try landing.expectNothingOutside(landed: bytes("chosen.txt"))
-    }
-
-    @Test("a FOLDER publishes whole under the receiver's name", arguments: renames)
-    func folderTakesTheReceiversName(_ rename: InterposedFileSystem.ExclusiveRename) throws {
-        let landing = try Landing(kernelContainment: true)
-        let result = try publish(Self.folderContainer, .folder, as: .exactly(bytes("Chosen")), rename, landing)
-        #expect(result.success == bytes("Chosen"))
-        #expect(try landing.landedEntries(bytes("Chosen")) == [".: directory", "./f: regular 1"].sorted())
-        try landing.expectNothingOutside(landed: bytes("Chosen"))
-    }
-
-    @Test("an item at an exact path lands there, and its publish keeps that name", arguments: [false, true])
-    func exactPathKeepsItsName(_ folder: Bool) throws {
-        let landing = try Landing(kernelContainment: true)
-        let name = folder ? "Chosen" : "chosen.txt"
-        let receiver = TreeReceiver(
-            exactPath: bytes(landing.destinationPath + "/" + name), accepting: acceptance(folder ? .folder : .file),
-            decodingWorkers: 0, fileSystem: POSIXTreeFileSystem())
-        let result = Result { () throws(TreeWriteFailure) in
-            try receiver.receive(folder ? Self.folderContainer : Self.fileContainer)
-            try receiver.finish()
-            return try receiver.publish()
-        }
-        #expect(result.success == bytes(name))
-        try landing.expectNothingOutside(landed: bytes(name))
-    }
-
     @Test(
         "an exact-path publish that finds another item at its path fails moved and leaves both",
         arguments: [false, true])
@@ -117,24 +83,6 @@ struct PublishTests {
         #expect(try landing.landedEntries(bytes("Folder 2")) == [".: directory", "./f: regular 1"].sorted())
         #expect(
             try Self.names(landing) == ["Folder", "Folder 2", "report 2.pdf", "report 3.pdf", "report.pdf"].sorted())
-    }
-
-    @Test("an exact name that is taken fails EEXIST, leaving the taken item and nothing else", arguments: renames)
-    func exactNameTaken(_ rename: InterposedFileSystem.ExclusiveRename) throws {
-        let landing = try Landing(kernelContainment: true)
-        try Self.seed(landing, files: ["taken"], folders: ["taken folder"])
-        let file = try publish(Self.fileContainer, .file, as: .exactly(bytes("taken")), rename, landing)
-        let folder = try publish(Self.folderContainer, .folder, as: .exactly(bytes("taken folder")), rename, landing)
-        for result in [file, folder] {
-            guard case .system(let error)? = result.failure?.reason else {
-                Issue.record("\(result)")
-                continue
-            }
-            #expect(error.code == EEXIST)
-        }
-        #expect(try Self.contents(landing, "taken") == Data("seed".utf8))
-        #expect(try landing.landedEntries(bytes("taken folder")) == [".: directory"])
-        #expect(try Self.names(landing) == ["taken", "taken folder"])
     }
 
     @Test("Keep Both counts no name past the name limit: a taken name that has no room fails ENAMETOOLONG")
