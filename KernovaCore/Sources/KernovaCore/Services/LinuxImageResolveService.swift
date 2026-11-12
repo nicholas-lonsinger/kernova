@@ -42,21 +42,7 @@ final class LinuxImageResolveService: LinuxImageResolving {
     }
 
     func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedCatalogImage {
-        // The entry reaching here came off a `config.json` a user can edit, so
-        // it gets the catalog's own admission checks before it names a host to
-        // contact or a file to read.
-        guard entry.directoryURL.scheme?.lowercased() == "https" else {
-            throw LinuxImageResolveError.insecureDirectory(url: entry.directoryURL)
-        }
-        guard entry.manifestDirectory.scheme?.lowercased() == "https" else {
-            throw LinuxImageResolveError.insecureDirectory(url: entry.manifestDirectory)
-        }
-        guard LinuxImageCatalogService.isFilenameGlob(entry.isoPattern) else {
-            throw LinuxImageResolveError.invalidISOPattern(pattern: entry.isoPattern)
-        }
-        guard LinuxImageCatalogService.isFilename(entry.checksumManifest) else {
-            throw LinuxImageResolveError.invalidManifestName(manifest: entry.checksumManifest)
-        }
+        try entry.admit()
 
         let text = try await manifestText(at: entry.manifestURL, named: entry.checksumManifest)
         let rows = ChecksumManifest.parse(text)
@@ -66,7 +52,7 @@ final class LinuxImageResolveService: LinuxImageResolving {
 
         let digests = Dictionary(
             rows.map { ($0.filename, $0.sha256) }, uniquingKeysWith: { first, _ in first })
-        // The pattern is a wildcard `.iso` filename by the guard above, so a
+        // The pattern is a wildcard `.iso` filename by admission above, so a
         // glob that will not compile and a manifest listing nothing that
         // matches come to the same thing: no image to download.
         guard let glob = ISOFilenameGlob(entry.isoPattern),

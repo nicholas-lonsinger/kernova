@@ -58,9 +58,7 @@ package struct LinuxImageCatalogService {
     enum Rejection: Equatable, CustomStringConvertible {
         case undecodableDocument
         case undecodableEntry(index: Int)
-        case insecureURL(id: String, url: URL)
-        case invalidPattern(id: String, pattern: String)
-        case invalidManifestName(id: String, manifest: String)
+        case inadmissible(id: String, LinuxImageCatalogEntry.AdmissionError)
         case duplicateID(id: String)
 
         var description: String {
@@ -69,11 +67,11 @@ package struct LinuxImageCatalogService {
                 "the document did not decode"
             case .undecodableEntry(let index):
                 "entry at index \(index) did not decode"
-            case .insecureURL(let id, let url):
+            case .inadmissible(let id, .insecureDirectory(let url)):
                 "\(id) has a non-HTTPS URL (\(url))"
-            case .invalidPattern(let id, let pattern):
+            case .inadmissible(let id, .invalidISOPattern(let pattern)):
                 "\(id) has an ISO pattern that is not a wildcard .iso filename ('\(pattern)')"
-            case .invalidManifestName(let id, let manifest):
+            case .inadmissible(let id, .invalidManifestName(let manifest)):
                 "\(id) has a checksum manifest that is not a filename ('\(manifest)')"
             case .duplicateID(let id):
                 "\(id) appears more than once"
@@ -93,13 +91,6 @@ package struct LinuxImageCatalogService {
     /// Pure and non-asserting so the drop paths are testable; ``init()``
     /// is what turns a rejection into a fault, because a rejection in the
     /// *shipped* resource is a build-time mistake.
-    ///
-    /// There is no host allowlist to check the way the macOS catalog checks for
-    /// Apple: an ISO is fetched from whatever address a distribution publishes
-    /// for downloads, mirror network included, and a list of those written here
-    /// would go stale without anything noticing. What the entry pins instead is
-    /// the host its *manifest* is read from — see
-    /// ``LinuxImageCatalogEntry/manifestDirectoryURL``.
     static func parse(_ data: Data) -> ParseResult {
         guard let document = try? JSONDecoder().decode(LenientCatalog.self, from: data) else {
             return ParseResult(catalog: nil, rejections: [.undecodableDocument])
@@ -112,21 +103,10 @@ package struct LinuxImageCatalogService {
         var seenIDs: Set<String> = []
 
         for entry in document.decodedImages {
-            guard entry.directoryURL.scheme?.lowercased() == "https" else {
-                rejections.append(.insecureURL(id: entry.id, url: entry.directoryURL))
-                continue
-            }
-            guard entry.manifestDirectory.scheme?.lowercased() == "https" else {
-                rejections.append(.insecureURL(id: entry.id, url: entry.manifestDirectory))
-                continue
-            }
-            guard isFilenameGlob(entry.isoPattern) else {
-                rejections.append(.invalidPattern(id: entry.id, pattern: entry.isoPattern))
-                continue
-            }
-            guard isFilename(entry.checksumManifest) else {
-                rejections.append(
-                    .invalidManifestName(id: entry.id, manifest: entry.checksumManifest))
+            do throws(LinuxImageCatalogEntry.AdmissionError) {
+                try entry.admit()
+            } catch {
+                rejections.append(.inadmissible(id: entry.id, error))
                 continue
             }
             guard seenIDs.insert(entry.id).inserted else {
@@ -141,18 +121,6 @@ package struct LinuxImageCatalogService {
             images: kept.sorted(by: LinuxImageCatalogEntry.isOrderedBefore)
         )
         return ParseResult(catalog: catalog, rejections: rejections)
-    }
-
-    /// Whether a string names one file inside the entry's directory.
-    static func isFilename(_ candidate: String) -> Bool {
-        !candidate.isEmpty && !candidate.contains("/")
-    }
-
-    /// Whether a string is a usable ISO glob: a filename, carrying at least one
-    /// `*` to absorb the version, and ending in the extension the resolved file
-    /// must have.
-    static func isFilenameGlob(_ candidate: String) -> Bool {
-        isFilename(candidate) && candidate.contains("*") && candidate.hasSuffix(".iso")
     }
 
     /// Catalog document whose `images` array tolerates a bad element.

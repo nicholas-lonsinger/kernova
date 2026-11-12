@@ -334,7 +334,8 @@ struct LinuxImageResolveServiceTests {
             manifestDirectoryURLString: "http://dl.fedoraproject.org/pub/fedora/")
 
         await #expect(
-            throws: LinuxImageResolveError.insecureDirectory(url: entry.manifestDirectory)
+            throws: LinuxImageCatalogEntry.AdmissionError.insecureDirectory(
+                url: entry.manifestDirectory)
         ) {
             _ = try await makeService().resolve(entry)
         }
@@ -347,7 +348,8 @@ struct LinuxImageResolveServiceTests {
         defer { ResolveStubURLProtocol.reset() }
 
         await #expect(
-            throws: LinuxImageResolveError.invalidManifestName(manifest: "../../etc/passwd")
+            throws: LinuxImageCatalogEntry.AdmissionError.invalidManifestName(
+                manifest: "../../etc/passwd")
         ) {
             _ = try await makeService().resolve(editedEntry(checksumManifest: "../../etc/passwd"))
         }
