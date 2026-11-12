@@ -148,7 +148,7 @@ final class ReviewContentViewController: NSViewController {
 
         if creationVM.selectedOS == .linux {
             var rows: [NSView] = []
-            switch creationVM.selectedBootMode {
+            switch creationVM.linuxBootMode {
             case .efi:
                 switch creationVM.linuxSelection {
                 case .catalogEntry(let entry):
@@ -195,8 +195,6 @@ final class ReviewContentViewController: NSViewController {
                 if let path = creationVM.kernelPath {
                     rows.append(valueRow("Kernel", URL(fileURLWithPath: path).lastPathComponent))
                 }
-            case .macOS:
-                break
             }
             if !rows.isEmpty { addSection("Boot", rows: rows, to: summary) }
         }

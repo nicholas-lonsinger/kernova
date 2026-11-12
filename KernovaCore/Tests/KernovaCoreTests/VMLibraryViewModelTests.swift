@@ -1450,7 +1450,7 @@ struct VMLibraryViewModelTests {
     ) -> VMCreationViewModel {
         let wizard = VMCreationViewModel.overFakeEngine()
         wizard.selectedOS = .linux
-        wizard.selectedBootMode = .efi
+        wizard.linuxBootMode = .efi
         wizard.vmName = name
         wizard.startAfterCreate = startAfterCreate
         return wizard

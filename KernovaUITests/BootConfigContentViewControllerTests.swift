@@ -33,7 +33,7 @@ struct BootConfigContentViewControllerTests {
     func efiShowsEveryImageSource() {
         let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
+        vm.linuxBootMode = .efi
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
@@ -129,7 +129,7 @@ struct BootConfigContentViewControllerTests {
     func switchToKernel() {
         let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
+        vm.linuxBootMode = .efi
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
@@ -140,7 +140,7 @@ struct BootConfigContentViewControllerTests {
         segmented.selectedSegment = 1
         segmented.sendAction(segmented.action, to: segmented.target)
 
-        #expect(vm.selectedBootMode == .linuxKernel)
+        #expect(vm.linuxBootMode == .linuxKernel)
         #expect(findLabel(withText: "Kernel", in: vc.view) != nil)
         #expect(findLabel(withText: "Initrd", in: vc.view) != nil)
     }
@@ -149,7 +149,7 @@ struct BootConfigContentViewControllerTests {
     func commandLineWriteBack() {
         let vm = VMCreationViewModel.overEngine()
         vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
+        vm.linuxBootMode = .linuxKernel
         let vc = BootConfigContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
 
