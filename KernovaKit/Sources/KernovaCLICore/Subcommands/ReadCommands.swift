@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 
 extension KernovaCommand {
     /// `kernova list` — the virtual machines a filter admits, in library order

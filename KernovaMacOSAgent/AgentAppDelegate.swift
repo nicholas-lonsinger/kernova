@@ -91,10 +91,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Entry point
 
     static func main() {
-        guard let command = MacAgentCommand.parse(Array(CommandLine.arguments.dropFirst())) else {
-            FileHandle.standardError.write(Data((MacAgentCommand.usage + "\n").utf8))
-            exit(64)  // EX_USAGE
-        }
+        let command = MacAgentTools.command(Array(CommandLine.arguments.dropFirst()))
         // Everything but the session peer runs headless, before any
         // NSApplication or window-server setup: the system peer is a daemon
         // with no window server (TN2083).

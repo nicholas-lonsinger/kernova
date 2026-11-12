@@ -17,6 +17,7 @@ import CKernovaAgentVersion
 import KernovaAgentCore
 import KernovaAgentInstall
 import KernovaAgentRuntime
+import KernovaConsole
 import KernovaDBus
 import KernovaDigest
 import KernovaLogging
@@ -50,13 +51,13 @@ enum AgentShell {
 
     static func main(_ arguments: [String]) -> Never {
         guard let command = AgentCommand.parse(Array(arguments.dropFirst())) else {
-            writeError(AgentCommand.usage)
+            Console.notice(AgentCommand.usage)
             exit(64)  // EX_USAGE
         }
         let label = String(cString: kernova_agent_version_label())
         switch command {
         case .version:
-            print(label)
+            Console.out(label)
             exit(0)
         case .selfTest:
             selfTest(label: label)
@@ -80,15 +81,15 @@ enum AgentShell {
     private static func selfTest(label: String) -> Never {
         do throws(LinuxIdentityError) {
             let claim = try LinuxIdentity.current(role: .sessionPeer, versionLabel: label)
-            print("version: \(claim.versionLabel)")
-            print("payload-sha256: \(lowercaseHex(claim.payloadHash))")
-            print("scope: \(claim.scope)")
-            print("architecture: \(claim.architecture)")
-            print("os: \(claim.osDistribution) \(claim.osVersion)")
-            print("kernel: \(claim.osBuild)")
+            Console.out("version: \(claim.versionLabel)")
+            Console.out("payload-sha256: \(lowercaseHex(claim.payloadHash))")
+            Console.out("scope: \(claim.scope)")
+            Console.out("architecture: \(claim.architecture)")
+            Console.out("os: \(claim.osDistribution) \(claim.osVersion)")
+            Console.out("kernel: \(claim.osBuild)")
             exit(0)
         } catch {
-            writeError("kernova-agent: cannot read its own executable: \(error)")
+            Console.notice("kernova-agent: cannot read its own executable: \(error)")
             exit(1)
         }
     }
@@ -227,7 +228,7 @@ enum AgentShell {
     /// when it ran, 1 when it failed.
     private static func runRollbackCheck(_ scope: InstallScope) -> Never {
         guard let running = LinuxIdentity.runningSlot() else {
-            writeError("kernova-agent: rollback-check runs only from an installed slot")
+            Console.notice("kernova-agent: rollback-check runs only from an installed slot")
             exit(1)
         }
         let root: SlotRoot
@@ -271,11 +272,6 @@ enum AgentShell {
     private static func fail(_ message: LogMessage) -> Never {
         logger.log(.error, message)
         exit(1)
-    }
-
-    static func writeError(_ text: String) {
-        var line = text + "\n"
-        line.withUTF8 { bytes in _ = write(2, bytes.baseAddress, bytes.count) }
     }
 }
 #endif

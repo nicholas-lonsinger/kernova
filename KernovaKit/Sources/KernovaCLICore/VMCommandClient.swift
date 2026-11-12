@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import KernovaCommandModel
+import KernovaConsole
 import KernovaKit
 
 /// The tool's end of the app's command socket.

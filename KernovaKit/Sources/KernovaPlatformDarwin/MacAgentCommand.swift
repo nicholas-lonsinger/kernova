@@ -38,7 +38,7 @@ public enum MacAgentCommand: Equatable, Sendable {
     }
 
     /// The usage line printed for arguments `parse(_:)` refuses.
-    public static let usage = """
+    static let usage = """
         usage: KernovaMacOSAgent [session | system | self-test | --version]
                KernovaMacOSAgent install [--system] [--dry-run]
                KernovaMacOSAgent uninstall [--system] [--dry-run]

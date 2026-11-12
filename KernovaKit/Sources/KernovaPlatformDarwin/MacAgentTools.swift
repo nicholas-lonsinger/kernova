@@ -5,6 +5,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentInstall
 import KernovaAgentRuntime
+import KernovaConsole
 import KernovaDigest
 import KernovaLogging
 import KernovaSynchronization
@@ -22,13 +23,23 @@ public enum MacAgentTools {
         var termination: (any DispatchSourceSignal)?
     }
 
+    /// The command `arguments` — those after the program name — ask for. Arguments that ask for none write the
+    /// usage to standard error and exit 64 (EX_USAGE).
+    public static func command(_ arguments: [String]) -> MacAgentCommand {
+        guard let command = MacAgentCommand.parse(arguments) else {
+            Console.notice(MacAgentCommand.usage)
+            exit(64)  // EX_USAGE
+        }
+        return command
+    }
+
     /// Runs `command`, one the session's app does not run itself, then exits: 0 when it did what was asked. The
     /// system peer reaches the host through `dialer`.
     public static func run(_ command: MacAgentCommand, label: String, dialer: any TransportDialer) -> Never {
         switch command {
         case .session: preconditionFailure("the session peer is the app")
         case .version:
-            print(label)
+            Console.out(label)
             exit(0)
         case .selfTest: selfTest(label: label)
         case .system: runSystemPeer(label: label, dialer: dialer)
@@ -37,7 +48,7 @@ public enum MacAgentTools {
         case .rollbackCheck(let scope): runRollbackCheck(scope)
         case .stopService(let target):
             guard LaunchdStop.stop(target) else {
-                writeError("Kernova Guest Agent: launchd still runs \(target)")
+                Console.notice("Kernova Guest Agent: launchd still runs \(target)")
                 exit(1)
             }
             exit(0)
@@ -48,11 +59,11 @@ public enum MacAgentTools {
     /// Prints what this executable would claim, so an install can tell a landed payload runs here.
     private static func selfTest(label: String) -> Never {
         let claim = DarwinIdentity.current(role: .sessionPeer, versionLabel: label)
-        print("version: \(claim.versionLabel)")
-        print("payload-sha256: \(claim.payloadHash.isEmpty ? "none" : lowercaseHex(claim.payloadHash))")
-        print("scope: \(claim.scope)")
-        print("architecture: \(claim.architecture)")
-        print("os: macOS \(claim.osVersion) (\(claim.osBuild))")
+        Console.out("version: \(claim.versionLabel)")
+        Console.out("payload-sha256: \(claim.payloadHash.isEmpty ? "none" : lowercaseHex(claim.payloadHash))")
+        Console.out("scope: \(claim.scope)")
+        Console.out("architecture: \(claim.architecture)")
+        Console.out("os: macOS \(claim.osVersion) (\(claim.osBuild))")
         exit(0)
     }
 
@@ -118,19 +129,19 @@ public enum MacAgentTools {
             if request.dryRun {
                 let verb = uninstalling ? "uninstall" : "install"
                 let heading = "KernovaMacOSAgent \(verb)\(request.scope == .system ? " --system" : "") will:"
-                for line in InstallPlan.dryRun(plan, heading: heading) { print(line) }
+                for line in InstallPlan.dryRun(plan, heading: heading) { Console.out(line) }
                 exit(0)
             }
             let installer = Installer(
                 stagingRoot: "", runsCommands: true, payloadSource: .packedDirectory(bundle(of: tool)),
                 lander: MacAgentPeer.lander, versionLabel: label, account: nil)
-            try installer.run(plan) { print("Kernova Guest Agent: \($0)") }
-            print(
+            try installer.run(plan) { Console.out("Kernova Guest Agent: \($0)") }
+            Console.out(
                 uninstalling
                     ? "Kernova Guest Agent: removed \(scope)." : "Kernova Guest Agent: installed \(scope), \(label).")
             exit(0)
         } catch {
-            writeError("Kernova Guest Agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")
+            Console.notice("Kernova Guest Agent: cannot \(uninstalling ? "remove" : "install") \(scope): \(error)")
             exit(1)
         }
     }
@@ -154,7 +165,7 @@ public enum MacAgentTools {
     /// Runs the rollback check once for `scope`'s install, the one this executable sits in: 0 when it ran.
     private static func runRollbackCheck(_ scope: InstallScope) -> Never {
         guard let running = DarwinIdentity.runningSlot() else {
-            writeError("Kernova Guest Agent: rollback-check runs only from an installed slot")
+            Console.notice("Kernova Guest Agent: rollback-check runs only from an installed slot")
             exit(1)
         }
         let root: SlotRoot
@@ -177,7 +188,7 @@ public enum MacAgentTools {
         guard FileManager.default.createFile(atPath: output, contents: nil),
             let handle = FileHandle(forWritingAtPath: output)
         else {
-            writeError("Kernova Guest Agent: cannot create \(output)")
+            Console.notice("Kernova Guest Agent: cannot create \(output)")
             exit(1)
         }
         do {
@@ -185,13 +196,9 @@ public enum MacAgentTools {
             try handle.close()
             exit(0)
         } catch {
-            writeError("Kernova Guest Agent: cannot pack \(app): \(error)")
+            Console.notice("Kernova Guest Agent: cannot pack \(app): \(error)")
             exit(1)
         }
-    }
-
-    static func writeError(_ text: String) {
-        FileHandle.standardError.write(Data((text + "\n").utf8))
     }
 }
 #endif

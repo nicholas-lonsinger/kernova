@@ -1,6 +1,7 @@
 import ArgumentParser
 import Darwin
 import Foundation
+import KernovaConsole
 
 /// The `kernova` tool's root command.
 ///
@@ -59,22 +60,17 @@ public struct KernovaCommand: ParsableCommand {
             var command = try parseAsRoot()
             try command.run()
         } catch let failure as CLIFailure {
-            write(failure.message, to: FileHandle.standardError)
+            Console.notice(failure.message)
             Darwin.exit(failure.code.rawValue)
         } catch {
             // `--help` and `--version` arrive here as clean exits: their output
             // is the answer, so it goes to stdout and the process succeeds.
-            let isCleanExit = exitCode(for: error) == .success
-            write(
-                fullMessage(for: error),
-                to: isCleanExit ? FileHandle.standardOutput : FileHandle.standardError)
-            Darwin.exit(isCleanExit ? CLIExitCode.success.rawValue : CLIExitCode.usage.rawValue)
+            guard exitCode(for: error) == .success else {
+                Console.notice(fullMessage(for: error))
+                Darwin.exit(CLIExitCode.usage.rawValue)
+            }
+            Console.out(fullMessage(for: error))
         }
         Darwin.exit(CLIExitCode.success.rawValue)
-    }
-
-    private static func write(_ text: String, to handle: FileHandle) {
-        guard !text.isEmpty else { return }
-        handle.write(Data((text + "\n").utf8))
     }
 }
