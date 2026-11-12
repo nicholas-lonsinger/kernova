@@ -142,6 +142,59 @@ struct RestoreImageCatalogServiceTests {
         #expect(catalog.images.first?.releaseDate == nil)
     }
 
+    @Test("An undecodable document yields no catalog")
+    func rejectsUndecodableDocument() {
+        let result = RestoreImageCatalogService.parse(Data("not json".utf8))
+        #expect(result.catalog == nil)
+        #expect(result.rejections == [.undecodableDocument])
+    }
+
+    @Test("A non-HTTPS URL is rejected")
+    func rejectsInsecureURL() throws {
+        let insecure = goodEntry.replacingOccurrences(of: "https://", with: "http://")
+        let result = RestoreImageCatalogService.parse(json(images: insecure))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.isEmpty)
+        #expect(result.rejections.count == 1)
+        if case .insecureURL(let build, _) = result.rejections[0] {
+            #expect(build == "24G90")
+        } else {
+            Issue.record("Expected an insecureURL rejection, got \(result.rejections[0])")
+        }
+    }
+
+    @Test("A non-Apple host is rejected")
+    func rejectsForeignHost() throws {
+        let foreign = goodEntry.replacingOccurrences(
+            of: "updates.cdn-apple.com", with: "mirrors.example.com")
+        let result = RestoreImageCatalogService.parse(json(images: foreign))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.isEmpty)
+        #expect(result.rejections.count == 1)
+        if case .foreignHost(let build, _) = result.rejections[0] {
+            #expect(build == "24G90")
+        } else {
+            Issue.record("Expected a foreignHost rejection, got \(result.rejections[0])")
+        }
+    }
+
+    @Test("A non-numeric version is rejected")
+    func rejectsUnparseableVersion() throws {
+        let bad = goodEntry.replacingOccurrences(of: "\"15.6.1\"", with: "\"Sequoia\"")
+        let result = RestoreImageCatalogService.parse(json(images: bad))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.isEmpty)
+        #expect(result.rejections == [.unparseableVersion(build: "24G90", version: "Sequoia")])
+    }
+
+    @Test("A repeated build is kept once")
+    func rejectsDuplicateBuild() throws {
+        let result = RestoreImageCatalogService.parse(json(images: "\(goodEntry), \(goodEntry)"))
+        let catalog = try #require(result.catalog)
+        #expect(catalog.images.count == 1)
+        #expect(result.rejections == [.duplicateBuild(build: "24G90")])
+    }
+
     @Test("Parsed entries come back newest first regardless of input order")
     func sortsParsedEntries() throws {
         let older =

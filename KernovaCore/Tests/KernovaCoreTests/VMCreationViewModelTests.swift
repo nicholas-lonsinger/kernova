@@ -672,6 +672,22 @@ struct VMCreationViewModelTests {
         #expect(inspector.lastInspectedURL?.path(percentEncoded: false) == destination)
     }
 
+    @Test("An unreadable file is refused with a reason")
+    func refusesUnreadableExistingFile() async throws {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectError = LocalRestoreImageError.unreadable
+        let vm = VMCreationViewModel.overFakeEngine(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry())
+
+        let verdict = await vm.adoptExistingDownloadFile(at: try #require(vm.ipswDownloadPath))
+
+        #expect(
+            verdict
+                == .unusable(
+                    message: LocalRestoreImageError.unreadable.errorDescription ?? ""))
+        #expect(vm.ipswSource == .catalogVersion)
+    }
+
     @Test("An image the host can't run is refused even when the build matches")
     func refusesUnsupportedExistingFile() async throws {
         let inspector = MockLocalRestoreImageInspector()
