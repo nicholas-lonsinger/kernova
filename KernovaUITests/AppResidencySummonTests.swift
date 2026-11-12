@@ -172,7 +172,7 @@ struct AppResidencySummonTests {
         let (controller, registry, _) = makeController(focus: focus)
         registry.showLibrary(bringToFront: true)
         let library = try #require(registry.libraryWindow)
-        focus.miniaturize(library)
+        focus.minimize(library)
         let requestsBefore = focus.requests
         let presentations = PresentationCounter()
         registry.residency = presentations

@@ -46,7 +46,7 @@ struct AppWindowRegistryPresenceTests {
         registry.showLibrary(bringToFront: true)
         let window = try #require(registry.libraryWindow)
 
-        focus.miniaturize(window)
+        focus.minimize(window)
 
         #expect(registry.hasTrackedUserWindow)
     }

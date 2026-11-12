@@ -115,7 +115,7 @@ final class VMDisplayPlacementController {
 
     func toggleFullscreen(for instance: VMInstance) {
         if let window = windows[instance.instanceID]?.window {
-            focus.toggleFullScreen(window)
+            focus.toggleFullScreenMode(of: window)
             return
         }
         viewModel.recordDisplayPreference(.fullscreen, for: instance)
@@ -193,7 +193,7 @@ final class VMDisplayPlacementController {
         }
         windows[vmID] = controller
 
-        // For fullscreen: position on the remembered display so toggleFullScreen
+        // For fullscreen: position on the remembered display so entering fullscreen
         // picks the correct screen.
         if enterFullscreen {
             if let screen = preferredScreenForFullscreen(of: instance),
@@ -212,7 +212,7 @@ final class VMDisplayPlacementController {
         controller.prepareToShow(front: show != .behind)
         guard let window = controller.window else { return }
         focus.present(window, Self.presentation(of: show))
-        if enterFullscreen { focus.toggleFullScreen(window) }
+        if enterFullscreen { focus.toggleFullScreenMode(of: window) }
         host?.displayWindowShown(window)
     }
 

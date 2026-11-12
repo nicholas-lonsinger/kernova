@@ -37,7 +37,7 @@ package protocol SessionFocus: AnyObject {
 
     func present(_ window: NSWindow, _ presentation: WindowPresentation)
     /// Enters or leaves native fullscreen.
-    func toggleFullScreen(_ window: NSWindow)
+    func toggleFullScreenMode(of window: NSWindow)
     /// The standard About panel.
     func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any])
     /// Ends whatever menu-bar tracking is in progress.

@@ -40,7 +40,7 @@ final class AppKitSessionFocus: SessionFocus {
         }
     }
 
-    func toggleFullScreen(_ window: NSWindow) {
+    func toggleFullScreenMode(of window: NSWindow) {
         window.toggleFullScreen(nil)
     }
 

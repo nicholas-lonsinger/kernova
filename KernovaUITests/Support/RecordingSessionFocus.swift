@@ -18,7 +18,7 @@ final class RecordingSessionFocus: SessionFocus {
         case activate
         case unhideWithoutActivation
         case present(NSWindow, WindowPresentation)
-        case toggleFullScreen(NSWindow)
+        case toggleFullScreenMode(NSWindow)
         case showAboutPanel
         case cancelMenuBarTracking
     }
@@ -76,7 +76,7 @@ final class RecordingSessionFocus: SessionFocus {
         if presentation == .keyAndFront { postFocusChanged() }
     }
 
-    func toggleFullScreen(_ window: NSWindow) { record(.toggleFullScreen(window)) }
+    func toggleFullScreenMode(of window: NSWindow) { record(.toggleFullScreenMode(window)) }
 
     func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any]) { record(.showAboutPanel) }
 
@@ -95,7 +95,7 @@ final class RecordingSessionFocus: SessionFocus {
 
     /// The user miniaturizing `window`: it leaves the screen and reads as
     /// miniaturized until it is presented again.
-    func miniaturize(_ window: NSWindow) {
+    func minimize(_ window: NSWindow) {
         window.orderOut(nil)
         miniaturized.add(window)
         postFocusChanged()
