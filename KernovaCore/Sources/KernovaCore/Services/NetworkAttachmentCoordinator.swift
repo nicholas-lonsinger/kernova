@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
 
@@ -11,15 +12,13 @@ package enum NetworkAttachmentPlan: Equatable, Sendable {
     /// entitled build.
     case vmnet(VmnetNetworkSelection)
 
-    /// The realization this plan attaches by. The bridged interface is
-    /// ignored: an attachment over any interface realizes Bridged.
-    var realization: VMNetworkRealization {
-        switch self {
-        case .nat: .systemNAT
-        case .bridged: .bridged
-        case .vmnet(let selection): .vmnet(selection)
-        }
-    }
+    /// Where a Bridged choice attaches while its interface can't be bridged:
+    /// the VM's own NAT network. No other guest joins it, so it adds no
+    /// guest-to-guest reach, and no VM sharing this one's MAC address can be
+    /// on it (``VMMACAddressRegistry`` compares the configured network, which
+    /// for Bridged is not this one).
+    package static let bridgedFallback = NetworkAttachmentPlan.vmnet(
+        VmnetNetworkSelection(kind: .nat, membership: .isolated))
 
     /// The app-managed network this plan attaches to, `nil` for plans vmnet
     /// does not back.
@@ -29,11 +28,47 @@ package enum NetworkAttachmentPlan: Equatable, Sendable {
     }
 }
 
+/// A live VM's network device as attachment recovery last reported it.
+package enum NetworkAttachmentState: Equatable, Sendable {
+    case attached(NetworkAttachmentPlan)
+    /// No attachment; recovery is waiting to reattach.
+    case detached
+}
+
 /// The network the user chose for a VM, as attachment recovery needs it.
 package struct NetworkChoice: Equatable {
-    let joinedNetwork: VMJoinedNetwork
+    package let joinedNetwork: VMJoinedNetwork
     /// The persisted bridged interface, `nil` for Automatic.
     let bridgedInterfaceIdentifier: String?
+
+    /// The plan this choice attaches by on the host as it is now — what a
+    /// boot builds (`holding` nil) and what recovery keeps a live device on
+    /// (`holding` the device's current plan). `nil` only when this build
+    /// cannot attach the choice.
+    ///
+    /// Bridged attaches over its interface while the host offers it
+    /// (``BridgedInterfaceSelection/interface(persisted:held:available:primary:)``)
+    /// and otherwise to ``NetworkAttachmentPlan/bridgedFallback`` — never over
+    /// another interface, whose network the user did not choose.
+    package func plan(
+        entitlements: EntitlementService, interfaces: any BridgedInterfaceProviding,
+        holding held: NetworkAttachmentPlan?
+    ) -> NetworkAttachmentPlan? {
+        guard let realization = entitlements.realization(of: joinedNetwork) else { return nil }
+        switch realization {
+        case .systemNAT:
+            return .nat
+        case .vmnet(let selection):
+            return .vmnet(selection)
+        case .bridged:
+            let heldInterface: String? = if case .bridged(let identifier)? = held { identifier } else { nil }
+            let interface = BridgedInterfaceSelection.interface(
+                persisted: bridgedInterfaceIdentifier, held: heldInterface,
+                available: interfaces.interfaces().map(\.identifier),
+                primary: bridgedInterfaceIdentifier == nil ? interfaces.primaryInterfaceIdentifier() : nil)
+            return interface.map(NetworkAttachmentPlan.bridged) ?? .bridgedFallback
+        }
+    }
 }
 
 extension VMConfiguration {
@@ -74,10 +109,11 @@ package protocol NetworkLinkObserving: AnyObject {
 /// chose — across VZ's attachment-disconnect callback, a boot or restore that
 /// came up detached, host link changes, and live mode/interface edits.
 ///
-/// Recovery narrows but never escalates: a bridged VM whose interface is gone
-/// falls back within Bridged (to the default-route interface) or runs detached
-/// until one returns — it never silently becomes NAT, and no mode
-/// is ever attached that the user didn't choose (docs/NETWORKING.md).
+/// Recovery only narrows exposure (docs/NETWORKING.md): after each reconcile
+/// the device is on the plan ``NetworkChoice/plan(entitlements:interfaces:holding:)``
+/// answers, or detached while that plan can't attach. A Bridged VM whose
+/// interface is gone is on its own NAT network until the interface returns,
+/// never on another interface's network.
 ///
 /// Created by the bring-up alongside the `VZVirtualMachine`. `activate()` is
 /// deferred until the session first reaches `.running`, and reconciliation is
@@ -123,11 +159,15 @@ package final class NetworkAttachmentCoordinator {
     private var lastAttachAttemptAt: EngineInstant?
     private let isEligible: @MainActor () -> Bool
     private let choice: @MainActor () -> NetworkChoice?
-    private let onPendingChange: @MainActor (Bool) -> Void
+    private let onAttachmentChange: @MainActor (NetworkAttachmentState?) -> Void
 
-    /// `true` while the device is detached — no attachment realizes the chosen
-    /// mode and recovery is waiting to reattach.
-    private(set) var isPending = false
+    /// What recovery last reported for the device, `nil` while it reports
+    /// nothing — before the first reconcile, or with no network chosen.
+    private var reported: NetworkAttachmentState?
+
+    /// `true` while the device is detached and recovery is waiting to
+    /// reattach.
+    var isPending: Bool { reported == .detached }
 
     private var isActive = false
     private var retryTask: Task<Void, Never>?
@@ -154,7 +194,7 @@ package final class NetworkAttachmentCoordinator {
         clock: any EngineClock = makePlatformEngineClock(),
         isEligible: @escaping @MainActor () -> Bool,
         choice: @escaping @MainActor () -> NetworkChoice?,
-        onPendingChange: @escaping @MainActor (Bool) -> Void
+        onAttachmentChange: @escaping @MainActor (NetworkAttachmentState?) -> Void
     ) {
         self.vmName = vmName
         self.device = device
@@ -167,7 +207,7 @@ package final class NetworkAttachmentCoordinator {
         self.clock = clock
         self.isEligible = isEligible
         self.choice = choice
-        self.onPendingChange = onPendingChange
+        self.onAttachmentChange = onAttachmentChange
     }
 
     /// Starts link observation and reconciles once. Idempotent — a hot resume
@@ -209,7 +249,7 @@ package final class NetworkAttachmentCoordinator {
             // VZ has already nil'd the attachment; reflect that and let the
             // ladder pace the next attempt rather than reattaching in lockstep
             // with a persistently failing attach.
-            setPending(device.currentPlan == nil)
+            reportDevice()
             if retryTask == nil { scheduleRetry() }
             return
         }
@@ -243,13 +283,13 @@ package final class NetworkAttachmentCoordinator {
                 .warning,
                 "Network reconcile for '\(self.vmName, privacy: .public)' found no network choice — leaving the attachment alone"
             )
-            setPending(false)
+            report(nil)
             return
         }
 
-        let desired = resolvePlan(for: choice)
-        if let desired {
-            if device.currentPlan != desired {
+        let desired = choice.plan(entitlements: entitlements, interfaces: interfaces, holding: device.currentPlan)
+        if device.currentPlan != desired {
+            if let desired {
                 lastAttachAttemptAt = clock.now
                 if device.apply(desired) {
                     Self.logger.log(
@@ -263,29 +303,15 @@ package final class NetworkAttachmentCoordinator {
                     )
                 }
             }
-        } else if device.currentPlan != nil {
-            // Nothing realizes the choice — a still-usable bridge would have
-            // been held by `resolvePlan` — so what remains is stale (its
-            // interface vanished) and the honest state is detached.
-            device.detach()
+            // A refused apply leaves the previous attachment live, and a choice
+            // this build can't attach leaves whatever was there: either is a
+            // network the user didn't choose, so the device detaches
+            // (docs/NETWORKING.md).
+            if device.currentPlan != desired, device.currentPlan != nil { device.detach() }
         }
 
-        // Never leave an attachment realizing a network other than the chosen
-        // one (a refused apply can leave the previous one's attachment live):
-        // when the chosen network cannot attach, the honest state is detached,
-        // not a substituted network (docs/NETWORKING.md) — an isolated VM never
-        // stays on its mode's common network. A refused apply whose live
-        // attachment does match the choice is kept — a working bridge beats
-        // detaching, and the next trigger retries.
-        if let current = device.currentPlan,
-            current.realization != entitlements.realization(of: choice.joinedNetwork)
-        {
-            device.detach()
-        }
-
-        let pending = device.currentPlan == nil
-        setPending(pending)
-        if pending {
+        reportDevice()
+        if isPending {
             scheduleRetry()
             if let selection = desired?.vmnetSelection { ensureVmnetMaterialization(of: selection) }
         }
@@ -340,38 +366,6 @@ package final class NetworkAttachmentCoordinator {
         vmnetMaterializationSelection = nil
     }
 
-    /// The plan the chosen network resolves to right now, `nil` when Bridged
-    /// has no usable host interface or the build cannot realize the choice.
-    private func resolvePlan(for choice: NetworkChoice) -> NetworkAttachmentPlan? {
-        guard let realization = entitlements.realization(of: choice.joinedNetwork) else { return nil }
-        switch realization {
-        case .systemNAT:
-            return .nat
-        case .vmnet(let selection):
-            return .vmnet(selection)
-        case .bridged:
-            let available = interfaces.interfaces().map(\.identifier)
-            // The persisted interface is reclaimed the moment the host offers
-            // it again; otherwise a live bridge is held while its interface
-            // remains available — for Automatic so a default-route change
-            // doesn't bounce the guest's link, and for a narrowed fallback so
-            // the default route flapping away doesn't detach a working bridge.
-            if let persisted = choice.bridgedInterfaceIdentifier, available.contains(persisted) {
-                return .bridged(persisted)
-            }
-            if case .bridged(let current)? = device.currentPlan, available.contains(current) {
-                return .bridged(current)
-            }
-            guard
-                let chosen = BridgedInterfaceSelection.choose(
-                    persisted: choice.bridgedInterfaceIdentifier,
-                    available: available,
-                    primary: interfaces.primaryInterfaceIdentifier())
-            else { return nil }
-            return .bridged(chosen)
-        }
-    }
-
     private func scheduleRetry() {
         guard nextRetryIndex < retryDelays.count else {
             ladderExhausted()
@@ -392,23 +386,29 @@ package final class NetworkAttachmentCoordinator {
     }
 
     private func ladderExhausted() {
-        guard let choice = choice(), let selection = resolvePlan(for: choice)?.vmnetSelection else {
-            return
-        }
+        guard let choice = choice(),
+            let selection = choice.plan(
+                entitlements: entitlements, interfaces: interfaces, holding: device.currentPlan)?.vmnetSelection
+        else { return }
         Self.logger.log(
             .warning,
             "Network attachment for '\(self.vmName, privacy: .public)' exhausted its ladder on the \(selection.logDescription, privacy: .public) network"
         )
     }
 
-    private func setPending(_ pending: Bool) {
-        guard pending != isPending else { return }
-        isPending = pending
+    /// Reports the plan the device is on, or that it is detached.
+    private func reportDevice() {
+        report(device.currentPlan.map(NetworkAttachmentState.attached) ?? .detached)
+    }
+
+    private func report(_ state: NetworkAttachmentState?) {
+        guard state != reported else { return }
+        reported = state
         Self.logger.log(
             .notice,
-            "Network attachment for '\(self.vmName, privacy: .public)' is \(pending ? "pending reattach" : "attached", privacy: .public)"
+            "Network attachment for '\(self.vmName, privacy: .public)' is \(state.map { String(describing: $0) } ?? "untracked", privacy: .public)"
         )
-        onPendingChange(pending)
+        onAttachmentChange(state)
     }
 
     #if DEBUG

@@ -199,6 +199,33 @@ struct VMOverviewResolverTests {
                 + "on separate networks.")
     }
 
+    @Test("A Bridged VM on its own NAT network is warned beside a shared MAC address")
+    func bridgedFallbackJoinsTheDuplicateMACWarning() throws {
+        let viewModel = makeSettingsViewModel(preferences: preferences)
+        let instance = viewModel.library.admitFixture {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.bridgedInterfaceIdentifier = "en1"
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
+        viewModel.library.admitFixture {
+            $0.name = "Twin"
+            $0.networkEnabled = true
+            $0.macAddress = "aa:bb:cc:dd:ee:ff"
+        }
+        let resolver = makeResolver(instance: instance, viewModel: viewModel)
+        resolver.refresh()
+        let duplicateMAC = try #require(resolver.resolved.warnings[.network])
+
+        instance.beginSessionContextForTesting().networkAttachment = .attached(.bridgedFallback)
+        resolver.refresh()
+
+        let notice = try #require(instance.networkAttachmentNotice)
+        let warning = try #require(resolver.resolved.warnings[.network])
+        #expect(warning.hasPrefix(notice))
+        #expect(warning.hasSuffix(duplicateMAC))
+    }
+
     @Test("The shared machine ID note names one holder, or several in a list")
     func sharedMachineIDNoteNamesTheHolders() {
         #expect(VMOverviewResolver.sharedMachineIDNote(holders: []) == nil)

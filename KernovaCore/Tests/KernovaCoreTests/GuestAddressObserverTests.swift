@@ -79,6 +79,30 @@ struct GuestAddressObserverTests {
         #expect(makeObserver().address(for: vm(mac: nil)) == .unavailable)
     }
 
+    // MARK: - What is observed
+
+    @Test("A Bridged VM that recovery put on its own NAT network is observed on that network")
+    func bridgedVMOnItsOwnNATIsObserved() async {
+        let vmnet = Self.subnetted()
+        let guest = vm(.bridged)
+        // The host offers no interface, so recovery attaches the VM's own NAT
+        // network, which comes up on this subnet.
+        vmnet.operations.setSubnet(.scripted("192.168.90.0"))
+        let device = MockNetworkDeviceControl(
+            vmnetNetworks: vmnet.service.sessionNetworks(ownedBy: guest.configuration.id))
+        let coordinator = attachNetworkCoordinator(to: guest, device: device, entitlements: .entitled)
+        coordinator.activate()
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+        let observer = makeObserver(
+            ScriptedARPTable([Self.entry("192.168.90.5"), Self.entry("192.168.64.5")]), vmnet: vmnet)
+        roster.instances = [guest]
+
+        await observer.readForTesting()
+
+        #expect(observer.address(for: guest) == .observed("192.168.90.5"))
+        coordinator.stop()
+    }
+
     // MARK: - When the table is read
 
     @Test("Reading starts with the first running VM, repeats on the interval, and ends with the last")

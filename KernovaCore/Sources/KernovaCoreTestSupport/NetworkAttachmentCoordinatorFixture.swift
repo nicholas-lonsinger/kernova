@@ -5,7 +5,7 @@ import KernovaCommandModel
 
 /// Wires a mock-backed `NetworkAttachmentCoordinator` onto `instance`, mirroring
 /// `VMInstance.setupNetworkAttachmentCoordinator`: it reads the instance's live
-/// configuration and publishes pending state onto the session context.
+/// configuration and reports the device's state through the instance.
 @MainActor
 @discardableResult
 func attachNetworkCoordinator(
@@ -30,8 +30,9 @@ func attachNetworkCoordinator(
         vmnetRematerializeDelays: vmnetRematerializeDelays,
         isEligible: { [weak instance] in instance?.hasLiveSession ?? false },
         choice: { [weak instance] in instance?.configuration.networkChoice },
-        onPendingChange: { [weak instance] pending in
-            instance?.sessionContext?.networkAttachmentPending = pending
+        onAttachmentChange: { [weak instance] state in
+            guard let instance, let context = instance.sessionContext else { return }
+            instance.networkAttachmentReported(state, on: context)
         })
     let context = instance.sessionContext ?? instance.beginSessionContextForTesting()
     context.networkAttachmentCoordinator = coordinator

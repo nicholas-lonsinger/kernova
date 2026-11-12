@@ -34,9 +34,9 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
     /// Holds the banner naming the other VMs sharing this one's MAC address.
     private var networkWarningContainer = NSStackView()
 
-    /// The duplicate-MAC banner's rendered message, `nil` when no banner is
-    /// shown, so a pass that changed nothing about it skips the rebuild.
-    private var renderedNetworkMACWarning: String?
+    /// The network banner's rendered message, `nil` when no banner is shown,
+    /// so a pass that changed nothing about it skips the rebuild.
+    private var renderedNetworkWarning: String?
     /// What the Mode menu was last built from, so a `refresh()` pass that
     /// changed nothing about networking skips a rebuild.
     private var renderedNetworkMenu: NetworkMenuBasis?
@@ -533,19 +533,20 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
             rebuildNetworkModeMenu()
         }
         refreshMACAddressRow()
-        refreshMACAddressWarning()
+        refreshNetworkWarning()
         refreshIPAddressRow()
     }
 
-    /// Discloses that another VM in the library carries this one's MAC address.
+    /// Discloses a live device off the network the user chose, and another VM
+    /// in the library carrying this one's MAC address.
     ///
     /// Import, load and reconcile admit a bundle whatever address it arrives
     /// with, so the shared address is visible here rather than refused at the
     /// door, with the address still editable.
-    private func refreshMACAddressWarning() {
+    private func refreshNetworkWarning() {
         let message = resolved.warnings[.network]
-        guard message != renderedNetworkMACWarning else { return }
-        renderedNetworkMACWarning = message
+        guard message != renderedNetworkWarning else { return }
+        renderedNetworkWarning = message
         networkWarningContainer.arrangedSubviews.forEach { $0.removeFromSuperview() }
         guard let message else { return }
         let banner = makeGroupedFormBanner(
@@ -637,7 +638,7 @@ final class VMSettingsNetworkPanelViewController: NSViewController, VMSettingsPa
         loadViewIfNeeded()
         panelStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         lockRegistry.removeAll()
-        renderedNetworkMACWarning = nil
+        renderedNetworkWarning = nil
         renderedNetworkMenu = nil
         let section = buildNetworkSection()
         addGroupedFormFullWidth(section, to: panelStack)

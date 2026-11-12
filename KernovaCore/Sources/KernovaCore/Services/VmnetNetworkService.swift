@@ -379,6 +379,17 @@ extension VmnetNetworkSelection {
         case .named(let network): self.init(kind: id.kind, membership: .network(network))
         }
     }
+
+    /// The network this names for the VM with identifier `owner`.
+    func network(of owner: UUID) -> VmnetNetworkID {
+        let scope: VmnetNetworkID.Scope =
+            switch membership {
+            case .common: .common
+            case .isolated: .vm(owner)
+            case .network(let network): .named(network)
+            }
+        return VmnetNetworkID(kind: kind, scope: scope)
+    }
 }
 
 /// One VM session's view of the app-managed networks: the common ones, the
@@ -404,13 +415,7 @@ package final class VmnetSessionNetworks: Sendable {
     }
 
     private func id(_ selection: VmnetNetworkSelection) -> VmnetNetworkID {
-        let scope: VmnetNetworkID.Scope =
-            switch selection.membership {
-            case .common: .common
-            case .isolated: .vm(owner)
-            case .network(let network): .named(network)
-            }
-        return VmnetNetworkID(kind: selection.kind, scope: scope)
+        selection.network(of: owner)
     }
 
     /// `network`, joined by this view's VM and materialized first when it is

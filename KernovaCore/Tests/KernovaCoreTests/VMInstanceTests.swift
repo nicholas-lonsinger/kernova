@@ -295,10 +295,11 @@ struct VMInstanceTests {
     func networkPendingSaysWhy() {
         let library = makeWiredLibrary()
         let instance = library.registerFixture(phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().networkAttachmentPending = true
+        instance.beginSessionContextForTesting().networkAttachment = .detached
 
         // The wording names what is actually unavailable: the app-managed
-        // network for NAT and Host Only, a host interface for Bridged.
+        // network for NAT and Host Only, a host interface and the VM's own
+        // NAT network for Bridged.
         library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .nat }
         #expect(
             instance.statusToolTip
@@ -309,6 +310,39 @@ struct VMInstanceTests {
                 == "The Host Only network is unavailable. Kernova reconnects automatically.")
         library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .bridged }
         #expect(instance.statusToolTip?.contains("network interface") == true)
+        #expect(instance.statusToolTip?.contains("isn\u{2019}t connected") == true)
+    }
+
+    @Test("A running Bridged VM on its own NAT network says so, naming the missing interface")
+    func bridgedFallbackSaysWhy() async {
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture(phase: .running(sessionID: UUID())) {
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.bridgedInterfaceIdentifier = "en1"
+        }
+        let device = MockNetworkDeviceControl()
+        let coordinator = attachNetworkCoordinator(to: instance, device: device, entitlements: .entitled)
+        coordinator.activate()
+        await coordinator.vmnetMaterializationTaskForTesting?.value
+
+        #expect(instance.isOnBridgedFallback)
+        #expect(instance.statusToolTip?.contains("en1") == true)
+        #expect(instance.statusToolTip?.contains("until it returns") == true)
+
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.bridgedInterfaceIdentifier = nil }
+        #expect(instance.statusToolTip?.contains("No network interface can be bridged") == true)
+        #expect(instance.statusToolTip?.contains("until one can") == true)
+
+        // The same network chosen as NAT – Isolated is where the VM belongs.
+        library.editConfiguration(of: instance, as: .networkAttachment) {
+            $0.networkMode = .nat
+            $0.networkMembership = .isolated
+        }
+        #expect(device.currentPlan == .vmnet(.own(.nat)))
+        #expect(!instance.isOnBridgedFallback)
+        #expect(instance.statusToolTip == nil)
+        coordinator.stop()
     }
 
     @Test("applyLivePolicy forwards a network mode change to the coordinator")
@@ -358,7 +392,7 @@ struct VMInstanceTests {
         // whether or not `tearDown()` stopped the coordinator, since it is
         // that same context's slot the teardown nils regardless.
         #expect(context.networkAttachmentCoordinator == nil)
-        #expect(!context.networkAttachmentPending)
+        #expect(context.networkAttachment == nil)
         #expect(!observer.isObserving)
     }
 

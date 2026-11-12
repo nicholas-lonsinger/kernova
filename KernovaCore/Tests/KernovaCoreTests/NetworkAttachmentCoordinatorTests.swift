@@ -39,7 +39,7 @@ struct NetworkAttachmentCoordinatorTests {
         let clock: TestEngineClock
         let eligibility: EligibilityBox
         let choiceBox: ChoiceBox
-        let pendingChanges: PendingRecorder
+        let reports: ReportRecorder
         /// How many networks the harness stood up before the coordinator ran.
         let preMaterialized: Int
 
@@ -56,12 +56,12 @@ struct NetworkAttachmentCoordinatorTests {
         }
     }
 
-    /// Records every pending-state callback, standing in for
-    /// `VMInstance.networkAttachmentPending`.
+    /// Records every attachment report, standing in for
+    /// `VMInstance.networkAttachment`.
     @MainActor
-    private final class PendingRecorder {
-        private(set) var values: [Bool] = []
-        func record(_ value: Bool) { values.append(value) }
+    private final class ReportRecorder {
+        private(set) var values: [NetworkAttachmentState?] = []
+        func record(_ value: NetworkAttachmentState?) { values.append(value) }
     }
 
     private func makeHarness(
@@ -84,7 +84,7 @@ struct NetworkAttachmentCoordinatorTests {
         let clock = TestEngineClock()
         let eligibility = EligibilityBox()
         let choiceBox = ChoiceBox(choice)
-        let pendingChanges = PendingRecorder()
+        let reports = ReportRecorder()
         let coordinator = NetworkAttachmentCoordinator(
             vmName: "Test VM",
             device: device,
@@ -96,11 +96,11 @@ struct NetworkAttachmentCoordinatorTests {
             clock: clock,
             isEligible: { eligibility.isEligible },
             choice: { choiceBox.choice },
-            onPendingChange: { pendingChanges.record($0) })
+            onAttachmentChange: { reports.record($0) })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
             vmnet: vmnet, owner: owner, observer: observer, clock: clock, eligibility: eligibility,
-            choiceBox: choiceBox, pendingChanges: pendingChanges,
+            choiceBox: choiceBox, reports: reports,
             preMaterialized: vmnet.operations.createdKinds.count)
     }
 
@@ -175,23 +175,23 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.stop()
     }
 
-    @Test("A bridged VM with no usable interface goes pending, then a link event reattaches it")
-    func degradedBridgedStartRecoversOnLinkEvent() {
+    @Test("A detached bridged VM is reattached over its interface by the link event announcing it")
+    func detachedBridgedStartRecoversOnLinkEvent() {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en0"),
             entitled: true)
+        h.vmnet.operations.setCreateNetworkError(TestFailure("network limit reached"))
 
         h.coordinator.activate()
-        #expect(h.coordinator.isPending)
-        #expect(h.pendingChanges.values == [true])
+        #expect(h.reports.values == [.detached])
         #expect(h.device.appliedPlans.isEmpty)
 
         h.provider.setAvailable([Self.wiFi])
         h.observer.fire()
 
         #expect(h.device.appliedPlans == [.bridged("en0")])
-        #expect(!h.coordinator.isPending)
-        #expect(h.pendingChanges.values == [true, false])
+        #expect(h.reports.values == [.detached, .attached(.bridged("en0"))])
+        h.coordinator.stop()
     }
 
     // MARK: - Disconnect
@@ -235,8 +235,8 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.coordinator.isPending)
     }
 
-    @Test("A bridged disconnect with the persisted interface gone narrows to the primary")
-    func bridgedDisconnectNarrowsToPrimary() {
+    @Test("A Bridged VM whose interface is gone joins its own NAT network, never the default-route interface")
+    func goneInterfaceJoinsOwnNATNotPrimary() async {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
             devicePlan: .bridged("en1"),
@@ -245,14 +245,75 @@ struct NetworkAttachmentCoordinatorTests {
             entitled: true)
         h.coordinator.activate()
 
-        // en1 undocked: the host now offers only Wi-Fi.
+        // en1 undocked: the host now offers only Wi-Fi, which carries the
+        // default route.
         h.provider.setAvailable([Self.wiFi])
         h.provider.setPrimary("en0")
         h.device.plan = nil
         h.coordinator.attachmentWasDisconnected(error: TestFailure("undock"))
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
 
-        #expect(h.device.appliedPlans == [.bridged("en0")])
+        #expect(!h.device.appliedPlans.contains(.bridged("en0")))
+        #expect(h.device.currentPlan == .vmnet(.own(.nat)))
+        #expect(h.subnet(.nat, .vm(h.owner)) != nil)
         #expect(!h.coordinator.isPending)
+        h.coordinator.stop()
+    }
+
+    @Test("Automatic with a default-route interface that can't be bridged joins its own NAT network")
+    func automaticWithUnbridgeablePrimaryJoinsOwnNAT() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: nil),
+            available: [Self.wiFi, Self.ethernet],
+            primary: "utun4",
+            entitled: true)
+
+        h.coordinator.activate()
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+
+        #expect(h.device.appliedPlans == [.vmnet(.own(.nat))])
+        #expect(!h.coordinator.isPending)
+        h.coordinator.stop()
+    }
+
+    @Test("A Bridged VM on its own NAT network goes back to its interface the moment the host offers it")
+    func returningInterfaceIsReclaimedFromOwnNAT() async {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
+            available: [Self.wiFi],
+            primary: "en0",
+            entitled: true)
+        h.coordinator.activate()
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        #expect(h.device.currentPlan == .vmnet(.own(.nat)))
+
+        h.provider.setAvailable([Self.wiFi, Self.ethernet])
+        h.observer.fire()
+
+        #expect(h.device.appliedPlans == [.vmnet(.own(.nat)), .bridged("en1")])
+        #expect(!h.coordinator.isPending)
+        h.coordinator.stop()
+    }
+
+    @Test("A Bridged VM whose own NAT network won't materialize waits detached while it is materialized")
+    func unmaterializableOwnNATWaitsDetached() async throws {
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
+            entitled: true)
+        let createHold = DispatchSemaphore(value: 0)
+        h.vmnet.operations.setCreateNetworkError(TestFailure("network limit reached"))
+        h.vmnet.operations.setCreateHold(createHold)
+
+        h.coordinator.activate()
+        try await h.vmnet.operations.createEntered.wait { h.materializeRequests == [.nat] }
+
+        #expect(h.device.currentPlan == nil)
+        #expect(h.device.appliedPlans.isEmpty)
+        #expect(h.coordinator.isPending)
+        #expect(h.coordinator.vmnetMaterializationTaskForTesting != nil)
+        createHold.signal()
+        h.coordinator.stop()
+        await h.coordinator.vmnetMaterializationTaskForTesting?.value
     }
 
     @Test("An Automatic bridge holds its interface across a default-route change")
@@ -272,7 +333,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.device.currentPlan == .bridged("en0"))
     }
 
-    @Test("A vanished interface detaches the stale bridge, goes pending, and arms a retry")
+    @Test("A vanished interface detaches the stale bridge and arms a retry while its NAT network isn't ready")
     func vanishedInterfaceDetachesStaleBridge() {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
@@ -295,6 +356,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.device.currentPlan == nil)
         #expect(h.coordinator.isPending)
         #expect(h.coordinator.retryTaskForTesting != nil)
+        h.coordinator.stop()
     }
 
     // MARK: - Backoff retries

@@ -35,7 +35,7 @@ struct VMInstanceStatusColorTests {
     func networkPendingShowsWarningTint() {
         let library = makeWiredLibrary()
         let instance = library.registerFixture(phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting().networkAttachmentPending = true
+        instance.beginSessionContextForTesting().networkAttachment = .detached
 
         #expect(instance.statusDisplayNSColor == StatusColor.warning)
     }

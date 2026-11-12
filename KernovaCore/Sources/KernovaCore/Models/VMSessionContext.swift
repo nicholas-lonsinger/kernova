@@ -139,9 +139,9 @@ package final class VMSessionContext {
     /// once the session reaches `.running`, torn down with the session.
     @ObservationIgnored package var networkAttachmentCoordinator: NetworkAttachmentCoordinator?
 
-    /// `true` while a live session's network device is detached and recovery
-    /// is waiting for a usable host interface.
-    package var networkAttachmentPending = false
+    /// The live network device as attachment recovery last reported it,
+    /// `nil` while recovery reports nothing.
+    package var networkAttachment: NetworkAttachmentState?
 
     // MARK: - Runtime Removable Media
 
@@ -179,7 +179,7 @@ package final class VMSessionContext {
     func tearDown() {
         networkAttachmentCoordinator?.stop()
         networkAttachmentCoordinator = nil
-        networkAttachmentPending = false
+        networkAttachment = nil
         clipboardPassthroughCoordinator?.stop()
         clipboardPassthroughCoordinator = nil
         detachAgentTransport()

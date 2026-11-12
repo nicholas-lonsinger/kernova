@@ -94,27 +94,48 @@ extension VMInstance {
         return reported
     }
 
+    /// What a person reads while the live network device isn't on the network
+    /// the user chose — detached, or a Bridged VM on its own NAT network —
+    /// and `nil` while it is.
+    package var networkAttachmentNotice: String? {
+        let bridgedFallbackNetwork =
+            "\(NetworkModeChoice.isolatedTitle.lowercased()) \(VMNetworkMode.nat.title) network"
+        // The interface is named by identifier: the host no longer offers it,
+        // so it has no display name to show.
+        let missingInterface = configuration.bridgedInterfaceIdentifier.map {
+            "network interface \($0) isn\u{2019}t available"
+        }
+        if isOnBridgedFallback {
+            guard let missingInterface else {
+                return "No network interface can be bridged, so this VM is on an \(bridgedFallbackNetwork) "
+                    + "until one can."
+            }
+            return "The \(missingInterface), so this VM is on an \(bridgedFallbackNetwork) until it returns."
+        }
+        guard networkAttachmentPending else { return nil }
+        // NAT and Host Only wait on the app's own network, not a host
+        // interface — pointing the user at Wi-Fi/Ethernet would misdirect
+        // them.
+        if let network = configuration.joinedNetwork, !network.isCommon {
+            return network.isOwn
+                ? "This VM's isolated network is unavailable. Kernova reconnects automatically."
+                : "This VM's network is unavailable. Kernova reconnects automatically."
+        }
+        return switch configuration.networkMode {
+        case .hostOnly, .nat:
+            "The \(configuration.networkMode.title) network is unavailable. Kernova reconnects automatically."
+        case .bridged:
+            "This VM isn\u{2019}t connected to a network: \(missingInterface ?? "no network interface can be bridged"), "
+                + "and its \(bridgedFallbackNetwork) isn\u{2019}t ready. Kernova reconnects automatically."
+        }
+    }
+
     /// Tooltip explaining the VM state variant, or `nil` for standard states.
     package var statusToolTip: String? {
         if heldByAnotherCopy { return statusDisplayName + "." }
         if status == .initialBoot { return "Click Start to install macOS" }
         if status == .error { return errorMessage }
-        if status == .running, networkAttachmentPending {
-            // NAT and Host Only wait on the app's own network, not a host
-            // interface — pointing the user at Wi-Fi/Ethernet would misdirect
-            // them.
-            if let network = configuration.joinedNetwork, !network.isCommon {
-                return network.isOwn
-                    ? "This VM's isolated network is unavailable. Kernova reconnects automatically."
-                    : "This VM's network is unavailable. Kernova reconnects automatically."
-            }
-            return switch configuration.networkMode {
-            case .hostOnly, .nat:
-                "The \(configuration.networkMode.title) network is unavailable. Kernova reconnects automatically."
-            case .bridged:
-                "The network interface is unavailable. Kernova reconnects automatically when one is available."
-            }
-        }
+        if status == .running, let networkAttachmentNotice { return networkAttachmentNotice }
         return switch status {
         case .paused: "VM is paused in memory"
         case .suspended: "VM state is saved to disk"

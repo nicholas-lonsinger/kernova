@@ -174,9 +174,11 @@ package final class VMOverviewResolver {
         values.warnings[.general] = Self.autoStartCapacityWarning(
             isMacOSGuest: config.guestOS == .macOS,
             markedMacOSVMCount: viewModel.macOSVMNamesMarkedForAutoStart.count)
-        values.warnings[.network] = Self.duplicateMACWarning(
+        let duplicateMAC = Self.duplicateMACWarning(
             sharingWith: config.networkEnabled && config.macAddress != nil
                 ? viewModel.vmNamesSharingMACAddress(with: instance) : [])
+        let network = [instance.networkAttachmentNotice, duplicateMAC].compactMap(\.self)
+        values.warnings[.network] = network.isEmpty ? nil : network.joined(separator: "\n")
         values.sharedMachineIDNote = Self.sharedMachineIDNote(
             holders: viewModel.vmNamesSharingMachineIdentity(with: instance))
         values.micWarning = micPermissionPresentation(

@@ -221,6 +221,11 @@ package final class VMInstance {
     /// VM's copy of it go with the session.
     @ObservationIgnored var onGuestPoweredOff: (@MainActor () -> Void)?
 
+    /// Fired when attachment recovery reports the live network device moved:
+    /// a VM it put on an app-managed network is a guest whose address can be
+    /// watched.
+    @ObservationIgnored var onNetworkAttachmentChanged: (@MainActor () -> Void)?
+
     // MARK: - Session Projection
 
     /// What `scope`'s agent last reported on this VM: this session's when one
@@ -430,9 +435,26 @@ package final class VMInstance {
         sessionContext?.networkAttachmentCoordinator?.activate()
     }
 
+    /// Records what attachment recovery reports for `context`'s network
+    /// device.
+    package func networkAttachmentReported(_ state: NetworkAttachmentState?, on context: VMSessionContext) {
+        context.networkAttachment = state
+        onNetworkAttachmentChanged?()
+    }
+
+    /// The live network device as attachment recovery last reported it,
+    /// `nil` while it reports nothing.
+    package var networkAttachment: NetworkAttachmentState? { sessionContext?.networkAttachment }
+
     /// `true` while a live session's network device is detached and recovery
-    /// is waiting for a usable host interface.
-    package var networkAttachmentPending: Bool { sessionContext?.networkAttachmentPending ?? false }
+    /// is waiting to reattach it.
+    package var networkAttachmentPending: Bool { networkAttachment == .detached }
+
+    /// `true` while a Bridged VM's live device is on its own NAT network
+    /// because its interface can't be bridged.
+    package var isOnBridgedFallback: Bool {
+        configuration.joinedNetwork == .bridged && networkAttachment == .attached(.bridgedFallback)
+    }
 
     // MARK: - Bundle Layout
 

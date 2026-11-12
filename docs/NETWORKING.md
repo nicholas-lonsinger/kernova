@@ -6,9 +6,10 @@ Read this before changing how a guest attaches to a network or is reached from o
 
 A guest gets the exposure the user chose for it, per VM, and recovery only narrows
 it: no mode change, decode fallback or recovery path puts the guest on a network the
-user did not choose. A Bridged VM whose interface is gone runs on NAT, not on another
-interface's network, and a network that cannot be made leaves the guest detached
-until it can. Worked case: `NetworkAttachmentCoordinator`.
+user did not choose. A Bridged VM whose interface is gone runs on a NAT network of its
+own until the interface returns, not on another interface's network, and a network
+that cannot be made leaves the guest detached until it can. Worked case:
+`NetworkAttachmentCoordinator`.
 
 ## An address is stated at the strength of its source
 

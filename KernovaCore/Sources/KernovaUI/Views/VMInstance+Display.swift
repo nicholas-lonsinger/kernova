@@ -26,11 +26,12 @@ extension VMInstance {
     /// Color used to tint the sidebar's OS icon.
     ///
     /// A VM another copy of Kernova holds is the running color dimmed.
-    /// Running-while-awaiting-network-reattach is orange, and the remaining
+    /// Running off the network the user chose — awaiting reattach, or a
+    /// Bridged VM on its own NAT network — is orange, and the remaining
     /// states follow `status`.
     var statusDisplayNSColor: NSColor {
         if heldByAnotherCopy { return StatusColor.heldByAnotherCopy }
-        if status == .running && networkAttachmentPending { return StatusColor.warning }
+        if status == .running && (networkAttachmentPending || isOnBridgedFallback) { return StatusColor.warning }
         switch status {
         // A concrete gray (not `.secondaryLabelColor`) so the icon keeps its
         // stopped color on the selection highlight instead of inverting to white.
