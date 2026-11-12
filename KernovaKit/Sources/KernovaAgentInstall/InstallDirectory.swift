@@ -370,7 +370,9 @@ public struct StagedFile<Failure: InstallFileFailure>: ~Copyable {
 }
 
 /// A descriptor this owns alone, closed when it ends unless released first.
-private struct OpenFile: ~Copyable {
+// A module that ends a `StagedFile` destroys its fields itself, so a Release build of the static agent links
+// this type's metadata from outside the module: private, the link fails on an undefined hidden symbol.
+@usableFromInline struct OpenFile: ~Copyable {
     let descriptor: Int32
 
     deinit {
