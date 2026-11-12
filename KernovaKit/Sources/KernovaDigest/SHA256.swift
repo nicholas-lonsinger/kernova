@@ -1,7 +1,7 @@
 /// SHA-256 (FIPS 180-4), fed incrementally.
 ///
-/// The agents hash their own payloads with it; the host hashes the same files with CryptoKit, and the tests
-/// hold the two to the same answers.
+/// The agents hash their own payloads with it and the host hashes the same files with CryptoKit, so its digests
+/// must match CryptoKit's.
 public struct SHA256: Sendable {
     /// The digest's length in bytes.
     public static let byteCount = 32

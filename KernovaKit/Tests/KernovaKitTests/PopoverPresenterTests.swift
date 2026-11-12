@@ -55,8 +55,8 @@ struct PopoverPresenterTests {
         func controlTextDidEndEditing(_: Notification) { endedEdits += 1 }
     }
 
-    /// A window with a field under edit, typed into so its delegate is asked before
-    /// the edit ends, beside an anchor inside `surroundings`.
+    /// A window with a field under edit, typed into, beside an anchor inside
+    /// `surroundings`.
     private func makeEdit(
         anchorIn surroundings: NSView, anchor: NSView = NSView()
     ) throws -> (window: NSWindow, anchor: NSView, field: NSTextField, watcher: FieldWatcher) {
