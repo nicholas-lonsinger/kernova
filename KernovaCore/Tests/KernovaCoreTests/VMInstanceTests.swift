@@ -291,6 +291,26 @@ struct VMInstanceTests {
 
     // MARK: - Network Attachment Recovery
 
+    @Test("A running VM awaiting network reattach says why")
+    func networkPendingSaysWhy() {
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture(phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting().networkAttachmentPending = true
+
+        // The wording names what is actually unavailable: the app-managed
+        // network for NAT and Host Only, a host interface for Bridged.
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .nat }
+        #expect(
+            instance.statusToolTip
+                == "The NAT network is unavailable. Kernova reconnects automatically.")
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .hostOnly }
+        #expect(
+            instance.statusToolTip
+                == "The Host Only network is unavailable. Kernova reconnects automatically.")
+        library.editConfiguration(of: instance, as: .networkAttachment) { $0.networkMode = .bridged }
+        #expect(instance.statusToolTip?.contains("network interface") == true)
+    }
+
     @Test("applyLivePolicy forwards a network mode change to the coordinator")
     func applyLivePolicyForwardsNetworkChange() {
         let library = makeWiredLibrary()
