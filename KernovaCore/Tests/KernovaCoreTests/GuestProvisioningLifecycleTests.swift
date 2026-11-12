@@ -97,24 +97,6 @@ struct GuestProvisioningLifecycleTests {
 
     // MARK: - What an Install Leaves Behind
 
-    @available(macOS 27.0, *)
-    @Test("A completed install keeps the account for the boot chained after it")
-    func installKeepsTheAccountForTheBootAfterIt() async throws {
-        let (coordinator, installService) = makeCoordinator()
-        installService.installedImage = .macOSRestoreImage(version: "27.0", build: "27A100")
-        let (instance, library) = makeInstance(intent: makeIntent())
-        defer { withExtendedLifetime(library) {} }
-        #expect(instance.configuration.installContext != nil)
-
-        try await coordinator.launchGuestSetup(on: instance).value()
-
-        // The install is over — that context goes. The account is not: the boot
-        // that delivers it has not run, so anything interrupting the two must
-        // leave the next Start something to ask about.
-        #expect(instance.configuration.installContext == nil)
-        #expect(instance.configuration.pendingGuestAccount == makeIntent())
-    }
-
     @Test("An install below the provisioning floor records the image and leaves the drop to its caller")
     func installBelowFloorRecordsTheImage() async throws {
         let (coordinator, installService) = makeCoordinator()

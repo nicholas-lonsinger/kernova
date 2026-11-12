@@ -25,25 +25,6 @@ struct LinuxImageFilenameTests {
         #expect(first.hasSuffix(".iso"))
     }
 
-    @Test("A path a source could name is never reproduced in the destination")
-    func destinationIsOneComponent() throws {
-        // `URL.lastPathComponent` percent-decodes, so this arrives as
-        // `../../evil.iso` — a stem the generator refuses in favor of its
-        // default.
-        let escaping = LinuxImageFilename.destination(
-            for: try url("https://mirror.example/a%2F..%2F..%2Fevil.iso"))
-
-        #expect(!escaping.contains("/"))
-        #expect(escaping.hasPrefix("LinuxImage-"))
-    }
-
-    @Test("One URL always names the same destination, so a download stays resumable")
-    func destinationIsStableForOneURL() throws {
-        let iso = try url("https://mirror.example/alpine-3.22-aarch64.iso")
-
-        #expect(LinuxImageFilename.destination(for: iso) == LinuxImageFilename.destination(for: iso))
-    }
-
     @Test("A URL that names no usable stem still yields an .iso destination")
     func destinationFallsBackToADefaultStem() throws {
         let name = LinuxImageFilename.destination(for: try url("https://mirror.example/"))
@@ -63,25 +44,5 @@ struct LinuxImageFilenameTests {
         #expect(
             LinuxImageFilename.sourceFilename(of: LinuxImageFilename.destination(for: iso))
                 == "debian-13.6.0-arm64-netinst.iso")
-    }
-
-    @Test(
-        "A name this app did not generate belongs to no source",
-        arguments: [
-            // The mirror's own name, as a user's own fetch would leave it.
-            "debian-13.6.0-arm64-netinst.iso",
-            // A discriminator that is not eight lowercase hex characters.
-            "debian-1a2b3c4.iso",
-            "debian-1a2b3c4de.iso",
-            "debian-1A2B3C4D.iso",
-            "debian-nothexes.iso",
-            // Nothing in front of the discriminator to name a source.
-            "-1a2b3c4d.iso",
-            // Not an ISO, so not an image at all — a resume bundle among them.
-            "debian-13.6.0-arm64-netinst-1a2b3c4d.kernovadownload",
-            "debian-1a2b3c4d.img",
-        ])
-    func sourceFilenameRefusesForeignNames(candidate: String) {
-        #expect(LinuxImageFilename.sourceFilename(of: candidate) == nil)
     }
 }

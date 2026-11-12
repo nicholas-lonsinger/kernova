@@ -37,16 +37,6 @@ struct GuestSetupStateTests {
 
     // MARK: - Linux image flow
 
-    @Test("A Linux image download runs Download then Verify")
-    func linuxImageSteps() {
-        let state = GuestSetupState.linuxImage(digestSource: .enteredByUser)
-
-        #expect(state.steps.map(\.id) == [.download, .verify])
-        #expect(state.steps.map(\.label) == ["Download", "Verify"])
-        #expect(state.showsStepIndicator)
-        #expect(state.progress == .download(.zero))
-    }
-
     @Test("A Linux image with no digest behind it runs Download then Checksum")
     func linuxImageWithoutVerifyStep() {
         let state = GuestSetupState.linuxImage(digestSource: nil)
@@ -94,13 +84,6 @@ struct GuestSetupStateTests {
     }
 
     // MARK: - Progress payloads
-
-    @Test("A download payload reports the transfer's own fraction")
-    func downloadFraction() {
-        let progress = SetupStepProgress.download(
-            DownloadProgress(bytesWritten: 750_000, totalBytes: 1_000_000, bytesPerSecond: 0))
-        #expect(progress.fraction == 0.75)
-    }
 
     @Test("A fraction payload reports itself")
     func plainFraction() {

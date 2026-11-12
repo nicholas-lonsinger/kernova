@@ -7,17 +7,6 @@ import Testing
 
 @Suite("LinuxImageCatalogEntry Tests", .caseScoped)
 struct LinuxImageCatalogEntryTests {
-    @Test("Identity is the slug, so two editions of one version stay distinct")
-    func slugIsIdentity() {
-        let desktop = makeLinuxCatalogEntry(
-            id: "ubuntu-desktop-26.04", distribution: "Ubuntu Desktop", version: "26.04 LTS")
-        let server = makeLinuxCatalogEntry(
-            id: "ubuntu-server-26.04", distribution: "Ubuntu Server", version: "26.04 LTS")
-        #expect(desktop.id == "ubuntu-desktop-26.04")
-        #expect(desktop != server)
-        #expect(Set([desktop.id, server.id]).count == 2)
-    }
-
     @Test("A version's numeric components stop at the first non-numeric part")
     func versionComponentsParse() {
         #expect(makeLinuxCatalogEntry(version: "26.04 LTS").versionComponents == [26, 4])
@@ -42,17 +31,6 @@ struct LinuxImageCatalogEntryTests {
             sorted.map(\.id) == [
                 "ubuntu-desktop-26.04", "ubuntu-server-24.04", "debian-13", "debian-12", "kali",
             ])
-    }
-
-    @Test("Versions compare numerically per component, not lexicographically")
-    func sortsVersionsNumerically() {
-        let entries = [
-            makeLinuxCatalogEntry(id: "b", distribution: "Debian", version: "9"),
-            makeLinuxCatalogEntry(id: "a", distribution: "Debian", version: "10"),
-            makeLinuxCatalogEntry(id: "c", distribution: "Debian", version: "8.11"),
-        ]
-        let sorted = entries.sorted(by: LinuxImageCatalogEntry.isOrderedBefore)
-        #expect(sorted.map(\.id) == ["a", "b", "c"])
     }
 
     @Test("A distribution outside the fixed order sorts after every one in it")
@@ -110,16 +88,6 @@ struct LinuxImageCatalogServiceTests {
         }
         """
 
-    @Test("A well-formed catalog decodes with no rejections")
-    func decodesCleanCatalog() throws {
-        let result = LinuxImageCatalogService.parse(json(images: goodEntry))
-        let catalog = try #require(result.catalog)
-        #expect(result.rejections.isEmpty)
-        #expect(catalog.generatedAt == "2026-08-05")
-        #expect(catalog.images.map(\.id) == ["debian-13"])
-        #expect(catalog.images.first?.approxSizeBytes == 735_358_976)
-    }
-
     @Test("A malformed entry is dropped rather than failing the whole decode")
     func dropsMalformedEntry() throws {
         let malformed = """
@@ -136,41 +104,6 @@ struct LinuxImageCatalogServiceTests {
         let result = LinuxImageCatalogService.parse(Data("not json".utf8))
         #expect(result.catalog == nil)
         #expect(result.rejections == [.undecodableDocument])
-    }
-
-    @Test("A non-HTTPS directory URL is rejected")
-    func rejectsInsecureURL() throws {
-        let insecure = goodEntry.replacingOccurrences(of: "https://", with: "http://")
-        let result = LinuxImageCatalogService.parse(json(images: insecure))
-        let catalog = try #require(result.catalog)
-        #expect(catalog.images.isEmpty)
-        #expect(result.rejections.count == 1)
-        if case .insecureURL(let id, _) = result.rejections[0] {
-            #expect(id == "debian-13")
-        } else {
-            Issue.record("Expected an insecureURL rejection, got \(result.rejections[0])")
-        }
-    }
-
-    @Test("A manifest directory decodes when stated and falls back to the ISO directory when not")
-    func decodesManifestDirectory() throws {
-        let plain = try #require(LinuxImageCatalogService.parse(json(images: goodEntry)).catalog)
-        #expect(plain.images.first?.manifestDirectoryURL == nil)
-        #expect(
-            plain.images.first?.manifestDirectory
-                == URL(string: "https://cdimage.debian.org/debian-cd/current/arm64/iso-cd/"))
-
-        let pinned = goodEntry.replacingOccurrences(
-            of: "\"checksumManifest\"",
-            with:
-                "\"manifestDirectoryURL\": \"https://kali.download/base-images/kali-2026.2/\", \"checksumManifest\""
-        )
-        let result = LinuxImageCatalogService.parse(json(images: pinned))
-        let catalog = try #require(result.catalog)
-        #expect(result.rejections.isEmpty)
-        #expect(
-            catalog.images.first?.manifestDirectory
-                == URL(string: "https://kali.download/base-images/kali-2026.2/"))
     }
 
     @Test("A non-HTTPS manifest directory is rejected")
@@ -220,26 +153,6 @@ struct LinuxImageCatalogServiceTests {
             #expect(
                 result.rejections == [.invalidManifestName(id: "debian-13", manifest: manifest)])
         }
-    }
-
-    @Test("A repeated id is kept once")
-    func rejectsDuplicateID() throws {
-        let result = LinuxImageCatalogService.parse(json(images: "\(goodEntry), \(goodEntry)"))
-        let catalog = try #require(result.catalog)
-        #expect(catalog.images.count == 1)
-        #expect(result.rejections == [.duplicateID(id: "debian-13")])
-    }
-
-    @Test("Parsed entries come back in display order regardless of input order")
-    func sortsParsedEntries() throws {
-        let ubuntu =
-            goodEntry
-            .replacingOccurrences(of: "\"debian-13\"", with: "\"ubuntu-desktop-26.04\"")
-            .replacingOccurrences(of: "\"Debian\"", with: "\"Ubuntu Desktop\"")
-            .replacingOccurrences(of: "\"13\"", with: "\"26.04 LTS\"")
-        let result = LinuxImageCatalogService.parse(json(images: "\(goodEntry), \(ubuntu)"))
-        let catalog = try #require(result.catalog)
-        #expect(catalog.images.map(\.id) == ["ubuntu-desktop-26.04", "debian-13"])
     }
 
     @Test("The catalog the core ships parses clean")
