@@ -309,12 +309,10 @@ struct VMLiveIdentitiesTests {
 
     @Test("A running VM's disk image is matched at the path its bookmark resolved to")
     func diskImageMatchesTheHoldersResolvedPath() throws {
-        let scratch = FileManager.default.temporaryDirectory
-            .appending(path: "VMLiveIdentitiesTests-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: scratch) }
+        let scratch = TestScratchDirectory(prefix: "VMLiveIdentitiesTests")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         // Named as a bookmark resolves it, through no symlink such as /var.
-        let directory = scratch.resolvingSymlinksInPath()
+        let directory = scratch.url.resolvingSymlinksInPath()
         let picked = directory.appending(path: "picked.img")
         try Data(repeating: 0, count: 512).write(to: picked)
         let bookmark = try #require(SecurityScopedBookmark.make(for: picked))
