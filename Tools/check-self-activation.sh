@@ -28,11 +28,12 @@
 #       `isHidden`, `deactivate`, `keyWindow` or `mainWindow`, and
 #       `NSRunningApplication.current` reaching `activate` or `hide`;
 #     - a call to `makeKeyAndOrderFront(`, `makeKey(`, `makeMain(`,
-#       `orderFrontRegardless(`, `toggleFullScreen(`, `miniaturize(` or
-#       `orderFrontStandardAboutPanel(`;
+#       `orderFrontRegardless(`, `toggleFullScreen(`, `miniaturize(`,
+#       `orderFrontStandardAboutPanel(` or `showWindow(`, which makes the
+#       window key;
 #     - outside KernovaUITests/, which orders its parked test windows in
-#       itself, a call to `showWindow(`, `orderFront(` or `orderBack(`, and a
-#       read of `.isOnActiveSpace`.
+#       itself, a call to `orderFront(` or `orderBack(`, and a read of
+#       `.isOnActiveSpace`.
 # A URL bound to a local first and passed on a later line is not traced, nor is
 # an `NSApplication` bound to a local.
 #
@@ -83,10 +84,10 @@ findings=$(list_files "$@" \
                 next
             } else if (code ~ /(NSApp[[:space:]]*\??|NSApplication\.shared)[[:space:]]*\.[[:space:]]*(activate|activationPolicy|setActivationPolicy|isActive|hide|unhide|unhideWithoutActivation|unhideAllApplications|isHidden|deactivate|keyWindow|mainWindow)([^A-Za-z0-9_]|$)/ \
                 || code ~ /NSRunningApplication\.current[[:space:]]*\.[[:space:]]*(activate|hide)([^A-Za-z0-9_]|$)/ \
-                || code ~ /(^|[^A-Za-z0-9_])(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|orderFrontStandardAboutPanel)[[:space:]]*\(/) {
+                || code ~ /(^|[^A-Za-z0-9_])(makeKeyAndOrderFront|makeKey|makeMain|orderFrontRegardless|toggleFullScreen|miniaturize|orderFrontStandardAboutPanel|showWindow)[[:space:]]*\(/) {
                 report()
             } else if (!in_tests \
-                && (code ~ /(^|[^A-Za-z0-9_])(showWindow|orderFront|orderBack)[[:space:]]*\(/ \
+                && (code ~ /(^|[^A-Za-z0-9_])(orderFront|orderBack)[[:space:]]*\(/ \
                     || code ~ /\.[[:space:]]*isOnActiveSpace([^A-Za-z0-9_]|$)/)) {
                 report()
             }

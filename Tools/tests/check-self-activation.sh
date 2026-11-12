@@ -70,7 +70,8 @@ window.orderFront(nil)
 window.orderBack(nil)
 let here = window.isOnActiveSpace' 'KernovaCore/Sources/KernovaUI/App/Ordering.swift'
 
-expect window-ordering-in-tests '' 'window.orderFront(nil)
+expect window-ordering-in-tests '1' 'controller.showWindow(nil)
+window.orderFront(nil)
 window.orderBack(nil)
 let here = window.isOnActiveSpace' 'KernovaUITests/Ordering.swift'
 
