@@ -44,6 +44,15 @@ struct VMCreationViewModelTests {
         #expect(vm.currentStep == .review)
     }
 
+    @Test("goNext at review step is a no-op")
+    func goNextAtReviewIsNoOp() {
+        let vm = VMCreationViewModel.overFakeEngine()
+        vm.currentStep = .review
+
+        vm.goNext()
+        #expect(vm.currentStep == .review)
+    }
+
     @Test("goBack retreats through steps in order")
     func goBackRetreatsThroughSteps() {
         let vm = VMCreationViewModel.overFakeEngine()
