@@ -130,7 +130,7 @@ package enum MacOSGuestProvisioning {
     /// word.
     static func offersUnattendedSetup(forImageVersion imageVersion: MacOSVersion?) -> Bool {
         guard hostSupportsProvisioning, let imageVersion else { return false }
-        return imageVersion.isAtLeast(guestFloor)
+        return imageVersion >= guestFloor
     }
 
     /// Whether the guest `configuration` describes can act on provisioning —
@@ -139,7 +139,7 @@ package enum MacOSGuestProvisioning {
         guard hostSupportsProvisioning, configuration.guestOS == .macOS,
             let version = configuration.effectiveGuestMacOSVersion
         else { return false }
-        return version.isAtLeast(guestFloor)
+        return version >= guestFloor
     }
 
     /// What stops `credentials` creating the account, in the order the user

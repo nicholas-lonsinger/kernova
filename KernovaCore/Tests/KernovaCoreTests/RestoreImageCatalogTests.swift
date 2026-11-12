@@ -33,10 +33,10 @@ struct RestoreImageCatalogEntryTests {
         #expect(!entry.isSupported(onHost: host(14, 9, 9)))
     }
 
-    @Test("A non-numeric version has no components and cannot be host-checked")
+    @Test("A non-numeric version does not parse and cannot be host-checked")
     func unparseableVersion() {
         let entry = makeCatalogEntry(version: "Sequoia", build: "24G90")
-        #expect(entry.versionComponents == nil)
+        #expect(entry.parsedVersion == nil)
         #expect(!entry.isSupported(onHost: host(26, 0, 0)))
     }
 
@@ -231,7 +231,7 @@ struct RestoreImageCatalogServiceTests {
         for entry in service.entries {
             #expect(entry.url.scheme == "https")
             #expect(entry.suggestedFilename.hasSuffix(".ipsw"))
-            #expect(entry.versionComponents != nil)
+            #expect(entry.parsedVersion != nil)
         }
         let sorted = service.entries.sorted(by: RestoreImageCatalogEntry.isDescending)
         #expect(sorted.map(\.build) == service.entries.map(\.build))

@@ -59,9 +59,6 @@ struct GuestInputDevicesTests {
             // The agent's report outranks the install record, both directions.
             Case("13.5", "12.0.1", .mac),
             Case("12.0.1", "13.5", .usb),
-            // Localized free-form reports still read as a version.
-            Case("Versión 12.2.1 (Compilación 21D62)", nil, .usb),
-            Case("Version 13.0 (Build 22A380)", nil, .mac),
             // A report that parses to nothing falls through rather than
             // erasing the install record's vote.
             Case("macOS", "13.0", .mac),

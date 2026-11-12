@@ -120,7 +120,7 @@ package final class MacOSInstallService {
         Self.logger.log(.info, "macOS installation completed for '\(instance.name, privacy: .public)'")
 
         return .macOSRestoreImage(
-            version: KernovaOSVersion.displayString(restoreImage.operatingSystemVersion),
+            version: MacOSVersion(restoreImage.operatingSystemVersion).description,
             build: restoreImage.buildVersion)
     }
 

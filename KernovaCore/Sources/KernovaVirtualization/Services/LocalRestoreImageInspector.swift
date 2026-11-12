@@ -35,7 +35,7 @@ package struct LocalRestoreImageInspector: LocalRestoreImageInspecting {
             .flatMap { $0 }
             .map(UInt64.init)
         let inspected = InspectedRestoreImage(
-            version: KernovaOSVersion.displayString(version),
+            version: MacOSVersion(version).description,
             build: image.buildVersion,
             isSupportedOnThisHost: image.mostFeaturefulSupportedConfiguration != nil,
             sizeBytes: sizeBytes

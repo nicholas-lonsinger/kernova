@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 
 /// A restore image at a user-supplied URL, after the pre-download check.
 ///

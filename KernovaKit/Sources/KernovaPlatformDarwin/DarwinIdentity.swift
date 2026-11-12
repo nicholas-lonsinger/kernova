@@ -4,6 +4,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentInstall
 import KernovaDigest
+import KernovaKit
 import MachO
 
 /// Who this macOS agent process is: everything its Hello claims except the role's session state.
@@ -46,11 +47,12 @@ public enum DarwinIdentity {
         #endif
     }
 
-    /// The OS version as `sw_vers` prints it: "15.3.1", or "15.3" for a release with no patch.
+    /// The running system's ``MacOSVersion``.
+    ///
+    /// Reads the decomposed `operatingSystemVersion`: `operatingSystemVersionString` is human-readable,
+    /// localized, and documented by Apple as not for parsing.
     public static var osVersion: String {
-        let version = ProcessInfo.processInfo.operatingSystemVersion
-        let base = "\(version.majorVersion).\(version.minorVersion)"
-        return version.patchVersion == 0 ? base : base + ".\(version.patchVersion)"
+        MacOSVersion(ProcessInfo.processInfo.operatingSystemVersion).description
     }
 
     /// The OS build, `kern.osversion`: "24D70".

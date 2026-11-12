@@ -36,6 +36,6 @@ package enum GuestAgentDiskDelivery: Equatable, Sendable {
         // USB.
         guard config.guestOS == .macOS else { return .usb }
         guard let version = config.effectiveGuestMacOSVersion else { return .usb }
-        return version.isAtLeast(usbMassStorageFloor) ? .usb : .virtio
+        return version >= usbMassStorageFloor ? .usb : .virtio
     }
 }

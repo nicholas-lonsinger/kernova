@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaCommandModel
 import KernovaLogging
 
