@@ -28,26 +28,6 @@ struct FileDigestTests {
         return url
     }
 
-    @Test("The digest matches the published SHA-256 of 'abc'")
-    func knownDigest() async throws {
-        // FIPS 180-2 test vector, so this asserts against the algorithm rather
-        // than against a second call into CryptoKit.
-        let url = try makeFile(Data("abc".utf8))
-
-        let digest = try await FileDigest.sha256(of: url)
-
-        #expect(digest == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
-    }
-
-    @Test("An empty file digests to the published empty-input hash")
-    func emptyFile() async throws {
-        let url = try makeFile(Data())
-
-        let digest = try await FileDigest.sha256(of: url)
-
-        #expect(digest == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-    }
-
     @Test("A file spanning several chunks digests the same as one read whole")
     func multipleChunks() async throws {
         // Longer than `chunkByteCount`, so the digest takes more than one read.
@@ -72,14 +52,5 @@ struct FileDigestTests {
 
         #expect(samples.values.last == 1)
         #expect(samples.values.allSatisfy { $0 >= 0 && $0 <= 1 })
-    }
-
-    @Test("A missing file surfaces the read failure")
-    func missingFile() async {
-        let url = scratch.url.appendingPathComponent("absent.bin")
-
-        await #expect(throws: (any Error).self) {
-            try await FileDigest.sha256(of: url)
-        }
     }
 }

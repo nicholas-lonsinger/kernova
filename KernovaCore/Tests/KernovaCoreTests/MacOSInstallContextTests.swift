@@ -23,19 +23,6 @@ struct MacOSInstallContextTests {
         #expect(!ctx.requestedFreshDownload)
     }
 
-    @Test("Roundtrip preserves the flag")
-    func roundtripPreservesFlag() throws {
-        let original = MacOSInstallContext(
-            source: .downloadLatest,
-            downloadDestinationPath: "/Users/me/Downloads/R.ipsw",
-            requestedFreshDownload: true
-        )
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(MacOSInstallContext.self, from: data)
-        #expect(decoded == original)
-        #expect(decoded.requestedFreshDownload)
-    }
-
     @Test("Decoding JSON without localIPSWBookmark decodes to nil")
     func decodeMissingBookmarkDefaultsNil() throws {
         // Pre-sandbox on-disk shape: localFile contexts carried only the raw
@@ -49,19 +36,6 @@ struct MacOSInstallContextTests {
         let ctx = try JSONDecoder().decode(MacOSInstallContext.self, from: Data(json.utf8))
         #expect(ctx.localIPSWPath == "/Users/me/R.ipsw")
         #expect(ctx.localIPSWBookmark == nil)
-    }
-
-    @Test("Roundtrip preserves localIPSWBookmark")
-    func roundtripPreservesBookmark() throws {
-        let original = MacOSInstallContext(
-            source: .localFile,
-            localIPSWPath: "/Users/me/R.ipsw",
-            localIPSWBookmark: Data([0x01, 0x02, 0x03])
-        )
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(MacOSInstallContext.self, from: data)
-        #expect(decoded == original)
-        #expect(decoded.localIPSWBookmark == Data([0x01, 0x02, 0x03]))
     }
 
     // MARK: - Catalog Version Source

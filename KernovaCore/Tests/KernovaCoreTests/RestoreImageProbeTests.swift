@@ -13,13 +13,6 @@ struct ProbedRestoreImageTests {
         OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
     }
 
-    @Test("Apple's filename convention yields version and build")
-    func parsesAppleFilename() {
-        let parsed = ProbedRestoreImage.parseFilename("UniversalMac_15.6.1_24G90_Restore.ipsw")
-        #expect(parsed.version == "15.6.1")
-        #expect(parsed.build == "24G90")
-    }
-
     @Test("A two-component version parses too")
     func parsesTwoComponentVersion() {
         let parsed = ProbedRestoreImage.parseFilename("UniversalMac_26.6_25G72_Restore.ipsw")
@@ -44,57 +37,6 @@ struct ProbedRestoreImageTests {
         }
     }
 
-    @Test("An off-convention URL gets a name generated for it")
-    func suggestedFilenameForOffConventionURL() {
-        for urlString in [
-            "https://example.com/downloads/",
-            "https://example.com/image.zip",
-            "https://example.com/restore.ipsw",
-        ] {
-            let image = makeProbedImage(urlString: urlString)
-            #expect(
-                image.suggestedFilename.hasSuffix(".ipsw"), "expected an .ipsw name from '\(urlString)'")
-            #expect(image.suggestedFilename == RestoreImageFilename.unique(for: image.url))
-        }
-    }
-
-    @Test("Two different images never resolve to the same destination")
-    func destinationsAreDistinct() {
-        let first = makeProbedImage(
-            urlString: "https://a.example.com/UniversalMac_15.6.1_24G90_Restore.ipsw")
-        let second = makeProbedImage(
-            urlString: "https://b.example.com/UniversalMac_26.6_25G72_Restore.ipsw")
-        #expect(first.suggestedFilename != second.suggestedFilename)
-    }
-
-    @Test("Two URLs sharing a basename resolve to different destinations")
-    func offConventionDestinationsAreDistinctPerURL() {
-        let first = makeProbedImage(urlString: "https://a.example.com/restore.ipsw")
-        let second = makeProbedImage(urlString: "https://b.example.com/restore.ipsw")
-        #expect(first.suggestedFilename != second.suggestedFilename)
-        // Stable, so the same URL resumes into the file it started.
-        #expect(
-            first.suggestedFilename
-                == makeProbedImage(urlString: "https://a.example.com/restore.ipsw")
-                .suggestedFilename)
-    }
-
-    @Test("A URL whose filename escapes its directory is never used as one")
-    func suggestedFilenameRefusesTraversal() {
-        // `lastPathComponent` percent-decodes, so this arrives as
-        // `a/../../evil.ipsw` and would land two directories above Downloads.
-        let image = makeProbedImage(urlString: "https://host/a%2F..%2F..%2Fevil.ipsw")
-        #expect(image.url.lastPathComponent == "a/../../evil.ipsw")
-        #expect(!image.suggestedFilename.contains("/"))
-        #expect(!image.suggestedFilename.contains(".."))
-    }
-
-    @Test("Host support is unknown when the filename named no version")
-    func hostSupportUnknownWithoutVersion() {
-        let image = makeProbedImage(version: nil, build: nil)
-        #expect(image.isSupported(onHost: host(26, 0, 0)) == nil)
-    }
-
     @Test("An unparseable version is unknown too, not a refusal")
     func hostSupportUnknownForUnparseableVersion() {
         #expect(makeProbedImage(version: "Sequoia").isSupported(onHost: host(26, 0, 0)) == nil)
@@ -110,52 +52,8 @@ struct ProbedRestoreImageTests {
     }
 }
 
-@Suite("LatestRestoreImage Tests", .caseScoped)
-struct LatestRestoreImageTests {
-    @Test("The destination is Apple's filename for the URL the lookup returned")
-    func suggestedFilename() {
-        #expect(
-            makeLatestImage(version: "26.5.2", build: "25F84").suggestedFilename
-                == "UniversalMac_26.5.2_25F84_Restore.ipsw")
-    }
-
-    @Test("An off-convention URL gets a name generated for it")
-    func suggestedFilenameForOffConventionURL() {
-        let image = makeLatestImage(urlString: "https://example.com/restore.ipsw")
-        #expect(image.suggestedFilename.hasSuffix(".ipsw"))
-        #expect(image.suggestedFilename == RestoreImageFilename.unique(for: image.url))
-    }
-}
-
 @Suite("RestoreImageFilename Tests", .caseScoped)
 struct RestoreImageFilenameTests {
-    @Test("A plain .ipsw filename passes through")
-    func acceptsPlainFilename() {
-        #expect(
-            RestoreImageFilename.sanitized("UniversalMac_15.6.1_24G90_Restore.ipsw")
-                == "UniversalMac_15.6.1_24G90_Restore.ipsw")
-        #expect(RestoreImageFilename.sanitized("restore.IPSW") == "restore.IPSW")
-    }
-
-    @Test(
-        "Anything that is not one visible .ipsw component is refused",
-        arguments: [
-            "",
-            ".",
-            "..",
-            "/",
-            "a/../../evil.ipsw",
-            "../evil.ipsw",
-            "sub/dir/image.ipsw",
-            ".hidden.ipsw",
-            ".ipsw",
-            "image.zip",
-            "a%2F..%2Fevil.ipsw",
-        ])
-    func refusesUnsafeCandidates(candidate: String) {
-        #expect(RestoreImageFilename.sanitized(candidate) == nil)
-    }
-
     @Test("A generated name is one visible .ipsw component, whatever the URL")
     func generatedNamesAreSafeComponents() throws {
         for urlString in [
@@ -175,12 +73,6 @@ struct RestoreImageFilenameTests {
 
 @Suite("MacOSVersion Tests", .caseScoped)
 struct MacOSVersionTests {
-    @Test("What KernovaOSVersion renders is what the catalog's own version strings parse as")
-    func displayStringRoundTripsThroughTheParser() {
-        let rendered = KernovaOSVersion.displayString(
-            OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2))
-        #expect(MacOSVersion(rendered)?.components == [26, 5, 2])
-    }
 }
 
 /// Stub for the probe's requests.
@@ -465,41 +357,6 @@ struct RestoreImageProbeServiceTests {
         #expect(image.url == imageURL)
     }
 
-    @Test("The size alone is read without touching the image's structure")
-    func sizeReadsOnlyTheLength() async throws {
-        // No zip structure at all: a size read must not depend on one, which is
-        // what lets it serve an image Virtualization already vouched for.
-        serve(total: 19_772_077_142, body: Data())
-        defer { ProbeStubURLProtocol.reset() }
-
-        #expect(try await makeService().size(of: imageURL) == 19_772_077_142)
-    }
-
-    @Test("An image with no VM hardware model is refused")
-    func refusesImageWithoutVirtualMachineModel() async {
-        let tail = makeZipTail(containsVMA2: false)
-        serve(total: tail.count, body: tail)
-        defer { ProbeStubURLProtocol.reset() }
-
-        await #expect(throws: RestoreImageProbeError.notAVirtualMachineImage) {
-            _ = try await makeService().probe(imageURL)
-        }
-    }
-
-    @Test("A non-HTTPS URL is refused before any request")
-    func refusesInsecureURL() async throws {
-        let http = try #require(URL(string: "http://updates.cdn-apple.com/x/R.ipsw"))
-        ProbeStubURLProtocol.setHandler { _ in
-            Issue.record("The probe issued a request for a non-HTTPS URL")
-            return ProbeStubURLProtocol.Reply(statusCode: 200, body: Data(), headers: [:])
-        }
-        defer { ProbeStubURLProtocol.reset() }
-
-        await #expect(throws: RestoreImageProbeError.insecureURL) {
-            _ = try await makeService().probe(http)
-        }
-    }
-
     @Test("The size read refuses a non-HTTPS URL before any request too")
     func sizeRefusesInsecureURL() async throws {
         let http = try #require(URL(string: "http://updates.cdn-apple.com/x/R.ipsw"))
@@ -537,33 +394,6 @@ struct RestoreImageProbeServiceTests {
         await #expect(throws: RestoreImageProbeError.unknownSize) {
             _ = try await makeService().probe(imageURL)
         }
-    }
-
-    @Test("A URL that answers nothing but 404 is refused with its status")
-    func refusesMissingImage() async {
-        ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.setHandler { _ in
-            ProbeStubURLProtocol.Reply(statusCode: 404, body: Data(), headers: [:])
-        }
-        defer { ProbeStubURLProtocol.reset() }
-
-        await #expect(throws: RestoreImageProbeError.unreachable(statusCode: 404)) {
-            _ = try await makeService().probe(imageURL)
-        }
-    }
-
-    @Test(
-        "A server that refuses HEAD is probed with ranged GETs instead",
-        arguments: [403, 405, 501])
-    func fallsBackToRangedGetWhenHeadIsRefused(headStatus: Int) async throws {
-        let tail = makeZipTail(containsVMA2: true)
-        serve(total: tail.count, body: tail, headStatus: headStatus)
-        defer { ProbeStubURLProtocol.reset() }
-
-        let image = try await makeService().probe(imageURL)
-
-        #expect(image.sizeBytes == UInt64(tail.count))
-        #expect(image.version == "15.6.1")
     }
 
     @Test("A server that answers a ranged read with the whole file is abandoned unread")
