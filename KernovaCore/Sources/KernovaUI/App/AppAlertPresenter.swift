@@ -884,7 +884,7 @@ final class AppAlertPresenter {
         // suspended start it came from resumed, and the sheet still owns the
         // one that matters.
         if let asking = windowAsking(about: vmID) {
-            asking.makeKeyAndOrderFront(nil)
+            windows.focus.present(asking, .keyAndFront)
             windows.focus.activate()
             Self.logger.log(
                 .notice,

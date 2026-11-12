@@ -1,8 +1,20 @@
 import AppKit
 
+/// How a window goes on screen.
+package enum WindowPresentation: Equatable {
+    /// In front of the app's other windows, and key.
+    case keyAndFront
+    /// In front of the app's other windows, leaving key where it is.
+    case front
+    /// Behind the app's other windows.
+    case back
+    /// In front whether or not the app is active.
+    case frontRegardless
+}
+
 /// The login session's focus as Kernova meets it: its activation policy
-/// (whether it has a Dock icon), whether it is hidden, and whether it is
-/// frontmost.
+/// (whether it has a Dock icon), whether it is hidden and frontmost, and every
+/// window Kernova puts on screen.
 ///
 /// Every read and change of that state goes through the one instance the
 /// composition root builds, so a test host that builds its own stand-in never
@@ -21,4 +33,12 @@ package protocol SessionFocus: AnyObject {
     var isHidden: Bool { get }
     /// Leaves the hidden state without asking for activation.
     func unhideWithoutActivation()
+
+    func present(_ window: NSWindow, _ presentation: WindowPresentation)
+    /// Enters or leaves native fullscreen.
+    func toggleFullScreen(_ window: NSWindow)
+    /// The standard About panel.
+    func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any])
+    /// Ends whatever menu-bar tracking is in progress.
+    func cancelMenuBarTracking()
 }

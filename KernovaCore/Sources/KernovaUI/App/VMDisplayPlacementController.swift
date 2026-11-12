@@ -114,8 +114,8 @@ final class VMDisplayPlacementController {
     }
 
     func toggleFullscreen(for instance: VMInstance) {
-        if let existing = windows[instance.instanceID] {
-            existing.window?.toggleFullScreen(nil)
+        if let window = windows[instance.instanceID]?.window {
+            focus.toggleFullScreen(window)
             return
         }
         viewModel.recordDisplayPreference(.fullscreen, for: instance)
@@ -160,11 +160,10 @@ final class VMDisplayPlacementController {
         // Already open (e.g. resuming a live-paused VM from the library):
         // surface the existing window so keyboard input lands in the guest.
         if let existing = windows[vmID] {
-            switch show {
-            case .front: existing.window?.makeKeyAndOrderFront(nil)
-            case .behind: existing.window?.orderFront(nil)
+            if let window = existing.window {
+                focus.present(window, Self.presentation(of: show))
+                host?.displayWindowShown(window)
             }
-            if let window = existing.window { host?.displayWindowShown(window) }
             return
         }
         residency?.prepareToPresentWindow()
@@ -172,7 +171,6 @@ final class VMDisplayPlacementController {
         let controller = VMDisplayWindowController(
             instance: instance,
             capabilities: viewModel.capabilities,
-            enterFullscreen: enterFullscreen,
             stage: stage,
             onResume: { [weak self] in
                 guard let self else { return }
@@ -211,11 +209,18 @@ final class VMDisplayPlacementController {
         }
 
         apply(VMDisplayPlacement.placement(for: .shown(fullscreen: enterFullscreen)), to: instance)
+        controller.prepareToShow(front: show != .behind)
+        guard let window = controller.window else { return }
+        focus.present(window, Self.presentation(of: show))
+        if enterFullscreen { focus.toggleFullScreen(window) }
+        host?.displayWindowShown(window)
+    }
+
+    private static func presentation(of show: VMDisplayPlacement.WindowShow) -> WindowPresentation {
         switch show {
-        case .front: controller.showWindow(nil)
-        case .behind: controller.showWindowBehind()
+        case .front: .keyAndFront
+        case .behind: .front
         }
-        if let window = controller.window { host?.displayWindowShown(window) }
     }
 
     /// The screen ``VMDisplayPlacement/fullscreenScreen(lastDisplayID:screens:libraryScreen:displayID:)``

@@ -44,6 +44,7 @@ final class GuestAgentStatusWindowController: NSWindowController, NSWindowDelega
         // Restores the saved frame, whose size the content then overrides.
         window.setFrameAutosaveName(stage.autosave.guestAgentStatusFrame(for: instance.instanceID))
         fitContent()
+        observe()
     }
 
     @available(*, unavailable)
@@ -52,11 +53,6 @@ final class GuestAgentStatusWindowController: NSWindowController, NSWindowDelega
     }
 
     // MARK: - Lifecycle
-
-    override func showWindow(_ sender: Any?) {
-        super.showWindow(sender)
-        if observation == nil { observe() }
-    }
 
     func windowWillClose(_ notification: Notification) {
         observation?.cancel()

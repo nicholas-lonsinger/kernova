@@ -59,11 +59,14 @@ struct AppWindowRegistryPresenceTests {
         #expect(registry.hasTrackedUserWindow)
     }
 
-    @Test("The Settings window counts on its own")
+    @Test("The Settings window brings Kernova forward and counts on its own")
     func settingsShown() throws {
-        let registry = makeRegistry()
+        let focus = RecordingSessionFocus()
+        let registry = makeRegistry(focus: focus)
         registry.showSettings()
 
+        let window = try #require(registry.settingsWindow)
+        #expect(focus.requests == [.activate, .present(window, .keyAndFront)])
         #expect(registry.hasTrackedUserWindow)
     }
 
@@ -74,11 +77,9 @@ struct AppWindowRegistryPresenceTests {
 
         registry.showConfigCheck(.automatic)
         let window = try #require(registry.configCheckWindow)
-        #expect(window.isVisible)
-        #expect(focus.requests.isEmpty)
+        #expect(focus.requests == [.present(window, .front)])
 
         registry.showConfigCheck(.user)
-        #expect(window.isVisible)
-        #expect(focus.requests == [.activate])
+        #expect(focus.requests == [.present(window, .front), .activate, .present(window, .keyAndFront)])
     }
 }

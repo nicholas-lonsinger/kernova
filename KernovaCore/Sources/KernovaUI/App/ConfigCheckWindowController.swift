@@ -33,15 +33,8 @@ final class ConfigCheckWindowController: NSWindowController {
         fatalError("ConfigCheckWindowController does not support NSCoder")
     }
 
-    /// Brings the window forward — key too when `makingKey` — and checks
-    /// every config file again.
-    func showAndCheck(makingKey: Bool) {
-        if makingKey {
-            showWindow(nil)
-            window?.makeKeyAndOrderFront(nil)
-        } else {
-            window?.orderFront(nil)
-        }
+    /// Checks every config file again.
+    func checkAgain() {
         checkViewController.runCheck()
     }
 }

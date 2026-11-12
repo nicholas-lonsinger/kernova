@@ -55,60 +55,56 @@ struct AppResidencySummonTests {
         return (controller, registry, viewModel)
     }
 
-    /// Records, at each activation request, whether the library window was on
-    /// screen.
-    private func libraryOnScreenAtActivation(
-        _ focus: RecordingSessionFocus, _ registry: AppWindowRegistry,
-        alsoOn request: RecordingSessionFocus.Request? = nil, run: @escaping () -> Void = {}
-    ) -> () -> [Bool] {
-        var onScreen: [Bool] = []
-        focus.onRequest = { [weak registry] recorded in
-            if recorded == .activate { onScreen.append(registry?.libraryWindow?.isVisible == true) }
-            if recorded == request { run() }
-        }
-        return { onScreen }
-    }
-
     @Test("A hidden summon unhides, shows and activates in one main-actor job")
     func hiddenSummonIsOneJob() async throws {
         let focus = RecordingSessionFocus(isHidden: true)
         let (controller, registry, _) = makeController(focus: focus)
         let laterJob = LaterJob()
-        let libraryOnScreen = libraryOnScreenAtActivation(
-            focus, registry, alsoOn: .unhideWithoutActivation, run: { laterJob.enqueue(reading: focus) })
+        focus.onRequest = { [focus] request in
+            if request == .unhideWithoutActivation { laterJob.enqueue(reading: focus) }
+        }
 
         controller.summonUserInterface()
         // The unhide belongs to the deferred show, never to the call itself.
         #expect(focus.requests.isEmpty)
         try await laterJob.gate.wait { laterJob.requestsSeen != nil }
 
-        #expect(laterJob.requestsSeen == [.unhideWithoutActivation, .activate])
-        #expect(libraryOnScreen() == [true])
+        let library = try #require(registry.libraryWindow)
+        #expect(
+            laterJob.requestsSeen == [
+                .unhideWithoutActivation, .present(library, .keyAndFront), .present(library, .frontRegardless),
+                .activate, .cancelMenuBarTracking,
+            ])
     }
 
     @Test("A delivered presentation neither unhides nor asks for activation")
     func deliveredPresentationAsksNothing() async throws {
         let focus = RecordingSessionFocus(isHidden: true)
         let (controller, registry, _) = makeController(focus: focus)
-        let libraryOnScreen = libraryOnScreenAtActivation(focus, registry)
         registry.showLibrary(bringToFront: true)
+        let library = try #require(registry.libraryWindow)
+        let shown: [RecordingSessionFocus.Request] = [
+            .present(library, .keyAndFront), .present(library, .frontRegardless),
+        ]
 
         // The summon's job runs behind the delivered one, so once the summon has
         // asked, anything the delivered one did is recorded ahead of it — and
         // the fake stays hidden, so an unhide by both would record two.
         controller.presentSummonedInterface()
         controller.summonUserInterface()
-        try await focus.gate.wait { focus.requests.contains(.activate) }
+        try await focus.gate.wait {
+            focus.requests.last == .cancelMenuBarTracking && focus.requests.contains(.activate)
+        }
 
-        #expect(focus.requests == [.unhideWithoutActivation, .activate])
-        #expect(libraryOnScreen() == [true])
+        #expect(
+            focus.requests == [.present(library, .keyAndFront)] + shown + [.cancelMenuBarTracking]
+                + [.unhideWithoutActivation] + shown + [.activate, .cancelMenuBarTracking])
     }
 
     @Test("A status-item row for an arrival selects it and summons the library")
     func arrivalRowSelectsTheArrival() async throws {
         let focus = RecordingSessionFocus(isHidden: false)
         let (controller, registry, viewModel) = makeController(focus: focus)
-        let libraryOnScreen = libraryOnScreenAtActivation(focus, registry)
         let arrival = VMArrival.inert(
             .importing,
             configuration: VMConfiguration(
@@ -118,11 +114,15 @@ struct AppResidencySummonTests {
         viewModel.selection = nil
 
         controller.summonStatusItemTarget(for: arrival.id)
-        try await focus.gate.wait { focus.requests.contains(.activate) }
+        try await focus.gate.wait { focus.requests.last == .cancelMenuBarTracking }
 
         #expect(viewModel.selectedID == arrival.id)
-        #expect(focus.requests == [.activate])
-        #expect(libraryOnScreen() == [true])
+        let library = try #require(registry.libraryWindow)
+        #expect(
+            focus.requests == [
+                .present(library, .keyAndFront), .present(library, .frontRegardless), .activate,
+                .cancelMenuBarTracking,
+            ])
     }
 
     @Test("A reopen with no user window on screen shows the library")
@@ -137,7 +137,8 @@ struct AppResidencySummonTests {
         await drainMainQueue()
 
         #expect(presentations.count == 1)
-        #expect(registry.libraryWindow?.isVisible == true)
+        let library = try #require(registry.libraryWindow)
+        #expect(focus.requests == [.present(library, .keyAndFront), .present(library, .frontRegardless)])
     }
 
     @Test("A reopen while hidden leaves the hidden state before it decides")

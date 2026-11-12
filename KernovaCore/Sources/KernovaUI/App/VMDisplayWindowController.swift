@@ -36,22 +36,14 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
     /// only the view can tell those from a user-initiated enter or exit.
     private var isClosing = false
     private let toolbarManager: VMToolbarManager
-    private let enterFullscreen: Bool
     private let backingView: VMDisplayBackingView
     private var instanceObservation: ObservationLoop?
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMDisplayWindowController")
 
-    #if DEBUG
-    /// Whether the window last went up in front, taking key, rather than
-    /// behind; `nil` before it first goes up. An inactive test host makes no
-    /// window key, so `isKeyWindow` cannot tell the two apart.
-    private(set) var shownInFrontForTesting: Bool?
-    #endif
-
     init(
-        instance: VMInstance, capabilities: VMCapabilityCatalog, enterFullscreen: Bool,
-        stage: WindowStage, onResume: @escaping () -> Void
+        instance: VMInstance, capabilities: VMCapabilityCatalog, stage: WindowStage,
+        onResume: @escaping () -> Void
     ) {
         self.instance = instance
         self.toolbarManager = VMToolbarManager(
@@ -73,7 +65,6 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             capabilities: capabilities,
             instanceProvider: { [weak instance] in instance }
         )
-        self.enterFullscreen = enterFullscreen
 
         let backing = VMDisplayBackingView()
         backing.onResume = onResume
@@ -115,20 +106,9 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Lifecycle
 
-    override func showWindow(_ sender: Any?) {
-        show(front: true)
-    }
-
-    /// Puts the window up in Kernova's own window layer, taking neither key nor
-    /// the screen: no fullscreen however the window was configured.
-    ///
-    /// What a display readied while the user is in another app gets — the guest
-    /// draws into a real window and whatever is in front of it stays in front.
-    func showWindowBehind() {
-        show(front: false)
-    }
-
-    private func show(front: Bool) {
+    /// Readies the window to go on screen — with the keyboard in the guest
+    /// when it goes up in front — and starts following the VM.
+    func prepareToShow(front: Bool) {
         // Re-derived here rather than trusted from `init`: the placement
         // controller writes `displayMode` between constructing this controller
         // and showing it, so a VM opening straight into fullscreen resolves
@@ -136,18 +116,8 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
         // before the machine view takes focus below, which is when system-key
         // capture starts to matter.
         backingView.apply(instance.displayViewSettings)
-        #if DEBUG
-        shownInFrontForTesting = front
-        #endif
         if front {
-            super.showWindow(nil)
-            // Land keyboard focus in the guest, so typing works without a click.
             window?.makeFirstResponder(backingView.machineView)
-            if enterFullscreen {
-                window?.toggleFullScreen(nil)
-            }
-        } else {
-            window?.orderFront(nil)
         }
         updateToolbarItems()
         observeInstance()

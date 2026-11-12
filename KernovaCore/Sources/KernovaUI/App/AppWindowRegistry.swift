@@ -84,6 +84,11 @@ final class AppWindowRegistry {
         onWindowShown?()
     }
 
+    private func present(_ controller: NSWindowController, _ presentation: WindowPresentation) {
+        guard let window = controller.window else { return }
+        focus.present(window, presentation)
+    }
+
     // MARK: - Library
 
     var libraryWindow: NSWindow? { mainWindowController?.window }
@@ -98,20 +103,16 @@ final class AppWindowRegistry {
         if let existingWindow = mainWindowController?.window {
             if bringToFront {
                 Self.logger.log(.debug, "showLibrary: focusing existing window")
-                existingWindow.makeKeyAndOrderFront(nil)
+                focus.present(existingWindow, .keyAndFront)
             } else {
                 Self.logger.log(.debug, "showLibrary: showing existing window in background")
-                existingWindow.orderBack(nil)
+                focus.present(existingWindow, .back)
             }
         } else {
             Self.logger.log(.notice, "showLibrary: recreating main window controller")
             let windowController = MainWindowController(
                 viewModel: viewModel, stage: stage)
-            if bringToFront {
-                windowController.showWindow(nil)
-            } else {
-                windowController.showWindowInBackground()
-            }
+            present(windowController, bringToFront ? .keyAndFront : .back)
             mainWindowController = windowController
         }
         shown(mainWindowController?.window)
@@ -148,8 +149,7 @@ final class AppWindowRegistry {
         settingsWindowController = controller
         if let destination { controller.tabs.show(destination) }
         focus.activate()
-        controller.showWindow(nil)
-        controller.window?.makeKeyAndOrderFront(nil)
+        present(controller, .keyAndFront)
     }
 
     // MARK: - Config check
@@ -171,10 +171,11 @@ final class AppWindowRegistry {
         switch request {
         case .user:
             focus.activate()
-            controller.showAndCheck(makingKey: true)
+            present(controller, .keyAndFront)
         case .automatic:
-            controller.showAndCheck(makingKey: false)
+            present(controller, .front)
         }
+        controller.checkAgain()
     }
 
     // MARK: - Guest Agent Status
@@ -186,7 +187,7 @@ final class AppWindowRegistry {
         let vmID = instance.instanceID
         if let existing = guestAgentStatusWindows[vmID] {
             residency?.prepareToPresentWindow()
-            existing.window?.makeKeyAndOrderFront(nil)
+            present(existing, .keyAndFront)
             shown(existing.window)
             return
         }
@@ -197,7 +198,7 @@ final class AppWindowRegistry {
             self?.guestAgentStatusWindows.removeValue(forKey: vmID)
         }
         guestAgentStatusWindows[vmID] = controller
-        controller.showWindow(nil)
+        present(controller, .keyAndFront)
         shown(controller.window)
     }
 

@@ -4,15 +4,21 @@ import KernovaTestSupport
 @testable import KernovaUI
 
 /// Stands in for the login session's focus, so no test changes the test host's
-/// Dock presence or asks for the front.
+/// Dock presence, asks for the front, or makes a window key.
 ///
-/// Holds the state a test gives it, and records every request in order.
+/// Holds the state a test gives it, and records every request in order. A
+/// presented window is ordered in behind the rest, where a stage window stays
+/// beyond every display; nothing else a request asks for is performed.
 @MainActor
 final class RecordingSessionFocus: SessionFocus {
     enum Request: Equatable {
         case setActivationPolicy(NSApplication.ActivationPolicy)
         case activate
         case unhideWithoutActivation
+        case present(NSWindow, WindowPresentation)
+        case toggleFullScreen(NSWindow)
+        case showAboutPanel
+        case cancelMenuBarTracking
     }
 
     var activationPolicy: NSApplication.ActivationPolicy
@@ -50,4 +56,15 @@ final class RecordingSessionFocus: SessionFocus {
     func activate() { record(.activate) }
 
     func unhideWithoutActivation() { record(.unhideWithoutActivation) }
+
+    func present(_ window: NSWindow, _ presentation: WindowPresentation) {
+        window.orderBack(nil)
+        record(.present(window, presentation))
+    }
+
+    func toggleFullScreen(_ window: NSWindow) { record(.toggleFullScreen(window)) }
+
+    func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any]) { record(.showAboutPanel) }
+
+    func cancelMenuBarTracking() { record(.cancelMenuBarTracking) }
 }

@@ -318,9 +318,9 @@ package final class AppDelegate: VMScriptingRoot, NSMenuItemValidation {
         #if DEBUG
         let buildNumber = viewModel.library.bundleProducts.buildNumber ?? ""
         let versionAnnotation = buildNumber.isEmpty ? "Debug" : "\(buildNumber) | Debug"
-        NSApp.orderFrontStandardAboutPanel(options: [.version: versionAnnotation])
+        focus.showAboutPanel(options: [.version: versionAnnotation])
         #else
-        NSApp.orderFrontStandardAboutPanel(sender)
+        focus.showAboutPanel(options: [:])
         #endif
     }
 

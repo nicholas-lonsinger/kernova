@@ -409,7 +409,7 @@ final class AppResidencyController: WindowResidencyHosting {
             // Summoning from the status-item menu leaves the freshly-appeared menu
             // bar with its first menu highlighted: the status menu's dismissal
             // bleeds into the menu bar the morph just installed. Clear it.
-            NSApp.mainMenu?.cancelTracking()
+            self.focus.cancelMenuBarTracking()
         }
         // After the presentation is enqueued, not before: the pass's first act
         // is to await the library read, so the deferred window show above still
@@ -437,7 +437,7 @@ final class AppResidencyController: WindowResidencyHosting {
         // Activation may be refused; the window has to arrive either way.
         // `orderFrontRegardless` is the only ordering call that doesn't
         // depend on the app being active.
-        summoned?.orderFrontRegardless()
+        if let summoned { focus.present(summoned, .frontRegardless) }
     }
 
     /// Leaves the hidden state without asking for activation, so the surface

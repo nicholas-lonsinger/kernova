@@ -16,8 +16,8 @@ struct VMDisplayPlacementBringUpTests {
     private let preferences = makeTestPreferences()
     private let stage = WindowStage.offDesktop()
 
-    /// Puts a readied window up behind, so no test runs AppKit's real
-    /// fullscreen transition; the transition's end is delivered by hand.
+    /// Puts a readied window up behind, out of fullscreen; the transition's
+    /// end is delivered by hand.
     private final class BackgroundResidency: WindowResidencyHosting {
         var guiPosture: GUIPosture { .background }
         func prepareToPresentWindow() {}

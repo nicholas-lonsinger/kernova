@@ -29,4 +29,25 @@ final class AppKitSessionFocus: SessionFocus {
     func unhideWithoutActivation() {
         NSApp.unhideWithoutActivation()
     }
+
+    func present(_ window: NSWindow, _ presentation: WindowPresentation) {
+        switch presentation {
+        case .keyAndFront: window.makeKeyAndOrderFront(nil)
+        case .front: window.orderFront(nil)
+        case .back: window.orderBack(nil)
+        case .frontRegardless: window.orderFrontRegardless()
+        }
+    }
+
+    func toggleFullScreen(_ window: NSWindow) {
+        window.toggleFullScreen(nil)
+    }
+
+    func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any]) {
+        NSApp.orderFrontStandardAboutPanel(options: options)
+    }
+
+    func cancelMenuBarTracking() {
+        NSApp.mainMenu?.cancelTracking()
+    }
 }

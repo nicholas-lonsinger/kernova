@@ -589,7 +589,7 @@ struct AppAlertPresenterTests {
     func aSecondStartUnderThePromptIsTurnedAway() {
         let h = makeHarness()
         let presenter = h.presenter
-        h.showLibrary()
+        let library = h.showLibrary()
         let first = AccountAnswers()
         presenter.presentGuestAccountPassword(accountRequest(answers: first))
         let second = AccountAnswers()
@@ -604,7 +604,7 @@ struct AppAlertPresenterTests {
         #expect(second.answered == [.answered(.cancelled)])
         #expect(first.answered.isEmpty)
         #expect(h.isShowingAlert)
-        #expect(h.focus.requests == [.activate])
+        #expect(h.focus.requests == [.present(library, .back), .present(library, .keyAndFront), .activate])
     }
 
     @Test("A pairing prompt on screen when the window goes is answered as a hold")
