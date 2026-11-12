@@ -109,7 +109,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel.overFakeEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
+        vm.linuxBootMode = .efi
 
         #expect(vm.linuxSelection == nil)
         #expect(vm.canAdvance == false)
@@ -123,7 +123,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel.overFakeEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
+        vm.linuxBootMode = .linuxKernel
 
         vm.kernelPath = nil
         #expect(vm.canAdvance == false)
@@ -169,7 +169,7 @@ struct VMCreationViewModelTests {
     func buildConfigurationLinuxEFI() throws {
         let vm = VMCreationViewModel.overFakeEngine()
         vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
+        vm.linuxBootMode = .efi
         vm.vmName = "  Test Linux  "
         vm.cpuCount = 4
         vm.memorySize = .gibibytes(8)
@@ -204,7 +204,7 @@ struct VMCreationViewModelTests {
     func buildConfigurationLinuxKernel() {
         let vm = VMCreationViewModel.overFakeEngine()
         vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
+        vm.linuxBootMode = .linuxKernel
         vm.vmName = "Kernel VM"
         vm.cpuCount = 2
         vm.memorySize = .gibibytes(4)
@@ -227,46 +227,51 @@ struct VMCreationViewModelTests {
         #expect(config.kernelCommandLine == "console=hvc0")
     }
 
-    @Test("buildConfiguration only installs an installer ISO for EFI boot mode")
-    func buildConfigurationInstallerISOOnlyForEFI() {
-        let vm = VMCreationViewModel.overFakeEngine()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .linuxKernel
-        vm.vmName = "Test"
-        vm.selectLocalISO(path: "/should/be/ignored.iso", bookmark: nil)
-        vm.kernelPath = "/path/to/vmlinuz"
+    @Test(
+        "A configuration carries the picks of its own boot mode and no other's",
+        arguments: VMGuestOS.allCases, [LinuxBootMode.efi, .linuxKernel])
+    func configurationCarriesOnlyItsBootModesPicks(guest: VMGuestOS, linuxBootMode: LinuxBootMode) {
+        for installerOnDisk in [true, false] {
+            // Every Linux pick is made before the guest is settled, as a user
+            // who chose Linux, then went Back and chose the guest, leaves them.
+            let vm = VMCreationViewModel.overFakeEngine()
+            vm.selectedOS = .linux
+            if installerOnDisk {
+                vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: Data([0x01]))
+            } else {
+                vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
+            }
+            vm.kernelPath = "/path/to/vmlinuz"
+            vm.initrdPath = "/path/to/initrd"
+            vm.kernelCommandLine = "console=hvc0"
+            vm.kernelBookmark = Data([0x02])
+            vm.initrdBookmark = Data([0x03])
+            vm.linuxBootMode = linuxBootMode
+            vm.selectedOS = guest
+            vm.vmName = "Test"
 
-        let config = vm.buildConfiguration()
-        // Linux Kernel boot loads the kernel directly — no installer
-        // enters storageDisks, so the field stays nil (default main disk).
-        #expect(config.storageDisks == nil)
-    }
+            let config = vm.buildConfiguration()
 
-    @Test("buildConfiguration sets kernel fields only for linuxKernel boot mode")
-    func buildConfigurationKernelFieldsOnlyForLinuxKernel() {
-        let vm = VMCreationViewModel.overFakeEngine()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
-        vm.vmName = "Test"
-        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
-        vm.kernelPath = "/should/be/ignored"
-        vm.initrdPath = "/should/be/ignored"
-        vm.kernelCommandLine = "should be ignored"
-
-        let config = vm.buildConfiguration()
-        #expect(config.kernelPath == nil)
-        #expect(config.initrdPath == nil)
-        #expect(config.kernelCommandLine == nil)
-    }
-
-    @Test("buildConfiguration does not set genericMachineIdentifierData for macOS boot mode")
-    func buildConfigurationNoGenericMachineIdentifierForMacOS() {
-        let vm = VMCreationViewModel.overFakeEngine()
-        vm.selectedOS = .macOS
-        vm.vmName = "macOS Test"
-
-        let config = vm.buildConfiguration()
-        #expect(config.genericMachineIdentifierData == nil)
+            let expectedBootMode: VMBootMode =
+                switch (guest, linuxBootMode) {
+                case (.macOS, _): .macOS
+                case (.linux, .efi): .efi
+                case (.linux, .linuxKernel): .linuxKernel
+                }
+            let bootsMacOS = expectedBootMode == .macOS
+            let bootsInstaller = expectedBootMode == .efi
+            let bootsKernel = expectedBootMode == .linuxKernel
+            #expect(config.bootMode == expectedBootMode)
+            #expect((config.installContext != nil) == bootsMacOS)
+            #expect((config.genericMachineIdentifierData != nil) == !bootsMacOS)
+            #expect((config.storageDisks != nil) == (bootsInstaller && installerOnDisk))
+            #expect((config.linuxInstallContext != nil) == (bootsInstaller && !installerOnDisk))
+            #expect((config.kernelPath != nil) == bootsKernel)
+            #expect((config.initrdPath != nil) == bootsKernel)
+            #expect((config.kernelCommandLine != nil) == bootsKernel)
+            #expect((config.kernelBookmark != nil) == bootsKernel)
+            #expect((config.initrdBookmark != nil) == bootsKernel)
+        }
     }
 
     // MARK: - Linux Image Selection
@@ -275,7 +280,7 @@ struct VMCreationViewModelTests {
     func localISOCarriesItsBookmark() throws {
         let vm = VMCreationViewModel.overFakeEngine()
         vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
+        vm.linuxBootMode = .efi
         vm.vmName = "Test"
         let bookmark = Data([0x01, 0x02, 0x03])
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: bookmark)
@@ -325,7 +330,7 @@ struct VMCreationViewModelTests {
         let vm = VMCreationViewModel.overFakeEngine()
         vm.currentStep = .bootConfig
         vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
+        vm.linuxBootMode = .efi
 
         #expect(vm.validationMessage == "Select an installer image to continue.")
     }
@@ -352,16 +357,18 @@ struct VMCreationViewModelTests {
         #expect(vm.validationMessage == "Enter a name for your virtual machine.")
     }
 
-    // MARK: - buildLinuxInstallContext
+    // MARK: - Linux Install Context
 
-    @Test("buildLinuxInstallContext snapshots a URL pick with its checksum and destination")
-    func buildLinuxInstallContextURLPick() throws {
+    @Test("A URL pick is persisted with its checksum and destination")
+    func linuxInstallContextForAURLPick() throws {
         let vm = VMCreationViewModel.overFakeEngine()
+        vm.selectedOS = .linux
+        vm.vmName = "Test"
         let digest = String(repeating: "a", count: 64)
         let image = makeCustomLinuxImage(sha256: digest)
         vm.selectLinuxCustomURL(image, sizeBytes: 1_073_741_824)
 
-        let context = try #require(vm.buildLinuxInstallContext())
+        let context = try #require(vm.buildConfiguration().linuxInstallContext)
 
         #expect(
             customImage(of: context)?.url
@@ -374,47 +381,6 @@ struct VMCreationViewModelTests {
         let destination = LinuxImageFilename.destination(for: image.url)
         #expect(destination != "alpine-3.22-aarch64.iso")
         #expect(context.downloadDestinationPath == vm.downloadPath(forFilename: destination))
-    }
-
-    @Test("An EFI image pick does not follow a switch to Linux-kernel boot")
-    func buildLinuxInstallContextGatedOnEFI() {
-        let vm = VMCreationViewModel.overFakeEngine()
-        vm.selectedOS = .linux
-        vm.selectedBootMode = .efi
-        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
-        #expect(vm.buildLinuxInstallContext() != nil)
-
-        // A kernel-boot VM never boots an installer image, so a pick made
-        // before the switch must not reach the created VM — the same rule
-        // `buildConfiguration()` applies to the installer `storageDisks`.
-        vm.selectedBootMode = .linuxKernel
-        #expect(vm.buildLinuxInstallContext() == nil)
-
-        vm.selectLinuxCustomURL(makeCustomLinuxImage(), sizeBytes: 1_073_741_824)
-        #expect(vm.buildLinuxInstallContext() == nil)
-
-        // Switching back restores the pick, which was never dropped.
-        vm.selectedBootMode = .efi
-        #expect(vm.buildLinuxInstallContext() != nil)
-    }
-
-    @Test("buildLinuxInstallContext is nil for a local ISO and for no selection at all")
-    func buildLinuxInstallContextWithoutCatalogPick() {
-        let vm = VMCreationViewModel.overFakeEngine()
-        // Nothing chosen yet.
-        #expect(vm.buildLinuxInstallContext() == nil)
-
-        // An ISO already on disk goes straight into `storageDisks`; there is
-        // nothing left for the post-create pipeline to fetch.
-        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: Data([0x01]))
-        #expect(vm.buildLinuxInstallContext() == nil)
-
-        vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
-        #expect(vm.buildLinuxInstallContext() != nil)
-
-        // Moving back to a local ISO retracts the download.
-        vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: nil)
-        #expect(vm.buildLinuxInstallContext() == nil)
     }
 
     // MARK: - buildInstallContext

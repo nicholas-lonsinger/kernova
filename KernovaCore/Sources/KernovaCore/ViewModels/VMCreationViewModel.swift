@@ -71,6 +71,13 @@ package enum LinuxImageSelection: Sendable, Equatable {
     case localISO(path: String, bookmark: Data?)
 }
 
+/// How a Linux guest boots: EFI firmware starting an installer image, or a
+/// kernel loaded directly.
+package enum LinuxBootMode: Sendable {
+    case efi
+    case linuxKernel
+}
+
 /// Where the lookup of what "Download Latest" would fetch stands.
 package enum LatestImageLookup: Sendable, Equatable {
     /// No answer yet: the lookup has not run, or is running.
@@ -199,7 +206,10 @@ package final class VMCreationViewModel {
 
     // MARK: - Step 2: Boot Config
 
-    package var selectedBootMode: VMBootMode = .efi
+    /// How a Linux guest boots. Kept while macOS is selected, so going back to
+    /// Linux finds it — which is why the configuration reads
+    /// ``effectiveBootMode`` instead.
+    package var linuxBootMode: LinuxBootMode = .efi
 
     /// The image the install runs from. Its version is what the account is
     /// offered against, so it decides the walk — see ``clampToWalkedStep()``.
@@ -436,7 +446,7 @@ package final class VMCreationViewModel {
         case .guestAccount:
             return guestAccountValidationMessage
         case .bootConfig:
-            switch selectedOS {
+            switch effectiveBootMode {
             case .macOS:
                 if awaitingLatestImage {
                     return "Looking up the latest macOS\u{2026}"
@@ -457,12 +467,10 @@ package final class VMCreationViewModel {
                     }
                 }
                 return nil
-            case .linux:
-                switch selectedBootMode {
-                case .efi: return "Select an installer image to continue."
-                case .linuxKernel: return "Select a kernel image to continue."
-                case .macOS: return "Invalid boot configuration."
-                }
+            case .efi:
+                return "Select an installer image to continue."
+            case .linuxKernel:
+                return "Select a kernel image to continue."
             }
         case .resources:
             return "Enter a name for your virtual machine."
@@ -500,27 +508,31 @@ package final class VMCreationViewModel {
         return nil
     }
 
+    /// How the new VM boots, and so which of the wizard's picks it is made
+    /// from.
     package var effectiveBootMode: VMBootMode {
         switch selectedOS {
         case .macOS: .macOS
-        case .linux: selectedBootMode
+        case .linux:
+            switch linuxBootMode {
+            case .efi: .efi
+            case .linuxKernel: .linuxKernel
+            }
         }
     }
 
     private var bootConfigValid: Bool {
-        switch selectedOS {
+        switch effectiveBootMode {
         case .macOS:
             if awaitingLatestImage || shouldShowOverwriteWarning { return false }
             if case .localFile(let image) = ipswSelection {
                 return image.inspection.usable != nil
             }
             return true
-        case .linux:
-            switch selectedBootMode {
-            case .efi: return linuxSelection != nil
-            case .linuxKernel: return kernelPath != nil
-            case .macOS: return false
-            }
+        case .efi:
+            return linuxSelection != nil
+        case .linuxKernel:
+            return kernelPath != nil
         }
     }
 
@@ -759,34 +771,6 @@ package final class VMCreationViewModel {
         }
     }
 
-    /// Snapshots a Linux image pick that has still to be downloaded into a
-    /// persistable `LinuxInstallContext`, or `nil` when nothing is.
-    ///
-    /// A local ISO is already on disk and goes straight into `storageDisks`;
-    /// the two download sources leave work for the post-create pipeline. Gated
-    /// on the EFI boot mode alongside its siblings in ``buildConfiguration()``,
-    /// so a pick made under EFI does not follow a switch to Linux-kernel boot
-    /// onto a VM that never boots an installer.
-    ///
-    /// A catalog pick gets no destination: only a resolution just before the
-    /// download knows which URL the mirror is serving, and the destination is
-    /// named for that URL. A pasted URL is known from the moment it is
-    /// admitted, so its destination is too.
-    func buildLinuxInstallContext() -> LinuxInstallContext? {
-        guard selectedBootMode == .efi else { return nil }
-        switch linuxSelection {
-        case .catalogEntry(let entry):
-            return LinuxInstallContext(source: .catalogEntry(entry))
-        case .customURL(let image, _):
-            return LinuxInstallContext(
-                source: .customURL(image),
-                downloadDestinationPath: downloadPath(
-                    forFilename: LinuxImageFilename.destination(for: image.url)))
-        case .localISO, nil:
-            return nil
-        }
-    }
-
     /// Whether the user confirmed overwriting the destination the wizard is
     /// currently pointing at.
     private var requestedFreshDownload: Bool {
@@ -902,37 +886,6 @@ package final class VMCreationViewModel {
     /// Start reads back off the bundle.
     func buildConfiguration() -> VMConfiguration {
         let bootMode = effectiveBootMode
-
-        // Generate a stable MAC address so save/restore uses a consistent config
-        let macAddress: String? = networkEnabled ? GuestMACAddress.random() : nil
-
-        let genericMachineIdentifierData: Data? =
-            (bootMode == .efi || bootMode == .linuxKernel)
-            ? host.makeGenericMachineIdentifier()
-            : nil
-
-        // For an EFI install from an ISO already on disk, the installer goes in
-        // as `storageDevices[0]` so EFI boots it ahead of the main disk. Other
-        // boot modes leave the list nil so the builder synthesizes the default
-        // disk — as does a catalog pick, whose ISO does not exist yet.
-        var storageDisks: [StorageDisk]? = nil
-        if selectedBootMode == .efi, case .localISO(let path, let bookmark) = linuxSelection {
-            let installerDisk = StorageDisk(
-                path: path,
-                readOnly: true,
-                label: URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
-                bookmark: bookmark
-            )
-            let mainDisk = StorageDisk(
-                path: "Disk.asif",
-                readOnly: false,
-                label: "Main Disk",
-                isInternal: true,
-                kind: .virtio
-            )
-            storageDisks = [installerDisk, mainDisk]
-        }
-
         var configuration = VMConfiguration(
             name: vmName.trimmingCharacters(in: .whitespaces),
             guestOS: selectedOS,
@@ -940,27 +893,58 @@ package final class VMCreationViewModel {
             cpuCount: cpuCount,
             memorySizeInGB: memorySize,
             networkEnabled: networkEnabled,
-            macAddress: macAddress,
-            genericMachineIdentifierData: genericMachineIdentifierData,
-            kernelPath: selectedBootMode == .linuxKernel ? kernelPath : nil,
-            initrdPath: selectedBootMode == .linuxKernel ? initrdPath : nil,
-            kernelCommandLine: selectedBootMode == .linuxKernel ? kernelCommandLine : nil,
-            kernelBookmark: selectedBootMode == .linuxKernel ? kernelBookmark : nil,
-            initrdBookmark: selectedBootMode == .linuxKernel ? initrdBookmark : nil,
-            storageDisks: storageDisks
+            // Generate a stable MAC address so save/restore uses a consistent config
+            macAddress: networkEnabled ? GuestMACAddress.random() : nil
         )
 
-        // Persist the setup intent so the next Start can drive the pipeline
-        // without the wizard: a macOS install, or the download of a Linux
-        // installer image the user picked from the catalog. The account rides
-        // beside the install rather than inside it — it outlives the install by
-        // exactly one boot.
-        switch selectedOS {
+        switch bootMode {
         case .macOS:
+            // Persisted so the next Start can drive the install without the
+            // wizard. The account rides beside the install rather than inside
+            // it — it outlives the install by exactly one boot.
             configuration.installContext = buildInstallContext()
             configuration.pendingGuestAccount = unattendedSetupIntent
-        case .linux:
-            configuration.linuxInstallContext = buildLinuxInstallContext()
+        case .efi:
+            configuration.genericMachineIdentifierData = host.makeGenericMachineIdentifier()
+            switch linuxSelection {
+            case .catalogEntry(let entry):
+                // No destination: only a resolution just before the download
+                // knows which URL the mirror is serving, and the destination
+                // is named for that URL.
+                configuration.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(entry))
+            case .customURL(let image, _):
+                configuration.linuxInstallContext = LinuxInstallContext(
+                    source: .customURL(image),
+                    downloadDestinationPath: downloadPath(
+                        forFilename: LinuxImageFilename.destination(for: image.url)))
+            case .localISO(let path, let bookmark):
+                // The installer goes in as `storageDevices[0]` so EFI boots it
+                // ahead of the main disk.
+                configuration.storageDisks = [
+                    StorageDisk(
+                        path: path,
+                        readOnly: true,
+                        label: URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
+                        bookmark: bookmark
+                    ),
+                    StorageDisk(
+                        path: "Disk.asif",
+                        readOnly: false,
+                        label: "Main Disk",
+                        isInternal: true,
+                        kind: .virtio
+                    ),
+                ]
+            case nil:
+                break
+            }
+        case .linuxKernel:
+            configuration.genericMachineIdentifierData = host.makeGenericMachineIdentifier()
+            configuration.kernelPath = kernelPath
+            configuration.initrdPath = initrdPath
+            configuration.kernelCommandLine = kernelCommandLine
+            configuration.kernelBookmark = kernelBookmark
+            configuration.initrdBookmark = initrdBookmark
         }
 
         return configuration

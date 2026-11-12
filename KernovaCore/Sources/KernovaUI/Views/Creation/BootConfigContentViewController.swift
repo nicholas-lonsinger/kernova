@@ -55,7 +55,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
             ])
         let subtitle = makeWizardSubtitle("Choose how to boot your Linux virtual machine.")
 
-        bootModeControl.selectedSegment = creationVM.selectedBootMode == .linuxKernel ? 1 : 0
+        bootModeControl.selectedSegment = creationVM.linuxBootMode == .linuxKernel ? 1 : 0
         bootModeControl.target = self
         bootModeControl.action = #selector(bootModeChanged)
         bootModeControl.translatesAutoresizingMaskIntoConstraints = false
@@ -99,7 +99,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
         }
         radios.removeAll()
 
-        if creationVM.selectedBootMode == .linuxKernel {
+        if creationVM.linuxBootMode == .linuxKernel {
             addKernelSection()
         } else {
             addImageSection()
@@ -263,7 +263,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     // MARK: - Actions
 
     @objc private func bootModeChanged() {
-        creationVM.selectedBootMode = bootModeControl.selectedSegment == 1 ? .linuxKernel : .efi
+        creationVM.linuxBootMode = bootModeControl.selectedSegment == 1 ? .linuxKernel : .efi
         rebuildConditional()
     }
 
