@@ -120,6 +120,260 @@ struct VMCommandCoreArrivalTests {
         #expect(events.failures.first?.message == failure.message)
     }
 
+    // MARK: - Sources Whose Files Have Repairs
+
+    /// A value no field of any config type takes.
+    private static let unrecognized = "plan9-mode"
+
+    /// What a copy the library can't read for its `config.json`'s
+    /// unrecognized `$.networkMode` says, in the VM named `name`.
+    private static func unreadableCopyMessage(_ name: String) -> String {
+        "\u{201C}\(name)\u{201D} is in the library, but Kernova can\u{2019}t read \u{201C}config.json\u{201D}: "
+            + "$.networkMode: \u{201C}plan9-mode\u{201D} is not a recognized value. "
+            + "Choose File > Check Config Files\u{2026} to review it."
+    }
+
+    /// What a hook running inside the library's work saw, read back after.
+    private final class Captured<Value> {
+        var value: Value
+        init(_ value: Value) { self.value = value }
+    }
+
+    /// Writes the JSON file at `relativePath` in the bundle at `url` again,
+    /// with `edit` applied to what it held — nothing, where there was no file.
+    private func editJSON(
+        _ relativePath: String, in url: URL, _ edit: (inout [String: Any]) -> Void
+    ) throws {
+        let fileURL = url.appendingPathComponent(relativePath)
+        var object: [String: Any] = [:]
+        if let data = try? Data(contentsOf: fileURL) {
+            object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        edit(&object)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: fileURL)
+    }
+
+    /// An import source named `name` on disk whose `config.json` holds an
+    /// unrecognized `$.networkMode`, a problem with a repair.
+    private func repairableSource(_ name: String) throws -> (url: URL, id: UUID) {
+        let source = try scratch.importSource(name: name)
+        try editJSON(VMBundleLayout.configRelativePath, in: source.url) { $0["networkMode"] = Self.unrecognized }
+        return (source.url, source.config.id)
+    }
+
+    /// Every regular file under `url`, by its path below it.
+    private func contents(of url: URL) throws -> [String: Data] {
+        let root = url.resolvingSymlinksInPath().path(percentEncoded: false)
+        let enumerator = try #require(
+            FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey]))
+        var files: [String: Data] = [:]
+        for case let file as URL in enumerator
+        where try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true {
+            let path = file.resolvingSymlinksInPath().path(percentEncoded: false)
+            files[String(path.dropFirst(root.count))] = try Data(contentsOf: file)
+        }
+        return files
+    }
+
+    @Test(
+        "A waited import of a repairable config.json throws; its copy is a row the check lists and repairs to the VM"
+    )
+    func waitedImportOfARepairableConfigLeavesARowTheCheckRepairs() async throws {
+        let harness = makeHarness()
+        let source = try repairableSource("Dev")
+        let before = try contents(of: source.url)
+
+        let thrown = await #expect(throws: CommandError.self) {
+            try await harness.core.importVM(from: source.url, waitForOutcome: true)
+        }
+
+        #expect(thrown?.message == Self.unreadableCopyMessage("Dev"))
+        #expect(harness.library.entries.count == 1)
+        let row = try #require(harness.library.entries.first?.unreadable)
+        let destination = try storage.vmsDirectory.appendingPathComponent(
+            "Dev.\(VMBundleFormat.fileExtension)", isDirectory: true)
+        #expect(harness.library.isSameBundle(row.bundleURL, destination))
+        let checked = try await harness.library.checkConfigFiles()
+        #expect(checked.count == 1)
+        guard case .bundle(let checkedBundle, .configuration)? = checked.first?.location else {
+            Issue.record("the check listed \(checked.map(\.location)), not the copy's config.json")
+            return
+        }
+        #expect(harness.library.isSameBundle(checkedBundle, destination))
+        #expect(checked.allSatisfy { $0.isRepairable })
+        let after = try contents(of: source.url)
+        #expect(after == before)
+
+        #expect(await harness.library.useDefaults(in: checked).isEmpty)
+
+        #expect(harness.library.instances.map(\.id) == [source.id])
+        #expect(harness.library.entries.count == 1)
+        let afterRepair = try contents(of: source.url)
+        #expect(afterRepair == before)
+    }
+
+    @Test("An unawaited import of a repairable config.json raises no alert, asks for the check, and emits its failure")
+    func unawaitedImportOfARepairableConfigAsksForTheCheck() async throws {
+        let harness = makeHarness()
+        let checkRequests = Captured(0)
+        harness.library.onUnreadableFilesFound = { checkRequests.value += 1 }
+        let (events, recording) = recordFailureEvents(of: harness.core)
+        defer { recording.cancel() }
+        let source = try repairableSource("Dev")
+
+        let started = try await harness.core.importVM(from: source.url, waitForOutcome: false)
+        let arrival = try #require(harness.library.arrivals.first)
+        #expect(await arrival.settle() == nil)
+
+        #expect(harness.failures.isEmpty)
+        #expect(checkRequests.value == 1)
+        #expect(harness.library.entries.compactMap(\.unreadable).count == 1)
+        try await events.changed.wait { events.failures.count == 1 }
+        #expect(events.failures.first?.id == started.id)
+        #expect(events.failures.first?.message == Self.unreadableCopyMessage("Dev"))
+    }
+
+    /// A core file of a bundle: one an import admits only when it reads, or
+    /// when each of its problems has a repair.
+    enum CoreFile: CaseIterable, Sendable {
+        case configuration, hostState, snapshotManifest
+    }
+
+    @Test(
+        "A source whose config.json, host state or manifest has a problem with no repair is refused before anything is staged",
+        arguments: CoreFile.allCases)
+    func aSourceWithAnUnrepairableCoreFileIsRefusedBeforeStaging(_ file: CoreFile) async throws {
+        let harness = makeHarness()
+        let source = try scratch.importSource(name: "Broken")
+        let fileName: String
+        switch file {
+        case .configuration:
+            try editJSON(VMBundleLayout.configRelativePath, in: source.url) { $0["id"] = "not-a-uuid" }
+            fileName = "config.json"
+        case .hostState:
+            try Data("not json".utf8).write(
+                to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
+            fileName = "host-state.json"
+        case .snapshotManifest:
+            let manifest = source.url.appendingPathComponent(VMBundleLayout.snapshotManifestRelativePath)
+            try FileManager.default.createDirectory(
+                at: manifest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("not json".utf8).write(to: manifest)
+            fileName = "manifest.json"
+        }
+
+        let thrown = await #expect(throws: CommandError.self) {
+            try await harness.core.importVM(from: source.url, waitForOutcome: true)
+        }
+
+        #expect(thrown?.message.hasPrefix("\u{201C}\(fileName)\u{201D} could not be read: ") == true)
+        #expect(storage.stagedBundleURLs.isEmpty)
+        #expect(harness.library.entries.isEmpty)
+    }
+
+    @Test("A repairable host state imports as a VM, its copy's host state readable and arrived as a copy's")
+    func importOfARepairableHostStateArrivesAsACopy() async throws {
+        let harness = makeHarness()
+        let source = try scratch.importSource(name: "Marked")
+        var marked = VMHostState()
+        marked.startsAutomaticallyOnLaunch = true
+        marked.lastRunAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let encoded = try VMConfiguration.makeJSONEncoder().encode(marked)
+        var object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["displayPreference"] = Self.unrecognized
+        #expect(object["startsAutomaticallyOnLaunch"] as? Bool == true)
+        #expect(object["lastRunAt"] != nil)
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            .write(to: source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath))
+        let before = try contents(of: source.url)
+
+        let summary = try await harness.core.importVM(from: source.url, waitForOutcome: true)
+
+        let imported = try #require(harness.library.instances.first)
+        #expect(imported.id == summary.id)
+        let copy = try VMBundleFiles(url: imported.bundleURL, access: CoordinatedBundleFileAccess()).read()
+        #expect(copy.hostState.startsAutomaticallyOnLaunch == false)
+        #expect(copy.hostState.lastRunAt == nil)
+        #expect(copy.hostState.displayPreference == .inline)
+        let after = try contents(of: source.url)
+        #expect(after == before)
+    }
+
+    @Test("Importing the source of a bundle the library can't read copies nothing, and answers that row and its file")
+    func importingTheSourceOfAnUnreadableRowCopiesNothing() async throws {
+        let harness = makeHarness()
+        let source = try scratch.importSource(name: "Dev")
+        let libraryCopy = try storage.vmsDirectory.appendingPathComponent(
+            "Dev.\(VMBundleFormat.fileExtension)", isDirectory: true)
+        try FileManager.default.copyItem(at: source.url, to: libraryCopy)
+        try editJSON(VMBundleLayout.configRelativePath, in: libraryCopy) { $0["networkMode"] = Self.unrecognized }
+        await harness.library.loadVMs()
+        let row = try #require(harness.library.entries.first?.unreadable)
+        harness.library.selection = nil
+
+        let thrown = await #expect(throws: CommandError.self) {
+            try await harness.core.importVM(from: source.url, waitForOutcome: true)
+        }
+        let batch = harness.core.beginImports(from: [source.url], intoFolder: nil)
+
+        #expect(thrown?.message == Self.unreadableCopyMessage("Dev"))
+        #expect(batch.imports.count == 1)
+        guard case .failure(let refusal)? = batch.imports.first else {
+            Issue.record("the batch answered \(batch.imports), not a refusal")
+            return
+        }
+        #expect((refusal as? CommandError)?.message == Self.unreadableCopyMessage("Dev"))
+        #expect(harness.library.selectedID == row.id)
+        #expect(storage.stagedBundleURLs.isEmpty)
+        #expect(harness.library.entries.count == 1)
+    }
+
+    @Test("A reconcile between the rename and the arrival's step leaves an unreadable copy to the arrival: one row")
+    func aReconcileDuringTheRenameLeavesAnUnreadableCopyToItsArrival() async throws {
+        let harness = makeHarness()
+        let library = harness.library
+        let source = try repairableSource("Dev")
+        let reconciled = Captured<[LibraryEntry]>([])
+
+        _ = await storage.withAfterPublish({
+            library.reconcileWithDisk()
+            reconciled.value = library.entries
+        }) {
+            await #expect(throws: CommandError.self) {
+                try await harness.core.importVM(from: source.url, waitForOutcome: true)
+            }
+        }
+
+        #expect(reconciled.value.count == 1)
+        #expect(reconciled.value.first?.arrival != nil)
+        #expect(library.entries.count == 1)
+        #expect(library.entries.first?.unreadable != nil)
+    }
+
+    @Test("A cancel during the rename of an unreadable copy whose trash fails keeps its row and reports once")
+    func aCancelDuringTheRenameOfAnUnreadableCopyWhoseTrashFailsKeepsItsRow() async throws {
+        let harness = makeHarness()
+        let source = try repairableSource("Dev")
+        let hold = DispatchSemaphore(value: 0)
+        storage.setPublishHold(hold)
+        storage.setDeleteVMBundleError(CocoaError(.fileWriteNoPermission))
+
+        let started = try await harness.core.importVM(from: source.url, waitForOutcome: false)
+        let arrival = try #require(harness.library.arrivals.first)
+        try await storage.publishLanded.wait { storage.publishBundleCallCount == 1 }
+        try harness.core.cancelPreparing(.id(started.id), consent: .all)
+        hold.signal()
+
+        #expect(await arrival.settle() == nil)
+        #expect(storage.deleteVMBundleCallCount == 1)
+        #expect(harness.library.arrivals.isEmpty)
+        #expect(harness.library.entries.count == 1)
+        #expect(harness.library.entries.first?.unreadable != nil)
+        #expect(harness.failures.count == 1)
+    }
+
     // MARK: - An Arrival Is Not a VM
 
     @Test("An arrival's storage disks answer the list its write was asked for, unmeasured")

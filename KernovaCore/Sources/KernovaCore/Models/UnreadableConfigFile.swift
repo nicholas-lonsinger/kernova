@@ -163,7 +163,19 @@ package struct UnreadableConfigFile: LocalizedError, Sendable, Equatable {
             case 1: "\(first.subject) and 1 more file"
             default: "\(first.subject) and \(more) more files"
             }
-        return "Kernova can\u{2019}t read \(named). "
-            + "Choose File > Check Config Files\u{2026} to review \(more == 0 ? "it" : "them")."
+        return "Kernova can\u{2019}t read \(named). " + reviewPrompt(fileCount: files.count)
+    }
+
+    /// What a create, clone or import says of the bundle it put, or found,
+    /// in the library as the VM named `name`, which a read refuses for this
+    /// file: the file, its first problem, and where to go about it.
+    func inLibraryNotice(name: String) -> String {
+        "\u{201C}\(name)\u{201D} is in the library, but Kernova can\u{2019}t read \(subject): \(summary). "
+            + Self.reviewPrompt(fileCount: 1)
+    }
+
+    /// Where to go about `fileCount` unreadable files.
+    static func reviewPrompt(fileCount: Int) -> String {
+        "Choose File > Check Config Files\u{2026} to review \(fileCount == 1 ? "it" : "them")."
     }
 }

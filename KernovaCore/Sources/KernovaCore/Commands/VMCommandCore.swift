@@ -906,11 +906,12 @@ package final class VMCommandCore {
     /// Puts an arrival's failure on the event stream, waited or not, while its
     /// row is still in the library: the diff in ``emitLibraryChanges()`` only
     /// ever sees the row vanish, and reports that after this. A failure nobody
-    /// awaits is reported here too, in the same step.
+    /// awaits is reported here too, in the same step, unless the config check
+    /// is its report (``VMArrival/isReportedByTheCheck(_:)``).
     private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
         guard let failure = arrival.failure(for: error) else { return }
         broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: failure.message)])
-        if !arrival.isAwaited { report(failure, on: nil) }
+        if !arrival.isAwaited, !VMArrival.isReportedByTheCheck(error) { report(failure, on: nil) }
     }
 }
 

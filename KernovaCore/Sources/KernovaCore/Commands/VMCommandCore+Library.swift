@@ -69,8 +69,9 @@ extension VMCommandCore {
     /// bundle became, or the failure thrown here — and reported nowhere else,
     /// unless the waiter has gone by the time it settles or the arrival was
     /// begun unawaited (``VMArrival/isAwaited``), whose failure is reported as
-    /// it settles. The event stream already carries the failure
-    /// (``arrivalFailed(_:with:)``).
+    /// it settles — either way, unless the config check is its report
+    /// (``VMArrival/isReportedByTheCheck(_:)``). The event stream already
+    /// carries the failure (``arrivalFailed(_:with:)``).
     ///
     /// Awaiting ``VMArrival/settled`` does not return early when the waiting
     /// task is cancelled, so whether the waiter is still there is read after
@@ -84,7 +85,9 @@ extension VMCommandCore {
                     verb: arrival.kind.verb,
                     message: "The \(arrival.kind.displayNoun.lowercased()) was cancelled.")
             }
-            if Task.isCancelled, arrival.isAwaited { report(failure, on: nil) }
+            if Task.isCancelled, arrival.isAwaited, !VMArrival.isReportedByTheCheck(error) {
+                report(failure, on: nil)
+            }
             throw failure
         }
     }
@@ -519,18 +522,21 @@ extension VMCommandCore {
     }
 
     /// Copies one `.kernova` bundle into the library — answering the existing
-    /// VM when the source is already in the library by identifier, and joining
-    /// the arrival already importing it when one is.
+    /// VM when the source is already in the library by identifier, joining
+    /// the arrival already importing it when one is, and refusing, copying
+    /// nothing, when it is a bundle in the library Kernova can't read.
     ///
-    /// `waitForOutcome` is ``clone(_:outcome:waitForOutcome:)``'s.
+    /// `waitForOutcome` is ``clone(_:outcome:waitForOutcome:)``'s. A copy
+    /// that is in the library as a bundle Kernova can't read is no VM, so a
+    /// waited import throws ``VMArrival/unreadableFailure(_:kind:name:)``.
     @discardableResult
     func importVM(from sourceURL: URL, waitForOutcome: Bool) async throws -> VMSummary {
         let start = try registerImports(
             from: [sourceURL], intoFolder: nil, awaited: waitForOutcome
         ).starts[0].get()
         switch start {
-        case .existing(let instance):
-            return summary(instance)
+        case .existing, .unreadable:
+            return try summary(of: start)
         case .joined(let arrival):
             // Its own initiating call already routes an unwaited outcome.
             return waitForOutcome ? summary(try await awaitOutcome(of: arrival)) : summary(arrival)
@@ -548,7 +554,7 @@ extension VMCommandCore {
     func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch {
         let registered = registerImports(from: urls, intoFolder: folder, awaited: false)
         return VMImportBatch(
-            imports: registered.starts.map { $0.map(summary(of:)) },
+            imports: registered.starts.map { start in start.flatMap { start in Result { try summary(of: start) } } },
             membershipFailure: registered.membershipFailure)
     }
 
@@ -558,27 +564,34 @@ extension VMCommandCore {
         case existing(VMInstance)
         case joined(VMArrival)
         case started(VMArrival)
+        /// The source's VM is in the library as a bundle Kernova can't read.
+        case unreadable(UnreadableVM)
 
         var id: UUID {
             switch self {
             case .existing(let instance): instance.id
             case .joined(let arrival), .started(let arrival): arrival.id
+            case .unreadable(let row): row.id
             }
         }
     }
 
-    private func summary(of start: ImportStart) -> VMSummary {
+    /// The row an import's caller is answered with; one whose source is in
+    /// the library as a bundle Kernova can't read is refused, naming its file.
+    private func summary(of start: ImportStart) throws -> VMSummary {
         switch start {
         case .existing(let instance): summary(instance)
         case .joined(let arrival), .started(let arrival): summary(arrival)
+        case .unreadable(let row): throw VMArrival.unreadableFailure(row.file, kind: .importing, name: row.name)
         }
     }
 
     /// Registers the import of each bundle at `urls`, puts every entry they
     /// name in the folder `folder` identifies, if any, in one write, then
     /// makes the batch's one selection: its first entry, in that folder when
-    /// the folder took them — a VM already in the library, or an import
-    /// already copying it, revealed; an arrival just started selected on an
+    /// the folder took them — a VM already in the library, an import already
+    /// copying it, or the source's bundle in the library Kernova can't read,
+    /// which no folder takes, revealed; an arrival just started selected on an
     /// arrival's terms (``VMLibrary/selectArrival(_:in:)``). An arrival the
     /// user is watching keeps the selection, whichever kind comes first.
     ///
@@ -593,16 +606,19 @@ extension VMCommandCore {
             Result<ImportStart, any Error> { try registerImport(from: url, awaited: awaited) }
         }
         let registered = starts.compactMap { try? $0.get() }
+        let members = registered.filter {
+            if case .unreadable = $0 { false } else { true }
+        }
         var section: SidebarSectionID?
         var membershipFailure: (any Error)?
-        if let folder, !registered.isEmpty {
+        if let folder, !members.isEmpty {
             do {
-                try library.add(registered.map(\.id), toFolder: folder)
+                try library.add(members.map(\.id), toFolder: folder)
                 section = .folder(folder)
             } catch {
                 logger.log(
                     .error,
-                    "Couldn't put \(registered.count, privacy: .public) import(s) in a folder: \(error.localizedDescription, privacy: .public)"
+                    "Couldn't put \(members.count, privacy: .public) import(s) in a folder: \(error.localizedDescription, privacy: .public)"
                 )
                 membershipFailure = error
             }
@@ -611,6 +627,7 @@ extension VMCommandCore {
             switch first {
             case .started(let arrival): library.selectArrival(arrival.id, in: section)
             case .existing, .joined: library.selectRevealing(first.id, in: section)
+            case .unreadable: library.selectRevealing(first.id)
             }
         }
         return (starts, membershipFailure)
@@ -626,10 +643,13 @@ extension VMCommandCore {
     private func registerImport(from sourceURL: URL, awaited: Bool) throws -> ImportStart {
         do {
             let vmsDir = try storageService.vmsDirectory
-            // A host state or manifest that doesn't read is the library's to
-            // report once it reads the copy; the import starts without it.
-            let read = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles).readArrivalState()
-            let config = read.configuration
+            // A core file with a problem no repair makes refuses the import
+            // here, before anything is copied. A `config.json` or manifest
+            // whose every problem has a repair is copied as it is, and the
+            // library lists the copy for the check; the copy's host state is
+            // the import's own write, which repairs it.
+            let source = try VMBundleFiles(url: sourceURL, access: storageService.bundleFiles).readAdmission()
+            let config = source.configuration
 
             // Already in the library by UUID (including a source already inside the VMs
             // directory) — answered with it rather than re-imported.
@@ -645,8 +665,17 @@ extension VMCommandCore {
             case nil:
                 break
             }
+            // A copy made before is in the library as a bundle Kernova can't
+            // read, which the check repairs; another would be a second row.
+            if let row = library.entries.lazy.compactMap(\.unreadable).first(where: { $0.vmID == config.id }) {
+                logger.log(
+                    .notice,
+                    "VM '\(config.name, privacy: .public)' already in library as \(row.bundleURL.lastPathComponent, privacy: .public), which can't be read — nothing imported"
+                )
+                return .unreadable(row)
+            }
 
-            var hostState = read.hostState ?? VMHostState()
+            var hostState = source.hostState
             hostState.arriveAsCopy()
             return .started(
                 library.beginArrival(
@@ -654,13 +683,17 @@ extension VMCommandCore {
                     destination: library.reserveDestination(for: sourceURL, in: vmsDir),
                     staged: try VMStagedBundle.mint(in: storageService),
                     source: .importing(sourceURL),
-                    starting: VMArrival.Starting(
-                        hostState: hostState, hasSnapshots: read.hasSnapshots ?? false),
+                    starting: VMArrival.Starting(hostState: hostState, hasSnapshots: source.hasSnapshots),
                     awaited: awaited,
-                    write: { staged in
+                    write: { [logger] staged in
                         try await Self.runBoundedCopy {
                             try FileManager.default.copyItem(at: sourceURL, to: staged.url)
-                            try staged.update(.hostState) { $0.arriveAsCopy() }
+                            if let repaired = try staged.arriveHostStateAsCopy() {
+                                logger.log(
+                                    .notice,
+                                    "Import of \(sourceURL.lastPathComponent, privacy: .public) wrote its copy's \(repaired.fileName, privacy: .public) with the defaults for \(String(describing: repaired.problems), privacy: .public)"
+                                )
+                            }
                         }
                     }))
         } catch {

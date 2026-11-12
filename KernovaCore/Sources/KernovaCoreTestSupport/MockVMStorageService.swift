@@ -13,7 +13,8 @@ import KernovaTestSupport
 /// except `vmsDirectory`/`stagingRoot`, which import/clone tests need as real, writable
 /// directories since `VMCommandCore.importVM(from:)` does a raw `FileManager.copyItem` into the
 /// staging area rather than going through this protocol, and `cloneVMBundle`, which creates its
-/// destination directory for the same reason (see below). `baseDirectory` is a
+/// destination directory for the same reason (see below), and `listVMBundles`, which lists a
+/// bundle such a copy published there. `baseDirectory` is a
 /// `TestScratchDirectory` per instance, so tests copying real bundles into it can't collide or
 /// leak state into each other.
 ///
@@ -248,10 +249,21 @@ final class MockVMStorageService: VMStorageProviding {
         // Mirrors the real service's hidden-skipping enumeration, which never
         // admits a bundle still being written under `.Staging`.
         let staging = stagingRoot.url.standardizedFileURL
-        return files.bundleURLs.filter {
+        let held = files.bundleURLs.filter {
             files.data(atRelativePath: VMBundleLayout.configRelativePath, in: $0) != nil
                 && $0.deletingLastPathComponent().standardizedFileURL != staging
         }
+        // A bundle an import really copied and published is on disk alone,
+        // and listed as the real service lists every bundle.
+        let onDisk =
+            ((try? FileManager.default.contentsOfDirectory(
+                at: baseDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [])
+            .filter {
+                !files.holds($0)
+                    && FileManager.default.fileExists(
+                        atPath: VMBundleLayout(bundleURL: $0).configURL.path(percentEncoded: false))
+            }
+        return held + onDisk
     }
 
     /// Records the directory as held, so the configuration the create writes
