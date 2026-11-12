@@ -11,7 +11,7 @@ import KernovaLogging
 /// every other surface share one set of refusals. The list is a
 /// ``SettingsNamedListEditor``.
 @MainActor
-final class NetworksSettingsViewController: NSViewController {
+final class NetworksSettingsViewController: NSViewController, SettingsPaneContent {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "NetworksSettingsViewController")
 
@@ -118,11 +118,14 @@ final class NetworksSettingsViewController: NSViewController {
                 + "Network settings.")
     }
 
+    func refreshContent() {
+        editor.reload()
+        publishSettingsPaneSize()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        editor.reload()
         editor.startObserving()
-        publishSettingsPaneSize()
     }
 
     override func viewDidDisappear() {

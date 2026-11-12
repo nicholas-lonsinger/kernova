@@ -68,6 +68,7 @@ struct RemindersSettingsViewControllerTests {
         }
         let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
+        controller.refreshContent()
         controller.viewWillAppear()
         controller.view.setFrameSize(controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
@@ -87,6 +88,7 @@ struct RemindersSettingsViewControllerTests {
         let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         // Measure while detached, exactly as the pane does before the tab
         // controller sizes the window, then hand the window that measurement.
+        controller.refreshContent()
         controller.viewWillAppear()
         showInTestWindow(controller.view, size: controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
@@ -225,7 +227,7 @@ struct RemindersSettingsViewControllerTests {
 
         // Still disabled, still showing the choice, once one is saved.
         viewModel.duplicateMachineIDQuestionDismissed = true
-        controller.viewWillAppear()
+        controller.refreshContent()
         #expect(toggle.state == .off)
         #expect(!toggle.isEnabled)
     }
@@ -358,6 +360,7 @@ struct RemindersSettingsViewControllerTests {
         defer { controller.viewDidDisappear() }
         controller.view.setFrameSize(NSSize(width: 520, height: 400))
         host.addSubview(controller.view)
+        controller.refreshContent()
         controller.viewWillAppear()
         controller.view.layoutSubtreeIfNeeded()
 
@@ -397,6 +400,7 @@ struct RemindersSettingsViewControllerTests {
         viewModel.library.admitFixture(name: "Tux", guestOS: .linux)
         let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
+        controller.refreshContent()
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
 
@@ -413,6 +417,7 @@ struct RemindersSettingsViewControllerTests {
         storage.setSaveHostStateError(CocoaError(.fileWriteNoPermission))
         let controller = RemindersSettingsViewController(viewModel: viewModel, visibleFrame: offDesktopVisibleFrame)
         _ = controller.view
+        controller.refreshContent()
         controller.viewWillAppear()
         defer { controller.viewDidDisappear() }
         let toggle = try #require(vmSwitches(in: controller).first)

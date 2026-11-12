@@ -52,7 +52,7 @@ struct ClipboardSettingsViewControllerTests {
     private func makeLaidOutController() -> ClipboardSettingsViewController {
         let controller = ClipboardSettingsViewController(viewModel: makeViewModel())
         _ = controller.view
-        controller.viewWillAppear()
+        controller.refreshContent()
         controller.view.setFrameSize(controller.preferredContentSize)
         controller.view.layoutSubtreeIfNeeded()
         return controller

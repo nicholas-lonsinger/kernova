@@ -20,7 +20,7 @@ import KernovaLogging
 /// app-group container: the tool there could reach no app, so there is nothing
 /// to offer.
 @MainActor
-final class AdvancedSettingsViewController: NSViewController {
+final class AdvancedSettingsViewController: NSViewController, SettingsPaneContent {
     private let preferences: AppPreferences
     private let commandLineTool: CommandLineToolInstaller
     private let alwaysShowSwitch = NSSwitch()
@@ -170,12 +170,11 @@ final class AdvancedSettingsViewController: NSViewController {
         view = SettingsPaneRootView(content: root)
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
-        publishSettingsPaneSize()
+    func refreshContent() {
         alwaysShowSwitch.state = preferences.alwaysShowAdvancedOptions ? .on : .off
         duplicateIDOverrideSwitch.state = preferences.allowsDuplicateMachineIDOverride ? .on : .off
         cloneOutcomePopUp.selectItem(at: CloneOutcome.allCases.firstIndex(of: preferences.cloneOutcome) ?? 0)
+        publishSettingsPaneSize()
     }
 
     @objc private func alwaysShowToggled() {

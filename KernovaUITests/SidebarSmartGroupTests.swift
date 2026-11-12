@@ -469,7 +469,7 @@ struct SidebarSmartGroupTests {
         // The pane shows the notice in place of the list, and offers no change.
         let pane = TagsSettingsViewController(viewModel: viewModel)
         pane.loadViewIfNeeded()
-        pane.viewWillAppear()
+        pane.refreshContent()
         #expect(pane.isUnreadable)
         #expect(pane.tags.isEmpty)
         func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {

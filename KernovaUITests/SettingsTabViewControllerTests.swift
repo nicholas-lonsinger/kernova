@@ -68,6 +68,7 @@ struct SettingsTabViewControllerTests {
         pane.loadViewIfNeeded()
         // Measure detached first, then give the window that size, standing in for
         // the container's own `resizeWindow(toFit:)`.
+        pane.refreshContent()
         pane.viewWillAppear()
         showInTestWindow(pane.view, size: pane.preferredContentSize)
         pane.view.layoutSubtreeIfNeeded()
@@ -140,6 +141,25 @@ struct SettingsTabViewControllerTests {
         #expect(try networksPane(in: tabs).selectedNetworkIDForTesting == lab.id)
     }
 
+    /// AppKit fits a window onto its screen as it orders in, so a window still
+    /// at a provisional height there moves when its saved top-left puts its
+    /// bottom off screen.
+    @Test("Settings has its pane's height when it orders in", arguments: [nil, SettingsDestination.pane(.reminders)])
+    func settingsHasItsPaneHeightWhenItOrdersIn(destination: SettingsDestination?) throws {
+        let focus = RecordingSessionFocus()
+        let registry = makeWindowRegistry(makeSettingsViewModel(preferences: preferences), focus: focus)
+        var heightAtOrderIn: CGFloat?
+        focus.willOrderIn = { window in
+            heightAtOrderIn = window.contentRect(forFrameRect: window.frame).height
+        }
+
+        registry.showSettings(at: destination)
+
+        let pane = try #require(try tabs(of: registry).tabView.selectedTabViewItem?.viewController)
+        #expect(pane.preferredContentSize.height > 0)
+        #expect(heightAtOrderIn == pane.preferredContentSize.height)
+    }
+
     @Test("Each pane is a destination, and one the build does not offer leaves the selection")
     func everyOfferedPaneIsADestination() throws {
         let tabController = SettingsTabViewController(
@@ -155,6 +175,24 @@ struct SettingsTabViewControllerTests {
         limited.show(.pane(.networks))
         #expect(limited.selectedPaneForTesting == .reminders)
         #expect(!limited.tabViewItems.contains { $0.viewController is NetworksSettingsViewController })
+    }
+
+    @Test("A window whose pane runs below the screen moves up just enough, never past the top")
+    func paneTallerThanTheRoomBelowLiftsTheWindow() {
+        // A 1512×949 visible area, as on a 14-inch MacBook Pro with the Dock hidden.
+        let visible = NSRect(x: 0, y: 0, width: 1_512, height: 949)
+        // Networks' 376-point window with its top at 288: 88 points below the bottom edge.
+        #expect(
+            SettingsPaneMetrics.lifted(NSRect(x: 822, y: -88, width: 520, height: 376), into: visible)
+                == NSRect(x: 822, y: 0, width: 520, height: 376))
+        // Taller than the whole visible area: the top edge stays at its top.
+        #expect(
+            SettingsPaneMetrics.lifted(NSRect(x: 822, y: -400, width: 520, height: 1_000), into: visible)
+                == NSRect(x: 822, y: -51, width: 520, height: 1_000))
+        // Already inside: unchanged.
+        #expect(
+            SettingsPaneMetrics.lifted(NSRect(x: 822, y: 56, width: 520, height: 233), into: visible)
+                == NSRect(x: 822, y: 56, width: 520, height: 233))
     }
 
     @Test("A window sitting mid-screen caps its pane at the room below its top edge")

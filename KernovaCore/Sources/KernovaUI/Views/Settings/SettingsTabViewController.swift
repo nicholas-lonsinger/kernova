@@ -14,6 +14,17 @@ protocol SettingsPaneScrollCueing: AnyObject {
     func rearmScrollMoreCue()
 }
 
+/// A Settings pane: brings what it shows up to date and publishes its size
+/// through `publishSettingsPaneSize`.
+///
+/// The tab container calls it for the pane it is about to show — before the
+/// window orders in, and on every tab switch — so the window has the pane's
+/// height before AppKit fits the window onto its screen.
+@MainActor
+protocol SettingsPaneContent: NSViewController {
+    func refreshContent()
+}
+
 /// A Settings pane's root view: `content`, pinned to every edge.
 ///
 /// The pane is measured through `content`, never the root: AppKit holds a
@@ -47,9 +58,9 @@ extension NSViewController {
     /// publishes the result as `preferredContentSize`, which
     /// `SettingsTabViewController` resizes the window to whenever it changes.
     ///
-    /// The pane's view is a ``SettingsPaneRootView``. A pane calls this on
-    /// appearance and after anything that changes what it shows, such as a
-    /// note appearing. A wrapping caption's height stays single-line until a
+    /// The pane's view is a ``SettingsPaneRootView``. A pane calls this from
+    /// ``SettingsPaneContent/refreshContent()`` and after anything that changes
+    /// what it shows, such as a note appearing. A wrapping caption's height stays single-line until a
     /// layout pass resolves its wrap width, so a pane not yet in a window is
     /// laid out at the pane width, `layoutHeight` tall, before it is measured.
     func publishSettingsPaneSize(layoutHeight: CGFloat = SettingsPaneMetrics.width) {
@@ -87,6 +98,16 @@ enum SettingsPaneMetrics {
         let chrome = window.map { $0.frame.height - $0.contentRect(forFrameRect: $0.frame).height } ?? 0
         let windowTop = window?.screen == nil ? nil : window?.frame.maxY
         return maxHeight(windowTop: windowTop, visibleFrame: visibleFrame, chrome: chrome)
+    }
+
+    /// `frame` moved up just enough that its bottom edge is inside
+    /// `visibleFrame`, never so far that its top edge leaves it — where AppKit
+    /// puts a window as it orders in.
+    static func lifted(_ frame: NSRect, into visibleFrame: NSRect) -> NSRect {
+        guard frame.minY < visibleFrame.minY else { return frame }
+        var lifted = frame
+        lifted.origin.y = min(visibleFrame.minY, visibleFrame.maxY - frame.height)
+        return lifted
     }
 
     /// The pane height that keeps a window whose top edge sits at `windowTop`
@@ -141,7 +162,7 @@ final class SettingsTabViewController: NSTabViewController {
         }
     }
 
-    private func makeController(_ pane: SettingsPane) -> NSViewController {
+    private func makeController(_ pane: SettingsPane) -> any SettingsPaneContent {
         switch pane {
         case .general: GeneralSettingsViewController(viewModel: viewModel)
         case .reminders: RemindersSettingsViewController(viewModel: viewModel, visibleFrame: visibleFrame)
@@ -181,31 +202,27 @@ final class SettingsTabViewController: NSTabViewController {
     /// `NSTabViewController` does not do this itself: it sizes the window from
     /// the initial pane at `NSWindow(contentViewController:)` time and then
     /// keeps whatever height the window has, letting a shorter pane stretch and
-    /// a taller pane clip. Each pane publishes its content height via
-    /// `preferredContentSize` in `viewWillAppear()` (which runs before this
-    /// delegate call), so the target size is already fresh here.
-    /// A later change is picked up by ``preferredContentSizeDidChange(for:)``.
+    /// a taller pane clip. A later change is picked up by
+    /// ``preferredContentSizeDidChange(for:)``.
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
-        resizeWindow(toFit: tabViewItem?.viewController, animate: true)
+        fitWindow(to: tabViewItem?.viewController)
         // After the resize, never before: the cue is a statement about the pane
         // overflowing the window it just got, and re-arming against the outgoing
         // tab's height would answer for the wrong geometry.
         rearmScrollMoreCue(on: tabViewItem?.viewController)
     }
 
-    /// Sizes the window to the pane that is about to become visible.
+    /// Brings the selected pane up to date and sizes the window to it, before
+    /// the window orders in.
     ///
-    /// `tabView(_:didSelect:)` only fires on a tab *switch*, and not for the
-    /// initial selection (during `viewDidLoad` there is no window yet). Without
-    /// this hook the first pane shown is sized by whatever frame the window
-    /// already has — including the stale height its frame autosave name restores
-    /// from a previous session's taller tab — and the pane's four-edge pin
-    /// stretches its cards over the excess. No animation: the window has not
-    /// been shown yet, so there is nothing to animate from.
-    override func viewWillAppear() {
-        super.viewWillAppear()
-        resizeWindow(toFit: tabView.selectedTabViewItem?.viewController, animate: false)
+    /// AppKit fits a window onto its screen as it orders in, before any
+    /// `viewWillAppear()`, so a window still at a stale height — the one
+    /// `NSWindow(contentViewController:)` gave it, or a previous pane's — is
+    /// moved by that fit when its saved top-left puts its bottom off screen.
+    func prepareToShow() {
+        loadViewIfNeeded()
+        fitWindow(to: tabView.selectedTabViewItem?.viewController)
     }
 
     /// Resizes the window when the selected pane's content changes size while
@@ -213,7 +230,7 @@ final class SettingsTabViewController: NSTabViewController {
     override func preferredContentSizeDidChange(for viewController: NSViewController) {
         super.preferredContentSizeDidChange(for: viewController)
         guard viewController === tabView.selectedTabViewItem?.viewController else { return }
-        resizeWindow(toFit: viewController, animate: true)
+        resizeWindow(toFit: viewController)
     }
 
     /// Cues the pane the window opened on, once that window is on screen.
@@ -234,24 +251,32 @@ final class SettingsTabViewController: NSTabViewController {
         (pane as? any SettingsPaneScrollCueing)?.rearmScrollMoreCue()
     }
 
-    /// Resizes the window so its content area matches the content size of `pane`.
+    /// Brings `pane` up to date and resizes the window to the size it publishes.
+    private func fitWindow(to pane: NSViewController?) {
+        guard let pane = pane as? SettingsPaneContent else { return }
+        pane.refreshContent()
+        resizeWindow(toFit: pane)
+    }
+
+    /// Resizes the window so its content area matches `pane`'s
+    /// `preferredContentSize`, animated only while the window is on screen.
     ///
-    /// The top-left corner is kept anchored, matching the system apps' behavior.
+    /// The top-left corner is kept anchored, matching the system apps' behavior,
+    /// unless that leaves the bottom edge off screen: then the window moves up
+    /// as AppKit moves it when it orders in.
     ///
-    /// No-ops until the window and a measurable pane exist.
-    private func resizeWindow(toFit pane: NSViewController?, animate: Bool) {
-        guard let window = view.window, let pane else { return }
-        var contentSize = pane.preferredContentSize
-        if contentSize == .zero {
-            contentSize = pane.view.fittingSize
-        }
-        guard contentSize != .zero else { return }
-        let contentRect = NSRect(origin: .zero, size: contentSize)
+    /// No-ops until the window exists and the pane has published a size.
+    private func resizeWindow(toFit pane: NSViewController) {
+        guard let window = view.window, pane.preferredContentSize != .zero else { return }
+        let contentRect = NSRect(origin: .zero, size: pane.preferredContentSize)
         let targetSize = window.frameRect(forContentRect: contentRect).size
         var frame = window.frame
         frame.origin.y += frame.height - targetSize.height
         frame.size = targetSize
-        window.setFrame(frame, display: true, animate: animate)
+        if let visible = visibleFrame(window) {
+            frame = SettingsPaneMetrics.lifted(frame, into: visible)
+        }
+        window.setFrame(frame, display: true, animate: window.isVisible)
     }
 
     /// Loads an SF Symbol for a tab item, logging and asserting on a typo while

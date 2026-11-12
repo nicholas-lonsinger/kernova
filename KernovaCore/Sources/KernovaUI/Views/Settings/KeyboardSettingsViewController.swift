@@ -7,7 +7,7 @@ import KernovaLogging
 ///
 /// App-wide rather than per VM, because the shortcuts are the menu bar's.
 @MainActor
-final class KeyboardSettingsViewController: NSViewController {
+final class KeyboardSettingsViewController: NSViewController, SettingsPaneContent {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "KeyboardSettingsViewController")
 
@@ -80,8 +80,7 @@ final class KeyboardSettingsViewController: NSViewController {
         view = SettingsPaneRootView(content: root)
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
+    func refreshContent() {
         let disabled = viewModel.disabledReservedShortcuts
         for (shortcut, toggle) in switches {
             toggle.state = disabled.contains(shortcut) ? .off : .on

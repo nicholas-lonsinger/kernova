@@ -15,7 +15,7 @@ import ServiceManagement
 ///   last-window close leaves Kernova resident in the menu bar, or quits the
 ///   app outright.
 @MainActor
-final class GeneralSettingsViewController: NSViewController {
+final class GeneralSettingsViewController: NSViewController, SettingsPaneContent {
     private let loginItem: LoginItemService
     private let viewModel: VMLibraryViewModel
     private let openAtLoginSwitch = NSSwitch()
@@ -101,10 +101,13 @@ final class GeneralSettingsViewController: NSViewController {
         view = SettingsPaneRootView(content: root)
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
+    func refreshContent() {
         keepInMenuBarSwitch.state = viewModel.keepInMenuBarOnQuit ? .on : .off
         refreshFromStatus()
+    }
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
         // Refresh when the app regains focus — e.g. returning from System Settings
         // after approving/toggling the login item there.
         if activationObservation == nil {

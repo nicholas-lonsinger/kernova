@@ -15,7 +15,7 @@ import KernovaLogging
 /// `VMLibraryViewModel.applyClipboardPasteLimitChange()`; the host's own checks
 /// read the preference at each paste and need no push.
 @MainActor
-final class ClipboardSettingsViewController: NSViewController {
+final class ClipboardSettingsViewController: NSViewController, SettingsPaneContent {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardSettingsViewController")
 
@@ -101,8 +101,7 @@ final class ClipboardSettingsViewController: NSViewController {
         view = SettingsPaneRootView(content: root)
     }
 
-    override func viewWillAppear() {
-        super.viewWillAppear()
+    func refreshContent() {
         refresh()
         publishSettingsPaneSize()
     }

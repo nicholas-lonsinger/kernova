@@ -149,7 +149,7 @@ final class AppWindowRegistry {
             settingsWindowController
             ?? SettingsWindowController(viewModel: viewModel, stage: stage)
         settingsWindowController = controller
-        if let destination { controller.tabs.show(destination) }
+        controller.prepareToShow(at: destination)
         focus.activate()
         present(controller, .keyAndFront)
     }

@@ -8,7 +8,7 @@ import KernovaLogging
 /// renamed, recolored and deleted here and put on a VM from its row's Tags
 /// menu in the sidebar. The list is a ``SettingsNamedListEditor``.
 @MainActor
-final class TagsSettingsViewController: NSViewController {
+final class TagsSettingsViewController: NSViewController, SettingsPaneContent {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "TagsSettingsViewController")
 
@@ -140,11 +140,14 @@ final class TagsSettingsViewController: NSViewController {
         editor.tableView.rowHeight = 24
     }
 
+    func refreshContent() {
+        editor.reload()
+        publishSettingsPaneSize()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
-        editor.reload()
         editor.startObserving()
-        publishSettingsPaneSize()
     }
 
     override func viewDidDisappear() {

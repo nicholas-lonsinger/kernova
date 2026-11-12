@@ -29,6 +29,7 @@ struct GeneralSettingsViewControllerTests {
         let controller = GeneralSettingsViewController(
             loginItem: LoginItemService(registration: registration), viewModel: viewModel)
         _ = controller.view
+        controller.refreshContent()
         controller.viewWillAppear()
         return controller
     }
