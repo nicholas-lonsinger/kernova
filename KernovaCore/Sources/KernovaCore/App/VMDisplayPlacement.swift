@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 /// The decisions ``VMDisplayPlacementController`` carries out: where each
@@ -148,8 +147,8 @@ package enum VMDisplayPlacement {
     ) -> CGPoint? {
         if isOnTarget { return nil }
         return CGPoint(
-            x: targetFrame.midX - windowFrame.width / 2,
-            y: targetFrame.midY - windowFrame.height / 2)
+            x: targetFrame.origin.x + (targetFrame.size.width - windowFrame.size.width) / 2,
+            y: targetFrame.origin.y + (targetFrame.size.height - windowFrame.size.height) / 2)
     }
 
     /// The screen a VM enters fullscreen on: the display it was last
