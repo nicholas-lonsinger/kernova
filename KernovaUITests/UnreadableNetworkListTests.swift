@@ -120,6 +120,18 @@ struct UnreadableNetworkListTests {
         #expect(response.result == .failure(refusal.dto))
     }
 
+    @Test("Shortcuts throws the refusal from every network query")
+    func shortcutsRefuse() async throws {
+        let harness = try makeHarness()
+        let gateway = VMIntentGateway(
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
+            index: MockVMEntityIndex(), record: makeTestIndexRecord())
+
+        await #expect(throws: refusal) { try await gateway.networks() }
+        await #expect(throws: refusal) { try await gateway.networks(matching: "Lab") }
+        await #expect(throws: refusal) { try await gateway.networks(withIDs: [UUID()]) }
+    }
+
     @Test("AppleScript records the refusal on the command it answers")
     func appleScriptRefuses() async throws {
         let harness = try makeHarness()
