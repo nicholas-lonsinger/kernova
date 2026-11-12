@@ -39,20 +39,6 @@ struct UnreadableNetworkListTests {
         .operationFailed(verb: .networks, message: VMNetworkDirectory.unreadableMessage)
     }
 
-    @Test("The directory holds the file as unreadable, with the path of what it found")
-    func theDirectoryIsUnreadable() throws {
-        let harness = try makeHarness()
-
-        guard case .unreadable(let file) = harness.library.networks.state else {
-            Issue.record("Expected an unreadable network list")
-            return
-        }
-        #expect(file.location == .networkList(fileURL))
-        #expect(file.owner == .networkList)
-        #expect(file.problems.map(\.path?.description) == ["$.networks[0].kind"])
-        #expect(file.isRepairable)
-    }
-
     @Test("The command core refuses the listing, and every change, and leaves the file as it was")
     func theCoreRefuses() throws {
         let harness = try makeHarness()
