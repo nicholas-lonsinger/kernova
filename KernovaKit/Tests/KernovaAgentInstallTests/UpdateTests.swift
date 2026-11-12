@@ -96,61 +96,65 @@ final class Inbox<Value: Sendable>: @unchecked Sendable {
 
 struct InboxTimeout: Error {}
 
-/// A lander of one file, `agent`, in its slot, staged as `agent.partial` until it publishes. A write can be made
-/// to fail with an errno, and a publish to refuse.
+/// A lander of one file, `agent`, in its slot, staged until it publishes. A write can be made to fail with an
+/// errno, and a publish to refuse.
 struct TestLander: PayloadLander {
     static let name = "agent"
-    static let partialName = name + ".partial"
+    static let stagedName = KernovaAgentInstall.stagedName(of: name)
 
     var writeFailure: Int32?
     var refusal: PayloadRefusal?
 
     var format: PayloadFormat { .executable }
 
-    func install(_ payload: InstallPayloadReader, as name: String, in slot: InstallDirectory) throws(Installer.Failure)
-    {
-        try slot.writeFile(name, mode: 0o755) { descriptor throws(Installer.Failure) in
-            try payload.read { piece throws(Installer.Failure) in
-                try Installer.writeAll(Array(piece), to: descriptor, path: slot.path + "/" + name)
-            }
+    func install(
+        _ payload: InstallPayloadReader, as name: String, in slot: borrowing InstallDirectory<Installer.Failure>
+    ) throws(Installer.Failure) {
+        try slot.writeFile(name, mode: 0o755) { file throws(Installer.Failure) in
+            try payload.read { piece throws(Installer.Failure) in try file.write(piece) }
         }
     }
 
     func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
         let directory = try root.openSlot(slot)
-        let file = openat(directory, Self.partialName, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
-        guard file >= 0 else { throw SlotRoot.Failure(operation: "create", name: Self.partialName, errno: errno) }
+        let file = try directory.stage(Self.name)
         return Landing(lander: self, slot: directory, file: file)
     }
 
-    struct Landing: PayloadLanding {
+    final class Landing: PayloadLanding, @unchecked Sendable {
         let lander: TestLander
-        let slot: Int32
-        let file: Int32
+        let slot: InstallDirectory<SlotRoot.Failure>
+        var file: StagedFile<SlotRoot.Failure>?
+
+        init(
+            lander: TestLander, slot: consuming InstallDirectory<SlotRoot.Failure>,
+            file: consuming StagedFile<SlotRoot.Failure>
+        ) {
+            self.lander = lander
+            self.slot = slot
+            self.file = .some(file)
+        }
 
         func write(_ bytes: UnsafeRawBufferPointer) throws(SlotRoot.Failure) {
             if let failure = lander.writeFailure {
-                throw SlotRoot.Failure(operation: "write", name: TestLander.partialName, errno: failure)
+                throw SlotRoot.Failure(operation: "write", path: TestLander.stagedName, errno: failure)
             }
-            try SlotRoot.writeAll(Array(bytes), to: file, name: TestLander.partialName)
+            try file?.write(bytes)
         }
 
         func publish() throws(PayloadRefusal) {
-            close(file)
-            defer { close(slot) }
-            if let refusal = lander.refusal {
-                unlinkat(slot, TestLander.partialName, 0)
-                throw refusal
+            guard let file = file.take() else { preconditionFailure("a publish after the landing ended") }
+            let refusal: PayloadRefusal?
+            do {
+                refusal = try file.publish(in: slot, mode: 0o755) { [lander] _ in lander.refusal }
+            } catch {
+                throw PayloadRefusal(.updateInstallFailed, "\(error)", errno: error.errno, rejectsPayload: false)
             }
-            guard renameat(slot, TestLander.partialName, slot, TestLander.name) == 0 else {
-                throw PayloadRefusal(.updateInstallFailed, "rename", errno: errno, rejectsPayload: false)
-            }
+            if let refusal { throw refusal }
         }
 
         func discard() {
-            close(file)
-            unlinkat(slot, TestLander.partialName, 0)
-            close(slot)
+            file.take()?.discard(in: slot)
         }
     }
 }
@@ -215,7 +219,7 @@ struct SlotUpdateInstallerTests {
         _ = try run.switched.next()
 
         #expect(fixture.contents("slots/b/" + TestLander.name) == Payloads.bytes)
-        #expect(!fixture.exists("slots/b/" + TestLander.partialName))
+        #expect(!fixture.exists("slots/b/" + TestLander.stagedName))
         #expect(fixture.link("current") == "slots/b")
         #expect(fixture.link("rollback") == "slots/a")
         #expect(fixture.contents("switch-pending") == Data())
@@ -323,12 +327,12 @@ struct SlotUpdateInstallerTests {
         let run = try InstallerRun(fixture)
         _ = try run.reports.next()
         try Payloads.write(run)
-        #expect(fixture.exists("slots/b/" + TestLander.partialName))
+        #expect(fixture.exists("slots/b/" + TestLander.stagedName))
         run.installer.abort(Payloads.id)
         run.installer.clearRejected()
         run.installer.recordRejected(Data(repeating: 1, count: 32))
         _ = try run.reports.next()
-        #expect(!fixture.exists("slots/b/" + TestLander.partialName))
+        #expect(!fixture.exists("slots/b/" + TestLander.stagedName))
     }
 
     @Test("recordRejected and clearRejected persist the rejected hash and re-advertise it")
@@ -396,7 +400,7 @@ struct SlotUpdateInstallerTests {
         #expect(fixture.link("current") == "slots/a")
         #expect(!fixture.exists("switch-pending"))
         #expect(!fixture.exists("slots/b/" + TestLander.name))
-        #expect(!fixture.exists("slots/b/" + TestLander.partialName))
+        #expect(!fixture.exists("slots/b/" + TestLander.stagedName))
         #expect(try fixture.state().pendingSwitch == nil)
     }
 }

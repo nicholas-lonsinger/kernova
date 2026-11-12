@@ -14,7 +14,9 @@ public protocol PayloadLander: Sendable {
 
     /// Lands the install's payload, read from `payload` to its end, as `name` in `slot`, every file and
     /// directory it makes handed to the slot's owner (``InstallDirectory``).
-    func install(_ payload: InstallPayloadReader, as name: String, in slot: InstallDirectory) throws(Installer.Failure)
+    func install(
+        _ payload: InstallPayloadReader, as name: String, in slot: borrowing InstallDirectory<Installer.Failure>
+    ) throws(Installer.Failure)
 
     /// Begins landing an update in `slot` of `root`. What the slot holds stays until the landing publishes.
     func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding

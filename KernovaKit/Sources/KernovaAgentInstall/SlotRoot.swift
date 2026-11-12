@@ -7,9 +7,11 @@ import Glibc
 import Musl
 #endif
 
+import KernovaFileTree
+
 /// One install's root, open, as the agent that runs from it and its rollback check change it: `state.json`,
-/// the `current` and `rollback` links, the slots, and the two switch markers. Every name is reached relative
-/// to the root's descriptor.
+/// the `current` and `rollback` links, the slots, and the two switch markers, each reached through the root's
+/// ``InstallDirectory``.
 ///
 /// Each file has one writer, so no two processes ever write one file: the running agent writes `state.json`
 /// and creates `switch-pending`; the rollback check appends to `switch-pending` and only reads `state.json`.
@@ -19,55 +21,54 @@ import Musl
 /// next starts (``reconcile(runningSlot:)``).
 public final class SlotRoot: Sendable {
     /// What failed, and where.
-    public struct Failure: Error, CustomStringConvertible, Equatable {
+    public struct Failure: InstallFileFailure, CustomStringConvertible, Equatable {
         /// The call that failed.
         public var operation: String
-        /// The name it acted on, relative to the root.
-        public var name: String
+        /// The full path it acted on.
+        public var path: String
         /// Its errno; 0 when the failure was not a call's, as for metadata that does not parse.
         public var errno: Int32
         /// What failed, when `errno` is 0.
-        public var detail = ""
+        public var detail: String
 
-        /// `operation` on `name` failing with `errno`, or with `detail` when `errno` is 0.
-        public init(operation: String, name: String, errno: Int32, detail: String = "") {
+        /// `operation` on `path` failing with `errno`, or with `detail` when `errno` is 0.
+        public init(operation: String, path: String, errno: Int32, detail: String) {
             self.operation = operation
-            self.name = name
+            self.path = path
             self.errno = errno
             self.detail = detail
         }
 
-        /// The call, the name, and the OS's message for the errno or the detail.
+        /// `operation` on `path` failing with `errno`.
+        public init(operation: String, path: String, errno: Int32) {
+            self.init(operation: operation, path: path, errno: errno, detail: "")
+        }
+
+        /// The call, the path, and the OS's message for the errno or the detail.
         public var description: String {
-            errno == 0 ? "\(operation) \(name): \(detail)" : "\(operation) \(name): \(String(cString: strerror(errno)))"
+            errno == 0 ? "\(operation) \(path): \(detail)" : "\(operation) \(path): \(String(cString: strerror(errno)))"
         }
     }
 
+    private let root: InstallDirectory<Failure>
+
     /// The root's path, for messages.
-    public let path: String
-    private let descriptor: Int32
+    public var path: String { root.path }
 
-    /// The root at `path`, opened as a directory.
-    public init(path: String) throws(Failure) {
-        let descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
-        guard descriptor >= 0 else { throw Failure(operation: "open", name: path, errno: errno) }
-        self.path = path
-        self.descriptor = descriptor
-    }
-
-    deinit {
-        close(descriptor)
+    /// The root at `path`, a path `realpath(3)` gives, opened through `fileSystem`.
+    public init(path: String, fileSystem: any MutableTreeFileSystem = POSIXTreeFileSystem()) throws(Failure) {
+        root = try InstallDirectory(opening: path, path: path, owner: nil, fileSystem: fileSystem)
     }
 
     // MARK: state.json
 
     /// The slot metadata.
     func readState() throws(Failure) -> InstallState {
-        let bytes = try contents(of: InstallRoot.stateName)
+        let bytes = try root.contents(of: InstallRoot.stateName)
         do {
             return try InstallState.decoded(bytes)
         } catch {
-            throw Failure(operation: "parse", name: InstallRoot.stateName, errno: 0, detail: "\(error)")
+            throw Failure(operation: "parse", path: statePath, errno: 0, detail: "\(error)")
         }
     }
 
@@ -77,101 +78,69 @@ public final class SlotRoot: Sendable {
         try readState().slots[slot]?.payloadSHA256
     }
 
-    /// Replaces the slot metadata whole and durably: written beside it, flushed, renamed over it, then the
-    /// directory flushed, so a crash leaves the old file or the new one.
+    /// Replaces the slot metadata whole.
     func writeState(_ state: InstallState) throws(Failure) {
         let bytes: [UInt8]
         do { bytes = try state.encoded() } catch {
-            throw Failure(operation: "encode", name: InstallRoot.stateName, errno: 0, detail: "\(error)")
+            throw Failure(operation: "encode", path: statePath, errno: 0, detail: "\(error)")
         }
-        let temporary = InstallRoot.stateName + ".tmp"
-        let file = openat(descriptor, temporary, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o644)
-        guard file >= 0 else { throw Failure(operation: "create", name: temporary, errno: errno) }
-        do throws(Failure) {
-            try Self.writeAll(bytes, to: file, name: temporary)
-            guard fsync(file) == 0 else { throw Failure(operation: "fsync", name: temporary, errno: errno) }
-        } catch {
-            close(file)
-            unlinkat(descriptor, temporary, 0)
-            throw error
-        }
-        close(file)
-        guard renameat(descriptor, temporary, descriptor, InstallRoot.stateName) == 0 else {
-            let failure = errno
-            unlinkat(descriptor, temporary, 0)
-            throw Failure(operation: "rename onto", name: InstallRoot.stateName, errno: failure)
-        }
-        try syncDirectory()
+        try root.writeFile(InstallRoot.stateName, mode: 0o644) { file throws(Failure) in try file.write(bytes) }
     }
+
+    private var statePath: String { path + "/" + InstallRoot.stateName }
 
     // MARK: Links
 
     /// Points the link `name` at `slots/<slot>`, replacing it in one rename.
     func point(_ name: String, at slot: String) throws(Failure) {
-        let temporary = name + ".kernova-new"
-        guard unlinkat(descriptor, temporary, 0) == 0 || errno == ENOENT else {
-            throw Failure(operation: "remove", name: temporary, errno: errno)
-        }
-        guard symlinkat("slots/" + slot, descriptor, temporary) == 0 else {
-            throw Failure(operation: "symlink", name: temporary, errno: errno)
-        }
-        guard renameat(descriptor, temporary, descriptor, name) == 0 else {
-            let failure = errno
-            unlinkat(descriptor, temporary, 0)
-            throw Failure(operation: "rename onto", name: name, errno: failure)
-        }
-        try syncDirectory()
+        try root.replaceLink(name, target: InstallRoot.slotsName + "/" + slot)
     }
 
-    /// The slot the link `name`, relative to the directory open at `directory` — `AT_FDCWD` for a path —
-    /// points at, `slots/<slot>`; nil when it is missing or points elsewhere.
-    public static func slot(linkedFrom name: String, in directory: Int32) -> String? {
-        var buffer = [CChar](repeating: 0, count: 256)
-        let count = readlinkat(directory, name, &buffer, buffer.count - 1)
-        guard count > 0 else { return nil }
-        let target = String(decoding: buffer[0..<count].map { UInt8(bitPattern: $0) }, as: UTF8.self)
-        guard target.hasPrefix(InstallRoot.slotsName + "/") else { return nil }
-        let slot = String(target.dropFirst(InstallRoot.slotsName.count + 1))
-        // Bytes, not `String.contains(_:)`: Foundation's, which a string argument picks, links ICU into the
-        // static Linux agent.
-        return slot.isEmpty || slot.utf8.contains(UInt8(ascii: "/")) ? nil : slot
+    /// The slot the link `name`, relative to the directory open at `directory` — ``treeRootDirectory`` for a
+    /// path — points at, `slots/<slot>`; nil when it is missing or points elsewhere.
+    public static func slot(
+        linkedFrom name: String, in directory: Int32, on fileSystem: any TreeFileSystem = POSIXTreeFileSystem()
+    ) -> String? {
+        guard let target = try? fileSystem.linkTarget(of: Array(name.utf8), in: directory) else { return nil }
+        let prefix = Array((InstallRoot.slotsName + "/").utf8)
+        guard target.starts(with: prefix) else { return nil }
+        let slot = target.dropFirst(prefix.count)
+        guard !slot.isEmpty, !slot.contains(UInt8(ascii: "/")) else { return nil }
+        return String(decoding: slot, as: UTF8.self)
     }
 
     // MARK: Markers
 
     /// Whether `name` exists, as a file or anything else.
     func exists(_ name: String) -> Bool {
-        var info = stat()
-        return fstatat(descriptor, name, &info, AT_SYMLINK_NOFOLLOW) == 0
+        root.exists(name)
     }
 
-    /// Makes `switch-pending` empty: no run of the rollback check has counted against the switch yet.
+    /// Makes `switch-pending` empty, replacing it whole: no run of the rollback check has counted against the
+    /// switch yet.
     func createSwitchPending() throws(Failure) {
-        let name = InstallRoot.switchPendingName
-        let file = openat(descriptor, name, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o644)
-        guard file >= 0 else { throw Failure(operation: "create", name: name, errno: errno) }
-        let synced = fsync(file) == 0
-        let failure = errno
-        close(file)
-        guard synced else { throw Failure(operation: "fsync", name: name, errno: failure) }
-        try syncDirectory()
+        try root.writeFile(InstallRoot.switchPendingName, mode: 0o644) { _ throws(Failure) in }
     }
 
     /// Counts one run of the rollback check against the pending switch, by appending a byte to
     /// `switch-pending`, and answers how many runs have counted; nil when there is no pending switch. The
-    /// marker is opened without `O_CREAT`, so a switch confirmed meanwhile is never brought back.
+    /// marker is never created here, so a switch confirmed meanwhile is never brought back.
     func countRollbackRun() throws(Failure) -> Int? {
         let name = InstallRoot.switchPendingName
-        let file = openat(descriptor, name, O_WRONLY | O_APPEND | O_NOFOLLOW | O_CLOEXEC)
-        guard file >= 0 else {
-            guard errno == ENOENT else { throw Failure(operation: "open", name: name, errno: errno) }
+        let markerPath = path + "/" + name
+        let file: Int32
+        do { file = try root.fileSystem.openFileForAppending(Array(name.utf8), in: root.descriptor) } catch {
+            guard error.code == ENOENT else { throw Failure(operation: "open", path: markerPath, errno: error.code) }
             return nil
         }
-        defer { close(file) }
-        try Self.writeAll([0x2E], to: file, name: name)
-        var info = stat()
-        guard fstat(file, &info) == 0 else { throw Failure(operation: "stat", name: name, errno: errno) }
-        return Int(info.st_size)
+        defer { root.fileSystem.close(file) }
+        var run: UInt8 = 0x2E
+        while write(file, &run, 1) != 1 {
+            guard errno == EINTR else { throw Failure(operation: "write", path: markerPath, errno: errno) }
+        }
+        do { return Int(try root.fileSystem.status(of: file).size) } catch {
+            throw Failure(operation: "stat", path: markerPath, errno: error.code)
+        }
     }
 
     /// Takes `switch-pending` away for the agent, settling the switch without a rollback; false when it is
@@ -183,40 +152,34 @@ public final class SlotRoot: Sendable {
     /// Takes `switch-pending` away for the rollback check, renaming it `switch-rejected`; false when it is gone
     /// already, as the new version's confirmation leaves it.
     func claimRollback() throws(Failure) -> Bool {
-        guard
-            renameat(descriptor, InstallRoot.switchPendingName, descriptor, InstallRoot.switchRejectedName) == 0
-        else {
-            guard errno == ENOENT else {
-                throw Failure(operation: "rename", name: InstallRoot.switchPendingName, errno: errno)
+        do {
+            try root.fileSystem.renameReplacing(
+                Array(InstallRoot.switchPendingName.utf8), in: root.descriptor,
+                to: Array(InstallRoot.switchRejectedName.utf8), in: root.descriptor)
+        } catch {
+            guard error.code == ENOENT else {
+                throw Failure(
+                    operation: "rename", path: path + "/" + InstallRoot.switchPendingName, errno: error.code)
             }
             return false
         }
-        try syncDirectory()
+        try root.sync()
         return true
     }
 
     /// Removes the file `name`: true when this call removed it, false when it was already gone.
     @discardableResult
     func remove(_ name: String) throws(Failure) -> Bool {
-        guard unlinkat(descriptor, name, 0) == 0 else {
-            guard errno == ENOENT else { throw Failure(operation: "remove", name: name, errno: errno) }
-            return false
-        }
-        try syncDirectory()
+        guard try root.removeFile(name) else { return false }
+        try root.sync()
         return true
     }
 
     // MARK: Slots
 
     /// The directory `slots/<slot>`, open; made first when it is missing.
-    public func openSlot(_ slot: String) throws(Failure) -> Int32 {
-        let name = "slots/" + slot
-        if mkdirat(descriptor, name, 0o755) != 0, errno != EEXIST {
-            throw Failure(operation: "mkdir", name: name, errno: errno)
-        }
-        let directory = openat(descriptor, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
-        guard directory >= 0 else { throw Failure(operation: "open", name: name, errno: errno) }
-        return directory
+    public func openSlot(_ slot: String) throws(Failure) -> InstallDirectory<Failure> {
+        try root.makeDirectories([InstallRoot.slotsName, slot], mode: 0o755)
     }
 
     // MARK: Reconciling
@@ -248,37 +211,6 @@ public final class SlotRoot: Sendable {
         if state != before { try writeState(state) }
         try remove(InstallRoot.switchRejectedName)
         return state
-    }
-
-    // MARK: Helpers
-
-    private func contents(of name: String) throws(Failure) -> [UInt8] {
-        let file = openat(descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-        guard file >= 0 else { throw Failure(operation: "open", name: name, errno: errno) }
-        defer { close(file) }
-        var bytes: [UInt8] = []
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { read(file, $0.baseAddress, $0.count) }
-            if count < 0, errno == EINTR { continue }
-            guard count >= 0 else { throw Failure(operation: "read", name: name, errno: errno) }
-            guard count > 0 else { return bytes }
-            bytes += buffer[0..<count]
-        }
-    }
-
-    private func syncDirectory() throws(Failure) {
-        guard fsync(descriptor) == 0 else { throw Failure(operation: "fsync", name: ".", errno: errno) }
-    }
-
-    static func writeAll(_ bytes: [UInt8], to file: Int32, name: String) throws(Failure) {
-        var offset = 0
-        while offset < bytes.count {
-            let count = bytes[offset...].withUnsafeBytes { write(file, $0.baseAddress, $0.count) }
-            if count < 0, errno == EINTR { continue }
-            guard count > 0 else { throw Failure(operation: "write", name: name, errno: errno) }
-            offset += count
-        }
     }
 }
 #endif

@@ -38,19 +38,16 @@ struct ExecutableLanderTests {
     }
 
     static let bytes = Data((0..<300_000).map { UInt8(truncatingIfNeeded: $0 &* 13 &+ 5) })
-    static let partial = "slots/b/" + ExecutableLander.partialName
+    static let staged = stagedName(of: "kernova-agent")
+    static let stagedInB = "slots/b/" + staged
 
     /// A lander whose self-test answers `outcome`, recording the path it was asked to run.
-    static func lander(
-        selfTest outcome: SelfTest.Outcome = .passed, ran: Locked<[String]>? = nil,
-        write: (@Sendable (Int32, UnsafeRawBufferPointer) -> Int)? = nil
-    ) -> ExecutableLander {
+    static func lander(selfTest outcome: SelfTest.Outcome = .passed, ran: Locked<[String]>? = nil) -> ExecutableLander {
         var lander = ExecutableLander()
         lander.system.selfTest = { path in
             ran?.withLock { $0.append(path) }
             return outcome
         }
-        if let write { lander.system.write = write }
         return lander
     }
 
@@ -70,10 +67,10 @@ struct ExecutableLanderTests {
         let landing = try lander.beginUpdate(in: "b", of: try SlotRoot(path: root.path))
         try Self.write(landing)
         try landing.publish()
-        #expect(ran.withLock { $0 } == [root.path + "/" + Self.partial])
+        #expect(ran.withLock { $0 } == [root.path + "/" + Self.stagedInB])
         #expect(root.contents("slots/b/kernova-agent") == Self.bytes)
         #expect(root.mode("slots/b/kernova-agent") == 0o755)
-        #expect(!root.exists(Self.partial))
+        #expect(!root.exists(Self.stagedInB))
         #expect(root.contents("slots/a/kernova-agent") == Data("installed agent".utf8))
     }
 
@@ -85,22 +82,19 @@ struct ExecutableLanderTests {
         let refusal = try #require(throws: PayloadRefusal.self) { try landing.publish() }
         #expect(refusal.code == .updateInstallFailed)
         #expect(refusal.rejectsPayload)
-        #expect(!root.exists(Self.partial))
+        #expect(!root.exists(Self.stagedInB))
         #expect(!root.exists("slots/b/kernova-agent"))
     }
 
     @Test("A write failing ENOSPC throws its errno, and discarding drops the staged file")
     func diskFull() throws {
         let root = try Root()
-        let lander = Self.lander { _, _ in
-            errno = ENOSPC
-            return -1
-        }
-        let landing = try lander.beginUpdate(in: "b", of: try SlotRoot(path: root.path))
+        let full = InterposedFileSystem(writeFailure: ENOSPC)
+        let landing = try Self.lander().beginUpdate(in: "b", of: try SlotRoot(path: root.path, fileSystem: full))
         let failure = try #require(throws: SlotRoot.Failure.self) { try Self.write(landing) }
         #expect(failure.errno == ENOSPC)
         landing.discard()
-        #expect(!root.exists(Self.partial))
+        #expect(!root.exists(Self.stagedInB))
     }
 
     @Test("discard drops the staged file and leaves the slot's binary")
@@ -108,9 +102,9 @@ struct ExecutableLanderTests {
         let root = try Root()
         let landing = try Self.lander().beginUpdate(in: "a", of: try SlotRoot(path: root.path))
         try Self.write(landing)
-        #expect(root.exists("slots/a/" + ExecutableLander.partialName))
+        #expect(root.exists("slots/a/" + Self.staged))
         landing.discard()
-        #expect(!root.exists("slots/a/" + ExecutableLander.partialName))
+        #expect(!root.exists("slots/a/" + Self.staged))
         #expect(root.contents("slots/a/kernova-agent") == Data("installed agent".utf8))
     }
 }

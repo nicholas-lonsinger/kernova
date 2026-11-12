@@ -9,105 +9,76 @@ import KernovaAgentCore
 import KernovaAgentInstall
 import KernovaWire
 
-/// The lander of `PAYLOAD_FORMAT_EXECUTABLE`: the static `kernova-agent`, one executable file in its slot. An update
-/// is staged in the slot itself, for the reason the installer makes every file beside its destination
-/// (`Installer.writeFile`).
+/// The lander of `PAYLOAD_FORMAT_EXECUTABLE`: the static `kernova-agent`, one executable file in its slot, written
+/// whole as a ``StagedFile`` there.
 struct ExecutableLander: PayloadLander {
     /// The calls the lander makes into the system, replaced in tests.
     struct System: Sendable {
         /// Runs the staged binary at a path through its `self-test`.
         var selfTest: @Sendable (String) -> SelfTest.Outcome = { SelfTest.run($0) }
-        /// write(2).
-        var write: @Sendable (Int32, UnsafeRawBufferPointer) -> Int = posixWrite
     }
-
-    /// An update's name in the slot until it is published.
-    static let partialName = InstallLayout.binaryName + ".partial"
 
     var system = System()
 
     var format: PayloadFormat { .executable }
 
-    func install(_ payload: InstallPayloadReader, as name: String, in slot: InstallDirectory) throws(Installer.Failure)
-    {
-        let path = slot.path + "/" + name
-        try slot.writeFile(name, mode: 0o755) { descriptor throws(Installer.Failure) in
-            try payload.read { piece throws(Installer.Failure) in
-                try Installer.writeAll(Array(piece), to: descriptor, path: path)
-            }
+    func install(
+        _ payload: InstallPayloadReader, as name: String, in slot: borrowing InstallDirectory<Installer.Failure>
+    ) throws(Installer.Failure) {
+        try slot.writeFile(name, mode: 0o755) { file throws(Installer.Failure) in
+            try payload.read { piece throws(Installer.Failure) in try file.write(piece) }
         }
     }
 
     func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
         let directory = try root.openSlot(slot)
-        let file = openat(directory, Self.partialName, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0o700)
-        guard file >= 0 else {
-            let failure = errno
-            close(directory)
-            throw SlotRoot.Failure(operation: "create", name: Self.partialName, errno: failure)
-        }
-        return Landing(
-            system: system, slot: directory, file: file, staged: root.path + "/slots/" + slot + "/" + Self.partialName)
+        let file = try directory.stage(InstallLayout.binaryName)
+        return Landing(system: system, slot: directory, file: file)
     }
 
-    /// One update, written to ``partialName`` in the slot until it is published as the slot's binary.
-    struct Landing: PayloadLanding {
-        let system: System
+    /// One update, staged in the slot until it is published as the slot's binary. ``SlotUpdateInstaller`` calls
+    /// it from its own queue alone, one call at a time, which is what makes its unsynchronized state safe to
+    /// share.
+    final class Landing: PayloadLanding, @unchecked Sendable {
+        private let system: System
         /// The slot, open.
-        let slot: Int32
-        /// The staged file, open for writing.
-        let file: Int32
-        /// The staged file's path, which the self-test runs.
-        let staged: String
+        private let slot: InstallDirectory<SlotRoot.Failure>
+        /// The staged binary until the landing publishes or is discarded.
+        private var file: StagedFile<SlotRoot.Failure>?
 
-        func write(_ bytes: UnsafeRawBufferPointer) throws(SlotRoot.Failure) {
-            var offset = 0
-            while offset < bytes.count {
-                let count = system.write(file, UnsafeRawBufferPointer(rebasing: bytes[offset...]))
-                if count < 0, errno == EINTR { continue }
-                guard count > 0 else {
-                    throw SlotRoot.Failure(operation: "write", name: partialName, errno: count < 0 ? errno : EIO)
-                }
-                offset += count
-            }
+        init(
+            system: System, slot: consuming InstallDirectory<SlotRoot.Failure>,
+            file: consuming StagedFile<SlotRoot.Failure>
+        ) {
+            self.system = system
+            self.slot = slot
+            self.file = .some(file)
         }
 
-        /// Flushes the staged binary, makes it executable, runs its self-test, and renames it over the slot's
-        /// binary.
+        func write(_ bytes: UnsafeRawBufferPointer) throws(SlotRoot.Failure) {
+            guard file != nil else { preconditionFailure("bytes after the landing ended") }
+            try file?.write(bytes)
+        }
+
+        /// Publishes the staged binary as the slot's, made executable, once its self-test passes.
         func publish() throws(PayloadRefusal) {
-            var file = self.file
-            defer {
-                if file >= 0 { close(file) }
-                close(slot)
+            guard let file = file.take() else { preconditionFailure("a publish after the landing ended") }
+            let refusal: PayloadRefusal?
+            do {
+                refusal = try file.publish(in: slot, mode: 0o755) { [system] staged in
+                    let outcome = system.selfTest(staged)
+                    return outcome == .passed ? nil : PayloadRefusal(.updateInstallFailed, "self-test: \(outcome)")
+                }
+            } catch {
+                throw PayloadRefusal(
+                    .updateInstallFailed, "\(error.operation) \(error.path)", errno: error.errno, rejectsPayload: false)
             }
-            func refuse(_ detail: String, errno: Int32 = 0, rejects: Bool = false) -> PayloadRefusal {
-                unlinkat(slot, partialName, 0)
-                return PayloadRefusal(.updateInstallFailed, detail, errno: errno, rejectsPayload: rejects)
-            }
-            guard fsync(file) == 0 else { throw refuse("fsync", errno: errno) }
-            guard fchmod(file, 0o755) == 0 else { throw refuse("chmod", errno: errno) }
-            // Closed first: a file open for writing cannot be executed (ETXTBSY).
-            close(file)
-            file = -1
-            let outcome = system.selfTest(staged)
-            guard outcome == .passed else { throw refuse("self-test: \(outcome)", rejects: true) }
-            guard renameat(slot, partialName, slot, InstallLayout.binaryName) == 0, fsync(slot) == 0 else {
-                throw refuse("rename into the slot", errno: errno)
-            }
+            if let refusal { throw refusal }
         }
 
         func discard() {
-            close(file)
-            unlinkat(slot, partialName, 0)
-            close(slot)
+            file.take()?.discard(in: slot)
         }
-
-        private var partialName: String { ExecutableLander.partialName }
     }
-}
-
-/// write(2) of `buffer` to `file`.
-private func posixWrite(_ file: Int32, _ buffer: UnsafeRawBufferPointer) -> Int {
-    write(file, buffer.baseAddress, buffer.count)
 }
 #endif
