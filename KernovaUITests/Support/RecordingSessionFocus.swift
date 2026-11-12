@@ -10,7 +10,10 @@ import KernovaTestSupport
 /// Holds the state a test gives it, and records every request in order. A
 /// presented window is ordered in behind the rest, where a stage window stays
 /// beyond every display, and one presented key reads as key while it is
-/// visible; nothing else a request asks for is performed.
+/// visible and the app reads as active — AppKit's key and main window can be
+/// `nil` while the app is inactive. Nothing else a request asks for is
+/// performed: `activate()` leaves ``isActive`` as given, as AppKit grants
+/// activation, if at all, after the request returns.
 @MainActor
 final class RecordingSessionFocus: SessionFocus {
     enum Request: Equatable {
@@ -82,9 +85,14 @@ final class RecordingSessionFocus: SessionFocus {
 
     func cancelMenuBarTracking() { record(.cancelMenuBarTracking) }
 
-    var keyWindow: NSWindow? { recordedKeyWindow.flatMap { $0.isVisible ? $0 : nil } }
+    var keyWindow: NSWindow? { onScreenWhileActive(recordedKeyWindow) }
 
-    var mainWindow: NSWindow? { recordedMainWindow.flatMap { $0.isVisible ? $0 : nil } }
+    var mainWindow: NSWindow? { onScreenWhileActive(recordedMainWindow) }
+
+    private func onScreenWhileActive(_ window: NSWindow?) -> NSWindow? {
+        guard isActive, let window, window.isVisible else { return nil }
+        return window
+    }
 
     func standing(of window: NSWindow) -> WindowStanding {
         WindowStanding(
