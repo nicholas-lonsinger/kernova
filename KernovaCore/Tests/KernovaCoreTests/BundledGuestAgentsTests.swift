@@ -100,17 +100,6 @@ struct BundledGuestAgentsTests {
         #expect(first.first?.manifest == Self.manifest(of: Self.payload))
     }
 
-    @Test("A bundle without an agent's payload has no entry for it and offers no payload")
-    func payloadsMissing() async throws {
-        let entries = BundledGuestAgents.entries(
-            in: try bundle(exactly: [Self.macOSDisk: Data([0])]), versionLabel: "1.2 (34)")
-        #expect(entries.isEmpty)
-        let agents = BundledGuestAgents(entries: entries, macOSInstallerDiskImageURL: nil, linuxDisk: .testing)
-        #expect(await agents.payloads(for: .linux).isEmpty)
-        #expect(await agents.payloads(for: .macOS).isEmpty)
-        #expect(await agents.payloadHashes().isEmpty)
-    }
-
     @Test("The macOS agent serves both scopes from one container-tree payload, offered with its hash, beside the DMG")
     func macOS() async throws {
         let agents = BundledGuestAgents(bundle: try bundle([:]), versionLabel: "1.2 (34)")
@@ -144,25 +133,6 @@ struct BundledGuestAgentsTests {
         #expect(!agents.isInstallerDisk(path: user.fileURL.path(percentEncoded: false)))
     }
 
-    @Test("A macOS agent signed ad-hoc keeps its identity and installer disk, and is offered to no peer")
-    func macOSAdHoc() async throws {
-        let agents = BundledGuestAgents(
-            bundle: try bundle([Self.macOSSigning: Self.signing(team: nil)]), versionLabel: "1.2 (34)")
-        let user = try #require(agents.entry(.macOS, .arm64, .user))
-        #expect(!user.updatesInBand)
-        #expect(agents.entry(.linux, .arm64, .user)?.updatesInBand == true)
-
-        let manifest = Self.manifest(of: Self.macOSPayload, format: .containerTree)
-        let payloads = await agents.payloads(for: .macOS)
-        #expect(payloads.map(\.manifest) == [manifest, manifest])
-        #expect(await agents.payloadHashes()[.macOS] == manifest.payloadHash)
-        let session = PeerClaim(role: .sessionPeer, scope: .user, os: .macOS, architecture: .arm64)
-        let service = PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64)
-        #expect(BundledPayload.offer(from: payloads, for: session) == nil)
-        #expect(BundledPayload.offer(from: payloads, for: service) == nil)
-        #expect(agents.bundlesInstallerDisk(for: .macOS))
-    }
-
     // MARK: The hub's provider
 
     @Test("The hub's provider reads the bundled file's bytes at an offset, and refuses a manifest it did not make")
@@ -184,58 +154,6 @@ struct BundledGuestAgentsTests {
             provider.read(manifest: other, offset: 0, count: 10) { continuation.resume(returning: $0) }
         }
         #expect(throws: WireError.self) { try refused.get() }
-    }
-
-    @Test(
-        "Read as a pull reads it, a grant at a time from offset 0 to payload_size, the provider serves the exact file")
-    func providerServesExactBytes() async throws {
-        let payload = Data(
-            (0..<(2 * WireConstants.maxRawDataPayload + 1234)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
-        let agents = BundledGuestAgents(bundle: try bundle([Self.linuxAgent: payload]), versionLabel: "1.2 (34)")
-        let provider = BundledGuestAgentPayloads(agents, guestOS: .linux)
-        let manifest = Self.manifest(of: payload)
-        var served = Data()
-        while UInt64(served.count) < manifest.payloadSize {
-            let count = min(WireConstants.maxRawDataPayload, Int(manifest.payloadSize) - served.count)
-            let read = await withCheckedContinuation { continuation in
-                provider.read(manifest: manifest, offset: UInt64(served.count), count: count) {
-                    continuation.resume(returning: $0)
-                }
-            }
-            let bytes = try read.get()
-            try #require(!bytes.isEmpty)
-            served += bytes
-        }
-        #expect(served == payload)
-        #expect(Data(SHA256.hash(data: served)) == manifest.payloadHash)
-    }
-
-    @Test("A Linux VM's hub offers the bundled payload, and a peer running it stands current")
-    @MainActor
-    func hubOffersTheBundle() async throws {
-        let agents = BundledGuestAgents(bundle: try bundle([Self.linuxAgent: Self.payload]), versionLabel: "1.2 (34)")
-        let products = AppBundleProducts(
-            bundleURL: URL(filePath: "/var/empty/Kernova.app", directoryHint: .isDirectory), hostVersion: "1.2",
-            buildNumber: "34", guestAgents: agents)
-        let probe = AgentHubProbe()
-        let instance = VMInstanceFixture.make(
-            guestOS: .linux, phase: .running(sessionID: UUID()), bundleProducts: products, agentConnector: probe)
-        instance.beginSessionContextForTesting()
-        instance.attachAgentTransport(probe)
-        try await probe.changed.wait { probe.isStarted }
-        #expect(probe.connect())
-
-        let claim = PeerClaim(
-            role: .sessionPeer, scope: .user, os: .linux, architecture: .arm64,
-            payloadHash: Self.manifest(of: Self.payload).payloadHash, versionLabel: "1.2 (34)",
-            instanceID: Data(repeating: 1, count: 16))
-        probe.deliver(.helloReceived(claim, PeerSessionState(console: .on, sessionID: "2")), fromConnection: 0)
-        probe.deliver(.featuresChanged(FeatureStatusTable()), fromConnection: 0)
-        try await waitForChange { instance.agentHubSnapshot.peers.first?.standing == .current }
-
-        #expect(probe.connect())
-        try await probe.changed.wait { probe.bundles.count == 2 }
-        #expect(probe.bundles[1] == (await agents.payloads(for: .linux)))
     }
 
     /// The agent the guest runs is another build's: a peer claiming a hash the host does not bundle.

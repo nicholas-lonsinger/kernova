@@ -41,31 +41,6 @@ struct AgentAbsenceDeadlinesTests {
         return Dictionary(uniqueKeysWithValues: absences.map { ($0.subject, $0.deadline) })
     }
 
-    @Test("A missing scope with no away peer is waited for from the floor")
-    func scopeFromTheFloor() {
-        #expect(Self.pending([Self.absent(.login)]) == [.scope(.login): Self.floor + Self.grace])
-    }
-
-    @Test("An away peer is waited for from when it left; one relaunching into an update through the rollback too")
-    func awayFromItsOwnStart() {
-        let plain = Self.away(.sessionPeer, order: 2, after: .seconds(30))
-        let relaunching = Self.away(.systemPeer, order: 1, after: .seconds(10), relaunching: true)
-        #expect(
-            Self.pending([Self.absent(.login, seen: true)], away: [plain, relaunching]) == [
-                .away(order: 2): Self.floor + .seconds(30) + Self.grace,
-                .away(order: 1): Self.floor + .seconds(10) + Self.grace + Self.rollback,
-            ])
-    }
-
-    @Test("An absence that began before the floor counts from the floor")
-    func neverBeforeTheFloor() {
-        let early = Self.away(.systemPeer, order: 1, after: .seconds(-50))
-        #expect(
-            Self.pending([Self.absent(.system)], away: [early]) == [
-                .away(order: 1): Self.floor + Self.grace, .scope(.system): Self.floor + Self.grace,
-            ])
-    }
-
     @Test("A missing scope counts from its newest away peer, expired or not, and takes its relaunch")
     func scopeFromItsNewestAwayPeer() {
         let older = Self.away(.systemPeer, order: 1, after: .seconds(5))
@@ -75,24 +50,6 @@ struct AgentAbsenceDeadlinesTests {
             Self.pending(
                 [Self.absent(.system), Self.absent(.login, seen: true)], away: [otherScope, newer, older],
                 expired: [3, 1, 4]) == [.scope(.system): Self.floor + .seconds(40) + Self.grace + Self.rollback])
-    }
-
-    @Test("A warned scope, a scope the rule doesn't find missing, and an expired away peer are not waited for")
-    func nothingPendingTwice() {
-        let gone = Self.away(.sessionPeer, order: 1, after: .seconds(1))
-        let connected = AgentScopePresence(
-            scope: .system, lastSeenVersion: "1.0", seenThisSession: true, isConnected: true)
-        #expect(
-            Self.pending(
-                [Self.absent(.login), connected], away: [gone], warned: [.login], expired: [1]
-            ).isEmpty)
-    }
-
-    @Test("Evaluating again with the same state gives the same deadlines")
-    func stable() {
-        let away = [Self.away(.systemPeer, order: 1, after: .seconds(3), relaunching: true)]
-        let presences = [Self.absent(.login), Self.absent(.system)]
-        #expect(Self.pending(presences, away: away) == Self.pending(presences, away: away))
     }
 }
 

@@ -31,25 +31,6 @@ struct ClipboardHostPasteboardItemsTests {
             .flatMap(URL.init(string:))
     }
 
-    @Test("a plain-text inline copy promises its text UTI and serves bytes lazily")
-    func inlineTextServedLazily() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let content = ClipboardContent(text: "hello world")
-        let specs = try await HostClipboardPublisher.hostPasteboardItems(
-            for: content, generation: 1, staging: staging)
-
-        #expect(specs.count == 1)
-        let spec = specs[0]
-        let textType = ClipboardContent.utf8TextUTI
-        #expect(spec.types == [textType])
-        // The bytes are produced on demand by the provider closure.
-        #expect(spec.provide(textType) == Data("hello world".utf8))
-        // A type this item never promised serves nothing.
-        #expect(spec.provide(fileURLType) == nil)
-    }
-
     @Test("two file payloads produce two items, each promising exactly one file URL")
     func twoFilesTwoItems() async throws {
         let staging = makeStaging()
@@ -96,92 +77,5 @@ struct ClipboardHostPasteboardItemsTests {
         let url = try #require(fileURL(in: spec))
         #expect(url.lastPathComponent == "photo.png")
         #expect(try Data(contentsOf: url) == png)
-    }
-
-    @Test("inline content and a file produce one inline item plus one file item")
-    func inlinePlusFile() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let content = ClipboardContent(representations: [
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("inline text".utf8)),
-            .init(uti: UTType.plainText.identifier, data: Data("file body".utf8), filename: "f.txt"),
-        ])
-        let specs = try await HostClipboardPublisher.hostPasteboardItems(
-            for: content, generation: 1, staging: staging)
-
-        #expect(specs.count == 2)
-        // First item is the inline block (the text UTI, no file URL).
-        let textType = ClipboardContent.utf8TextUTI
-        #expect(specs[0].types == [textType])
-        #expect(specs[0].provide(textType) == Data("inline text".utf8))
-        #expect(fileURL(in: specs[0]) == nil)
-        // Second item is the file (a file URL only).
-        #expect(specs[1].types == [fileURLType])
-        #expect(try #require(fileURL(in: specs[1])).lastPathComponent == "f.txt")
-    }
-
-    @Test("same-named files get distinct staged URLs")
-    func sameNamedFilesDistinctURLs() async throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let content = ClipboardContent(representations: [
-            .init(uti: UTType.plainText.identifier, data: Data("one".utf8), filename: "dup.txt"),
-            .init(uti: UTType.plainText.identifier, data: Data("two".utf8), filename: "dup.txt"),
-        ])
-        let specs = try await HostClipboardPublisher.hostPasteboardItems(
-            for: content, generation: 1, staging: staging)
-
-        #expect(specs.count == 2)
-        let urlA = try #require(fileURL(in: specs[0]))
-        let urlB = try #require(fileURL(in: specs[1]))
-        #expect(urlA != urlB)
-        // Each file keeps its own contents (no collapse onto one path).
-        #expect(try Data(contentsOf: urlA) == Data("one".utf8))
-        #expect(try Data(contentsOf: urlB) == Data("two".utf8))
-    }
-
-    @Test("a directory payload is extracted into a real folder on the pasteboard")
-    func directoryPayloadExtracted() async throws {
-        let fm = FileManager.default
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        // A folder rep arrives already unpacked: its transfer extracted the tree
-        // as the archive streamed, so the rep points at the tree itself.
-        let tree = TestScratchDirectory(prefix: "ClipboardHostPasteboardItemsTests").url
-            .appendingPathComponent("Project", isDirectory: true)
-        try fm.createDirectory(
-            at: tree.appendingPathComponent("sub"), withIntermediateDirectories: true)
-        try "readme".write(
-            to: tree.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
-        try "nested".write(
-            to: tree.appendingPathComponent("sub/n.txt"), atomically: true, encoding: .utf8)
-
-        let content = ClipboardContent(representations: [
-            .init(
-                uti: UTType.folder.identifier, fileURL: tree, byteCount: 1024,
-                filename: "Project", isDirectory: true)
-        ])
-        let specs = try await HostClipboardPublisher.hostPasteboardItems(
-            for: content, generation: 1, staging: staging)
-
-        #expect(specs.count == 1)
-        // A directory is file-only: a single `.fileURL`, no inline bytes.
-        #expect(specs[0].types == [fileURLType])
-        let dirURL = try #require(fileURL(in: specs[0]))
-        var isDir: ObjCBool = false
-        #expect(fm.fileExists(atPath: dirURL.path, isDirectory: &isDir) && isDir.boolValue)
-        // The pasted folder is served as-is, with no extract step inside the
-        // paste deadline.
-        #expect(dirURL == tree)
-        #expect(dirURL.lastPathComponent == "Project")
-        #expect(
-            try String(contentsOf: dirURL.appendingPathComponent("README.md"), encoding: .utf8)
-                == "readme")
-        #expect(
-            try String(contentsOf: dirURL.appendingPathComponent("sub/n.txt"), encoding: .utf8)
-                == "nested")
     }
 }

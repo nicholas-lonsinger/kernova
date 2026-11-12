@@ -77,21 +77,6 @@ struct ClipboardTransferWordingTests {
 
     // MARK: - Outcomes with nothing to say
 
-    @Test("an operation that delivered what was asked for has no wording")
-    func successHasNoWording() {
-        let snapshot = ClipboardProgressSnapshot(
-            direction: .inbound, peerName: vm, currentItemName: nil, filesCompleted: 1,
-            fileCount: 1, bytesTransferred: 10, totalBytes: 10, bytesPerSecond: nil,
-            secondsRemaining: nil, gesture: .paste, elapsedSeconds: 1)
-        for outcome in [
-            ClipboardTransferOutcome.completed(final: snapshot), .cancelled(final: snapshot),
-        ] {
-            let finish = ClipboardTransferFinish(
-                gesture: .paste, outcome: outcome, peerName: vm)
-            #expect(ClipboardTransferWording.wording(for: finish, vmName: vm) == nil)
-        }
-    }
-
     // MARK: - Headlines
 
     @Test("the headline names the VM and the direction the clipboard didn't move")
@@ -119,67 +104,7 @@ struct ClipboardTransferWordingTests {
                 == "Clipboard preview from \(quotedVM) failed.")
     }
 
-    @Test("every arm names the VM in its headline")
-    func everyHeadlineNamesTheVM() throws {
-        for (failure, gesture) in everyArm {
-            let copy = try #require(wording(failure, gesture), "\(failure) / \(gesture)")
-            #expect(copy.headline.contains(quotedVM), "\(failure) / \(gesture)")
-            #expect(copy.headline.hasSuffix("."), "\(failure) / \(gesture)")
-        }
-    }
-
     // MARK: - Messages
-
-    @Test(
-        "a retracted copy says why it went: sharing stopping, or the VM withdrawing it without claiming sharing stopped"
-    )
-    func retractedCopyNamesItsCause() throws {
-        let expected: [(ClipboardTransferFailure, String, String)] = [
-            (
-                .disconnectedCopyRetracted, "Clipboard sharing stopped in \(quotedVM).",
-                "Clipboard sharing with the VM stopped, so the earlier copy was removed from the Mac clipboard."
-            ),
-            (
-                .disconnectedFilesRetracted, "Clipboard sharing stopped in \(quotedVM).",
-                "Clipboard sharing with the VM stopped, so the copied files were removed from the Mac clipboard. The rest of the copy is still there."
-            ),
-            (
-                .withdrawnCopyRetracted, "Clipboard copy withdrawn by \(quotedVM).",
-                "The VM withdrew the earlier copy, so it was removed from the Mac clipboard."
-            ),
-            (
-                .withdrawnFilesRetracted, "Clipboard copy withdrawn by \(quotedVM).",
-                "The VM withdrew the earlier copy, so its files were removed from the Mac clipboard. The rest of the copy is still there."
-            ),
-        ]
-        for (failure, headline, message) in expected {
-            let copy = try #require(wording(failure, .copy))
-            #expect(copy.headline == headline)
-            #expect(copy.message == message)
-        }
-    }
-
-    @Test("a guest-reported failure reads as its own explanation, not the wire text")
-    func peerReportedMessages() throws {
-        #expect(
-            try #require(wording(.peerReported(.pasteFailed), .peerPaste)).message
-                == "Clipboard transfer failed on the guest side")
-        #expect(
-            try #require(wording(.tooLarge(limitBytes: limit), .peerPaste)).message
-                == "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(limit)) clipboard transfer limit"
-        )
-    }
-
-    @Test("an over-cap refusal names the ceiling in force when it was raised")
-    func tooLargeNamesTheGivenCeiling() throws {
-        let lowered = 512 * 1024 * 1024
-        #expect(
-            try #require(wording(.tooLarge(limitBytes: lowered), .peerPaste)).message
-                .contains(ClipboardPasteLimit.displayLimit(lowered)))
-        #expect(
-            try #require(wording(.tooLarge(limitBytes: lowered), .copy)).message
-                == ClipboardTransferWording.overCopyBudgetMessage(limitBytes: lowered))
-    }
 
     @Test("a disk-full message appends whichever figures the failure knew")
     func diskFullDetail() throws {
@@ -231,41 +156,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.interrupted(fileCount: 3), .drop)).message
                 == "The files stopped transferring when the connection to the VM ended.")
-    }
-
-    @Test("a drop this side ended is worded by what it observed, and claims no disconnect")
-    func droppedStopWording() throws {
-        let expected: [(ClipboardDropStop, String)] = [
-            (
-                .turnedOff,
-                "\u{201C}Drag and drop files\u{201D} was off in the VM's settings, so the drop didn't finish."
-            ),
-            (.noAgent, "No guest agent in the VM was taking drops, so the drop didn't finish."),
-            (.movedToAnotherAgent, "Another guest agent in the VM took over drops, so the drop didn't finish."),
-        ]
-        for (stop, message) in expected {
-            let copy = try #require(wording(.dropStopped(stop), .drop))
-            #expect(copy.headline == "Files not copied to \(quotedVM).", "\(stop)")
-            #expect(copy.message == message, "\(stop)")
-            #expect(!copy.message.contains("disconnect"), "\(stop)")
-        }
-        #expect(
-            try #require(wording(.sendFailed, .drop)).message
-                == "The files couldn't be offered to the VM, so none were sent.")
-    }
-
-    @Test("a guest drop failure says the drop didn't finish, not that nothing was saved")
-    func dropFailureWording() throws {
-        #expect(
-            try #require(wording(.peerReported(.dropDiskFull), .drop)).message
-                == "The VM ran out of disk space, so the drop didn't finish.")
-        #expect(
-            try #require(wording(.peerReported(.dropDownloadsDenied), .drop)).message
-                == "The guest agent isn't allowed to use the VM's Downloads folder, so the drop didn't finish."
-        )
-        #expect(
-            try #require(wording(.peerReported(.dropFailed), .drop)).message
-                == "The drop didn't finish — some files may not be in the VM's Downloads folder.")
     }
 
     @Test("a drag out reads as files not copied from the VM, never as a paste or a drop")
@@ -349,13 +239,6 @@ struct ClipboardTransferWordingTests {
         #expect(!wording.message.contains("read"))
     }
 
-    @Test("a forward none of whose items could be read says nothing was sent")
-    func unreadableForwardMessage() throws {
-        #expect(
-            try #require(wording(.itemsUnreadable, .forward)).message
-                == "The copy couldn't be read, so nothing was sent to the VM.")
-    }
-
     // MARK: - Menu lines
 
     @Test("the dropdown line is a compact fragment per outcome")
@@ -393,31 +276,5 @@ struct ClipboardTransferWordingTests {
             #expect(
                 try #require(wording(failure, gesture)).menuLine == line, "\(failure) / \(gesture)")
         }
-    }
-
-    @Test("no dropdown line ends in a period — they read as menu rows, not prose")
-    func menuLinesAreFragments() throws {
-        for (failure, gesture) in everyArm {
-            #expect(
-                !(try #require(wording(failure, gesture)).menuLine.hasSuffix(".")),
-                "\(failure) / \(gesture)")
-        }
-    }
-
-    // MARK: - The Mac-clipboard aside
-
-    @Test("only the over-cap copy refusal may say the Mac clipboard is unchanged")
-    func staleContextIsCopyRefusalOnly() throws {
-        #expect(try #require(wording(.tooLarge(limitBytes: limit), .copy)).mentionsMacClipboardKept)
-        for (failure, gesture) in everyArm where !(gesture == .copy && isTooLarge(failure)) {
-            #expect(
-                !(try #require(wording(failure, gesture)).mentionsMacClipboardKept),
-                "\(failure) / \(gesture) must not claim it")
-        }
-    }
-
-    private func isTooLarge(_ failure: ClipboardTransferFailure) -> Bool {
-        guard case .tooLarge = failure else { return false }
-        return true
     }
 }

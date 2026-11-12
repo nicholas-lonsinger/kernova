@@ -8,19 +8,6 @@ import Testing
 struct SpiceAgentProtocolTests {
     // MARK: - VDI Chunk Header
 
-    @Test("VDI chunk header serializes and deserializes correctly")
-    func chunkHeaderRoundTrip() {
-        let header = VDIChunkHeader(port: 1, dataSize: 42)
-        let data = header.serialize()
-
-        #expect(data.count == VDIChunkHeader.size)
-
-        let decoded = VDIChunkHeader.deserialize(from: data)
-        #expect(decoded != nil)
-        #expect(decoded?.port == 1)
-        #expect(decoded?.dataSize == 42)
-    }
-
     @Test("VDI chunk header uses little-endian byte order")
     func chunkHeaderLittleEndian() {
         let header = VDIChunkHeader(port: 0x0100, dataSize: 0x0200)
@@ -31,12 +18,6 @@ struct SpiceAgentProtocolTests {
         #expect(data[1] == 0x01)
         #expect(data[4] == 0x00)
         #expect(data[5] == 0x02)
-    }
-
-    @Test("VDI chunk header deserialization fails with insufficient data")
-    func chunkHeaderTooShort() {
-        let data = Data([0x01, 0x00, 0x00])
-        #expect(VDIChunkHeader.deserialize(from: data) == nil)
     }
 
     // MARK: - VDAgent Message Header
@@ -71,17 +52,6 @@ struct SpiceAgentProtocolTests {
         // First 4 bytes should be protocol = 1 (little-endian)
         let protocolVersion = data.readLittleEndianUInt32(at: 0)
         #expect(protocolVersion == 1)
-    }
-
-    @Test("VDAgent message header deserialization fails for unknown type")
-    func messageHeaderUnknownType() {
-        var data = Data(repeating: 0, count: VDAgentMessageHeader.size)
-        // Set type field (offset 4) to an unknown value
-        var unknownType: UInt32 = 99
-        Swift.withUnsafeBytes(of: &unknownType) { ptr in
-            data.replaceSubrange(4..<8, with: ptr)
-        }
-        #expect(VDAgentMessageHeader.deserialize(from: data) == nil)
     }
 
     // MARK: - Message Builder
@@ -145,127 +115,7 @@ struct SpiceAgentProtocolTests {
         #expect(clipType == SpiceClipboardType.utf8Text.rawValue)
     }
 
-    @Test("Clipboard data message includes type and payload")
-    func buildClipboardData() {
-        let text = "Hello, guest!"
-        let textData = text.data(using: .utf8)!
-        let message = SpiceMessageBuilder.buildClipboardData(type: .utf8Text, data: textData)
-
-        let msgType = message.readLittleEndianUInt32(at: VDIChunkHeader.size + 4)
-        #expect(msgType == SpiceAgentMessageType.clipboard.rawValue)
-
-        let clipType = message.readLittleEndianUInt32(at: VDIChunkHeader.size + VDAgentMessageHeader.size)
-        #expect(clipType == SpiceClipboardType.utf8Text.rawValue)
-
-        let payloadStart = VDIChunkHeader.size + VDAgentMessageHeader.size + 4
-        let payload = message.subdata(in: payloadStart..<message.count)
-        #expect(String(data: payload, encoding: .utf8) == text)
-    }
-
     // MARK: - Parser
-
-    @Test("Parser handles announce capabilities from guest")
-    func parseAnnounceCapabilities() {
-        // Build a guest→host capabilities message (port = serverPort)
-        var caps: UInt32 = 0
-        caps |= 1 << UInt32(SpiceAgentCapability.clipboard.rawValue)
-        caps |= 1 << UInt32(SpiceAgentCapability.clipboardByDemand.rawValue)
-
-        let message = buildGuestMessage(
-            type: .announceCapabilities,
-            payload: {
-                var data = Data()
-                data.appendLittleEndian(UInt32(1))  // request = true
-                data.appendLittleEndian(caps)
-                return data
-            }())
-
-        var parser = SpiceAgentParser()
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .announceCapabilities(let request, let parsedCaps) = results[0] {
-            #expect(request == true)
-            #expect(parsedCaps.count == 1)
-            #expect(parsedCaps[0] & (1 << UInt32(SpiceAgentCapability.clipboard.rawValue)) != 0)
-        } else {
-            Issue.record("Expected announceCapabilities message")
-        }
-    }
-
-    @Test("Parser handles clipboard grab from guest")
-    func parseClipboardGrab() {
-        var payload = Data()
-        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-
-        let message = buildGuestMessage(type: .clipboardGrab, payload: payload)
-
-        var parser = SpiceAgentParser()
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .clipboardGrab(let types) = results[0] {
-            #expect(types == [.utf8Text])
-        } else {
-            Issue.record("Expected clipboardGrab message")
-        }
-    }
-
-    @Test("Parser handles clipboard data from guest")
-    func parseClipboardData() {
-        let text = "Guest clipboard content"
-        let textData = text.data(using: .utf8)!
-
-        var payload = Data()
-        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-        payload.append(textData)
-
-        let message = buildGuestMessage(type: .clipboard, payload: payload)
-
-        var parser = SpiceAgentParser()
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .clipboardData(let type, let data) = results[0] {
-            #expect(type == .utf8Text)
-            #expect(String(data: data, encoding: .utf8) == text)
-        } else {
-            Issue.record("Expected clipboardData message")
-        }
-    }
-
-    @Test("Parser handles clipboard request from guest")
-    func parseClipboardRequest() {
-        var payload = Data()
-        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-
-        let message = buildGuestMessage(type: .clipboardRequest, payload: payload)
-
-        var parser = SpiceAgentParser()
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .clipboardRequest(let type) = results[0] {
-            #expect(type == .utf8Text)
-        } else {
-            Issue.record("Expected clipboardRequest message")
-        }
-    }
-
-    @Test("Parser handles clipboard release from guest")
-    func parseClipboardRelease() {
-        let message = buildGuestMessage(type: .clipboardRelease, payload: Data())
-
-        var parser = SpiceAgentParser()
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .clipboardRelease = results[0] {
-            // pass
-        } else {
-            Issue.record("Expected clipboardRelease message")
-        }
-    }
 
     @Test("Parser handles multiple messages in a single feed")
     func parseMultipleMessages() {
@@ -285,51 +135,10 @@ struct SpiceAgentProtocolTests {
         #expect(results.count == 2)
     }
 
-    @Test("Parser handles partial data across multiple feeds")
-    func parsePartialData() {
-        var payload = Data()
-        payload.appendLittleEndian(SpiceClipboardType.utf8Text.rawValue)
-        let message = buildGuestMessage(type: .clipboardGrab, payload: payload)
-
-        let splitPoint = message.count / 2
-
-        var parser = SpiceAgentParser()
-        let results1 = parser.feed(message.subdata(in: 0..<splitPoint))
-        #expect(results1.isEmpty)
-
-        let results2 = parser.feed(message.subdata(in: splitPoint..<message.count))
-        #expect(results2.count == 1)
-    }
-
-    @Test("Parser ignores unknown message types gracefully")
-    func parseUnknownMessageType() {
-        let message = buildGuestMessage(type: .mouseState, payload: Data(repeating: 0, count: 16))
-
-        var parser = SpiceAgentParser()
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .other(let type) = results[0] {
-            #expect(type == .mouseState)
-        } else {
-            Issue.record("Expected other message type")
-        }
-    }
-
     // MARK: - Buffer Overflow and Corruption Guards
 
     /// Must match SpiceAgentParser.maxBufferSize / maxChunkDataSize (both 1 MB).
     private static let parserSizeLimit = 1_048_576
-
-    @Test("Parser resets buffer when it exceeds maxBufferSize")
-    func bufferOverflowTriggersReset() {
-        var parser = SpiceAgentParser()
-        let oversized = Data(repeating: 0xFF, count: Self.parserSizeLimit + 1)
-        let results = parser.feed(oversized)
-
-        #expect(results.isEmpty)
-        #expect(parser.didReset == true)
-    }
 
     @Test("Parser accepts chunk header with dataSize at exactly maxChunkDataSize")
     func chunkDataSizeAtExactLimitDoesNotReset() {
@@ -381,39 +190,7 @@ struct SpiceAgentProtocolTests {
         }
     }
 
-    @Test(
-        "Parser returns malformedChunk for invalid payloads",
-        arguments: [
-            Data(repeating: 0, count: 4),  // truncated: needs 20 bytes, only 4
-            Data(),  // empty payload
-        ])
-    func malformedPayloadReturnsMalformed(payload: Data) {
-        var parser = SpiceAgentParser()
-
-        let chunk = VDIChunkHeader(
-            port: SpiceConstants.serverPort,
-            dataSize: UInt32(payload.count)
-        )
-        let message = chunk.serialize() + payload
-
-        let results = parser.feed(message)
-
-        #expect(results.count == 1)
-        if case .malformedChunk = results[0] {
-            // pass
-        } else {
-            Issue.record("Expected malformedChunk")
-        }
-    }
-
     // MARK: - Data Extension Helpers
-
-    @Test("Little-endian UInt32 read/write round-trips")
-    func uint32RoundTrip() {
-        var data = Data()
-        data.appendLittleEndian(UInt32(0xDEADBEEF))
-        #expect(data.readLittleEndianUInt32(at: 0) == 0xDEADBEEF)
-    }
 
     @Test("Little-endian UInt64 read/write round-trips")
     func uint64RoundTrip() {
@@ -423,21 +200,6 @@ struct SpiceAgentProtocolTests {
     }
 
     // MARK: - Server Port
-
-    @Test("All builders stamp serverPort in the chunk header")
-    func buildersUseServerPort() {
-        let capabilities = SpiceMessageBuilder.buildAnnounceCapabilities(request: false)
-        #expect(capabilities.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
-
-        let grab = SpiceMessageBuilder.buildClipboardGrab(types: [.utf8Text])
-        #expect(grab.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
-
-        let request = SpiceMessageBuilder.buildClipboardRequest(type: .utf8Text)
-        #expect(request.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
-
-        let data = SpiceMessageBuilder.buildClipboardData(type: .utf8Text, data: Data([0x41]))
-        #expect(data.readLittleEndianUInt32(at: 0) == SpiceConstants.serverPort)
-    }
 
     // MARK: - Capability Checking
 

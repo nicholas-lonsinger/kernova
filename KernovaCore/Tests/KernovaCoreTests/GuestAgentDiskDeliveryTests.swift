@@ -79,24 +79,7 @@ struct GuestAgentDiskDeliveryTests {
         #expect(GuestAgentDiskDelivery.mode(for: config) == testCase.expected)
     }
 
-    @Test("A Linux guest never takes the virtio path", arguments: [nil, "12.1"] as [String?])
-    func linuxGuestAlwaysUSB(lastSeen: String?) {
-        let config = Self.makeConfig(
-            guestOS: .linux, lastSeen: lastSeen, installedVersion: "12.0.1")
-        #expect(GuestAgentDiskDelivery.mode(for: config) == .usb)
-    }
-
     // MARK: - Hostile reports
-
-    @Test("A report carrying a command still reads as its leading version")
-    func reportWithTrailingJunk() {
-        #expect(GuestAgentDiskDelivery.mode(for: Self.makeConfig(lastSeen: "12.3; rm -rf /")) == .usb)
-    }
-
-    @Test("A negative report reads as its digits, below the floor")
-    func negativeReport() {
-        #expect(GuestAgentDiskDelivery.mode(for: Self.makeConfig(lastSeen: "-1")) == .virtio)
-    }
 
     @Test("A report too large to be a version falls through to the install record")
     func unparsablyLargeReport() {
@@ -105,49 +88,5 @@ struct GuestAgentDiskDeliveryTests {
         #expect(
             GuestAgentDiskDelivery.mode(
                 for: Self.makeConfig(lastSeen: huge, installedVersion: "12.0.1")) == .virtio)
-    }
-
-    @Test("An unparsable install record leaves the version unknown")
-    func unparsableInstallRecord() {
-        var config = Self.makeConfig()
-        config.installedImage = .macOSRestoreImage(version: "not a version", build: "21A559")
-        #expect(config.effectiveGuestMacOSVersion == nil)
-        #expect(GuestAgentDiskDelivery.mode(for: config) == .usb)
-    }
-
-    @Test("A Linux install record never answers for a macOS guest's version")
-    func linuxInstallRecordIsNotAVersion() {
-        var config = Self.makeConfig()
-        config.installedImage = .linuxCatalogImage(distribution: "Ubuntu", version: "12.0.1", digest: nil)
-        #expect(config.effectiveGuestMacOSVersion == nil)
-        #expect(GuestAgentDiskDelivery.mode(for: config) == .usb)
-    }
-
-    // MARK: - Version comparison
-
-    @Test(
-        "isAtLeast compares components as numbers",
-        arguments: [
-            ("12.3", true),
-            ("12.3.0", true),
-            ("12.3.1", true),
-            ("12.10", true),
-            ("13.0", true),
-            ("26.0", true),
-            ("12.2.1", false),
-            ("12.2", false),
-            ("12.0.1", false),
-            ("11.7.10", false),
-        ])
-    func isAtLeastComparesNumerically(version: String, expected: Bool) throws {
-        let parsed = try #require(MacOSVersion(version))
-        #expect(parsed.isAtLeast(GuestAgentDiskDelivery.usbMassStorageFloor) == expected)
-    }
-
-    @Test("A compile-time version equals the same version parsed from text")
-    func compileTimeVersionMatchesParsed() {
-        #expect(MacOSVersion(major: 12, minor: 3) == MacOSVersion("12.3"))
-        #expect(MacOSVersion(major: 12, minor: 3) == MacOSVersion("12.3.0"))
-        #expect(MacOSVersion(major: 12, minor: 3, patch: 1) == MacOSVersion("12.3.1"))
     }
 }

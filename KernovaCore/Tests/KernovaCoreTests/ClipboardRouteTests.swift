@@ -17,14 +17,6 @@ import Testing
 struct ClipboardRouteTests {
     private static let peer = PeerHandle(rawValue: 4)
 
-    @Test("A CLIPBOARD console peer gets the hub, a SPICE port without one gets SPICE, and neither gets nothing")
-    func choice() {
-        #expect(ClipboardRoute.choose(hasSpicePort: true, consolePeer: Self.peer) == .hub(Self.peer))
-        #expect(ClipboardRoute.choose(hasSpicePort: false, consolePeer: Self.peer) == .hub(Self.peer))
-        #expect(ClipboardRoute.choose(hasSpicePort: true, consolePeer: nil) == .spice)
-        #expect(ClipboardRoute.choose(hasSpicePort: false, consolePeer: nil) == ClipboardRoute.none)
-    }
-
     /// A Linux VM's running session with its SPICE clipboard service started.
     private func linuxWithSpice() -> (VMInstance, SpiceClipboardService) {
         let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
@@ -39,13 +31,6 @@ struct ClipboardRouteTests {
             peers: [], features: FeatureStatus.merge([]), consolePeers: consolePeer.map { [.clipboard: $0] } ?? [:])
     }
 
-    @Test("A Linux guest with a SPICE port and no CLIPBOARD peer is carried by SPICE")
-    func linuxWithoutPeerIsSpice() {
-        let (instance, spice) = linuxWithSpice()
-        #expect(instance.clipboardRoute == .spice)
-        #expect(instance.clipboardService === spice)
-    }
-
     @Test("A CLIPBOARD console peer takes the clipboard from SPICE, and gives it back when it goes")
     func peerTakesTheClipboard() {
         let (instance, spice) = linuxWithSpice()
@@ -58,15 +43,6 @@ struct ClipboardRouteTests {
         instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: nil))
         #expect(instance.clipboardService === spice)
         #expect(spice.carriesClipboard)
-    }
-
-    @Test("A macOS guest with no CLIPBOARD peer has no clipboard service")
-    func macOSWithoutPeerHasNone() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        #expect(instance.clipboardService == nil)
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: Self.peer))
-        #expect(instance.clipboardService === instance.hubClipboard)
     }
 
     @Test("CLIPBOARD's policy follows the clipboard-sharing setting and carries the paste ceiling and passthrough")

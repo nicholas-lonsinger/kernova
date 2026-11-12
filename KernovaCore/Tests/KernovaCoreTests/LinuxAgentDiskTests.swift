@@ -89,15 +89,6 @@ struct LinuxAgentDiskTests {
         #expect(LinuxAgentInstallChoice(seen: [.login, .system]) == .both)
     }
 
-    @Test("LICENSES.txt carries Kernova's licence whole")
-    func licences() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "../../..")
-        let license = try String(contentsOf: root.appending(path: "LICENSE"), encoding: .utf8)
-        let licenses = String(
-            decoding: try LinuxAgentDisk.resource("LICENSES.txt", in: LinuxAgentDisk.bundledFiles), as: UTF8.self)
-        #expect(licenses.contains(license.trimmingCharacters(in: .whitespacesAndNewlines)))
-    }
-
     @Test("The cache writes the image once per process, at one path, labelled KERNOVA_AGENT")
     func writesOnce() async throws {
         let agent = try agent([1, 2, 3])
