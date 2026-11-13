@@ -10,7 +10,8 @@ import Foundation
 /// so anything the app can do can happen inside the wait — including a second
 /// promise callback, whose own wait nests inside this one, and a tracking or
 /// modal loop (a menu, a drag, a sheet) that then holds the callback's return
-/// until it ends.
+/// until it ends. ``holdsMainThread`` says when a wait is in progress, so UI
+/// that would enter such a loop can offer something else instead.
 ///
 /// A resolution reaches the wait as a wake event that ``wake()`` posts. Two
 /// mechanisms cover a wake that another loop dequeues first:
@@ -35,7 +36,7 @@ import Foundation
 /// nested `nextEvent`/`sendEvent` loop there dispatches input, drains the main
 /// queue and runs `MainActor` work, while a plain `RunLoop.run` drops the input
 /// it receives.
-final class NestedEventLoopWait: Sendable {
+public final class NestedEventLoopWait: Sendable {
     /// How a ``wait(timeout:isResolved:)`` ended.
     enum Ending: Sendable, Equatable {
         /// The wait saw `isResolved()` hold before either `.deadline` case.
@@ -67,6 +68,15 @@ final class NestedEventLoopWait: Sendable {
     /// `NSApp.run`, which dispatches an application-defined event addressed to
     /// no window to nothing.
     @MainActor private static var activeWaits = 0
+
+    /// Whether a wait holds the main thread: a callback is running the event
+    /// loop and has not returned, so a tracking or modal loop entered now would
+    /// hold that return until it ends.
+    @MainActor public static var holdsMainThread: Bool { activeWaits > 0 }
+
+    /// Posted on the main thread, synchronously, each time ``holdsMainThread``
+    /// changes.
+    public static let holdChangedNotification = Notification.Name("app.kernova.NestedEventLoopWait.holdChanged")
 
     /// This wait's ``defaultSlice``.
     private let slice: TimeInterval
@@ -100,9 +110,10 @@ final class NestedEventLoopWait: Sendable {
     func wait(timeout: TimeInterval, isResolved: @Sendable () -> Bool) -> Ending {
         MainActor.assumeIsolated {
             Self.activeWaits += 1
+            if Self.activeWaits == 1 { Self.postHoldChanged() }
             defer {
                 Self.activeWaits -= 1
-                if Self.activeWaits > 0 { Self.postWake() }
+                if Self.activeWaits > 0 { Self.postWake() } else { Self.postHoldChanged() }
             }
             let ending = runEventLoop(timeout: timeout, isResolved: isResolved)
             #if DEBUG
@@ -160,6 +171,11 @@ final class NestedEventLoopWait: Sendable {
             }
             if !dequeued && lastPass { return .deadline }
         }
+    }
+
+    @MainActor
+    private static func postHoldChanged() {
+        NotificationCenter.default.post(name: holdChangedNotification, object: nil)
     }
 
     /// Queues a wake event for the innermost wait in progress.

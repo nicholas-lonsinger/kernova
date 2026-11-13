@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for `TransferRateEstimator` — the smoothed throughput and ETA
 /// behind the paste progress readout (#643).

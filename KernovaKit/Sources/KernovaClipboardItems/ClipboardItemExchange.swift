@@ -5,6 +5,7 @@ import KernovaAgentRuntime
 import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// One end's clipboard over CLIPBOARD items, the same at the host and the macOS guest agent, over whichever
@@ -70,8 +71,18 @@ public final class ClipboardItemExchange {
         /// A newer copy arrived before this one landed, and refused it `ITEM_OFFER_REPLACED`, or it ended: nothing
         /// was written.
         case superseded
+        /// This side's Cancel on its readout stopped a pull of it: it was refused `CANCELLED`, and nothing written.
+        case cancelled
         /// A pull of it failed with this error, and it was refused with it; nothing was written.
         case failed(WireError)
+    }
+
+    /// Why a copy this side sent was not written (``onCopyRefused``).
+    public enum CopyRefusal: Sendable, Equatable {
+        /// The connection did not open it, so it never reached the far side.
+        case notOpened
+        /// The far side refused it with this error.
+        case byFarSide(WireError)
     }
 
     /// The guest's answer to the host's ask for its clipboard (``askForCopy(_:)``).
@@ -107,10 +118,11 @@ public final class ClipboardItemExchange {
     /// Hears each copy this end held that ended before it let it go, and how: the link ended (`.linkLost`), or
     /// the far side withdrew it. What this end wrote of it can be pulled no more.
     public var onCopyEnded: ((_ copy: ClipboardRemoteOffer, _ ending: RemoteEnding) -> Void)?
-    /// Hears each copy this side sent that the far side refused, and why: `CLIPBOARD_CHANGED` when its clipboard
-    /// changed before the copy landed, `TOO_LARGE` over its paste ceiling, `CLIPBOARD_FILES_WITHHELD` when it
-    /// was written without its files.
-    public var onCopyRefused: ((_ copy: ClipboardOfferSource, _ error: WireError) -> Void)?
+    /// Hears each copy this side sent that the connection did not open or the far side refused, and why:
+    /// `CLIPBOARD_CHANGED` when its clipboard changed before the copy landed, `TOO_LARGE` over its paste ceiling,
+    /// `CLIPBOARD_FILES_WITHHELD` when it was written without its files, `CANCELLED` when its user cancelled it on
+    /// its readout.
+    public var onCopyRefused: ((_ copy: ClipboardOfferSource, _ refusal: CopyRefusal) -> Void)?
     /// Hears each pull of this side's offer that it served.
     public var onServed: (() -> Void)?
     /// Hears each pull of the far side's offer that landed here.
@@ -158,17 +170,26 @@ public final class ClipboardItemExchange {
     private let pulls = ClipboardPullRegistry()
     private let serves = ClipboardServeWaits()
     private let logger: KernovaLogger
+    private let transfers: ClipboardTransferReporter
+    private let peerName: () -> String
+    private let transferClock: any EngineClock
 
     /// An exchange landing the far side's representations in clipboard staging labelled `stagingLabel` under
-    /// `stagingRoot`, reading the paste ceiling from `pasteCeiling` each time a pull needs it.
+    /// `stagingRoot`, reading the paste ceiling from `pasteCeiling` each time a pull needs it, and reporting each
+    /// offer's pulls to `transfers` as from the far side `peerName` names when the offer arrives, measured on
+    /// `transferClock`.
     public init(
         side: Side, stagingLabel: String, stagingRoot: ProcessStagingRoot,
-        pasteCeiling: @escaping @Sendable () -> Int, logger: KernovaLogger
+        pasteCeiling: @escaping @Sendable () -> Int, logger: KernovaLogger, transfers: ClipboardTransferReporter,
+        peerName: @escaping () -> String, transferClock: any EngineClock = makePlatformEngineClock()
     ) {
         self.side = side
         staging = ClipboardFileStaging(label: stagingLabel, root: stagingRoot)
         self.pasteCeiling = pasteCeiling
         self.logger = logger
+        self.transfers = transfers
+        self.peerName = peerName
+        self.transferClock = transferClock
     }
 
     /// Whether a connection can carry the clipboard now.
@@ -329,7 +350,7 @@ public final class ClipboardItemExchange {
         send(offer, on: link) { [weak self] wasOpened in
             opened(wasOpened)
             guard !wasOpened, let self, let source = self.sentCopies.removeValue(forKey: token) else { return }
-            self.onCopyRefused?(source, WireError(.cancelled, debugDetail: "the copy was not opened"))
+            self.onCopyRefused?(source, .notOpened)
         }
         source.whenWithdrawalOwed { [weak self] in self?.withdrawCopy(token, because: $0) }
         return true
@@ -460,8 +481,9 @@ public final class ClipboardItemExchange {
     /// newer copy arrived meanwhile, so an older copy never writes over a newer one. `write` hears how many
     /// references it could not fill, which it leaves out. A copy of only references to one offer this end's
     /// pasteboard still holds changes nothing, so it is refused `CLIPBOARD_ALREADY_HELD`; a failed pull refuses
-    /// it too. `write` decides everything after: whether to write, and whether to release or refuse it. Once it
-    /// has, what landed INLINE in staging is deleted (``ClipboardRemoteOffer/discardStagedInline()``).
+    /// it too, and a Cancel on its readout refuses it `CANCELLED`. A copy that landed ends its readout completed
+    /// there and then, before `write`. `write` decides everything after: whether to write, and whether to release
+    /// or refuse it. Once it has, what landed INLINE in staging is deleted (``ClipboardRemoteOffer/discardStagedInline()``).
     @discardableResult
     public func land(_ copy: ClipboardRemoteOffer, then write: @MainActor (_ referencesLeftOut: Int) -> Void) async
         -> CopyLanding
@@ -490,13 +512,20 @@ public final class ClipboardItemExchange {
             }
         }
         guard landing == copy.token else { return .superseded }
-        if let error = await copy.landInline() {
-            guard landing == copy.token else { return .superseded }
+        let inline = await copy.landInline()
+        guard landing == copy.token else { return .superseded }
+        switch inline {
+        case .landed:
+            copy.finishReadout()
+        case .cancelled:
+            landing = nil
+            refuseCopy(copy, WireError(.cancelled, debugDetail: "cancelled on its readout"))
+            return .cancelled
+        case .failed(let error):
             landing = nil
             refuseCopy(copy, error)
             return .failed(error)
         }
-        guard landing == copy.token else { return .superseded }
         landing = nil
         if leftOut > 0 {
             logger.log(.notice, "\(leftOut, privacy: .public) reference(s) of a clipboard copy could not be filled")
@@ -597,7 +626,7 @@ public final class ClipboardItemExchange {
             if header.copy == .notACopy { received(header, on: link) } else { receivedCopy(header, on: link) }
         case .offerEnded(_, .local, let token, let closure):
             if let source = sentCopies.removeValue(forKey: token) {
-                if case .resetByPeer(let error) = closure { onCopyRefused?(source, error) }
+                if case .resetByPeer(let error) = closure { onCopyRefused?(source, .byFarSide(error)) }
                 return
             }
             if let ask, ask.token == token {
@@ -718,39 +747,31 @@ public final class ClipboardItemExchange {
         of header: ItemSetHeaderValue, on link: any ClipboardItemLink,
         _ done: @escaping @MainActor ([OfferedItem]?) -> Void
     ) {
-        let count = header.count
-        let read = Locked<[OfferedItem?]>(Array(repeating: nil, count: count))
-        let left = Locked(count)
-        let finish: @Sendable () -> Void = {
-            let items = read.withLock { $0 }
-            let held = items.compactMap { $0 }
-            MainActorBridge.async { done(held.count == items.count ? held : nil) }
-        }
-        guard count > 0 else { return finish() }
-        for index in 0..<count {
-            link.readItem(header.token, item: UInt32(index)) { item in
-                read.withLock { $0[index] = item }
-                if left.withLock({ left in
-                    left -= 1
-                    return left == 0
-                }) {
-                    finish()
-                }
-            }
+        readOfferedItems(count: header.count, { link.readItem(header.token, item: $0, $1) }) { items in
+            MainActorBridge.async { done(items) }
         }
     }
 
-    /// The far side's offer `header` of `items`, its pulls landing in a staging generation of its own.
+    /// The far side's offer `header` of `items`, its pulls landing in a staging generation of its own and
+    /// reporting as a paste of it, or as the copy it is: the host's Copy Guest Clipboard to Mac, a guest's
+    /// Copy Mac Clipboard to Guest.
     private func remoteOffer(
         _ header: ItemSetHeaderValue, _ items: [OfferedItem], on link: any ClipboardItemLink
     ) -> ClipboardRemoteOffer {
         let generation = nextGeneration
         nextGeneration += 1
         let ceiling = pasteCeiling
+        let gesture: ClipboardTransferGesture =
+            switch (header.copy, side) {
+            case (.notACopy, _): .paste
+            case (_, .host): .copy
+            case (_, .guest): .send
+            }
         return ClipboardRemoteOffer(
             header: header, items: items, link: link, connection: connection, staging: staging,
             generation: generation,
             ceiling: { UInt64(clamping: max(ceiling(), 0)) }, registry: pulls, logger: logger,
+            progress: .init(gesture: gesture, transfers: transfers, peerName: peerName(), clock: transferClock),
             landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } },
             failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } })
     }

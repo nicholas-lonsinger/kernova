@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// A `ClipboardTransferReporter` plus every report it has published, for a test
 /// asserting on what a surface would render.

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// The two clipboard commands: each copies a snapshot of one side's clipboard to the other's, everything on it
 /// as it is. What is not a file or folder crosses at the command and lands as data; files cross as references
@@ -59,7 +60,7 @@ extension VMInstance {
             switch copy {
             case .nothing:
                 reportClipboardCommand(.copy, .nothingToCopy)
-            case .alreadyHeld, .landed:
+            case .alreadyHeld, .landed, .cancelled:
                 break
             case .failed(let failure):
                 reportClipboardCommand(.copy, failure)

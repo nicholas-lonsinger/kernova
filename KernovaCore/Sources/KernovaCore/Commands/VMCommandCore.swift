@@ -4,6 +4,7 @@ import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// Whether somebody asked for one VM's bring-up in particular.
 package enum VMBringUpPresence: Sendable, Equatable {

@@ -21,6 +21,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaPortableTestSupport
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 import Testing
 
@@ -35,16 +36,25 @@ struct DropReceiverTests {
         let runtime: PeerAgentRuntime
         let hostEvents = Recorder<ItemTransferEvent>()
         let landed = Recorder<[String]>()
+        /// Each report the receiver's transfers published, in order.
+        let reports = Recorder<ClipboardTransferReport>()
+        let transfers: ClipboardTransferReporter
         /// The name of each entry the host was asked to serve, as it was asked.
         let served = Recorder<String>()
         /// While held, each serve waits for `releaseServes()`.
         private let held: Locked<Bool>
         private let released = DispatchSemaphore(value: 0)
+        /// Recorded as the receiver's first open of its landing folder begins, which then waits for
+        /// `releaseLandingOpen()` when held, as the OS holds it while asking the user.
+        let landingOpens = Recorder<Void>()
+        private let landingOpenReleased = DispatchSemaphore(value: 0)
 
         var source: String { scratch.path + "/source" }
         var downloads: String { scratch.path + "/Downloads" }
 
-        init(downloads landing: String? = nil, holdingServes: Bool = false) async throws {
+        init(downloads landing: String? = nil, holdingServes: Bool = false, holdingLandingOpen: Bool = false)
+            async throws
+        {
             held = Locked(holdingServes)
             scratch = try PortableScratchDirectory(prefix: "drop-receiver")
             try FileManager.default.createDirectory(atPath: scratch.path + "/source", withIntermediateDirectories: true)
@@ -70,9 +80,26 @@ struct DropReceiverTests {
                     sink: MemoryItems(), features: hostRouter.features),
                 itemEvents: { hostRouter.deliver($0) })
             await harness.attached()
-            let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+            let landingPath = Array((landing ?? scratch.path + "/Downloads").utf8)
+            let (landingOpens, landingOpenReleased) = (landingOpens, landingOpenReleased)
+            let firstOpen = Locked(true)
+            let sink = ItemSinkAdapter(
+                fileSystem: InterposedFileSystem(openingDirectory: { name in
+                    guard name == landingPath,
+                        firstOpen.withLock({ first in
+                            defer { first = false }; return first
+                        })
+                    else { return }
+                    landingOpens.record(())
+                    if holdingLandingOpen { landingOpenReleased.wait() }
+                }))
+            let transfers = ClipboardTransferReporter(clock: SteppingClock())
+            self.transfers = transfers
+            let reports = reports
+            await MainActor.run { transfers.onReportChanged = { reports.record($0) } }
             let receiver = DropReceiver(
-                directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger
+                directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger,
+                transfers: transfers, peerName: "Mac", transferClock: SteppingClock()
             ) { names in landed.record(names.map { String(decoding: $0, as: UTF8.self) }) }
             let peerRouter = ItemFeatureRouter<Void>(drop: receiver.owner, logger: Fixture.logger)
             runtime = PeerAgentRuntime(
@@ -90,6 +117,11 @@ struct DropReceiverTests {
             _ = await harness.snapshot { $0.consolePeers[.drop] != nil }
         }
 
+        /// Lets the held open of the landing folder go on.
+        func releaseLandingOpen() {
+            landingOpenReleased.signal()
+        }
+
         /// Lets every serve held so far, and every later one, go on.
         func releaseServes() {
             held.withLock { $0 = false }
@@ -104,12 +136,16 @@ struct DropReceiverTests {
             FileManager.default.contents(atPath: downloads + "/" + relative).map { String(decoding: $0, as: UTF8.self) }
         }
 
-        /// Offers the source entries `names` as one drop, each a FILE or, ending in `/`, a FOLDER.
-        func drop(_ names: [String], token tag: UInt8 = 1) async -> Result<PeerHandle, WireError> {
-            let items = names.map { name -> [Representation] in
+        /// Offers the source entries `names` as one drop, each a FILE or, ending in `/`, a FOLDER, with the size
+        /// estimate of its place in `estimates`, or none.
+        func drop(_ names: [String], estimates: [UInt64] = [], token tag: UInt8 = 1) async
+            -> Result<PeerHandle, WireError>
+        {
+            let items = names.enumerated().map { index, name -> [Representation] in
                 var representation = Representation()
                 representation.storage = name.hasSuffix("/") ? .folder : .file
                 representation.name = Data((name.hasSuffix("/") ? String(name.dropLast()) : name).utf8)
+                if estimates.indices.contains(index) { representation.sizeEstimate = estimates[index] }
                 return [representation]
             }
             return await withCheckedContinuation { continuation in
@@ -207,6 +243,103 @@ struct DropReceiverTests {
         await bench.close()
     }
 
+    @Test("A drop reports on one readout, its bar counting every item's landed bytes, and completes at its release")
+    func reportsOneReadout() async throws {
+        let bench = try await Bench()
+        try bench.write("abc", to: "a.txt")
+        try bench.write("hello", to: "b.txt")
+
+        _ = try await bench.drop(["a.txt", "b.txt"]).get()
+
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
+        var reports = bench.reports.waiter()
+        let ended = await reports.next { if case .finished = $0 { true } else { false } }
+        guard case .finished(let finish) = ended, case .completed(let final) = finish.outcome else {
+            Issue.record("the readout ended \(ended)"); return
+        }
+        #expect(finish.gesture == .drop)
+        #expect(final.fileCount == 2)
+        #expect(final.filesCompleted == 2)
+        #expect(final.bytesTransferred == 8)
+        #expect(final.totalBytes == 8)
+        let operations = Set(
+            bench.reports.elements.compactMap { report -> ClipboardTransferOperationID? in
+                if case .running(let snapshot, _) = report { snapshot.operationID } else { nil }
+            })
+        #expect(operations == [final.operationID])
+        await bench.close()
+    }
+
+    @Test("A drop's first readout counts every item of the offer, and the bytes their estimates add up to")
+    func firstReadoutCountsTheWholeDrop() async throws {
+        let bench = try await Bench(holdingServes: true)
+        try bench.write("abc", to: "a.txt")
+        try bench.write("hello", to: "b.txt")
+
+        _ = try await bench.drop(["a.txt", "b.txt"], estimates: [3, 5]).get()
+
+        var reports = bench.reports.waiter()
+        let first = await reports.next { if case .running = $0 { true } else { false } }
+        guard case .running(let readout, _) = first else { return }
+        #expect(readout.fileCount == 2)
+        #expect(readout.totalBytes == 3 + 5)
+        bench.releaseServes()
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
+        await bench.close()
+    }
+
+    @Test("A drop's readout begins only once the open of its landing folder, which the OS may hold, has returned")
+    func readoutBeginsAfterTheLandingOpens() async throws {
+        let bench = try await Bench(holdingLandingOpen: true)
+        try bench.write("abc", to: "a.txt")
+
+        _ = try await bench.drop(["a.txt"], estimates: [3]).get()
+
+        var opens = bench.landingOpens.waiter()
+        _ = await opens.next { _ in true }
+        // Every publication made before the open began hops to the main actor first.
+        await MainActor.run {}
+        #expect(bench.reports.elements.isEmpty)
+
+        bench.releaseLandingOpen()
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0]).endBody))
+        await bench.close()
+    }
+
+    @Test("The readout's Cancel refuses the drop CANCELLED mid-pull, landing nothing more")
+    func cancelRefusesTheDrop() async throws {
+        let bench = try await Bench(holdingServes: true)
+        try bench.write("a", to: "a.txt")
+        try bench.write("b", to: "b.txt")
+        _ = try await bench.drop(["a.txt", "b.txt"]).get()
+        var served = bench.served.waiter()
+        _ = await served.next { _ in true }
+        var reports = bench.reports.waiter()
+        let running = await reports.next { if case .running = $0 { true } else { false } }
+        guard case .running(let readout, _) = running else { return }
+        #expect(readout.isCancellable)
+        #expect(readout.fileCount == 2)
+
+        let transfers = bench.transfers
+        #expect(await MainActor.run { transfers.cancel(readout.operationID) })
+
+        guard case .resetByPeer(let error) = await bench.offerEnd() else {
+            Issue.record("the drop ended otherwise"); return
+        }
+        #expect(error.code == .cancelled)
+        let ended = await reports.next { if case .finished = $0 { true } else { false } }
+        guard case .finished(let finish) = ended, case .cancelled = finish.outcome else {
+            Issue.record("the readout ended \(ended)"); return
+        }
+        bench.releaseServes()
+        await bench.harness.settled()
+        await flush(bench.runtime.queue)
+        #expect(bench.landed.elements.isEmpty)
+        #expect(bench.read("a.txt") == nil)
+        #expect(bench.served.elements == ["a.txt"])
+        await bench.close()
+    }
+
     @Test("A drop the host withdraws mid-drop lands nothing more and reveals nothing")
     func withdrawnDropStops() async throws {
         let bench = try await Bench(holdingServes: true)
@@ -228,6 +361,27 @@ struct DropReceiverTests {
         #expect(bench.read("a.txt") == nil)
         #expect(bench.served.elements == ["a.txt"])
         await bench.close()
+    }
+}
+
+/// A clock each reading of which is a second past the last, so a readout is past its reveal gate at its first
+/// event; nothing it schedules comes due within a test.
+private final class SteppingClock: EngineClock {
+    private let readings = Locked<UInt64>(0)
+
+    var now: EngineInstant {
+        EngineInstant(
+            nanoseconds: readings.withLock {
+                $0 += 1
+                return $0 * 1_000_000_000
+            })
+    }
+
+    /// Returns only once the task is cancelled.
+    func sleep(for interval: TimeInterval) async throws {
+        for await _ in AsyncStream<Void>(unfolding: { nil }) {}
+        try Task.checkCancellation()
+        throw CancellationError()
     }
 }
 #endif

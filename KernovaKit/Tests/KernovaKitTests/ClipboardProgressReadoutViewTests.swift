@@ -4,6 +4,7 @@ import Testing
 
 @testable import KernovaAppKitShared
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for the transfer readout the status item's dropdown and callout
 /// both show.
@@ -116,6 +117,38 @@ struct ClipboardProgressReadoutViewTests {
         view.apply(makeSnapshot(isCancellable: true))
         #expect(view.barFractionForTesting == 0.1)
         #expect(!view.byteProgressForTesting.isEmpty)
+    }
+
+    /// A paste of 2 GB, `bytes` of it landed.
+    private func pasteSnapshot(bytes: UInt64, of operation: ClipboardTransferOperationID)
+        -> ClipboardProgressSnapshot
+    {
+        ClipboardProgressSnapshot(
+            direction: .inbound, peerName: "Mac", currentItemName: "big.bin", filesCompleted: 0, fileCount: 1,
+            bytesTransferred: bytes, totalBytes: 2_000_000_000, bytesPerSecond: nil, secondsRemaining: nil,
+            gesture: .paste, elapsedSeconds: 1, isCancellable: true, operationID: operation)
+    }
+
+    @Test("a new operation gets a bar that has shown no other; the same operation keeps its bar")
+    func eachOperationGetsItsOwnBar() {
+        // The status item keeps one readout for every operation it shows.
+        let view = ClipboardProgressReadoutView(surface: .callout)
+        let first = ClipboardTransferOperationID()
+        view.apply(pasteSnapshot(bytes: 2_000_000_000, of: first))
+        let firstBar = view.barForTesting
+
+        let second = ClipboardTransferOperationID()
+        view.apply(pasteSnapshot(bytes: 100_000_000, of: second))
+        let secondBar = view.barForTesting
+        #expect(secondBar !== firstBar)
+        // 100 MB of 2 GB, worked by hand.
+        #expect(secondBar.doubleValue == 0.05)
+        #expect(secondBar.superview != nil)
+        #expect(firstBar.superview == nil)
+
+        view.apply(pasteSnapshot(bytes: 433_800_000, of: second))
+        #expect(view.barForTesting === secondBar)
+        #expect(secondBar.doubleValue == 0.2169)
     }
 
     @Test("Cancel acts on the click that also activates its app")

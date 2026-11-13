@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// The one clipboard readout the app-level surfaces render across every VM, and
 /// the routing behind the Cancel it carries.

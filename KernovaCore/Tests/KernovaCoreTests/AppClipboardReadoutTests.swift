@@ -2,6 +2,7 @@ import Foundation
 import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
+import KernovaTransferProgress
 import Testing
 
 @testable import KernovaCore
@@ -20,7 +21,7 @@ struct AppClipboardReadoutTests {
         VMInstanceFixture.make(name: name, phase: .running(sessionID: UUID()))
     }
 
-    /// Stands a running, cancellable readout on `instance`, returning the
+    /// Stands a running readout with a transfer in flight on `instance`, returning the
     /// operation behind it and the cell its cancel sets.
     ///
     /// The operation is returned so the caller can keep it alive: the reporter
@@ -34,6 +35,8 @@ struct AppClipboardReadoutTests {
             gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
             clock: GatedEngineClock(), onCancelRequested: { cancelled.withLock { $0 = true } },
             reporter: instance.clipboardTransfers)
+        // A transfer in flight, so a Cancel has something to stop.
+        _ = operation.unit(expectedBytes: 2)
         instance.clipboardTransfers.publish(
             from: operation,
             .running(

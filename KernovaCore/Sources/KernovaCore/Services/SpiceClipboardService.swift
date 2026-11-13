@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 
 /// Manages SPICE clipboard sharing between the host and a single guest VM.

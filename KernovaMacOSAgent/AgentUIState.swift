@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// Clipboard sharing state for display in the menu.
 ///

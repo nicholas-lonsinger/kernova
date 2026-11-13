@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// The far side's clipboard offer as this side received it, its items read whole, and the pulls that land its
@@ -14,6 +15,11 @@ import KernovaWire
 /// the offer ended still serves after. Its pulls together land no more than the paste ceiling as it stood at
 /// the first of them: one budget the sink charges each landed byte to. Ending the offer
 /// here cancels every pull still running and fails everyone waiting on one.
+///
+/// Its pulls report on one readout while they run, each pull a unit its landing feeds; the readout ends once no
+/// pull has run for its idle gap, since nothing says a paste is done asking, or once a copy's pulls have all
+/// landed (``finishReadout()``). Its Cancel spends the offer: every pull in flight stops and the offer closes, so
+/// no later ask of any write of it pulls anything, and pasting again takes a fresh copy on the far side.
 ///
 /// Safe from any thread: a paste asks on whatever thread the pasteboard fires its provider on, and a pull ends
 /// on the connection's queue, so neither waits for the main actor.
@@ -39,7 +45,17 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private let logger: KernovaLogger
     private let landed: @Sendable () -> Void
     private let failed: @Sendable (WireError) -> Void
+    private let progress: Progress
     private let state = Locked(State())
+
+    /// What the offer's readout reports: the gesture its pulls serve, the side's reporter, the far side's name,
+    /// and the clock the readout is measured on.
+    struct Progress: Sendable {
+        var gesture: ClipboardTransferGesture
+        var transfers: ClipboardTransferReporter
+        var peerName: String
+        var clock: any EngineClock
+    }
 
     /// One representation of one item.
     private struct Key: Hashable, Sendable {
@@ -80,10 +96,24 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         }
     }
 
+    /// What an ask of a representation hears.
+    private enum Answer: Sendable {
+        case content(Content)
+        /// The readout's Cancel stopped the pull it waited on.
+        case cancelled
+        /// Nothing it takes landed, and the error the pull failed with when its end said.
+        case missing(WireError?)
+
+        /// What landed, nil when nothing did.
+        var content: Content? {
+            if case .content(let content) = self { content } else { nil }
+        }
+    }
+
     /// One ask of a representation: the most bytes it takes, nil for a FILE or FOLDER ask, and its completion.
     private struct Ask {
         var ceiling: UInt64?
-        var completion: @Sendable (Content?) -> Void
+        var completion: @Sendable (Answer) -> Void
     }
 
     /// The pull of a representation in flight, and every ask waiting on it.
@@ -104,6 +134,10 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         /// Where it lands in staging; nil for a pull landing in memory.
         var directory: URL?
         var isInline: Bool
+        /// What it reports on the readout.
+        var unit: ClipboardTransferOperation.Unit?
+        /// The readout's Cancel stopped it, so its end is no failure.
+        var cancelled = false
     }
 
     private struct State {
@@ -112,21 +146,21 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         var opened: [ItemPullID: Opened] = [:]
         /// What every pull of the offer lands against, from the first of them.
         var budget: ByteBudget?
-        /// Why each representation's last pull failed, when its end said.
-        var failures: [Key: WireError] = [:]
         var nextAttempt: UInt64 = 0
-        /// No more pulls: released, or the far side ended the offer.
+        /// No more pulls: released, the far side ended the offer, or a readout's Cancel spent it.
         var closed = false
         /// Hear the offer close.
         var endHandlers: [@Sendable () -> Void] = []
+        /// The readout the pulls report on, from the first pull after the last one ended.
+        var readout: ClipboardTransferOperation?
     }
 
     init(
         header: ItemSetHeaderValue, items: [OfferedItem], link: any ClipboardItemLink,
         connection: ClipboardConnectionID, staging: ClipboardFileStaging, generation: UInt64,
         ceiling: @escaping @Sendable () -> UInt64,
-        registry: ClipboardPullRegistry, logger: KernovaLogger, landed: @escaping @Sendable () -> Void,
-        failed: @escaping @Sendable (WireError) -> Void
+        registry: ClipboardPullRegistry, logger: KernovaLogger, progress: Progress,
+        landed: @escaping @Sendable () -> Void, failed: @escaping @Sendable (WireError) -> Void
     ) {
         token = header.token
         concealed = header.concealed
@@ -141,23 +175,24 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         self.logger = logger
         self.landed = landed
         self.failed = failed
+        self.progress = progress
     }
 
     // MARK: ClipboardItemPulling
 
     /// The bytes of INLINE representation `representation` of item `item`, under the paste ceiling.
     public func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
-        ask(Key(item: item, representation: representation), ceiling: ceiling()) { completion($0?.bytes) }
+        ask(Key(item: item, representation: representation), ceiling: ceiling()) { completion($0.content?.bytes) }
     }
 
     /// The file or folder FILE or FOLDER representation `representation` of item `item` landed at, its bytes
     /// charged to the offer's budget.
     public func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
-        ask(Key(item: item, representation: representation), ceiling: nil) { completion($0?.url) }
+        ask(Key(item: item, representation: representation), ceiling: nil) { completion($0.content?.url) }
     }
 
-    /// Runs `handler` once the offer closes — released, ended by the far side, or its connection gone — at once
-    /// when it has.
+    /// Runs `handler` once the offer closes — released, ended by the far side, its connection gone, or spent by its
+    /// readout's Cancel — at once when it has.
     public func whenEnded(_ handler: @escaping @Sendable () -> Void) {
         let closed = state.withLock { state -> Bool in
             if !state.closed { state.endHandlers.append(handler) }
@@ -166,9 +201,19 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         if closed { handler() }
     }
 
-    /// Pulls every kept INLINE representation now, all at once, and waits for each: nil once all landed, or
-    /// the error the first to fail ended with. What a copy is written from.
-    public func landInline() async -> WireError? {
+    /// How landing a copy's INLINE representations ended (``landInline()``).
+    public enum InlineLanding: Sendable, Equatable {
+        /// Every one landed.
+        case landed
+        /// The readout's Cancel stopped a pull of one.
+        case cancelled
+        /// A pull of one failed with this error.
+        case failed(WireError)
+    }
+
+    /// Pulls every kept INLINE representation now, all at once, and waits for each: landed once all landed, or
+    /// how the first not to land ended. What a copy is written from.
+    public func landInline() async -> InlineLanding {
         var keys: [Key] = []
         for (item, offered) in items.enumerated() {
             for (index, representation) in offered.representations.enumerated()
@@ -178,14 +223,13 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 keys.append(Key(item: item, representation: index))
             }
         }
-        return await withTaskGroup(of: WireError?.self) { group in
+        return await withTaskGroup(of: InlineLanding.self) { group in
             for key in keys { group.addTask { await self.land(key) } }
-            for await error in group {
-                guard let error else { continue }
+            for await landing in group where landing != .landed {
                 group.cancelAll()
-                return error
+                return landing
             }
-            return nil
+            return .landed
         }
     }
 
@@ -265,30 +309,94 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         return true
     }
 
-    private func land(_ key: Key) async -> WireError? {
-        let content = await withCheckedContinuation { continuation in
+    private func land(_ key: Key) async -> InlineLanding {
+        let answer = await withCheckedContinuation { continuation in
             ask(key, ceiling: ceiling()) { continuation.resume(returning: $0) }
         }
-        if case .some = content { return nil }
-        return state.withLock { $0.failures[key] }
-            ?? WireError(.readFailed, debugDetail: "the representation did not land")
+        switch answer {
+        case .content: return .landed
+        case .cancelled: return .cancelled
+        case .missing(let error):
+            return .failed(error ?? WireError(.readFailed, debugDetail: "the representation did not land"))
+        }
     }
 
     // MARK: Lifecycle
 
     /// Ends the offer here: what landed stays servable, nothing more is pulled, every pull in flight is
-    /// cancelled, and everyone waiting on one hears nil now.
+    /// cancelled, everyone waiting on one hears nil now, and a readout still measuring goes without a finish.
     func close() {
-        let (ids, asks, ended) = state.withLock { state -> ([ItemPullID], [Ask], [@Sendable () -> Void]) in
+        end(.closed)
+    }
+
+    /// The readout's Cancel: the offer ends as ``close()`` ends it, except that its pulls in flight end as
+    /// cancelled rather than failed, everyone waiting on one hears it cancelled — a paste hears nil — and the
+    /// readout finishes cancelled at what had landed.
+    private func spend() {
+        end(.cancelled)
+    }
+
+    private enum Ending {
+        case closed
+        case cancelled
+    }
+
+    private func end(_ ending: Ending) {
+        let (ids, asks, ended, readout) = state.withLock {
+            state -> ([ItemPullID], [Ask], [@Sendable () -> Void], ClipboardTransferOperation?) in
             state.closed = true
             let pulling = state.pulling.values
             state.pulling = [:]
-            defer { state.endHandlers = [] }
-            return (pulling.compactMap(\.id), pulling.flatMap(\.asks), state.endHandlers)
+            let ids = pulling.compactMap(\.id)
+            if ending == .cancelled { for id in ids { state.opened[id]?.cancelled = true } }
+            defer {
+                state.endHandlers = []
+                state.readout = nil
+            }
+            return (ids, pulling.flatMap(\.asks), state.endHandlers, state.readout)
+        }
+        switch ending {
+        case .closed: readout?.abandon()
+        case .cancelled: readout?.finishCancelled(itemsOwed: .unknown)
         }
         for id in ids { link.cancelPull(id) }
-        for ask in asks { ask.completion(nil) }
+        for ask in asks { ask.completion(ending == .cancelled ? .cancelled : .missing(nil)) }
         for handler in ended { handler() }
+    }
+
+    /// Ends the readout now, by its pulls' outcome, rather than at its idle gap: for an owner that knows no more
+    /// asks follow — a copy whose pulls have all landed. A later ask pulls on a readout of its own.
+    func finishReadout() {
+        let readout = state.withLock { state -> ClipboardTransferOperation? in
+            defer { state.readout = nil }
+            return state.readout
+        }
+        readout?.finish(.completed)
+    }
+
+    /// A pull's unit on the readout the offer's pulls report on: the one running, or a new one when the last has
+    /// ended.
+    private func readoutUnit(name: String?, expectedBytes: UInt64) -> ClipboardTransferOperation.Unit? {
+        state.withLock { state in
+            if let unit = state.readout?.unit(name: name, expectedBytes: expectedBytes) { return unit }
+            let readout = ClipboardTransferOperation(
+                gesture: progress.gesture, direction: .inbound, peerName: progress.peerName,
+                clock: progress.clock,
+                onCancelRequested: { [weak self] in self?.spend() },
+                reporter: progress.transfers)
+            state.readout = readout
+            return readout.unit(name: name, expectedBytes: expectedBytes)
+        }
+    }
+
+    /// A pull of the offer ended, reporting on `unit`, `failure` saying why when it failed: the readout ends once
+    /// no pull has run for its idle gap.
+    private func pullEnded(
+        _ unit: ClipboardTransferOperation.Unit?, landed: Bool, failure: ClipboardTransferFailure? = nil
+    ) {
+        if let failure { unit?.failed(failure) }
+        unit?.ended(succeeded: landed)
+        state.withLock(\.readout)?.finishWhenIdle()
     }
 
     /// Ends the offer here and tells the far side, over the connection it arrived on, that this side pulls
@@ -304,7 +412,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         link.refuseOffer(token, error)
     }
 
-    /// Whether the offer is still the far side's, and pullable.
+    /// Whether the offer is still pullable: the far side's, and no readout's Cancel spent it.
     public var isOpen: Bool { !state.withLock(\.closed) }
 
     /// The pull `id` of this offer ended with `result`. What it landed is kept even once the offer is closed.
@@ -334,48 +442,53 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 case .failed(let error), .closed(.resetByPeer(let error)): error
                 case .landed, .closed: nil
                 }
+            let failure =
+                opened.cancelled ? nil : error.map { ClipboardTransferFailure(pullEndedWith: $0, fileCount: nil) }
+            // The unit ends before anyone waiting hears, so a landing that acts on the answer finds it ended.
+            pullEnded(opened.unit, landed: false, failure: failure)
             return settle(opened.key, opened.attempt, failedWith: error)
         }
+        pullEnded(opened.unit, landed: true)
         self.landed()
         let asks = state.withLock { state -> [Ask] in
             state.landed[opened.key] = landed
             guard state.pulling[opened.key]?.attempt == opened.attempt else { return [] }
             return state.pulling.removeValue(forKey: opened.key)?.asks ?? []
         }
-        for ask in asks { ask.completion(landed.admitted(by: ask.ceiling) ? landed.content : nil) }
+        for ask in asks { ask.completion(landed.admitted(by: ask.ceiling) ? .content(landed.content) : .missing(nil)) }
     }
 
     // MARK: Pulling
 
     /// Answers `completion` from what landed, or joins or starts the pull of `key`.
-    private func ask(_ key: Key, ceiling: UInt64?, _ completion: @escaping @Sendable (Content?) -> Void) {
+    private func ask(_ key: Key, ceiling: UInt64?, _ completion: @escaping @Sendable (Answer) -> Void) {
         enum Next {
-            case answer(Content?)
+            case answer(Answer)
             case joined
             case start(attempt: UInt64, ceiling: UInt64?)
         }
         guard items.indices.contains(key.item), items[key.item].representations.indices.contains(key.representation)
-        else { return completion(nil) }
+        else { return completion(.missing(nil)) }
         let isReference = items[key.item].representations[key.representation].hasReference
         let isInline = items[key.item].representations[key.representation].storage == .inline
         let ask = Ask(ceiling: isInline ? ceiling ?? 0 : nil, completion: completion)
         let next = state.withLock { state -> Next in
             if let landed = state.landed[key] {
-                return .answer(landed.admitted(by: ask.ceiling) ? landed.content : nil)
+                return .answer(landed.admitted(by: ask.ceiling) ? .content(landed.content) : .missing(nil))
             }
             if state.pulling[key] != nil {
                 state.pulling[key]?.asks.append(ask)
                 return .joined
             }
             // A reference names this side's own offer: nothing of it crosses the wire.
-            guard !state.closed, !isReference else { return .answer(nil) }
+            guard !state.closed, !isReference else { return .answer(.missing(nil)) }
             let attempt = state.nextAttempt
             state.nextAttempt += 1
             state.pulling[key] = Pulling(attempt: attempt, ceiling: ask.ceiling, asks: [ask])
             return .start(attempt: attempt, ceiling: ask.ceiling)
         }
         switch next {
-        case .answer(let content): completion(content)
+        case .answer(let answer): completion(answer)
         case .joined: break
         case .start(let attempt, let ceiling): start(key, attempt, ceiling: ceiling)
         }
@@ -386,6 +499,9 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private func start(_ key: Key, _ attempt: UInt64, ceiling: UInt64?) {
         let representation = items[key.item].representations[key.representation]
         let isInline = representation.storage == .inline
+        let unit = readoutUnit(
+            name: representation.name.isEmpty ? nil : String(decoding: representation.name, as: UTF8.self),
+            expectedBytes: representation.sizeEstimate)
         let directory: URL?
         let order: ItemPullOrder
         do {
@@ -405,9 +521,13 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             order = try link.order(
                 token: token, item: UInt32(key.item), representation: UInt32(key.representation),
                 byteCeiling: min(budget.remaining, ceiling ?? .max), landing: landing,
-                budget: budget)
+                budget: budget, progress: unit)
         } catch {
             logger.log(.error, "Cannot land a clipboard pull: \(String(describing: error), privacy: .public)")
+            pullEnded(
+                unit, landed: false,
+                failure: (error as? WireError).map { ClipboardTransferFailure(pullEndedWith: $0, fileCount: nil) }
+                    ?? .stagingFailed)
             return settle(key, attempt, failedWith: nil)
         }
         link.pullItem(order) { [self] result in
@@ -416,13 +536,18 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 let wanted = state.withLock { state -> Bool in
                     guard state.pulling[key]?.attempt == attempt else { return false }
                     state.pulling[key]?.id = id
-                    state.opened[id] = Opened(key: key, attempt: attempt, directory: directory, isInline: isInline)
+                    state.opened[id] = Opened(
+                        key: key, attempt: attempt, directory: directory, isInline: isInline, unit: unit)
                     return true
                 }
-                guard wanted else { return link.cancelPull(id) }
+                guard wanted else {
+                    pullEnded(unit, landed: false)
+                    return link.cancelPull(id)
+                }
                 registry.register(id, self)
             case .failure(let error):
                 logger.log(.notice, "A clipboard pull did not open: \(String(describing: error), privacy: .public)")
+                pullEnded(unit, landed: false, failure: ClipboardTransferFailure(pullEndedWith: error, fileCount: nil))
                 settle(key, attempt, failedWith: error)
             }
         }
@@ -450,7 +575,6 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         let (failing, retry) = state.withLock { state -> ([Ask], (attempt: UInt64, ceiling: UInt64)?) in
             guard let pulling = state.pulling[key], pulling.attempt == attempt else { return ([], nil) }
             state.pulling[key] = nil
-            state.failures[key] = error
             guard error?.code == .tooLarge, !state.closed, let refused = pulling.ceiling else {
                 return (pulling.asks, nil)
             }
@@ -462,7 +586,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             return (pulling.asks.filter { ($0.ceiling ?? 0) <= refused }, (retry, next))
         }
         if let error, !failing.isEmpty { failed(error) }
-        for ask in failing { ask.completion(nil) }
+        for ask in failing { ask.completion(.missing(error)) }
         if let retry { start(key, retry.attempt, ceiling: retry.ceiling) }
     }
 

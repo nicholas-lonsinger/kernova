@@ -7,6 +7,30 @@ import Foundation
 import KernovaSynchronization
 import KernovaWire
 
+/// Reads items `0..<count` of one offer through `read`, all at once, and hands `done` every one of them in item
+/// order, or nil once any is not held.
+public func readOfferedItems(
+    count: Int, _ read: (UInt32, @escaping @Sendable (OfferedItem?) -> Void) -> Void,
+    done: @escaping @Sendable ([OfferedItem]?) -> Void
+) {
+    guard count > 0 else { return done([]) }
+    let items = Locked<[OfferedItem?]>(Array(repeating: nil, count: count))
+    let left = Locked(count)
+    for index in 0..<count {
+        read(UInt32(index)) { item in
+            items.withLock { $0[index] = item }
+            let last = left.withLock { left in
+                left -= 1
+                return left == 0
+            }
+            guard last else { return }
+            let read = items.withLock { $0 }
+            let held = read.compactMap { $0 }
+            done(held.count == read.count ? held : nil)
+        }
+    }
+}
+
 /// One item pull: the connection it runs on and its stream, on either side.
 public struct ItemPullID: Hashable, Sendable {
     /// The connection the pull belongs to.
@@ -140,13 +164,41 @@ public struct ItemPullOrder: Sendable, Equatable {
     /// The budget the sink charges each landed entry's bytes to, shared with the owner's other pulls; nil
     /// when the request's byte ceiling is the only bound.
     public let budget: ByteBudget?
+    /// What the sink tells, as the pull lands, how far it has come; nil when nothing measures it.
+    public let progress: (any ItemLandingProgress)?
 
-    /// Pairs `request` with `landing`, which the caller has made it accept, charging what lands to `budget`.
-    package init(_ request: PullRequest, landing: ItemLanding, budget: ByteBudget? = nil) {
+    /// Pairs `request` with `landing`, which the caller has made it accept, charging what lands to `budget` and
+    /// reporting it to `progress`.
+    package init(
+        _ request: PullRequest, landing: ItemLanding, budget: ByteBudget? = nil,
+        progress: (any ItemLandingProgress)? = nil
+    ) {
         self.request = request
         self.landing = landing
         self.budget = budget
+        self.progress = progress
     }
+
+    /// This order, reporting to `progress` instead: for an owner that measures a pull only once its order is
+    /// built, since building it may wait on the landing.
+    public func reporting(to progress: (any ItemLandingProgress)?) -> ItemPullOrder {
+        ItemPullOrder(request, landing: landing, budget: budget, progress: progress)
+    }
+
+    /// Whether `lhs` and `rhs` are one pull's order: the same request and landing, drawing on one budget and
+    /// reporting to one progress.
+    public static func == (lhs: ItemPullOrder, rhs: ItemPullOrder) -> Bool {
+        lhs.request == rhs.request && lhs.landing == rhs.landing && lhs.budget == rhs.budget
+            && lhs.progress.map(ObjectIdentifier.init) == rhs.progress.map(ObjectIdentifier.init)
+    }
+}
+
+/// What a pull's landing reports as it lands, to whoever opened the pull, from the pull's own lane. The core
+/// never calls it.
+public protocol ItemLandingProgress: AnyObject, Sendable {
+    /// `landed` logical bytes — the unit of `EndRecord.bytes`, after decompression — have landed of `declared`,
+    /// the bytes the entries admitted so far declare their chunks carry. Both only grow.
+    func advanced(landed: UInt64, declared: UInt64)
 }
 
 /// Where the pulling side's sink lands a pull: its owner's choice, which the core hands the sink in `.begin`

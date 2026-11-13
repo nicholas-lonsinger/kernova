@@ -98,6 +98,12 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
         let pathByteCount: Int
     }
 
+    /// The bytes the events taken so far carried, data and resource fork: `TreeEventSequence.counts`.
+    public var landedByteCount: UInt64 { sequence.counts.bytes }
+
+    /// The bytes the entries taken so far declare their chunks carry: `TreeEventSequence.declaredBytes`.
+    public var declaredByteCount: UInt64 { sequence.declaredBytes }
+
     /// A directory entered: its identity and what lands on it as it is left.
     private struct Frame {
         let identity: FolderBatch.Identity

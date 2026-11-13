@@ -3,6 +3,7 @@ import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import Synchronization
 import Testing
 

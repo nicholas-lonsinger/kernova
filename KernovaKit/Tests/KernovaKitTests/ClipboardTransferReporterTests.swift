@@ -4,6 +4,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 @Suite("ClipboardTransferReporter", .caseScoped)
 @MainActor
@@ -255,85 +256,6 @@ struct ClipboardTransferReporterTests {
         try await passDwell(on: clock, of: reporter)
     }
 
-    @Test("the peer's paste completing leaves this side's own refusal standing")
-    func aPeerPasteDoesNotClearThisSidesRefusal() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let peerPaste = makeOperation(reporter, gesture: .peerPaste)
-        let refusedAt = Date(timeIntervalSince1970: 100)
-
-        // Passthrough could not forward every item this side's user copied, and
-        // said so.
-        let refusal = finish(
-            .itemsSkipped(count: 1), gesture: .forward, at: refusedAt)
-        reporter.finish(refusal)
-
-        // The guest then pastes what did get across. Its bar takes the readout.
-        let since = refusedAt.addingTimeInterval(1)
-        reporter.publish(
-            from: peerPaste, .running(snapshot(bytes: 10, gesture: .peerPaste), since: since))
-        #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
-
-        // That paste answers the *guest's* user; it disproves nothing about the
-        // items this side's copy left behind, however late it began.
-        reporter.publish(
-            from: peerPaste,
-            .finished(
-                ClipboardTransferFinish(
-                    gesture: .peerPaste, outcome: .completed(final: snapshot(bytes: 100)),
-                    peerName: "macOS TEST")))
-        #expect(reporter.report == .finished(refusal))
-        #expect(clock.requestedSeconds.isEmpty)
-    }
-
-    @Test("the peer's paste failing leaves this side's own refusal standing too")
-    func aFailedPeerPasteDoesNotDisplaceThisSidesRefusal() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let peerPaste = makeOperation(reporter, gesture: .peerPaste)
-        let refusedAt = Date(timeIntervalSince1970: 100)
-
-        let refusal = finish(
-            .itemsSkipped(count: 1), gesture: .forward, at: refusedAt)
-        reporter.finish(refusal)
-
-        // The guest pastes the file that did get across, and *that* transfer
-        // fails. Its refusal is the guest user's — the surfaces that interrupt
-        // here don't even present it — so it must not take the only message this
-        // side's user has off the screen.
-        let since = refusedAt.addingTimeInterval(1)
-        reporter.publish(
-            from: peerPaste, .running(snapshot(bytes: 10, gesture: .peerPaste), since: since))
-        reporter.publish(
-            from: peerPaste,
-            .finished(finish(.transferFailed, gesture: .peerPaste, at: since.addingTimeInterval(1))))
-
-        #expect(reporter.report == .finished(refusal))
-        #expect(clock.requestedSeconds.isEmpty)
-    }
-
-    @Test("a peer paste that succeeds still clears the peer paste that failed before it")
-    func aPeerPasteClearsAnOlderPeerPasteRefusal() async throws {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let retry = makeOperation(reporter, gesture: .peerPaste)
-        let failedAt = Date(timeIntervalSince1970: 100)
-
-        // The guest's first paste failed; the refusal is the guest user's.
-        reporter.finish(finish(.transferFailed, gesture: .peerPaste, at: failedAt))
-        // Their retry begins after it and runs to the end, so it disproves it.
-        let since = failedAt.addingTimeInterval(1)
-        reporter.publish(
-            from: retry, .running(snapshot(bytes: 10, gesture: .peerPaste), since: since))
-        let completed = ClipboardTransferFinish(
-            gesture: .peerPaste, outcome: .completed(final: snapshot(bytes: 100)),
-            peerName: "macOS TEST")
-        reporter.publish(from: retry, .finished(completed))
-
-        #expect(reporter.report == .finished(completed))
-        try await passDwell(on: clock, of: reporter)
-    }
-
     // MARK: - Absorbing repeats
 
     @Test("the repeated fires of one refused paste raise one report")
@@ -456,6 +378,9 @@ struct ClipboardTransferReporterTests {
         let newerStopped = Locked(false)
         let older = makeOperation(reporter, onCancelRequested: { olderStopped.withLock { $0 = true } })
         let newer = makeOperation(reporter, onCancelRequested: { newerStopped.withLock { $0 = true } })
+        // Each has a transfer in flight, so each has something to stop.
+        let units = [older.unit(expectedBytes: 10), newer.unit(expectedBytes: 10)]
+        defer { for unit in units { unit?.ended(succeeded: false) } }
 
         reporter.publish(from: older, .running(snapshot(bytes: 1), since: Date()))
         reporter.publish(from: newer, .running(snapshot(bytes: 2), since: Date()))
@@ -612,14 +537,13 @@ struct ClipboardTransferReporterTests {
     func aRunningOperationUnderTheReadoutIsCountedToo() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
-        let paste = makeOperation(reporter, gesture: .peerPaste)
         let drop = makeOperation(reporter, gesture: .drop)
+        let paste = makeOperation(reporter, gesture: .paste)
 
-        reporter.publish(
-            from: paste, .running(snapshot(bytes: 1, gesture: .peerPaste), since: Date()))
         reporter.publish(from: drop, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
+        reporter.publish(from: paste, .running(snapshot(bytes: 1, gesture: .paste), since: Date()))
 
-        #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
+        #expect(runningSnapshot(reporter)?.gesture == .drop)
         #expect(runningSnapshot(reporter)?.pendingBehind == 1)
     }
 

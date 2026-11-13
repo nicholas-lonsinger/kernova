@@ -3,6 +3,7 @@ import KernovaAppKitShared
 import KernovaCore
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// Owns the resident agent's menu-bar `NSStatusItem` and its dropdown.
 ///
@@ -65,7 +66,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var libraryObservation: ObservationLoop?
 
     /// The dropdown readout, its one-shot reveal in the popover slot, and the
-    /// shared menu wiring for a transfer in flight.
+    /// shared menu wiring for a transfer in flight. Built at init, with its
+    /// slot: they route a click made while a paste holds the main thread.
     private lazy var transferProgressPresenter = ClipboardProgressStatusItemPresenter(
         menu: menu, slot: transientPopover,
         onCancel: { [weak self] id in self?.cancelTransfer(id) })
@@ -127,6 +129,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.delegate = self
         menu.autoenablesItems = false
         statusItem.menu = menu
+        _ = transferProgressPresenter
         setIcon()
         updateTooltip()
 
@@ -210,13 +213,11 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     ///
     /// A notice the status item can't carry is dropped rather than deferred:
     /// the dropdown's own line is the fallback, and a refusal replayed later
-    /// would interrupt for something the user has moved past. A refusal the
-    /// *guest* user's gesture produced is not presented here at all — the
-    /// guest's own status item announces it over there.
+    /// would interrupt for something the user has moved past.
     private func presentPendingNotices() {
         for instance in viewModel.instances {
             guard case .finished(let finish) = instance.clipboardTransferReport,
-                finish.failure != nil, finish.gesture.isMadeHere,
+                finish.failure != nil,
                 let wording = ClipboardTransferWording.wording(
                     for: finish, vmName: instance.name),
                 noticeLedger.route(finish.date, for: instance.instanceID, dropdownIsOpen: isMenuOpen)

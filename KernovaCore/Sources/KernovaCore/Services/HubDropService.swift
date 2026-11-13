@@ -4,6 +4,7 @@ import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 import Synchronization
 
@@ -131,8 +132,11 @@ package final class HubDropService: Sendable {
         release(offer.staging, after: offer.promises)
         let items = offer.source.items.count
         guard case .completed(let body) = closure else {
+            guard let failure = Self.failure(ending: closure, items: items) else {
+                return Self.logger.log(.notice, "The guest's user cancelled a drop")
+            }
             Self.logger.log(.warning, "A drop ended before it landed: \(String(describing: closure), privacy: .public)")
-            return report(Self.failure(ending: closure, items: items), to: offer.peerName)
+            return report(failure, to: offer.peerName)
         }
         guard let landed = DropLanded(endBody: body) else {
             Self.logger.log(.error, "The guest released a drop with an END body that does not decode")
@@ -148,13 +152,16 @@ package final class HubDropService: Sendable {
         } else if skipped > 0 {
             report(.itemsSkipped(count: skipped), to: offer.peerName)
         } else {
-            reporter.completed(.drop, startedAt: offer.began)
+            reporter.completed(startedAt: offer.began)
         }
     }
 
-    /// What a drop whose offer of `items` items ended by `closure`, before the peer released it, reports.
-    static func failure(ending closure: StreamClosure, items: Int) -> ClipboardTransferFailure {
+    /// What a drop whose offer of `items` items ended by `closure`, before the peer released it, reports; nil
+    /// for one the guest's user cancelled, which the guest refuses `CANCELLED` and nothing else does.
+    static func failure(ending closure: StreamClosure, items: Int) -> ClipboardTransferFailure? {
         switch closure {
+        case .resetByPeer(let error) where error.code == .cancelled:
+            return nil
         case .resetByPeer(let error):
             return stop(error).map { .dropStopped($0) } ?? .peerReported(code(landing: error))
         case .resetLocally(let error):

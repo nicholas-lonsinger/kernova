@@ -6,6 +6,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 import Synchronization
 
@@ -278,7 +279,7 @@ package final class HubDragOut {
         /// sandboxed app may write that path and nothing beside it
         /// (`NSFilePromiseProvider.h`: "Always use the supplied URL").
         func pull(
-            _ item: DraggedOutItem, at index: Int, to destination: URL,
+            _ item: DraggedOutItem, at index: Int, to destination: URL, progress: (any ItemLandingProgress)?,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             guard let owner else {
@@ -289,7 +290,7 @@ package final class HubDragOut {
             do throws(WireError) {
                 order = try owner.sink.order(
                     token: token, item: UInt32(index), representation: item.representation, byteCeiling: .max,
-                    landing: .exactPath(destination.path))
+                    landing: .exactPath(destination.path), progress: progress)
             } catch {
                 ended(.failure(error))
                 return {}

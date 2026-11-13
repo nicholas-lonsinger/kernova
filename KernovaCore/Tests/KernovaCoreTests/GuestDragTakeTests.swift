@@ -3,6 +3,7 @@ import KernovaAgentCore
 import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 import Observation
 import Testing
@@ -63,6 +64,7 @@ struct GuestDragTakeTests {
         struct Pull {
             let index: Int
             let destination: URL
+            let progress: (any ItemLandingProgress)?
             let ended: @MainActor (Result<Void, WireError>) -> Void
             var cancelled = false
         }
@@ -95,11 +97,11 @@ struct GuestDragTakeTests {
         }
 
         func pull(
-            _ item: DraggedOutItem, at index: Int, to destination: URL,
+            _ item: DraggedOutItem, at index: Int, to destination: URL, progress: (any ItemLandingProgress)?,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             let position = pulls.count
-            pulls.append(Pull(index: index, destination: destination, ended: ended))
+            pulls.append(Pull(index: index, destination: destination, progress: progress, ended: ended))
             changed.notify()
             return { [weak self] in self?.pulls[position].cancelled = true }
         }
@@ -479,6 +481,31 @@ struct GuestDragTakeTests {
         #expect(final.totalBytes == 4)
         #expect(transport.releases == 1)
         #expect(finished.count == 1)
+    }
+
+    @Test("a dragged file's readout climbs as its bytes land, before its pull ends")
+    func readoutClimbsAsBytesLand() async throws {
+        let reporter = ClipboardTransferReporter()
+        reporter.onReportChanged = { [transport] _ in transport.changed.notify() }
+        let take = makeTake(items: [Self.unsizedFile], reporter: reporter, revealDelay: 0)
+        transport.report(.armed)
+        transport.target()
+        take.withheldDrag()
+        take.hostSessionEnded(dropped: true)
+        let outcome = OutcomeBox(gate: transport.changed)
+        take.writeItem(at: 0, to: URL(fileURLWithPath: "/Users/me/Desktop/a 2.txt")) { outcome.set($0) }
+        transport.report(.delivering)
+        transport.end(.caught(Self.delivery), delivered: [Self.file])
+        try await transport.changed.wait { !transport.pulls.isEmpty }
+
+        transport.pulls[0].progress?.advanced(landed: 3, declared: 4)
+
+        try await transport.changed.wait {
+            if case .running(let snapshot, _) = reporter.report { snapshot.bytesTransferred == 3 } else { false }
+        }
+        #expect(!outcome.isSet)
+        transport.end(0, .success(()))
+        try await transport.changed.wait { outcome.isSet }
     }
 
     @Test("names that arrive before the naming deadline stop it: the delivery stands and the take goes on")

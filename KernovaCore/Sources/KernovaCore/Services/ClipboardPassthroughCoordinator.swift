@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// Drives automatic clipboard passthrough for one VM: it polls the host
 /// pasteboard and offers copies made while the guest is connected, read as

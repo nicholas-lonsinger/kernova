@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// Why a clipboard, drop or drag transfer failed, as the side that failed
 /// reports it.

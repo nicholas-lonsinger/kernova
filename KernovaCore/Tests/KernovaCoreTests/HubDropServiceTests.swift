@@ -5,6 +5,7 @@ import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 import Testing
 
@@ -218,6 +219,39 @@ struct HubDropServiceTests {
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
         #expect(reports.compactMap(\.failure) == [.peerReported(.dropFailed)])
+        #expect(instance.dropService.openOffersForTesting == 0)
+    }
+
+    @Test("A drop the guest's user cancelled reports nothing")
+    func cancelledDropReportsNothing() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await instance(probe)
+        var reports: [ClipboardTransferReport] = []
+        let mirror = instance.clipboardTransfers.onReportChanged
+        instance.clipboardTransfers.onReportChanged = { report in
+            reports.append(report)
+            mirror?(report)
+        }
+        #expect(instance.dropOnGuest(pasteboard([try file("a.txt", "a")]), promises: []))
+        let (request, cancelled) = try await sentOffer(probe)
+        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
+        #expect(instance.dropOnGuest(pasteboard([try file("b.txt", "b")]), promises: []))
+        try await probe.changed.wait { probe.dropOffers.count == 2 }
+        let (second, refused) = probe.dropOffers[1]
+        probe.deliver(.itemReply(second, .offered(nil)), fromConnection: 0)
+
+        probe.deliver(
+            .items(.offerEnded(.drop, .local, token: cancelled.token, .resetByPeer(WireError(.cancelled)))),
+            fromConnection: 0)
+        // A later end, through the same queues, that does report: once it has, the first was handled.
+        probe.deliver(
+            .items(
+                .offerEnded(
+                    .drop, .local, token: refused.token, .resetByPeer(WireError(.writeFailed, posixErrno: ENOSPC)))),
+            fromConnection: 0)
+
+        try await waitForChange { instance.clipboardTransferReport.failure != nil }
+        #expect(reports.compactMap(\.failure) == [.peerReported(.dropDiskFull)])
         #expect(instance.dropService.openOffersForTesting == 0)
     }
 }

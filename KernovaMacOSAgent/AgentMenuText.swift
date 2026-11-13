@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaKit
+import KernovaTransferProgress
 
 /// Pure text mappers for the guest agent's menu-bar dropdown.
 enum AgentMenuText {

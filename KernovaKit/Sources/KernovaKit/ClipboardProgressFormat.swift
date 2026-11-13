@@ -1,14 +1,13 @@
 import Foundation
+import KernovaTransferProgress
 
 /// Display strings for the clipboard transfer readout.
 public enum ClipboardProgressFormat {
     /// Headline naming the operation and the machine on the other end.
     ///
-    /// `gesture` names what outbound bytes are for: under `.peerPaste` an app on
-    /// the peer is blocked on them right now, and under `.dragOut` they are
+    /// `gesture` names what outbound bytes are for: under `.dragOut` they are
     /// files the user dragged onto the peer. Inbound reads the same for every
-    /// gesture — a paste this side performs parks the thread that would repaint
-    /// it, so one never shows a readout at all.
+    /// gesture.
     ///
     /// The trailing ellipsis marks work still under way, matching the system's own
     /// "Copying…" progress titles — not the HIG's gathers-more-input ellipsis,
@@ -21,7 +20,6 @@ public enum ClipboardProgressFormat {
         case .inbound: return "Receiving from “\(peerName)”…"
         case .outbound:
             switch gesture {
-            case .peerPaste: return "Pasting into “\(peerName)”…"
             case .dragOut: return "Copying to “\(peerName)”…"
             case .paste, .preview, .copy, .forward, .send, .drop: return "Sending to “\(peerName)”…"
             }
@@ -135,18 +133,5 @@ public enum ClipboardProgressFormat {
             parts.append(pending)
         }
         return parts.joined(separator: " — ")
-    }
-
-    /// Seconds as a log record spells them ("2.00 s"), or `unknown` where there
-    /// is no estimate — never shown to a user, who gets `timeRemaining` instead.
-    package static func logSeconds(_ value: TimeInterval?) -> String {
-        guard let value else { return "unknown" }
-        return String(format: "%.2f s", value)
-    }
-
-    /// Bytes as a log record spells them ("512/4096 bytes"), or `size unknown`
-    /// for an operation that does not know its bytes.
-    package static func logBytes(transferred: UInt64, total: UInt64, known: Bool) -> String {
-        known ? "\(transferred)/\(total) bytes" : "size unknown"
     }
 }

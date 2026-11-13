@@ -20,6 +20,7 @@ final class RecordingLink: ClipboardItemLink {
         var orders: [ItemPullOrder] = []
         var opened: [ItemPullID] = []
         var pulls: [(order: ItemPullOrder, id: ItemPullID)] = []
+        var cancelled: [ItemPullID] = []
     }
 
     private let calls = Locked(Calls())
@@ -46,6 +47,8 @@ final class RecordingLink: ClipboardItemLink {
     var opened: [ItemPullID] { calls.withLock(\.opened) }
     /// Each pull opened, with its order.
     var pulls: [(order: ItemPullOrder, id: ItemPullID)] { calls.withLock(\.pulls) }
+    /// The id of each pull cancelled, in order.
+    var cancelled: [ItemPullID] { calls.withLock(\.cancelled) }
 
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
         calls.withLock { $0.offers.append(offer) }
@@ -90,17 +93,20 @@ final class RecordingLink: ClipboardItemLink {
         changed.notify()
     }
 
-    func cancelPull(_ id: ItemPullID) {}
+    func cancelPull(_ id: ItemPullID) {
+        calls.withLock { $0.cancelled.append(id) }
+        changed.notify()
+    }
 
     func order(
         token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
-        budget: ByteBudget?
+        budget: ByteBudget?, progress: (any ItemLandingProgress)?
     ) throws(WireError) -> ItemPullOrder {
         calls.withLock { $0.ceilings.append(byteCeiling) }
         guard let sink else { throw WireError(.writeFailed) }
         let order = try sink.order(
             token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
-            budget: budget)
+            budget: budget, progress: progress)
         calls.withLock { $0.orders.append(order) }
         return order
     }

@@ -1,5 +1,6 @@
 import AppKit
 import KernovaKit
+import KernovaTransferProgress
 
 /// The live readout of a transfer running in the background, laid out for the
 /// status item's dropdown or its callout.
@@ -48,11 +49,22 @@ public final class ClipboardProgressReadoutView: NSView {
     }
 
     private static let rowSpacing: CGFloat = 4
+    /// The bar's position among the readout's rows.
+    private static let barRow = 1
 
     private let metrics: Metrics
     private let headline = NSTextField(labelWithString: "")
     private let cancelButton = FirstClickButton(title: "Cancel", target: nil, action: nil)
-    private let bar = NSProgressIndicator()
+    // Replaced for each operation rather than reused: on macOS 27.2 the indicator
+    // moves its fill to each value through a 0.5 s animation group and takes the
+    // next value only once that ends, so one kept across operations presented a
+    // new operation's first values from the previous one's final fill — 89%
+    // beside "433.8 MB of 2 GB" after a paste that had run to 100%.
+    private var bar = ClipboardProgressReadoutView.makeBar(fraction: 0)
+    private var barWidth: NSLayoutConstraint?
+    /// The operation `bar` has shown, or `nil` before the first snapshot.
+    private var barOperation: ClipboardTransferOperationID?
+    private let rows = NSStackView()
     private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
     private let timeRemaining = NSTextField(labelWithString: "")
@@ -109,13 +121,6 @@ public final class ClipboardProgressReadoutView: NSView {
         cancelButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         cancelButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        bar.style = .bar
-        bar.isIndeterminate = false
-        bar.minValue = 0
-        bar.maxValue = 1
-        bar.doubleValue = 0
-        bar.controlSize = .small
-
         for label in [byteProgress, itemCounter, timeRemaining, pendingNote] {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             label.textColor = .secondaryLabelColor
@@ -155,7 +160,10 @@ public final class ClipboardProgressReadoutView: NSView {
         timeRow.distribution = .fill
         timeRow.spacing = 8
 
-        let stack = NSStackView(views: [headlineRow, bar, byteRow, timeRow])
+        let stack = rows
+        var views: [NSView] = [headlineRow, byteRow, timeRow]
+        views.insert(bar, at: Self.barRow)
+        stack.setViews(views, in: .leading)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Self.rowSpacing
@@ -170,13 +178,47 @@ public final class ClipboardProgressReadoutView: NSView {
             headlineRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             byteRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             timeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            bar.widthAnchor.constraint(equalTo: stack.widthAnchor),
             // Pin the content width so the rows lay out (and the height measures)
             // against the width the surface will actually give this view.
             stack.widthAnchor.constraint(
                 equalToConstant: metrics.width - metrics.leading - metrics.trailing),
         ])
+        pinBarWidth()
         return stack
+    }
+
+    /// A determinate bar for one operation, already at `fraction`.
+    private static func makeBar(fraction: Double) -> NSProgressIndicator {
+        let bar = NSProgressIndicator()
+        bar.style = .bar
+        bar.isIndeterminate = false
+        bar.minValue = 0
+        bar.maxValue = 1
+        bar.doubleValue = fraction
+        bar.controlSize = .small
+        return bar
+    }
+
+    private func pinBarWidth() {
+        barWidth?.isActive = false
+        barWidth = bar.widthAnchor.constraint(equalTo: rows.widthAnchor)
+        barWidth?.isActive = true
+    }
+
+    /// Shows `snapshot`'s fraction on the bar, in a fresh one when the snapshot
+    /// belongs to an operation other than the one the bar has shown.
+    private func showFraction(of snapshot: ClipboardProgressSnapshot) {
+        guard snapshot.operationID == barOperation else {
+            let fresh = Self.makeBar(fraction: snapshot.fractionComplete)
+            rows.removeArrangedSubview(bar)
+            bar.removeFromSuperview()
+            rows.insertArrangedSubview(fresh, at: Self.barRow)
+            bar = fresh
+            barOperation = snapshot.operationID
+            pinBarWidth()
+            return
+        }
+        bar.doubleValue = snapshot.fractionComplete
     }
 
     /// Applies a snapshot in place, so the readout keeps advancing while its
@@ -185,7 +227,7 @@ public final class ClipboardProgressReadoutView: NSView {
         headline.stringValue = ClipboardProgressFormat.headline(
             direction: snapshot.direction, peerName: snapshot.peerName,
             gesture: snapshot.gesture)
-        bar.doubleValue = snapshot.fractionComplete
+        showFraction(of: snapshot)
         byteProgress.stringValue = ClipboardProgressFormat.byteProgress(snapshot) ?? ""
         itemCounter.stringValue =
             ClipboardProgressFormat.itemCounter(
@@ -213,6 +255,9 @@ public final class ClipboardProgressReadoutView: NSView {
 
     /// Test seam: the fraction the bar shows.
     public var barFractionForTesting: Double { bar.doubleValue }
+
+    /// Test seam: the bar.
+    public var barForTesting: NSProgressIndicator { bar }
 
     /// Test seam: the byte line.
     public var byteProgressForTesting: String { byteProgress.stringValue }

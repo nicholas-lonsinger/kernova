@@ -1,10 +1,13 @@
 import AppKit
 import Foundation
+import KernovaLogging
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
 @testable import KernovaAppKitShared
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for how the presenter drives the status item's callout slot.
 @Suite("ClipboardProgressStatusItemPresenter", .caseScoped)
@@ -19,6 +22,7 @@ struct ClipboardProgressStatusItemPresenterTests {
     /// A slot holding showings by the real tenancy rules, with no status item.
     final class RecordingSlot: StatusItemCalloutSlot {
         var isDropdownOpen = false
+        var readoutForClick: (() -> TransientStatusItemPopover.ShowResult)?
         /// Whether the status item can carry a callout at all.
         var canCarry = true
         private(set) var shown: [NSViewController] = []
@@ -38,6 +42,10 @@ struct ClipboardProgressStatusItemPresenterTests {
             }
             shown.append(content)
             return .shown(showing)
+        }
+
+        func holds(_ showing: TransientStatusItemPopover.Showing) -> Bool {
+            tenancy.current == showing
         }
 
         func dismiss(_ showing: TransientStatusItemPopover.Showing) -> Bool {
@@ -88,7 +96,7 @@ struct ClipboardProgressStatusItemPresenterTests {
             ClipboardProgressSnapshot(
                 direction: .outbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
                 fileCount: 1, bytesTransferred: 100, totalBytes: 1_000, bytesPerSecond: 100,
-                secondsRemaining: 10, gesture: .peerPaste, elapsedSeconds: elapsed,
+                secondsRemaining: 10, gesture: .drop, elapsedSeconds: elapsed,
                 isCancellable: true, operationID: operation),
             since: Date())
     }
@@ -129,6 +137,25 @@ struct ClipboardProgressStatusItemPresenterTests {
         view.cancelButtonForTesting.performClick(nil)
 
         #expect(slot.events == [.dismissed(readout), .cancelled(operation)])
+    }
+
+    @Test("a click while the main thread is held shows the readout in the callout, one its reveal held back included")
+    func aHeldClickShowsTheReadout() throws {
+        let presenter = makePresenter()
+        let click = try #require(slot.readoutForClick)
+        #expect(click() == .skipped(.noReadout))
+
+        presenter.apply(sizeUnknown(elapsed: 0.25))
+        #expect(slot.shown.isEmpty)
+        guard case .shown(let showing) = click() else {
+            Issue.record("the readout did not go up")
+            return
+        }
+        #expect(slot.current == showing)
+
+        // The callout is the readout's own: clearing the readout closes it.
+        presenter.apply(.idle)
+        #expect(slot.events == [.dismissed(showing)])
     }
 
     @Test("a callout the status item could not carry leaves the reveal for a later update")
@@ -232,6 +259,32 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         #expect(clock.requestedSeconds.isEmpty)
         #expect(slot.shown.isEmpty)
+    }
+
+    @Test("the reveal writes a line when its decision changes, not per readout")
+    func revealLogsOnChange() {
+        let lines = Locked(0)
+        let presenter = ClipboardProgressStatusItemPresenter(
+            menu: NSMenu(), slot: slot, clock: clock,
+            logger: KernovaLogger(subsystem: "test", category: "test") { _, _, _, _ in lines.withLock { $0 += 1 } })
+
+        // Under the floor: the first readout is a line, the next ones repeat it.
+        presenter.apply(sizeUnknown(elapsed: 0.25))
+        presenter.apply(sizeUnknown(elapsed: 0.5))
+        #expect(lines.withLock { $0 } == 1)
+
+        // Held back by a status item that can't carry the callout: one line for the new reason.
+        slot.canCarry = false
+        presenter.apply(running(elapsed: 5))
+        presenter.apply(running(elapsed: 6))
+        #expect(lines.withLock { $0 } == 2)
+
+        // Shown, then updates while it stays up.
+        slot.canCarry = true
+        presenter.apply(running(elapsed: 7))
+        presenter.apply(running(elapsed: 8))
+        presenter.apply(running(elapsed: 9))
+        #expect(lines.withLock { $0 } == 3)
     }
 
     @Test("a readout that reveals on delivery arms no revisit")

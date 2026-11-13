@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaSynchronization
+import KernovaTransferProgress
 
 /// A production `EngineClock` whose `sleep` calls a test can count and await:
 /// each call is counted as it starts, then suspends on the wrapped clock for

@@ -65,6 +65,9 @@ public struct TreeEventSequence: Sendable {
     public private(set) var openFile: OpenFile?
     /// The entries admitted, and the bytes their files carried.
     public private(set) var counts = ContainerError.Counts(entries: 0, bytes: 0)
+    /// The bytes the entries admitted declare their chunks carry, data and resource fork: what `counts.bytes`
+    /// reaches once each has all its bytes.
+    public private(set) var declaredBytes: UInt64 = 0
     /// Whether `end` was admitted.
     public private(set) var isEnded = false
     /// The logical bytes the entries so far land, which the byte ceiling bounds.
@@ -140,6 +143,8 @@ public struct TreeEventSequence: Sendable {
         let entry = try ValidatedEntry(header)
         if entry.isLZ4 && !acceptance.acceptsLZ4 { throw .lz4NotAccepted }
         landedBytes = try acceptance.admitLanding(entry, after: landedBytes)
+        // No larger than the landed bytes the byte ceiling just bounded.
+        declaredBytes += entry.carriedByteCount
         counts.entries += 1
         switch header.type {
         case .directory: enteredDirectories += 1

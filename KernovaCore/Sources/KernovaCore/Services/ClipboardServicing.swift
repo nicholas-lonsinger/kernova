@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 import KernovaWire
 
 /// Common surface shared by every clipboard transport.
@@ -83,6 +84,8 @@ package enum GuestClipboardCopy {
     case alreadyHeld
     /// It could not be copied, and why.
     case failed(ClipboardTransferFailure)
+    /// The user cancelled it on its readout, which said so: nothing was written.
+    case cancelled
     /// The copy landed and was handed to the write.
     case landed
 }

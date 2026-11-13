@@ -7,6 +7,7 @@ import KernovaKit
 import KernovaLogging
 import KernovaPlatformDarwin
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// The guest's clipboard over the session peer's CLIPBOARD items: each copy in this session offered to the host
@@ -57,11 +58,14 @@ final class GuestClipboard {
     private(set) var activity: ClipboardActivity = .disabled
 
     /// A clipboard over `pasteboard`, landing the host's representations and calling in copied promises under
-    /// `stagingRoot`, logging through `logger`, and raising `onNotice` when a refusal lands in ``activity``. A paste
-    /// lands no more than `pasteCeiling` bytes until the host's policy sets it.
+    /// `stagingRoot`, logging through `logger`, reporting its pulls of the host's offers to `transfers` measured on
+    /// `transferClock`, and raising `onNotice` when a refusal lands in ``activity``. A paste lands no more than
+    /// `pasteCeiling` bytes until the host's policy sets it.
     init(
         pasteboard: any ClipboardPasteboard, stagingRoot: ProcessStagingRoot,
         pasteCeiling: Int = ClipboardPasteLimit.defaultBytes, logger: KernovaLogger = GuestClipboard.defaultLogger,
+        transfers: ClipboardTransferReporter = ClipboardTransferReporter(),
+        transferClock: any EngineClock = makePlatformEngineClock(),
         onNotice: @escaping @Sendable () -> Void = {}
     ) {
         self.pasteboard = pasteboard
@@ -71,7 +75,7 @@ final class GuestClipboard {
         self.pasteCeiling = ceiling
         exchange = ClipboardItemExchange(
             side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: { ceiling.withLock { $0 } },
-            logger: logger)
+            logger: logger, transfers: transfers, peerName: { MacAgentPeer.hostName }, transferClock: transferClock)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         snapshotStaging = .leased(label: "agent-copies", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
@@ -88,9 +92,12 @@ final class GuestClipboard {
         publisher.onPasteRefused = { [weak self] in self?.writeRefused() }
     }
 
-    /// The general pasteboard's clipboard.
-    convenience init(stagingRoot: ProcessStagingRoot, onNotice: @escaping @Sendable () -> Void) {
-        self.init(pasteboard: NSPasteboard.general, stagingRoot: stagingRoot, onNotice: onNotice)
+    /// The general pasteboard's clipboard, reporting its pulls to `transfers`.
+    convenience init(
+        stagingRoot: ProcessStagingRoot, transfers: ClipboardTransferReporter,
+        onNotice: @escaping @Sendable () -> Void
+    ) {
+        self.init(pasteboard: NSPasteboard.general, stagingRoot: stagingRoot, transfers: transfers, onNotice: onNotice)
     }
 
     /// CLIPBOARD's owner on the session peer's connection, calling into it through `calls`.
@@ -450,10 +457,10 @@ struct AgentClipboardLink: ClipboardItemLink {
 
     func order(
         token: Data, item: UInt32, representation: UInt32, byteCeiling: UInt64, landing: ItemLanding,
-        budget: ByteBudget?
+        budget: ByteBudget?, progress: (any ItemLandingProgress)?
     ) throws(WireError) -> ItemPullOrder {
         try calls.order(
             token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
-            budget: budget)
+            budget: budget, progress: progress)
     }
 }

@@ -7,6 +7,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 
 /// The VM display's current hosting location.
@@ -479,13 +480,15 @@ package final class VMInstance {
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk, whose clipboard publishes to and polls
-    /// `hostPasteboard` and stages under `stagingRoot`, and whose
-    /// ``activity`` forwards its records to `logSink`.
+    /// `hostPasteboard` and stages under `stagingRoot`, its clipboard readouts and their dwell
+    /// measured on `transferClock`, and whose ``activity`` forwards its records
+    /// to `logSink`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
         hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts,
         logSink: KernovaLogger.ForwardingSink?, agentConnector: (any HostConnectionMaking)? = nil,
-        stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot
+        stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot,
+        transferClock: any EngineClock = makePlatformEngineClock()
     ) {
         self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
@@ -498,12 +501,14 @@ package final class VMInstance {
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
         self.itemSink = itemSink
+        let clipboardTransfers = ClipboardTransferReporter(clock: transferClock)
+        self.clipboardTransfers = clipboardTransfers
         let hubClipboard = HubClipboardService(
             sink: itemSink, stagingRoot: stagingRoot,
-            stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes })
+            stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes },
+            reporter: clipboardTransfers, transferClock: transferClock,
+            label: { [snapshots] in snapshots.instance?.name ?? "VM" })
         self.hubClipboard = hubClipboard
-        let clipboardTransfers = ClipboardTransferReporter()
-        self.clipboardTransfers = clipboardTransfers
         let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService
         let dragOut = HubDragOut(sink: itemSink, reporter: clipboardTransfers) { [snapshots] in
@@ -544,7 +549,6 @@ package final class VMInstance {
     private func wireHubClipboard() {
         let publisher = hostClipboardPublisher
         hubClipboard.hub = agentHub
-        hubClipboard.reporter = clipboardTransfers
         publisher.onPasteRefused = { [weak self] in
             guard let self else { return }
             Self.logger.log(
@@ -554,7 +558,6 @@ package final class VMInstance {
             clipboardTransfers.finish(
                 ClipboardTransferFinish(gesture: .paste, outcome: .failed(.transferFailed), peerName: name))
         }
-        hubClipboard.label = { [weak self] in self?.name ?? "VM" }
         hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0, withdrawing: $1) }
         hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
         hubClipboard.passthroughRuns = { [weak self] in

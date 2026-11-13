@@ -3,6 +3,7 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Unit tests for `FetchProgressCoalescer` — the stateful watermarks the paste
 /// progress consumers share.

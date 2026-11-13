@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaTestSupport
+import KernovaTransferProgress
 import Testing
 
 @testable import KernovaCore
@@ -29,8 +30,6 @@ struct ClipboardTransferWordingTests {
             (.diskFull(needed: 4096, available: 1024), .paste),
             (.diskFull(needed: nil, available: nil), .preview),
             (.tooLarge(limitBytes: limit), .copy),
-            (.tooLarge(limitBytes: limit), .peerPaste),
-            (.peerReported(.pasteFailed), .peerPaste),
             (.peerReported(.dropDiskFull), .drop),
             (.peerReported(.dropDownloadsDenied), .drop),
             (.peerReported(.dropFailed), .drop),
@@ -93,9 +92,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.timedOut, .paste)).headline
                 == "Clipboard not pasted from \(quotedVM).")
-        #expect(
-            try #require(wording(.peerReported(.pasteFailed), .peerPaste)).headline
-                == "Clipboard not pasted into \(quotedVM).")
         #expect(
             try #require(wording(.sendFailed, .drop)).headline
                 == "Files not copied to \(quotedVM).")
@@ -254,11 +250,6 @@ struct ClipboardTransferWordingTests {
     func menuLines() throws {
         let expected: [(ClipboardTransferFailure, ClipboardTransferGesture, String)] = [
             (.tooLarge(limitBytes: limit), .copy, "Clipboard: too large to copy to your Mac"),
-            (
-                .tooLarge(limitBytes: limit), .peerPaste,
-                "Clipboard: too large to paste into the guest"
-            ),
-            (.peerReported(.pasteFailed), .peerPaste, "Clipboard: paste into the guest failed"),
             (.timedOut, .paste, "Clipboard: paste from the guest timed out"),
             (.transferFailed, .paste, "Clipboard: paste from the guest failed"),
             (.diskFull(needed: 1, available: 0), .paste, "Clipboard: paste from the guest failed"),

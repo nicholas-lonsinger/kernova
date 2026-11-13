@@ -1,6 +1,7 @@
 import Foundation
 import KernovaKit
 import KernovaSynchronization
+import KernovaTransferProgress
 
 /// An `EngineClock` that parks every `sleep` until the test releases it,
 /// recording the interval each caller asked for.
