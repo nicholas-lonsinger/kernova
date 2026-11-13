@@ -180,11 +180,12 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
     /// not held.
     private func begin(_ token: Data, _ items: [OfferedItem]?) {
         guard let items else { return finish(token) }
-        guard jobs.withLock({ jobs in
-            guard jobs[token]?.withdrawn == false else { return false }
-            jobs[token]?.items = items
-            return true
-        })
+        guard
+            jobs.withLock({ jobs in
+                guard jobs[token]?.withdrawn == false else { return false }
+                jobs[token]?.items = items
+                return true
+            })
         else { return }
         advance(token)
     }
@@ -214,7 +215,8 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
             return finish(token, refusing: error)
         }
         let readout = job.readout ?? makeReadout(for: job, of: token)
-        let unit = readout.unit(name: String(decoding: offered.name, as: UTF8.self), expectedBytes: offered.sizeEstimate)
+        let unit = readout.unit(
+            name: String(decoding: offered.name, as: UTF8.self), expectedBytes: offered.sizeEstimate)
         jobs.withLock { jobs in
             jobs[token]?.readout = readout
             jobs[token]?.unit = unit

@@ -275,6 +275,7 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         return true
     }
 
+    /// Whether `showing`'s callout still holds the slot.
     public func holds(_ showing: Showing) -> Bool {
         tenancy.current == showing
     }

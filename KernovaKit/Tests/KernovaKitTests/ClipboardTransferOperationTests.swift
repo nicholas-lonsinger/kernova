@@ -526,7 +526,8 @@ struct ClipboardTransferOperationTests {
         #expect(recorder.reporter.cancel(operation.id))
         #expect(stops.withLock { $0 } == 1)
         await settle()
-        if case .completed = try #require(recorder.finish).outcome {} else {
+        if case .completed = try #require(recorder.finish).outcome {
+        } else {
             Issue.record("a Cancel with nothing in flight should complete")
         }
         #expect(!operation.isCancellable)
@@ -558,7 +559,8 @@ struct ClipboardTransferOperationTests {
         first.ended(succeeded: true)
         operation.finishCancelled(itemsOwed: true)
         await settle()
-        if case .cancelled = try #require(recorder.finish).outcome {} else {
+        if case .cancelled = try #require(recorder.finish).outcome {
+        } else {
             Issue.record("a Cancel with an item owed should cancel")
         }
     }

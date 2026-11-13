@@ -85,7 +85,10 @@ struct DropReceiverTests {
             let firstOpen = Locked(true)
             let sink = ItemSinkAdapter(
                 fileSystem: InterposedFileSystem(openingDirectory: { name in
-                    guard name == landingPath, firstOpen.withLock({ first in defer { first = false }; return first })
+                    guard name == landingPath,
+                        firstOpen.withLock({ first in
+                            defer { first = false }; return first
+                        })
                     else { return }
                     landingOpens.record(())
                     if holdingLandingOpen { landingOpenReleased.wait() }
