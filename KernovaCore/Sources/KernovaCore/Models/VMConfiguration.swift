@@ -830,38 +830,38 @@ extension VMConfiguration {
             references.append(
                 ExternalFileReference(
                     id: singletonReferenceID(seed: "kernel"), kind: .kernel, label: "Kernel",
-                    path: kernelPath, bookmark: kernelBookmark))
+                    path: kernelPath, bookmark: kernelBookmark, readOnly: true))
         }
         if let initrdPath {
             references.append(
                 ExternalFileReference(
                     id: singletonReferenceID(seed: "initrd"), kind: .initrd,
-                    label: "Initial RAM Disk", path: initrdPath, bookmark: initrdBookmark))
+                    label: "Initial RAM Disk", path: initrdPath, bookmark: initrdBookmark, readOnly: true))
         }
         for disk in storageDisks ?? [] where !disk.isInternal {
             references.append(
                 ExternalFileReference(
                     id: disk.id, kind: .storageDisk, label: disk.label, path: disk.path,
-                    bookmark: disk.bookmark))
+                    bookmark: disk.bookmark, readOnly: disk.readOnly))
         }
         for item in removableMedia ?? [] {
             references.append(
                 ExternalFileReference(
                     id: item.id, kind: .removableMedia, label: item.label, path: item.path,
-                    bookmark: item.bookmark))
+                    bookmark: item.bookmark, readOnly: item.readOnly))
         }
         for directory in sharedDirectories ?? [] {
             references.append(
                 ExternalFileReference(
                     id: directory.id, kind: .sharedDirectory, label: directory.displayName,
-                    path: directory.path, bookmark: directory.bookmark))
+                    path: directory.path, bookmark: directory.bookmark, readOnly: directory.readOnly))
         }
         if let localIPSWPath = installContext?.localIPSWPath {
             references.append(
                 ExternalFileReference(
                     id: singletonReferenceID(seed: "local-ipsw"), kind: .localIPSW,
                     label: "Installer Image", path: localIPSWPath,
-                    bookmark: installContext?.localIPSWBookmark))
+                    bookmark: installContext?.localIPSWBookmark, readOnly: true))
         }
         return references
     }

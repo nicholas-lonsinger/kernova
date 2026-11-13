@@ -542,6 +542,21 @@ struct VMCommandEnvelopeTests {
                 + "Stop \u{201C}Alpha Copy\u{201D} first.")
     }
 
+    @Test(
+        "A disk image in use offers stopping the other VM only when this copy runs it, and names the VM that writes",
+        arguments: [false, true], [false, true])
+    func diskImageCopyOffersWhatFreesTheImage(otherHeldByAnotherCopy: Bool, writableThere: Bool) {
+        let refusal = sharing(
+            .diskImage(label: "Data", writableThere: writableThere), otherHeldByAnotherCopy: otherHeldByAnotherCopy)
+        let message = refusal.message
+        #expect(refusal.title == "Disk Image In Use")
+        #expect(message.contains("Stop \u{201C}Alpha Copy\u{201D} first.") == !otherHeldByAnotherCopy)
+        #expect(message.contains("another copy of Kernova") == otherHeldByAnotherCopy)
+        let fact = message.components(separatedBy: ". ").first ?? ""
+        #expect(fact.contains("can write to it") == writableThere)
+        #expect(fact.contains("\u{201C}Alpha\u{201D} would write to it") == !writableThere)
+    }
+
     @Test("A shared MAC address is refused on its own terms, whatever the machine IDs")
     func macAddressCopyNamesTheNetwork() {
         let active = sharing(.macAddress, otherHeldByAnotherCopy: false)

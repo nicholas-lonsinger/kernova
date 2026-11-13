@@ -289,6 +289,10 @@ extension VMCommandCore {
     /// Appends `files` to the VM's removable-media list, skipping paths it
     /// already carries — off the wire for the reason
     /// ``attachStorageDisks(_:paths:)`` states.
+    ///
+    /// On a running VM, an image another active VM has open writable is
+    /// refused at the commit, leaving the list as it was
+    /// (``VMLiveIdentities/diskImageConflict(on:movingFrom:to:)``).
     func attachRemovableMedia(_ selector: VMSelector, paths files: [PickedFile]) throws {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
@@ -492,7 +496,9 @@ extension VMCommandCore {
     /// Marks a removable medium read-only, or writable again.
     ///
     /// Unlike a label or a note this *is* part of the mount identity, so a live
-    /// guest sees the medium ejected and re-inserted.
+    /// guest sees the medium ejected and re-inserted. On a running VM, making
+    /// writable an image another active VM has open is refused at the commit
+    /// (``VMLiveIdentities/diskImageConflict(on:movingFrom:to:)``).
     func setRemovableMediaReadOnly(
         _ selector: VMSelector, item id: UUID, readOnly: Bool
     ) throws {

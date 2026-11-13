@@ -32,6 +32,10 @@ extension VMCommandCore {
     /// Another active VM using the VM's MAC address on the network it would
     /// join refuses it with ``CommandError/stepRequired(_:)``, routing through
     /// the changes to the VM's network it can take first.
+    ///
+    /// Another active VM having open an external disk image the VM would open
+    /// refuses it with ``CommandError/conflict(vm:with:reason:)``, unless both
+    /// have it read-only.
     package func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {
@@ -478,19 +482,19 @@ extension VMCommandCore {
     /// may no longer read or write all leave the same VM, with the same one
     /// entry to remove.
     ///
-    /// Three exclusions where removal is the wrong advice. A bundle-internal
+    /// Two exclusions where removal is the wrong advice. A bundle-internal
     /// disk, because nothing re-creates its entry
     /// (``StartFailedAttachment``) — which covers `Disk.asif`, the disk a
     /// path-traversing entry is refused as, and an in-bundle disk the user
-    /// created. A VM's only disk, since removing it leaves nothing to start and
-    /// an empty list would re-synthesize `Disk.asif`. And file-lock contention —
-    /// the file is fine and the lock holder is a VM still tearing down, so the
-    /// fix is to wait and retry.
+    /// created. And a VM's only disk, since removing it leaves nothing to start
+    /// and an empty list would re-synthesize `Disk.asif`. A file another
+    /// process keeps locked never arrives here: the start ends on
+    /// ``VirtualizationError/fileLockHeld(label:underlying:)``, not a builder
+    /// error.
     private func bringUpFailedAttachment(
         from error: Error, verb: VMVerb, on instance: VMInstance
     ) -> StartFailedAttachment? {
         guard let builderError = error as? ConfigurationBuilderError,
-            !VirtualizationFailure.isFileLockContention(builderError),
             let reason = builderError.attachmentReason
         else { return nil }
         switch builderError {
@@ -1044,8 +1048,9 @@ extension VMCommandCore {
     /// A hot resume of a live-paused VM, or the restore of the saved state one
     /// holds — joining a restore already in flight.
     ///
-    /// Presents nothing, and refuses a shared machine identity and a MAC
-    /// address, as ``start(_:recovery:consent:)`` does.
+    /// Presents nothing, and refuses a shared machine identity, a MAC address
+    /// and a disk image another active VM has open, as
+    /// ``start(_:recovery:consent:)`` does.
     package func resume(_ selector: VMSelector, consent: Consent) async throws {
         let instance = try resolve(selector)
         do {

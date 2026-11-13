@@ -600,6 +600,8 @@ package final class VMCommandCore {
         switch refusal {
         case .macAddressInUse(let conflict):
             macAddressRefusal(conflict, on: instance)
+        case .diskImageInUse(let conflict):
+            .conflict(vm: summary(instance), with: summary(conflict.other), reason: conflict.reason)
         case .noLibrary:
             .notFound(.id(instance.id))
         case .outsidePermit:

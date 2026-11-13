@@ -287,13 +287,24 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         setData(
             Self.encode(manifest.record), atRelativePath: VMBundleLayout.snapshotManifestRelativePath,
             in: url)
-        // Each snapshot's own `config.json` carries the network device the
-        // manifest's reader takes from it.
-        for snapshot in manifest.snapshots {
-            guard let network = snapshot.network else { continue }
+        // Each snapshot's own `config.json` carries the network device and
+        // disk images the manifest's reader takes from it.
+        for snapshot in manifest.snapshots where snapshot.network != nil || snapshot.diskImages != nil {
             setData(
-                Self.encode(network),
+                Self.encode(CapturedParts(network: snapshot.network, diskImages: snapshot.diskImages)),
                 atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshot.id), in: url)
+        }
+    }
+
+    /// What a snapshot's `config.json` holds of its network device and disk
+    /// images, as one JSON object.
+    private struct CapturedParts: Encodable {
+        let network: VMCapturedNetwork?
+        let diskImages: VMCapturedDiskImages?
+
+        func encode(to encoder: any Encoder) throws {
+            try network?.encode(to: encoder)
+            try diskImages?.encode(to: encoder)
         }
     }
 

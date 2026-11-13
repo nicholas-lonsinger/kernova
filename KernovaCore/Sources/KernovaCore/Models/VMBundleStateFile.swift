@@ -176,9 +176,10 @@ private struct VMSnapshotConfigurationRecord: Codable, Sendable {
     }
 }
 
-/// A snapshot's `config.json`, its bytes read once, and the two things a
-/// bundle read takes from them: the network device the snapshot reserves an
-/// address for, and whether a strict read refuses the file.
+/// A snapshot's `config.json`, its bytes read once, and what a bundle read
+/// takes from them: the network device the snapshot reserves an address for,
+/// the disk images a revert to it opens, and whether a strict read refuses
+/// the file.
 private struct VMSnapshotConfigurationRead {
     private let file: VMBundleStateFile<VMConfiguration>
     /// The bytes, `nil` when there is no file; the read's error when there is
@@ -191,6 +192,8 @@ private struct VMSnapshotConfigurationRead {
     /// else what ``JSONDecoder/decodeRepairing(_:from:)`` reads of the bytes,
     /// and `nil` when there are no bytes to read.
     let network: VMCapturedNetwork?
+    /// The snapshot's disk images, read the way ``network`` is.
+    let diskImages: VMCapturedDiskImages?
 
     init(of id: UUID, in files: any VMBundleFileReading) {
         let file = VMBundleStateFile.snapshotConfiguration(id: id)
@@ -199,16 +202,19 @@ private struct VMSnapshotConfigurationRead {
         guard case .success(let data) = bytes else {
             refusal = nil
             network = nil
+            diskImages = nil
             return
         }
         do {
-            network = VMCapturedNetwork(try file.decoded(data, in: files))
+            let configuration = try file.decoded(data, in: files)
+            network = VMCapturedNetwork(configuration)
+            diskImages = VMCapturedDiskImages(configuration)
             refusal = nil
         } catch {
             refusal = error
-            network = data.flatMap {
-                try? VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: $0)
-            }
+            let decoder = VMConfiguration.makeJSONDecoder()
+            network = data.flatMap { try? decoder.decodeRepairing(VMCapturedNetwork.self, from: $0) }
+            diskImages = data.flatMap { try? decoder.decodeRepairing(VMCapturedDiskImages.self, from: $0) }
         }
     }
 
@@ -233,16 +239,16 @@ extension VMBundleStateFile where Value == USBAccessoryPairingSet {
 }
 
 extension VMBundleStateFile where Value == VMSnapshotManifestRecord {
-    /// The manifest as the file records it, without the network device each
-    /// snapshot's own `config.json` holds.
+    /// The manifest as the file records it, without the network device and
+    /// disk images each snapshot's own `config.json` holds.
     static var snapshotManifestRecord: Self {
         coded(.snapshotManifest) { VMSnapshotManifestRecord(snapshots: [], currentID: nil) }
     }
 }
 
 extension VMBundleStateFile where Value == VMSnapshotManifest {
-    /// The manifest, each snapshot carrying the network device its own
-    /// `config.json` records — read through the same access, since the
+    /// The manifest, each snapshot carrying the network device and disk
+    /// images its own `config.json` records — read through the same access, since the
     /// manifest does not repeat it.
     static var snapshotManifest: Self {
         coded(
@@ -253,13 +259,15 @@ extension VMBundleStateFile where Value == VMSnapshotManifest {
             encode: { $0.record })
     }
 
-    /// `record` with each snapshot carrying the network device `reads` — one
-    /// per snapshot, in order — found in its `config.json`.
+    /// `record` with each snapshot carrying the network device and disk images
+    /// `reads` — one per snapshot, in order — found in its `config.json`.
     fileprivate static func assembled(
         _ record: VMSnapshotManifestRecord, reads: [VMSnapshotConfigurationRead]
     ) -> VMSnapshotManifest {
         VMSnapshotManifest(
-            snapshots: zip(record.snapshots, reads).map { VMSnapshot($0, network: $1.network) },
+            snapshots: zip(record.snapshots, reads).map {
+                VMSnapshot($0, network: $1.network, diskImages: $1.diskImages)
+            },
             currentID: record.currentID)
     }
 }
@@ -399,8 +407,8 @@ struct VMBundleFiles: Sendable {
             let hostState = attempt(.hostState, owner: owner)
             let manifestRecord = attempt(.snapshotManifestRecord, owner: owner)
             usbPairings = try? attempt(.usbPairings, owner: owner).get()
-            // Each snapshot's `config.json` is read once, for both the network
-            // device the manifest carries and whether the file reads.
+            // Each snapshot's `config.json` is read once, for what the manifest
+            // carries of it and whether the file reads.
             let snapshotManifest = manifestRecord.map { record in
                 let reads = record.snapshots.map { snapshot in
                     let read = VMSnapshotConfigurationRead(of: snapshot.id, in: files)

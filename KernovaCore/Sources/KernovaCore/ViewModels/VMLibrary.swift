@@ -585,7 +585,7 @@ package final class VMLibrary: VMAdmissionPeers {
         self.macAddresses = macAddresses
         self.liveIdentities = VMLiveIdentities(macAddresses: macAddresses, preferences: preferences)
         let configurationPolicy = VMLibraryConfigurationPolicy(
-            macAddresses: macAddresses, removableMedia: removableMedia,
+            macAddresses: macAddresses, liveIdentities: liveIdentities, removableMedia: removableMedia,
             guestAddresses: guestAddresses)
         self.configurationPolicy = configurationPolicy
         self.bundleFactory = VMBundle.Factory(
@@ -976,6 +976,9 @@ package final class VMLibrary: VMAdmissionPeers {
         /// The change puts the VM on a MAC address another VM holds, or — for
         /// a running VM — onto the network another active VM uses it on.
         case macAddressInUse(VMMACAddressRegistry.MACAddressConflict)
+        /// The change has a running VM open a disk image another active VM
+        /// has open, with either of them writable.
+        case diskImageInUse(VMIdentityConflict)
         /// The write reached no library: the instance was never wired to one,
         /// or the library that wired it is gone.
         case noLibrary
@@ -987,6 +990,7 @@ package final class VMLibrary: VMAdmissionPeers {
         package var errorDescription: String? {
             switch self {
             case .macAddressInUse: "Another virtual machine holds that MAC address."
+            case .diskImageInUse(let conflict): conflict.errorDescription
             case .noLibrary: "No library is available to write this virtual machine\u{2019}s settings."
             case .outsidePermit:
                 "The virtual machine\u{2019}s current state doesn\u{2019}t allow this change."

@@ -1349,7 +1349,25 @@ struct VirtualizationServiceTests {
             id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
             underlying: makeFileLockContentionError())
         #expect(VirtualizationFailure.isFileLockContention(wrapped))
-        #expect(VirtualizationFailure.isTransientStartError(wrapped))
+    }
+
+    @Test("A lock still held when the retries run out is transient, though no builder error is")
+    func lockHeldIsTransient() {
+        let held = VirtualizationError.fileLockHeld(
+            label: "Main Disk",
+            underlying: ConfigurationBuilderError.storageDiskAttachFailed(
+                id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
+                underlying: makeFileLockContentionError()))
+        #expect(VirtualizationFailure.isTransientStartError(held))
+    }
+
+    @Test("A lock held on the VM's own files says so in the plural throughout")
+    func lockHeldOnTheVMsOwnFilesAgrees() {
+        let held = VirtualizationError.fileLockHeld(label: nil, underlying: makeFileLockContentionError())
+        #expect(
+            held.localizedDescription
+                == "Couldn\u{2019}t open the virtual machine\u{2019}s files because another process is using them. "
+                + "If a virtual machine that uses them was just stopped, try again in a moment.")
     }
 
     @Test("a non-contention attach failure stays permanent")

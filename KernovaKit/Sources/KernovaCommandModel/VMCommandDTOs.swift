@@ -874,6 +874,7 @@ extension ConflictReason {
         case .machineIdentity: "Duplicate Machine ID"
         case .macAddress: "Duplicate MAC Address"
         case .macAddressInUse: "MAC Address In Use"
+        case .diskImage: "Disk Image In Use"
         }
     }
 }
@@ -1013,7 +1014,30 @@ extension CommandErrorDTO {
                 + (otherHeldByAnotherCopy
                     ? "Change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings."
                     : "Stop \u{201C}\(other)\u{201D} first, or change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings.")
+        case .diskImage(let label, let writableThere):
+            diskImageMessage(
+                label: label, vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy,
+                writableThere: writableThere)
         }
+    }
+
+    /// What ``ConflictReason/diskImage(label:writableThere:)`` tells the
+    /// user: who uses the image and who would write to it, the rule, and —
+    /// only when this copy runs `other` — stopping it.
+    private static func diskImageMessage(
+        label: String, vm: String, other: String, otherHeldByAnotherCopy: Bool, writableThere: Bool
+    ) -> String {
+        let (label, vm, other) = ("\u{201C}\(label)\u{201D}", "\u{201C}\(vm)\u{201D}", "\u{201C}\(other)\u{201D}")
+        let holder = otherHeldByAnotherCopy ? "which another copy of Kernova is using" : "which is active"
+        let fact =
+            switch (otherHeldByAnotherCopy, writableThere) {
+            case (false, true): "\(label) is in use by \(other), which is active and can write to it."
+            case (true, true): "\(label) is in use by \(other), \(holder) and which can write to it."
+            case (_, false): "\(label) is in use by \(other), \(holder), and \(vm) would write to it."
+            }
+        return fact
+            + " A disk image can be in use by two virtual machines at once only when neither can write to it."
+            + (otherHeldByAnotherCopy ? "" : " Stop \(other) first.")
     }
 
     /// The sentences naming the VM `vm` shares its MAC address with on one

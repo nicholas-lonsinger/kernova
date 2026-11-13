@@ -135,4 +135,218 @@ struct VMLiveIdentitiesTests {
         }
         withExtendedLifetime(library) {}
     }
+
+    // MARK: - Disk Images
+
+    /// How the VM holding a disk image is placed when another starts with it.
+    enum HolderState: Sendable, CaseIterable, CustomTestStringConvertible {
+        case running, bringingUp, heldByAnotherCopy, stopped, suspended
+
+        /// Whether a VM so placed has its disk images open.
+        var claims: Bool {
+            switch self {
+            case .running, .bringingUp, .heldByAnotherCopy: true
+            case .stopped, .suspended: false
+            }
+        }
+
+        var testDescription: String {
+            switch self {
+            case .running: "running"
+            case .bringingUp: "bring-up in flight"
+            case .heldByAnotherCopy: "held by another copy"
+            case .stopped: "stopped"
+            case .suspended: "suspended"
+            }
+        }
+    }
+
+    /// The external disk-image kinds a configuration lists.
+    enum ImageKind: Sendable, CaseIterable, CustomTestStringConvertible {
+        case removableMedia, storageDisk
+
+        /// Lists the image at `path` as this kind, labelled `label`.
+        func attach(_ path: String, readOnly: Bool, label: String, to config: inout VMConfiguration) {
+            switch self {
+            case .removableMedia:
+                config.removableMedia = [RemovableMediaItem(path: path, readOnly: readOnly, label: label)]
+            case .storageDisk:
+                config.storageDisks = [
+                    StorageDisk(
+                        id: UUID(), path: path, readOnly: readOnly, label: label, isInternal: false,
+                        kind: .virtio)
+                ]
+            }
+        }
+
+        var testDescription: String { self == .removableMedia ? "removable media" : "storage disk" }
+    }
+
+    struct DiskImageRow: Sendable, CustomTestStringConvertible {
+        let holderState: HolderState
+        let holderKind: ImageKind
+        let holderReadOnly: Bool
+        let candidateKind: ImageKind
+        let candidateReadOnly: Bool
+
+        var testDescription: String {
+            "holder \(holderState) \(holderKind) \(holderReadOnly ? "read-only" : "writable"), "
+                + "candidate \(candidateKind) \(candidateReadOnly ? "read-only" : "writable")"
+        }
+    }
+
+    nonisolated static let diskImageRows: [DiskImageRow] = HolderState.allCases.flatMap { state in
+        ImageKind.allCases.flatMap { holderKind in
+            ImageKind.allCases.flatMap { candidateKind in
+                [false, true].flatMap { holderReadOnly in
+                    [false, true].map { candidateReadOnly in
+                        DiskImageRow(
+                            holderState: state, holderKind: holderKind, holderReadOnly: holderReadOnly,
+                            candidateKind: candidateKind, candidateReadOnly: candidateReadOnly)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test(
+        "A start naming a disk image another VM has open is refused, unless both have it read-only",
+        arguments: diskImageRows)
+    func diskImageSweep(row: DiskImageRow) {
+        let storage = MockVMStorageService()
+        let preferences = makeTestPreferences()
+        let library = makeWiredLibrary(storage: storage, preferences: preferences)
+        let path = "/Volumes/Shared/w.img"
+        let holderPhase: VMLifecyclePhase =
+            switch row.holderState {
+            case .running: .running(sessionID: UUID())
+            case .suspended: .suspended
+            case .bringingUp, .heldByAnotherCopy, .stopped: .stopped
+            }
+        let holder = library.registerFixture(name: "Holder", phase: holderPhase, preferences: preferences) {
+            row.holderKind.attach(path, readOnly: row.holderReadOnly, label: "There", to: &$0)
+        }
+        switch row.holderState {
+        case .bringingUp:
+            holder.activity.placeForTesting(
+                .operating(.bringUp(.guestStart(.starting(recovery: false))), from: .stopped))
+        case .heldByAnotherCopy:
+            storage.files.holdElsewhere(holder.bundleURL)
+        case .running, .stopped, .suspended:
+            break
+        }
+        let candidate = library.registerFixture(name: "Candidate", preferences: preferences) {
+            row.candidateKind.attach(path, readOnly: row.candidateReadOnly, label: "Here", to: &$0)
+        }
+
+        let decision = candidate.activity.decide(.start(recovery: false), posture: .commit)
+
+        let refused = row.holderState.claims && !(row.holderReadOnly && row.candidateReadOnly)
+        switch decision {
+        case .admit where !refused:
+            break
+        case .refuse(.identityConflict(let conflict)) where refused:
+            #expect(conflict.other === holder)
+            #expect(conflict.reason == .diskImage(label: "Here", writableThere: !row.holderReadOnly))
+            #expect(!conflict.asks)
+        default:
+            Issue.record("decided \(decision)")
+        }
+        withExtendedLifetime(library) {}
+    }
+
+    @Test("A guest-agent installer entry is neither a claim nor a candidate")
+    func installerEntriesNeverConflict() throws {
+        let preferences = makeTestPreferences()
+        let library = makeWiredLibrary(preferences: preferences)
+        let installer = try #require(AppBundleProducts.testing.guestAgents.macOSInstallerDiskImageURL)
+            .path(percentEncoded: false)
+        // Writable on both sides, so only the exclusion admits the start.
+        let entry: (inout VMConfiguration) -> Void = {
+            $0.removableMedia = [RemovableMediaItem(path: installer, readOnly: false, label: "Kernova Guest Agent")]
+        }
+        _ = library.registerFixture(
+            name: "Holder", phase: .running(sessionID: UUID()), preferences: preferences, mutate: entry)
+        let candidate = library.registerFixture(name: "Candidate", preferences: preferences, mutate: entry)
+
+        #expect(candidate.activity.decide(.start(recovery: false), posture: .commit) == .admit)
+        withExtendedLifetime(library) {}
+    }
+
+    @Test("A disk image is answered before a shared machine identity, so nothing is asked")
+    func diskImageIsAnsweredBeforeMachineIdentity() {
+        let preferences = makeTestPreferences()
+        preferences.allowsDuplicateMachineIDOverride = true
+        let identity = Data([1, 6, 1, 8])
+        let library = makeWiredLibrary(preferences: preferences)
+        let path = "/Volumes/Shared/w.img"
+        let live = library.registerFixture(
+            name: "Live", phase: .running(sessionID: UUID()), preferences: preferences
+        ) {
+            $0.genericMachineIdentifierData = identity
+            $0.removableMedia = [RemovableMediaItem(path: path, readOnly: false, label: "W")]
+        }
+        let twin = library.registerFixture(name: "Twin", preferences: preferences) {
+            $0.genericMachineIdentifierData = identity
+            $0.removableMedia = [RemovableMediaItem(path: path, readOnly: false, label: "W")]
+        }
+
+        let decision = twin.activity.decide(.start(recovery: false), posture: .commit, identity: .askable)
+
+        guard case .refuse(.identityConflict(let conflict)) = decision else {
+            Issue.record("decided \(decision)")
+            return
+        }
+        #expect(conflict.other === live)
+        #expect(conflict.reason == .diskImage(label: "W", writableThere: true))
+        #expect(!conflict.asks)
+        withExtendedLifetime(library) {}
+    }
+
+    @Test("A running VM's disk image is matched at the path its bookmark resolved to")
+    func diskImageMatchesTheHoldersResolvedPath() throws {
+        let scratch = TestScratchDirectory(prefix: "VMLiveIdentitiesTests")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        // Named as a bookmark resolves it, through no symlink such as /var.
+        let directory = scratch.url.resolvingSymlinksInPath()
+        let picked = directory.appending(path: "picked.img")
+        try Data(repeating: 0, count: 512).write(to: picked)
+        let bookmark = try #require(SecurityScopedBookmark.make(for: picked))
+        let moved = directory.appending(path: "moved.img")
+        try FileManager.default.moveItem(at: picked, to: moved)
+
+        let preferences = makeTestPreferences()
+        let library = makeWiredLibrary(preferences: preferences)
+        let holder = library.registerFixture(
+            name: "Holder", phase: .running(sessionID: UUID()), preferences: preferences
+        ) {
+            $0.removableMedia = [
+                RemovableMediaItem(
+                    path: picked.path(percentEncoded: false), readOnly: false, label: "Picked",
+                    bookmark: bookmark)
+            ]
+        }
+        // The session opens the bookmark as a boot does, so it resolves to the moved file.
+        holder.beginSessionContextForTesting()
+        let naming = { (url: URL) in
+            library.registerFixture(name: url.lastPathComponent, preferences: preferences) {
+                $0.removableMedia = [
+                    RemovableMediaItem(path: url.path(percentEncoded: false), readOnly: false, label: "Here")
+                ]
+            }
+        }
+        let atResolved = naming(moved)
+        let elsewhere = naming(directory.appending(path: "other.img"))
+
+        guard
+            case .refuse(.identityConflict(let conflict)) = atResolved.activity.decide(
+                .start(recovery: false), posture: .commit)
+        else {
+            Issue.record("a start naming the resolved path was admitted")
+            return
+        }
+        #expect(conflict.other === holder)
+        #expect(elsewhere.activity.decide(.start(recovery: false), posture: .commit) == .admit)
+        withExtendedLifetime(library) {}
+    }
 }

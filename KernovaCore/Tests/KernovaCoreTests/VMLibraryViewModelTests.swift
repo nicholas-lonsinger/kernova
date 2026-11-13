@@ -1243,27 +1243,34 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
     }
 
-    @Test("start does not offer removal for transient file-lock contention")
+    @Test("A start that kept meeting a file lock says so, offers no removal, and leaves the VM stopped")
     func startDoesNotOfferRemovalForLockContention() async {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let item = RemovableMediaItem(path: "/tmp/shared.iso", readOnly: true, label: "Shared ISO")
         let instance = viewModel.library.admitFixture { $0.removableMedia = [item] }
-        // Contention means the file is fine and a dying VM still holds the
-        // lock — offering to detach a working attachment would be wrong.
-        virtService.startError = ConfigurationBuilderError.removableMediaAttachFailed(
-            id: item.id, path: item.path, label: item.label,
-            underlying: NSError(
-                domain: VirtualizationFailure.Framework.errorDomain,
-                code: VirtualizationFailure.Framework.Code.invalidVirtualMachineConfiguration.rawValue,
-                userInfo: [
-                    NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
-                ]))
+        // What the start ends on once its retries run out: the file is fine,
+        // so offering to detach it would be wrong.
+        virtService.startError = VirtualizationError.fileLockHeld(
+            label: item.label,
+            underlying: ConfigurationBuilderError.removableMediaAttachFailed(
+                id: item.id, path: item.path, label: item.label,
+                underlying: NSError(
+                    domain: VirtualizationFailure.Framework.errorDomain,
+                    code: VirtualizationFailure.Framework.Code.invalidVirtualMachineConfiguration.rawValue,
+                    userInfo: [
+                        NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
+                    ])))
 
         await viewModel.start(instance)
 
         #expect(presenter.startFailedAttachments.isEmpty)
-        #expect(presenter.showError == true)
+        #expect(
+            presenter.errorMessage
+                == "Couldn\u{2019}t open \u{201C}Shared ISO\u{201D} because another process is using it. "
+                + "If a virtual machine that uses it was just stopped, try again in a moment.")
+        #expect(instance.status == .stopped)
+        #expect(instance.errorMessage == nil)
         #expect(instance.configuration.removableMedia?.count == 1)
     }
 

@@ -140,19 +140,26 @@ enum VMInstanceFixture {
 extension VMBundle.Factory {
     /// A factory for fixture bundles no library holds: their configuration
     /// policy is a library's, over parts no library wires, so it has no VMs
-    /// to refuse a MAC address against or to watch.
+    /// to refuse a MAC address or a disk image against or to watch.
     @MainActor
     init(machineFiles: any VMBundleMachineFileWorking) {
         let guestAddresses = GuestAddressObserver(
             reader: ScriptedARPTable(), vmnetNetworks: .scripted(), entitlements: .entitled)
+        let macAddresses = VMMACAddressRegistry()
+        let liveIdentities = VMLiveIdentities(macAddresses: macAddresses, preferences: makeTestPreferences())
+        liveIdentities.roster = noVMs
         self.init(
             machineFiles: machineFiles,
             configurationPolicy: VMLibraryConfigurationPolicy(
-                macAddresses: VMMACAddressRegistry(),
+                macAddresses: macAddresses, liveIdentities: liveIdentities,
                 removableMedia: VMRemovableMediaReconciler(lifecycle: makeTestLifecycle()),
                 guestAddresses: guestAddresses))
     }
 }
+
+/// The roster of a fixture bundle's configuration policy: a library with no
+/// VMs, alive for the whole run because the policy holds its roster weakly.
+@MainActor private let noVMs = StubVMInstanceRoster()
 
 extension VMGuestOS {
     /// The CPU count the creation wizard gives a new guest of this OS on this

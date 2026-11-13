@@ -25,9 +25,23 @@ package struct ExternalFileReference: Sendable, Equatable {
     let label: String
     let path: String
     let bookmark: Data?
+    /// Whether the VM opens the item read-only: always for a kernel, an
+    /// initial RAM disk and an installer image, and as the entry says for
+    /// the rest.
+    let readOnly: Bool
 }
 
 extension ExternalFileReference.Kind {
+    /// Whether the VM opens this kind as a disk image, which VZ locks while
+    /// it is open — exclusively when writable, shared when read-only
+    /// (`docs/research/2026-09-23-two-instances-same-vm.md`).
+    var isDiskImage: Bool {
+        switch self {
+        case .storageDisk, .removableMedia: true
+        case .kernel, .initrd, .sharedDirectory, .localIPSW: false
+        }
+    }
+
     /// Whether ``VMInstance/openRuntimeFileAccess(into:)`` takes a scope on this
     /// kind for the VM's runtime.
     var opensRuntimeScope: Bool {

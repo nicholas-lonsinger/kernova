@@ -1,26 +1,30 @@
 import Foundation
 
 /// The configuration policy every bundle a ``VMLibrary`` builds answers to:
-/// the MAC-address refusal across the library's VMs, and the live policy, the
-/// removable-media reconcile and the guest-address watch a moved
-/// configuration starts.
+/// the MAC-address and disk-image refusals across the library's VMs, and the
+/// live policy, the removable-media reconcile and the guest-address watch a
+/// moved configuration starts.
 @MainActor
 final class VMLibraryConfigurationPolicy {
     private let macAddresses: VMMACAddressRegistry
+    private let liveIdentities: VMLiveIdentities
     private let removableMedia: VMRemovableMediaReconciler
     private let guestAddresses: GuestAddressObserver
 
     init(
-        macAddresses: VMMACAddressRegistry, removableMedia: VMRemovableMediaReconciler,
-        guestAddresses: GuestAddressObserver
+        macAddresses: VMMACAddressRegistry, liveIdentities: VMLiveIdentities,
+        removableMedia: VMRemovableMediaReconciler, guestAddresses: GuestAddressObserver
     ) {
         self.macAddresses = macAddresses
+        self.liveIdentities = liveIdentities
         self.removableMedia = removableMedia
         self.guestAddresses = guestAddresses
     }
 
     /// Refuses a move onto a MAC address another VM holds, in its
-    /// configuration or in one of its snapshots.
+    /// configuration or in one of its snapshots, and a running VM's move onto
+    /// a disk image another active VM has open
+    /// (``VMLiveIdentities/diskImageConflict(on:movingFrom:to:)``).
     ///
     /// A revert refuses nothing: the snapshot's saved state restores only
     /// under the address it was taken with, which ``VMMACAddressRegistry``
@@ -32,9 +36,13 @@ final class VMLibraryConfigurationPolicy {
         under authority: VMEditPermit.Authority
     ) -> (any Error)? {
         if case .operation(.bringUp(.reverting)) = authority { return nil }
-        guard let conflict = macAddresses.macAddressConflict(on: instance, movingFrom: old, to: new)
-        else { return nil }
-        return VMLibrary.SettingsRefusal.macAddressInUse(conflict)
+        if let conflict = macAddresses.macAddressConflict(on: instance, movingFrom: old, to: new) {
+            return VMLibrary.SettingsRefusal.macAddressInUse(conflict)
+        }
+        if let conflict = liveIdentities.diskImageConflict(on: instance, movingFrom: old, to: new) {
+            return VMLibrary.SettingsRefusal.diskImageInUse(conflict)
+        }
+        return nil
     }
 
     /// Pushes the change to a running VM: the hot-toggleable fields through

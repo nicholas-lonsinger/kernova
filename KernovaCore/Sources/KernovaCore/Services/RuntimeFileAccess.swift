@@ -14,13 +14,14 @@ import KernovaLogging
 final class RuntimeFileAccess {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "RuntimeFileAccess")
 
-    private var configScopes: [ScopedAccess] = []
+    private var configScopes: [UUID: ScopedAccess] = [:]
     private var attachmentScopes: [UUID: ScopedAccess] = [:]
 
-    /// Replaces the config-derived scope set (releasing any prior set — a
-    /// boot attempt after a retried teardown must not double-hold).
-    func adoptConfigScopes(_ scopes: [ScopedAccess]) {
-        configScopes.forEach { $0.release() }
+    /// Replaces the config-derived scope set, keyed by reference id (releasing
+    /// any prior set — a boot attempt after a retried teardown must not
+    /// double-hold).
+    func adoptConfigScopes(_ scopes: [UUID: ScopedAccess]) {
+        configScopes.values.forEach { $0.release() }
         configScopes = scopes
         Self.logger.log(.debug, "Adopted \(scopes.count, privacy: .public) config scope(s)")
     }
@@ -38,6 +39,12 @@ final class RuntimeFileAccess {
         attachmentScopes.removeValue(forKey: id)?.release()
     }
 
+    /// The path the scope this session holds for the external reference or
+    /// attachment `id` resolved to, or `nil` when it holds none.
+    func resolvedPath(of id: UUID) -> String? {
+        (configScopes[id] ?? attachmentScopes[id])?.url.path(percentEncoded: false)
+    }
+
     /// Releases every scope this session holds.
     ///
     /// Safe to call repeatedly.
@@ -46,7 +53,7 @@ final class RuntimeFileAccess {
         if count > 0 {
             Self.logger.log(.debug, "Releasing all \(count, privacy: .public) scope(s)")
         }
-        configScopes.forEach { $0.release() }
+        configScopes.values.forEach { $0.release() }
         configScopes.removeAll()
         attachmentScopes.values.forEach { $0.release() }
         attachmentScopes.removeAll()
@@ -77,7 +84,7 @@ extension VMInstance {
     /// (``effectiveConfiguration``); ``writeHeals(of:_:)`` writes them to the
     /// bundle.
     func openRuntimeFileAccess(into context: VMSessionContext) {
-        var scopes: [ScopedAccess] = []
+        var scopes: [UUID: ScopedAccess] = [:]
         var heals: [ExternalReferenceHeal] = []
 
         for reference in configuration.externalFileReferences
@@ -92,7 +99,7 @@ extension VMInstance {
             case .removableMedia, .sharedDirectory:
                 context.fileAccess.holdAttachmentScope(id: reference.id, opened.scope)
             case .kernel, .initrd, .storageDisk, .localIPSW:
-                scopes.append(opened.scope)
+                scopes[reference.id] = opened.scope
             }
         }
 

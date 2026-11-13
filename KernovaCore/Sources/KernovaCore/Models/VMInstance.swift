@@ -759,10 +759,42 @@ package final class VMInstance {
     package var heldByAnotherCopy: Bool { activity.heldByAnotherCopy }
     var isAtRest: Bool { activity.isAtRest }
 
-    /// Whether this VM claims its machine identity and MAC address right now:
-    /// live in this copy (``holdsLiveIdentity``), or held by another copy of
-    /// Kernova, which may be running it.
+    /// Whether this VM claims its machine identity, its MAC address and the
+    /// disk images it opens (``claimedDiskImages``) right now: live in this
+    /// copy (``holdsLiveIdentity``), a bring-up in flight included, or held by
+    /// another copy of Kernova, which may be running it.
     var claimsIdentity: Bool { holdsLiveIdentity || heldByAnotherCopy }
+
+    /// The external disk images this VM has open while it
+    /// ``claimsIdentity``, and none otherwise: each its configuration lists,
+    /// and each its live session still has attached that the configuration
+    /// no longer lists that way — a detach still in flight holds the file.
+    ///
+    /// A guest-agent installer entry claims nothing: each VM is attached its
+    /// own copy of the disk (``GuestAgentDiskCopies``).
+    var claimedDiskImages: [DiskImageClaim] {
+        guard claimsIdentity else { return [] }
+        let agents = bundleProducts.guestAgents
+        let access = sessionContext?.fileAccess
+        func claim(id: UUID, path: String, readOnly: Bool) -> DiskImageClaim {
+            DiskImageClaim(
+                identities: ExternalFileReference.fileIdentities(
+                    forPath: path, resolvedTarget: access?.resolvedPath(of: id)),
+                writable: !readOnly)
+        }
+        let listed = configuration.externalFileReferences.filter(\.kind.isDiskImage)
+        var claims = listed.filter { !agents.isInstallerDisk(path: $0.path) }.map {
+            claim(id: $0.id, path: $0.path, readOnly: $0.readOnly)
+        }
+        for live in liveRemovableMedia where !agents.isInstallerDisk(path: live.path) {
+            let listedAsLive = listed.contains {
+                $0.id == live.id && $0.path == live.path && $0.readOnly == live.readOnly
+            }
+            guard !listedAsLive else { continue }
+            claims.append(claim(id: live.id, path: live.path, readOnly: live.readOnly))
+        }
+        return claims
+    }
     package var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
     package var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
@@ -846,21 +878,14 @@ package final class VMInstance {
     }
 
     /// The configuration `kind` puts in front of VZ, as far as identity reads
-    /// it: this VM's own, except for a revert, which lands the snapshot's
-    /// network device and address
-    /// (``VMConfiguration/adoptingSnapshotState(_:)`` keeps only the machine
-    /// identity across).
+    /// it — network device and disk images: this VM's own, except for a
+    /// revert, which lands what the snapshot was captured with
+    /// (``VMSnapshot/installed(on:)``), read when the manifest was.
     func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
         guard case .reverting(let snapshotID, _) = kind,
             let snapshot = snapshotManifest.snapshot(id: snapshotID)
         else { return configuration }
-        guard let network = snapshot.network else {
-            // Nothing readable to land on: no address a network could see.
-            var landing = configuration
-            landing.macAddress = nil
-            return landing
-        }
-        return network.installed(on: configuration)
+        return snapshot.installed(on: configuration)
     }
 
     /// `true` when the bundle holds a saved state and nothing is live — the VM

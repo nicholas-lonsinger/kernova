@@ -2,7 +2,7 @@ import Foundation
 import KernovaCommandModel
 
 /// How a failure Virtualization reported is classified: which start failures
-/// are transient, which are this copy's own file-lock contention, and what a
+/// are transient, which are file-lock contention a start retries, and what a
 /// log line says about the chain beneath one.
 package enum VirtualizationFailure {
     /// `VZErrorDomain` and the `VZErrorCode`s classified here, as
@@ -43,17 +43,15 @@ package enum VirtualizationFailure {
     /// `userInfo` can nest arbitrarily deep, or cyclically.
     nonisolated private static let maxUnderlyingErrorDepth = 4
 
-    /// Returns `true` when the error is a transient environmental condition (e.g. too many
-    /// concurrent VMs) rather than a problem with the VM itself.
+    /// Returns `true` when the error is a transient environmental condition (too many
+    /// concurrent VMs, a file another process keeps locked) rather than a problem with
+    /// the VM itself.
     ///
     /// Transient leaves a plain start in `.stopped` and an install in
     /// `.initialBoot`, with no stored message; permanent rests at `.failed`
     /// (red) carrying the message for the banner and tooltip.
     nonisolated static func isTransientStartError(_ error: Error) -> Bool {
-        // Checked ahead of the builder-error rule below: contention on a disk image
-        // surfaces *as* a builder error and is still transient — the lock holder is
-        // a dying VZVirtualMachine that releases it at deallocation.
-        if isFileLockContention(error) { return true }
+        if case .fileLockHeld? = error as? VirtualizationError { return true }
 
         if error is ConfigurationBuilderError { return false }
 
@@ -135,6 +133,10 @@ package enum VirtualizationError: LocalizedError {
     case restoreFailed(underlying: any Error, hostLocked: Bool = false)
     /// The revert wrote the snapshot back, and bringing the VM up on it failed.
     case revertResumeFailed(underlying: any Error)
+    /// A start kept meeting VZ's lock on one of the VM's files
+    /// (``VirtualizationFailure/isFileLockContention(_:)``) until its retries
+    /// ran out. `label` names the attachment, `nil` for the VM's own files.
+    case fileLockHeld(label: String?, underlying: any Error)
 
     package var errorDescription: String? {
         switch self {
@@ -162,6 +164,13 @@ package enum VirtualizationError: LocalizedError {
             "The virtual machine was reverted to the snapshot, but it could not be "
                 + "resumed: \(underlying.localizedDescription)\n\n"
                 + "The reverted state was kept — choose Resume to try again."
+        case .fileLockHeld(let label, _):
+            label.map {
+                "Couldn\u{2019}t open \u{201C}\($0)\u{201D} because another process is using it. "
+                    + "If a virtual machine that uses it was just stopped, try again in a moment."
+            }
+                ?? ("Couldn\u{2019}t open the virtual machine\u{2019}s files because another process is using them. "
+                    + "If a virtual machine that uses them was just stopped, try again in a moment.")
         }
     }
 }
@@ -172,7 +181,8 @@ package enum VirtualizationError: LocalizedError {
 extension VirtualizationError: CustomNSError {
     package var errorUserInfo: [String: Any] {
         switch self {
-        case .restoreFailed(let underlying, _), .revertResumeFailed(let underlying):
+        case .restoreFailed(let underlying, _), .revertResumeFailed(let underlying),
+            .fileLockHeld(_, let underlying):
             [NSUnderlyingErrorKey: underlying as NSError]
         default:
             [:]

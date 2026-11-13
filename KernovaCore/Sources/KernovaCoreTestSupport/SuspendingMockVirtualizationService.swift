@@ -174,9 +174,7 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<VMSnapshot> {
         .rest(
             .asStarted,
-            VMSnapshot(
-                request.record(capturedIn: context.mode),
-                network: VMCapturedNetwork(instance.configuration)))
+            VMSnapshot(request.record(capturedIn: context.mode), capturedUnder: instance.configuration))
     }
 
     func copyLive(

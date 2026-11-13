@@ -1098,7 +1098,7 @@ struct VMCommandCoreTests {
     ) -> ExternalAttachment {
         ExternalAttachment(
             reference: ExternalFileReference(
-                id: UUID(), kind: .storageDisk, label: label, path: path, bookmark: nil),
+                id: UUID(), kind: .storageDisk, label: label, path: path, bookmark: nil, readOnly: false),
             sharedWithVMNames: sharedWith,
             isMissing: isMissing)
     }

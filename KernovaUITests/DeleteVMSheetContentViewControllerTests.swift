@@ -346,7 +346,7 @@ struct DeleteVMSheetContentViewControllerTests {
     ) -> ExternalAttachment {
         ExternalAttachment(
             reference: ExternalFileReference(
-                id: id, kind: .storageDisk, label: label, path: path, bookmark: nil),
+                id: id, kind: .storageDisk, label: label, path: path, bookmark: nil, readOnly: false),
             sharedWithVMNames: shared,
             isMissing: missing
         )
