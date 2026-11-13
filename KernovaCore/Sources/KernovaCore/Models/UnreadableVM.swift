@@ -14,11 +14,14 @@ package final class UnreadableVM {
     package let bundleURL: URL
     /// The file that kept the bundle out, as the read found it.
     let file: UnreadableConfigFile
+    /// ``UnreadableBundle/vmID``.
+    let vmID: UUID?
 
     init(_ bundle: UnreadableBundle) {
         self.id = Self.id(for: bundle.url)
         self.bundleURL = bundle.url
         self.file = bundle.file
+        self.vmID = bundle.vmID
     }
 
     /// The row identifier of the bundle at `bundleURL`.
@@ -36,7 +39,7 @@ package final class UnreadableVM {
     /// Why the row is unreadable, and where to go about it.
     package var toolTip: String {
         "Kernova can\u{2019}t read this virtual machine\u{2019}s settings: \(file.summary). "
-            + "Choose File > Check Config Files\u{2026} to review it."
+            + UnreadableConfigFile.reviewPrompt(fileCount: 1)
     }
 }
 
@@ -44,4 +47,8 @@ package final class UnreadableVM {
 struct UnreadableBundle: Sendable, Equatable {
     let url: URL
     let file: UnreadableConfigFile
+    /// The identifier the bundle's `config.json` gives its VM, read as an
+    /// import admits the file (``VMBundleFiles/readAdmittedVMID()``); `nil`
+    /// when that refuses it.
+    let vmID: UUID?
 }

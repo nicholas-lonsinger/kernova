@@ -171,9 +171,9 @@ package final class VMArrival {
     let isAwaited: Bool
 
     /// The host state the VM arrives with and whether it carries snapshots: a
-    /// clone's, the values its copy writes; an import's, its source's as read
-    /// when the import registered, as the copy will leave them; a create's,
-    /// and an import's whose source's state files don't read, a new VM's.
+    /// clone's, the values its copy writes; an import's, its source's as the
+    /// import admitted them when it registered (``VMBundleFiles/readAdmission()``),
+    /// as the copy will leave them; a create's, a new VM's.
     struct Starting: Sendable, Equatable {
         var hostState = VMHostState()
         var hasSnapshots = false

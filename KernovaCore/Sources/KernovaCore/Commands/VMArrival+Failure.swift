@@ -9,11 +9,35 @@ extension VMArrival {
     func failure(for error: any Error) -> CommandError? {
         guard !(error is CancellationError) else { return nil }
         if let command = error as? CommandError { return command }
+        if case VMLibrary.ArrivalError.unreadable(let file) = error {
+            return Self.unreadableFailure(file, kind: kind, name: name)
+        }
         return .operationFailed(
-            verb: kind.verb,
-            title: "Couldn\u{2019}t \(kind.titleVerb) \u{201C}\(name)\u{201D}",
+            verb: kind.verb, title: Self.failureTitle(kind, name: name),
             message: Self.failureMessage(
                 for: error, kind: kind, name: name, stagedURL: staged.url, source: source))
+    }
+
+    /// Whether the config check is the report of `error`: the arrival's
+    /// bundle is in the library as a row Kernova can't read, which the library
+    /// asked for the check about as it listed it.
+    nonisolated static func isReportedByTheCheck(_ error: any Error) -> Bool {
+        if case VMLibrary.ArrivalError.unreadable = error { true } else { false }
+    }
+
+    /// The failure of a `kind` whose bundle is in the library as the row,
+    /// named `name`, of a bundle a read refuses for `file`: the bundle it
+    /// published, or — for an import — the row already there for its source.
+    nonisolated static func unreadableFailure(
+        _ file: UnreadableConfigFile, kind: Kind, name: String
+    ) -> CommandError {
+        .operationFailed(
+            verb: kind.verb, title: failureTitle(kind, name: name), message: file.inLibraryNotice(name: name))
+    }
+
+    /// The heading a failed `kind` of the VM named `name` is reported under.
+    nonisolated private static func failureTitle(_ kind: Kind, name: String) -> String {
+        "Couldn\u{2019}t \(kind.titleVerb) \u{201C}\(name)\u{201D}"
     }
 
     /// What a failed write tells the user, naming the file it failed on by the

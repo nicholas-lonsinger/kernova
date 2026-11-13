@@ -139,6 +139,28 @@ extension VMLibrary {
         func read(at bundleURL: URL) throws(UnreadableConfigFile) -> VMBundleRead {
             try files(at: bundleURL).read()
         }
+
+        /// The bundle at `bundleURL` as the library lists it once a read
+        /// refused it for `file`.
+        func unreadable(at bundleURL: URL, _ file: UnreadableConfigFile) -> UnreadableBundle {
+            UnreadableBundle(url: bundleURL, file: file, vmID: files(at: bundleURL).readAdmittedVMID())
+        }
+
+        /// Reads the bundle, or what the library lists for it when the read
+        /// refuses it.
+        func scan(at bundleURL: URL) -> ScannedOrUnreadable {
+            do {
+                return .scanned(try bundle(at: bundleURL))
+            } catch {
+                return .unreadable(unreadable(at: bundleURL, error))
+            }
+        }
+    }
+
+    /// What ``BundleReader/scan(at:)`` found.
+    enum ScannedOrUnreadable: Sendable {
+        case scanned(ScannedBundle)
+        case unreadable(UnreadableBundle)
     }
 
     var bundleReader: BundleReader {
@@ -177,11 +199,12 @@ extension VMLibrary {
         var scan = LibraryScan()
         for bundleURL in try reader.storage.listVMBundles().sorted(by: bundleNameOrder) {
             if reader.files(at: bundleURL).isRunLockedElsewhere() { scan.heldElsewhere.insert(bundleURL) }
-            do {
-                scan.bundles.append(try reader.bundle(at: bundleURL))
-            } catch {
-                logUnreadable(bundleURL, error, to: logger)
-                scan.unreadable.append(UnreadableBundle(url: bundleURL, file: error))
+            switch reader.scan(at: bundleURL) {
+            case .scanned(let bundle):
+                scan.bundles.append(bundle)
+            case .unreadable(let bundle):
+                logUnreadable(bundleURL, bundle.file, to: logger)
+                scan.unreadable.append(bundle)
             }
         }
         return scan
@@ -313,6 +336,14 @@ extension VMLibrary {
             // holds.
             var confirmedIDs: Set<UUID> = []
             func noteUnreadable(_ bundleURL: URL, _ file: UnreadableConfigFile) {
+                // A bundle an arrival is publishing is that arrival's to list,
+                // as ``Adoption/publishing(_:)`` leaves a readable one to it.
+                if arrivals.contains(where: {
+                    ($0.stage == .publishing || $0.stage == .withdrawing)
+                        && isSameBundle($0.destinationURL, bundleURL)
+                }) {
+                    return
+                }
                 Self.logUnreadable(bundleURL, file, to: logger)
                 // A VM already built from the bundle keeps its row, for the
                 // reason the eviction below is keyed on the listing, and its
@@ -324,7 +355,7 @@ extension VMLibrary {
                     return
                 }
                 recordUnreadable([file], under: bundleURL)
-                unreadable.append(UnreadableBundle(url: bundleURL, file: file))
+                unreadable.append(reader.unreadable(at: bundleURL, file))
             }
             var didChange = false
             for bundleURL in diskBundles {
@@ -478,10 +509,13 @@ extension VMLibrary {
     /// write; up to it, every exit discards the staged tree outright — it is
     /// app-internal, and its source still exists. The VM is built from what
     /// disk holds after the rename, not what the staged tree held before it.
-    /// A cancel taken during the rename is decided in the same main-actor step
-    /// as the adoption: the published bundle goes to the Trash before the
-    /// arrival settles, so nothing that follows the arrival ever receives its
-    /// VM.
+    /// A published bundle that read refuses — one whose `config.json` or
+    /// manifest has only problems with repairs, which an import copies as
+    /// they are — takes the arrival's row as the library's row for it, and
+    /// ``ArrivalError/unreadable(_:)`` is thrown. A cancel taken during the
+    /// rename is decided in the same main-actor step as the adoption: the
+    /// published bundle goes to the Trash before the arrival settles, so
+    /// nothing that follows the arrival ever receives its VM.
     ///
     /// Every outcome a cancel produced is thrown as `CancellationError`. The
     /// VM the arrival became follows what `whenAdopted` answers in the step
@@ -496,9 +530,10 @@ extension VMLibrary {
         do {
             try await write(arrival.staged)
             try Task.checkCancellation()
-            // Read before publication, so a written tree holding a file the
-            // library cannot read — an import's, say — never becomes a bundle.
-            _ = try await Task.detached { try reader.read(at: staged) }.value
+            // Read before publication as an import reads its source, so a
+            // written tree holding a core file with a problem no repair makes
+            // never becomes a bundle.
+            _ = try await Task.detached { try reader.files(at: staged).readAdmission() }.value
             guard arrival.beginPublishing() else { throw CancellationError() }
         } catch {
             await discardStagedTree(at: staged)
@@ -516,20 +551,25 @@ extension VMLibrary {
             .notice,
             "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' published at \(destination.lastPathComponent, privacy: .public)"
         )
-        let scanned: Result<ScannedBundle, any Error>
-        do {
-            scanned = .success(try await Task.detached { try reader.bundle(at: destination) }.value)
-        } catch {
-            scanned = .failure(error)
-        }
-        guard arrival.finishPublishing() else { try await withdraw(arrival, read: scanned) }
-        switch adopt(try scanned.get(), publishing: arrival) {
-        case .adopted(let instance), .alreadyAdopted(let instance), .rebound(let instance):
-            macAddresses.logDuplicateMACAddressHolders()
-            for followUp in whenAdopted?(instance) ?? [] { instance.activity.follow(followUp) }
-            return instance
-        case .publishing, .duplicate:
-            throw ArrivalError.identifierInUse(name: arrival.name)
+        let published = await Task.detached { reader.scan(at: destination) }.value
+        guard arrival.finishPublishing() else { try await withdraw(arrival, read: published) }
+        switch published {
+        case .unreadable(let bundle):
+            logger.log(
+                .error,
+                "\(arrival.kind.displayNoun, privacy: .public) of '\(arrival.name, privacy: .public)' is in the library as a bundle it can't read: \(bundle.file.fileName, privacy: .public) \(String(describing: bundle.file.problems), privacy: .public)"
+            )
+            admitUnreadable(bundle, publishedBy: arrival)
+            throw ArrivalError.unreadable(bundle.file)
+        case .scanned(let scanned):
+            switch adopt(scanned, publishing: arrival) {
+            case .adopted(let instance), .alreadyAdopted(let instance), .rebound(let instance):
+                macAddresses.logDuplicateMACAddressHolders()
+                for followUp in whenAdopted?(instance) ?? [] { instance.activity.follow(followUp) }
+                return instance
+            case .publishing, .duplicate:
+                throw ArrivalError.identifierInUse(name: arrival.name)
+            }
         }
     }
 
@@ -537,10 +577,10 @@ extension VMLibrary {
     /// throwing the cancel.
     ///
     /// A bundle the Trash turns down stays where it was published, so it is
-    /// adopted as the VM it now is and the refusal is thrown in place of the
-    /// cancel.
+    /// adopted as the VM it now is — or listed as the bundle a read refuses
+    /// that it is — and the refusal is thrown in place of the cancel.
     private func withdraw(
-        _ arrival: VMArrival, read scanned: Result<ScannedBundle, any Error>
+        _ arrival: VMArrival, read published: ScannedOrUnreadable
     ) async throws -> Never {
         let storage = storageService
         let destination = arrival.destinationURL
@@ -551,8 +591,9 @@ extension VMLibrary {
                 .error,
                 "Could not move the cancelled \(arrival.kind.displayNoun.lowercased(), privacy: .public) of '\(arrival.name, privacy: .public)' to the Trash: \(error.localizedDescription, privacy: .public)"
             )
-            if case .success(let bundle) = scanned {
-                _ = adopt(bundle, publishing: arrival)
+            switch published {
+            case .scanned(let bundle): _ = adopt(bundle, publishing: arrival)
+            case .unreadable(let bundle): admitUnreadable(bundle, publishedBy: arrival)
             }
             throw ArrivalError.withdrawalFailed(
                 name: arrival.name, reason: error.localizedDescription)
@@ -571,9 +612,15 @@ extension VMLibrary {
         /// A cancel taken during the rename could not move the published
         /// bundle to the Trash, so it stays in the library.
         case withdrawalFailed(name: String, reason: String)
+        /// The published bundle is in the library as the row of a bundle a
+        /// read refuses for this file, which the check the library asked for
+        /// reports (``VMArrival/isReportedByTheCheck(_:)``).
+        case unreadable(UnreadableConfigFile)
 
         var errorDescription: String? {
             switch self {
+            case .unreadable(let file):
+                file.inLibraryNotice(name: file.owner.title)
             case .identifierInUse(let name):
                 "Another virtual machine with the identifier of \u{201C}\(name)\u{201D} is already in the library."
             case .withdrawalFailed(let name, let reason):

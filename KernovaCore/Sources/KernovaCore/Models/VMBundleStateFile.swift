@@ -59,14 +59,46 @@ struct VMBundleStateFile<Value: Equatable & Sendable>: Sendable {
         from files: any VMBundleFileReading, in bundleURL: URL,
         owner: UnreadableConfigFile.Owner? = nil
     ) throws(UnreadableConfigFile) -> Value {
-        let data: Data?
+        try value(of: bytes(from: files, in: bundleURL, owner: owner), in: files, bundleURL: bundleURL, owner: owner)
+    }
+
+    /// The file's value as a bundle joining the library is admitted with it:
+    /// as ``read(from:in:owner:)`` reads it, or — where the strict decode
+    /// refuses it and every problem has a repair — as the check's repair
+    /// (``ConfigFileDiagnosis/repaired``) leaves it, beside the refusal.
+    ///
+    /// Throws the refusal when a problem has no repair.
+    fileprivate func admitted(
+        from files: any VMBundleFileReading, in bundleURL: URL,
+        owner: UnreadableConfigFile.Owner? = nil
+    ) throws(UnreadableConfigFile) -> (value: Value, refusal: UnreadableConfigFile?) {
+        let data = try bytes(from: files, in: bundleURL, owner: owner)
+        let strictFailure: any Error
         do {
-            data = try files.data(atRelativePath: relativePath)
+            return (try decoded(data, in: files), nil)
+        } catch {
+            strictFailure = error
+        }
+        guard let data else { throw unreadable(in: bundleURL, owner: owner, .fileMissing) }
+        let diagnosis = diagnose(data)
+        let refusal = unreadable(diagnosed: diagnosis, with: strictFailure, in: bundleURL, owner: owner)
+        guard let repaired = diagnosis.repaired, let value = try? decoded(repaired, in: files) else {
+            throw refusal
+        }
+        return (value, refusal)
+    }
+
+    /// The file's bytes as `files`, the bundle at `bundleURL`, holds them,
+    /// `nil` when there is no file.
+    private func bytes(
+        from files: any VMBundleFileReading, in bundleURL: URL, owner: UnreadableConfigFile.Owner?
+    ) throws(UnreadableConfigFile) -> Data? {
+        do {
+            return try files.data(atRelativePath: relativePath)
         } catch {
             throw unreadable(
                 in: bundleURL, owner: owner, .fileUnreadable(reason: error.localizedDescription))
         }
-        return try value(of: data, in: files, bundleURL: bundleURL, owner: owner)
     }
 
     /// The value `data` decodes to, as this file of the bundle at `bundleURL`.
@@ -95,10 +127,18 @@ struct VMBundleStateFile<Value: Equatable & Sendable>: Sendable {
         refusing data: Data?, with error: any Error, in bundleURL: URL, owner: UnreadableConfigFile.Owner?
     ) -> UnreadableConfigFile {
         guard let data else { return unreadable(in: bundleURL, owner: owner, .fileMissing) }
-        return UnreadableConfigFile(
+        return unreadable(diagnosed: diagnose(data), with: error, in: bundleURL, owner: owner)
+    }
+
+    /// The file whose bytes a strict decode that threw `error` refused, those
+    /// bytes diagnosed as `diagnosis`.
+    private func unreadable(
+        diagnosed diagnosis: ConfigFileDiagnosis, with error: any Error, in bundleURL: URL,
+        owner: UnreadableConfigFile.Owner?
+    ) -> UnreadableConfigFile {
+        UnreadableConfigFile(
             location: .bundle(bundleURL, id), owner: owner,
-            fallbackName: bundleURL.lastPathComponent, diagnosis: diagnose(data),
-            strictFailure: error)
+            fallbackName: bundleURL.lastPathComponent, diagnosis: diagnosis, strictFailure: error)
     }
 
     fileprivate func unreadable(
@@ -277,8 +317,9 @@ extension VMBundleStateFile where Value == VMSnapshotManifest {
 ///
 /// Any bundle can be read. A write takes ``VMBundle/CommitKey``, so only a
 /// ``VMBundle`` writes a bundle it holds; a bundle still being staged is
-/// written through ``VMStagedBundle``, and a file no read can take is
-/// rewritten only by ``repair(_:trashingOriginalWith:)``.
+/// written through ``VMStagedBundle``. A file no read can take is rewritten
+/// only by ``repair(_:trashingOriginalWith:)`` and, in a staged copy, by
+/// ``VMStagedBundle/arriveHostStateAsCopy()``.
 ///
 /// Every write reads the file, applies a change to what the file holds, and
 /// replaces it, all under one coordinated write — so a field another process
@@ -318,18 +359,33 @@ struct VMBundleFiles: Sendable {
         }
     }
 
-    /// What a bundle about to be copied is known to hold, in one coordinated
-    /// read: `config.json`, and the host state and whether the manifest lists
-    /// a snapshot, each `nil` when its file doesn't read. Reads no snapshot's
-    /// own files.
-    func readArrivalState() throws(UnreadableConfigFile) -> (
-        configuration: VMConfiguration, hostState: VMHostState?, hasSnapshots: Bool?
+    /// What a bundle joining the library — an import's source, or the tree an
+    /// arrival wrote — holds in its core files, `config.json`, the host state
+    /// and the snapshot manifest, in one coordinated read: each as a strict
+    /// read takes it or, where that refuses a file each of whose problems has
+    /// a repair, as the repair leaves it.
+    ///
+    /// Throws the file a strict read refuses for a problem with no repair. No
+    /// pairings or snapshot's own `config.json` decide whether the library
+    /// makes a VM of a bundle, so none is read.
+    func readAdmission() throws(UnreadableConfigFile) -> (
+        configuration: VMConfiguration, hostState: VMHostState, hasSnapshots: Bool
     ) {
         try reading { files throws(UnreadableConfigFile) in
-            let configuration = try VMBundleStateFile.configuration.read(from: files, in: url)
-            let hostState = try? VMBundleStateFile.hostState.read(from: files, in: url)
-            let manifest = try? VMBundleStateFile.snapshotManifestRecord.read(from: files, in: url)
-            return (configuration, hostState, manifest.map { !$0.snapshots.isEmpty })
+            let configuration = try VMBundleStateFile.configuration.admitted(from: files, in: url).value
+            let owner = UnreadableConfigFile.Owner.virtualMachine(configuration.name)
+            let hostState = try VMBundleStateFile.hostState.admitted(from: files, in: url, owner: owner).value
+            let manifest = try VMBundleStateFile.snapshotManifestRecord.admitted(from: files, in: url, owner: owner)
+                .value
+            return (configuration, hostState, !manifest.snapshots.isEmpty)
+        }
+    }
+
+    /// The identifier `config.json` gives the VM, read as
+    /// ``readAdmission()`` reads the file; `nil` when that refuses it.
+    func readAdmittedVMID() -> UUID? {
+        try? reading { files throws(UnreadableConfigFile) in
+            try VMBundleStateFile.configuration.admitted(from: files, in: url).value.id
         }
     }
 
@@ -489,20 +545,24 @@ struct VMBundleFiles: Sendable {
         _ file: VMBundleStateFile<Value>, _ key: VMBundle.CommitKey, holdingRunLock: Bool,
         _ change: (inout Value) throws -> Void
     ) throws -> Value {
-        try replace(file, refusingAnotherCopysHold: !holdingRunLock, change)
+        try replace(file, refusingAnotherCopysHold: !holdingRunLock, change).value
     }
 
     /// ``update(_:_:holdingRunLock:_:)``'s write, for the two writers this
-    /// file admits.
+    /// file admits, answering the value the file now holds.
+    ///
+    /// `repairing` reads the file as ``readAdmission()`` does, and a file a
+    /// strict read refuses is written, the refusal answered beside the value.
     fileprivate func replace<Value>(
-        _ file: VMBundleStateFile<Value>, refusingAnotherCopysHold: Bool,
+        _ file: VMBundleStateFile<Value>, refusingAnotherCopysHold: Bool, repairing: Bool = false,
         _ change: (inout Value) throws -> Void
-    ) throws -> Value {
+    ) throws -> (value: Value, repaired: UnreadableConfigFile?) {
         try access.writing(url, VMBundleFileWriteKey()) { files in
-            let current = try file.read(from: files, in: url)
+            let (current, refusal) =
+                repairing ? try file.admitted(from: files, in: url) : (try file.read(from: files, in: url), nil)
             var new = current
             try change(&new)
-            guard new != current else { return current }
+            guard new != current || refusal != nil else { return (current, nil) }
             // Inside the coordinated write: another copy's bring-up takes the
             // run lock and then reads the bundle, and a read and a write of one
             // bundle exclude each other, so either that read sees this write or
@@ -514,7 +574,7 @@ struct VMBundleFiles: Sendable {
             try files.replace(atRelativePath: file.relativePath, with: encoded)
             // What the file holds, not `new`: the encoding keeps dates to the
             // second, so the two can differ.
-            return try file.value(of: encoded, in: files, bundleURL: url)
+            return (try file.value(of: encoded, in: files, bundleURL: url), refusal)
         }
     }
 
@@ -602,7 +662,20 @@ struct VMStagedBundle: Sendable {
     func update<Value>(_ file: VMBundleStateFile<Value>, _ change: (inout Value) throws -> Void)
         throws -> Value
     {
-        try files.replace(file, refusingAnotherCopysHold: false, change)
+        try files.replace(file, refusingAnotherCopysHold: false, change).value
+    }
+
+    /// Readies the host state a copy brought in as a copy's
+    /// (``VMHostState/arriveAsCopy()``) — from what the file holds or, where
+    /// a strict read refuses it and every problem has a repair, from the value
+    /// the repair makes, which this write puts in its place. Answers that
+    /// refusal, `nil` when the file read.
+    ///
+    /// Only a staged copy is written this way: what the copy came from keeps
+    /// its own bytes, and a held bundle's file is repaired by the check alone.
+    func arriveHostStateAsCopy() throws -> UnreadableConfigFile? {
+        try files.replace(.hostState, refusingAnotherCopysHold: false, repairing: true) { $0.arriveAsCopy() }
+            .repaired
     }
 
     #if DEBUG

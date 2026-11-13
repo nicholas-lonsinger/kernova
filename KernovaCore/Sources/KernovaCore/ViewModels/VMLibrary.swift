@@ -704,7 +704,7 @@ package final class VMLibrary: VMAdmissionPeers {
                 continue
             }
             guard let row = entries[index].unreadable,
-                row.file != bundle.file || row.bundleURL != bundle.url
+                row.file != bundle.file || row.bundleURL != bundle.url || row.vmID != bundle.vmID
             else { continue }
             entries[index] = .unreadable(UnreadableVM(bundle))
             changed = true
@@ -718,6 +718,25 @@ package final class VMLibrary: VMAdmissionPeers {
                 instances.first { isSameBundle($0.bundleURL, row.bundleURL) }?.id ?? entries.first?.id
         }
         return changed
+    }
+
+    /// Replaces `arrival`'s row with the unreadable row of `bundle`, the
+    /// bundle it published, which a read refuses — in place, keeping the row's
+    /// place and selection as ``adopt(_:publishing:)`` keeps them for a VM —
+    /// and asks for the check about it as for any newly unreadable bundle.
+    ///
+    /// The arrival's own pipeline is the one caller, as it is the one that
+    /// adopts a readable bundle it published
+    /// (``Adoption/publishing(_:)``).
+    func admitUnreadable(_ bundle: UnreadableBundle, publishedBy arrival: VMArrival) {
+        guard let index = entries.firstIndex(where: { $0.arrival === arrival }) else { return }
+        let row = UnreadableVM(bundle)
+        let wasSelected = selectedID == arrival.id
+        entries[index] = .unreadable(row)
+        persistOrder()
+        if wasSelected { selectedID = row.id }
+        recordUnreadable([bundle.file], under: bundle.url)
+        reportNewlyUnreadable()
     }
 
     /// Whether two URLs name one bundle on disk, however each is spelled; a URL

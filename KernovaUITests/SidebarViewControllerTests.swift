@@ -1074,7 +1074,7 @@ struct SidebarViewControllerTests {
                     path: ConfigValuePath([.key("networkMode")]),
                     issue: .unrecognized(found: "plan9-mode"), repair: .useDefault("hostOnly"))
             ])
-        let bundle = UnreadableVM(UnreadableBundle(url: url, file: file))
+        let bundle = UnreadableVM(UnreadableBundle(url: url, file: file, vmID: nil))
         let controller = SidebarViewController(viewModel: viewModel)
 
         let cell = SidebarUnreadableRowCellView()
