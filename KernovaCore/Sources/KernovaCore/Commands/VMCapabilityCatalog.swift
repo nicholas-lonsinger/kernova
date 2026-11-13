@@ -338,8 +338,7 @@ package struct VMCapabilityCatalog {
     package func isAvailable(
         _ key: VMConfigurationKey, writing value: String, on instance: VMInstance
     ) -> Bool {
-        isAvailable(
-            key.capability(writing: value, for: instance.configuration.guestOS), on: instance)
+        isAvailable(key.capability(writing: value), on: instance)
             && key.accepts(value, for: instance, in: library)
     }
 
@@ -374,9 +373,8 @@ package struct VMCapabilityCatalog {
         case .writing:
             return isAvailable(key, writing: String(true), on: instance)
         case .capturingBaseline:
-            return isAvailable(
-                key.capability(writing: String(true), for: instance.configuration.guestOS),
-                on: instance) && isAvailable(.takeSnapshot, on: instance)
+            return isAvailable(key.capability(writing: String(true)), on: instance)
+                && isAvailable(.takeSnapshot, on: instance)
         case nil:
             return false
         }

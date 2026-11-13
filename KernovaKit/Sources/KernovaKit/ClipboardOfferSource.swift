@@ -173,7 +173,7 @@ public final class ClipboardOfferSource {
     /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`, or an
     ///   image file's size would take them there, reading nothing more.
     public func snapshot(
-        inlineCeiling: Int, holding lease: ClipboardStagingLease? = nil,
+        inlineCeiling: Int, holding lease: ClipboardStagingLease,
         contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
     ) async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, leftOut: Int)? {
         var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
@@ -229,7 +229,7 @@ public final class ClipboardOfferSource {
         let snapshot = ClipboardOfferSource(
             items: frozenItems, origins: frozenOrigins, concealed: concealed, pasteboard: nil, changeCount: 0,
             promises: [], promiseDestination: { throw ClipboardServeError.unavailable },
-            leases: leases + (lease.map { [$0] } ?? []), readFrom: readFrom)
+            leases: leases + [lease], readFrom: readFrom)
         return (snapshot, incomplete.count)
     }
 
@@ -275,7 +275,7 @@ public final class ClipboardOfferSource {
     ///   representation of out, or dropped.
     static func snapshot(
         of source: ClipboardWriteSource, on pasteboard: any ClipboardReadPasteboard,
-        copyingTo destination: ClipboardConnectionID?, inlineCeiling: Int
+        copyingTo destination: ClipboardConnectionID, inlineCeiling: Int
     ) async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, lost: Int)? {
         let readFrom = (pasteboard: pasteboard, changeCount: pasteboard.changeCount)
         let referenced = source.serving.flatMap { $0.connection == destination ? $0.token : nil }

@@ -114,7 +114,7 @@ struct VMConfigurationKeyRegistryTests {
             return key.descriptor.editableWhileRunning
         }
         #expect(try listing("cpus") == ["macOS": false, "linux": false])
-        #expect(try listing("clipboard.sharing") == ["macOS": true, "linux": false])
+        #expect(try listing("clipboard.sharing") == ["macOS": true])
         #expect(try listing("network.mode") == ["macOS": true, "linux": true])
         #expect(try listing("ephemeral") == ["macOS": true, "linux": true])
         #expect(try listing("dropFiles") == ["macOS": true])
@@ -241,7 +241,7 @@ struct VMConfigurationKeyRegistryTests {
         try write(key, "isolated", to: &config)
         #expect(config.networkMembership == .isolated)
         #expect(read(key, config) == "isolated")
-        #expect(key.capability(writing: "common", for: .linux) == .switchNetworkMembership)
+        #expect(key.capability(writing: "common") == .switchNetworkMembership)
         #expect(throws: CommandError.self) { try write(key, "true", to: &config) }
     }
 

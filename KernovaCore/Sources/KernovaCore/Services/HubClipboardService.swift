@@ -25,8 +25,6 @@ final class HubClipboardService: ClipboardServicing {
     /// `true` while a console peer carries CLIPBOARD.
     private(set) var isConnected = false
 
-    var supportsBinaryRepresentations: Bool { true }
-
     /// Bumped once per guest offer taken.
     private(set) var inboundOfferSeq: UInt64 = 0
 
@@ -67,9 +65,9 @@ final class HubClipboardService: ClipboardServicing {
     /// one went.
     private(set) var connectionEpoch: UInt64 = 0
 
-    /// The host pasteboard's change count when the console peer now up was named, after the last one's
-    /// retraction: a Mac copy since is one made while this connection was up.
-    @ObservationIgnored private(set) var connectionStartChangeCount: Int?
+    /// The host pasteboard's change count when the latest console peer was named, after the last one's
+    /// retraction: a Mac copy since is one made while that connection was up.
+    @ObservationIgnored private(set) var connectionStartChangeCount = 0
 
     @ObservationIgnored private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
     @ObservationIgnored private var peer: PeerHandle?
@@ -80,7 +78,7 @@ final class HubClipboardService: ClipboardServicing {
     /// Where a file promise copied on the Mac is called in when passthrough's offer of it is pulled.
     @ObservationIgnored private let promiseStaging: ClipboardFileStaging
     /// Where a snapshot of the Mac's clipboard calls its file promises in, each into a lease of its own.
-    @ObservationIgnored let snapshotStaging: ClipboardFileStaging?
+    @ObservationIgnored let snapshotStaging: ClipboardFileStaging
     @ObservationIgnored private var nextPromiseGeneration: UInt64 = 1
 
     nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubClipboardService")
@@ -127,10 +125,7 @@ final class HubClipboardService: ClipboardServicing {
         self.peer = peer
         isConnected = peer != nil
         exchange.setLink(peer.flatMap(link(to:)))
-        guard let peer else {
-            connectionStartChangeCount = nil
-            return
-        }
+        guard let peer else { return }
         connectionEpoch &+= 1
         connectionStartChangeCount = hostPasteboardChangeCount()
         Self.logger.log(
@@ -154,9 +149,6 @@ final class HubClipboardService: ClipboardServicing {
 
     // MARK: - ClipboardServicing
 
-    /// Nothing to stop: the hub's connections end with the session, and every offer with its connection.
-    func stop() {}
-
     /// Passthrough stopped, and both ends' passthrough offers end with it: the host's offer, which only
     /// passthrough makes, is withdrawn `DISABLED_BY_POLICY`, so the guest retracts its write of it as at a
     /// link's end; the guest's offer is let go, and the Mac's write of it retracted so, its promises no paste
@@ -172,9 +164,8 @@ final class HubClipboardService: ClipboardServicing {
 
     /// Makes the Mac's copy the host's clipboard and offers it: a new connection is offered only a copy made
     /// after it, so nothing is owed a retry.
-    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
+    func offerHostCopy(_ copy: ClipboardOfferSource) {
         exchange.offer(copy)
-        return .settled
     }
 
     /// The Mac's pasteboard changed to something it offers nothing of: the host's offer is withdrawn, and the
@@ -183,7 +174,7 @@ final class HubClipboardService: ClipboardServicing {
         exchange.withdrawLocal()
     }
 
-    var clipboardConnection: ClipboardConnectionID? { exchange.connection }
+    var clipboardConnection: ClipboardConnectionID { exchange.connection }
 
     // MARK: - The clipboard commands
 

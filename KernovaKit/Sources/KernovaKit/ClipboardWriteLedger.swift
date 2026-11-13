@@ -290,35 +290,3 @@ public final class ClipboardWriteLedger {
         }
     }
 }
-
-extension ClipboardWriteSource.Part {
-    /// The part a write of `representations`, every one already on this side, is made from: the inline ones as
-    /// one item of their bytes, and each file its own item.
-    public init(holding representations: [ClipboardContent.Representation]) {
-        var inline = OfferedItem()
-        var inlineBytes: [Data] = []
-        var items: [OfferedItem] = []
-        var held: [[ClipboardWriteSource.Held]] = []
-        for representation in representations {
-            let type = TypeDescriptor(appleUTI: representation.uti)
-            if let data = representation.inMemoryData, representation.filename.isEmpty {
-                inline.representations.append(.make(type, .inline, size: data.count))
-                inlineBytes.append(data)
-            } else if case .file(let url, let byteCount, _) = representation.source {
-                items.append(.with(.make(type, .file, size: byteCount, name: representation.filename)))
-                held.append([.file(url)])
-            }
-        }
-        if !inline.representations.isEmpty {
-            items.insert(inline, at: 0)
-            held.insert(inlineBytes.map(ClipboardWriteSource.Held.bytes), at: 0)
-        }
-        let table = held
-        self.init(
-            items: items, concealed: false, servingFileURLs: true, puller: nil,
-            held: { item, representation in
-                table.indices.contains(item) && table[item].indices.contains(representation)
-                    ? table[item][representation] : nil
-            })
-    }
-}

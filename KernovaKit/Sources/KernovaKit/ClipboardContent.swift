@@ -250,28 +250,8 @@ public struct ClipboardContent: Equatable, Sendable {
             representations: representations, isConcealed: concealed, precomputedDigest: digest)
     }
 
-    /// Content holding a single UTF-8 plain-text representation.
-    ///
-    /// The empty string normalizes to `.empty`: "empty text" and "no content" are
-    /// the same non-offerable value.
-    public init(text: String, isConcealed: Bool = false) {
-        if text.isEmpty {
-            self = .empty
-        } else {
-            self.init(
-                representations: [
-                    Representation(uti: Self.utf8TextUTI, data: Data(text.utf8))
-                ], isConcealed: isConcealed)
-        }
-    }
-
-    /// Content holding a single UTF-8 plain-text representation, built off the
-    /// caller's actor.
-    ///
-    /// The off-actor twin of `init(text:)` for the editor commit path: a large
-    /// pasted-then-edited buffer must not pay the UTF-8 copy *or* the SHA-256 on
-    /// the `@MainActor` per keystroke. The empty string normalizes to `.empty`,
-    /// identically to `init(text:)`.
+    /// Content holding a single UTF-8 plain-text representation, its UTF-8 copy and digest made off the
+    /// caller's actor. The empty string normalizes to `.empty`.
     public static func makeOffActor(text: String, isConcealed: Bool = false) async -> ClipboardContent {
         guard !text.isEmpty else { return .empty }
         return await makeOffActor(

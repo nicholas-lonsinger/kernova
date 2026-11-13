@@ -126,37 +126,18 @@ package struct VMConfigurationKey: Sendable {
     let name: String
     /// One line naming the unit or the accepted values.
     let summary: String
-    /// When a write of this key is taken on a guest of each OS.
-    let gate: @Sendable (VMGuestOS) -> VMConfigurationKeyGate
+    /// When a write of this key is taken.
+    let gate: VMConfigurationKeyGate
     /// Whether the key means anything for a guest of each OS at all. A key
     /// that does not apply is left out of a whole-VM read and refused when named.
     private let appliesToGuest: @Sendable (VMGuestOS) -> Bool
     let field: Field
 
-    /// A key over the VM's configuration, taken under `gate` on every guest.
+    /// A key over the VM's configuration, taken under `gate`.
     init(
         name: String,
         summary: String,
         gate: VMConfigurationKeyGate,
-        applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
-        read: @escaping @Sendable (VMConfiguration) -> String,
-        write:
-            @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
-            throws -> Void,
-        refusalOnResult: @escaping @Sendable (VMConfiguration, VMConfigurationWriteContext) -> String? = {
-            _, _ in nil
-        }
-    ) {
-        self.init(
-            name: name, summary: summary, gateByGuest: { _ in gate }, applies: applies, read: read,
-            write: write, refusalOnResult: refusalOnResult)
-    }
-
-    /// A key over the VM's configuration whose gate depends on the guest OS.
-    init(
-        name: String,
-        summary: String,
-        gateByGuest gate: @escaping @Sendable (VMGuestOS) -> VMConfigurationKeyGate,
         applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
         read: @escaping @Sendable (VMConfiguration) -> String,
         write:
@@ -174,7 +155,7 @@ package struct VMConfigurationKey: Sendable {
             ConfigurationField(read: read, write: write, refusalOnResult: refusalOnResult))
     }
 
-    /// A key over the VM's host state, gated on `gate` on every guest —
+    /// A key over the VM's host state, gated on `gate` —
     /// ``VMConfigurationKeyGate/live`` or ``VMConfigurationKeyGate/presentation``.
     ///
     /// Its gate is asked before either file is touched, whether or not the
@@ -197,7 +178,7 @@ package struct VMConfigurationKey: Sendable {
     ) {
         self.name = name
         self.summary = summary
-        self.gate = { _ in gate }
+        self.gate = gate
         self.appliesToGuest = applies
         field = .hostState(
             HostStateField(read: readHostState, change: changeHostState, refusalOnResult: refusalOnResult))
@@ -284,14 +265,14 @@ package struct VMConfigurationKey: Sendable {
             name: name, summary: summary,
             editableWhileRunning: Dictionary(
                 uniqueKeysWithValues: VMGuestOS.allCases.filter(applies(to:)).map {
-                    ($0.rawValue, gate($0).editableWhileRunning)
+                    ($0.rawValue, gate.editableWhileRunning)
                 }))
     }
 
-    /// What a write of `value` on a `guestOS` guest touches — the edit classes
-    /// the permit for it is minted for, read off ``capability(writing:for:)``.
-    func editClasses(writing value: String, for guestOS: VMGuestOS) -> VMEditClasses {
-        let capability = capability(writing: value, for: guestOS)
+    /// What a write of `value` touches — the edit classes the permit for it is
+    /// minted for, read off ``capability(writing:)``.
+    func editClasses(writing value: String) -> VMEditClasses {
+        let capability = capability(writing: value)
         guard let classes = capability.editClasses else {
             assertionFailure("The gate capability \(capability) names no edit class")
             return .all
@@ -299,13 +280,13 @@ package struct VMConfigurationKey: Sendable {
         return classes
     }
 
-    /// The capability a write of `value` on a `guestOS` guest has to pass.
+    /// The capability a write of `value` has to pass.
     ///
     /// Only the network mode's gate depends on the value: a device cannot be
     /// added or removed at runtime, so the mode that leaves the VM without one
     /// is not a hot swap however live the rest of the picker is.
-    func capability(writing value: String, for guestOS: VMGuestOS) -> VMCapability {
-        switch gate(guestOS) {
+    func capability(writing value: String) -> VMCapability {
+        switch gate {
         case .atRest: .editConfiguration
         case .live: .editLiveConfiguration
         case .presentation: .editPresentation
@@ -732,8 +713,9 @@ package enum VMConfigurationKeyRegistry {
 
     package static let clipboardSharing = VMConfigurationKey(
         name: "clipboard.sharing",
-        summary: "Exchange clipboard text with the guest: true or false.",
-        gateByGuest: { $0.sharesClipboardThroughDevice ? .atRest : .live },
+        summary: "Share the clipboard with the guest: true or false.",
+        gate: .live,
+        applies: { $0.guestAgentSettings.contains(.clipboard) },
         read: { String($0.clipboardSharingEnabled) },
         write: { value, config, _ in
             config.clipboardSharingEnabled = try ConfigurationValue.boolean(
@@ -745,6 +727,7 @@ package enum VMConfigurationKeyRegistry {
         summary:
             "Share one clipboard both ways, with no copy command, which needs sharing on.",
         gate: .live,
+        applies: { $0.guestAgentSettings.contains(.clipboard) },
         read: { String($0.clipboardPassthroughEnabled) },
         write: { value, config, _ in
             config.clipboardPassthroughEnabled = try ConfigurationValue.boolean(

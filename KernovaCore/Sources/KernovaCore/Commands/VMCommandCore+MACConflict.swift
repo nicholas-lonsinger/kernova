@@ -179,8 +179,7 @@ extension VMCommandCore {
                 guard capabilities.accepts(.discardSavedState, on: instance),
                     change.key.accepts(value, for: instance, in: library)
                 else { continue }
-                let capability = change.key.capability(
-                    writing: value, for: instance.configuration.guestOS)
+                let capability = change.key.capability(writing: value)
                 guard capabilities.accepts(capability, on: instance, after: discard) else {
                     if case .revertsToBaseline(let baseline) = discard, discard.landing.holdsSaveFile {
                         changes.withheld = .ephemeralBaselineHoldsSavedState(baseline)

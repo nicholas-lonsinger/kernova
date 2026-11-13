@@ -16,10 +16,13 @@ struct ClipboardCopyTests {
     private let scratch = TestScratchDirectory(prefix: "clipboard-copy")
     private let stagingRoot = TestStagingRoot()
 
+    /// Staging a snapshot's called-in file promises land in.
+    private var staging: ClipboardFileStaging { .leased(label: "copies", root: stagingRoot.root) }
+
     private func snapshot(_ pasteboard: FakePasteboard) async throws -> ClipboardOfferSource {
         guard
             case .snapshot(let snapshot, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         return snapshot
     }
@@ -63,7 +66,7 @@ struct ClipboardCopyTests {
         let pasteboard = FakePasteboard()
         guard
             case .nothing = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else {
             Issue.record("an empty pasteboard gave a snapshot")
             return
@@ -74,7 +77,7 @@ struct ClipboardCopyTests {
         ])
         guard
             case .nothing = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else {
             Issue.record("a transient copy gave a snapshot")
             return
@@ -205,7 +208,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
         #expect(puller.pulls.isEmpty)
@@ -242,7 +245,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(puller.pulls.isEmpty)
         #expect(pasteboard.providerInvocations == 0)
@@ -311,7 +314,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 1)
         #expect(source.items.map { $0.representations.map(\.storage) } == [[.file]])
@@ -342,7 +345,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
         #expect(pasteboard.providerInvocations == 0)
@@ -380,7 +383,7 @@ struct ClipboardCopyTests {
         pasteboard.setItem([(.string, Data("text".utf8)), (.rtf, Data("{\\rtf1 rich}".utf8))])
         guard
             case .tooLarge(let limitBytes) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ceiling: 3, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ceiling: 3, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else {
             Issue.record("a snapshot over the ceiling was taken")
             return
@@ -404,7 +407,7 @@ struct ClipboardCopyTests {
             serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection), onReleased: {})
         guard
             case .tooLarge = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ceiling: 3, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ceiling: 3, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else {
             Issue.record("a snapshot over the ceiling was taken")
             return
@@ -420,7 +423,7 @@ struct ClipboardCopyTests {
         pasteboard.setFilePromise(receiver)
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root), copyingTo: Self.connection,
+                from: pasteboard, staging: staging, copyingTo: Self.connection,
                 sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(receiver.callIns == 1)
@@ -466,7 +469,8 @@ struct ClipboardCopyTests {
 
         // As iCloud Drive's evicted files read downloading nothing: each fits the ceiling alone, the two do not.
         let outcome = await ClipboardPasteboardReader.readSnapshot(
-            from: pasteboard, ceiling: 10, ledger: ClipboardWriteLedger(), copyingTo: Self.connection, sizeOf: nil,
+            from: pasteboard, ceiling: 10, ledger: ClipboardWriteLedger(), staging: staging, copyingTo: Self.connection,
+            sizeOf: nil,
             contentsOf: { _ in nil })
         guard case .snapshot(let snapshot, let lost) = outcome else { throw TestFailure("not a snapshot: \(outcome)") }
         #expect(lost == 0)
@@ -480,7 +484,7 @@ struct ClipboardCopyTests {
 
         await #expect(throws: ClipboardSnapshotTooLarge(limitBytes: 10)) {
             _ = try await source.snapshot(
-                inlineCeiling: 10,
+                inlineCeiling: 10, holding: staging.lease(),
                 contentsOf: { _ in
                     reads.withLock { $0 += 1 }
                     return Data(repeating: 0x50, count: 12)
@@ -507,7 +511,7 @@ struct ClipboardCopyTests {
         #expect(pasteboard.setFiles([readable, locked]))
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 1)
         #expect(
@@ -520,7 +524,7 @@ struct ClipboardCopyTests {
         #expect(pasteboard.setFiles([try unreadableFile("locked.txt")]))
         guard
             case .unreadable = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("not unreadable") }
     }
 
@@ -559,7 +563,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 1)
         let item = try #require(source.items.first)
@@ -597,7 +601,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
         let item = try #require(source.items.first)
@@ -627,7 +631,7 @@ struct ClipboardCopyTests {
         #expect(pasteboard.setFile(try unreadableFile("derivative.jpeg"), promising: receiver))
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root),
+                from: pasteboard, staging: staging,
                 copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
@@ -662,7 +666,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root),
+                from: pasteboard, staging: staging,
                 copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
@@ -700,7 +704,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, staging: .leased(label: "copies", root: stagingRoot.root),
+                from: pasteboard, staging: staging,
                 copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(lost == 0)
@@ -992,7 +996,7 @@ struct ClipboardCopyTests {
 
         guard
             case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
-                from: pasteboard, ledger: ledger, copyingTo: Self.connection, sizeOf: nil)
+                from: pasteboard, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(source.concealed)
         #expect(source.items.map { $0.representations.compactMap(\.type.appleUTI) } == [[ClipboardContent.utf8TextUTI]])

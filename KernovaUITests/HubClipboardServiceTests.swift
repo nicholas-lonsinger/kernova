@@ -40,7 +40,7 @@ struct HubClipboardServiceTests {
         #expect(probe.connect())
         probe.deliver(.helloReceived(Self.claim, Self.onConsole), fromConnection: 0)
         probe.deliver(.featuresChanged(Self.clipboard), fromConnection: 0)
-        try await waitForChange { instance.hubClipboard.isConnected && instance.clipboardRoute != .none }
+        try await waitForChange { instance.hubClipboard.isConnected && instance.clipboardService != nil }
         return instance
     }
 
@@ -228,7 +228,7 @@ struct HubClipboardServiceTests {
         let instance = try await connected(probe)
         try runPassthroughByHand(instance)
         try await receive(Self.text, on: probe, into: instance, concealed: true)
-        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        _ = instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try hostPasteboard(instance)
 
         let password = Data("hunter2".utf8)
@@ -343,7 +343,7 @@ struct HubClipboardServiceTests {
         try runPassthroughByHand(instance)
         try await receive(
             Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
-        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        _ = instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
         let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
         try await probe.changed.wait { !pulls(probe).isEmpty }
@@ -907,7 +907,7 @@ struct HubClipboardServiceTests {
             Self.item(
                 Self.representation(ClipboardContent.utf8TextUTI, .inline), Self.representation("public.rtf", .inline)),
             on: probe, into: instance, concealed: true)
-        _ = try await instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
+        _ = instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try hostPasteboard(instance)
 
         let first = Task.detached {

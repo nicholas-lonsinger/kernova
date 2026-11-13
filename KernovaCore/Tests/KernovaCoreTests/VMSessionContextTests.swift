@@ -13,10 +13,8 @@ import Testing
 @Suite("VMSessionContext", .caseScoped)
 @MainActor
 struct VMSessionContextTests {
-    private func makeInstance(
-        guestOS: VMGuestOS = .macOS, phase: VMLifecyclePhase = .running(sessionID: UUID())
-    ) -> VMInstance {
-        VMInstanceFixture.make(name: "Session Context VM", guestOS: guestOS, phase: phase) {
+    private func makeInstance(phase: VMLifecyclePhase = .running(sessionID: UUID())) -> VMInstance {
+        VMInstanceFixture.make(name: "Session Context VM", guestOS: .macOS, phase: phase) {
             $0.dropFilesEnabled = true
             $0.lastSeenAgentVersion = "0.9.2"
         }
@@ -44,15 +42,11 @@ struct VMSessionContextTests {
 
     @Test("tearDown releases every service, pipe and hand-off the session held")
     func tearDownReleasesEverything() throws {
-        let instance = makeInstance(guestOS: .linux)
+        let instance = makeInstance()
         let context = instance.beginSessionContextForTesting()
 
         context.serialInputPipe = Pipe()
         context.serialOutputPipe = Pipe()
-        context.clipboardInputPipe = Pipe()
-        context.clipboardOutputPipe = Pipe()
-        let clipboard = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
-        context.clipboardService = clipboard
         context.liveRemovableMedia = [RemovableMediaDeviceInfo(path: "/tmp/media.iso", readOnly: true)]
         context.warnedAgentScopes = [.login]
         context.networkAttachment = .detached
@@ -61,9 +55,6 @@ struct VMSessionContextTests {
 
         #expect(context.serialInputPipe == nil)
         #expect(context.serialOutputPipe == nil)
-        #expect(context.clipboardInputPipe == nil)
-        #expect(context.clipboardOutputPipe == nil)
-        #expect(context.clipboardService == nil)
         #expect(context.networkAttachmentCoordinator == nil)
         #expect(context.liveRemovableMedia.isEmpty)
         // What the run warned about is its record, which the run's end reads.
@@ -144,8 +135,6 @@ struct VMSessionContextTests {
         VMSessionBuildProducts(
             serialInputPipe: Pipe(),
             serialOutputPipe: Pipe(),
-            clipboardInputPipe: Pipe(),
-            clipboardOutputPipe: Pipe(),
             coldRemovableMedia: coldRemovableMedia,
             directoryShare: nil,
             vmnetNetworks: VmnetNetworkService.scripted().sessionNetworks(ownedBy: UUID()))
@@ -178,7 +167,7 @@ struct VMSessionContextTests {
 
     @Test("adoptBuildProducts takes the build's pipes and cold-attached media")
     func adoptBuildProductsPopulatesTheContext() async throws {
-        let instance = makeInstance(guestOS: .linux, phase: .stopped)
+        let instance = makeInstance(phase: .stopped)
         let media = RemovableMediaDeviceInfo(path: "/tmp/cold.iso", readOnly: true)
         let result = Self.buildProducts(coldRemovableMedia: [media])
 
@@ -188,8 +177,6 @@ struct VMSessionContextTests {
 
             #expect(session.serialInputPipe === result.serialInputPipe)
             #expect(session.serialOutputPipe === result.serialOutputPipe)
-            #expect(session.clipboardInputPipe === result.clipboardInputPipe)
-            #expect(session.clipboardOutputPipe === result.clipboardOutputPipe)
             #expect(instance.liveRemovableMedia == [media])
             return .rest(.atRest(.stopped), ())
         }.value()

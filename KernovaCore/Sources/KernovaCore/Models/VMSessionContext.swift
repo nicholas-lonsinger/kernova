@@ -2,7 +2,6 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
-import KernovaLogging
 
 /// Everything scoped to the lifetime of one `VZVirtualMachine`, so a session's
 /// state is created and released as a unit rather than as loose fields a
@@ -16,11 +15,6 @@ import KernovaLogging
 @MainActor
 @Observable
 package final class VMSessionContext {
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSessionContext")
-
-    /// The VM name, for log records.
-    @ObservationIgnored private let label: String
-
     // MARK: - Session
 
     /// The live VM's session — the isolation domain that alone calls into the
@@ -49,17 +43,7 @@ package final class VMSessionContext {
     /// handler; it only binds a socket while started.
     @ObservationIgnored var serialSocketRelay: SerialSocketRelay?
 
-    // MARK: - Clipboard Sharing
-
-    /// Bidirectional pipes for the SPICE clipboard console port (Linux guests only).
-    var clipboardInputPipe: Pipe?
-    var clipboardOutputPipe: Pipe?
-
-    /// The SPICE clipboard service of a Linux guest's session. The guest
-    /// agent's clipboard is the VM's own (`VMInstance.hubClipboard`), and
-    /// `VMInstance.clipboardService` projects whichever its route names, so no
-    /// window controller branches on transport.
-    var clipboardService: (any ClipboardServicing)?
+    // MARK: - Clipboard Passthrough
 
     /// Automatic clipboard passthrough driver, created and torn down by
     /// `VMInstance.refreshClipboardPassthrough()`.
@@ -160,12 +144,7 @@ package final class VMSessionContext {
 
     // MARK: - Initializer
 
-    init(
-        label: String,
-        bootedIntoRecovery: Bool,
-        agentHub: AgentHub
-    ) {
-        self.label = label
+    init(bootedIntoRecovery: Bool, agentHub: AgentHub) {
         self.bootedIntoRecovery = bootedIntoRecovery
         self.agentHub = agentHub
     }
@@ -183,7 +162,6 @@ package final class VMSessionContext {
         clipboardPassthroughCoordinator?.stop()
         clipboardPassthroughCoordinator = nil
         detachAgentTransport()
-        stopClipboardService()
         stopSerialReading()
         cancelAgentAbsenceWatchdog()
         expiredAwayOrders = []
@@ -208,54 +186,6 @@ package final class VMSessionContext {
         serialSocketRelay = nil
         serialLogWriter?.close()
         serialLogWriter = nil
-    }
-
-    // MARK: - Clipboard Service Lifecycle
-
-    /// Stops and releases the clipboard service and (for SPICE) closes pipe file handles.
-    ///
-    /// Safe to call when no service is active.
-    func stopClipboardService() {
-        clipboardService?.stop()
-        clipboardService = nil
-        closeSpiceClipboardPipes()
-    }
-
-    private func closeSpiceClipboardPipes() {
-        do {
-            try clipboardInputPipe?.fileHandleForReading.close()
-        } catch {
-            Self.logger.log(
-                .warning,
-                "Failed to close clipboard input read handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        do {
-            try clipboardInputPipe?.fileHandleForWriting.close()
-        } catch {
-            Self.logger.log(
-                .warning,
-                "Failed to close clipboard input write handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        do {
-            try clipboardOutputPipe?.fileHandleForReading.close()
-        } catch {
-            Self.logger.log(
-                .warning,
-                "Failed to close clipboard output read handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        do {
-            try clipboardOutputPipe?.fileHandleForWriting.close()
-        } catch {
-            Self.logger.log(
-                .warning,
-                "Failed to close clipboard output write handle for VM '\(self.label, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-        }
-        clipboardInputPipe = nil
-        clipboardOutputPipe = nil
     }
 
     // MARK: - Agent Transport Lifecycle

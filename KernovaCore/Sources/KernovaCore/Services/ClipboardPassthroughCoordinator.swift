@@ -48,11 +48,6 @@ final class ClipboardPassthroughCoordinator {
         /// The last host-pasteboard change count this connection has *settled* —
         /// the guest holds that copy, it predates the connection or passthrough's
         /// start, or nothing about it can change by offering it again.
-        ///
-        /// A forward advances this only once the transport gives a delivery
-        /// verdict (`ClipboardGrabOutcome`): consuming the count of a copy the
-        /// guest never received loses the copy outright, since later polls read
-        /// the change count as unchanged and skip.
         var settledChangeCount: Int
 
         /// The change count of the forward whose read is still running.
@@ -78,12 +73,6 @@ final class ClipboardPassthroughCoordinator {
 
     private var inboundObservation: ObservationLoop?
 
-    /// The inbound publish in flight, held so `stop()` can cancel it and a newer
-    /// offer can supersede it. The pasteboard write happens inside the
-    /// publisher's await, so a session check after the await runs too late to
-    /// stop it; only cancellation reaches the write.
-    private var inboundPublishTask: Task<Void, Never>?
-
     /// The inbound-offer sequence already published to the host pasteboard, so a
     /// re-observation doesn't re-publish.
     private var lastInboundOfferSeq: UInt64 = 0
@@ -105,11 +94,9 @@ final class ClipboardPassthroughCoordinator {
     private var isRunning = false
 
     #if DEBUG
-    /// Fires after each inbound auto-publish completes.
+    /// Fires after each inbound auto-publish, whatever it wrote: the one signal that a publish which wrote
+    /// nothing has run.
     var onInboundPublishedForTesting: (@MainActor () -> Void)?
-
-    /// The inbound publish in flight, for a test to await its unwinding.
-    var inboundPublishTaskForTesting: Task<Void, Never>? { inboundPublishTask }
 
     /// Fires once a forward's read has been handled, on every outcome — the
     /// seam a test needs to observe that a forward produced *nothing*, which no
@@ -166,8 +153,6 @@ final class ClipboardPassthroughCoordinator {
         pasteboardWatch = nil
         inboundObservation?.cancel()
         inboundObservation = nil
-        inboundPublishTask?.cancel()
-        inboundPublishTask = nil
         Self.logger.log(
             .notice,
             "Clipboard passthrough stopped for '\(self.instance?.name ?? "?", privacy: .public)'")
@@ -183,7 +168,7 @@ final class ClipboardPassthroughCoordinator {
 
     /// Forwards a host copy made while the current guest connection is up,
     /// skipping our own inbound writes. Each poll of the host pasteboard
-    /// calls it, so an undelivered forward is retried at the next.
+    /// calls it.
     func pollHostClipboard() {
         guard let service = instance?.clipboardService, service.isConnected else {
             outbound = nil
@@ -208,7 +193,7 @@ final class ClipboardPassthroughCoordinator {
     private func connection(to service: any ClipboardServicing) -> OutboundConnection {
         if let outbound, outbound.serves(service) { return outbound }
         let connection = OutboundConnection(
-            service: service, settledChangeCount: service.connectionStartChangeCount ?? pasteboard.changeCount)
+            service: service, settledChangeCount: service.connectionStartChangeCount)
         outbound = connection
         return connection
     }
@@ -236,8 +221,7 @@ final class ClipboardPassthroughCoordinator {
         pollHostClipboard()
     }
 
-    /// Reads the host pasteboard's copy, metadata only, and offers it to the guest, settling `changeCount` only
-    /// once the copy needs no retry.
+    /// Reads the host pasteboard's copy, metadata only, and offers it to the guest, settling `changeCount`.
     ///
     /// The read stats copied files off the main actor, so it is never synchronous; a poll during it starts no
     /// second read of the same copy.
@@ -276,24 +260,19 @@ final class ClipboardPassthroughCoordinator {
             }
             guard let self, self.outbound === connection, let service = connection.service
             else { return }
-            await self.offer(read, changeCount, over: connection, to: service)
+            self.offer(read, changeCount, over: connection, to: service)
         }
     }
 
     /// Offers what the read found, unless the host clipboard has moved on since — that copy is nobody's now, and
     /// the next poll takes whatever replaced it — and raises the items it lost once the copy is settled.
     ///
-    /// The loss is raised *after* the offer, which clears the issue on a
-    /// successful one, and only on `.settled`: an undelivered forward left
-    /// nothing behind for the user to act on yet, and reporting each attempt
-    /// would file one transfer report per poll until the retry lands.
+    /// The loss is raised *after* the offer, which clears the issue.
     private func offer(
         _ read: ClipboardPasteboardReader.OfferOutcome, _ changeCount: Int, over connection: OutboundConnection,
         to service: any ClipboardServicing
-    ) async {
+    ) {
         guard pasteboard.changeCount == changeCount else { return }
-        // Only files are lost, and a text-only transport carries none.
-        let reportsLosses = service.supportsBinaryRepresentations
         switch read {
         case .empty, .suppressed:
             connection.settledChangeCount = changeCount
@@ -301,13 +280,11 @@ final class ClipboardPassthroughCoordinator {
         case .nothingOfferable(let lost):
             connection.settledChangeCount = changeCount
             service.hostCopyOffersNothing()
-            if lost > 0, reportsLosses { reportUnforwarded(.itemsUnreadable) }
+            if lost > 0 { reportUnforwarded(.itemsUnreadable) }
         case .offer(let copy, let lost):
-            guard await service.offerHostCopy(copy) == .settled, pasteboard.changeCount == changeCount else {
-                return
-            }
+            service.offerHostCopy(copy)
             connection.settledChangeCount = changeCount
-            if lost > 0, reportsLosses { reportUnforwarded(.itemsSkipped(count: lost)) }
+            if lost > 0 { reportUnforwarded(.itemsSkipped(count: lost)) }
         }
     }
 
@@ -352,25 +329,13 @@ final class ClipboardPassthroughCoordinator {
     /// paste ceiling caused so a later raise can deliver what it withheld.
     private func publishInbound(from service: any ClipboardServicing, seq: UInt64) {
         let ceiling = instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-        inboundPublishTask?.cancel()
-        inboundPublishTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            let outcome: HostPublishOutcome
-            do {
-                outcome = try await self.publisher.publish(from: service)
-            } catch {
-                // Stopped, or superseded by a newer offer: nothing landed.
-                return
-            }
-            self.budgetRefusedOffer =
-                outcome.droppedReasons.contains(.overPasteBudget)
-                ? (seq, ceiling, self.pasteboard.changeCount)
-                : nil
-            if case .writeFailed = outcome { self.reportUnwritten() }
-            #if DEBUG
-            self.onInboundPublishedForTesting?()
-            #endif
-        }
+        let outcome = publisher.publish(from: service)
+        budgetRefusedOffer =
+            outcome.droppedReasons.contains(.overPasteBudget) ? (seq, ceiling, pasteboard.changeCount) : nil
+        if case .writeFailed = outcome { reportUnwritten() }
+        #if DEBUG
+        onInboundPublishedForTesting?()
+        #endif
     }
 
     /// Raises the guest's offer the pasteboard refused to take: the Mac's clipboard holds nothing of it.

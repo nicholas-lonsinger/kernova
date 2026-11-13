@@ -181,7 +181,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// Independent of `clipboardSharingEnabled` — a drag never touches either
     /// pasteboard — and honored at runtime, so the display stops being a drag
     /// destination, and stops taking the guest's drags over, the moment it is
-    /// switched off. Linux guests have no Kernova agent and ignore this flag.
+    /// switched off. A Linux guest's agent offers no drag and drop, so it
+    /// ignores this flag.
     package var dropFilesEnabled: Bool
 
     // MARK: - Serial Console
@@ -801,10 +802,18 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Clipboard
 
+    /// Whether the clipboard is shared: the flag on, for a guest whose agent
+    /// offers clipboard sharing (``VMGuestOS/guestAgentSettings``). On any other
+    /// guest the stored flag has no effect. Every surface that offers the
+    /// clipboard reads this, or a key whose `applies` reads the same list.
+    package var sharesClipboard: Bool {
+        clipboardSharingEnabled && guestOS.guestAgentSettings.contains(.clipboard)
+    }
+
     /// Whether passthrough actually runs: the flag alone leaves it inert,
     /// because it rides on the clipboard sharing that carries it.
     var clipboardPassthroughIsEffective: Bool {
-        clipboardSharingEnabled && clipboardPassthroughEnabled
+        sharesClipboard && clipboardPassthroughEnabled
     }
 
     // MARK: - Removable Media

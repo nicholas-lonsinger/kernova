@@ -859,8 +859,7 @@ struct VMLibraryViewModelTests {
         in viewModel: VMLibraryViewModel, phase: VMLifecyclePhase = .stopped,
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
-        let instance = viewModel.library.registerFixture(phase: phase, mutate: mutate)
-        return instance
+        viewModel.library.registerFixture(guestOS: .macOS, phase: phase, mutate: mutate)
     }
 
     /// A CPU count the guest takes that is not `config`'s own.

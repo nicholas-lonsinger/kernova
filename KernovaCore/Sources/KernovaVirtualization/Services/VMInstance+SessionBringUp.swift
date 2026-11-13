@@ -6,8 +6,8 @@ import Virtualization
 /// configuration describes and handing its session to the VM to hold.
 extension VMInstance {
     /// Brings a built configuration all the way up: adopts its pipes and media,
-    /// creates the `VZVirtualMachine`, and starts the serial, clipboard and
-    /// agent-transport plumbing that rides it.
+    /// creates the `VZVirtualMachine`, and starts the serial, clipboard
+    /// passthrough and agent-transport plumbing that rides it.
     ///
     /// The whole of what a boot path does between building a configuration and
     /// telling VZ to run, so a cold boot and a restore cannot drift apart. The
@@ -21,7 +21,7 @@ extension VMInstance {
         adoptBuildProducts(context, result.products)
         guard let session = await attachSession(context, from: result) else { return nil }
         startSerialReading()
-        startClipboardService()
+        refreshClipboardPassthrough()
         attachSessionAgentTransport()
         return session
     }
