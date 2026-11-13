@@ -142,24 +142,6 @@ struct VMStateFieldClassesTests {
         #expect(refusedToTheRemoval([a, RemovableMediaItem(path: "/tmp/d.iso")]))
     }
 
-    @Test("Clipboard sharing is hardware on a Linux guest and a live setting on a macOS one")
-    func clipboardSharingIsClassifiedByGuest() {
-        let classes = VMConfiguration.fieldClasses
-        for (guestOS, bootMode) in [(VMGuestOS.linux, VMBootMode.efi), (.macOS, .macOS)] {
-            let old = VMConfiguration(
-                name: "VM", guestOS: guestOS, bootMode: bootMode, cpuCount: guestOS.hostCPUCount,
-                memorySizeInGB: guestOS.hostMemorySize)
-            var new = old
-            new.clipboardSharingEnabled.toggle()
-            let live = classes.refused(from: old, to: new, by: .edit(.liveKeys))
-            #expect(
-                live == (guestOS == .linux ? ["clipboardSharingEnabled"] : []), "\(guestOS)")
-            #expect(
-                classes.refused(from: old, to: new, by: .edit(.machineKeys))
-                    == (guestOS == .linux ? [] : ["clipboardSharingEnabled"]), "\(guestOS)")
-        }
-    }
-
     /// Values some key takes, or refuses, covering every key's spelling.
     private static let candidateValues = [
         "true", "false", "0", "1", "2", "4", "8", "16", "1280", "800",
@@ -200,7 +182,7 @@ struct VMStateFieldClassesTests {
                 case .configuration(let field):
                     for base in [networked, unaddressed, offline] where key.applies(base) {
                         let authority = VMEditPermit.Authority.edit(
-                            key.editClasses(writing: value, for: base.guestOS))
+                            key.editClasses(writing: value))
                         var written = base
                         guard (try? field.write(value, &written, context)) != nil else { continue }
                         #expect(
@@ -211,7 +193,7 @@ struct VMStateFieldClassesTests {
                 case .hostState(let field):
                     guard let change = try? field.change(value, context) else { continue }
                     let authority = VMEditPermit.Authority.edit(
-                        key.editClasses(writing: value, for: .macOS))
+                        key.editClasses(writing: value))
                     for base in hostStates {
                         var written = base
                         change(&written)

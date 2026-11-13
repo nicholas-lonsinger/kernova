@@ -142,11 +142,7 @@ extension VMConfiguration {
         },
         // Settings read at moments other than boot.
         .field("displayAutoResizes", \.displayAutoResizes, .liveKeys),
-        .field(
-            "clipboardSharingEnabled", \.clipboardSharingEnabled,
-            byRoot: { root, _, _ in
-                root.guestOS.sharesClipboardThroughDevice ? .machineKeys : .liveKeys
-            }),
+        .field("clipboardSharingEnabled", \.clipboardSharingEnabled, .liveKeys),
         .field("clipboardPassthroughEnabled", \.clipboardPassthroughEnabled, .liveKeys),
         .field("dropFilesEnabled", \.dropFilesEnabled, .liveKeys),
         .field("serialSocketRelayEnabled", \.serialSocketRelayEnabled, .liveKeys),

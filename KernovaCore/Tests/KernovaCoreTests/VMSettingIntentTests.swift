@@ -62,7 +62,7 @@ struct VMSettingIntentTests {
     @Test("Turning clipboard passthrough on asks once, then re-issues the write with the consent")
     func clipboardPassthroughAsks() async throws {
         let harness = WiredCommandCore()
-        let vm = harness.register(name: "Wired") { $0.clipboardSharingEnabled = true }
+        let vm = harness.register(name: "Wired", guestOS: .macOS) { $0.clipboardSharingEnabled = true }
         let gateway = makeGateway(over: harness)
         var asked: [ConfirmationPrompt] = []
 

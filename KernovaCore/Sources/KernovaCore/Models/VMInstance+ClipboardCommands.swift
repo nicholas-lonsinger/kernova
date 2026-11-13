@@ -33,7 +33,7 @@ extension VMInstance {
             case .snapshot(let snapshot, let lost):
                 if let failure = service.copyMacClipboardToGuest(snapshot) {
                     reportClipboardCommand(.send, failure)
-                } else if lost > 0, service.supportsBinaryRepresentations {
+                } else if lost > 0 {
                     reportClipboardCommand(.send, .itemsSkipped(count: lost))
                 }
             }

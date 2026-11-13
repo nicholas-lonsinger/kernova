@@ -306,7 +306,7 @@ final class VMToolbarManager: NSObject {
         _ = instance.displayMode
         _ = instance.detailPaneMode
         _ = instance.startAction
-        _ = instance.configuration.clipboardSharingEnabled
+        _ = instance.configuration.sharesClipboard
     }
 
     func updateToolbarItems(in toolbar: NSToolbar) {
@@ -481,7 +481,7 @@ final class VMToolbarManager: NSObject {
                         _ = observed.clipboardTransferReport
                         // Read too, so flipping the toggle mid-transfer clears the bar instead of leaving it on a
                         // button the same flip disabled.
-                        _ = observed.configuration.clipboardSharingEnabled
+                        _ = observed.configuration.sharesClipboard
                     },
                     apply: { [weak self] in self?.refreshClipboardTransferBars() })
         }
@@ -498,7 +498,7 @@ final class VMToolbarManager: NSObject {
         var running: ClipboardProgressSnapshot?
         // The bars ride buttons the clipboard toggle disables, so they say nothing while it is off — including
         // about a drop, which runs regardless and reports itself on the menu-bar status item instead.
-        if clipboardObservedInstance?.configuration.clipboardSharingEnabled == true,
+        if clipboardObservedInstance?.configuration.sharesClipboard == true,
             case .running(let snapshot, _) = clipboardObservedInstance?.clipboardTransferReport
         {
             running = snapshot

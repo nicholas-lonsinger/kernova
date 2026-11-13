@@ -333,7 +333,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("Passthrough refuses without sharing, whichever order the pair arrives in")
     func passthroughNeedsSharing() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
+        let instance = makeInstance(in: harness, guestOS: .macOS)
 
         #expect(throws: CommandError.self) {
             try harness.core.setConfiguration(
@@ -357,7 +357,7 @@ struct VMCommandCoreConfigurationTests {
     @Test("Turning sharing off leaves a passthrough flag already set alone")
     func turningSharingOffIsNotAPassthroughEnable() throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness) {
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
             $0.clipboardSharingEnabled = true
             $0.clipboardPassthroughEnabled = true
         }
@@ -392,7 +392,7 @@ struct VMCommandCoreConfigurationTests {
         let harness = makeHarness()
         // Reachable from both surfaces: passthrough is left set when sharing
         // goes off, and turning sharing back on starts it running again.
-        let instance = makeInstance(in: harness) { $0.clipboardPassthroughEnabled = true }
+        let instance = makeInstance(in: harness, guestOS: .macOS) { $0.clipboardPassthroughEnabled = true }
 
         let error = try #require(throws: CommandError.self) {
             _ = try harness.core.setConfiguration(

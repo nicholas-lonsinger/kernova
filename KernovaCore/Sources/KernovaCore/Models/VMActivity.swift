@@ -1600,8 +1600,6 @@ package final class VMActivity {
         }
         sessionContext.serialInputPipe = result.serialInputPipe
         sessionContext.serialOutputPipe = result.serialOutputPipe
-        sessionContext.clipboardInputPipe = result.clipboardInputPipe
-        sessionContext.clipboardOutputPipe = result.clipboardOutputPipe
         sessionContext.liveRemovableMedia = result.coldRemovableMedia
         sessionContext.directoryShare = result.directoryShare
         sessionContext.vmnetNetworks = result.vmnetNetworks

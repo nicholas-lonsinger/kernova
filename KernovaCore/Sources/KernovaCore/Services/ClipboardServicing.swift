@@ -2,25 +2,17 @@ import Foundation
 import KernovaKit
 import KernovaWire
 
-/// Common surface shared by every clipboard transport.
+/// A VM's clipboard transport: `HubClipboardService`, over the guest agent's items, in production.
 ///
-/// `SpiceClipboardService` carries only UTF-8 text; `HubClipboardService`, over the guest agent's items, carries
-/// every representation. Both implementations must be `@Observable` classes: the macro installs the registrar
-/// on the concrete type, so reading through the protocol witness still fires observation.
+/// An implementation must be an `@Observable` class: the macro installs the registrar on the concrete type, so
+/// reading through the protocol witness still fires observation.
 @MainActor
 package protocol ClipboardServicing: AnyObject {
     /// `true` once the implementation has completed its handshake with the guest.
     var isConnected: Bool { get }
 
-    /// `true` when the transport carries arbitrary UTI-tagged representations;
-    /// `false` when it is limited to plain text (SPICE).
-    var supportsBinaryRepresentations: Bool { get }
-
     /// Bumped once per new guest clipboard the transport takes, which passthrough writes to the Mac.
     var inboundOfferSeq: UInt64 { get }
-
-    /// Stops protocol I/O. Idempotent.
-    func stop()
 
     /// Passthrough stopped: what passthrough carried across ends, and each side's write of the other's is
     /// retracted. Default: nothing to end.
@@ -64,7 +56,7 @@ package protocol ClipboardServicing: AnyObject {
     var clipboardConnection: ClipboardConnectionID? { get }
 
     /// Reserves a directory to call a file promise copied on the Mac in to when the guest pulls it, or `nil`
-    /// when the transport can't stage one. Default `nil`: a text-only transport never takes a file.
+    /// when the transport can't stage one. Default `nil`.
     func reservePromiseDestination() -> URL?
 
     /// The guest's clipboard as passthrough places it on the host pasteboard — metadata only, synchronously.
@@ -133,7 +125,7 @@ package struct CopyToMacOffer: Sendable {
 
 /// One item passthrough places on the host pasteboard.
 package enum CopyToMacItem: Sendable {
-    /// A representation whose bytes are already local — the text a text-only transport received.
+    /// A representation whose bytes are already local.
     case resolved(ClipboardContent.Representation)
     /// A guest offer, promised whole; its bytes cross the wire only when a
     /// paste consumes them.

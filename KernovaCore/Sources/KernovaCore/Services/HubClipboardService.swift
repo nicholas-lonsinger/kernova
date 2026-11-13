@@ -25,8 +25,6 @@ final class HubClipboardService: ClipboardServicing {
     /// `true` while a console peer carries CLIPBOARD.
     private(set) var isConnected = false
 
-    var supportsBinaryRepresentations: Bool { true }
-
     /// Bumped once per guest offer taken.
     private(set) var inboundOfferSeq: UInt64 = 0
 
@@ -153,9 +151,6 @@ final class HubClipboardService: ClipboardServicing {
     }
 
     // MARK: - ClipboardServicing
-
-    /// Nothing to stop: the hub's connections end with the session, and every offer with its connection.
-    func stop() {}
 
     /// Passthrough stopped, and both ends' passthrough offers end with it: the host's offer, which only
     /// passthrough makes, is withdrawn `DISABLED_BY_POLICY`, so the guest retracts its write of it as at a

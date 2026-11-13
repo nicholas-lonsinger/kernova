@@ -663,7 +663,7 @@ struct VMCommandEnvelopeRouterTests {
     @Test("The keyspace, a read and a write each cross the wire as their own payload")
     func configurationVerbsCrossTheWire() async throws {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Alpha") {
+        let instance = makeInstance(in: harness, name: "Alpha", guestOS: .macOS) {
             $0.cpuCount = 4
             $0.clipboardSharingEnabled = true
         }

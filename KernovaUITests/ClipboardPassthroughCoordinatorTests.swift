@@ -10,6 +10,23 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
+extension ClipboardOfferSource {
+    /// The first INLINE UTF-8 text representation's text, read now; nil when the offer has none or it can no
+    /// longer be served.
+    fileprivate func utf8Text() async -> String? {
+        for (item, offered) in items.enumerated() {
+            guard
+                let index = offered.representations.firstIndex(where: {
+                    $0.storage == .inline && $0.type.appleUTI == ClipboardContent.utf8TextUTI
+                })
+            else { continue }
+            guard case .bytes(let data)? = try? await serve(item: item, representation: index) else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }
+        return nil
+    }
+}
+
 /// Exercises `ClipboardPassthroughCoordinator` — the automatic-passthrough
 /// driver — over a private `NSPasteboard(name:)` so tests never touch the
 /// developer's real clipboard.
@@ -36,7 +53,6 @@ struct ClipboardPassthroughCoordinatorTests {
     final class FakePassthroughService: ClipboardServicing {
         var guestContent: ClipboardContent = .empty
         var isConnected = true
-        var supportsBinaryRepresentations = true
         private(set) var inboundOfferSeq: UInt64 = 0
 
         /// Where this stand-in reports its own refusals, as the real transport
@@ -76,13 +92,12 @@ struct ClipboardPassthroughCoordinatorTests {
         /// and so how far a publish a test is holding has got.
         var copiesMaterialized = 0
 
-        func stop() {}
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
             .nothing
         }
 
-        /// Mirrors both real transports: a disconnected service delivers nothing,
+        /// Mirrors the real transport: a disconnected service delivers nothing,
         /// so it reports `.undelivered` and leaves the copy retryable.
         func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
             guard isConnected else { return .undelivered }
@@ -163,9 +178,8 @@ struct ClipboardPassthroughCoordinatorTests {
         let service = FakePassthroughService()
         let reports = ClipboardTransferReports()
         service.reporter = reports.reporter
-        // The clipboard service is session state, so it needs a session to
-        // live in.
-        instance.beginSessionContextForTesting().clipboardService = service
+        instance.beginSessionContextForTesting()
+        instance.clipboardServiceForTesting = service
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: reports.reporter)
         let resolves = ForwardResolveLog()
@@ -200,26 +214,6 @@ struct ClipboardPassthroughCoordinatorTests {
                 item.setString(url.absoluteString, forType: .fileURL)
                 return item
             })
-    }
-
-    @Test("A service that reconnects in place forwards only copies made after it came back")
-    func copyDuringInPlaceOutageIsNotForwarded() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        // SPICE keeps one service object across a vdagent re-handshake, so the
-        // disconnected poll is the only thing that can end the connection.
-        h.service.isConnected = false
-        try await poll(h)
-        writeText("copied during the outage", to: h.pasteboard)
-        h.service.isConnected = true
-        try await poll(h)
-        try await poll(h)
-        #expect(h.service.grabbed.isEmpty)
-
-        writeText("copied after the reconnect", to: h.pasteboard)
-        try await poll(h)
-        #expect(h.service.grabbed.map(\.text) == ["copied after the reconnect"])
     }
 
     @Test("a copied zero-byte file is forwarded like any other, with nothing noted")
@@ -474,13 +468,11 @@ struct ClipboardPassthroughCoordinatorTests {
     @Observable
     final class PromisedPassthroughService: ClipboardServicing {
         var isConnected = true
-        var supportsBinaryRepresentations = true
         private(set) var inboundOfferSeq: UInt64 = 0
         /// What the next `guestClipboardItems` offers.
         var items: [OfferedItem] = []
         @ObservationIgnored let puller = CountingPuller()
 
-        func stop() {}
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
             .nothing
@@ -540,7 +532,8 @@ struct ClipboardPassthroughCoordinatorTests {
             stagingRoot: stagingRoot.root)
         let instance = VMInstanceFixture.make(name: "Promised VM", guestOS: .macOS)
         let service = PromisedPassthroughService()
-        instance.beginSessionContextForTesting().clipboardService = service
+        instance.beginSessionContextForTesting()
+        instance.clipboardServiceForTesting = service
         let coordinator = ClipboardPassthroughCoordinator(
             instance: instance, publisher: publisher, reporter: instance.clipboardTransfers)
 

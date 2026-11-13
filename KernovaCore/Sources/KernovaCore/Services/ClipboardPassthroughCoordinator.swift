@@ -292,8 +292,6 @@ final class ClipboardPassthroughCoordinator {
         to service: any ClipboardServicing
     ) async {
         guard pasteboard.changeCount == changeCount else { return }
-        // Only files are lost, and a text-only transport carries none.
-        let reportsLosses = service.supportsBinaryRepresentations
         switch read {
         case .empty, .suppressed:
             connection.settledChangeCount = changeCount
@@ -301,13 +299,13 @@ final class ClipboardPassthroughCoordinator {
         case .nothingOfferable(let lost):
             connection.settledChangeCount = changeCount
             service.hostCopyOffersNothing()
-            if lost > 0, reportsLosses { reportUnforwarded(.itemsUnreadable) }
+            if lost > 0 { reportUnforwarded(.itemsUnreadable) }
         case .offer(let copy, let lost):
             guard await service.offerHostCopy(copy) == .settled, pasteboard.changeCount == changeCount else {
                 return
             }
             connection.settledChangeCount = changeCount
-            if lost > 0, reportsLosses { reportUnforwarded(.itemsSkipped(count: lost)) }
+            if lost > 0 { reportUnforwarded(.itemsSkipped(count: lost)) }
         }
     }
 

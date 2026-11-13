@@ -73,9 +73,6 @@ every persisted config file and repairs one no read can take.
   agent-status surface reads, and one `ItemFeatureRouter` joins the hub to each
   item feature's owner: `HubClipboardService`, `HubDropService` and
   `HubDragOut`.
-- Clipboard: `ClipboardServicing` unifies `HubClipboardService` (the guest
-  agent) and `SpiceClipboardService` (the guest's SPICE agent) behind
-  `VMInstance.clipboardService`, which `ClipboardRoute` picks.
 
 ## Views
 

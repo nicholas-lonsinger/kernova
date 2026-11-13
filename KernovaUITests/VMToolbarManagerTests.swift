@@ -30,7 +30,7 @@ struct VMToolbarManagerTests {
     private func makeInstance(
         phase: VMLifecyclePhase = .stopped, clipboardSharing: Bool = true
     ) -> VMInstance {
-        VMInstanceFixture.make(phase: phase) { $0.clipboardSharingEnabled = clipboardSharing }
+        VMInstanceFixture.make(guestOS: .macOS, phase: phase) { $0.clipboardSharingEnabled = clipboardSharing }
     }
 
     private func makeManager(

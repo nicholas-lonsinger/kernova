@@ -434,10 +434,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             menuItem.state = .off
             return false
         }
-        let isOn = instance.configuration.clipboardPassthroughEnabled
+        let key = VMConfigurationKeyRegistry.clipboardPassthrough
+        // A guest the key does not apply to has no passthrough to show as on.
+        let isOn = key.applies(instance.configuration) && instance.configuration.clipboardPassthroughEnabled
         menuItem.state = isOn ? .on : .off
-        return viewModel.capabilities.isAvailable(
-            VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!isOn), on: instance)
+        return viewModel.capabilities.isAvailable(key, writing: String(!isOn), on: instance)
     }
 
     // MARK: - Main Menu

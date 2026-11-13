@@ -565,7 +565,7 @@ struct VMInstanceTests {
     //
     // `VMInstance.agentPresentation` is the single read site for the UI; every
     // guest sources it from the agent hub's snapshot once its session attached
-    // the hub a transport, never from the SPICE clipboard's agent.
+    // the hub a transport.
 
     @Test("A session without a socket device has no agent channel, so no presentation", arguments: VMGuestOS.allCases)
     func agentPresentationSessionWithoutTransportIsNil(guestOS: VMGuestOS) {

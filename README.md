@@ -37,7 +37,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | **USB passthrough** of host accessories | ✅ | ✅ |
 | **Audio** out, opt-in **microphone** passthrough | ✅ | ✅ |
 | **Serial console** log and Unix-socket relay | ✅ | ✅ |
-| **Clipboard sharing** — text, rich text, images, files, folders | ✅ | text only |
+| **Clipboard sharing** — text, rich text, images, files, folders | ✅ | — |
 | **Drag-and-drop** files in and out of the guest | ✅ | — |
 | **Guest agent** with log forwarding to Console.app | ✅ | — |
 | **HiDPI** display, **Recovery Mode** boot | ✅ | — |
@@ -111,7 +111,7 @@ Kernova is a native Mac app for fast, disposable macOS and Linux VMs — no thir
 | Feature | What it offers |
 |---|---|
 | **Guest agent** (macOS) | A lightweight in-guest helper that clipboard sharing, drag-and-drop, and log forwarding run through — **Install Guest Agent…** attaches its installer disk, which installs it just for you or for everyone, and an installed agent updates itself when Kernova bundles a different one. Talks to the host over **vsock**; its own menu bar item shows the connection and what's shared, and a sidebar icon flags an agent that needs attention. |
-| **Clipboard sharing** | Text, rich text, images, files, and folders, both ways: **Edit → Copy Guest Clipboard to Mac** (⌃⇧⌘C) and **Copy Mac Clipboard to Guest** (⌃⇧⌘V), also in the toolbar, copy everything on one clipboard to the other as it stands at the click; files cross only when pasted, up to a ceiling (2 GB default). Opt-in **Automatic Clipboard Passthrough** shares one clipboard instead, moving bytes only when pasted. Passwords stay in memory; transient content is skipped. Linux: text, via **spice-vdagent**. |
+| **Clipboard sharing** (macOS) | Text, rich text, images, files, and folders, both ways: **Edit → Copy Guest Clipboard to Mac** (⌃⇧⌘C) and **Copy Mac Clipboard to Guest** (⌃⇧⌘V), also in the toolbar, copy everything on one clipboard to the other as it stands at the click; files cross only when pasted, up to a ceiling (2 GB default). Opt-in **Automatic Clipboard Passthrough** shares one clipboard instead, moving bytes only when pasted. Passwords stay in memory; transient content is skipped. |
 | **Drag-and-drop** (macOS) | Drop files and folders from Finder, or items from apps such as Photos and Mail, onto the display; they land in the guest's Downloads and are revealed, never overwriting, with live progress. Drag files, folders, and guest apps' items such as photos and Mail attachments out of the display onto the Mac; they are copied where you drop them, crossing only once a destination asks. |
 | **Log forwarding** (macOS) | Opt-in, live-toggleable: the guest agent's `os.Logger` records appear in **Console.app** under `app.kernova.guest`. |
 

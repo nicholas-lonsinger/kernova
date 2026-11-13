@@ -111,13 +111,6 @@ package struct ClipboardTransferWording: Equatable {
                 menuLine: "Clipboard: nothing to copy to the guest",
                 mentionsMacClipboardKept: false)
 
-        case (.noTextToCopy, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard not copied to \(vm).",
-                message: "The Mac clipboard holds no text, and text is all this VM\u{2019}s clipboard sharing carries.",
-                menuLine: "Clipboard: no text to copy to the guest",
-                mentionsMacClipboardKept: false)
-
         case (.tooLarge(let limitBytes), _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted into \(vm).",
@@ -438,7 +431,7 @@ package struct ClipboardTransferWording: Equatable {
             menuLine = "Drag: the VM couldn't read an item"
         case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
             .withdrawnFilesRetracted, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
-            .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone, .noTextToCopy:
+            .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }

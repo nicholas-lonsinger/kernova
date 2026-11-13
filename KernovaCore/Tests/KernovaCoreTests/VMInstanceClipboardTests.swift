@@ -10,39 +10,45 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// Which peer carries a VM's clipboard: the guest agent's CLIPBOARD console peer over SPICE, and SPICE over
-/// nothing.
+/// Which guests share a VM's clipboard, what carries it, and the policy its agent hears.
 @MainActor
-@Suite("Clipboard route", .caseScoped)
-struct ClipboardRouteTests {
+@Suite("VM clipboard", .caseScoped)
+struct VMInstanceClipboardTests {
     private static let peer = PeerHandle(rawValue: 4)
-
-    /// A Linux VM's running session with its SPICE clipboard service started.
-    private func linuxWithSpice() -> (VMInstance, SpiceClipboardService) {
-        let instance = VMInstanceFixture.make(guestOS: .linux, phase: .running(sessionID: UUID()))
-        let context = instance.beginSessionContextForTesting()
-        let spice = SpiceClipboardService(inputPipe: Pipe(), outputPipe: Pipe())
-        context.clipboardService = spice
-        return (instance, spice)
-    }
 
     private static func snapshot(consolePeer: PeerHandle?) -> AgentHubSnapshot {
         AgentHubSnapshot(
             peers: [], features: FeatureStatus.merge([]), consolePeers: consolePeer.map { [.clipboard: $0] } ?? [:])
     }
 
-    @Test("A CLIPBOARD console peer takes the clipboard from SPICE, and gives it back when it goes")
-    func peerTakesTheClipboard() {
-        let (instance, spice) = linuxWithSpice()
+    @Test("A CLIPBOARD console peer gives the VM its clipboard service, and takes it away when it goes")
+    func consolePeerCarriesTheClipboard() {
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+        instance.beginSessionContextForTesting()
+        #expect(instance.clipboardService == nil)
 
         instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: Self.peer))
-        #expect(instance.clipboardRoute == .hub(Self.peer))
         #expect(instance.clipboardService === instance.hubClipboard)
-        #expect(!spice.carriesClipboard)
 
         instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: nil))
-        #expect(instance.clipboardService === spice)
-        #expect(spice.carriesClipboard)
+        #expect(instance.clipboardService == nil)
+    }
+
+    @Test("Only a macOS guest shares the clipboard: a Linux guest's stored flags offer and send nothing")
+    func onlyMacOSSharesTheClipboard() {
+        let ceiling = ClipboardPasteLimit.choices[0]
+        for guestOS in VMGuestOS.allCases {
+            var configuration = VMInstanceFixture.makeConfiguration(name: "Shared VM", guestOS: guestOS)
+            configuration.clipboardSharingEnabled = true
+            configuration.clipboardPassthroughEnabled = true
+            let shares = guestOS == .macOS
+            #expect(configuration.sharesClipboard == shares, "\(guestOS)")
+            #expect(configuration.clipboardPassthroughIsEffective == shares, "\(guestOS)")
+            #expect(VMConfigurationKeyRegistry.clipboardSharing.applies(configuration) == shares, "\(guestOS)")
+            #expect(VMConfigurationKeyRegistry.clipboardPassthrough.applies(configuration) == shares, "\(guestOS)")
+            let policy = VMInstance.agentHubPolicy(for: configuration, maxPasteBytes: ceiling)
+            #expect(policy.isEnabled(.clipboard) == shares, "\(guestOS)")
+        }
     }
 
     @Test("CLIPBOARD's policy follows the clipboard-sharing setting and carries the paste ceiling and passthrough")

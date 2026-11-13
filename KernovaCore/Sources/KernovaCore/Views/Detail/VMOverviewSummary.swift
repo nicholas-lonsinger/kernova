@@ -206,7 +206,7 @@ package enum VMOverviewSummary {
         case .sharing:
             // Passthrough is a panel setting: its enable confirms in a sheet,
             // which is more weight than a card switch carries.
-            guestOS == .macOS ? [.clipboardSharing, .dropFiles] : [.clipboardSharing]
+            [.clipboardSharing, .dropFiles].filter { $0.key.applies(to: guestOS) }
         case .system, .storage, .network, .snapshots:
             []
         }
@@ -257,6 +257,7 @@ package enum VMOverviewSummary {
                 case 1: "1 shared folder"
                 default: "\(count) shared folders"
                 }
+            guard VMConfigurationKeyRegistry.clipboardPassthrough.applies(config) else { return folders }
             // Turning sharing off leaves the stored flag set, so the line
             // states what is running, as the panel dims the switch that isn't.
             let passthrough = config.clipboardPassthroughIsEffective ? "on" : "off"

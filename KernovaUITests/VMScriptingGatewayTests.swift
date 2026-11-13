@@ -260,7 +260,7 @@ struct VMScriptingGatewayTests {
     @Test("A scripted write carries no consent, so one that asks for it is refused and changes nothing")
     func scriptedWriteCarriesNoConsent() async throws {
         let wired = WiredCommandCore()
-        let alpha = wired.register(name: "Alpha") { $0.clipboardSharingEnabled = true }
+        let alpha = wired.register(name: "Alpha", guestOS: .macOS) { $0.clipboardSharingEnabled = true }
         let standIn = ScriptCommandStandIn()
         let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
         let command = try makeSetCommand()

@@ -27,7 +27,7 @@ struct VMSettingsViewControllerTests {
     @Test("Toggling Clipboard Sharing writes back to the configuration")
     func clipboardToggleWritesConfig() {
         let (vc, instance, _) = makeController(
-            guestOS: .linux, isReadOnly: false, category: .sharing)
+            guestOS: .macOS, isReadOnly: false, category: .sharing)
         #expect(instance.configuration.clipboardSharingEnabled == false)
 
         guard let clipboard = firstSwitch(action: "clipboardToggled", in: vc.view) else {

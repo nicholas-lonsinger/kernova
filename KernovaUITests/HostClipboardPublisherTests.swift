@@ -25,13 +25,11 @@ struct HostClipboardPublisherCancellationTests {
     final class CountingService: ClipboardServicing {
         var guestContent: ClipboardContent
         var isConnected = true
-        var supportsBinaryRepresentations = true
         let inboundOfferSeq: UInt64 = 0
         private(set) var materializeCount = 0
 
         init(content: ClipboardContent) { guestContent = content }
 
-        func stop() {}
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
             .nothing
@@ -121,13 +119,11 @@ struct HostClipboardPublisherOutcomeTests {
     @Observable
     final class ScriptedService: ClipboardServicing {
         var isConnected = true
-        var supportsBinaryRepresentations = true
         let inboundOfferSeq: UInt64 = 0
         let copyItems: [CopyToMacItem]
 
         init(copyItems: [CopyToMacItem]) { self.copyItems = copyItems }
 
-        func stop() {}
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
             .nothing

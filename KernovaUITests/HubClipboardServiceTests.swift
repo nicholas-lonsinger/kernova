@@ -40,7 +40,7 @@ struct HubClipboardServiceTests {
         #expect(probe.connect())
         probe.deliver(.helloReceived(Self.claim, Self.onConsole), fromConnection: 0)
         probe.deliver(.featuresChanged(Self.clipboard), fromConnection: 0)
-        try await waitForChange { instance.hubClipboard.isConnected && instance.clipboardRoute != .none }
+        try await waitForChange { instance.hubClipboard.isConnected && instance.clipboardService != nil }
         return instance
     }
 

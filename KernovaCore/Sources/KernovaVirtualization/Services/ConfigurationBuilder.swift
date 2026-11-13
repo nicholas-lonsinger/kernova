@@ -100,8 +100,6 @@ struct ConfigurationBuilder: Sendable {
 
         let (inputPipe, outputPipe) = configureSerialPort(vzConfig)
 
-        let clipboardPipes = configureClipboardSharing(vzConfig, config: config)
-
         if config.deviceShape.virtioSocketDevice {
             configureVsockDevice(vzConfig)
         }
@@ -120,8 +118,6 @@ struct ConfigurationBuilder: Sendable {
             products: VMSessionBuildProducts(
                 serialInputPipe: inputPipe,
                 serialOutputPipe: outputPipe,
-                clipboardInputPipe: clipboardPipes?.input,
-                clipboardOutputPipe: clipboardPipes?.output,
                 coldRemovableMedia: coldRemovableMedia,
                 directoryShare: directoryShare,
                 vmnetNetworks: sessionNetworks),
@@ -712,49 +708,6 @@ struct ConfigurationBuilder: Sendable {
         )
         vzConfig.serialPorts = [serialPort]
 
-        return (inputPipe, outputPipe)
-    }
-
-    // MARK: - Clipboard Sharing
-
-    /// Configures a SPICE agent console port for clipboard sharing using raw pipe I/O.
-    ///
-    /// The port takes a `VZFileHandleSerialPortAttachment`, not a
-    /// `VZSpiceAgentPortAttachment` — the latter syncs the host `NSPasteboard`
-    /// automatically, bypassing `SpiceClipboardService`'s gated UI.
-    ///
-    /// Returns `nil` for macOS guests and when clipboard sharing is disabled.
-    ///
-    /// The macOS exclusion is load-bearing rather than routing: SPICE needs a
-    /// userspace agent inside the guest to read the port, and while Linux ships
-    /// `spice-vdagent`, macOS ships nothing comparable. Attaching the port to a
-    /// macOS guest therefore exchanges no clipboard data and leaks a
-    /// `tty.com.redhat.spice.0X` port across save/restore. Those guests reach
-    /// the clipboard over vsock through the guest agent instead.
-    private func configureClipboardSharing(
-        _ vzConfig: VZVirtualMachineConfiguration,
-        config: VMConfiguration
-    ) -> (input: Pipe, output: Pipe)? {
-        guard config.clipboardSharingEnabled else { return nil }
-        guard config.guestOS.sharesClipboardThroughDevice else { return nil }
-
-        let inputPipe = Pipe()  // host writes → guest reads
-        let outputPipe = Pipe()  // guest writes → host reads
-
-        let consoleDevice = VZVirtioConsoleDeviceConfiguration()
-
-        let spicePort = VZVirtioConsolePortConfiguration()
-        spicePort.name = VZSpiceAgentPortAttachment.spiceAgentPortName
-        spicePort.attachment = VZFileHandleSerialPortAttachment(
-            fileHandleForReading: inputPipe.fileHandleForReading,
-            fileHandleForWriting: outputPipe.fileHandleForWriting
-        )
-        spicePort.isConsole = false
-        consoleDevice.ports[0] = spicePort
-
-        vzConfig.consoleDevices.append(consoleDevice)
-
-        Self.logger.log(.info, "Configured SPICE clipboard console port for '\(config.name, privacy: .public)'")
         return (inputPipe, outputPipe)
     }
 

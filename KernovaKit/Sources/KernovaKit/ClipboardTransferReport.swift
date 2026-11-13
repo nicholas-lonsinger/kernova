@@ -115,9 +115,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// A copy named what the destination had sent, and the destination no longer had some of it, so it was
     /// left out.
     case partsGone
-    /// The source's clipboard held no text, the one thing a text-only transport
-    /// carries.
-    case noTextToCopy
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.

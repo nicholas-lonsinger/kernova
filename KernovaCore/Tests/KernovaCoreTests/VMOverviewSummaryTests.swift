@@ -183,6 +183,13 @@ struct VMOverviewSummaryTests {
             ]
         }
         #expect(sharingNote(two) == "Passthrough off \u{00B7} 2 shared folders")
+
+        // A Linux guest has no passthrough to state, whatever its stored flags.
+        let linux = makeInstance(guestOS: .linux) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+        }
+        #expect(sharingNote(linux) == "No shared folders")
     }
 
     @Test("General closes with the shared machine ID note the resolver found")
@@ -266,12 +273,12 @@ struct VMOverviewSummaryTests {
         #expect(ephemeral(stuck)?.isOn == true)
     }
 
-    @Test("Drag and drop is a macOS-guest switch only")
-    func dropFilesToggleIsMacOSOnly() {
+    @Test("The Sharing card's switches are a macOS guest's: a Linux guest has none")
+    func sharingTogglesAreMacOSOnly() {
         let macOS = toggles(for: .sharing, instance: makeInstance())
         let linux = toggles(
             for: .sharing, instance: makeInstance(guestOS: .linux))
         #expect(macOS.map(\.toggle) == [.clipboardSharing, .dropFiles])
-        #expect(linux.map(\.toggle) == [.clipboardSharing])
+        #expect(linux.isEmpty)
     }
 }

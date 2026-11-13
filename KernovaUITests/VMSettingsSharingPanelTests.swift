@@ -93,14 +93,21 @@ struct VMSettingsSharingPanelTests {
         return (vc, instance)
     }
 
-    @Test("The Clipboard sharing switch on screen shows the setting, in the agent group or its own section")
+    @Test("A macOS guest's Clipboard sharing switch shows the setting")
     func clipboardSwitchShowsSetting() {
-        for guestOS in [VMGuestOS.macOS, .linux] {
-            let (onVC, _) = makeController(guestOS: guestOS, sharingEnabled: true)
-            #expect(firstSwitch(action: "clipboardToggled", in: onVC.view)?.state == .on, "\(guestOS)")
-            let (offVC, _) = makeController(guestOS: guestOS, sharingEnabled: false)
-            #expect(firstSwitch(action: "clipboardToggled", in: offVC.view)?.state == .off, "\(guestOS)")
+        let (onVC, _) = makeController(guestOS: .macOS, sharingEnabled: true)
+        #expect(firstSwitch(action: "clipboardToggled", in: onVC.view)?.state == .on)
+        let (offVC, _) = makeController(guestOS: .macOS, sharingEnabled: false)
+        #expect(firstSwitch(action: "clipboardToggled", in: offVC.view)?.state == .off)
+    }
+
+    @Test("A Linux guest's Sharing panel offers no clipboard switch, whatever its stored flags")
+    func linuxOffersNoClipboardSwitch() {
+        let (vc, _) = makeController(guestOS: .linux, sharingEnabled: true) {
+            $0.clipboardPassthroughEnabled = true
         }
+        #expect(firstSwitch(action: "clipboardToggled", in: vc.view) == nil)
+        #expect(firstSwitch(action: "clipboardPassthroughToggled", in: vc.view) == nil)
     }
 
     @Test("The passthrough toggle is disabled until sharing is on")

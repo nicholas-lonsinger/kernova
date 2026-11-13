@@ -6,8 +6,6 @@ import Foundation
 package struct VMSessionBuildProducts: Sendable {
     let serialInputPipe: Pipe
     let serialOutputPipe: Pipe
-    let clipboardInputPipe: Pipe?
-    let clipboardOutputPipe: Pipe?
     /// `RemovableMediaDeviceInfo` for each item in `config.removableMedia`,
     /// attached on the XHCI controller at config-build time, under the UUIDs
     /// the live devices carry — so `instance.liveRemovableMedia` can locate
@@ -22,14 +20,12 @@ package struct VMSessionBuildProducts: Sendable {
     package let vmnetNetworks: VmnetSessionNetworks
 
     package init(
-        serialInputPipe: Pipe, serialOutputPipe: Pipe, clipboardInputPipe: Pipe?, clipboardOutputPipe: Pipe?,
+        serialInputPipe: Pipe, serialOutputPipe: Pipe,
         coldRemovableMedia: [RemovableMediaDeviceInfo], directoryShare: MacOSDirectoryShare?,
         vmnetNetworks: VmnetSessionNetworks
     ) {
         self.serialInputPipe = serialInputPipe
         self.serialOutputPipe = serialOutputPipe
-        self.clipboardInputPipe = clipboardInputPipe
-        self.clipboardOutputPipe = clipboardOutputPipe
         self.coldRemovableMedia = coldRemovableMedia
         self.directoryShare = directoryShare
         self.vmnetNetworks = vmnetNetworks

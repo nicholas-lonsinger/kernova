@@ -65,7 +65,7 @@ struct VMAdmissionTests {
             hasSaveFile: slot, hasSnapshots: true, guestOS: variant.guestOS,
             networkEnabled: variant.networkEnabled,
             savedStateSurvivesMembershipMove: variant.survivesMembershipMove,
-            clipboardSharingEnabled: variant.clipboardSharing, reachesGuestAgent: variant.reachesGuestAgent,
+            sharesClipboard: variant.clipboardSharing, reachesGuestAgent: variant.reachesGuestAgent,
             hasPendingGuestSetup: variant.pendingSetup, usbPassthroughGap: variant.usbPassthroughGap,
             writesOutsideBundle: variant.writesOutsideBundle, identityConflict: nil,
             accessoryHolder: nil, terminating: terminating,

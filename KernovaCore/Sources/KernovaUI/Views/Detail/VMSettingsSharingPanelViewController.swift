@@ -3,9 +3,8 @@ import KernovaCommandModel
 import KernovaCore
 
 /// The Sharing category: shared directories, the guest-agent settings the
-/// guest's agent offers, a standalone clipboard section where the clipboard
-/// rides a device instead (Linux), and the USB accessories this VM takes back
-/// on its own.
+/// guest's agent offers, and the USB accessories this VM takes back on its
+/// own.
 @MainActor
 final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPanel {
     let context: VMSettingsPanelContext
@@ -65,7 +64,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         var sections = [buildSharedDirectoriesSection()]
         let settings = agentSettings
         if !settings.isEmpty { sections.append(buildGuestAgentSection(settings)) }
-        if instance.configuration.guestOS.sharesClipboardThroughDevice { sections.append(buildClipboardSection()) }
         // Absent, not disabled, in a process that cannot pass accessories
         // through: there is nothing it could ever list.
         pairingSection = nil
@@ -90,7 +88,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         lockRegistry.apply(isReadOnly: isReadOnly)
         sharesLockRegistry.apply(isReadOnly: !shownShareOffers.contains(where: \.isOffered))
         refreshGuestAgent()
-        refreshClipboard()
         refreshSharedList()
         refreshUSBPairings()
     }
@@ -126,9 +123,9 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// Explains the disabled install-reminder row while the prompt is off
     /// app-wide.
     private var installReminderOverrideCaption: GroupedFormStateNote?
-
-    // Drag and drop (macOS guests only)
     private var dropFilesSwitch = NSSwitch()
+    private var clipboardSwitch = NSSwitch()
+    private var clipboardPassthroughSwitch = NSSwitch()
 
     // Remembered USB accessories
     private var pairingListStack = NSStackView()
@@ -136,10 +133,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// build that never built one.
     private var pairingSection: NSView?
     private var pairingLoop: ObservationLoop?
-
-    // Clipboard
-    private var clipboardSwitch = NSSwitch()
-    private var clipboardPassthroughSwitch = NSSwitch()
 
     // MARK: Shared Directories
 
@@ -298,16 +291,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// controlled elsewhere.
     static let installPromptDisabledCaption = "Turned off for all virtual machines in Settings → Reminders."
 
-    /// Info-popover copy for the "Clipboard sharing" row on a Linux guest,
-    /// whose clipboard rides SPICE.
-    static let linuxClipboardInfoParagraphs: [InfoPopoverParagraph] = [
-        .body(
-            "Exchanges clipboard text between host and guest. Requires `spice-vdagent` installed in the guest via its package manager."
-        )
-    ]
-
-    /// Info-popover copy for the "Automatic clipboard passthrough" toggle, shared
-    /// by the macOS and Linux clipboard sections.
+    /// Info-popover copy for the "Automatic clipboard passthrough" toggle.
     static let passthroughInfoParagraphs: [InfoPopoverParagraph] = [
         .body(
             "Forwards this Mac's clipboard to the guest automatically and writes the guest's clipboard here — one clipboard, with no copy command in either direction. Requires clipboard sharing."
@@ -317,8 +301,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         ),
     ]
 
-    /// The Guest Agent group: a row for each of `settings`, which on macOS
-    /// include Clipboard sharing, riding the agent's vsock channel.
+    /// The Guest Agent group: a row for each of `settings`.
     private func buildGuestAgentSection(_ settings: [GuestAgentSetting]) -> NSView {
         let guestOS = instance.configuration.guestOS
         // Not lockable — every toggle here takes effect live. Each switch is made where its row is placed,
@@ -339,7 +322,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     primary: makeGroupedFormCardRow(
                         "Clipboard sharing", control: clipboardSwitch,
                         info: [
-                            .body("Exchanges clipboard text between host and guest.")
+                            .body("Shares the clipboard between this Mac and the guest.")
                         ]),
                     subOption: makeGroupedFormCardRow(
                         "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
@@ -376,32 +359,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         ])
     }
 
-    // MARK: Clipboard
-
-    /// Standalone Clipboard section for **Linux** guests, whose clipboard rides
-    /// SPICE (`spice-vdagent`) and is independent of the Kernova guest agent.
-    private func buildClipboardSection() -> NSView {
-        clipboardSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardToggled))
-        clipboardPassthroughSwitch = makeGroupedFormSwitch(target: self, action: #selector(clipboardPassthroughToggled))
-
-        // Sharing adds the SPICE console device, so the header carries the
-        // lock hint; passthrough is host-side and stays live.
-        return makeGroupedFormSection([
-            lockRegistry.makeHeader("Clipboard", editableWhen: .stopped),
-            makeGroupedFormCard(rows: [
-                makeGroupedFormSubOptionGroup(
-                    primary: makeGroupedFormCardRow(
-                        "Clipboard sharing", control: clipboardSwitch,
-                        info: Self.linuxClipboardInfoParagraphs),
-                    subOption: makeGroupedFormCardRow(
-                        "Automatic clipboard passthrough", control: clipboardPassthroughSwitch,
-                        info: Self.passthroughInfoParagraphs))
-            ]),
-        ])
-    }
-
-    /// Refreshes the agent rows on screen but Clipboard sharing's, which
-    /// ``refreshClipboard()`` owns wherever it is shown.
+    /// Refreshes the agent rows on screen.
     private func refreshGuestAgent() {
         for setting in agentSettings {
             switch setting {
@@ -412,7 +370,16 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                     isAvailable(VMConfigurationKeyRegistry.agentLogForwarding, writing: String(!forwardsLogs)),
                     control: logForwardingSwitch)
             case .clipboard:
-                break
+                let shares = instance.configuration.clipboardSharingEnabled
+                clipboardSwitch.state = shares ? .on : .off
+                applyGroupedFormRowEnabled(
+                    isAvailable(VMConfigurationKeyRegistry.clipboardSharing, writing: String(!shares)),
+                    control: clipboardSwitch)
+                let passthroughOn = instance.configuration.clipboardPassthroughEnabled
+                clipboardPassthroughSwitch.state = passthroughOn ? .on : .off
+                applyGroupedFormRowEnabled(
+                    isAvailable(VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!passthroughOn)),
+                    control: clipboardPassthroughSwitch)
             case .dropFiles:
                 let dropsFiles = instance.configuration.dropFilesEnabled
                 dropFilesSwitch.state = dropsFiles ? .on : .off
@@ -430,19 +397,6 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 installReminderOverrideCaption?.refresh()
             }
         }
-    }
-
-    private func refreshClipboard() {
-        let shares = instance.configuration.clipboardSharingEnabled
-        clipboardSwitch.state = shares ? .on : .off
-        applyGroupedFormRowEnabled(
-            isAvailable(VMConfigurationKeyRegistry.clipboardSharing, writing: String(!shares)),
-            control: clipboardSwitch)
-        let passthroughOn = instance.configuration.clipboardPassthroughEnabled
-        clipboardPassthroughSwitch.state = passthroughOn ? .on : .off
-        applyGroupedFormRowEnabled(
-            isAvailable(VMConfigurationKeyRegistry.clipboardPassthrough, writing: String(!passthroughOn)),
-            control: clipboardPassthroughSwitch)
     }
 
     /// The offers of the share controls on screen: Add always, and a Remove or
