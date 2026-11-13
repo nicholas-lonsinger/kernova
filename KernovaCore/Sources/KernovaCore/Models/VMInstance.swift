@@ -480,13 +480,15 @@ package final class VMInstance {
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk, whose clipboard publishes to and polls
-    /// `hostPasteboard` and stages under `stagingRoot`, and whose
-    /// ``activity`` forwards its records to `logSink`.
+    /// `hostPasteboard` and stages under `stagingRoot`, its clipboard readouts
+    /// measured on `transferClock`, and whose ``activity`` forwards its records
+    /// to `logSink`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
         hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts,
         logSink: KernovaLogger.ForwardingSink?, agentConnector: (any HostConnectionMaking)? = nil,
-        stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot
+        stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot,
+        transferClock: any EngineClock = makePlatformEngineClock()
     ) {
         self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
@@ -504,7 +506,8 @@ package final class VMInstance {
         let hubClipboard = HubClipboardService(
             sink: itemSink, stagingRoot: stagingRoot,
             stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes },
-            reporter: clipboardTransfers, label: { [snapshots] in snapshots.instance?.name ?? "VM" })
+            reporter: clipboardTransfers, transferClock: transferClock,
+            label: { [snapshots] in snapshots.instance?.name ?? "VM" })
         self.hubClipboard = hubClipboard
         let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService

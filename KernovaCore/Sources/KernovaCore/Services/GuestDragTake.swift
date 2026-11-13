@@ -1112,14 +1112,8 @@ package final class GuestDragTake: GuestDragTaking {
     /// What the readout says of a pull that ended in `error`, with `owed`
     /// items not yet written.
     static func failure(for error: WireError, owed: Int) -> ClipboardTransferFailure {
-        switch error.code {
-        case .itemOfferStale, .cancelled, .shuttingDown: .interrupted(fileCount: owed)
-        case .itemRepresentationUnavailable: .peerReported(.dragItemUnavailable)
-        case .writeFailed where error.posixErrno == ENOSPC: .diskFull(needed: nil, available: nil)
-        case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .stagingFailed
-        case .readFailed: .sourceUnreadable
-        default: .transferFailed
-        }
+        if error.code == .itemRepresentationUnavailable { return .peerReported(.dragItemUnavailable) }
+        return ClipboardTransferFailure(pullEndedWith: error, fileCount: owed)
     }
 
     private static func describe(_ result: DragTakeResult) -> String {

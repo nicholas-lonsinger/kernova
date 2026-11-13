@@ -60,7 +60,7 @@ extension VMInstance {
             switch copy {
             case .nothing:
                 reportClipboardCommand(.copy, .nothingToCopy)
-            case .alreadyHeld, .landed:
+            case .alreadyHeld, .landed, .cancelled:
                 break
             case .failed(let failure):
                 reportClipboardCommand(.copy, failure)

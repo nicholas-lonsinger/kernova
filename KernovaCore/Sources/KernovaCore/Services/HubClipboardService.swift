@@ -88,11 +88,11 @@ final class HubClipboardService: ClipboardServicing {
 
     /// A service landing the guest's representations in clipboard staging under `stagingRoot`, keyed
     /// `stagingKey`, its pulls built by `sink`, the hub's item sink, under the paste ceiling `maxPasteBytes` reads,
-    /// reporting to `reporter` as the VM `label` names.
+    /// reporting to `reporter` as the VM `label` names, its readouts measured on `transferClock`.
     init(
         sink: ItemSinkAdapter<POSIXTreeFileSystem>, stagingRoot: ProcessStagingRoot, stagingKey: String,
         maxPasteBytes: @escaping @Sendable () -> Int, reporter: ClipboardTransferReporter,
-        label: @escaping () -> String
+        transferClock: any EngineClock = makePlatformEngineClock(), label: @escaping () -> String
     ) {
         self.sink = sink
         self.maxPasteBytes = maxPasteBytes
@@ -100,7 +100,7 @@ final class HubClipboardService: ClipboardServicing {
         self.label = label
         exchange = ClipboardItemExchange(
             side: .host, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot, pasteCeiling: maxPasteBytes,
-            logger: Self.logger, transfers: reporter, peerName: label)
+            logger: Self.logger, transfers: reporter, peerName: label, transferClock: transferClock)
         promiseStaging = ClipboardFileStaging(label: "host-promises-\(stagingKey)", root: stagingRoot)
         snapshotStaging = .leased(label: "host-copies-\(stagingKey)", root: stagingRoot)
         exchange.onRemoteOffer = { [weak self] in self?.received($0) }
@@ -224,6 +224,7 @@ final class HubClipboardService: ClipboardServicing {
             switch landing {
             case .written: return .landed
             case .alreadyHeld: return .alreadyHeld
+            case .cancelled: return .cancelled
             case .superseded: return .failed(.transferFailed)
             case .failed(let error): return .failed(Self.failure(error))
             }
@@ -263,14 +264,19 @@ final class HubClipboardService: ClipboardServicing {
         return retraction
     }
 
-    /// The guest refused `copy` of the Mac's clipboard, or wrote it without some of it. A copy only naming what
-    /// the guest's clipboard holds already, and one a newer copy superseded, are the user's to make again: nothing
-    /// is said.
-    private func copyRefused(_ copy: ClipboardOfferSource, _ error: WireError) {
+    /// The guest refused `copy` of the Mac's clipboard, or wrote it without some of it, or the connection did not
+    /// open it. A copy only naming what the guest's clipboard holds already, one a newer copy superseded, and one
+    /// the guest's user cancelled on the guest's readout, which said so, are the user's to make again: nothing is
+    /// said.
+    private func copyRefused(_ copy: ClipboardOfferSource, _ refusal: ClipboardItemExchange.CopyRefusal) {
+        guard case .byFarSide(let error) = refusal else {
+            Self.logger.log(.notice, "The Mac's clipboard copy was not opened")
+            return reportRefusal(gesture: .send, .transferFailed)
+        }
         Self.logger.log(
             .notice, "The guest refused the Mac's clipboard copy: \(String(describing: error), privacy: .public)")
         switch error.code {
-        case .clipboardAlreadyHeld, .itemOfferReplaced:
+        case .clipboardAlreadyHeld, .itemOfferReplaced, .cancelled:
             return
         case .clipboardFilesWithheld:
             reportRefusal(
