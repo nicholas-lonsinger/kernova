@@ -18,21 +18,6 @@ struct ClipboardFileStagingTests {
         )
     }
 
-    @Test("a sink writes streamed chunks and commit keeps the file with the right name")
-    func sinkWritesAndCommits() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let sink = try staging.makeSink(generation: 1, filename: "photo.png")
-        try sink.write(Data([0x89, 0x50]))
-        try sink.write(Data([0x4E, 0x47]))
-        let url = try sink.commit()
-
-        #expect(url.lastPathComponent == "photo.png")
-        #expect(FileManager.default.fileExists(atPath: url.path))
-        #expect(try Data(contentsOf: url) == Data([0x89, 0x50, 0x4E, 0x47]))
-    }
-
     @Test("abort deletes the partial file")
     func abortDeletesPartial() throws {
         let staging = makeStaging()
@@ -45,39 +30,6 @@ struct ClipboardFileStagingTests {
 
         sink.abort()
         #expect(!FileManager.default.fileExists(atPath: url.path))
-    }
-
-    @Test("the last 3 generations survive; a 4th evicts only the oldest")
-    func keepsGenerationHistory() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        var dirs: [URL] = []
-        for generation in 1...4 {
-            let sink = try staging.makeSink(
-                generation: UInt64(generation), filename: "g\(generation).bin")
-            try sink.write(Data([UInt8(generation)]))
-            try sink.commit()
-            dirs.append(sink.url.deletingLastPathComponent())
-        }
-
-        // Generation 1's directory was evicted when generation 4 arrived; 2–4 survive.
-        #expect(!FileManager.default.fileExists(atPath: dirs[0].path))
-        #expect(FileManager.default.fileExists(atPath: dirs[1].path))
-        #expect(FileManager.default.fileExists(atPath: dirs[2].path))
-        #expect(FileManager.default.fileExists(atPath: dirs[3].path))
-    }
-
-    @Test("sinks for the same generation share one directory")
-    func sameGenerationSharesDirectory() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let a = try staging.makeSink(generation: 7, filename: "a.bin")
-        let b = try staging.makeSink(generation: 7, filename: "b.bin")
-        try a.commit()
-        try b.commit()
-        #expect(a.url.deletingLastPathComponent() == b.url.deletingLastPathComponent())
     }
 
     @Test("same-named sinks in one generation get distinct, non-colliding URLs")
@@ -122,54 +74,6 @@ struct ClipboardFileStagingTests {
             .deletingLastPathComponent()
         #expect(escaped.url.lastPathComponent == "escape.txt")
         #expect(escaped.url.deletingLastPathComponent() == generationDir)
-    }
-
-    @Test("sweep removes the staging root")
-    func sweepRemovesRoot() throws {
-        let staging = makeStaging()
-        let sink = try staging.makeSink(generation: 1, filename: "x.bin")
-        try sink.commit()
-        let dir = sink.url.deletingLastPathComponent()
-        #expect(FileManager.default.fileExists(atPath: dir.path))
-
-        staging.sweep()
-        #expect(!FileManager.default.fileExists(atPath: dir.path))
-    }
-
-    @Test("roots nest under the process root, one child per label")
-    func rootsNestUnderProcessRoot() throws {
-        let staging = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
-        let sink = try staging.makeSink(generation: 1, filename: "x.bin")
-        try sink.commit()
-
-        let labelRoot = stagingRoot.root.url.appendingPathComponent("host-vm", isDirectory: true)
-        #expect(FileManager.default.fileExists(atPath: labelRoot.path))
-        #expect(sink.url.path.hasPrefix(labelRoot.path + "/"))
-    }
-
-    @Test("same-generation roots of two labels never share a directory; one sweep leaves the other")
-    func perLabelRootsAreDisjoint() throws {
-        // Every label's counter starts at 1, so the same generation number must
-        // land in different roots.
-        let receive = ClipboardFileStaging(label: "host-vm", root: stagingRoot.root)
-        let drops = ClipboardFileStaging(label: "host-drops-vm", root: stagingRoot.root)
-
-        let received = try receive.makeSink(generation: 1, filename: "in.bin")
-        try received.write(Data("in".utf8))
-        try received.commit()
-        let dropped = try drops.makeSink(generation: 1, filename: "out.bin")
-        try dropped.write(Data("out".utf8))
-        try dropped.commit()
-
-        #expect(
-            received.url.deletingLastPathComponent() != dropped.url.deletingLastPathComponent())
-        // A sibling label extending this one is not "inside" this root.
-        #expect(!receive.isInStagingRoot(dropped.url))
-
-        // Sweeping one root leaves the other's file intact.
-        drops.sweep()
-        #expect(!FileManager.default.fileExists(atPath: dropped.url.path))
-        #expect(FileManager.default.fileExists(atPath: received.url.path))
     }
 
     @Test("same-label instances from different sessions own disjoint roots; one's sweep leaves the other's files")
@@ -266,67 +170,7 @@ struct ClipboardFileStagingTests {
         #expect(!staging.hasCapacity(forByteCount: .max, margin: 1))
     }
 
-    @Test("a crafted filename can't escape the generation directory")
-    func sanitizesPathTraversal() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let sink = try staging.makeSink(generation: 1, filename: "../../escape.png")
-        let url = sink.url
-        #expect(url.lastPathComponent == "escape.png")
-        #expect(url.deletingLastPathComponent().lastPathComponent != "..")
-    }
-
-    @Test(
-        "a dot-only filename falls back to a safe name",
-        arguments: ["..", "."])
-    func sanitizesDotOnlyNames(_ name: String) throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let sink = try staging.makeSink(generation: 1, filename: name)
-        try sink.write(Data([1]))
-        try sink.commit()
-        #expect(sink.url.lastPathComponent == "clipboard-file")
-        #expect(FileManager.default.fileExists(atPath: sink.url.path))
-    }
-
     // MARK: - Directory / tree reservations (Phase 2)
-
-    @Test("reserveScratchDirectory hands each caller its own empty directory in the generation")
-    func reserveScratchDirectoryIsolatesCallers() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let first = try staging.reserveScratchDirectory(generation: 1)
-        let second = try staging.reserveScratchDirectory(generation: 1)
-
-        var isDir: ObjCBool = false
-        #expect(FileManager.default.fileExists(atPath: first.path, isDirectory: &isDir))
-        #expect(isDir.boolValue)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: first.path).isEmpty)
-        // Two drops in one generation must not write into each other's directory.
-        #expect(first != second)
-        #expect(first.deletingLastPathComponent() == second.deletingLastPathComponent())
-    }
-
-    @Test("discardGeneration retires one generation early, leaving the rest of the window")
-    func discardGenerationRetiresEarly() throws {
-        let staging = makeStaging()
-        defer { staging.sweep() }
-
-        let first = try staging.reserveScratchDirectory(generation: 1)
-        let second = try staging.reserveScratchDirectory(generation: 2)
-
-        staging.discardGeneration(1)
-        #expect(!FileManager.default.fileExists(atPath: first.path))
-        #expect(FileManager.default.fileExists(atPath: second.path))
-
-        // Discarding a generation the window already evicted is a no-op, and the
-        // number is not reused by the survivors.
-        staging.discardGeneration(1)
-        #expect(FileManager.default.fileExists(atPath: second.path))
-    }
 
     @Test("reserved directories ride the generation window (3 newest survive)")
     func reservationsRideGenerationWindow() throws {

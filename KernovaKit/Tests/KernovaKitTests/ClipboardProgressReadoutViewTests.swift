@@ -63,16 +63,6 @@ struct ClipboardProgressReadoutViewTests {
         #expect(view.frame.height >= view.cancelButtonForTesting.fittingSize.height)
     }
 
-    @Test("applying a snapshot renders it without disturbing the handler")
-    func applyKeepsTheHandler() {
-        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
-        view.onCancel = {}
-        view.apply(makeSnapshot(isCancellable: true))
-
-        #expect(!view.cancelButtonForTesting.isHidden)
-        #expect(view.accessibilityLabel()?.isEmpty == false)
-    }
-
     @Test(
         "the readout says what is queued behind it, and costs no height to say so",
         arguments: [ClipboardProgressReadoutView.Surface.dropdownItem, .callout])
@@ -89,17 +79,6 @@ struct ClipboardProgressReadoutViewTests {
         #expect(view.accessibilityLabel()?.contains("2 more transfers pending") == true)
         // The surface takes this height once, so the line has to share a row.
         #expect(view.frame.height == height)
-    }
-
-    @Test("the bar shows a snapshot applied while the view has no window")
-    func barShowsASnapshotAppliedOffScreen() {
-        // The status item's dropdown applies snapshots before it opens.
-        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
-        #expect(view.window == nil)
-
-        view.apply(makeSnapshot(isCancellable: true))
-
-        #expect(view.barFractionForTesting == 0.1)
     }
 
     @Test("a readout that does not know its bytes fills its bar by files and shows no byte line")

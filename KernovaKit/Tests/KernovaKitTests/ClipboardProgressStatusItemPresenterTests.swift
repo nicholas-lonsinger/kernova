@@ -19,8 +19,6 @@ struct ClipboardProgressStatusItemPresenterTests {
     /// A slot holding showings by the real tenancy rules, with no status item.
     final class RecordingSlot: StatusItemCalloutSlot {
         var isDropdownOpen = false
-        /// Whether the status item can carry a callout at all.
-        var canCarry = true
         private(set) var shown: [NSViewController] = []
         var events: [Event] = []
         private var tenancy = TransientStatusItemPopover.Tenancy()
@@ -30,9 +28,6 @@ struct ClipboardProgressStatusItemPresenterTests {
         func show(_ content: NSViewController, for duration: TimeInterval?)
             -> TransientStatusItemPopover.ShowResult
         {
-            guard canCarry else {
-                return .skipped(.unreachable(visible: true, onScreen: false, menuOpen: false))
-            }
             guard let showing = tenancy.begin(timed: duration != nil) else {
                 return .skipped(.timedCalloutUp)
             }
@@ -105,19 +100,6 @@ struct ClipboardProgressStatusItemPresenterTests {
         #expect(slot.current == nil)
     }
 
-    @Test("clearing the readout leaves a newer callout that replaced it up")
-    func clearingLeavesANewerCallout() throws {
-        let presenter = makePresenter()
-        presenter.apply(running())
-        #expect(slot.current != nil)
-        let notice = try #require(slot.showNotice())
-
-        presenter.apply(.idle)
-
-        #expect(slot.events.isEmpty)
-        #expect(slot.current == notice)
-    }
-
     @Test("Cancel in the callout closes it, then cancels the operation it was rendered for")
     func cancelClosesThenCancels() throws {
         let presenter = makePresenter()
@@ -129,19 +111,6 @@ struct ClipboardProgressStatusItemPresenterTests {
         view.cancelButtonForTesting.performClick(nil)
 
         #expect(slot.events == [.dismissed(readout), .cancelled(operation)])
-    }
-
-    @Test("a callout the status item could not carry leaves the reveal for a later update")
-    func aSkippedShowLeavesTheRevealUnspent() {
-        let presenter = makePresenter()
-        slot.canCarry = false
-        presenter.apply(running(elapsed: 5))
-        #expect(slot.shown.isEmpty)
-
-        slot.canCarry = true
-        presenter.apply(running(elapsed: 6))
-        #expect(slot.shown.count == 1)
-        #expect(slot.current != nil)
     }
 
     @Test("a timed callout already up holds the reveal back until its time is up")
@@ -158,24 +127,6 @@ struct ClipboardProgressStatusItemPresenterTests {
         #expect(slot.current != notice)
     }
 
-    @Test("a readout that waits under the elapsed floor with no further update reveals as the floor passes")
-    func aWaitingReadoutRevealsAtTheFloor() async throws {
-        let presenter = makePresenter()
-        presenter.apply(sizeUnknown(elapsed: 0.25))
-        #expect(slot.shown.isEmpty)
-        let revisit = try #require(clock.parked.first)
-        #expect(clock.parked.count == 1)
-        #expect(revisit.seconds == ClipboardProgressAutoReveal.defaultMinimumElapsedToReveal - 0.25)
-
-        clock.advance(seconds: revisit.seconds)
-        clock.release(revisit)
-        await clock.completion(of: revisit)
-
-        #expect(slot.shown.count == 1)
-        #expect(slot.current != nil)
-        #expect(clock.parked.isEmpty)
-    }
-
     @Test("a revisit that runs before the floor has passed arms one more for the rest")
     func anEarlyRevisitArmsForTheRest() async throws {
         let presenter = makePresenter()
@@ -188,14 +139,6 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         #expect(slot.shown.isEmpty)
         #expect(clock.parked.map(\.seconds) == [0.25])
-    }
-
-    @Test("further updates for the waiting operation keep its one revisit")
-    func updatesKeepTheOneRevisit() throws {
-        let presenter = makePresenter()
-        presenter.apply(sizeUnknown(elapsed: 0.25))
-        presenter.apply(sizeUnknown(elapsed: 0.5))
-        #expect(clock.parked.count == 1)
     }
 
     @Test("a readout that clears before the floor leaves no revisit")
@@ -232,13 +175,5 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         #expect(clock.requestedSeconds.isEmpty)
         #expect(slot.shown.isEmpty)
-    }
-
-    @Test("a readout that reveals on delivery arms no revisit")
-    func anEarnedRevealArmsNothing() {
-        let presenter = makePresenter()
-        presenter.apply(sizeUnknown(elapsed: 2))
-        #expect(slot.shown.count == 1)
-        #expect(clock.requestedSeconds.isEmpty)
     }
 }

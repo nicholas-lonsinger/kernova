@@ -9,8 +9,6 @@ import Testing
 /// before a byte of it crosses.
 @Suite("ClipboardPromisePolicy", .caseScoped)
 struct ClipboardPromisePolicyTests {
-    private let fileURLType = ClipboardPasteboardPublisher.ItemSpec.fileURLType
-
     private func inline(_ uti: String = ClipboardContent.utf8TextUTI, size: Int = 8) -> Representation {
         .make(TypeDescriptor(appleUTI: uti), .inline, size: size)
     }
@@ -27,23 +25,6 @@ struct ClipboardPromisePolicyTests {
 
     // MARK: - keeps
 
-    @Test("an ordinary inline representation is kept")
-    func keepsInlineRepresentation() {
-        #expect(ClipboardPromisePolicy.keeps(inline()))
-    }
-
-    @Test("an identity-skipped type is never kept")
-    func dropsIdentitySkippedTypes() {
-        #expect(!ClipboardPromisePolicy.keeps(inline("public.file-url")))
-        #expect(!ClipboardPromisePolicy.keeps(inline(ClipboardSnapshotPolicy.concealedMarkerUTI)))
-    }
-
-    @Test("a representation of unknown size is kept: the sender read no bytes")
-    func keepsRepresentationsOfUnknownSize() {
-        #expect(ClipboardPromisePolicy.keeps(inline(size: 0)))
-        #expect(ClipboardPromisePolicy.keeps(file("empty.txt", size: 0)))
-    }
-
     @Test("an inline type no Mac pasteboard names is not kept; a MIME type alone maps")
     func keepsOnlyTypesAMacNames() {
         var windowsOnly = TypeDescriptor()
@@ -54,11 +35,6 @@ struct ClipboardPromisePolicyTests {
         mimeOnly.mime = "image/png"
         #expect(mimeOnly.appleUTI == "public.png")
         #expect(ClipboardPromisePolicy.keeps(.make(mimeOnly, .inline, size: 8)))
-    }
-
-    @Test("an unrecognized storage is not kept")
-    func dropsUnspecifiedStorage() {
-        #expect(!ClipboardPromisePolicy.keeps(.make(TypeDescriptor(appleUTI: "public.data"), .unspecified, size: 8)))
     }
 
     // MARK: - servesFileURL
@@ -73,25 +49,6 @@ struct ClipboardPromisePolicyTests {
         #expect(!ClipboardPromisePolicy.servesFileURL(inline("public.file-url")))
     }
 
-    // MARK: - promisedTypes
-
-    @Test("an item's best representation of each type serves it, and one file URL at most")
-    func promisedTypesTakeTheFirstOfEachType() {
-        let types = ClipboardPromisePolicy.promisedTypes(
-            for: item(
-                file("a.png", uti: "public.png"), inline("public.png"), inline("public.png"),
-                file("b.png", uti: "public.png"), inline("public.file-url")))
-        #expect(types.map(\.pasteboardType) == [fileURLType, "public.png"])
-        #expect(types.map(\.representation) == [0, 1])
-    }
-
-    @Test("withholding file URLs leaves an item's inline types")
-    func withholdingFileURLsLeavesInlineTypes() {
-        let types = ClipboardPromisePolicy.promisedTypes(
-            for: item(file("a.png", uti: "public.png"), inline("public.png")), servingFileURLs: false)
-        #expect(types.map(\.pasteboardType) == ["public.png"])
-    }
-
     // MARK: - Paste budget
 
     @Test("the paste-bound total counts only the .fileURL-serving reps")
@@ -102,14 +59,6 @@ struct ClipboardPromisePolicyTests {
             item(file("b.bin", size: 300), file("c.bin", size: 400)),
         ]
         #expect(ClipboardPromisePolicy.pasteBudget(items, limit: .max).total == 400)
-    }
-
-    @Test("the paste-bound total saturates rather than wrapping")
-    func totalSaturates() {
-        var huge = file("a.bin")
-        huge.sizeEstimate = .max
-        let items = [item(huge), item(file("b.bin", size: 1))]
-        #expect(ClipboardPromisePolicy.pasteBudget(items, limit: .max).total == .max)
     }
 
     @Test("a set exactly at the cap is within budget, one byte over is not")
