@@ -10,8 +10,7 @@ public struct ClipboardRepresentationDescriptor: Equatable, Sendable {
     /// payload.
     public let filename: String
 
-    /// Whether the representation inlines onto the pasteboard (vs. file-only),
-    /// per `ClipboardContent.Representation.shouldInlineOnPasteboard`.
+    /// Whether the representation inlines onto the pasteboard (vs. file-only).
     public let isInline: Bool
 
     /// Whether the representation may be promised at all.

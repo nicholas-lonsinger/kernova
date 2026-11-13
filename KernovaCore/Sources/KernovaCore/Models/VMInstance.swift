@@ -474,7 +474,7 @@ package final class VMInstance {
         self.bundle = bundle
         self.activity = VMActivity(phase: phase, logSink: logSink)
         self.preferences = preferences
-        self.hostClipboardPublisher = HostClipboardPublisher(pasteboard: hostPasteboard, stagingRoot: stagingRoot)
+        self.hostClipboardPublisher = HostClipboardPublisher(pasteboard: hostPasteboard)
         let snapshots = AgentHubSnapshotRelay()
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")

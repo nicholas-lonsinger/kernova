@@ -8,9 +8,6 @@ import UniformTypeIdentifiers
 
 @Suite("ClipboardContent AppKit helpers", .caseScoped)
 struct ClipboardContentAppKitTests {
-    // `shouldInlineOnPasteboard` moved to KernovaKit (shared by host + guest);
-    // its cases live in `ClipboardRepresentationPasteboardTests` in the package.
-
     // MARK: - filePayloads / richTextRepresentation
 
     @Test("filePayloads and the inline remainder partition the representations")

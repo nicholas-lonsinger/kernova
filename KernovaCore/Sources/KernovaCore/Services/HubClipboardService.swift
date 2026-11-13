@@ -167,9 +167,8 @@ final class HubClipboardService: ClipboardServicing {
 
     /// Makes the Mac's copy the host's clipboard and offers it: a new connection is offered only a copy made
     /// after it, so nothing is owed a retry.
-    func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
+    func offerHostCopy(_ copy: ClipboardOfferSource) {
         exchange.offer(copy)
-        return .settled
     }
 
     /// The Mac's pasteboard changed to something it offers nothing of: the host's offer is withdrawn, and the

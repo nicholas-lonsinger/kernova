@@ -38,7 +38,6 @@ extension ClipboardOfferSource {
 @Suite("ClipboardPassthroughCoordinator", .caseScoped)
 @MainActor
 struct ClipboardPassthroughCoordinatorTests {
-    private let stagingRoot = TestStagingRoot()
     private let scratch = TestScratchDirectory(prefix: "kernova-passthrough")
 
     init() throws {
@@ -51,7 +50,8 @@ struct ClipboardPassthroughCoordinatorTests {
     @MainActor
     @Observable
     final class FakePassthroughService: ClipboardServicing {
-        var guestContent: ClipboardContent = .empty
+        /// The text the guest's offer carries.
+        var guestText = ""
         var isConnected = true
         private(set) var inboundOfferSeq: UInt64 = 0
 
@@ -62,8 +62,6 @@ struct ClipboardPassthroughCoordinatorTests {
         /// One copy the poll offered.
         struct Forwarded {
             let copy: ClipboardOfferSource
-            /// Its text, read when it was offered.
-            let text: String?
 
             /// The name of each of its FILE and FOLDER representations.
             @MainActor var filenames: [String] {
@@ -75,9 +73,12 @@ struct ClipboardPassthroughCoordinatorTests {
         /// Every copy handed to `offerHostCopy(_:)` by the poll, in order.
         var grabbed: [Forwarded] = []
 
-        /// What a connected `offerHostCopy(_:)` reports — the seam a test uses to
-        /// simulate a send that never left.
-        var grabOutcome: ClipboardGrabOutcome = .settled
+        /// The text of each copy in `grabbed`, read now.
+        func grabbedTexts() async -> [String?] {
+            var texts: [String?] = []
+            for forwarded in grabbed { texts.append(await forwarded.copy.utf8Text()) }
+            return texts
+        }
 
         /// Makes `guestClipboardItems` refuse the way `HubClipboardService` does
         /// over the deadline-safe cap: every file dropped, and the refusal
@@ -88,29 +89,36 @@ struct ClipboardPassthroughCoordinatorTests {
         /// resolves on the event itself.
         @ObservationIgnored let grabRecorded = AsyncGate()
 
-        /// How many times `guestClipboardItems` has run — a publish's first step,
-        /// and so how far a publish a test is holding has got.
-        var copiesMaterialized = 0
-
+        func passthroughStopped() {}
+        func hostCopyOffersNothing() {}
+        let connectionEpoch: UInt64 = 0
+        let connectionStartChangeCount: Int? = nil
+        let snapshotStaging: ClipboardFileStaging? = nil
+        let clipboardConnection: ClipboardConnectionID? = nil
+        func reservePromiseDestination() -> URL? { nil }
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
             .nothing
         }
 
-        /// Mirrors the real transport: a disconnected service delivers nothing,
-        /// so it reports `.undelivered` and leaves the copy retryable.
-        func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome {
-            guard isConnected else { return .undelivered }
-            let text = await copy.utf8Text()
-            grabbed.append(Forwarded(copy: copy, text: text))
+        func offerHostCopy(_ copy: ClipboardOfferSource) {
+            grabbed.append(Forwarded(copy: copy))
             grabRecorded.notify()
-            return grabOutcome
         }
 
         func guestClipboardItems() -> [CopyToMacItem] {
-            copiesMaterialized += 1
             guard refusesOverCopyBudget else {
-                return guestContent.representations.map { .resolved($0) }
+                var item = OfferedItem()
+                item.representations = [
+                    ClipboardPassthroughCoordinatorTests.representation(ClipboardContent.utf8TextUTI, .inline)
+                ]
+                return [
+                    .offer(
+                        CopyToMacOffer(
+                            serving: .init(token: Data(repeating: 7, count: 16), connection: ClipboardConnectionID()),
+                            items: [item], concealed: false, servingFileURLs: true,
+                            puller: TextPuller(Data(guestText.utf8))))
+                ]
             }
             reporter?.finish(
                 ClipboardTransferFinish(
@@ -121,10 +129,10 @@ struct ClipboardPassthroughCoordinatorTests {
             return [.droppedFile(.overPasteBudget)]
         }
 
-        /// Simulates a new inbound guest offer: publishes `content` and bumps the
-        /// inbound sequence the coordinator observes.
-        func simulateInboundOffer(_ content: ClipboardContent) {
-            guestContent = content
+        /// Simulates a new inbound guest offer of `text`, bumping the inbound
+        /// sequence the coordinator observes.
+        func simulateInboundOffer(_ text: String) {
+            guestText = text
             inboundOfferSeq &+= 1
         }
     }
@@ -170,8 +178,7 @@ struct ClipboardPassthroughCoordinatorTests {
         let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
-            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
-            stagingRoot: stagingRoot.root)
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         let instance = VMInstanceFixture.make(
             name: "Passthrough VM", guestOS: .macOS,
             preferences: preferences ?? makeTestPreferences())
@@ -322,7 +329,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // And settling the superseded count must not roll the record backwards:
         // the copy that replaced it still forwards.
         try await poll(h)
-        #expect(h.service.grabbed.map(\.text) == ["copied over the folder"])
+        #expect(await h.service.grabbedTexts() == ["copied over the folder"])
     }
 
     @Test("A file resolve outliving its passthrough session offers nothing, and the next copy still forwards")
@@ -347,36 +354,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         writeText("copied after the restart", to: h.pasteboard)
         try await poll(h)
-        #expect(h.service.grabbed.map(\.text) == ["copied after the restart"])
-    }
-
-    @Test("An undelivered forward files no transfer report until its retry lands")
-    func undeliveredForwardDefersItsSkipNote() async throws {
-        let h = makeHarness()
-        defer { h.pasteboard.releaseGlobally() }
-
-        let kept = scratch.url.appendingPathComponent("kept.txt")
-        let doomed = scratch.url.appendingPathComponent("doomed.txt")
-        try Data("kept".utf8).write(to: kept)
-        try Data("doomed".utf8).write(to: doomed)
-        writeFileURLs([kept, doomed], to: h.pasteboard)
-
-        h.service.grabOutcome = .undelivered
-        h.coordinator.pollHostClipboard()
-        try FileManager.default.removeItem(at: doomed)
-        try await h.resolves.wait(untilCompleted: 1)
-
-        // Nothing reached the guest, so nothing partial did either — reporting
-        // here would file one refusal per poll until the retry lands.
-        #expect(h.service.grabbed.count == 1)
-        #expect(h.reports.refusals.isEmpty)
-
-        h.service.grabOutcome = .settled
-        h.coordinator.pollHostClipboard()
-        try await h.resolves.wait(untilCompleted: 2)
-
-        #expect(h.reports.refusals.count == 1)
-        #expect(h.reports.failure == .itemsSkipped(count: 1))
+        #expect(await h.service.grabbedTexts() == ["copied after the restart"])
     }
 
     // MARK: - Replaying a refusal after the ceiling is raised
@@ -402,7 +380,7 @@ struct ClipboardPassthroughCoordinatorTests {
         h.coordinator.start()
 
         h.service.refusesOverCopyBudget = true
-        h.service.simulateInboundOffer(ClipboardContent(text: "over the cap"))
+        h.service.simulateInboundOffer("over the cap")
         try await published.wait { publishCompleted }
         return h
     }
@@ -420,18 +398,17 @@ struct ClipboardPassthroughCoordinatorTests {
         // The user raises the ceiling — the action the refusal invites. Without a
         // replay this offer's sequence is already consumed and re-copying the
         // same content in the guest is deduped, so it would never arrive.
-        let republished = AsyncGate()
-        h.coordinator.onInboundPublishedForTesting = { republished.notify() }
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
         h.service.refusesOverCopyBudget = false
         h.coordinator.republishIfCeilingRaised()
 
         // A published guest rep lands under its own UTI, not `.string` — that
-        // type only ever holds what `writeText` put there.
+        // type only ever holds what `writeText` put there. Read off the main
+        // thread, where the publisher's hold parks rather than running an event loop.
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        try await republished.wait {
-            h.pasteboard.data(forType: textType) == Data("over the cap".utf8)
-        }
+        nonisolated(unsafe) let consumer = h.pasteboard
+        let served = await Task.detached { consumer.data(forType: textType) }.value
+        #expect(served == Data("over the cap".utf8))
     }
 
     @Test("a ceiling raised over content the user has since copied leaves their clipboard alone")
@@ -454,9 +431,6 @@ struct ClipboardPassthroughCoordinatorTests {
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
         h.coordinator.republishIfCeilingRaised()
 
-        // The raise decides synchronously; a republish it launched has landed
-        // once the publish in flight has.
-        await h.coordinator.inboundPublishTaskForTesting?.value
         #expect(!republished)
         #expect(h.pasteboard.string(forType: .string) == "what the user copied")
     }
@@ -473,11 +447,18 @@ struct ClipboardPassthroughCoordinatorTests {
         var items: [OfferedItem] = []
         @ObservationIgnored let puller = CountingPuller()
 
+        func passthroughStopped() {}
+        func hostCopyOffersNothing() {}
+        let connectionEpoch: UInt64 = 0
+        let connectionStartChangeCount: Int? = nil
+        let snapshotStaging: ClipboardFileStaging? = nil
+        let clipboardConnection: ClipboardConnectionID? = nil
+        func reservePromiseDestination() -> URL? { nil }
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
             .nothing
         }
-        func offerHostCopy(_ copy: ClipboardOfferSource) async -> ClipboardGrabOutcome { .settled }
+        func offerHostCopy(_ copy: ClipboardOfferSource) {}
         func guestClipboardItems() -> [CopyToMacItem] {
             [
                 .offer(
@@ -491,6 +472,19 @@ struct ClipboardPassthroughCoordinatorTests {
         func simulateInboundOffer(_ items: [OfferedItem]) {
             self.items = items
             inboundOfferSeq &+= 1
+        }
+    }
+
+    /// Answers every inline pull with `bytes`.
+    final class TextPuller: ClipboardItemPulling, Sendable {
+        private let bytes: Data
+        init(_ bytes: Data) { self.bytes = bytes }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completion(nil)
         }
     }
 
@@ -512,7 +506,7 @@ struct ClipboardPassthroughCoordinatorTests {
         }
     }
 
-    private static func representation(
+    static func representation(
         _ uti: String, _ storage: Representation.Storage, name: String = ""
     ) -> Representation {
         var representation = Representation()
@@ -528,8 +522,7 @@ struct ClipboardPassthroughCoordinatorTests {
         pasteboard.clearContents()
         defer { pasteboard.releaseGlobally() }
         let publisher = HostClipboardPublisher(
-            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry(),
-            stagingRoot: stagingRoot.root)
+            pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
         let instance = VMInstanceFixture.make(name: "Promised VM", guestOS: .macOS)
         let service = PromisedPassthroughService()
         instance.beginSessionContextForTesting()
@@ -564,110 +557,5 @@ struct ClipboardPassthroughCoordinatorTests {
         let served = await Task.detached { consumer.data(forType: textType) }.value
         #expect(served == Data("promised bytes".utf8))
         #expect(service.puller.pullCount == 1)
-    }
-
-    /// Starts a session and parks its one inbound publish at the write: past
-    /// `guestClipboardItems` *and* past the publisher's off-actor stage, the
-    /// window a cancellation has to land in for the write to be stopped.
-    private func makeHeldPublishHarness() async throws -> (Harness, PublishHold) {
-        let h = makeHarness()
-        writeText("previous host content", to: h.pasteboard)
-        let hold = PublishHold(h.publisher)
-        h.coordinator.start()
-        h.service.simulateInboundOffer(ClipboardContent(text: "guest copied this"))
-        try await hold.waitUntilAtWrite()
-        // Where the park sits: the publish has planned and staged its items, the
-        // state a gate on `guestClipboardItems` — synchronous, before the first
-        // await — cannot hold a publish in.
-        #expect(h.service.copiesMaterialized == 1)
-        return (h, hold)
-    }
-
-    @Test("stop() cancels the inbound publish in flight, so nothing lands after it")
-    func stopCancelsTheInboundPublishInFlight() async throws {
-        let (h, hold) = try await makeHeldPublishHarness()
-        defer { h.pasteboard.releaseGlobally() }
-        let baseline = h.pasteboard.changeCount
-
-        let publish = try #require(h.coordinator.inboundPublishTaskForTesting)
-        var publishedAfterStop = false
-        h.coordinator.onInboundPublishedForTesting = { publishedAfterStop = true }
-        h.coordinator.stop()
-        #expect(publish.isCancelled)
-
-        hold.release()
-        await publish.value
-
-        #expect(!publishedAfterStop)
-        #expect(h.pasteboard.changeCount == baseline)
-        #expect(h.pasteboard.string(forType: .string) == "previous host content")
-        // The write records this whether or not the pasteboard took the items,
-        // so `nil` means the write was never attempted.
-        #expect(h.publisher.lastWriteChangeCount == nil)
-    }
-
-    @Test("A newer inbound offer supersedes the publish in flight")
-    func newerOfferSupersedesInFlightPublish() async throws {
-        let (h, hold) = try await makeHeldPublishHarness()
-        defer {
-            h.coordinator.stop()
-            h.pasteboard.releaseGlobally()
-        }
-        let first = try #require(h.coordinator.inboundPublishTaskForTesting)
-
-        let published = AsyncGate()
-        h.coordinator.onInboundPublishedForTesting = { published.notify() }
-        h.service.simulateInboundOffer(ClipboardContent(text: "guest copied again"))
-        // Both publishes park at the write, so the first is provably still in
-        // flight — not merely un-awaited — when the second supersedes it.
-        try await hold.waitUntilAtWrite(count: 2)
-
-        #expect(first.isCancelled)
-        let second = try #require(h.coordinator.inboundPublishTaskForTesting)
-        #expect(second != first)
-        #expect(!second.isCancelled)
-
-        hold.release()
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        try await published.wait {
-            h.pasteboard.data(forType: textType) == Data("guest copied again".utf8)
-        }
-    }
-}
-
-/// Parks every publish one step short of its pasteboard write — past
-/// `guestClipboardItems` and the staging hop — so a test can drive a `stop()`, or
-/// a superseding offer, into the window a gate before the publish's first await
-/// never reaches.
-///
-/// Install it on the publisher before the offer that triggers the publish:
-/// ``waitUntilAtWrite(count:)`` resolves once that many publishes are parked
-/// there, and ``release()`` lets them all go on.
-@MainActor
-private final class PublishHold {
-    private let reached = AsyncGate()
-    private let resumed = AsyncGate()
-    private var parkedCount = 0
-    private var isReleased = false
-
-    init(_ publisher: HostClipboardPublisher) {
-        publisher.beforePasteboardWriteForTesting = { [self] in
-            parkedCount += 1
-            reached.notify()
-            // A fired backstop only lets the publish reach its write, which the
-            // caller's assertions catch — this hides no stuck condition.
-            try? await resumed.wait { self.isReleased }
-        }
-    }
-
-    /// Suspends until `count` publishes are parked at the write.
-    func waitUntilAtWrite(count: Int = 1) async throws {
-        try await reached.wait { self.parkedCount >= count }
-    }
-
-    /// Lets every parked publish go on.
-    func release() {
-        isReleased = true
-        resumed.notify()
     }
 }
