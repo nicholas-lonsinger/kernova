@@ -105,7 +105,7 @@ struct VMBundleTests {
     private func snapshot(_ name: String) -> VMSnapshot {
         VMSnapshot(
             VMSnapshotRecord(name: name, createdAt: Date(timeIntervalSince1970: 1_700_000_000)),
-            network: nil)
+            network: nil, diskImages: nil)
     }
 
     /// Commits this test's own change to `file` through the VM, answering
@@ -319,7 +319,7 @@ struct VMBundleTests {
                 VMSnapshotRecord(
                     name: "Before the update", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
                     notes: "tools configured"),
-                network: nil)
+                network: nil, diskImages: nil)
             let written = VMSnapshotManifest(snapshots: [taken], currentID: taken.id)
 
             try bundle.commitSnapshotManifest { $0 = written }
@@ -328,13 +328,14 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A read snapshot carries the network device and MAC address of the configuration it was taken under")
+    @Test("A read snapshot carries the network device, MAC address and disk images of the configuration it was taken under")
     func manifestCarriesEachSnapshotsMACAddress() throws {
         try withBundle { url in
             var configuration = VMConfiguration(
                 name: "Captured", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
                 memorySizeInGB: VMGuestOS.linux.hostMemorySize)
             configuration.macAddress = "aa:bb:cc:dd:ee:01"
+            configuration.removableMedia = [RemovableMediaItem(path: "/Volumes/Shared/x.img", readOnly: true)]
             // Listed carrying some other address, which the manifest must not keep.
             let captured = VMSnapshot(
                 name: "Captured", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -350,6 +351,8 @@ struct VMBundleTests {
 
             #expect(loaded.snapshot(id: captured.id)?.macAddress == "aa:bb:cc:dd:ee:01")
             #expect(loaded.snapshot(id: captured.id)?.network == VMCapturedNetwork(configuration))
+            #expect(
+                loaded.snapshot(id: captured.id)?.diskImages?.removableMedia?.map(\.path) == ["/Volumes/Shared/x.img"])
             #expect(loaded.snapshot(id: unrecorded.id) == unrecorded)
             // The snapshot's own configuration is where the address lives; the
             // manifest never records a second copy of it.

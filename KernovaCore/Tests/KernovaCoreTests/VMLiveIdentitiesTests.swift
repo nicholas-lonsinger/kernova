@@ -247,11 +247,7 @@ struct VMLiveIdentitiesTests {
             break
         case .refuse(.identityConflict(let conflict)) where refused:
             #expect(conflict.other === holder)
-            #expect(
-                conflict.reason
-                    == .diskImage(
-                        label: "Here", writableHere: !row.candidateReadOnly,
-                        writableThere: !row.holderReadOnly))
+            #expect(conflict.reason == .diskImage(label: "Here", writableThere: !row.holderReadOnly))
             #expect(!conflict.asks)
         default:
             Issue.record("decided \(decision)")
@@ -302,7 +298,7 @@ struct VMLiveIdentitiesTests {
             return
         }
         #expect(conflict.other === live)
-        #expect(conflict.reason == .diskImage(label: "W", writableHere: true, writableThere: true))
+        #expect(conflict.reason == .diskImage(label: "W", writableThere: true))
         #expect(!conflict.asks)
         withExtendedLifetime(library) {}
     }

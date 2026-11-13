@@ -165,9 +165,12 @@ package enum VirtualizationError: LocalizedError {
                 + "resumed: \(underlying.localizedDescription)\n\n"
                 + "The reverted state was kept — choose Resume to try again."
         case .fileLockHeld(let label, _):
-            (label.map { "Couldn\u{2019}t open \u{201C}\($0)\u{201D} because another process is using it." }
-                ?? "Couldn\u{2019}t open the virtual machine\u{2019}s files because another process is using them.")
-                + " If a virtual machine that uses it was just stopped, try again in a moment."
+            label.map {
+                "Couldn\u{2019}t open \u{201C}\($0)\u{201D} because another process is using it. "
+                    + "If a virtual machine that uses it was just stopped, try again in a moment."
+            }
+                ?? ("Couldn\u{2019}t open the virtual machine\u{2019}s files because another process is using them. "
+                    + "If a virtual machine that uses them was just stopped, try again in a moment.")
         }
     }
 }

@@ -11,16 +11,18 @@ extension VMSnapshot {
     /// snapshot keeps reserved, and a test that means "none" says so. The rest
     /// of the captured network device is a NAT one on its common
     /// network unless `network` names another, which then carries the address
-    /// too.
+    /// too. It lists the disk images `diskImages` holds, none by default.
     init(
         id: UUID = UUID(), name: String, createdAt: Date = Date(), notes: String = "",
-        kind: VMSnapshotKind = .warm, macAddress: String?, network: VMCapturedNetwork? = nil
+        kind: VMSnapshotKind = .warm, macAddress: String?, network: VMCapturedNetwork? = nil,
+        diskImages: VMCapturedDiskImages = VMCapturedDiskImages(storageDisks: nil, removableMedia: nil)
     ) {
         self.init(
             VMSnapshotRecord(id: id, name: name, createdAt: createdAt, notes: notes, kind: kind),
             network: network
                 ?? VMCapturedNetwork(
                     networkEnabled: true, networkMode: .nat, networkMembership: .common,
-                    bridgedInterfaceIdentifier: nil, macAddress: macAddress))
+                    bridgedInterfaceIdentifier: nil, macAddress: macAddress),
+            diskImages: diskImages)
     }
 }

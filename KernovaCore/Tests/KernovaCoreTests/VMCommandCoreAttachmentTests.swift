@@ -441,7 +441,7 @@ struct VMCommandCoreAttachmentTests {
             try harness.core.attachRemovableMedia(.id(b.id), paths: [PickedFile(path: path, bookmark: nil)])
         }
 
-        guard case .conflict(let vm, let other, .diskImage(_, writableHere: false, writableThere: true)) = refusal
+        guard case .conflict(let vm, let other, .diskImage(_, writableThere: true)) = refusal
         else {
             Issue.record("refused with \(refusal)")
             return
@@ -478,7 +478,7 @@ struct VMCommandCoreAttachmentTests {
         }
 
         guard
-            case .conflict(_, let other, .diskImage("Mine", writableHere: true, writableThere: false)) = refusal
+            case .conflict(_, let other, .diskImage("Mine", writableThere: false)) = refusal
         else {
             Issue.record("refused with \(refusal)")
             return
@@ -486,6 +486,35 @@ struct VMCommandCoreAttachmentTests {
         #expect(other.id == a.id)
         #expect(b.configuration.removableMedia?.first?.readOnly == true)
         #expect(harness.removableMedia.attachCallCount == 0)
+    }
+
+    @Test("A revert that would resume with an image another running VM writes is refused, naming it")
+    func revertRefusesTheSnapshotsImageAnotherVMWrites() async throws {
+        let harness = makeHarness()
+        let path = externalPath("x.img")
+        // B had X read-only when it took S; X has since moved to A, writable.
+        let (a, b) = makeRunningPair(in: harness, a: RemovableMediaItem(path: path, readOnly: false, label: "X"))
+        let atCapture = RemovableMediaItem(path: path, readOnly: true, label: "X")
+        let snapshot = VMSnapshot(
+            name: "S", kind: .warm, macAddress: nil,
+            diskImages: VMCapturedDiskImages(storageDisks: nil, removableMedia: [atCapture]))
+        b.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
+        var captured = b.configuration
+        captured.removableMedia = [atCapture]
+        harness.machineFiles.setCapturedConfiguration(captured, for: snapshot.id)
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.revertToSnapshot(.id(b.id), snapshot: snapshot.id, consent: .all)
+        }
+
+        guard case .conflict(let vm, let other, .diskImage("X", writableThere: true)) = refusal else {
+            Issue.record("refused with \(refusal)")
+            return
+        }
+        #expect(vm.id == b.id)
+        #expect(other.id == a.id)
+        #expect(harness.virtualization.revertedSnapshots.isEmpty)
+        #expect(b.configuration.removableMedia == nil)
     }
 
     @Test("Creating a removable disk attaches the written file read-write")

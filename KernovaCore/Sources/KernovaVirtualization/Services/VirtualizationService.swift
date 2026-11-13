@@ -103,11 +103,12 @@ package final class VirtualizationService {
     /// disk-image files only when fully *deallocated*, which lags
     /// `vm.state == .stopped` by more the more guest memory there is to tear down.
     /// No public VZ API observes the release, so gating on state cannot be
-    /// airtight; a bounded retry against the ground-truth failure is. Another
-    /// active VM holding the same files, in this copy of Kernova or another, is
-    /// refused at admission (``VMLiveIdentities``), so a lock still held when the
-    /// retries run out belongs to a session still deallocating or to a process
-    /// outside Kernova.
+    /// airtight; a bounded retry against the ground-truth failure is. Admission
+    /// refuses a start beside another active VM it can see, by path, has the
+    /// same image open (``VMLiveIdentities``); a hold it can't see — another
+    /// spelling of the file, a hold another copy of Kernova took since this copy
+    /// last caught up, a process outside Kernova — meets the lock here as a
+    /// session still deallocating does.
     private func coldBootRetryingLockContention(
         _ instance: VMInstance, _ context: borrowing VMBringUpContext, bootIntoRecovery: Bool,
         provisioning: GuestProvisioningCredentials?
@@ -418,7 +419,7 @@ package final class VirtualizationService {
                 "Took snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
             )
         }
-        return .rest(rest, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+        return .rest(rest, VMSnapshot(snapshot, capturedUnder: configuration))
     }
 
     /// Copies a live VM into a clone through ``VMLiveStateCapture/captureWarm(_:_:session:prepare:savingStateTo:copy:)``:
@@ -476,7 +477,7 @@ package final class VirtualizationService {
             .notice,
             "Took a cold snapshot '\(snapshot.name, privacy: .public)' of stopped VM '\(instance.name, privacy: .public)'"
         )
-        return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+        return .rest(.asStarted, VMSnapshot(snapshot, capturedUnder: configuration))
     }
 
     /// The bundle's suspend slot plus its disks, from a VM paused to disk.
@@ -508,7 +509,7 @@ package final class VirtualizationService {
             .notice,
             "Took a suspended-state snapshot '\(snapshot.name, privacy: .public)' of VM '\(instance.name, privacy: .public)'"
         )
-        return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+        return .rest(.asStarted, VMSnapshot(snapshot, capturedUnder: configuration))
     }
 
     // MARK: - Revert

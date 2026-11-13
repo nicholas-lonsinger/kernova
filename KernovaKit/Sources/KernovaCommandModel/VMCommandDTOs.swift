@@ -1014,36 +1014,30 @@ extension CommandErrorDTO {
                 + (otherHeldByAnotherCopy
                     ? "Change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings."
                     : "Stop \u{201C}\(other)\u{201D} first, or change \u{201C}\(vm)\u{201D}\u{2019}s network or MAC address in Network settings.")
-        case .diskImage(let label, _, let writableThere):
+        case .diskImage(let label, let writableThere):
             diskImageMessage(
                 label: label, vm: vm, other: other, otherHeldByAnotherCopy: otherHeldByAnotherCopy,
                 writableThere: writableThere)
         }
     }
 
-    /// What ``ConflictReason/diskImage(label:writableHere:writableThere:)``
-    /// tells the user: how `other` has the image open, the rule, and the steps
-    /// that free `vm` to open it — never stopping a VM another copy of
-    /// Kernova runs.
+    /// What ``ConflictReason/diskImage(label:writableThere:)`` tells the
+    /// user: who uses the image and who would write to it, the rule, and —
+    /// only when this copy runs `other` — stopping it.
     private static func diskImageMessage(
         label: String, vm: String, other: String, otherHeldByAnotherCopy: Bool, writableThere: Bool
     ) -> String {
         let (label, vm, other) = ("\u{201C}\(label)\u{201D}", "\u{201C}\(vm)\u{201D}", "\u{201C}\(other)\u{201D}")
         let holder = otherHeldByAnotherCopy ? "which another copy of Kernova is using" : "which is active"
         let fact =
-            writableThere
-            ? "\(label) is open for writing in \(other), \(holder)."
-            : "\(label) is open in \(other), \(holder), and \(vm) would write to it."
-        let remedy =
             switch (otherHeldByAnotherCopy, writableThere) {
-            case (false, true): "Stop \(other) first, or remove \(label) from \(vm)."
-            case (false, false): "Stop \(other) first, mark \(label) Read Only in \(vm), or remove it."
-            case (true, true): "Remove \(label) from \(vm) first."
-            case (true, false): "Mark \(label) Read Only in \(vm) first, or remove it."
+            case (false, true): "\(label) is in use by \(other), which is active and can write to it."
+            case (true, true): "\(label) is in use by \(other), \(holder) and which can write to it."
+            case (_, false): "\(label) is in use by \(other), \(holder), and \(vm) would write to it."
             }
-        return "\(fact) "
-            + "A disk image can be open in two virtual machines at once only when both have it read-only. "
-            + remedy
+        return fact
+            + " A disk image can be in use by two virtual machines at once only when neither can write to it."
+            + (otherHeldByAnotherCopy ? "" : " Stop \(other) first.")
     }
 
     /// The sentences naming the VM `vm` shares its MAC address with on one

@@ -11,10 +11,12 @@ import KernovaLogging
 /// An external disk image is open in at most one active VM, except that
 /// several may each have it read-only: VZ locks a writable image exclusively
 /// and a read-only one shared
-/// (`docs/research/2026-09-23-two-instances-same-vm.md`). Identity is the
-/// path — the stored one on both sides, and the holder's resolved one too —
-/// so two spellings of one file that neither bookmark exposes are left to
-/// VZ's lock.
+/// (`docs/research/2026-09-23-two-instances-same-vm.md`). Admission and a
+/// live edit refuse what they can see by path: the candidate's stored path
+/// against the holder's stored and resolved ones. What they can't see — a
+/// spelling only the candidate's bookmark resolves to, another spelling of
+/// the file, a hold another copy of Kernova took since this copy last caught
+/// up — is left to VZ's lock.
 @MainActor
 final class VMLiveIdentities {
     nonisolated private static let logger = KernovaLogger(
@@ -155,9 +157,7 @@ final class VMLiveIdentities {
                 else { continue }
                 return VMIdentityConflict(
                     vm: instance, other: other,
-                    reason: .diskImage(
-                        label: candidate.label, writableHere: !candidate.readOnly,
-                        writableThere: claim.writable),
+                    reason: .diskImage(label: candidate.label, writableThere: claim.writable),
                     configuration: configuration)
             }
         }

@@ -10,9 +10,10 @@ import KernovaLogging
 /// Headless: the configuration write and the alert both leave through hooks,
 /// so every configuration write stays ``VMLibrary``'s.
 ///
-/// An image another active VM has open never reaches a pass: the commit that
-/// would list it is refused first
-/// (``VMLiveIdentities/diskImageConflict(on:movingFrom:to:)``).
+/// An image the commit can see by path that another active VM has open never
+/// reaches a pass: the commit that would list it is refused first
+/// (``VMLiveIdentities/diskImageConflict(on:movingFrom:to:)``). One it can't
+/// see fails here, on VZ's lock.
 @MainActor
 final class VMRemovableMediaReconciler {
     nonisolated private static let logger = KernovaLogger(

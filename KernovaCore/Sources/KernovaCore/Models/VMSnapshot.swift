@@ -90,8 +90,9 @@ package struct VMSnapshotRecord: Codable, Sendable, Equatable, Identifiable {
 /// Distinct from the suspend slot (`VMBundleLayout.saveFileURL`), whose saved
 /// state is consumed the moment a restore succeeds.
 ///
-/// Equality covers ``network``: two values that differ in it describe
-/// different captured states, and its address is what reserves it.
+/// Equality covers ``network`` and ``diskImages``: two values that differ in
+/// either describe different captured states, and the network's address is
+/// what reserves it.
 package struct VMSnapshot: Sendable, Equatable, Identifiable {
     /// What the manifest records.
     var record: VMSnapshotRecord
@@ -104,9 +105,42 @@ package struct VMSnapshot: Sendable, Equatable, Identifiable {
     /// is stored; the manifest does not repeat it.
     let network: VMCapturedNetwork?
 
-    package init(_ record: VMSnapshotRecord, network: VMCapturedNetwork?) {
+    /// The disk images the configuration the snapshot was captured under
+    /// lists, which a revert has the VM open — `nil` when the snapshot holds
+    /// no readable list. Read from the same `config.json` as ``network``.
+    let diskImages: VMCapturedDiskImages?
+
+    package init(
+        _ record: VMSnapshotRecord, network: VMCapturedNetwork?, diskImages: VMCapturedDiskImages?
+    ) {
         self.record = record
         self.network = network
+        self.diskImages = diskImages
+    }
+
+    /// The snapshot `record` names, captured under `configuration`.
+    package init(_ record: VMSnapshotRecord, capturedUnder configuration: VMConfiguration) {
+        self.init(
+            record, network: VMCapturedNetwork(configuration),
+            diskImages: VMCapturedDiskImages(configuration))
+    }
+
+    /// `configuration` as a revert to this snapshot installs it, as far as
+    /// identity reads it — the snapshot's network device and disk images,
+    /// adopted the way the revert adopts the whole captured configuration
+    /// (``VMConfiguration/adoptingSnapshotState(_:)``). What the snapshot
+    /// holds no readable record of lands as nothing: no address, no disk
+    /// image.
+    func installed(on configuration: VMConfiguration) -> VMConfiguration {
+        var captured = configuration
+        if let network {
+            captured = network.installed(on: captured)
+        } else {
+            captured.macAddress = nil
+        }
+        captured.storageDisks = diskImages?.storageDisks
+        captured.removableMedia = diskImages?.removableMedia
+        return configuration.adoptingSnapshotState(captured)
     }
 
     /// The MAC address a revert puts the VM back on, which stays this VM's
@@ -187,10 +221,7 @@ package struct VMCapturedNetwork: Sendable, Equatable, Codable {
         macAddress = try c.decode(String?.self, forKey: .macAddress, absentMeans: nil, in: decoder)
     }
 
-    /// `configuration` with this network device in place of its own — the
-    /// network a revert to the snapshot lands `configuration`'s VM on
-    /// (``VMConfiguration/adoptingSnapshotState(_:)`` installs these fields
-    /// with the rest of the captured configuration).
+    /// `configuration` with this network device in place of its own.
     func installed(on configuration: VMConfiguration) -> VMConfiguration {
         var landing = configuration
         landing.networkEnabled = networkEnabled
@@ -199,6 +230,24 @@ package struct VMCapturedNetwork: Sendable, Equatable, Codable {
         landing.bridgedInterfaceIdentifier = bridgedInterfaceIdentifier
         landing.macAddress = macAddress
         return landing
+    }
+}
+
+/// The storage disks and removable media a snapshot's configuration was
+/// captured with — the part of what a revert installs that decides which
+/// disk images the VM has open.
+package struct VMCapturedDiskImages: Sendable, Equatable, Codable {
+    var storageDisks: [StorageDisk]?
+    var removableMedia: [RemovableMediaItem]?
+
+    package init(storageDisks: [StorageDisk]?, removableMedia: [RemovableMediaItem]?) {
+        self.storageDisks = storageDisks
+        self.removableMedia = removableMedia
+    }
+
+    /// What `configuration` carries.
+    package init(_ configuration: VMConfiguration) {
+        self.init(storageDisks: configuration.storageDisks, removableMedia: configuration.removableMedia)
     }
 }
 

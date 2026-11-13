@@ -242,7 +242,7 @@ final class MockVirtualizationService: VirtualizationProviding {
                 intoSnapshot: snapshot.id, relativePaths: prepared.relativePaths)
         }
         takenSnapshots.append(snapshot)
-        return .rest(.asStarted, VMSnapshot(snapshot, network: VMCapturedNetwork(configuration)))
+        return .rest(.asStarted, VMSnapshot(snapshot, capturedUnder: configuration))
     }
 
     /// Runs the real live-capture body over ``liveCopySession``.

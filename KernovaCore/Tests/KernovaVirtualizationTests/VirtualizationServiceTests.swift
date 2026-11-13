@@ -1361,6 +1361,15 @@ struct VirtualizationServiceTests {
         #expect(VirtualizationFailure.isTransientStartError(held))
     }
 
+    @Test("A lock held on the VM's own files says so in the plural throughout")
+    func lockHeldOnTheVMsOwnFilesAgrees() {
+        let held = VirtualizationError.fileLockHeld(label: nil, underlying: makeFileLockContentionError())
+        #expect(
+            held.localizedDescription
+                == "Couldn\u{2019}t open the virtual machine\u{2019}s files because another process is using them. "
+                + "If a virtual machine that uses them was just stopped, try again in a moment.")
+    }
+
     @Test("a non-contention attach failure stays permanent")
     func wrappedNonContentionAttachFailureIsPermanent() {
         // The sandbox-denied-open case: real, not transient, and must keep

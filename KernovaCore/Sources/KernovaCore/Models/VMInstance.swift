@@ -878,21 +878,14 @@ package final class VMInstance {
     }
 
     /// The configuration `kind` puts in front of VZ, as far as identity reads
-    /// it: this VM's own, except for a revert, which lands the snapshot's
-    /// network device and address
-    /// (``VMConfiguration/adoptingSnapshotState(_:)`` keeps only the machine
-    /// identity across).
+    /// it — network device and disk images: this VM's own, except for a
+    /// revert, which lands what the snapshot was captured with
+    /// (``VMSnapshot/installed(on:)``), read when the manifest was.
     func configuration(broughtUpBy kind: VMBringUpKind) -> VMConfiguration {
         guard case .reverting(let snapshotID, _) = kind,
             let snapshot = snapshotManifest.snapshot(id: snapshotID)
         else { return configuration }
-        guard let network = snapshot.network else {
-            // Nothing readable to land on: no address a network could see.
-            var landing = configuration
-            landing.macAddress = nil
-            return landing
-        }
-        return network.installed(on: configuration)
+        return snapshot.installed(on: configuration)
     }
 
     /// `true` when the bundle holds a saved state and nothing is live — the VM

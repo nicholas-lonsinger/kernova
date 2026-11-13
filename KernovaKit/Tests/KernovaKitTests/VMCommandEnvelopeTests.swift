@@ -543,19 +543,18 @@ struct VMCommandEnvelopeTests {
     }
 
     @Test(
-        "A disk image in use offers stopping only a VM this copy runs, and Read Only only while the other has it read-only",
+        "A disk image in use offers stopping the other VM only when this copy runs it, and names the VM that writes",
         arguments: [false, true], [false, true])
     func diskImageCopyOffersWhatFreesTheImage(otherHeldByAnotherCopy: Bool, writableThere: Bool) {
         let refusal = sharing(
-            .diskImage(label: "Data", writableHere: true, writableThere: writableThere),
-            otherHeldByAnotherCopy: otherHeldByAnotherCopy)
+            .diskImage(label: "Data", writableThere: writableThere), otherHeldByAnotherCopy: otherHeldByAnotherCopy)
         let message = refusal.message
         #expect(refusal.title == "Disk Image In Use")
-        #expect(message.contains("Stop \u{201C}Alpha Copy\u{201D} first") == !otherHeldByAnotherCopy)
+        #expect(message.contains("Stop \u{201C}Alpha Copy\u{201D} first.") == !otherHeldByAnotherCopy)
         #expect(message.contains("another copy of Kernova") == otherHeldByAnotherCopy)
-        #expect(message.contains("Read Only") == !writableThere)
-        #expect(message.contains("open for writing") == writableThere)
-        #expect(message.contains("remove") || message.contains("Remove"))
+        let fact = message.components(separatedBy: ". ").first ?? ""
+        #expect(fact.contains("can write to it") == writableThere)
+        #expect(fact.contains("\u{201C}Alpha\u{201D} would write to it") == !writableThere)
     }
 
     @Test("A shared MAC address is refused on its own terms, whatever the machine IDs")
