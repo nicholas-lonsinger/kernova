@@ -44,8 +44,7 @@ final class GuestClipboard {
     /// Whether the host's policy runs passthrough.
     private var passthrough = false
     private var link: (any ClipboardItemLink)?
-    /// The pasteboard change last seen by the poll, moved past every write this agent makes so its own
-    /// promise is never read as a copy.
+    /// The pasteboard change last seen by the poll.
     private var seenChangeCount: Int
     /// The change of the pasteboard whose read is in flight.
     private var readingChangeCount: Int?
@@ -185,11 +184,13 @@ final class GuestClipboard {
     }
 
     /// A copy since the last poll replaces the host's offer standing on the pasteboard, which this side then
-    /// releases, and is offered to the host while ``isOffering``.
+    /// releases, and is offered to the host while ``isOffering``. The publisher's own latest write is no copy: it
+    /// is this side's writing, or renewing, of the host's offer.
     func checkPasteboard() {
         let changeCount = pasteboard.changeCount
         guard changeCount != seenChangeCount else { return }
         seenChangeCount = changeCount
+        guard changeCount != publisher.lastWriteChangeCount else { return }
         if let published {
             self.published = nil
             exchange.release(published)
@@ -198,10 +199,10 @@ final class GuestClipboard {
         readAndOffer(changeCount)
     }
 
-    /// Reads the pasteboard as it stands at `changeCount` and offers it, unless it is this agent's write or has
-    /// moved on by the time the read lands.
+    /// Reads the pasteboard as it stands at `changeCount` and offers it, unless it has moved on by the time the
+    /// read lands.
     private func readAndOffer(_ changeCount: Int) {
-        guard changeCount != publisher.lastWriteChangeCount, readingChangeCount != changeCount else { return }
+        guard readingChangeCount != changeCount else { return }
         readingChangeCount = changeCount
         let promiseStaging = promiseStaging
         let generation = nextPromiseGeneration
@@ -300,7 +301,6 @@ final class GuestClipboard {
             copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
             held: { copy.held(item: $0, representation: $1) }, puller: copy, serving: copy.serving,
             onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
-        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
             guard leftOut == 0 else {
                 logger.log(.notice, "Nothing the host's copy named of this agent's clipboard remains: not written")
@@ -341,7 +341,6 @@ final class GuestClipboard {
         let written = publisher.publish(
             remote.items, concealed: remote.concealed, servingFileURLs: !budget.exceeds, puller: remote,
             serving: remote.serving)
-        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
         guard written else {
             logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
             exchange.release(remote)
@@ -411,15 +410,14 @@ final class GuestClipboard {
     }
 
     /// Withdraws `withdrawal`'s promises of this agent's write of `write` serving the offer `token`, if the
-    /// pasteboard still holds it, as this agent's own change — the poll must not read it as a copy — and logs what
-    /// that took back and its `cause`. Returns what it took back; nil when the pasteboard no longer held the write.
+    /// pasteboard still holds it, and logs what that took back and its `cause`. Returns what it took back; nil
+    /// when the pasteboard no longer held the write.
     @discardableResult
     private func retractWrite(
         servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal, of write: ClipboardRetractionLog.Write,
         because cause: ClipboardRetractionLog.Cause
     ) -> ClipboardRetraction? {
         guard let retraction = publisher.retractWrite(servingOffer: token, withdrawing: withdrawal) else { return nil }
-        seenChangeCount = pasteboard.changeCount
         if let line = ClipboardRetractionLog.line(retraction, of: write, on: .guest, because: cause) {
             logger.log(.notice, "\(line, privacy: .public)")
         }

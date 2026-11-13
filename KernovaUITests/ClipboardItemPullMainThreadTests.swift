@@ -16,6 +16,7 @@ struct ClipboardItemPullMainThreadTests {
     /// only a turning loop runs.
     private final class RunLoopPuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        func canServe(item: Int, representation: Int) -> Bool { false }
 
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
             RunLoop.main.perform { completion(Data("live".utf8)) }
@@ -32,6 +33,7 @@ struct ClipboardItemPullMainThreadTests {
         let heldDuringPull = Locked<[Bool]>([])
 
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        func canServe(item: Int, representation: Int) -> Bool { false }
 
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
             RunLoop.main.perform { [heldDuringPull] in

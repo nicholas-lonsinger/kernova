@@ -367,6 +367,48 @@ struct GuestClipboardTests {
         #expect(await again.value == nil)
     }
 
+    @Test("A paste its readout's Cancel stopped is promised again, which keeps the host's offer and pulls once more")
+    func cancelledPasteKeepsTheOffer() async throws {
+        let pasteboard = FakePasteboard()
+        let (transfers, reports, reported) = recordingTransfers()
+        let clock = GatedEngineClock()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, transfers: transfers, transferClock: clock)
+        var item = OfferedItem()
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: "public.data")
+        representation.storage = .file
+        representation.name = Data("a.bin".utf8)
+        representation.sizeEstimate = 100
+        item.representations = [representation]
+        let link = RecordingLink(items: [item], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        try await receiveOffer(item, clipboard, pasteboard, link)
+
+        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        try await link.changed.wait { link.opened.count == 1 }
+        clock.advance(seconds: 1)
+        link.pulls[0].order.progress?.advanced(landed: 40, declared: 100)
+        try await reported.wait {
+            if case .running? = reports.withLock({ $0.last }) { true } else { false }
+        }
+        guard case .running(let readout, _)? = reports.withLock({ $0.last }) else {
+            Issue.record("no readout ran: \(reports.withLock { $0 })"); return
+        }
+        let published = pasteboard.changeCount
+        #expect(transfers.cancel(readout.operationID))
+        #expect(await paste.value == nil)
+
+        try await pasteboard.changed.wait { pasteboard.changeCount != published }
+        clipboard.checkPasteboard()
+        #expect(!link.releases.contains(Self.hostToken))
+        #expect(clipboard.exchange.remote?.token == Self.hostToken)
+
+        let again = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        try await link.changed.wait { link.opened.count == 2 }
+        clipboard.exchange.pullEnded(link.opened[1], .failed(WireError(.readFailed)))
+        #expect(await again.value == nil)
+    }
+
     /// A reporter whose dwell never passes, so each finish stands, and every report it publishes, in order.
     private func recordingTransfers() -> (ClipboardTransferReporter, Locked<[ClipboardTransferReport]>, AsyncGate) {
         let transfers = ClipboardTransferReporter(clock: GatedEngineClock())
@@ -1483,6 +1525,7 @@ struct GuestClipboardTests {
         func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
             completion(state.withLock { $0.ended } ? nil : file)
         }
+        func canServe(item: Int, representation: Int) -> Bool { false }
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {
             let ended = state.withLock { state -> Bool in
                 if !state.ended { state.handlers.append(handler) }

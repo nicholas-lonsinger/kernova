@@ -23,6 +23,7 @@ struct ClipboardItemBridgeTests {
     /// folder as a receiver does: under the offer's name, in a landing folder.
     private final class OfferPuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        func canServe(item: Int, representation: Int) -> Bool { false }
         let source: ClipboardOfferSource
         let items: [OfferedItem]
         let landing: URL
@@ -72,6 +73,7 @@ struct ClipboardItemBridgeTests {
     /// start.
     private final class FixedPuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        func canServe(item: Int, representation: Int) -> Bool { false }
         let bytes: Data
         let starts = Locked(0)
 
@@ -91,6 +93,7 @@ struct ClipboardItemBridgeTests {
     /// Starts every pull and never completes one, keeping each completion for the test.
     private final class StalledPuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+        func canServe(item: Int, representation: Int) -> Bool { false }
         let completions = Locked<[@Sendable (Data?) -> Void]>([])
 
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
