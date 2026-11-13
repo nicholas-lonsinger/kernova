@@ -42,6 +42,10 @@ struct ClipboardProgressStatusItemPresenterTests {
             return .shown(showing)
         }
 
+        func holds(_ showing: TransientStatusItemPopover.Showing) -> Bool {
+            tenancy.current == showing
+        }
+
         func dismiss(_ showing: TransientStatusItemPopover.Showing) -> Bool {
             guard tenancy.end(showing) else { return false }
             events.append(.dismissed(showing))
