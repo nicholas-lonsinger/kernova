@@ -328,7 +328,7 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A read snapshot carries the network device, MAC address and disk images of the configuration it was taken under")
+    @Test("A read snapshot carries the network device and disk images of the configuration it was taken under")
     func manifestCarriesEachSnapshotsMACAddress() throws {
         try withBundle { url in
             var configuration = VMConfiguration(
