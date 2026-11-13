@@ -7,6 +7,30 @@ import Foundation
 import KernovaSynchronization
 import KernovaWire
 
+/// Reads items `0..<count` of one offer through `read`, all at once, and hands `done` every one of them in item
+/// order, or nil once any is not held.
+public func readOfferedItems(
+    count: Int, _ read: (UInt32, @escaping @Sendable (OfferedItem?) -> Void) -> Void,
+    done: @escaping @Sendable ([OfferedItem]?) -> Void
+) {
+    guard count > 0 else { return done([]) }
+    let items = Locked<[OfferedItem?]>(Array(repeating: nil, count: count))
+    let left = Locked(count)
+    for index in 0..<count {
+        read(UInt32(index)) { item in
+            items.withLock { $0[index] = item }
+            let last = left.withLock { left in
+                left -= 1
+                return left == 0
+            }
+            guard last else { return }
+            let read = items.withLock { $0 }
+            let held = read.compactMap { $0 }
+            done(held.count == read.count ? held : nil)
+        }
+    }
+}
+
 /// One item pull: the connection it runs on and its stream, on either side.
 public struct ItemPullID: Hashable, Sendable {
     /// The connection the pull belongs to.
@@ -153,6 +177,12 @@ public struct ItemPullOrder: Sendable, Equatable {
         self.landing = landing
         self.budget = budget
         self.progress = progress
+    }
+
+    /// This order, reporting to `progress` instead: for an owner that measures a pull only once its order is
+    /// built, since building it may wait on the landing.
+    public func reporting(to progress: (any ItemLandingProgress)?) -> ItemPullOrder {
+        ItemPullOrder(request, landing: landing, budget: budget, progress: progress)
     }
 
     /// Whether `lhs` and `rhs` are one pull's order: the same request and landing, drawing on one budget and

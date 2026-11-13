@@ -44,11 +44,17 @@ struct DropReceiverTests {
         /// While held, each serve waits for `releaseServes()`.
         private let held: Locked<Bool>
         private let released = DispatchSemaphore(value: 0)
+        /// Recorded as the receiver's first open of its landing folder begins, which then waits for
+        /// `releaseLandingOpen()` when held, as the OS holds it while asking the user.
+        let landingOpens = Recorder<Void>()
+        private let landingOpenReleased = DispatchSemaphore(value: 0)
 
         var source: String { scratch.path + "/source" }
         var downloads: String { scratch.path + "/Downloads" }
 
-        init(downloads landing: String? = nil, holdingServes: Bool = false) async throws {
+        init(downloads landing: String? = nil, holdingServes: Bool = false, holdingLandingOpen: Bool = false)
+            async throws
+        {
             held = Locked(holdingServes)
             scratch = try PortableScratchDirectory(prefix: "drop-receiver")
             try FileManager.default.createDirectory(atPath: scratch.path + "/source", withIntermediateDirectories: true)
@@ -74,7 +80,16 @@ struct DropReceiverTests {
                     sink: MemoryItems(), features: hostRouter.features),
                 itemEvents: { hostRouter.deliver($0) })
             await harness.attached()
-            let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
+            let landingPath = Array((landing ?? scratch.path + "/Downloads").utf8)
+            let (landingOpens, landingOpenReleased) = (landingOpens, landingOpenReleased)
+            let firstOpen = Locked(true)
+            let sink = ItemSinkAdapter(
+                fileSystem: InterposedFileSystem(openingDirectory: { name in
+                    guard name == landingPath, firstOpen.withLock({ first in defer { first = false }; return first })
+                    else { return }
+                    landingOpens.record(())
+                    if holdingLandingOpen { landingOpenReleased.wait() }
+                }))
             let transfers = ClipboardTransferReporter(clock: SteppingClock())
             self.transfers = transfers
             let reports = reports
@@ -99,6 +114,11 @@ struct DropReceiverTests {
             _ = await harness.snapshot { $0.consolePeers[.drop] != nil }
         }
 
+        /// Lets the held open of the landing folder go on.
+        func releaseLandingOpen() {
+            landingOpenReleased.signal()
+        }
+
         /// Lets every serve held so far, and every later one, go on.
         func releaseServes() {
             held.withLock { $0 = false }
@@ -113,12 +133,16 @@ struct DropReceiverTests {
             FileManager.default.contents(atPath: downloads + "/" + relative).map { String(decoding: $0, as: UTF8.self) }
         }
 
-        /// Offers the source entries `names` as one drop, each a FILE or, ending in `/`, a FOLDER.
-        func drop(_ names: [String], token tag: UInt8 = 1) async -> Result<PeerHandle, WireError> {
-            let items = names.map { name -> [Representation] in
+        /// Offers the source entries `names` as one drop, each a FILE or, ending in `/`, a FOLDER, with the size
+        /// estimate of its place in `estimates`, or none.
+        func drop(_ names: [String], estimates: [UInt64] = [], token tag: UInt8 = 1) async
+            -> Result<PeerHandle, WireError>
+        {
+            let items = names.enumerated().map { index, name -> [Representation] in
                 var representation = Representation()
                 representation.storage = name.hasSuffix("/") ? .folder : .file
                 representation.name = Data((name.hasSuffix("/") ? String(name.dropLast()) : name).utf8)
+                if estimates.indices.contains(index) { representation.sizeEstimate = estimates[index] }
                 return [representation]
             }
             return await withCheckedContinuation { continuation in
@@ -240,6 +264,42 @@ struct DropReceiverTests {
                 if case .running(let snapshot, _) = report { snapshot.operationID } else { nil }
             })
         #expect(operations == [final.operationID])
+        await bench.close()
+    }
+
+    @Test("A drop's first readout counts every item of the offer, and the bytes their estimates add up to")
+    func firstReadoutCountsTheWholeDrop() async throws {
+        let bench = try await Bench(holdingServes: true)
+        try bench.write("abc", to: "a.txt")
+        try bench.write("hello", to: "b.txt")
+
+        _ = try await bench.drop(["a.txt", "b.txt"], estimates: [3, 5]).get()
+
+        var reports = bench.reports.waiter()
+        let first = await reports.next { if case .running = $0 { true } else { false } }
+        guard case .running(let readout, _) = first else { return }
+        #expect(readout.fileCount == 2)
+        #expect(readout.totalBytes == 3 + 5)
+        bench.releaseServes()
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
+        await bench.close()
+    }
+
+    @Test("A drop's readout begins only once the open of its landing folder, which the OS may hold, has returned")
+    func readoutBeginsAfterTheLandingOpens() async throws {
+        let bench = try await Bench(holdingLandingOpen: true)
+        try bench.write("abc", to: "a.txt")
+
+        _ = try await bench.drop(["a.txt"], estimates: [3]).get()
+
+        var opens = bench.landingOpens.waiter()
+        _ = await opens.next { _ in true }
+        // Every publication made before the open began hops to the main actor first.
+        await MainActor.run {}
+        #expect(bench.reports.elements.isEmpty)
+
+        bench.releaseLandingOpen()
+        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0]).endBody))
         await bench.close()
     }
 

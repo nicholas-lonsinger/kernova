@@ -747,25 +747,8 @@ public final class ClipboardItemExchange {
         of header: ItemSetHeaderValue, on link: any ClipboardItemLink,
         _ done: @escaping @MainActor ([OfferedItem]?) -> Void
     ) {
-        let count = header.count
-        let read = Locked<[OfferedItem?]>(Array(repeating: nil, count: count))
-        let left = Locked(count)
-        let finish: @Sendable () -> Void = {
-            let items = read.withLock { $0 }
-            let held = items.compactMap { $0 }
-            MainActorBridge.async { done(held.count == items.count ? held : nil) }
-        }
-        guard count > 0 else { return finish() }
-        for index in 0..<count {
-            link.readItem(header.token, item: UInt32(index)) { item in
-                read.withLock { $0[index] = item }
-                if left.withLock({ left in
-                    left -= 1
-                    return left == 0
-                }) {
-                    finish()
-                }
-            }
+        readOfferedItems(count: header.count, { link.readItem(header.token, item: $0, $1) }) { items in
+            MainActorBridge.async { done(items) }
         }
     }
 

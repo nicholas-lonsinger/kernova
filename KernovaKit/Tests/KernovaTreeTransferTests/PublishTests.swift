@@ -11,6 +11,7 @@ import FoundationEssentials
 #else
 import Foundation
 #endif
+import KernovaAgentSimulation
 import KernovaContainer
 import KernovaFileTree
 import KernovaPortableTestSupport

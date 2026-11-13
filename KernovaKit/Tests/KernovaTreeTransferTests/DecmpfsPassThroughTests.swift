@@ -1,6 +1,7 @@
 #if canImport(Darwin)
 import Darwin
 import Foundation
+import KernovaAgentSimulation
 import KernovaContainer
 import KernovaDigest
 import KernovaFileTree

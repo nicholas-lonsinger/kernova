@@ -24,14 +24,19 @@ import KernovaWire
 /// open, stops the drop: it refuses the offer with that error, so the host hears why. An offer the host
 /// withdraws lands nothing more, and hands `landed` nothing.
 ///
-/// Each drop reports on one readout, each item's pull a unit its landing feeds. The readout's Cancel refuses
-/// the offer `CANCELLED`, which ends the pull in flight with it.
+/// Each drop reports on one readout, each item's pull a unit its landing feeds. The receiver reads every item
+/// of the offer before its first pull, so the readout counts the whole drop from its first report: every item it
+/// will pull, and their bytes when each has an estimate. The readout begins once the first item's landing is
+/// ordered, which opens the landing directory, so its clock leaves out the time the OS took asking the user. Its
+/// Cancel refuses the offer `CANCELLED`, which ends the pull in flight with it.
 ///
 /// Its work runs on its own serial queue, which opening the directory may block: the first landing in a
 /// directory the OS guards waits there while the OS asks the user.
 public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
     private struct Job: Sendable {
         var count: Int
+        /// Every item of the offer, once read.
+        var items: [OfferedItem] = []
         var next = 0
         var pull: ItemPullID?
         /// What the pull in flight reports on the readout.
@@ -39,7 +44,8 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         /// Each landed item's index, and the name it was published under.
         var landed: [(item: Int, name: Data)] = []
         var withdrawn = false
-        let readout: ClipboardTransferOperation
+        /// The drop's readout, from the moment its first landing is ordered.
+        var readout: ClipboardTransferOperation?
     }
 
     private let directory: String
@@ -94,17 +100,11 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         switch event {
         case .offerReceived(let header):
             let token = header.token
-            let readout = ClipboardTransferOperation(
-                gesture: .drop, direction: .inbound, peerName: peerName, expectedItems: header.count,
-                clock: transferClock,
-                onCancelRequested: { [weak self] in
-                    guard let self else { return }
-                    queue.async { [self] in cancel(token) }
-                },
-                reporter: transfers)
-            readout.markQueued()
-            jobs.withLock { $0[token] = Job(count: header.count, readout: readout) }
-            advance(token)
+            jobs.withLock { $0[token] = Job(count: header.count) }
+            guard let runtime = runtime.withLock({ $0 }) else { return finish(token) }
+            readOfferedItems(count: header.count, { runtime.readItem(token, item: $0, $1) }) { [self] items in
+                queue.async { [self] in begin(token, items) }
+            }
         case .offerEnded(_, .remote, let token, _):
             let idle = jobs.withLock { jobs -> Job? in
                 jobs[token]?.withdrawn = true
@@ -113,7 +113,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
             }
             if let idle {
                 logger.log(.notice, "The host withdrew a drop before it finished")
-                Self.interrupt(idle)
+                interrupt(idle, of: token)
             }
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
@@ -124,12 +124,12 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
 
     /// Every offer of the ended connection is gone with it; one whose pull is still committing ends with it.
     private func connectionEnded() {
-        let idle = jobs.withLock { jobs -> [Job] in
+        let idle = jobs.withLock { jobs -> [(Data, Job)] in
             for token in jobs.keys { jobs[token]?.withdrawn = true }
             defer { jobs = jobs.filter { $0.value.pull != nil } }
-            return jobs.values.filter { $0.pull == nil }
+            return jobs.filter { $0.value.pull == nil }.map { ($0.key, $0.value) }
         }
-        for job in idle { Self.interrupt(job) }
+        for (token, job) in idle { interrupt(job, of: token) }
     }
 
     /// The readout's Cancel: the offer of `token` is refused `CANCELLED`, which ends its pull in flight
@@ -137,51 +137,89 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
     private func cancel(_ token: Data) {
         guard let job = jobs.withLock({ $0[token] }) else { return }
         logger.log(.notice, "The user cancelled a drop")
-        job.readout.finishCancelled(itemsOwed: job.next < job.count)
+        job.readout?.finishCancelled(itemsOwed: job.next < job.count)
         finish(token, refusing: WireError(.cancelled, debugDetail: "the user cancelled the drop"))
     }
 
-    /// Ends `job`'s readout for a drop the host or the connection ended before it finished.
-    private static func interrupt(_ job: Job) {
+    /// Ends `job`'s readout for the drop of `token` the host or the connection ended before it finished.
+    private func interrupt(_ job: Job, of token: Data) {
         job.unit?.ended(succeeded: false)
-        job.readout.finish(.failed(.interrupted(fileCount: job.count - job.landed.count)))
+        // A refusal is owed an answer whether or not a landing began.
+        (job.readout ?? makeReadout(for: job, of: token))
+            .finish(.failed(.interrupted(fileCount: job.count - job.landed.count)))
+    }
+
+    /// The readout of the drop of `token`, counting every item of `job` it will pull, and their bytes when each
+    /// has an estimate; its clock starts now.
+    private func makeReadout(for job: Job, of token: Data) -> ClipboardTransferOperation {
+        let estimates = job.items.compactMap { Self.carried($0)?.representation.sizeEstimate }
+        var expectedBytes: UInt64 = 0
+        if !estimates.contains(0) {
+            for estimate in estimates {
+                let (sum, overflow) = expectedBytes.addingReportingOverflow(estimate)
+                expectedBytes = overflow ? .max : sum
+            }
+        }
+        return ClipboardTransferOperation(
+            gesture: .drop, direction: .inbound, peerName: peerName, expectedBytes: expectedBytes,
+            expectedItems: estimates.count, clock: transferClock,
+            onCancelRequested: { [weak self] in
+                guard let self else { return }
+                queue.async { [self] in cancel(token) }
+            },
+            reporter: transfers)
+    }
+
+    /// The representation a drop lands of `item`, its first FILE or FOLDER one, with its index; nil when it has
+    /// none, and is skipped.
+    private static func carried(_ item: OfferedItem) -> (index: Int, representation: Representation)? {
+        item.representations.firstIndex { [.file, .folder].contains($0.storage) }.map { ($0, item.representations[$0]) }
+    }
+
+    /// Starts landing the offer of `token` once every one of its `items` has been read, finishing it when one was
+    /// not held.
+    private func begin(_ token: Data, _ items: [OfferedItem]?) {
+        guard let items else { return finish(token) }
+        guard jobs.withLock({ jobs in
+            guard jobs[token]?.withdrawn == false else { return false }
+            jobs[token]?.items = items
+            return true
+        })
+        else { return }
+        advance(token)
     }
 
     /// Pulls the next item of the offer of `token`, or finishes the drop once there is none.
     private func advance(_ token: Data) {
         guard let job = jobs.withLock({ $0[token] }), !job.withdrawn else { return }
         guard job.next < job.count else { return finish(token) }
-        guard let runtime = runtime.withLock({ $0 }) else { return finish(token) }
-        let index = job.next
-        runtime.readItem(token, item: UInt32(index)) { [self] item in
-            queue.async { [self] in pull(index, item, of: token) }
-        }
+        pull(job.next, of: token)
     }
 
-    private func pull(_ index: Int, _ item: OfferedItem?, of token: Data) {
+    private func pull(_ index: Int, of token: Data) {
         guard let runtime = runtime.withLock({ $0 }), let job = jobs.withLock({ $0[token] }), !job.withdrawn else {
             return
         }
-        guard let item else { return finish(token) }
-        guard let representation = item.representations.firstIndex(where: { [.file, .folder].contains($0.storage) })
-        else {
+        guard let (representation, offered) = Self.carried(job.items[index]) else {
             logger.log(.warning, "A dropped item offers no file or folder: it is skipped")
             return next(token)
         }
-        let offered = item.representations[representation]
-        let unit = job.readout.unit(
-            name: String(decoding: offered.name, as: UTF8.self), expectedBytes: offered.sizeEstimate)
-        let order: ItemPullOrder
+        let unmeasured: ItemPullOrder
         do throws(WireError) {
-            order = try sink.order(
+            unmeasured = try sink.order(
                 token: token, item: UInt32(index), representation: UInt32(representation), byteCeiling: .max,
-                landing: .staged(directory: directory, name: .keepingBoth(offered.name)), progress: unit)
+                landing: .staged(directory: directory, name: .keepingBoth(offered.name)))
         } catch {
             logger.log(.error, "Cannot land a drop in \(directory, privacy: .private): \(error.code, privacy: .public)")
-            unit?.ended(succeeded: false)
             return finish(token, refusing: error)
         }
-        jobs.withLock { $0[token]?.unit = unit }
+        let readout = job.readout ?? makeReadout(for: job, of: token)
+        let unit = readout.unit(name: String(decoding: offered.name, as: UTF8.self), expectedBytes: offered.sizeEstimate)
+        jobs.withLock { jobs in
+            jobs[token]?.readout = readout
+            jobs[token]?.unit = unit
+        }
+        let order = unmeasured.reporting(to: unit)
         runtime.pullItem(order) { [self] result in
             queue.async { [self] in
                 switch result {
@@ -208,7 +246,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         }
         if job.withdrawn {
             jobs.withLock { $0[token] = nil }
-            Self.interrupt(job)
+            interrupt(job, of: token)
             return
         }
         switch result {
@@ -245,10 +283,11 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         job.unit?.ended(succeeded: false)
         let runtime = runtime.withLock { $0 }
         if let error {
-            job.readout.finish(.failed(.transferFailed))
+            // A refusal is owed an answer whether or not a landing began.
+            (job.readout ?? makeReadout(for: job, of: token)).finish(.failed(.transferFailed))
             runtime?.refuseOffer(token, error)
         } else {
-            job.readout.finish(.completed)
+            job.readout?.finish(.completed)
             runtime?.releaseOffer(token, endBody: DropLanded(items: job.landed.map(\.item)).endBody)
         }
         logger.log(
