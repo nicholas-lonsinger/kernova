@@ -1,3 +1,13 @@
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(ucrt)
+import ucrt
+#endif
+
 /// Removes an entry outright: a file, a symlink (never its target), or a
 /// directory tree of any depth and any mode.
 ///
@@ -94,20 +104,27 @@ public enum TreeRemoval {
     }
 
     /// Opens the directory `name` in `directory`, whose status is `status`,
-    /// first making it searchable and writable by its owner.
+    /// made searchable and writable by its owner through its descriptor. Only
+    /// a directory the caller cannot open is changed by name first, so a
+    /// caller the system lets open anything changes nothing by name.
     ///
     /// - Returns: the directory, open, with the names in it; `nil` when it is
     ///   empty, closed.
     private static func open<FileSystem: MutableTreeFileSystem>(
         _ name: [UInt8], status: FileStatus, in directory: Int32, on fileSystem: FileSystem
     ) throws(TreeFileSystemError) -> (descriptor: Int32, status: FileStatus, names: [[UInt8]])? {
-        let mode = status.permissions
-        if mode & ownerAll != ownerAll {
-            try fileSystem.setMode(mode | ownerAll, of: name, in: directory)
+        let descriptor: Int32
+        do { descriptor = try fileSystem.openDirectory(name, in: directory) } catch {
+            guard error.code == EACCES, status.permissions & ownerAll != ownerAll else { throw error }
+            try fileSystem.setMode(status.permissions | ownerAll, of: name, in: directory)
+            descriptor = try fileSystem.openDirectory(name, in: directory)
         }
-        let descriptor = try fileSystem.openDirectory(name, in: directory)
         do {
             let opened = try fileSystem.status(of: descriptor)
+            if opened.permissions & ownerAll != ownerAll {
+                try fileSystem.setAttributes(
+                    TreeEntryAttributes(permissions: opened.permissions | ownerAll), of: .descriptor(descriptor))
+            }
             let names = try fileSystem.names(in: descriptor)
             guard !names.isEmpty else {
                 fileSystem.close(descriptor)

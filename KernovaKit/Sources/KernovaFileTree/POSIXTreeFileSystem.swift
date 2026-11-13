@@ -218,6 +218,11 @@ public struct POSIXTreeFileSystem: MutableTreeFileSystem {
         return descriptor
     }
 
+    /// `O_WRONLY | O_APPEND | O_NOFOLLOW | O_NONBLOCK`, beneath `directory`.
+    public func openFileForAppending(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32 {
+        try open(name, in: directory, flags: O_WRONLY | O_APPEND | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+    }
+
     /// `symlinkat`.
     public func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(TreeFileSystemError) {
         try Self.call(target, name) { target, name in symlinkat(target, directory, name) }

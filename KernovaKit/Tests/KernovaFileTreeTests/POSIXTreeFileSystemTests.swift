@@ -83,6 +83,21 @@ struct POSIXTreeFileSystemTests {
         #expect(try fileSystem.linkTarget(of: Self.bytes("link"), in: top) == Self.bytes("target"))
     }
 
+    @Test("opening a file for appending never creates it, and never opens a symlink to one")
+    func appendingNeverCreates() throws {
+        let fileSystem = POSIXTreeFileSystem()
+        try #require(close(open(scratch.path + "/file", O_WRONLY | O_CREAT, 0o600)) == 0)
+        try #require(symlink("file", scratch.path + "/link") == 0)
+        let top = try openScratch(on: fileSystem)
+        defer { fileSystem.close(top) }
+        let refusal = #expect(throws: TreeFileSystemError.self) {
+            try fileSystem.openFileForAppending(Self.bytes("missing"), in: top)
+        }
+        #expect(refusal?.code == ENOENT)
+        #expect(throws: TreeFileSystemError.self) { try fileSystem.status(of: Self.bytes("missing"), in: top) }
+        #expect(throws: TreeFileSystemError.self) { try fileSystem.openFileForAppending(Self.bytes("link"), in: top) }
+    }
+
     @Test(
         "a resource fork written in positional pieces reads back in pieces where the OS keeps one, and is refused where it keeps none"
     )

@@ -101,22 +101,4 @@ public final class InstallPayloadReader {
         return hasher.finalize()
     }
 }
-
-/// A directory below the agent's root, open, that a lander makes the install's payload in.
-public struct InstallDirectory {
-    /// The directory.
-    public let descriptor: Int32
-    /// Its path, for messages.
-    public let path: String
-    /// Who everything made in it belongs to; nil for the installer.
-    let owner: Installer.Owner?
-
-    /// Writes `name` here whole, as ``Installer`` writes every file: `fill` writes a new file beside it, which
-    /// then replaces it in one rename, with `mode` and belonging to the directory's owner.
-    public func writeFile(
-        _ name: String, mode: UInt16, _ fill: (Int32) throws(Installer.Failure) -> Void
-    ) throws(Installer.Failure) {
-        try Installer.writeFile(in: descriptor, name, path: path + "/" + name, mode: mode, owner: owner, fill)
-    }
-}
 #endif

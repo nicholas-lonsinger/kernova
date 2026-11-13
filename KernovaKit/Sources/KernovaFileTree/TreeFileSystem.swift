@@ -110,6 +110,10 @@ public protocol MutableTreeFileSystem: TreeFileSystem, Sendable {
     /// writing — failing when anything already has the name, a symlink
     /// included, which it never follows.
     func createFile(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32
+    /// Opens the existing file `name` in `directory` for appending — never
+    /// creating it, refusing a symlink, and never waiting for a reader:
+    /// opening a FIFO no one reads fails at once.
+    func openFileForAppending(_ name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> Int32
     /// Creates the symlink `name` in `directory` pointing at `target`, failing
     /// when anything already has the name.
     func makeSymlink(_ name: [UInt8], to target: [UInt8], in directory: Int32) throws(TreeFileSystemError)

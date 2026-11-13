@@ -114,10 +114,11 @@ var targets: [Target] = [
         name: "KernovaISO9660",
         swiftSettings: sharedSwiftSettings
     ),
-    // The scratch directory and wait backstop of the test targets that cannot reach
-    // `KernovaTestSupport` (Tools/check-test-seams.sh), which re-exports it.
+    // The scratch directory, wait backstop and interposed file system of the test targets that cannot
+    // reach `KernovaTestSupport` (Tools/check-test-seams.sh), which re-exports it.
     .target(
         name: "KernovaPortableTestSupport",
+        dependencies: ["KernovaFileTree"],
         swiftSettings: sharedSwiftSettings
     ),
     // The Linux agent's display version. Tools/build-linux-guest-agent.sh

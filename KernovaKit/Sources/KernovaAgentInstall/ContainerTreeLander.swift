@@ -64,42 +64,42 @@ public struct ContainerTreeLander: PayloadLander {
 
     /// Lands the install's payload as `name` in `slot`, replacing what the slot holds there. The tree belongs
     /// to the installer: no install scope that lands this format hands its root to another account.
-    public func install(_ payload: InstallPayloadReader, as name: String, in slot: InstallDirectory)
-        throws(Installer.Failure)
-    {
+    public func install(
+        _ payload: InstallPayloadReader, as name: String, in slot: borrowing InstallDirectory<Installer.Failure>
+    ) throws(Installer.Failure) {
+        let path = slot.path
         guard slot.owner == nil else {
-            throw .system(operation: "hand to the account", path: slot.path + "/" + name, errno: ENOTSUP)
+            throw .system(operation: "hand to the account", path: path + "/" + name, errno: ENOTSUP)
         }
-        let landing = try Self.landing(name, in: slot.descriptor, path: slot.path) {
+        let landing = try Self.landing(name, in: slot.descriptor, path: path) {
             operation, errno throws(Installer.Failure) in
-            Installer.Failure.system(operation: operation, path: slot.path, errno: errno)
+            Installer.Failure.system(operation: operation, path: path, errno: errno)
         }
         try payload.read { piece throws(Installer.Failure) in
             do throws(TreeWriteFailure) {
                 try landing.receive(Data(piece))
             } catch {
-                throw .system(operation: "land \(error)", path: slot.path + "/" + name, errno: error.errno)
+                throw .system(operation: "land \(error)", path: path + "/" + name, errno: error.errno)
             }
         }
         do throws(PayloadRefusal) {
             try landing.publish(check: nil)
         } catch {
-            throw .system(operation: error.detail, path: slot.path + "/" + name, errno: error.errno)
+            throw .system(operation: error.detail, path: path + "/" + name, errno: error.errno)
         }
     }
 
     /// Begins landing an update in `slot` of `root`, staged beside the slot's item.
     public func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
         let directory = try root.openSlot(slot)
-        defer { close(directory) }
-        let path = root.path + "/slots/" + slot
-        let landing = try Self.landing(itemName, in: directory, path: path) {
+        let path = directory.path
+        let landing = try Self.landing(itemName, in: directory.descriptor, path: path) {
             operation, errno throws(SlotRoot.Failure) in
-            SlotRoot.Failure(operation: operation, name: "slots/" + slot, errno: errno)
+            SlotRoot.Failure(operation: operation, path: path, errno: errno)
         }
         let item = path + "/" + itemName
         let executable = item + "/" + selfTestExecutable
-        return Update(landing: landing, itemName: itemName) { [system] in
+        return Update(landing: landing, item: item) { [system] in
             if let refusal = system.launchRefusal(item) { return refusal }
             let outcome = system.selfTest(executable)
             return outcome == .passed ? nil : PayloadRefusal(.updateInstallFailed, "self-test: \(outcome)")
@@ -130,12 +130,13 @@ public struct ContainerTreeLander: PayloadLander {
     /// one call at a time, which is what makes its unsynchronized state safe to share.
     final class Update: PayloadLanding, @unchecked Sendable {
         private let landing: TreeLanding
-        private let itemName: String
+        /// The item's path, for messages.
+        private let item: String
         private let check: @Sendable () -> PayloadRefusal?
 
-        init(landing: TreeLanding, itemName: String, check: @escaping @Sendable () -> PayloadRefusal?) {
+        init(landing: TreeLanding, item: String, check: @escaping @Sendable () -> PayloadRefusal?) {
             self.landing = landing
-            self.itemName = itemName
+            self.item = item
             self.check = check
         }
 
@@ -144,7 +145,7 @@ public struct ContainerTreeLander: PayloadLander {
                 try landing.receive(Data(bytes))
             } catch {
                 throw SlotRoot.Failure(
-                    operation: "land", name: itemName, errno: error.errno, detail: String(describing: error))
+                    operation: "land", path: item, errno: error.errno, detail: String(describing: error))
             }
         }
 
