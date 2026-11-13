@@ -101,6 +101,47 @@ extension CoreUnits {
             #expect(Self.localFaults(run) == 0)
         }
 
+        // MARK: accepted
+
+        enum Finish: String, CaseIterable, Sendable, CustomTestStringConvertible {
+            case handedOff, blocked, cancelledInGuest, failed
+            var testDescription: String { rawValue }
+
+            var input: PowerInput {
+                let id = PowerResponderUnitTests.id
+                switch self {
+                case .handedOff: return .handedOff(id)
+                case .blocked: return .blocked(id, [AppValue(displayName: "Editor"), AppValue(displayName: "Mail")])
+                case .cancelledInGuest: return .cancelledInGuest(id)
+                case .failed: return .failed(id, WireError(.powerOsFailed))
+                }
+            }
+
+            var kind: Kernova_V2_PowerOutcome.Kind {
+                switch self {
+                case .handedOff: .handedOff
+                case .blocked: .blocked
+                case .cancelledInGuest: .cancelledInGuest
+                case .failed: .failed
+                }
+            }
+        }
+
+        @Test("accepted + a final report → END with that outcome", arguments: Finish.allCases)
+        func acceptedFinish(_ finish: Finish) {
+            let run = Self.peer()
+            Self.request(run)
+            run.input(.power(.accepted(Self.id)))
+            run.input(.power(finish.input))
+            let outcomes = Self.outcomes(run.written)
+            #expect(outcomes.map(\.kind) == [finish.kind])
+            switch finish {
+            case .blocked: #expect(outcomes.first?.apps.map(\.displayName) == ["Editor", "Mail"])
+            case .failed: #expect(outcomes.first?.error.code == .powerOsFailed)
+            case .handedOff, .cancelledInGuest: break
+            }
+        }
+
         // MARK: Coalescing
 
         @Test("ACCEPTED is queued at once; a later unsendable progress is held, a newer one replacing it")
@@ -125,6 +166,19 @@ extension CoreUnits {
             run.input(.power(.askingApps(Self.id)))
             #expect(run.written.on(2).isEmpty)
             #expect(Self.localFaults(run) == 1)
+        }
+
+        @Test("An out-of-order terminal report still releases the request: RESET INTERNAL, the next OPEN performs")
+        func outOfOrderTerminalReport() {
+            let run = Self.peer()
+            Self.request(run)
+            run.input(.power(.cancelled(Self.id)))
+            #expect(Self.localFaults(run) == 1)
+            #expect(run.streamResets.map(\.code) == [.streamProtocolError])
+            Self.request(run, stream: 4)
+            #expect(
+                Self.powerEffects(run).last
+                    == .perform(PowerRequestID(generation: Self.id.generation, rawValue: 4), .shutdown))
         }
 
         @Test(

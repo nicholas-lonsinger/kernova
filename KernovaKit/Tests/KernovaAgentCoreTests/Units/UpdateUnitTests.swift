@@ -237,6 +237,14 @@ extension CoreUnits {
             #expect(run.hostEffects == [.read(Self.id(), Self.offered, offset: 0, maxBytes: 262_144)])
         }
 
+        @Test("Bytes past the grant → RESET READ_FAILED with a diagnostic (as built)")
+        func bytesPastGrant() {
+            let run = Self.serving()
+            run.payload(.bytes(Self.id(), Data(repeating: 4, count: 262_145)))
+            #expect(run.streamResets.map(\.code) == [.readFailed])
+            #expect(run.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
+        }
+
         @Test("payload_size bytes served → the server ENDs (empty) by itself and asks for no more")
         func endsAtSize() {
             let run = Self.serving(Self.small)

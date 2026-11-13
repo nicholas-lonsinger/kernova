@@ -114,6 +114,12 @@ extension CoreUnits {
             #expect(hello?.adverts.last?.advert.availability == .absent(.notPermitted, debugDetail: ""))
         }
 
+        @Test("An advert with neither params nor absent is absent UNSPECIFIED")
+        func neither() {
+            let (hello, _) = Self.received(Self.hello(.sessionPeer) { $0.features = [Self.advert(.logs)] })
+            #expect(hello?.adverts.first?.advert.availability == .absent(.unspecified, debugDetail: ""))
+        }
+
         @Test(
             "An Absence.reason outside 1–99 reads as UNSPECIFIED",
             arguments: [

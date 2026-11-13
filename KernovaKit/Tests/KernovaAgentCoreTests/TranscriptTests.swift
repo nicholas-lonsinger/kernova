@@ -108,6 +108,26 @@ struct TranscriptTests {
         #expect(replay.failures.isEmpty, "\(name): \(replay.failures.joined(separator: "\n"))")
     }
 
+    /// Pinned input past this many bytes is cut at every 4 KiB boundary instead of every byte.
+    static let everyByteLimit = 64 << 10
+
+    @Test("The pinned side's input cut at every byte offset ends cleanly", arguments: TranscriptFiles.frozenNames)
+    func cuts(_ name: String) throws {
+        let text = try #require(
+            TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent(name)), "\(name) is missing")
+        let transcript = try Transcript(parsing: text)
+        let total = transcript.pinnedBytes.reduce(0) { $0 + $1.bytes.count }
+        let step = total > Self.everyByteLimit ? 4096 : 1
+        for offset in stride(from: 0, through: total, by: step) {
+            let replay = try SoloReplay(transcript)
+            replay.runCut(at: offset)
+            if !replay.failures.isEmpty {
+                Issue.record("\(name) cut at \(offset): \(replay.failures.joined(separator: "; "))")
+                return
+            }
+        }
+    }
+
     @Test("Each current transcript replays duet, byte for byte", arguments: Exchange.current.map(\.id))
     func duet(_ id: String) throws {
         let exchange = try #require(Exchange.current.first { $0.id == id })

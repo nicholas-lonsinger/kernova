@@ -156,6 +156,59 @@ extension CoreUnits {
             #expect(returned.dropFirst().first.map { $0.at >= Unit.at(62) } == true)
         }
 
+        // MARK: Misuse
+
+        enum Misuse: String, CaseIterable, Sendable, CustomTestStringConvertible {
+            case messageOnSilentDirection, rawPastWritable, sendAfterEnd, resetOfClosed, openOtherRolesKind
+            case consumedPastHeld, peerStateOnHost
+
+            var testDescription: String { rawValue }
+        }
+
+        @Test("A misused core closes the connection INTERNAL when assertions are off", arguments: Misuse.allCases)
+        func misuseClosesInternal(_ misuse: Misuse) {
+            var wire = Wire.host { $0.addTestKinds() }
+            wire.establish()
+            let power = wire.connection.open(.powerRequest, body: Unit.encode(Unit.powerRequest(.shutdown)))
+            _ = wire.flush()
+            switch misuse {
+            case .messageOnSilentDirection:
+                wire.connection.send(message: Data([1]), on: power)
+            case .rawPastWritable:
+                let bulk = wire.connection.open(StreamKind.testBulkByHost, body: Data())
+                wire.connection.send(data: Data([1]), on: bulk)
+            case .sendAfterEnd:
+                wire.connection.end(power, body: Data())
+                wire.connection.end(power, body: Data())
+            case .resetOfClosed:
+                wire.connection.reset(power, WireError(.cancelled))
+                wire.connection.reset(power, WireError(.cancelled))
+            case .openOtherRolesKind:
+                wire.connection.open(.updatePull, body: Data())
+            case .consumedPastHeld:
+                let bulk = wire.connection.open(StreamKind.testBulkByHost, body: Data())
+                wire.connection.consumed(1, on: bulk)
+            case .peerStateOnHost:
+                wire.connection.setPeerState(PeerSessionState(sessionID: "x"))
+            }
+            #expect(wire.connection.state == .closing)
+            let events = wire.takeEvents()
+            #expect(
+                events.contains { event in
+                    if case .diagnostic(.localFault(let text)) = event { return text.hasPrefix("misuse:") }
+                    return false
+                })
+            #expect(
+                events.contains { event in
+                    if case .closed(.closedLocally(let error)) = event { return error.code == .internal }
+                    return false
+                })
+            let frames = wire.flush()
+            #expect(frames.shape == ["0:reset"])
+            #expect(frames.first.map { Unit.error($0.payload).code } == .internal)
+            #expect(wire.connection.state == .finished)
+        }
+
         // MARK: Coalescing
 
         @Test("Unsent snapshots coalesce in the transmit queue, the newest replacing the older")

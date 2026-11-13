@@ -234,6 +234,19 @@ extension CoreUnits {
             return WireFrames.message(1, batch)
         }
 
+        @Test("Records past 64 are dropped with a diagnostic")
+        func recordBound() {
+            let run = Self.host()
+            run.feed([Self.batch((0..<70).map { Self.protoRecord("\($0)") })])
+            guard case .records(let records) = Self.deliveries(run).last else {
+                Issue.record("no records delivered")
+                return
+            }
+            #expect(records.count == 64)
+            #expect(records.last?.segments.first?.text == "63")
+            #expect(Self.violations(run) == 1)
+        }
+
         @Test("Segments past 256 are dropped with a diagnostic, the record marked truncated")
         func segmentBound() {
             let run = Self.host()
