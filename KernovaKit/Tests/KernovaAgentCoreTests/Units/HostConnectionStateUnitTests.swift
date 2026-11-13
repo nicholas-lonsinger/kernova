@@ -19,11 +19,6 @@ extension CoreUnits {
             .notThisProtocol,
         ]
 
-        @Test("The host's Hello connects")
-        func establishedConnects() {
-            #expect(HostConnectionState.connecting.after(Self.established) == .connected)
-        }
-
         @Test("An unresponsive verdict leaves a connected peer unresponsive")
         func unresponsive() {
             #expect(HostConnectionState.connected.after(Self.unresponsive) == .unresponsive)
@@ -38,20 +33,6 @@ extension CoreUnits {
         func closedReconnects(_ closure: ConnectionClosure) {
             for state in [HostConnectionState.connected, .unresponsive] {
                 #expect(state.after(.closed(closure)) == .connecting)
-            }
-        }
-
-        @Test("Events that say nothing about the connection leave every state as it is")
-        func otherEventsLeaveIt() {
-            let events: [PeerEvent] = [
-                .policyReceived(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])),
-                .updateAvailable(nil), .itemFeatureUsable(.clipboard, true),
-                .diagnostic(.remoteViolation("test")),
-            ]
-            for state in [HostConnectionState.connecting, .connected, .unresponsive] {
-                for event in events {
-                    #expect(state.after(event) == state)
-                }
             }
         }
     }

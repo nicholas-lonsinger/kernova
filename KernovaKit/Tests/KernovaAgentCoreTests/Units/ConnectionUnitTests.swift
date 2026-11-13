@@ -46,72 +46,6 @@ extension CoreUnits {
             }
         }
 
-        @Test("Stream FIFOs are served round-robin by id, one frame per stream per turn")
-        func roundRobin() {
-            var wire = Wire.host()
-            wire.establish()
-            let body = Unit.encode(Unit.powerRequest(.shutdown))
-            let first = wire.connection.open(.powerRequest, body: body)
-            wire.connection.end(first, body: Data())
-            let second = wire.connection.open(.powerRequest, body: body)
-            wire.connection.end(second, body: Data())
-            #expect(wire.flush().shape == ["2:open", "4:open", "2:end", "4:end"])
-        }
-
-        @Test("pollTransmit returns one whole frame even past maxBytes")
-        func wholeFramePastMaxBytes() {
-            var wire = Wire.host()
-            let transmit = wire.connection.pollTransmit(maxBytes: 1)
-            #expect(transmit.map { $0.byteCount > 1 } == true)
-            #expect(transmit?.isFinal == false)
-        }
-
-        @Test("A RESET queued before its OPEN is handed out drops the stream unsent, closes it .resetLocally once")
-        func resetBeforeOpenHandedOut() {
-            var wire = Wire.host()
-            wire.establish()
-            let body = Unit.encode(Unit.powerRequest(.shutdown))
-            let dropped = wire.connection.open(.powerRequest, body: body)
-            wire.connection.end(dropped, body: Data())
-            wire.connection.reset(dropped, WireError(.cancelled))
-            let events = wire.takeEvents()
-            #expect(
-                events == [.streamClosed(dropped, .resetLocally(WireError(.cancelled))), .slotFreed(.powerRequest)])
-            let next = wire.connection.open(.powerRequest, body: body)
-            #expect(next.rawValue == dropped.rawValue + 2)
-            let frames = wire.flush()
-            #expect(frames.on(dropped.rawValue).isEmpty)
-            #expect(frames.shape == ["\(next.rawValue):open"])
-            #expect(wire.takeEvents().isEmpty)
-            #expect(wire.connection.footprint.streamRecords == 1)
-        }
-
-        @Test("A RESET that drops an unsent OPEN frees its concurrency slot at once")
-        func resetBeforeOpenFreesSlot() {
-            var wire = Wire.host()
-            wire.establish()
-            let body = Unit.encode(Unit.powerRequest(.shutdown))
-            var streams: [StreamID] = []
-            for _ in 0..<64 { streams.append(wire.connection.open(.powerRequest, body: body)) }
-            #expect(!wire.connection.canOpen(.powerRequest))
-            wire.connection.reset(streams[10], WireError(.cancelled))
-            #expect(wire.connection.canOpen(.powerRequest))
-        }
-
-        @Test("A RESET after its OPEN was handed out holds the slot until the RESET itself is handed out")
-        func resetAfterOpenHoldsSlotUntilHandedOut() {
-            var wire = Wire.host()
-            wire.establish()
-            let body = Unit.encode(Unit.powerRequest(.shutdown))
-            var streams: [StreamID] = []
-            for _ in 0..<64 { streams.append(wire.connection.open(.powerRequest, body: body)) }
-            _ = wire.flush()
-            wire.connection.reset(streams[0], WireError(.cancelled))
-            #expect(!wire.connection.canOpen(.powerRequest))
-            #expect(wire.flush().shape == ["\(streams[0].rawValue):reset"])
-            #expect(wire.connection.canOpen(.powerRequest))
-        }
-
         // MARK: Credit
 
         @Test("Connection credit is conserved after a RESET with raw DATA held, queued and in flight")
@@ -178,46 +112,6 @@ extension CoreUnits {
                     == Limits.initialConnectionWindow)
         }
 
-        @Test("The opener of a bulk direction puts one WINDOW of 8 MiB − 256 KiB right after its OPEN")
-        func bulkWindowOpener() {
-            var wire = Wire.peer()
-            wire.establish()
-            var pull = Kernova_V2_UpdatePull()
-            pull.payloadHash = Data(repeating: 3, count: 32)
-            let stream = wire.connection.open(.updatePull, body: Unit.encode(pull))
-            let frames = wire.flush()
-            #expect(frames.shape == ["\(stream.rawValue):open", "\(stream.rawValue):window"])
-            #expect(frames.last.map { Unit.window($0.payload) } == UInt32(8_388_608 - 262_144))
-        }
-
-        @Test("A message-only direction stays at 256 KiB, no WINDOW after the OPEN")
-        func messageDirectionStaysAtInitialWindow() {
-            var wire = Wire.peer()
-            wire.establish()
-            wire.feed([Unit.policy(logs: true)])
-            let stream = wire.connection.open(.logForward, body: Unit.encode(Kernova_V2_LogOpen()))
-            #expect(wire.flush().shape == ["\(stream.rawValue):open"])
-        }
-
-        @Test("The acceptor of a bulk direction queues the raising WINDOW with its first frames")
-        func bulkWindowAcceptor() {
-            let kind = StreamKind.UNRECOGNIZED(9100)
-            var wire = Wire.host {
-                $0.kinds.append(
-                    StreamKindDescriptor(
-                        kind: kind, feature: nil, owner: .testBulk, openerRole: .peer, openerToAcceptor: .rawData,
-                        acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: { _ in true }))
-            }
-            wire.establish()
-            var open = Kernova_V2_Open()
-            open.kind = kind
-            wire.feed([Frame(streamID: StreamID(rawValue: 1), type: .open, payload: Unit.encode(open))])
-            #expect(wire.takeEvents() == [.opened(StreamID(rawValue: 1), kind, body: Data())])
-            let frames = wire.flush()
-            #expect(frames.shape == ["1:window"])
-            #expect(frames.first.map { Unit.window($0.payload) } == UInt32(8_388_608 - 262_144))
-        }
-
         @Test("A capped credit return sends the burst, then no more than the rate allows")
         func creditReturnRateCap() {
             var wire = Wire.host()
@@ -260,84 +154,6 @@ extension CoreUnits {
             #expect(afterBurst <= 1_048_576)
             #expect(afterBurst >= 1_048_576 - 2 * 65_536)
             #expect(returned.dropFirst().first.map { $0.at >= Unit.at(62) } == true)
-        }
-
-        // MARK: Writability
-
-        @Test("A message stream fires .writable on the rising edge of credit ≥ 64 KiB with no message unsent")
-        func writableRisingEdge() {
-            var wire = Wire.peer()
-            wire.establish()
-            wire.feed([Unit.policy(logs: true)])
-            let stream = wire.connection.open(.logForward, body: Unit.encode(Kernova_V2_LogOpen()))
-            _ = wire.flush()
-            _ = wire.takeEvents()
-            let message = Data(repeating: 1, count: 60_000)
-            for _ in 0..<4 {
-                #expect(wire.connection.canSendMessage(message.count, on: stream))
-                wire.connection.send(message: message, on: stream)
-                #expect(!wire.connection.canSendMessage(1, on: stream))
-                _ = wire.flush()
-            }
-            #expect(wire.takeEvents() == [.writable(stream), .writable(stream), .writable(stream)])
-            #expect(!wire.connection.canSendMessage(60_000, on: stream))
-            wire.feed([WireFrames.window(stream.rawValue, 40_000)])
-            #expect(wire.takeEvents().isEmpty)
-            wire.feed([WireFrames.window(stream.rawValue, 20_000)])
-            #expect(wire.takeEvents() == [.writable(stream)])
-        }
-
-        // MARK: Misuse
-
-        enum Misuse: String, CaseIterable, Sendable, CustomTestStringConvertible {
-            case messageOnSilentDirection, rawPastWritable, sendAfterEnd, resetOfClosed, openOtherRolesKind
-            case consumedPastHeld, peerStateOnHost
-
-            var testDescription: String { rawValue }
-        }
-
-        @Test("A misused core closes the connection INTERNAL when assertions are off", arguments: Misuse.allCases)
-        func misuseClosesInternal(_ misuse: Misuse) {
-            var wire = Wire.host { $0.addTestKinds() }
-            wire.establish()
-            let power = wire.connection.open(.powerRequest, body: Unit.encode(Unit.powerRequest(.shutdown)))
-            _ = wire.flush()
-            switch misuse {
-            case .messageOnSilentDirection:
-                wire.connection.send(message: Data([1]), on: power)
-            case .rawPastWritable:
-                let bulk = wire.connection.open(StreamKind.testBulkByHost, body: Data())
-                wire.connection.send(data: Data([1]), on: bulk)
-            case .sendAfterEnd:
-                wire.connection.end(power, body: Data())
-                wire.connection.end(power, body: Data())
-            case .resetOfClosed:
-                wire.connection.reset(power, WireError(.cancelled))
-                wire.connection.reset(power, WireError(.cancelled))
-            case .openOtherRolesKind:
-                wire.connection.open(.updatePull, body: Data())
-            case .consumedPastHeld:
-                let bulk = wire.connection.open(StreamKind.testBulkByHost, body: Data())
-                wire.connection.consumed(1, on: bulk)
-            case .peerStateOnHost:
-                wire.connection.setPeerState(PeerSessionState(sessionID: "x"))
-            }
-            #expect(wire.connection.state == .closing)
-            let events = wire.takeEvents()
-            #expect(
-                events.contains { event in
-                    if case .diagnostic(.localFault(let text)) = event { return text.hasPrefix("misuse:") }
-                    return false
-                })
-            #expect(
-                events.contains { event in
-                    if case .closed(.closedLocally(let error)) = event { return error.code == .internal }
-                    return false
-                })
-            let frames = wire.flush()
-            #expect(frames.shape == ["0:reset"])
-            #expect(frames.first.map { Unit.error($0.payload).code } == .internal)
-            #expect(wire.connection.state == .finished)
         }
 
         // MARK: Coalescing

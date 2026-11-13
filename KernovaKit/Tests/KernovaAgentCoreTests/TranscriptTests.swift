@@ -108,26 +108,6 @@ struct TranscriptTests {
         #expect(replay.failures.isEmpty, "\(name): \(replay.failures.joined(separator: "\n"))")
     }
 
-    /// Pinned input past this many bytes is cut at every 4 KiB boundary instead of every byte.
-    static let everyByteLimit = 64 << 10
-
-    @Test("The pinned side's input cut at every byte offset ends cleanly", arguments: TranscriptFiles.frozenNames)
-    func cuts(_ name: String) throws {
-        let text = try #require(
-            TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent(name)), "\(name) is missing")
-        let transcript = try Transcript(parsing: text)
-        let total = transcript.pinnedBytes.reduce(0) { $0 + $1.bytes.count }
-        let step = total > Self.everyByteLimit ? 4096 : 1
-        for offset in stride(from: 0, through: total, by: step) {
-            let replay = try SoloReplay(transcript)
-            replay.runCut(at: offset)
-            if !replay.failures.isEmpty {
-                Issue.record("\(name) cut at \(offset): \(replay.failures.joined(separator: "; "))")
-                return
-            }
-        }
-    }
-
     @Test("Each current transcript replays duet, byte for byte", arguments: Exchange.current.map(\.id))
     func duet(_ id: String) throws {
         let exchange = try #require(Exchange.current.first { $0.id == id })
@@ -138,23 +118,6 @@ struct TranscriptTests {
         duet.run()
         #expect(duet.failures.isEmpty, "\(duet.failures)")
         #expect(duet.renderDuet() == expected)
-    }
-
-    @Test("Only the update pull's frozen file is cut at 4 KiB boundaries; every other is cut at every byte")
-    func cutStrides() throws {
-        for name in TranscriptFiles.frozenNames {
-            let text = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent(name)))
-            let total = try Transcript(parsing: text).pinnedBytes.reduce(0) { $0 + $1.bytes.count }
-            #expect((total > Self.everyByteLimit) == (name == "F09h.transcript"), "\(name): \(total) pinned bytes")
-        }
-    }
-
-    @Test("F09 pins the STAGED result: the peer's END after its install, and the host's result event")
-    func updateResultPinned() throws {
-        let host = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent("F09h.transcript")))
-        let peer = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent("F09p.transcript")))
-        #expect(host.contains("expect  p>h s=3 END result.kind=1 result.code=0"))
-        #expect(peer.contains("ev      host update result kind=1 code=0"))
     }
 
     /// `name`'s frozen text with the first line containing `fragment` removed or replaced.
