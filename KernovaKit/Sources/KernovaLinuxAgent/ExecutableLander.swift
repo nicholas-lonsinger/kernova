@@ -31,9 +31,8 @@ struct ExecutableLander: PayloadLander {
     }
 
     func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
-        let directory = try root.openSlot(slot)
-        let file = try directory.stage(InstallLayout.binaryName)
-        return Landing(system: system, slot: directory, file: file)
+        let file = try root.openSlot(slot).stage(InstallLayout.binaryName)
+        return Landing(system: system, file: file)
     }
 
     /// One update, staged in the slot until it is published as the slot's binary. ``SlotUpdateInstaller`` calls
@@ -41,17 +40,11 @@ struct ExecutableLander: PayloadLander {
     /// share.
     final class Landing: PayloadLanding, @unchecked Sendable {
         private let system: System
-        /// The slot, open.
-        private let slot: InstallDirectory<SlotRoot.Failure>
         /// The staged binary until the landing publishes or is discarded.
         private var file: StagedFile<SlotRoot.Failure>?
 
-        init(
-            system: System, slot: consuming InstallDirectory<SlotRoot.Failure>,
-            file: consuming StagedFile<SlotRoot.Failure>
-        ) {
+        init(system: System, file: consuming StagedFile<SlotRoot.Failure>) {
             self.system = system
-            self.slot = slot
             self.file = .some(file)
         }
 
@@ -65,7 +58,7 @@ struct ExecutableLander: PayloadLander {
             guard let file = file.take() else { preconditionFailure("a publish after the landing ended") }
             let refusal: PayloadRefusal?
             do {
-                refusal = try file.publish(in: slot, mode: 0o755) { [system] staged in
+                refusal = try file.publish(mode: 0o755) { [system] staged in
                     let outcome = system.selfTest(staged)
                     return outcome == .passed ? nil : PayloadRefusal(.updateInstallFailed, "self-test: \(outcome)")
                 }
@@ -77,7 +70,7 @@ struct ExecutableLander: PayloadLander {
         }
 
         func discard() {
-            file.take()?.discard(in: slot)
+            file.take()?.discard()
         }
     }
 }

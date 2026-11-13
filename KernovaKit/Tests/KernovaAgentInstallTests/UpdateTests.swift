@@ -116,22 +116,16 @@ struct TestLander: PayloadLander {
     }
 
     func beginUpdate(in slot: String, of root: SlotRoot) throws(SlotRoot.Failure) -> any PayloadLanding {
-        let directory = try root.openSlot(slot)
-        let file = try directory.stage(Self.name)
-        return Landing(lander: self, slot: directory, file: file)
+        let file = try root.openSlot(slot).stage(Self.name)
+        return Landing(lander: self, file: file)
     }
 
     final class Landing: PayloadLanding, @unchecked Sendable {
         let lander: TestLander
-        let slot: InstallDirectory<SlotRoot.Failure>
         var file: StagedFile<SlotRoot.Failure>?
 
-        init(
-            lander: TestLander, slot: consuming InstallDirectory<SlotRoot.Failure>,
-            file: consuming StagedFile<SlotRoot.Failure>
-        ) {
+        init(lander: TestLander, file: consuming StagedFile<SlotRoot.Failure>) {
             self.lander = lander
-            self.slot = slot
             self.file = .some(file)
         }
 
@@ -146,7 +140,7 @@ struct TestLander: PayloadLander {
             guard let file = file.take() else { preconditionFailure("a publish after the landing ended") }
             let refusal: PayloadRefusal?
             do {
-                refusal = try file.publish(in: slot, mode: 0o755) { [lander] _ in lander.refusal }
+                refusal = try file.publish(mode: 0o755) { [lander] _ in lander.refusal }
             } catch {
                 throw PayloadRefusal(.updateInstallFailed, "\(error)", errno: error.errno, rejectsPayload: false)
             }
@@ -154,7 +148,7 @@ struct TestLander: PayloadLander {
         }
 
         func discard() {
-            file.take()?.discard(in: slot)
+            file.take()?.discard()
         }
     }
 }

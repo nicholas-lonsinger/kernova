@@ -70,15 +70,19 @@ public struct InstallDirectory<Failure: InstallFileFailure>: ~Copyable, Sendable
 
     /// Hands the directory itself to its owner.
     func handToOwner() throws(Failure) {
-        try hand(descriptor, path: path)
+        try Self.hand(descriptor, to: owner, path: path, fileSystem: fileSystem)
     }
 
-    /// Hands the open `descriptor`, `path` naming it, to the owner.
-    func hand(_ descriptor: Int32, path: String) throws(Failure) {
+    /// Hands the open `descriptor`, `path` naming it, to `owner`; nil leaves it this process's.
+    static func hand(
+        _ descriptor: Int32, to owner: Installer.Owner?, path: String, fileSystem: any MutableTreeFileSystem
+    ) throws(Failure) {
         guard let owner else { return }
-        var info = stat()
-        guard fstat(descriptor, &info) == 0 else { throw Failure(operation: "stat", path: path, errno: errno) }
-        guard info.st_uid != owner.uid || info.st_gid != owner.gid else { return }
+        let status: FileStatus
+        do { status = try fileSystem.status(of: descriptor) } catch {
+            throw Failure(operation: "stat", path: path, errno: error.code)
+        }
+        guard status.owner != owner.uid || status.group != owner.gid else { return }
         guard fchown(descriptor, owner.uid, owner.gid) == 0 else {
             throw Failure(operation: "chown", path: path, errno: errno)
         }
@@ -118,7 +122,7 @@ public struct InstallDirectory<Failure: InstallFileFailure>: ~Copyable, Sendable
         guard fchmod(made.descriptor, mode_t(mode)) == 0 else {
             throw Failure(operation: "chmod", path: childPath, errno: errno)
         }
-        try hand(made.descriptor, path: childPath)
+        try Self.hand(made.descriptor, to: owner, path: childPath, fileSystem: fileSystem)
         return made
     }
 
@@ -149,16 +153,20 @@ public struct InstallDirectory<Failure: InstallFileFailure>: ~Copyable, Sendable
     ) throws(Failure) {
         var file = try stage(name)
         do { try fill(&file) } catch {
-            file.discard(in: self)
+            file.discard()
             throw error
         }
-        try file.publish(in: self, mode: mode)
+        try file.publish(mode: mode)
     }
 
-    /// Begins writing `name` here whole, staged beside it, a stale staged file removed first.
+    /// Begins writing `name` here whole, staged beside it, a stale staged file removed first. The staged file
+    /// holds this directory open itself, so it publishes or is discarded here alone.
     public func stage(_ name: String) throws(Failure) -> StagedFile<Failure> {
         let staged = stagedName(of: name)
         let stagedPath = path + "/" + staged
+        let duplicate = dup(descriptor)
+        guard duplicate >= 0 else { throw Failure(operation: "dup", path: path, errno: errno) }
+        let directory = OpenFile(descriptor: duplicate)
         do { try fileSystem.remove(Array(staged.utf8), in: descriptor, isDirectory: false) } catch {
             guard error.code == ENOENT else { throw Failure(operation: "remove", path: stagedPath, errno: error.code) }
         }
@@ -166,7 +174,9 @@ public struct InstallDirectory<Failure: InstallFileFailure>: ~Copyable, Sendable
         do { file = try fileSystem.createFile(Array(staged.utf8), in: descriptor) } catch {
             throw Failure(operation: "create", path: stagedPath, errno: error.code)
         }
-        return StagedFile(descriptor: file, name: name, path: path + "/" + name, fileSystem: fileSystem)
+        return StagedFile(
+            descriptor: file, name: name, directory: directory, directoryPath: path, owner: owner,
+            fileSystem: fileSystem)
     }
 
     /// Points the link `name` here at `target`, replacing whatever entry is there in one rename, then flushes
@@ -273,24 +283,39 @@ func stagedName(of name: String) -> String {
 ///
 /// It is staged in the destination's own directory, never elsewhere and moved: a rename keeps the SELinux
 /// label a file was created with, and only one created in place takes the directory's, so a binary made
-/// anywhere else would land unexecutable.
+/// anywhere else would land unexecutable. It holds that directory open itself, so it publishes or is
+/// discarded there and nowhere else.
 public struct StagedFile<Failure: InstallFileFailure>: ~Copyable {
     /// The staged file, open for writing until it is published or discarded.
     private let file: OpenFile
+    /// The directory it is staged in.
+    private let directory: OpenFile
+    /// The directory's path, for messages.
+    private let directoryPath: String
+    /// Who the published file belongs to; nil for this process.
+    private let owner: Installer.Owner?
     /// The destination's name in its directory.
     private let name: String
-    /// The destination's path, for messages.
-    private let path: String
     private let fileSystem: any MutableTreeFileSystem
     /// Where the next write lands.
     private var offset: Int64 = 0
 
-    init(descriptor: Int32, name: String, path: String, fileSystem: any MutableTreeFileSystem) {
+    /// Takes ownership of `descriptor`, the file staged for `name` in `directory`, the directory at
+    /// `directoryPath`.
+    init(
+        descriptor: Int32, name: String, directory: consuming OpenFile, directoryPath: String,
+        owner: Installer.Owner?, fileSystem: any MutableTreeFileSystem
+    ) {
         file = OpenFile(descriptor: descriptor)
+        self.directory = directory
+        self.directoryPath = directoryPath
+        self.owner = owner
         self.name = name
-        self.path = path
         self.fileSystem = fileSystem
     }
+
+    /// The destination's path, for messages.
+    private var path: String { directoryPath + "/" + name }
 
     /// Appends all of `bytes`.
     public mutating func write(_ bytes: UnsafeRawBufferPointer) throws(Failure) {
@@ -315,56 +340,59 @@ public struct StagedFile<Failure: InstallFileFailure>: ~Copyable {
         try outcome.get()
     }
 
-    /// Replaces the destination in `directory` with the file written, with `mode` and belonging to the
-    /// directory's owner.
-    public consuming func publish(in directory: borrowing InstallDirectory<Failure>, mode: UInt16) throws(Failure) {
-        _ = try publish(in: directory, mode: mode) { _ -> Never? in nil }
+    /// Replaces the destination in the directory it was staged in with the file written, with `mode` and
+    /// belonging to the directory's owner.
+    public consuming func publish(mode: UInt16) throws(Failure) {
+        _ = try publish(mode: mode) { _ -> Never? in nil }
     }
 
-    /// Replaces the destination in `directory` with the file written, with `mode` and belonging to the
-    /// directory's owner, once `check` passes it: `check` is handed the staged file's path, closed, and answers
-    /// why it is refused, or nil.
+    /// Replaces the destination in the directory it was staged in with the file written, with `mode` and
+    /// belonging to the directory's owner, once `check` passes it: `check` is handed the staged file's path,
+    /// closed, and answers why it is refused, or nil.
     ///
     /// - Returns: `check`'s refusal, the staged file removed and the destination left as it was; nil once the
     ///   destination is replaced.
     public consuming func publish<Refusal>(
-        in directory: borrowing InstallDirectory<Failure>, mode: UInt16, check: (String) -> Refusal?
+        mode: UInt16, check: (String) -> Refusal?
     ) throws(Failure) -> Refusal? {
-        let file = self.file.release()
+        let path = path
+        let directory = self.directory.descriptor
         let staged = Array(stagedName(of: name).utf8)
         let stagedPath = stagedName(of: path)
+        let file = self.file.release()
         do throws(Failure) {
             guard fchmod(file, mode_t(mode)) == 0 else {
                 throw Failure(operation: "chmod", path: stagedPath, errno: errno)
             }
-            try directory.hand(file, path: stagedPath)
+            try InstallDirectory<Failure>.hand(file, to: owner, path: stagedPath, fileSystem: fileSystem)
             guard fsync(file) == 0 else { throw Failure(operation: "fsync", path: stagedPath, errno: errno) }
         } catch {
             fileSystem.close(file)
-            try? fileSystem.remove(staged, in: directory.descriptor, isDirectory: false)
+            try? fileSystem.remove(staged, in: directory, isDirectory: false)
             throw error
         }
         do { try fileSystem.closeWritten(file) } catch {
-            try? fileSystem.remove(staged, in: directory.descriptor, isDirectory: false)
+            try? fileSystem.remove(staged, in: directory, isDirectory: false)
             throw Failure(operation: "close", path: stagedPath, errno: error.code)
         }
         if let refusal = check(stagedPath) {
-            try? fileSystem.remove(staged, in: directory.descriptor, isDirectory: false)
+            try? fileSystem.remove(staged, in: directory, isDirectory: false)
             return refusal
         }
         do {
             try fileSystem.renameReplacing(
-                staged, in: directory.descriptor, to: Array(name.utf8), in: directory.descriptor)
+                staged, in: directory, to: Array(name.utf8), in: directory)
         } catch {
-            try? fileSystem.remove(staged, in: directory.descriptor, isDirectory: false)
+            try? fileSystem.remove(staged, in: directory, isDirectory: false)
             throw Failure(operation: "rename onto", path: path, errno: error.code)
         }
-        try directory.sync()
+        guard fsync(directory) == 0 else { throw Failure(operation: "fsync", path: directoryPath, errno: errno) }
         return nil
     }
 
-    /// Removes the staged file from `directory`, and closes it, leaving the destination as it was.
-    public consuming func discard(in directory: borrowing InstallDirectory<Failure>) {
+    /// Removes the staged file from the directory it was staged in, and closes it, leaving the destination as it
+    /// was.
+    public consuming func discard() {
         try? fileSystem.remove(Array(stagedName(of: name).utf8), in: directory.descriptor, isDirectory: false)
     }
 }
