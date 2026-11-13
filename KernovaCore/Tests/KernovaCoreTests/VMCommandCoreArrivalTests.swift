@@ -325,6 +325,37 @@ struct VMCommandCoreArrivalTests {
         #expect(after == before)
     }
 
+    @Test(
+        "Importing a symbolic link to a bundle copies the bundle it resolves to, leaving the source's host state as it was"
+    )
+    func importOfASymlinkCopiesTheBundleItResolvesTo() async throws {
+        let harness = makeHarness()
+        let source = try scratch.importSource(name: "Linked")
+        try VMStagedBundle.fixtureForTesting(at: source.url, access: CoordinatedBundleFileAccess())
+            .update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
+        let link = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent("Alias.\(VMBundleFormat.fileExtension)", isDirectory: false)
+        try FileManager.default.createDirectory(
+            at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source.url)
+        let sourceHostState = source.url.appendingPathComponent(VMBundleLayout.hostStateRelativePath)
+        let hostStateBefore = try Data(contentsOf: sourceHostState)
+        let filesBefore = try contents(of: source.url)
+
+        let summary = try await harness.core.importVM(from: link, waitForOutcome: true)
+
+        let imported = try #require(harness.library.instances.first { $0.id == summary.id })
+        let published = imported.bundleURL
+        #expect(published.lastPathComponent == "Linked.\(VMBundleFormat.fileExtension)")
+        let values = try published.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        #expect(values.isSymbolicLink == false)
+        #expect(values.isDirectory == true)
+        #expect(try Set(contents(of: published).keys) == Set(filesBefore.keys))
+        #expect(try Data(contentsOf: sourceHostState) == hostStateBefore)
+        let copy = try VMBundleFiles(url: published, access: CoordinatedBundleFileAccess()).read()
+        #expect(copy.hostState.startsAutomaticallyOnLaunch == false)
+    }
+
     @Test("Importing the source of a bundle the library can't read copies nothing, and answers that row and its file")
     func importingTheSourceOfAnUnreadableRowCopiesNothing() async throws {
         let harness = makeHarness()
