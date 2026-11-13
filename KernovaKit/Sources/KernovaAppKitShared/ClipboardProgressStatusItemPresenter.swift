@@ -14,8 +14,7 @@ import KernovaTransferProgress
 /// ring and tooltip.
 @MainActor
 public final class ClipboardProgressStatusItemPresenter {
-    private static let logger = KernovaLogger(
-        subsystem: "app.kernova", category: "ClipboardProgressStatusItem")
+    private let logger: KernovaLogger
 
     private let menu: NSMenu
     /// The status item's popover slot, which the reveal shows its callout in.
@@ -55,6 +54,9 @@ public final class ClipboardProgressStatusItemPresenter {
 
     private var autoReveal = ClipboardProgressAutoReveal()
 
+    /// What the reveal's last line recorded: a line is written when this changes, never per snapshot.
+    private var loggedReveal: RevealRecord?
+
     /// What the reveal's revisit is timed on.
     private let clock: any EngineClock
     /// When ``snapshot`` was delivered, so a revisit can age it to the moment
@@ -73,8 +75,10 @@ public final class ClipboardProgressStatusItemPresenter {
     public init(
         menu: NSMenu, slot: any StatusItemCalloutSlot,
         onCancel: ((ClipboardTransferOperationID) -> Void)? = nil,
-        clock: any EngineClock = makePlatformEngineClock()
+        clock: any EngineClock = makePlatformEngineClock(),
+        logger: KernovaLogger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardProgressStatusItem")
     ) {
+        self.logger = logger
         self.menu = menu
         self.slot = slot
         self.onCancel = onCancel
@@ -121,7 +125,8 @@ public final class ClipboardProgressStatusItemPresenter {
         syncItems()
         if rendered == nil {
             let closed = dismissCallout()
-            Self.logger.log(
+            loggedReveal = nil
+            logger.log(
                 .info,
                 "Readout cleared — callout \(closed ? "dismissed" : "not up", privacy: .public)")
         }
@@ -168,7 +173,7 @@ public final class ClipboardProgressStatusItemPresenter {
         if case .shown(let showing) = result {
             calloutShowing = showing
             calloutShownByClick = true
-            Self.logger.log(
+            logger.log(
                 .notice,
                 "Readout callout shown by a click — gesture=\(String(describing: snapshot.gesture), privacy: .public), \(ClipboardProgressLog.bytes(transferred: snapshot.bytesTransferred, total: snapshot.totalBytes, known: snapshot.bytesKnown), privacy: .public)"
             )
@@ -255,28 +260,39 @@ public final class ClipboardProgressStatusItemPresenter {
         revisit = (readout.operationID, task)
     }
 
-    /// Records the decision with the inputs that made it — one line per delivered
-    /// readout, a rate the tracker's throttle already bounds, and one per revisit.
+    /// What a reveal line records: the callout's state and why a reveal was held back, for one operation.
+    private struct RevealRecord: Equatable {
+        let operation: ClipboardTransferOperationID
+        let callout: String
+        let skip: TransientStatusItemPopover.SkipReason?
+        let dropdownOpen: Bool
+    }
+
+    /// Records the decision with the inputs that made it, when what it records differs from the last line: an
+    /// operation's first readout, its callout going up or down, a reveal held back for a new reason, the dropdown
+    /// opening or closing.
     ///
-    /// Only `.shown` is `.info`: a reveal the slot skipped is retried on every
-    /// update until it goes up, so it repeats at the throttle rate as `.none`
-    /// does.
+    /// Only `.shown` is `.info`.
     private func log(
         _ decision: ClipboardProgressRevealDecision, skip: TransientStatusItemPopover.SkipReason?,
         readout: ClipboardProgressSnapshot, dropdownOpen: Bool
     ) {
+        let callout =
+            switch calloutShowing.map(slot.holds) {
+            case true?: calloutShownByClick ? "shown by a click" : "shown by the reveal"
+            case false?, nil: "not up"
+            }
+        let record = RevealRecord(
+            operation: readout.operationID, callout: callout, skip: skip, dropdownOpen: dropdownOpen)
+        guard record != loggedReveal else { return }
+        loggedReveal = record
         let level: KernovaLogLevel =
             switch decision {
             case .none, .notShown: .debug
             case .shown: .info
             }
         let skipped = skip.map { " — skipped: \($0)" } ?? ""
-        let callout =
-            switch calloutShowing.map(slot.holds) {
-            case true?: calloutShownByClick ? "shown by a click" : "shown by the reveal"
-            case false?, nil: "not up"
-            }
-        Self.logger.log(
+        logger.log(
             level,
             """
             Readout callout \(String(describing: decision), privacy: .public)\(skipped, privacy: .public) — \

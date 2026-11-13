@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import KernovaLogging
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -257,6 +259,32 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         #expect(clock.requestedSeconds.isEmpty)
         #expect(slot.shown.isEmpty)
+    }
+
+    @Test("the reveal writes a line when its decision changes, not per readout")
+    func revealLogsOnChange() {
+        let lines = Locked(0)
+        let presenter = ClipboardProgressStatusItemPresenter(
+            menu: NSMenu(), slot: slot, clock: clock,
+            logger: KernovaLogger(subsystem: "test", category: "test") { _, _, _, _ in lines.withLock { $0 += 1 } })
+
+        // Under the floor: the first readout is a line, the next ones repeat it.
+        presenter.apply(sizeUnknown(elapsed: 0.25))
+        presenter.apply(sizeUnknown(elapsed: 0.5))
+        #expect(lines.withLock { $0 } == 1)
+
+        // Held back by a status item that can't carry the callout: one line for the new reason.
+        slot.canCarry = false
+        presenter.apply(running(elapsed: 5))
+        presenter.apply(running(elapsed: 6))
+        #expect(lines.withLock { $0 } == 2)
+
+        // Shown, then updates while it stays up.
+        slot.canCarry = true
+        presenter.apply(running(elapsed: 7))
+        presenter.apply(running(elapsed: 8))
+        presenter.apply(running(elapsed: 9))
+        #expect(lines.withLock { $0 } == 3)
     }
 
     @Test("a readout that reveals on delivery arms no revisit")

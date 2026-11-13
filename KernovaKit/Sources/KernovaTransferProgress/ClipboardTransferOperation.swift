@@ -119,7 +119,6 @@ public final class ClipboardTransferOperation: Sendable {
     private enum LogEvent: Sendable {
         case revealed(elapsed: TimeInterval, bytes: String)
         case ended(terminal: String, elapsed: TimeInterval, bytes: String, revealed: Bool)
-        case emission(ClipboardProgressSnapshot)
     }
 
     private static let logger = KernovaLogger(
@@ -288,9 +287,7 @@ public final class ClipboardTransferOperation: Sendable {
             }
             guard admits else { return Outcome(logs: logs) }
             published = true
-            let snapshot = snapshot(at: now, header: header)
-            logs.append(.emission(snapshot))
-            return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
+            return Outcome(call: .running(snapshot(at: now, header: header), since: header.startedDate), logs: logs)
         }
 
         /// Resolves a terminal reached at `now`.
@@ -686,11 +683,6 @@ public final class ClipboardTransferOperation: Sendable {
             Self.logger.log(
                 .info,
                 "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressLog.seconds(elapsed), privacy: .public) — \(bytes, privacy: .public), revealed=\(revealed, privacy: .public)"
-            )
-        case .emission(let snapshot):
-            Self.logger.log(
-                .debug,
-                "\(String(describing: self.header.gesture), privacy: .public) readout — \(ClipboardProgressLog.bytes(transferred: snapshot.bytesTransferred, total: snapshot.totalBytes, known: snapshot.bytesKnown), privacy: .public), \(ClipboardProgressLog.seconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressLog.seconds(snapshot.secondsRemaining), privacy: .public) remaining"
             )
         }
     }
