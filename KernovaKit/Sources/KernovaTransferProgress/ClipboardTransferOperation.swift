@@ -120,7 +120,8 @@ public final class ClipboardTransferOperation: Sendable {
         let gesture: ClipboardTransferGesture
         let direction: ClipboardProgressSnapshot.Direction
         let peerName: String
-        let isCancellable: Bool
+        /// Whether the owner can stop the operation's transfers at all.
+        let isStoppable: Bool
         /// When the operation began, in wall-clock terms, so an app-level
         /// surface can rank concurrent operations across VMs.
         let startedDate: Date
@@ -138,7 +139,7 @@ public final class ClipboardTransferOperation: Sendable {
     /// What the reveal gate, the readout's timings and the idle terminal are
     /// measured on.
     private let clock: any EngineClock
-    /// Stops what this operation measures, when it can be cancelled at all. `nil`
+    /// Stops what this operation measures, when it can be stopped at all. `nil`
     /// is what leaves the readout without a Cancel button.
     private let onCancelRequested: (@Sendable () -> Void)?
     private let reporter: ClipboardTransferReporter
@@ -184,6 +185,8 @@ public final class ClipboardTransferOperation: Sendable {
         /// Whether anything has been published, so a terminal inside the reveal
         /// gate knows it has nothing to retire.
         var published = false
+        /// The cancellability the last published readout carried.
+        var publishedCancellable = false
         var isFinished = false
         /// The armed idle terminal, `nil` while none is.
         ///
@@ -224,6 +227,9 @@ public final class ClipboardTransferOperation: Sendable {
         /// Whether nothing is in flight.
         var isIdle: Bool { activeUnits.isEmpty }
 
+        /// Whether a Cancel would stop something now: a transfer is in flight and the owner can stop it.
+        func isCancellable(_ header: Header) -> Bool { header.isStoppable && !isFinished && !isIdle }
+
         /// The files the operation expects to transfer.
         var fileCount: Int { max(units.count, expectedItems) }
 
@@ -262,6 +268,11 @@ public final class ClipboardTransferOperation: Sendable {
                 coalescer.markForwarded(bytesTransferred: progress.done, at: now)
                 logs.append(.revealed(elapsed: elapsed, bytes: loggedBytes))
                 admits = true
+            } else if isCancellable(header) != publishedCancellable {
+                // A Cancel appearing or going is never held back: one left showing
+                // with nothing in flight would stop nothing.
+                coalescer.markForwarded(bytesTransferred: progress.done, at: now)
+                admits = true
             } else {
                 admits = coalescer.shouldForward(
                     bytesTransferred: progress.done, totalBytes: progress.total, at: now)
@@ -272,6 +283,7 @@ public final class ClipboardTransferOperation: Sendable {
             guard admits else { return Outcome(logs: logs) }
             published = true
             let snapshot = snapshot(at: now, header: header)
+            publishedCancellable = snapshot.isCancellable
             logs.append(.emission(snapshot))
             return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
         }
@@ -339,7 +351,7 @@ public final class ClipboardTransferOperation: Sendable {
                     ? rate.secondsRemaining(bytes: transferredBytes, total: total) : nil,
                 gesture: header.gesture,
                 elapsedSeconds: max(0, startedAt.seconds(to: now)),
-                isCancellable: header.isCancellable,
+                isCancellable: isCancellable(header),
                 operationID: header.id, bytesKnown: bytesKnown)
         }
 
@@ -361,10 +373,11 @@ public final class ClipboardTransferOperation: Sendable {
     /// upward as they are declared. `expectedBytes` nil is an operation that
     /// cannot know its bytes: its readout counts files alone.
     ///
-    /// `onCancelRequested` stops what this operation measures — the transfers,
-    /// not the offer behind them — and is what puts a Cancel affordance on the
-    /// readout. It is invoked outside the lock, may fire more than once, and may
-    /// fire after the operation has ended, so it must be idempotent.
+    /// `onCancelRequested` stops what this operation measures, and is what puts a
+    /// Cancel affordance on the readout while one of its transfers is in flight.
+    /// It is invoked outside the lock, only for a Cancel that reached the
+    /// operation with a transfer in flight, but that transfer can end before it
+    /// runs, so it must be idempotent.
     public init(
         gesture: ClipboardTransferGesture,
         direction: ClipboardProgressSnapshot.Direction,
@@ -379,7 +392,7 @@ public final class ClipboardTransferOperation: Sendable {
     ) {
         self.header = Header(
             id: ClipboardTransferOperationID(), gesture: gesture, direction: direction,
-            peerName: peerName, isCancellable: onCancelRequested != nil, startedDate: Date())
+            peerName: peerName, isStoppable: onCancelRequested != nil, startedDate: Date())
         self.revealDelay = revealDelay
         self.idleGap = idleGap
         self.clock = clock
@@ -562,17 +575,22 @@ public final class ClipboardTransferOperation: Sendable {
     /// silently measures nothing at all.
     public var isLive: Bool { state.withLock { !$0.isFinished } }
 
-    /// Whether this operation can be stopped, which is what puts a Cancel
-    /// affordance on its readout.
-    public var isCancellable: Bool { header.isCancellable }
+    /// Whether a Cancel would stop something now — one of its transfers is in
+    /// flight and its owner can stop it — which is what puts a Cancel affordance
+    /// on its readout.
+    public var isCancellable: Bool { state.withLock { $0.isCancellable(header) } }
 
-    /// Stops what this operation measures, if it can be stopped at all.
-    public func requestCancel() {
-        guard let onCancelRequested else { return }
+    /// Stops what this operation measures, if a transfer of it is in flight and
+    /// its owner can stop it; with nothing in flight it changes nothing. Returns
+    /// whether it reached the owner.
+    @discardableResult
+    public func requestCancel() -> Bool {
+        guard let onCancelRequested, isCancellable else { return false }
         Self.logger.log(
             .notice,
             "Cancel requested for a \(String(describing: self.header.gesture), privacy: .public) transfer")
         onCancelRequested()
+        return true
     }
 
     // MARK: - Event plumbing

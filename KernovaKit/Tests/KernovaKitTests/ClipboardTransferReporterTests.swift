@@ -378,6 +378,9 @@ struct ClipboardTransferReporterTests {
         let newerStopped = Locked(false)
         let older = makeOperation(reporter, onCancelRequested: { olderStopped.withLock { $0 = true } })
         let newer = makeOperation(reporter, onCancelRequested: { newerStopped.withLock { $0 = true } })
+        // Each has a transfer in flight, so each has something to stop.
+        let units = [older.unit(expectedBytes: 10), newer.unit(expectedBytes: 10)]
+        defer { for unit in units { unit?.ended(succeeded: false) } }
 
         reporter.publish(from: older, .running(snapshot(bytes: 1), since: Date()))
         reporter.publish(from: newer, .running(snapshot(bytes: 2), since: Date()))

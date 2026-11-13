@@ -483,9 +483,46 @@ struct ClipboardTransferOperationTests {
         let stopped = Locked(false)
         let operation = makeOperation(
             recorder: recorder, clock: clock, onCancelRequested: { stopped.withLock { $0 = true } })
+        let unit = operation.unit(expectedBytes: 100)
 
-        operation.requestCancel()
+        #expect(operation.requestCancel())
         #expect(stopped.withLock { $0 })
+        unit?.ended(succeeded: false)
+    }
+
+    @Test("Cancel is offered only while a transfer is in flight, and with none it stops nothing")
+    func cancelOnlyWhileATransferIsInFlight() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let stops = Locked(0)
+        let operation = makeOperation(
+            recorder: recorder, clock: clock, gesture: .paste,
+            onCancelRequested: { stops.withLock { $0 += 1 } })
+        #expect(!operation.isCancellable)
+        clock.advance(seconds: Self.revealDelay)
+
+        let unit = try #require(operation.unit(expectedBytes: 100))
+        unit.advanced(landed: 100, declared: 100)
+        await settle()
+        #expect(try #require(recorder.runningSnapshot).isCancellable)
+
+        // The file landed whole: what the readout shows of its bytes does not move, but its Cancel goes.
+        unit.ended(succeeded: true)
+        await settle()
+        let idle = try #require(recorder.runningSnapshot)
+        #expect(idle.bytesTransferred == 100)
+        #expect(!idle.isCancellable)
+        #expect(!operation.requestCancel())
+        #expect(!recorder.reporter.cancel(operation.id))
+        #expect(stops.withLock { $0 } == 0)
+
+        // The next file of the same paste brings it back.
+        let next = try #require(operation.unit(expectedBytes: 100))
+        await settle()
+        #expect(try #require(recorder.runningSnapshot).isCancellable)
+        #expect(recorder.reporter.cancel(operation.id))
+        #expect(stops.withLock { $0 } == 1)
+        next.ended(succeeded: false)
     }
 
     @Test("an operation with nothing to stop offers no cancel")
