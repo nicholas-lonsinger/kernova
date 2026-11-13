@@ -53,7 +53,12 @@ public final class ClipboardProgressReadoutView: NSView {
     private let metrics: Metrics
     private let headline = NSTextField(labelWithString: "")
     private let cancelButton = FirstClickButton(title: "Cancel", target: nil, action: nil)
-    private let bar = NSProgressIndicator()
+    // Not NSProgressIndicator: on macOS 27.2 it moves its fill to each value
+    // through a 0.5 s animation group ("overallDeterminateAnimation") and takes
+    // the next value only once that ends, and a bar kept across operations
+    // presents the last one's final value when a new one is applied, so its fill
+    // ran ahead of and behind the byte line rendered from the same snapshot.
+    private let bar = Bar()
     private let byteProgress = NSTextField(labelWithString: "")
     private let itemCounter = NSTextField(labelWithString: "")
     private let timeRemaining = NSTextField(labelWithString: "")
@@ -109,13 +114,6 @@ public final class ClipboardProgressReadoutView: NSView {
         cancelButton.action = #selector(cancelTapped)
         cancelButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         cancelButton.setContentHuggingPriority(.required, for: .horizontal)
-
-        bar.style = .bar
-        bar.isIndeterminate = false
-        bar.minValue = 0
-        bar.maxValue = 1
-        bar.doubleValue = 0
-        bar.controlSize = .small
 
         for label in [byteProgress, itemCounter, timeRemaining, pendingNote] {
             label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -186,7 +184,7 @@ public final class ClipboardProgressReadoutView: NSView {
         headline.stringValue = ClipboardProgressFormat.headline(
             direction: snapshot.direction, peerName: snapshot.peerName,
             gesture: snapshot.gesture)
-        bar.doubleValue = snapshot.fractionComplete
+        bar.fraction = snapshot.fractionComplete
         byteProgress.stringValue = ClipboardProgressFormat.byteProgress(snapshot) ?? ""
         itemCounter.stringValue =
             ClipboardProgressFormat.itemCounter(
@@ -213,11 +211,63 @@ public final class ClipboardProgressReadoutView: NSView {
     public var cancelButtonForTesting: NSButton { cancelButton }
 
     /// Test seam: the fraction the bar shows.
-    public var barFractionForTesting: Double { bar.doubleValue }
+    public var barFractionForTesting: Double { bar.fraction }
+
+    /// Test seam: the bar.
+    public var barForTesting: NSView { bar }
 
     /// Test seam: the byte line.
     public var byteProgressForTesting: String { byteProgress.stringValue }
     #endif
+
+    /// A determinate bar that draws the fraction it holds as soon as it is set, so the bar and the text beside
+    /// it show the same snapshot.
+    private final class Bar: NSView {
+        private static let trackHeight: CGFloat = 6
+
+        /// How full the bar is, `0...1`.
+        var fraction: Double = 0 {
+            didSet {
+                guard fraction != oldValue else { return }
+                needsDisplay = true
+                setAccessibilityValue(fraction)
+            }
+        }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            setAccessibilityElement(true)
+            setAccessibilityRole(.progressIndicator)
+            setAccessibilityMinValue(0)
+            setAccessibilityMaxValue(1)
+            setAccessibilityValue(fraction)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("Bar does not support NSCoder")
+        }
+
+        override var intrinsicContentSize: NSSize {
+            NSSize(width: NSView.noIntrinsicMetric, height: Self.trackHeight * 2)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let track = NSRect(
+                x: bounds.minX, y: bounds.midY - Self.trackHeight / 2, width: bounds.width, height: Self.trackHeight)
+            let capsule = NSBezierPath(
+                roundedRect: track, xRadius: Self.trackHeight / 2, yRadius: Self.trackHeight / 2)
+            NSColor.quaternaryLabelColor.setFill()
+            capsule.fill()
+            let filled = track.width * min(1, max(0, fraction))
+            guard filled > 0 else { return }
+            NSGraphicsContext.saveGraphicsState()
+            capsule.addClip()
+            NSColor.controlAccentColor.setFill()
+            NSRect(x: track.minX, y: track.minY, width: filled, height: track.height).fill()
+            NSGraphicsContext.restoreGraphicsState()
+        }
+    }
 
     /// The Cancel button, taking the click that also activates its app.
     ///

@@ -119,6 +119,59 @@ struct ClipboardProgressReadoutViewTests {
         #expect(!view.byteProgressForTesting.isEmpty)
     }
 
+    /// A paste of 2 GB, `bytes` of it landed.
+    private func pasteSnapshot(bytes: UInt64) -> ClipboardProgressSnapshot {
+        ClipboardProgressSnapshot(
+            direction: .inbound, peerName: "Mac", currentItemName: "big.bin", filesCompleted: 0, fileCount: 1,
+            bytesTransferred: bytes, totalBytes: 2_000_000_000, bytesPerSecond: nil, secondsRemaining: nil,
+            gesture: .paste, elapsedSeconds: 1, isCancellable: true)
+    }
+
+    /// The share of `bar`'s width its fill presents on screen now, read off its layer's presentation as rendered:
+    /// the run of columns, from the leading edge, the color of the leading one.
+    private func presentedFill(of bar: NSView) throws -> Double {
+        let layer = try #require(bar.layer)
+        let scale = 2
+        let width = Int(bar.bounds.width) * scale
+        let height = Int(bar.bounds.height) * scale
+        let context = try #require(
+            CGContext(
+                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+        (layer.presentation() ?? layer).render(in: context)
+        let pixels = try #require(context.data).bindMemory(to: UInt8.self, capacity: width * height * 4)
+        let row = height / 2
+        func pixel(_ x: Int) -> [Int] { (0..<4).map { Int(pixels[(row * width + x) * 4 + $0]) } }
+        let painted = (0..<width).filter { pixel($0)[3] > 0 }
+        let start = try #require(painted.first)
+        let end = try #require(painted.last)
+        let fill = pixel(start + scale * 2)
+        let filled = (start...end).prefix { x in zip(pixel(x), fill).allSatisfy { abs($0 - $1) <= 24 } }
+        return Double(filled.count) / Double(end - start + 1)
+    }
+
+    @Test("the bar shows the share of the bytes its text shows as both are applied, after a readout that ended full")
+    func barShowsWhatItsTextShows() throws {
+        // The status item keeps one readout for every operation it shows.
+        let view = ClipboardProgressReadoutView(surface: .callout)
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = view
+        view.apply(pasteSnapshot(bytes: 2_000_000_000))
+        window.displayIfNeeded()
+        CATransaction.flush()
+
+        view.apply(pasteSnapshot(bytes: 433_800_000))
+        window.displayIfNeeded()
+        CATransaction.flush()
+
+        #expect(view.byteProgressForTesting == "433.8 MB of 2 GB")
+        // 433.8 MB of 2 GB, worked by hand: 0.2169.
+        let shown = try presentedFill(of: view.barForTesting)
+        #expect(abs(shown - 0.2169) < 0.02, "the bar shows \(shown)")
+    }
+
     @Test("Cancel acts on the click that also activates its app")
     func cancelTakesTheFirstClick() {
         // The guest agent is never the active app, so a Cancel that only
