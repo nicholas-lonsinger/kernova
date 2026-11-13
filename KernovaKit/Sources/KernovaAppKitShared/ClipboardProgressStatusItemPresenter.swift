@@ -5,7 +5,9 @@ import KernovaTransferProgress
 
 /// Presents a transfer's progress readout inside a menu-bar status item's
 /// dropdown, and reveals it once in the status item's callout so it is seen
-/// without a click.
+/// without a click. A click on the status item while a wait holds the main
+/// thread shows it in the callout too, in place of the dropdown
+/// (``StatusItemCalloutSlot/readoutForClick``).
 ///
 /// A status-item controller keeps its own icon and menu structure, drives this
 /// from its `menuNeedsUpdate`, and reads `snapshot` back to compose the icon
@@ -76,6 +78,7 @@ public final class ClipboardProgressStatusItemPresenter {
         self.onCancel = onCancel
         self.clock = clock
         self.deliveredAt = clock.now
+        slot.readoutForClick = { [weak self] in self?.showCalloutForClick() ?? .skipped(.noReadout) }
     }
 
     /// Applies the transfer report the domain host just published.
@@ -154,6 +157,15 @@ public final class ClipboardProgressStatusItemPresenter {
     }
 
     // MARK: - Private
+
+    /// Shows the readout in the callout for the user's click, until the readout
+    /// clears or its Cancel closes it.
+    private func showCalloutForClick() -> TransientStatusItemPopover.ShowResult {
+        guard snapshot != nil else { return .skipped(.noReadout) }
+        let result = slot.show(calloutContent, for: nil)
+        if case .shown(let showing) = result { calloutShowing = showing }
+        return result
+    }
 
     /// Adds or removes the readout rows from a dropdown that is already on
     /// screen; a closed one is rebuilt by `menuNeedsUpdate` when it next opens.

@@ -60,4 +60,17 @@ struct TransientStatusItemPopoverTests {
         #expect(notice != reminder)
         #expect(tenancy.current == reminder)
     }
+
+    @Test(
+        "a click opens the dropdown unless a wait holds the main thread, when it shows the readout instead",
+        arguments: [false, true], [false, true])
+    func clickRoute(calloutUp: Bool, mainThreadHeld: Bool) {
+        let expected: TransientStatusItemPopover.ClickRoute =
+            switch (calloutUp, mainThreadHeld) {
+            case (_, true): .readoutCallout
+            case (true, false): .dismissThenMenu
+            case (false, false): .menu
+            }
+        #expect(TransientStatusItemPopover.route(calloutUp: calloutUp, mainThreadHeld: mainThreadHeld) == expected)
+    }
 }

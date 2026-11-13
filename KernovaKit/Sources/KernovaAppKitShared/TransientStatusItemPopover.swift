@@ -1,5 +1,6 @@
 import AppKit
 import KernovaKit
+import KernovaLogging
 
 /// A status item's one callout slot, as the readout presenter uses it.
 ///
@@ -17,6 +18,10 @@ public protocol StatusItemCalloutSlot: AnyObject {
     /// Closes `showing`'s callout if it still holds the slot; `false` otherwise.
     @discardableResult
     func dismiss(_ showing: TransientStatusItemPopover.Showing) -> Bool
+
+    /// Shows the transfer readout in the callout for a click on the status item
+    /// while a wait holds the main thread, and says whether it went up.
+    var readoutForClick: (() -> TransientStatusItemPopover.ShowResult)? { get set }
 }
 
 /// The menu-bar status item's one popover slot: a callout anchored to the
@@ -26,12 +31,36 @@ public protocol StatusItemCalloutSlot: AnyObject {
 /// duration replaces whatever the slot held; one without — up until its owner
 /// dismisses it — never displaces a timed one before its time is up, and is
 /// skipped instead. A callout is non-modal, so it never takes the user's next
-/// click; the status item's menu opens only from the user's own click. The menu
-/// is detached for as long as a callout is up and reattached on every dismissal
-/// path, and a click on the status item while a callout is up dismisses it and
-/// opens the menu.
+/// click; the status item's menu opens only from the user's own click.
+///
+/// The menu is attached only while no callout is up and no wait holds the main
+/// thread (``NestedEventLoopWait/holdsMainThread``): menu tracking entered under
+/// a wait holds the callback's return — a paste's file — until the menu closes,
+/// where a callout lets the wait keep dispatching. Otherwise a click reaches
+/// ``route(calloutUp:mainThreadHeld:)``, which ``ClickRoute`` describes.
 @MainActor
 public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
+    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "TransientStatusItemPopover")
+
+    /// What a click on the status item does.
+    enum ClickRoute: Equatable {
+        /// The dropdown is attached, so AppKit opens it.
+        case menu
+        /// Closes the callout that is up, then opens the dropdown.
+        case dismissThenMenu
+        /// Closes any callout that is up and shows the transfer readout in its
+        /// place, the dropdown left detached; the dropdown when the readout
+        /// can't go up.
+        case readoutCallout
+    }
+
+    /// What a click does with a callout up or not, while a wait holds the main
+    /// thread or not.
+    static func route(calloutUp: Bool, mainThreadHeld: Bool) -> ClickRoute {
+        if mainThreadHeld { return .readoutCallout }
+        return calloutUp ? .dismissThenMenu : .menu
+    }
+
     /// One callout's time in the slot, handed to whoever showed it.
     public struct Showing: Hashable, Sendable {
         fileprivate let serial: UInt64
@@ -44,6 +73,8 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         case unreachable(visible: Bool, onScreen: Bool, menuOpen: Bool)
         /// An untimed callout would displace a timed one still up.
         case timedCalloutUp
+        /// No transfer readout to show.
+        case noReadout
 
         /// The reason as a log line names it.
         public var description: String {
@@ -52,6 +83,8 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
                 "visible=\(visible), onScreen=\(onScreen), menuOpen=\(menuOpen)"
             case .timedCalloutUp:
                 "a timed callout is up"
+            case .noReadout:
+                "no transfer readout"
             }
         }
     }
@@ -122,9 +155,17 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         presenter.onClose = { [weak self] in
             guard let self, !self.presenter.isShown else { return }
             self.tenancy.endAny()
-            self.reattachMenu()
+            self.attachMenuIfFree()
         }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(mainThreadHoldChanged), name: NestedEventLoopWait.holdChangedNotification,
+            object: nil)
+        mainThreadHoldChanged()
     }
+
+    /// Shows the transfer readout for a click made while a wait holds the main
+    /// thread; the readout's presenter sets it.
+    public var readoutForClick: (() -> ShowResult)?
 
     /// Whether the status item's dropdown is on screen.
     public var isDropdownOpen: Bool { isDropdownOpenProvider() }
@@ -154,9 +195,7 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         // on every soft quit, the cursor nowhere near the item), and that open
         // dismisses the popover through the controller's `menuNeedsUpdate` within
         // a frame. Every dismissal path restores the menu.
-        statusItem.menu = nil
-        button.target = self
-        button.action = #selector(statusItemTapped)
+        detachMenu()
 
         // A `.transient` popover closes when the app deactivates (see
         // `PopoverPresenter`'s `onClose` doc), and a callout outlives that: a
@@ -190,7 +229,7 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     }
 
     /// Closes whatever the slot holds, cancels its auto-dismiss timer, and
-    /// reattaches the dropdown.
+    /// reattaches the dropdown unless a wait holds the main thread.
     ///
     /// Idempotent.
     public func dismiss() {
@@ -202,26 +241,62 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         dismissTask?.cancel()
         dismissTask = nil
         presenter.close()
-        reattachMenu()
+        attachMenuIfFree()
     }
 
-    /// Restores the dropdown, clearing the temporary button action.
-    private func reattachMenu() {
-        guard statusItem.menu == nil else { return }
+    /// Detaches the dropdown, routing the status item's click here: a callout
+    /// went up, or a wait began holding the main thread.
+    private func detachMenu() {
+        statusItem.menu = nil
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemTapped)
+    }
+
+    /// Restores the dropdown once no callout holds the slot and no wait holds
+    /// the main thread, clearing the button action.
+    ///
+    /// Only ever attaches: a dropdown opened as a fallback from a click stays
+    /// attached until the next callout or wait detaches it.
+    private func attachMenuIfFree() {
+        guard tenancy.current == nil, !NestedEventLoopWait.holdsMainThread, statusItem.menu == nil else { return }
         statusItem.button?.target = nil
         statusItem.button?.action = nil
         statusItem.menu = menu
     }
 
-    /// Handles a click on the status item while a popover is up and the dropdown
-    /// is therefore detached.
+    @objc private func mainThreadHoldChanged() {
+        if NestedEventLoopWait.holdsMainThread { detachMenu() } else { attachMenuIfFree() }
+    }
+
+    /// Handles a click on the status item while its dropdown is detached.
     @objc private func statusItemTapped() {
-        dismiss()
-        // Deferred a tick: the menu is reattached above, but popping it from
-        // inside the button-action callback the same click is still delivering
-        // re-enters menu tracking mid-event.
+        switch Self.route(calloutUp: tenancy.current != nil, mainThreadHeld: NestedEventLoopWait.holdsMainThread) {
+        case .menu, .dismissThenMenu:
+            dismiss()
+            openMenu()
+        case .readoutCallout:
+            dismiss()
+            let result = readoutForClick?() ?? .skipped(.noReadout)
+            guard case .skipped(let reason) = result else { return }
+            Self.logger.log(
+                .notice,
+                "A click while a paste holds the main thread opened the menu, which holds the paste until it closes — readout skipped: \(String(describing: reason), privacy: .public)"
+            )
+            openMenu()
+        }
+    }
+
+    /// Opens the dropdown from a click its detachment routed here.
+    private func openMenu() {
+        // Deferred a tick: popping the menu from inside the button-action
+        // callback the same click is still delivering re-enters menu tracking
+        // mid-event.
         performOnMainRunLoop { [weak self] in
-            self?.statusItem.button?.performClick(nil)
+            guard let self else { return }
+            self.statusItem.button?.target = nil
+            self.statusItem.button?.action = nil
+            self.statusItem.menu = self.menu
+            self.statusItem.button?.performClick(nil)
         }
     }
 }

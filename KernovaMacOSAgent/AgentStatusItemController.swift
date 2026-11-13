@@ -35,7 +35,8 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         statusItem: statusItem, menu: menu,
         isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
 
-    /// Built lazily, since most sessions never reveal a transfer readout.
+    /// Built at init, with its slot: they route a click made while a paste holds
+    /// the main thread.
     private lazy var transferProgressPresenter = ClipboardProgressStatusItemPresenter(
         menu: menu, slot: calloutSlot,
         onCancel: { [weak self] id in self?.onCancelTransfer(id) })
@@ -61,6 +62,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         menu.delegate = self
         menu.autoenablesItems = false
         statusItem.menu = menu
+        _ = transferProgressPresenter
         setIcon(for: connectionState())
     }
 

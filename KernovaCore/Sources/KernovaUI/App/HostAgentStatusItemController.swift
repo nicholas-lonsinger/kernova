@@ -66,7 +66,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     private var libraryObservation: ObservationLoop?
 
     /// The dropdown readout, its one-shot reveal in the popover slot, and the
-    /// shared menu wiring for a transfer in flight.
+    /// shared menu wiring for a transfer in flight. Built at init, with its
+    /// slot: they route a click made while a paste holds the main thread.
     private lazy var transferProgressPresenter = ClipboardProgressStatusItemPresenter(
         menu: menu, slot: transientPopover,
         onCancel: { [weak self] id in self?.cancelTransfer(id) })
@@ -128,6 +129,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         menu.delegate = self
         menu.autoenablesItems = false
         statusItem.menu = menu
+        _ = transferProgressPresenter
         setIcon()
         updateTooltip()
 

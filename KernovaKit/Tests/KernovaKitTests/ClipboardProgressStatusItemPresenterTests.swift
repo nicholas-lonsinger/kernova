@@ -20,6 +20,7 @@ struct ClipboardProgressStatusItemPresenterTests {
     /// A slot holding showings by the real tenancy rules, with no status item.
     final class RecordingSlot: StatusItemCalloutSlot {
         var isDropdownOpen = false
+        var readoutForClick: (() -> TransientStatusItemPopover.ShowResult)?
         /// Whether the status item can carry a callout at all.
         var canCarry = true
         private(set) var shown: [NSViewController] = []
@@ -130,6 +131,25 @@ struct ClipboardProgressStatusItemPresenterTests {
         view.cancelButtonForTesting.performClick(nil)
 
         #expect(slot.events == [.dismissed(readout), .cancelled(operation)])
+    }
+
+    @Test("a click while the main thread is held shows the readout in the callout, one its reveal held back included")
+    func aHeldClickShowsTheReadout() throws {
+        let presenter = makePresenter()
+        let click = try #require(slot.readoutForClick)
+        #expect(click() == .skipped(.noReadout))
+
+        presenter.apply(sizeUnknown(elapsed: 0.25))
+        #expect(slot.shown.isEmpty)
+        guard case .shown(let showing) = click() else {
+            Issue.record("the readout did not go up")
+            return
+        }
+        #expect(slot.current == showing)
+
+        // The callout is the readout's own: clearing the readout closes it.
+        presenter.apply(.idle)
+        #expect(slot.events == [.dismissed(showing)])
     }
 
     @Test("a callout the status item could not carry leaves the reveal for a later update")
