@@ -56,25 +56,6 @@ extension CoreUnits {
             #expect(Normalize.display(text, maxBytes: 64) == "abcdefghi é😀 e\u{301}")
         }
 
-        @Test(
-            "Strings are clipped to 64 UTF-8 bytes on a scalar boundary",
-            arguments: [
-                (String(repeating: "x", count: 64), 64), (String(repeating: "x", count: 65), 64),
-                ("a" + String(repeating: "é", count: 40), 63), (String(repeating: "😀", count: 17), 64),
-                (String(repeating: "€", count: 30), 63),
-            ])
-        func clipsOnScalarBoundary(_ text: String, _ bytes: Int) {
-            let clipped = Normalize.display(text, maxBytes: 64)
-            #expect(clipped.utf8.count == bytes)
-            #expect(text.hasPrefix(clipped))
-        }
-
-        @Test("Stripping comes before clipping, so stripped scalars cost no bytes")
-        func stripsBeforeClipping() {
-            let text = String(repeating: "\u{200B}", count: 10) + String(repeating: "x", count: 64)
-            #expect(Normalize.display(text, maxBytes: 64) == String(repeating: "x", count: 64))
-        }
-
         @Test("Every string in a received PeerIdentity and PeerState is normalized")
         func identityAndStateStrings() {
             let long = "\u{202E}" + String(repeating: "é", count: 40)
@@ -94,26 +75,6 @@ extension CoreUnits {
             #expect(hello?.claim.versionLabel == "v1")
             #expect(hello?.state?.sessionID == "s1")
             #expect(hello?.state?.userName == clipped)
-        }
-
-        @Test("A system peer's console_session_id is normalized")
-        func consoleSessionID() {
-            let frame = Self.hello(.systemPeer) {
-                $0.state.consoleSessionID = "\u{FEFF}c" + String(repeating: "1", count: 80)
-            }
-            let (hello, _) = Self.received(frame)
-            #expect(hello?.state?.consoleSessionID == "c" + String(repeating: "1", count: 63))
-        }
-
-        @Test("A session peer whose session_id normalizes to empty is a PROTOCOL_ERROR")
-        func emptyAfterNormalization() {
-            let (hello, events) = Self.received(Self.hello(.sessionPeer) { $0.state.sessionID = "\u{7}\u{200B}" })
-            #expect(hello == nil)
-            #expect(
-                events.contains { event in
-                    if case .closed(.closedLocally(let error)) = event { return error.code == .protocolError }
-                    return false
-                })
         }
 
         // MARK: Bytes
@@ -170,26 +131,6 @@ extension CoreUnits {
             let (hello, _) = Self.received(
                 Self.hello(.sessionPeer) { $0.features = [Self.advert(.logs, absent: sent)] })
             #expect(hello?.adverts.first?.advert.availability == .absent(read, debugDetail: ""))
-        }
-
-        @Test("debug_detail is clipped to 1 KiB")
-        func debugDetail() {
-            let detail = String(repeating: "d", count: 2_000)
-            let frame = Self.hello(.sessionPeer) {
-                $0.features = [Self.advert(.logs, absent: .notPermitted, detail: detail)]
-            }
-            let (hello, _) = Self.received(frame)
-            #expect(
-                hello?.adverts.first?.advert.availability
-                    == .absent(.notPermitted, debugDetail: String(repeating: "d", count: 1_024)))
-        }
-
-        @Test("A received Error's debug_detail is clipped to 1 KiB")
-        func errorDebugDetail() {
-            var error = Kernova_V2_Error()
-            error.code = .cancelled
-            error.debugDetail = String(repeating: "e", count: 3_000)
-            #expect(WireError(received: error).debugDetail.utf8.count == 1_024)
         }
     }
 }

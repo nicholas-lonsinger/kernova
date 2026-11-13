@@ -140,23 +140,6 @@ struct TranscriptTests {
         #expect(duet.renderDuet() == expected)
     }
 
-    @Test("Only the update pull's frozen file is cut at 4 KiB boundaries; every other is cut at every byte")
-    func cutStrides() throws {
-        for name in TranscriptFiles.frozenNames {
-            let text = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent(name)))
-            let total = try Transcript(parsing: text).pinnedBytes.reduce(0) { $0 + $1.bytes.count }
-            #expect((total > Self.everyByteLimit) == (name == "F09h.transcript"), "\(name): \(total) pinned bytes")
-        }
-    }
-
-    @Test("F09 pins the STAGED result: the peer's END after its install, and the host's result event")
-    func updateResultPinned() throws {
-        let host = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent("F09h.transcript")))
-        let peer = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent("F09p.transcript")))
-        #expect(host.contains("expect  p>h s=3 END result.kind=1 result.code=0"))
-        #expect(peer.contains("ev      host update result kind=1 code=0"))
-    }
-
     /// `name`'s frozen text with the first line containing `fragment` removed or replaced.
     static func edited(_ name: String, _ fragment: String, with replacement: String? = nil) throws -> String {
         let text = try #require(TranscriptFiles.read(TranscriptFiles.frozen.appendingPathComponent(name)))

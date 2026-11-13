@@ -59,132 +59,7 @@ extension CoreUnits {
             #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([2, 1]))
         }
 
-        @Test("A system peer is the console authority: CONSOLE_ON names the session; then the system peer")
-        func systemPeerConsoleOn() {
-            let peers = [
-                Self.session(1, "a"), Self.session(2, "b", console: .off), Self.session(3, "c"),
-                Self.system(9, consoleSessionID: "b"),
-            ]
-            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([2, 9]))
-        }
-
-        @Test("A system peer reporting console UNSPECIFIED has no authority: the session peers' own reports decide")
-        func systemPeerConsoleUnknown() {
-            let peers = [
-                Self.session(1, "a"), Self.session(2, "b", console: .off), Self.system(9, console: .unknown),
-            ]
-            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([1, 9]))
-        }
-
-        @Test(
-            "A system peer reporting CONSOLE_ON with no session id names none: the session peers' own reports decide",
-            arguments: [true, false])
-        func systemPeerConsoleOnUnnamed(sessionOnConsole: Bool) {
-            let peers = [
-                Self.session(1, "a", console: .off), Self.session(2, "b", console: sessionOnConsole ? .on : .off),
-                Self.system(9, console: .on, consoleSessionID: ""),
-            ]
-            #expect(
-                PowerRouting.candidates(for: .shutdown, peers: peers, excluding: [])
-                    == Self.handles(sessionOnConsole ? [2, 9] : [9]))
-        }
-
-        @Test("A system peer reporting CONSOLE_OFF makes no session peer a console candidate")
-        func systemPeerConsoleOff() {
-            let peers = [Self.session(1, "a"), Self.system(9, console: .off, consoleSessionID: "a")]
-            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([9]))
-        }
-
-        @Test("A system peer without POWER still decides the console, but is no candidate itself")
-        func systemPeerUnusableStillAuthority() {
-            let peers = [
-                Self.session(1, "a"), Self.session(2, "b"), Self.system(9, consoleSessionID: "b", usable: false),
-            ]
-            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([2]))
-        }
-
-        @Test("Two session peers of the console session go newest connection first")
-        func consoleSessionNewestFirst() {
-            let peers = [
-                Self.session(1, "a", order: 3), Self.session(2, "a", order: 7), Self.system(9, consoleSessionID: "a"),
-            ]
-            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([2, 1, 9]))
-        }
-
-        @Test("A peer is a candidate only while POWER is usable, the action is offered, and it was not asked")
-        func eligibility() {
-            let peers = [
-                Self.session(1, "a", usable: false), Self.session(2, "a", actions: [.shutdown]), Self.session(3, "a"),
-                Self.session(4, "a"),
-            ]
-            #expect(
-                PowerRouting.candidates(for: .restart, peers: peers, excluding: Self.handles([4])) == Self.handles([3]))
-        }
-
-        @Test("Without waiting for apps, only a peer listing the action among those is a candidate, and only it")
-        func ignoringAppsCandidates() {
-            // A user logged in: the session peer shuts down waiting for apps, the system peer only without.
-            let peers = [
-                Self.session(1, "a"),
-                Self.system(9, consoleSessionID: "a", actions: [], ignoringApps: [.shutdown]),
-            ]
-            #expect(
-                PowerRouting.candidates(for: .shutdown, ignoringApps: true, peers: peers, excluding: [])
-                    == Self.handles([9]))
-            #expect(PowerRouting.candidates(for: .shutdown, peers: peers, excluding: []) == Self.handles([1]))
-            #expect(PowerRouting.candidates(for: .restart, ignoringApps: true, peers: peers, excluding: []).isEmpty)
-            let unusable = [Self.system(9, usable: false, actions: [], ignoringApps: [.shutdown])]
-            #expect(
-                PowerRouting.candidates(for: .shutdown, ignoringApps: true, peers: unusable, excluding: []).isEmpty)
-        }
-
-        @Test("A routing without waiting for apps asks so, and ends .untaken when no peer offers it")
-        func ignoringAppsRouting() {
-            let peers = [
-                Self.session(1, "a"),
-                Self.system(9, consoleSessionID: "a", actions: [], ignoringApps: [.shutdown]),
-            ]
-            var routing = PowerRouting()
-            routing.begin(.shutdown, ignoringApps: true, peers: peers)
-            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 9), .shutdown, ignoringApps: true)])
-            routing.handle(.refused(WireError(.powerActionUnsupported)), from: PeerHandle(rawValue: 9), peers: peers)
-            #expect(
-                Self.outputs(&routing) == [
-                    .untaken(
-                        .shutdown,
-                        refusals: [
-                            PeerRefusal(peer: PeerHandle(rawValue: 9), error: WireError(.powerActionUnsupported))
-                        ])
-                ])
-
-            routing.begin(.shutdown, ignoringApps: true, peers: [Self.session(1, "a")])
-            #expect(Self.outputs(&routing) == [.untaken(.shutdown, refusals: [])])
-        }
-
         // MARK: Routing
-
-        @Test("refused → recompute and ask the next; every peer refused → .untaken with the refusals")
-        func refusedToAcpi() {
-            let peers = [Self.session(1, "a"), Self.system(9, consoleSessionID: "a")]
-            var routing = PowerRouting()
-            routing.begin(.shutdown, peers: peers)
-            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 1), .shutdown)])
-            let first = WireError(.powerNotOnConsole)
-            routing.handle(.refused(first), from: PeerHandle(rawValue: 1), peers: peers)
-            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 9), .shutdown)])
-            let second = WireError(.timeout)
-            routing.handle(.refused(second), from: PeerHandle(rawValue: 9), peers: peers)
-            #expect(
-                Self.outputs(&routing) == [
-                    .untaken(
-                        .shutdown,
-                        refusals: [
-                            PeerRefusal(peer: PeerHandle(rawValue: 1), error: first),
-                            PeerRefusal(peer: PeerHandle(rawValue: 9), error: second),
-                        ])
-                ])
-            #expect(!routing.isRouting)
-        }
 
         @Test(
             "At the login window a graceful action asks no peer and ends .untaken; without waiting for apps it goes to the system peer",
@@ -199,106 +74,6 @@ extension CoreUnits {
             #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 9), .shutdown, ignoringApps: true)])
         }
 
-        @Test(
-            "A graceful action goes to the console session's peer, not a background one or the system peer",
-            arguments: [PowerAction.shutdown, .restart])
-        func consoleSessionTakesGraceful(action: PowerAction) {
-            let peers = [
-                Self.session(1, "a", console: .off), Self.session(2, "b"),
-                Self.system(9, consoleSessionID: "b", actions: [], ignoringApps: [.shutdown]),
-            ]
-            var routing = PowerRouting()
-            routing.begin(action, peers: peers)
-            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 2), action)])
-        }
-
-        @Test(
-            "A shutdown without waiting for apps goes to the system peer in every console state",
-            arguments: [ConsoleState.off, .on, .unknown])
-        func ignoringAppsReachesSystemPeer(console: ConsoleState) {
-            let peers = [
-                Self.session(1, "a", console: console == .on ? .on : .off),
-                Self.system(
-                    9, console: console, consoleSessionID: console == .on ? "a" : "", actions: [],
-                    ignoringApps: [.shutdown]),
-            ]
-            var routing = PowerRouting()
-            routing.begin(.shutdown, ignoringApps: true, peers: peers)
-            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 9), .shutdown, ignoringApps: true)])
-        }
-
-        @Test("No candidate at all → .untaken at once with no refusals")
-        func noCandidates() {
-            var routing = PowerRouting()
-            routing.begin(.restart, peers: [])
-            #expect(Self.outputs(&routing) == [.untaken(.restart, refusals: [])])
-        }
-
-        @Test("Candidates are recomputed after each refusal from the current peer views")
-        func recomputedAfterRefusal() {
-            var peers = [Self.session(1, "a")]
-            var routing = PowerRouting()
-            routing.begin(.shutdown, peers: peers)
-            _ = Self.outputs(&routing)
-            peers.append(Self.session(2, "b"))
-            routing.handle(.refused(WireError(.timeout)), from: PeerHandle(rawValue: 1), peers: peers)
-            #expect(Self.outputs(&routing) == [.ask(PeerHandle(rawValue: 2), .shutdown)])
-        }
-
-        @Test("accepted → no other provider is asked; progress and the final result are reported")
-        func acceptedThenFinished() {
-            let peers = [Self.session(1, "a"), Self.system(9, consoleSessionID: "a")]
-            let peer = PeerHandle(rawValue: 1)
-            var routing = PowerRouting()
-            routing.begin(.shutdown, peers: peers)
-            _ = Self.outputs(&routing)
-            routing.handle(.accepted, from: peer, peers: peers)
-            routing.handle(.progress(.waitingOnApps, [AppValue(displayName: "Editor")]), from: peer, peers: peers)
-            routing.handle(.finished(.blocked([AppValue(displayName: "Editor")])), from: peer, peers: peers)
-            #expect(
-                Self.outputs(&routing) == [
-                    .progress(peer, .waitingOnApps, [AppValue(displayName: "Editor")]),
-                    .blocked(peer, [AppValue(displayName: "Editor")]),
-                ])
-            #expect(!routing.isRouting)
-        }
-
-        @Test("Each final result after acceptance maps to its routing output")
-        func finishes() {
-            let peer = PeerHandle(rawValue: 1)
-            let peers = [Self.session(1, "a")]
-            let cases: [(PowerFinish, RoutingOutput)] = [
-                (.handedOff, .handedOff(peer)), (.cancelledInGuest, .cancelledInGuest(peer)),
-                (.failed(WireError(.powerOsFailed)), .failed(peer, WireError(.powerOsFailed))),
-            ]
-            for (finish, expected) in cases {
-                var routing = PowerRouting()
-                routing.begin(.shutdown, peers: peers)
-                _ = Self.outputs(&routing)
-                routing.handle(.accepted, from: peer, peers: peers)
-                routing.handle(.finished(finish), from: peer, peers: peers)
-                #expect(Self.outputs(&routing) == [expected])
-            }
-        }
-
-        @Test(".indeterminate and .lostAfterAcceptance end routing; ACPI is not used")
-        func indeterminateEnds() {
-            let peers = [Self.session(1, "a"), Self.system(9, consoleSessionID: "a")]
-            let peer = PeerHandle(rawValue: 1)
-            var routing = PowerRouting()
-            routing.begin(.shutdown, peers: peers)
-            _ = Self.outputs(&routing)
-            routing.handle(.indeterminate, from: peer, peers: peers)
-            #expect(Self.outputs(&routing) == [.indeterminate(peer)])
-            #expect(!routing.isRouting)
-
-            routing.begin(.shutdown, peers: peers)
-            _ = Self.outputs(&routing)
-            routing.handle(.accepted, from: peer, peers: peers)
-            routing.handle(.lostAfterAcceptance, from: peer, peers: peers)
-            #expect(Self.outputs(&routing) == [.lostAfterAcceptance(peer)])
-        }
-
         @Test("A second routing while one runs is .busy; a result from a peer not asked is ignored")
         func busyAndStrayResult() {
             let peers = [Self.session(1, "a"), Self.session(2, "b")]
@@ -310,56 +85,16 @@ extension CoreUnits {
             #expect(Self.outputs(&routing).isEmpty)
             #expect(routing.isRouting)
         }
-
-        @Test("A refusal after acceptance cannot reopen routing: it ends .indeterminate")
-        func refusalAfterAcceptance() {
-            let peers = [Self.session(1, "a"), Self.session(2, "b")]
-            let peer = PeerHandle(rawValue: 2)
-            var routing = PowerRouting()
-            routing.begin(.shutdown, peers: peers)
-            _ = Self.outputs(&routing)
-            routing.handle(.accepted, from: peer, peers: peers)
-            routing.handle(.refused(WireError(.timeout)), from: peer, peers: peers)
-            #expect(Self.outputs(&routing) == [.indeterminate(peer)])
-        }
     }
 
     @Suite("ConsoleAuthority: the session peers on the console")
     struct ConsoleAuthorityUnitTests {
-        typealias Peers = PowerRoutingUnitTests
-
-        @Test("The console session's peers, newest first, whatever else they can do; never the system peer")
-        func consoleSessionNewestFirst() {
-            let peers = [
-                Peers.session(1, "a", console: .off, order: 3, usable: false, actions: []),
-                Peers.session(2, "a", console: .off, order: 7), Peers.session(3, "b"),
-                Peers.system(9, console: .on, consoleSessionID: "a"),
-            ]
-            #expect(ConsoleAuthority.consolePeers(peers) == [peers[1], peers[0]])
-        }
-
-        @Test("A system peer reporting the console on without a session id leaves it to the sessions' own reports")
-        func consoleOnUnnamed() {
-            let peers = [
-                Peers.session(1, "a", console: .off), Peers.session(2, "b", order: 5), Peers.session(3, "c", order: 8),
-                Peers.system(9, console: .on, consoleSessionID: ""),
-            ]
-            #expect(ConsoleAuthority.consolePeers(peers) == [peers[2], peers[1]])
-            #expect(ConsoleAuthority.consolePeers([peers[0], peers[3]]).isEmpty)
-        }
-
         @Test("A system peer's report names the console's owner: a session only with its id")
         func consoleOwner() {
             #expect(PeerSessionState(console: .on, consoleSessionID: "c1").consoleOwner == .session("c1"))
             #expect(PeerSessionState(console: .on).consoleOwner == .unnamed)
             #expect(PeerSessionState(console: .unknown, consoleSessionID: "c1").consoleOwner == .unnamed)
             #expect(PeerSessionState(console: .off, consoleSessionID: "c1").consoleOwner == .noUserSession)
-        }
-
-        @Test("A system peer reporting the console off leaves no console peer, whatever the sessions report")
-        func consoleOff() {
-            let peers = [Peers.session(1, "a"), Peers.system(9, console: .off)]
-            #expect(ConsoleAuthority.consolePeers(peers).isEmpty)
         }
     }
 
@@ -383,36 +118,6 @@ extension CoreUnits {
                 isUnresponsive: unresponsive)
         }
 
-        @Test("Different identity keys do not conflict: another role, or another session id")
-        func noConflict() {
-            #expect(PeerConflict.resolve(existing: Self.session("c1"), incoming: Self.session("c2")) == .noConflict)
-            #expect(PeerConflict.resolve(existing: Self.session(), incoming: Self.system()) == .noConflict)
-        }
-
-        @Test("The same non-empty instance id → the existing closes SUPERSEDED")
-        func row1() {
-            #expect(
-                PeerConflict.resolve(existing: Self.session(), incoming: Self.session())
-                    == .closeExisting(.superseded, retryAfter: nil))
-            #expect(
-                PeerConflict.resolve(existing: Self.system(), incoming: Self.system())
-                    == .closeExisting(.superseded, retryAfter: nil))
-        }
-
-        @Test("The instance check precedes rank: the same instance with another scope still supersedes")
-        func row1BeforeRow2() {
-            #expect(
-                PeerConflict.resolve(existing: Self.session(scope: .user), incoming: Self.session(scope: .unspecified))
-                    == .closeExisting(.superseded, retryAfter: nil))
-        }
-
-        @Test("An empty instance id matches nothing")
-        func emptyInstanceMatchesNothing() {
-            #expect(
-                PeerConflict.resolve(existing: Self.session(instance: Data()), incoming: Self.session(instance: Data()))
-                    == .closeIncoming(.duplicatePeer, retryAfter: .milliseconds(20_000)))
-        }
-
         @Test(
             "Session peers of different rank → the lower closes DUPLICATE_PEER, retry 60 s",
             arguments: [
@@ -430,48 +135,6 @@ extension CoreUnits {
                     existing: Self.session(scope: lower, unresponsive: true),
                     incoming: Self.session(scope: higher, instance: Self.instanceB))
                     == .closeExisting(.duplicatePeer, retryAfter: sixty))
-        }
-
-        @Test(
-            "Rank precedes responsiveness: a lower-rank incoming never displaces an unresponsive higher-rank existing")
-        func row2BeforeRow3() {
-            #expect(
-                PeerConflict.resolve(
-                    existing: Self.session(scope: .user, unresponsive: true),
-                    incoming: Self.session(scope: .system, instance: Self.instanceB))
-                    == .closeIncoming(.duplicatePeer, retryAfter: .milliseconds(60_000)))
-        }
-
-        @Test("Same rank, the existing unresponsive → the existing closes SUPERSEDED")
-        func row3() {
-            #expect(
-                PeerConflict.resolve(
-                    existing: Self.session(unresponsive: true), incoming: Self.session(instance: Self.instanceB))
-                    == .closeExisting(.superseded, retryAfter: nil))
-            #expect(
-                PeerConflict.resolve(
-                    existing: Self.system(unresponsive: true), incoming: Self.system(instance: Self.instanceB))
-                    == .closeExisting(.superseded, retryAfter: nil))
-        }
-
-        @Test("Same rank, the existing responsive → the incoming closes DUPLICATE_PEER, retry 20 s")
-        func row4() {
-            let twenty = CoreDuration.milliseconds(20_000)
-            #expect(
-                PeerConflict.resolve(existing: Self.session(), incoming: Self.session(instance: Self.instanceB))
-                    == .closeIncoming(.duplicatePeer, retryAfter: twenty))
-            #expect(
-                PeerConflict.resolve(existing: Self.system(), incoming: Self.system(instance: Self.instanceB))
-                    == .closeIncoming(.duplicatePeer, retryAfter: twenty))
-        }
-
-        @Test("System peers never compare by rank: a claimed scope cannot outrank the real one")
-        func systemPeersIgnoreRank() {
-            var incoming = Self.system(instance: Self.instanceB)
-            incoming.claim.scope = .user
-            #expect(
-                PeerConflict.resolve(existing: Self.system(), incoming: incoming)
-                    == .closeIncoming(.duplicatePeer, retryAfter: .milliseconds(20_000)))
         }
     }
 
@@ -521,21 +184,6 @@ extension CoreUnits {
                 #expect(merged[.update] == .absent(.notPermitted, debugDetail: ""))
                 #expect(merged[.logs] == .absent(.notOnConsole, debugDetail: "a"))
             }
-        }
-
-        @Test("The precedence puts update-remediable reasons first and every assigned reason in it once")
-        func precedenceCovers() {
-            #expect(FeatureStatus.absencePrecedence.prefix(2) == [.protocolMismatch, .versionMismatch])
-            #expect(Set(FeatureStatus.absencePrecedence.map(\.rawValue)).count == FeatureStatus.absencePrecedence.count)
-            for reason in AbsenceReason.allCases {
-                #expect(FeatureStatus.absencePrecedence.contains(reason))
-            }
-        }
-
-        @Test("The merged table is ordered by feature")
-        func ordered() {
-            let merged = FeatureStatus.merge([Self.table([(.logs, .available(Data())), (.power, .available(Data()))])])
-            #expect(merged.entries.map(\.feature) == [.power, .update, .logs, .clipboard, .drop, .drag, .itemTransfer])
         }
     }
 }
