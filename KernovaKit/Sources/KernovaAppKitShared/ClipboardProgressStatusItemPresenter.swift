@@ -50,6 +50,8 @@ public final class ClipboardProgressStatusItemPresenter {
     /// The callout's showing, kept after it ends so the readout clearing can
     /// close it without closing whatever replaced it.
     private var calloutShowing: TransientStatusItemPopover.Showing?
+    /// Whether a click, rather than the reveal, put ``calloutShowing`` up.
+    private var calloutShownByClick = false
 
     private var autoReveal = ClipboardProgressAutoReveal()
 
@@ -161,9 +163,16 @@ public final class ClipboardProgressStatusItemPresenter {
     /// Shows the readout in the callout for the user's click, until the readout
     /// clears or its Cancel closes it.
     private func showCalloutForClick() -> TransientStatusItemPopover.ShowResult {
-        guard snapshot != nil else { return .skipped(.noReadout) }
+        guard let snapshot else { return .skipped(.noReadout) }
         let result = slot.show(calloutContent, for: nil)
-        if case .shown(let showing) = result { calloutShowing = showing }
+        if case .shown(let showing) = result {
+            calloutShowing = showing
+            calloutShownByClick = true
+            Self.logger.log(
+                .notice,
+                "Readout callout shown by a click — gesture=\(String(describing: snapshot.gesture), privacy: .public), \(ClipboardProgressLog.bytes(transferred: snapshot.bytesTransferred, total: snapshot.totalBytes, known: snapshot.bytesKnown), privacy: .public)"
+            )
+        }
         return result
     }
 
@@ -208,6 +217,7 @@ public final class ClipboardProgressStatusItemPresenter {
             switch slot.show(calloutContent, for: nil) {
             case .shown(let showing):
                 calloutShowing = showing
+                calloutShownByClick = false
                 return true
             case .skipped(let reason):
                 skip = reason
@@ -261,6 +271,11 @@ public final class ClipboardProgressStatusItemPresenter {
             case .shown: .info
             }
         let skipped = skip.map { " — skipped: \($0)" } ?? ""
+        let callout =
+            switch calloutShowing.map(slot.holds) {
+            case true?: calloutShownByClick ? "shown by a click" : "shown by the reveal"
+            case false?, nil: "not up"
+            }
         Self.logger.log(
             level,
             """
@@ -269,7 +284,8 @@ public final class ClipboardProgressStatusItemPresenter {
             elapsed=\(ClipboardProgressLog.seconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressLog.seconds(readout.secondsRemaining), privacy: .public), \
             \(ClipboardProgressLog.bytes(transferred: readout.bytesTransferred, total: readout.totalBytes, known: readout.bytesKnown), privacy: .public), \
-            menuOpen=\(dropdownOpen, privacy: .public)
+            menuOpen=\(dropdownOpen, privacy: .public), \
+            callout=\(callout, privacy: .public)
             """
         )
     }
