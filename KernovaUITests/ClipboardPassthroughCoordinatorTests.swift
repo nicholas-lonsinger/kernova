@@ -506,7 +506,6 @@ struct ClipboardPassthroughCoordinatorTests {
     /// Answers every inline pull with the same bytes, and counts every pull.
     final class CountingPuller: ClipboardItemPulling, Sendable {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-        func canServe(item: Int, representation: Int) -> Bool { false }
 
         private let pulls = Mutex(0)
         var pullCount: Int { pulls.withLock { $0 } }

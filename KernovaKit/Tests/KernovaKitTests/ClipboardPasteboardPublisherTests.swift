@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import KernovaSynchronization
 import KernovaTestSupport
-import KernovaWire
 import Testing
 
 @testable import KernovaKit
@@ -14,7 +13,6 @@ import Testing
 @MainActor
 struct ClipboardPasteboardPublisherTests {
     private static let connection = ClipboardConnectionID()
-    private let scratch = TestScratchDirectory(prefix: "publisher")
     private let textUTI = ClipboardContent.utf8TextUTI
     private let offer = Data(repeating: 1, count: 16)
     private let otherOffer = Data(repeating: 2, count: 16)
@@ -282,165 +280,6 @@ struct ClipboardPasteboardPublisherTests {
         #expect(specs[0].types == [textUTI])
         #expect(specs[0].provide(textUTI) == Data("inline".utf8))
         #expect(serving.fileURLCalls.isEmpty)
-    }
-
-    // MARK: - Promising again
-
-    /// A fresh named pasteboard, the real OS's, never the user's clipboard.
-    private func namedPasteboard() -> NSPasteboard {
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("KernovaTest-\(UUID().uuidString)"))
-        pasteboard.clearContents()
-        return pasteboard
-    }
-
-    /// One item offering one INLINE text representation.
-    private var textItem: OfferedItem {
-        .with(.make(TypeDescriptor(appleUTI: textUTI), .inline, size: 5))
-    }
-
-    /// Reads `type` of the pasteboard's first item off the main thread, where the publisher's hold parks instead
-    /// of running an event loop.
-    private func paste(_ type: String, from pasteboard: NSPasteboard) async -> Data? {
-        nonisolated(unsafe) let reader = pasteboard
-        return await offCooperativePool { reader.data(forType: NSPasteboard.PasteboardType(type)) }
-    }
-
-    @Test("a paste its readout's Cancel stopped is asked again by the next paste, which gets the bytes")
-    func cancelledPasteIsPromisedAgain() async {
-        let pasteboard = namedPasteboard()
-        defer { pasteboard.releaseGlobally() }
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        let puller = ScriptedPuller(answers: [nil, Data("hello".utf8)], servable: true)
-        #expect(
-            publisher.publish(
-                [textItem], concealed: false, puller: puller,
-                serving: .init(token: offer, connection: Self.connection)))
-
-        #expect(await paste(textUTI, from: pasteboard) == nil)
-        await drainMainQueue()
-        #expect(await paste(textUTI, from: pasteboard) == Data("hello".utf8))
-        #expect(puller.pulls == 2)
-        // The write still serves the offer, so the offer's end still withdraws it.
-        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) != nil)
-    }
-
-    @Test("a paste whose pull failed is not promised again")
-    func failedPasteIsNotPromisedAgain() async {
-        let pasteboard = namedPasteboard()
-        defer { pasteboard.releaseGlobally() }
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        let puller = ScriptedPuller(answers: [nil, Data("hello".utf8)], servable: false)
-        publisher.publish(
-            [textItem], concealed: false, puller: puller, serving: .init(token: offer, connection: Self.connection))
-        let written = pasteboard.changeCount
-
-        #expect(await paste(textUTI, from: pasteboard) == nil)
-        await drainMainQueue()
-        #expect(pasteboard.changeCount == written)
-        #expect(await paste(textUTI, from: pasteboard) == nil)
-        #expect(puller.pulls == 1)
-    }
-
-    @Test("a copy someone else made while the paste ran is not written over")
-    func anotherWriteIsNotWrittenOver() async {
-        let pasteboard = namedPasteboard()
-        defer { pasteboard.releaseGlobally() }
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        nonisolated(unsafe) let writer = pasteboard
-        let copied = Locked(0)
-        // The copy lands while the pull runs, so it is on the pasteboard before the empty fire returns.
-        let puller = ScriptedPuller(answers: [nil, Data("hello".utf8)], servable: true) {
-            DispatchQueue.main.sync {
-                writer.clearContents()
-                writer.setString("theirs", forType: .string)
-                copied.withLock { $0 = writer.changeCount }
-            }
-        }
-        publisher.publish(
-            [textItem], concealed: false, puller: puller, serving: .init(token: offer, connection: Self.connection))
-
-        #expect(await paste(textUTI, from: pasteboard) == nil)
-        await drainMainQueue()
-        let theirs = copied.withLock { $0 }
-
-        #expect(pasteboard.changeCount == theirs)
-        #expect(pasteboard.string(forType: .string) == "theirs")
-    }
-
-    @Test("a copy promised again stays held: its release waits for what replaces the write")
-    func renewedCopyKeepsItsRelease() async {
-        let pasteboard = namedPasteboard()
-        defer { pasteboard.releaseGlobally() }
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        let file = scratch.url.appendingPathComponent("a.bin")
-        let puller = ScriptedPuller(answers: [nil, Data()], file: file, servable: true)
-        let released = Locked(0)
-        let placed = publisher.publishCopy(
-            [.with(.make(TypeDescriptor(appleUTI: "public.data"), .file, size: 1, name: "a.bin"))],
-            concealed: false, servingFileURLs: true, held: { _, _ in nil }, puller: puller,
-            serving: .init(token: offer, connection: Self.connection),
-            onReleased: { released.withLock { $0 += 1 } })
-        #expect(placed.written && placed.holdsCopy)
-
-        let fileURLType = ClipboardPasteboardPublisher.ItemSpec.fileURLType
-        #expect(await paste(fileURLType, from: pasteboard) == nil)
-        await drainMainQueue()
-        #expect(released.withLock { $0 } == 0)
-        #expect(await paste(fileURLType, from: pasteboard) == Data(file.absoluteString.utf8))
-
-        publisher.clear()
-        #expect(released.withLock { $0 } == 1)
-    }
-}
-
-/// Answers each pull with the next of `answers`, nil once they run out — a FILE pull with `file` where an answer
-/// is not nil — and calls every representation `servable`.
-private final class ScriptedPuller: ClipboardItemPulling, Sendable {
-    private let answers: Locked<[Data?]>
-    private let file: URL?
-    private let servable: Bool
-    private let duringPull: @Sendable () -> Void
-    private let count = Locked(0)
-
-    /// Runs `duringPull` in each pull, before it answers.
-    init(answers: [Data?], file: URL? = nil, servable: Bool, duringPull: @escaping @Sendable () -> Void = {}) {
-        self.answers = Locked(answers)
-        self.file = file
-        self.servable = servable
-        self.duringPull = duringPull
-    }
-
-    /// How many pulls were started.
-    var pulls: Int { count.withLock { $0 } }
-
-    func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
-        completion(next())
-    }
-
-    func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
-        completion(next() == nil ? nil : file)
-    }
-
-    func canServe(item: Int, representation: Int) -> Bool { servable }
-
-    func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-
-    private func next() -> Data? {
-        count.withLock { $0 += 1 }
-        duringPull()
-        return answers.withLock { $0.isEmpty ? nil : $0.removeFirst() }
     }
 }
 

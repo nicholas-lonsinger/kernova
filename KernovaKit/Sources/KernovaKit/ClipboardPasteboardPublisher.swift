@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaLogging
 import KernovaSynchronization
 
 // MARK: - Seams
@@ -129,32 +128,6 @@ public enum ClipboardRetraction: Equatable, Sendable {
     case keptEverything
 }
 
-/// The provider fires of one write on the stack, and the types they left empty, so whatever follows an empty fire
-/// waits for the write's outermost fire to return: a fire can run the event loop, which can fire a sibling.
-final class ClipboardWriteFires: Sendable {
-    private struct State: Sendable {
-        var depth = 0
-        var empty: [(item: Int, type: String)] = []
-    }
-
-    private let state = Locked(State())
-
-    /// A fire of the write began.
-    func began() { state.withLock { $0.depth += 1 } }
-
-    /// A fire of the write returned, leaving `empty`'s type of its item empty when not nil. Returns every type the
-    /// write's fires left empty once this was the outermost fire; nothing while a fire still runs below it.
-    func ended(empty: (item: Int, type: String)?) -> [(item: Int, type: String)] {
-        state.withLock { state in
-            if let empty { state.empty.append(empty) }
-            state.depth -= 1
-            guard state.depth == 0 else { return [] }
-            defer { state.empty = [] }
-            return state.empty
-        }
-    }
-}
-
 // MARK: - Publisher
 
 /// The one place a clipboard publication reaches a pasteboard, on either side of
@@ -182,21 +155,14 @@ public final class ClipboardPasteboardPublisher {
         /// it empty.
         public let provide: @Sendable (String) -> Data?
 
-        /// Whether a type `provide` left empty can still be served, so a paste after it may ask again: what the
-        /// far side's open offer can still pull for it.
-        public let servable: @Sendable (String) -> Bool
-
-        /// Creates one item: `data` written now, and `types` promised; `servable` says which of them a fire that
-        /// left empty can still serve.
+        /// Creates one item: `data` written now, and `types` promised.
         public init(
             data: [(type: String, bytes: Data)] = [], types: [String],
-            provide: @escaping @Sendable (String) -> Data?,
-            servable: @escaping @Sendable (String) -> Bool = { _ in false }
+            provide: @escaping @Sendable (String) -> Data?
         ) {
             self.data = data
             self.types = types
             self.provide = provide
-            self.servable = servable
         }
     }
 
@@ -250,10 +216,6 @@ public final class ClipboardPasteboardPublisher {
     /// paste can be served from the offer any more; a paste of every promised type leaves the write standing, so
     /// it runs nothing. A write that fails, or neither promises anything nor holds an item marked concealed, never
     /// runs it.
-    ///
-    /// A paste that got nothing of a type `specs` say can still be served (``ItemSpec/servable``) writes the same
-    /// promises again once its fire returns, while the pasteboard still holds the write: the new write serves the
-    /// same source, and `onReleased` moves to it.
     @discardableResult
     public func write(
         _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
@@ -279,25 +241,12 @@ public final class ClipboardPasteboardPublisher {
         let record = ClipboardStandingWrite(
             source: source, by: self, written: data.map { $0.map(\.type) }, promised: promised, onEnded: onReleased)
         let read = record.read
-        let fires = ClipboardWriteFires()
-        let promises = specs.map { Promise(types: $0.types, provide: $0.provide, servable: $0.servable) }
         let items = zip(specs, data).enumerated().map { index, entry -> ClipboardWriteItem in
             let (spec, data) = entry
             guard !spec.types.isEmpty else { return ClipboardWriteItem(data: data, promised: [], provider: nil) }
             let provide = spec.provide
             let provider = LazyClipboardDataProvider(
-                provide: { [weak self, weak record] type in
-                    fires.began()
-                    let provided = provide(type.rawValue)
-                    let empty = fires.ended(empty: provided == nil ? (index, type.rawValue) : nil)
-                    if !empty.isEmpty {
-                        MainActorBridge.async { [weak self, weak record] in
-                            guard let self, let record else { return }
-                            renew(record, promises, afterEmpty: empty)
-                        }
-                    }
-                    return Self.screened(provided, servedAs: type.rawValue)
-                },
+                provide: { Self.screened(provide($0.rawValue), servedAs: $0.rawValue) },
                 onRefused: { [weak self] _ in MainActorBridge.async { self?.onPasteRefused?() } },
                 onProvided: { read.provided($0, item: index) },
                 onFinished: { registry.release($0) })
@@ -328,40 +277,6 @@ public final class ClipboardPasteboardPublisher {
         stand(record)
         providerRegistry.retain(providers)
         return record
-    }
-
-    /// Where the publisher's pulls and renewals log.
-    nonisolated static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardPasteboardPublisher")
-
-    /// What one item of a write promises, without the bytes it was written with as data.
-    private struct Promise: Sendable {
-        let types: [String]
-        let provide: @Sendable (String) -> Data?
-        let servable: @Sendable (String) -> Bool
-    }
-
-    /// Writes `record`'s items again, promising `promises` with what each holds as data read back from the
-    /// pasteboard, when a provider fire of it left a type in `empty` the offer can still serve: the pasteboard
-    /// asks a write's provider for a type once, and a fire that sets no data leaves the type listed with nothing
-    /// behind it for the rest of the write, so only a write of the same promises lets a later paste ask again
-    /// (macOS 27.2.1, a named pasteboard read from another process, 2026-11-12; Apple's documentation is silent).
-    ///
-    /// Only while the pasteboard still holds `record`, under the same source, its end handed to the new write.
-    /// macOS asks a replaced write nothing more, so the paste the empty fire served stops there.
-    private func renew(
-        _ record: ClipboardStandingWrite, _ promises: [Promise], afterEmpty empty: [(item: Int, type: String)]
-    ) {
-        guard standing === record, heldChangeCount == pasteboard.changeCount, let source = record.source,
-            empty.contains(where: { promises[$0.item].servable($0.type) })
-        else { return }
-        let specs = zip(promises, record.written(on: pasteboard)).map { promise, data in
-            ItemSpec(
-                data: data.map { ($0.type.rawValue, $0.bytes) }, types: promise.types, provide: promise.provide,
-                servable: promise.servable)
-        }
-        let onEnded = record.handOffEnd()
-        Self.logger.log(.notice, "A paste the offer can still serve got nothing: its write is promised again")
-        if place(specs, source: source, onReleased: onEnded) == nil { onEnded?() }
     }
 
     /// The pasteboard took `record`'s write, which stands from now on.

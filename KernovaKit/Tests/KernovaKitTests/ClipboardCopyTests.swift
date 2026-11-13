@@ -86,7 +86,6 @@ struct ClipboardCopyTests {
     /// Answers every file pull with `url`.
     private final class FilePuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-        func canServe(item: Int, representation: Int) -> Bool { false }
         let url: URL?
         init(url: URL?) { self.url = url }
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
@@ -168,7 +167,6 @@ struct ClipboardCopyTests {
     /// Answers each INLINE pull with `bytes` and each file pull with `url`, counting the pulls.
     private final class CountingPuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-        func canServe(item: Int, representation: Int) -> Bool { false }
         let bytes: Data
         let url: URL?
         private let pulled = Locked<[Int]>([])
@@ -278,7 +276,6 @@ struct ClipboardCopyTests {
             }
             completion(ended ? nil : url)
         }
-        func canServe(item: Int, representation: Int) -> Bool { false }
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {
             let ended = state.withLock { state -> Bool in
                 if !state.ended { state.handlers.append(handler) }

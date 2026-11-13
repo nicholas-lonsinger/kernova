@@ -24,17 +24,15 @@ public protocol ClipboardItemPulling: Sendable {
     /// receiver chose, or nil when the pull failed.
     func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void)
 
-    /// Whether a new ask of representation `representation` of item `item` can still be served: the offer is
-    /// open, and the representation's pull was stopped by its readout's Cancel, is still running, or landed what
-    /// an ask takes. False once its pull failed.
-    func canServe(item: Int, representation: Int) -> Bool
-
     /// Runs `handler` once, on any thread, when the offer ends and can be pulled no more: at once when it has
     /// already. A puller whose offer never ends never runs it.
     func whenEnded(_ handler: @escaping @Sendable () -> Void)
 }
 
 extension ClipboardPasteboardPublisher {
+    nonisolated private static let pullLogger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardPasteboardPublisher")
+
     /// The longest a paste's provider holds its thread for a pull: 120 s, when
     /// `NSPasteboard.dataForType(_:)` abandons a promise, and past Finder's
     /// 60 s (docs/research/2026-07-27-pasteboard-promise-deadlines.md). By
@@ -130,18 +128,13 @@ extension ClipboardPasteboardPublisher {
             guard !data.isEmpty || !files.isEmpty else { return nil }
             if concealed { data.append((ClipboardSnapshotPolicy.concealedMarkerUTI, Data())) }
             guard let file = files.first else { return ItemSpec(data: data, types: []) { _ in nil } }
-            return ItemSpec(
-                data: data, types: [ItemSpec.fileURLType],
-                provide: { type in
-                    guard type == ItemSpec.fileURLType else { return nil }
-                    return held(eventLoopWait, for: holdLimit) {
-                        puller.pullFile(item: index, representation: file, completion: $0)
-                    }
-                    .map { Data($0.absoluteString.utf8) }
-                },
-                servable: { type in
-                    type == ItemSpec.fileURLType && puller.canServe(item: index, representation: file)
-                })
+            return ItemSpec(data: data, types: [ItemSpec.fileURLType]) { type in
+                guard type == ItemSpec.fileURLType else { return nil }
+                return held(eventLoopWait, for: holdLimit) {
+                    puller.pullFile(item: index, representation: file, completion: $0)
+                }
+                .map { Data($0.absoluteString.utf8) }
+            }
         }
     }
 
@@ -173,23 +166,18 @@ extension ClipboardPasteboardPublisher {
             let promised = ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: servingFileURLs)
             guard !promised.isEmpty else { return nil }
             let routes = Dictionary(uniqueKeysWithValues: promised.map { ($0.pasteboardType, $0) })
-            return ItemSpec(
-                data: markers, types: promised.map(\.pasteboardType),
-                provide: { type in
-                    guard let route = routes[type] else { return nil }
-                    guard route.isFileURL else {
-                        return held(eventLoopWait, for: holdLimit) {
-                            puller.pullBytes(item: index, representation: route.representation, completion: $0)
-                        }
-                    }
+            return ItemSpec(data: markers, types: promised.map(\.pasteboardType)) { type in
+                guard let route = routes[type] else { return nil }
+                guard route.isFileURL else {
                     return held(eventLoopWait, for: holdLimit) {
-                        puller.pullFile(item: index, representation: route.representation, completion: $0)
+                        puller.pullBytes(item: index, representation: route.representation, completion: $0)
                     }
-                    .map { Data($0.absoluteString.utf8) }
-                },
-                servable: { type in
-                    routes[type].map { puller.canServe(item: index, representation: $0.representation) } ?? false
-                })
+                }
+                return held(eventLoopWait, for: holdLimit) {
+                    puller.pullFile(item: index, representation: route.representation, completion: $0)
+                }
+                .map { Data($0.absoluteString.utf8) }
+            }
         }
     }
 
@@ -204,7 +192,7 @@ extension ClipboardPasteboardPublisher {
         start: (_ completion: @escaping @Sendable (Value?) -> Void) -> Void
     ) -> Value? {
         guard let wait = ThreadHold.Wait(eventLoop: eventLoopWait()) else {
-            logger.log(.notice, "A paste fired on the main thread outside its run loop's base; nothing pulled")
+            pullLogger.log(.notice, "A paste fired on the main thread outside its run loop's base; nothing pulled")
             return nil
         }
         let completed = Locked<Value??>(nil)
@@ -218,7 +206,7 @@ extension ClipboardPasteboardPublisher {
         }
         let deadline = DispatchTime.now() + limit
         guard let value = wait.hold(deadline: deadline, until: { completed.withLock { $0 } }) else {
-            logger.log(.notice, "A paste gave up on its pull after \(limit, privacy: .public) s; the pull runs on")
+            pullLogger.log(.notice, "A paste gave up on its pull after \(limit, privacy: .public) s; the pull runs on")
             return nil
         }
         return value

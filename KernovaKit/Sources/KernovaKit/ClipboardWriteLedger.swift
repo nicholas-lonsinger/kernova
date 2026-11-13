@@ -113,7 +113,7 @@ final class ClipboardStandingWrite {
     /// The publisher that made the write, held while it stands, so whatever must withdraw from the write can.
     private(set) var publisher: ClipboardPasteboardPublisher?
     /// Runs once, when a ``withdrawable`` write ends.
-    private var onEnded: (@MainActor @Sendable () -> Void)?
+    private var onEnded: (@MainActor () -> Void)?
     private var observation: ClipboardPasteboardWatch.Observation?
 
     /// A write of `written` and `promised`, made from `source`, which `onEnded` hears end when it is
@@ -121,7 +121,7 @@ final class ClipboardStandingWrite {
     init(
         source: ClipboardWriteSource?, by publisher: ClipboardPasteboardPublisher,
         written: [[NSPasteboard.PasteboardType]], promised: [[NSPasteboard.PasteboardType]],
-        onEnded: (@MainActor @Sendable () -> Void)?
+        onEnded: (@MainActor () -> Void)?
     ) {
         let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
         let promises = promised.contains { !$0.isEmpty }
@@ -181,18 +181,6 @@ final class ClipboardStandingWrite {
             return data.isEmpty ? nil : data
         }
         return (items, whole)
-    }
-
-    /// What each item was written with as data, read back from `pasteboard`, which holds the write.
-    func written(on pasteboard: any ClipboardWritePasteboard) -> [[(type: NSPasteboard.PasteboardType, bytes: Data)]] {
-        written.indices.map { item in Self.data(of: written[item], item: item, on: pasteboard) }
-    }
-
-    /// Takes the write's end away for a write of the same promises that replaces it: this write's end then runs
-    /// nothing, and the caller hands what it returns to the replacement.
-    func handOffEnd() -> (@MainActor @Sendable () -> Void)? {
-        defer { onEnded = nil }
-        return onEnded
     }
 
     /// The bytes item `item` holds on `pasteboard` as each of `types`, which it holds as data.

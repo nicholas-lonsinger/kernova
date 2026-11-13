@@ -383,7 +383,6 @@ final class SpiceClipboardService: ClipboardServicing {
 /// The puller of a copy with no files, which nothing asks.
 private struct NoFilesPuller: ClipboardItemPulling {
     func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-    func canServe(item: Int, representation: Int) -> Bool { false }
 
     func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
         completion(nil)

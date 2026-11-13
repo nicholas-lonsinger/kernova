@@ -143,8 +143,6 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private struct State {
         var landed: [Key: Landed] = [:]
         var pulling: [Key: Pulling] = [:]
-        /// Representations whose pull the readout's Cancel stopped, until one is pulled again.
-        var cancelled: Set<Key> = []
         var opened: [ItemPullID: Opened] = [:]
         /// What every pull of the offer lands against, from the first of them.
         var budget: ByteBudget?
@@ -191,22 +189,6 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// charged to the offer's budget.
     public func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
         ask(Key(item: item, representation: representation), ceiling: nil) { completion($0.content?.url) }
-    }
-
-    /// Whether an ask of representation `representation` of item `item` can still be served: the offer is open,
-    /// and the representation's pull was stopped by the readout's Cancel, is still running, or landed what an ask
-    /// under the paste ceiling takes.
-    public func canServe(item: Int, representation: Int) -> Bool {
-        let key = Key(item: item, representation: representation)
-        guard items.indices.contains(item), items[item].representations.indices.contains(representation) else {
-            return false
-        }
-        let ceiling = items[item].representations[representation].storage == .inline ? ceiling() : nil
-        return state.withLock { state in
-            guard !state.closed else { return false }
-            if let landed = state.landed[key] { return landed.admitted(by: ceiling) }
-            return state.pulling[key] != nil || state.cancelled.contains(key)
-        }
     }
 
     /// Runs `handler` once the offer closes — released, ended by the far side, or its connection gone — at once
@@ -366,7 +348,6 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     private func cancelPulls() {
         let (ids, asks, readout) = state.withLock { state -> ([ItemPullID], [Ask], ClipboardTransferOperation?) in
             let pulling = state.pulling.values
-            state.cancelled.formUnion(state.pulling.keys)
             state.pulling = [:]
             let ids = pulling.compactMap(\.id)
             for id in ids { state.opened[id]?.cancelled = true }
@@ -498,7 +479,6 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             guard !state.closed, !isReference else { return .answer(.missing(nil)) }
             let attempt = state.nextAttempt
             state.nextAttempt += 1
-            state.cancelled.remove(key)
             state.pulling[key] = Pulling(attempt: attempt, ceiling: ask.ceiling, asks: [ask])
             return .start(attempt: attempt, ceiling: ask.ceiling)
         }
