@@ -55,8 +55,12 @@ struct VMCommandCoreArrivalTests {
     /// A bundle whose configuration reads, at a path with nothing on disk to
     /// copy — an import of it fails in the copy.
     private func unreadableSource() -> URL {
+        // Seeded at the spelling the import resolves it to: the store keys
+        // bundles by URL, and resolving a path that doesn't exist keeps the
+        // `/private` that resolving `/var` adds.
         let url = scratch.url.appendingPathComponent(UUID().uuidString, isDirectory: true)
             .appendingPathComponent("Vanished.\(VMBundleFormat.fileExtension)", isDirectory: true)
+            .resolvingSymlinksInPath()
         storage.files.seed(
             VMConfiguration(
                 name: "Vanished", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
