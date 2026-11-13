@@ -18,8 +18,8 @@ import KernovaWire
 ///
 /// Its pulls report on one readout while they run, each pull a unit its landing feeds; the readout ends once no
 /// pull has run for its idle gap, since nothing says a paste is done asking, or once a copy's pulls have all
-/// landed (``finishReadout()``). Its Cancel stops every pull in
-/// flight and leaves the offer open, so a later ask pulls again on a readout of its own.
+/// landed (``finishReadout()``). Its Cancel spends the offer: every pull in flight stops and the offer closes, so
+/// no later ask of any write of it pulls anything, and pasting again takes a fresh copy on the far side.
 ///
 /// Safe from any thread: a paste asks on whatever thread the pasteboard fires its provider on, and a pull ends
 /// on the connection's queue, so neither waits for the main actor.
@@ -147,7 +147,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         /// What every pull of the offer lands against, from the first of them.
         var budget: ByteBudget?
         var nextAttempt: UInt64 = 0
-        /// No more pulls: released, or the far side ended the offer.
+        /// No more pulls: released, the far side ended the offer, or a readout's Cancel spent it.
         var closed = false
         /// Hear the offer close.
         var endHandlers: [@Sendable () -> Void] = []
@@ -191,8 +191,8 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         ask(Key(item: item, representation: representation), ceiling: nil) { completion($0.content?.url) }
     }
 
-    /// Runs `handler` once the offer closes — released, ended by the far side, or its connection gone — at once
-    /// when it has.
+    /// Runs `handler` once the offer closes — released, ended by the far side, its connection gone, or spent by its
+    /// readout's Cancel — at once when it has.
     public func whenEnded(_ handler: @escaping @Sendable () -> Void) {
         let closed = state.withLock { state -> Bool in
             if !state.closed { state.endHandlers.append(handler) }
@@ -326,37 +326,42 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     /// Ends the offer here: what landed stays servable, nothing more is pulled, every pull in flight is
     /// cancelled, everyone waiting on one hears nil now, and a readout still measuring goes without a finish.
     func close() {
+        end(.closed)
+    }
+
+    /// The readout's Cancel: the offer ends as ``close()`` ends it, except that its pulls in flight end as
+    /// cancelled rather than failed, everyone waiting on one hears it cancelled — a paste hears nil — and the
+    /// readout finishes cancelled.
+    private func spend() {
+        end(.cancelled)
+    }
+
+    private enum Ending {
+        case closed
+        case cancelled
+    }
+
+    private func end(_ ending: Ending) {
         let (ids, asks, ended, readout) = state.withLock {
             state -> ([ItemPullID], [Ask], [@Sendable () -> Void], ClipboardTransferOperation?) in
             state.closed = true
             let pulling = state.pulling.values
             state.pulling = [:]
+            let ids = pulling.compactMap(\.id)
+            if ending == .cancelled { for id in ids { state.opened[id]?.cancelled = true } }
             defer {
                 state.endHandlers = []
                 state.readout = nil
             }
-            return (pulling.compactMap(\.id), pulling.flatMap(\.asks), state.endHandlers, state.readout)
+            return (ids, pulling.flatMap(\.asks), state.endHandlers, state.readout)
         }
-        readout?.abandon()
+        switch ending {
+        case .closed: readout?.abandon()
+        case .cancelled: readout?.finish(.cancelled)
+        }
         for id in ids { link.cancelPull(id) }
-        for ask in asks { ask.completion(.missing(nil)) }
+        for ask in asks { ask.completion(ending == .cancelled ? .cancelled : .missing(nil)) }
         for handler in ended { handler() }
-    }
-
-    /// The readout's Cancel: every pull in flight is cancelled and everyone waiting on one hears it cancelled now —
-    /// a paste hears nil — but the offer stays open, so a later ask pulls again.
-    private func cancelPulls() {
-        let (ids, asks, readout) = state.withLock { state -> ([ItemPullID], [Ask], ClipboardTransferOperation?) in
-            let pulling = state.pulling.values
-            state.pulling = [:]
-            let ids = pulling.compactMap(\.id)
-            for id in ids { state.opened[id]?.cancelled = true }
-            defer { state.readout = nil }
-            return (ids, pulling.flatMap(\.asks), state.readout)
-        }
-        readout?.finish(.cancelled)
-        for id in ids { link.cancelPull(id) }
-        for ask in asks { ask.completion(.cancelled) }
     }
 
     /// Ends the readout now, by its pulls' outcome, rather than at its idle gap: for an owner that knows no more
@@ -377,7 +382,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
             let readout = ClipboardTransferOperation(
                 gesture: progress.gesture, direction: .inbound, peerName: progress.peerName,
                 clock: progress.clock,
-                onCancelRequested: { [weak self] in self?.cancelPulls() },
+                onCancelRequested: { [weak self] in self?.spend() },
                 reporter: progress.transfers)
             state.readout = readout
             return readout.unit(name: name, expectedBytes: expectedBytes)
@@ -407,7 +412,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         link.refuseOffer(token, error)
     }
 
-    /// Whether the offer is still the far side's, and pullable.
+    /// Whether the offer is still pullable: the far side's, and no readout's Cancel spent it.
     public var isOpen: Bool { !state.withLock(\.closed) }
 
     /// The pull `id` of this offer ended with `result`. What it landed is kept even once the offer is closed.
