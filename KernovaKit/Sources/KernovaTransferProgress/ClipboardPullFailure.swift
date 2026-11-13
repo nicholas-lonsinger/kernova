@@ -23,6 +23,7 @@ extension ClipboardTransferFailure {
             case .writeFailed where error.posixErrno == ENOSPC: .diskFull(needed: nil, available: nil)
             case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .stagingFailed
             case .readFailed: .sourceUnreadable
+            case .tooLarge: .tooLarge(limitBytes: Int(clamping: error.limit))
             default: .transferFailed
             }
     }
