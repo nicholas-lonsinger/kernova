@@ -480,7 +480,7 @@ package final class VMInstance {
     // MARK: - Initializer
 
     /// A VM whose bundle is on disk, whose clipboard publishes to and polls
-    /// `hostPasteboard` and stages under `stagingRoot`, its clipboard readouts
+    /// `hostPasteboard` and stages under `stagingRoot`, its clipboard readouts and their dwell
     /// measured on `transferClock`, and whose ``activity`` forwards its records
     /// to `logSink`.
     init(
@@ -501,7 +501,7 @@ package final class VMInstance {
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
         self.itemSink = itemSink
-        let clipboardTransfers = ClipboardTransferReporter()
+        let clipboardTransfers = ClipboardTransferReporter(clock: transferClock)
         self.clipboardTransfers = clipboardTransfers
         let hubClipboard = HubClipboardService(
             sink: itemSink, stagingRoot: stagingRoot,

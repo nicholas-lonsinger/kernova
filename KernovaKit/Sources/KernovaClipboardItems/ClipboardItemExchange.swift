@@ -481,8 +481,9 @@ public final class ClipboardItemExchange {
     /// newer copy arrived meanwhile, so an older copy never writes over a newer one. `write` hears how many
     /// references it could not fill, which it leaves out. A copy of only references to one offer this end's
     /// pasteboard still holds changes nothing, so it is refused `CLIPBOARD_ALREADY_HELD`; a failed pull refuses
-    /// it too, and a Cancel on its readout refuses it `CANCELLED`. `write` decides everything after: whether to write, and whether to release or refuse it. Once it
-    /// has, what landed INLINE in staging is deleted (``ClipboardRemoteOffer/discardStagedInline()``).
+    /// it too, and a Cancel on its readout refuses it `CANCELLED`. A copy that landed ends its readout completed
+    /// there and then, before `write`. `write` decides everything after: whether to write, and whether to release
+    /// or refuse it. Once it has, what landed INLINE in staging is deleted (``ClipboardRemoteOffer/discardStagedInline()``).
     @discardableResult
     public func land(_ copy: ClipboardRemoteOffer, then write: @MainActor (_ referencesLeftOut: Int) -> Void) async
         -> CopyLanding
@@ -515,7 +516,7 @@ public final class ClipboardItemExchange {
         guard landing == copy.token else { return .superseded }
         switch inline {
         case .landed:
-            break
+            copy.finishReadout()
         case .cancelled:
             landing = nil
             refuseCopy(copy, WireError(.cancelled, debugDetail: "cancelled on its readout"))

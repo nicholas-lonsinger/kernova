@@ -17,7 +17,8 @@ import KernovaWire
 /// here cancels every pull still running and fails everyone waiting on one.
 ///
 /// Its pulls report on one readout while they run, each pull a unit its landing feeds; the readout ends once no
-/// pull has run for its idle gap, since nothing says a paste is done asking. Its Cancel stops every pull in
+/// pull has run for its idle gap, since nothing says a paste is done asking, or once a copy's pulls have all
+/// landed (``finishReadout()``). Its Cancel stops every pull in
 /// flight and leaves the offer open, so a later ask pulls again on a readout of its own.
 ///
 /// Safe from any thread: a paste asks on whatever thread the pasteboard fires its provider on, and a pull ends
@@ -323,7 +324,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     // MARK: Lifecycle
 
     /// Ends the offer here: what landed stays servable, nothing more is pulled, every pull in flight is
-    /// cancelled, everyone waiting on one hears nil now, and the readout goes without a finish.
+    /// cancelled, everyone waiting on one hears nil now, and a readout still measuring goes without a finish.
     func close() {
         let (ids, asks, ended, readout) = state.withLock {
             state -> ([ItemPullID], [Ask], [@Sendable () -> Void], ClipboardTransferOperation?) in
@@ -356,6 +357,16 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         readout?.finish(.cancelled)
         for id in ids { link.cancelPull(id) }
         for ask in asks { ask.completion(.cancelled) }
+    }
+
+    /// Ends the readout now, by its pulls' outcome, rather than at its idle gap: for an owner that knows no more
+    /// asks follow — a copy whose pulls have all landed. A later ask pulls on a readout of its own.
+    func finishReadout() {
+        let readout = state.withLock { state -> ClipboardTransferOperation? in
+            defer { state.readout = nil }
+            return state.readout
+        }
+        readout?.finish(.completed)
     }
 
     /// A pull's unit on the readout the offer's pulls report on: the one running, or a new one when the last has
@@ -403,8 +414,6 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
     func ended(_ id: ItemPullID, _ result: ItemPullResult) {
         guard let opened = state.withLock({ $0.opened.removeValue(forKey: id) }) else { return }
         var landed: Landed?
-        var failure: ClipboardTransferFailure?
-        defer { pullEnded(opened.unit, landed: landed != nil, failure: failure) }
         switch result {
         case .landed(.named(let name)):
             guard let url = opened.directory?.appendingPathComponent(String(decoding: name, as: UTF8.self)) else {
@@ -428,9 +437,13 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
                 case .failed(let error), .closed(.resetByPeer(let error)): error
                 case .landed, .closed: nil
                 }
-            if !opened.cancelled { failure = error.map { ClipboardTransferFailure(pullEndedWith: $0, fileCount: nil) } }
+            let failure =
+                opened.cancelled ? nil : error.map { ClipboardTransferFailure(pullEndedWith: $0, fileCount: nil) }
+            // The unit ends before anyone waiting hears, so a landing that acts on the answer finds it ended.
+            pullEnded(opened.unit, landed: false, failure: failure)
             return settle(opened.key, opened.attempt, failedWith: error)
         }
+        pullEnded(opened.unit, landed: true)
         self.landed()
         let asks = state.withLock { state -> [Ask] in
             state.landed[opened.key] = landed

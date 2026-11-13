@@ -348,6 +348,10 @@ struct GuestClipboardTests {
         #expect(await first.value == nil)
         #expect(await second.value == nil)
         #expect(Set(link.cancelled) == Set(link.opened))
+        // The readout publishes its end through a main-queue hop the pastes' answers do not wait for.
+        try await reported.wait {
+            if case .finished? = reports.withLock({ $0.last }) { true } else { false }
+        }
         guard case .finished(let finish)? = reports.withLock({ $0.last }), case .cancelled = finish.outcome else {
             Issue.record("the readout ended \(reports.withLock { $0 })"); return
         }
@@ -449,6 +453,39 @@ struct GuestClipboardTests {
             Issue.record("the readout ended \(reports.withLock { $0 })"); return
         }
         #expect(pasteboard.dataByItem.isEmpty)
+    }
+
+    @Test("A host copy that lands ends the guest's readout completed at its whole size, not withdrawn")
+    func hostCopyThatLandsCompletesItsReadout() async throws {
+        let pasteboard = FakePasteboard()
+        let (transfers, reports, reported) = recordingTransfers()
+        // Gated, so the readout's idle gap never passes: only the landing can complete it.
+        let clock = GatedEngineClock()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, transfers: transfers, transferClock: clock)
+        let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        clipboard.setLink(link)
+        clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        let content = Data("from the Mac".utf8)
+        try await link.changed.wait { link.pulls.count == 1 }
+        clock.advance(seconds: 1)
+        link.pulls[0].order.progress?.advanced(landed: 1, declared: UInt64(content.count))
+        try await reported.wait {
+            if case .running? = reports.withLock({ $0.last }) { true } else { false }
+        }
+
+        try await landPull(content, clipboard, link)
+        try await link.changed.wait { link.releases == [Self.copyToken] }
+        await drainMainQueue()
+
+        guard case .finished(let finish)? = reports.withLock({ $0.last }), case .completed(let final) = finish.outcome
+        else {
+            Issue.record("the readout ended \(reports.withLock { $0 })")
+            return
+        }
+        #expect(final.bytesTransferred == UInt64(content.count))
+        #expect(final.totalBytes == UInt64(content.count))
+        #expect(pasteboard.items.first?.data(forType: .string) == content)
     }
 
     @Test("A paste of the host's concealed text lands it in memory, creating nothing under the staging root")

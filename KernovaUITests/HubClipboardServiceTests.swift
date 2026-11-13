@@ -523,9 +523,48 @@ struct HubClipboardServiceTests {
         probe.deliver(
             .items(.pullEnded(.clipboard, pull, .closed(.resetLocally(WireError(.cancelled))))), fromConnection: 0)
         try await waitForChange { !instance.runningClipboardCommands.contains(.copyGuestClipboardToMac) }
-        // A cancel's report dwells and goes; a failure would stand.
+        // No failure replaced the cancel's report.
         if case .finished(let after) = instance.clipboardTransferReport { #expect(after.failure == nil) }
         #expect(try hostPasteboard(instance).prepareCount == 0)
+    }
+
+    @Test("Copy to Mac that lands ends its readout completed at its whole size, not withdrawn, once the copy is let go")
+    func copyToMacThatLandsCompletesItsReadout() async throws {
+        let probe = AgentHubProbe()
+        // Gated, so the readout's idle gap never passes: only the landing can complete it.
+        let clock = GatedEngineClock()
+        let instance = try await connected(probe, transferClock: clock)
+        _ = try await copyToMac(Self.text, on: probe, into: instance)
+        try await probe.changed.wait { pulls(probe).count == 1 }
+        let (requestID, order) = pulls(probe)[0]
+        let content = Data("the guest's".utf8)
+        let pull = open(requestID, stream: 3, on: probe)
+        await probe.settle()
+        clock.advance(seconds: 1)
+        order.progress?.advanced(landed: 1, declared: UInt64(content.count))
+        try await waitForChange {
+            if case .running = instance.clipboardTransferReport { true } else { false }
+        }
+
+        guard case .staged(let directory, .exactly(let name)) = order.landing else {
+            Issue.record("landing \(order.landing)")
+            return
+        }
+        try content.write(
+            to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
+        probe.deliver(.items(.pullEnded(.clipboard, pull, .landed(.named(name)))), fromConnection: 0)
+        try await probe.changed.wait { released(Self.copyToken, probe) }
+        try await waitForChange { !instance.runningClipboardCommands.contains(.copyGuestClipboardToMac) }
+        await drainMainQueue()
+
+        guard case .finished(let finish) = instance.clipboardTransferReport,
+            case .completed(let final) = finish.outcome
+        else {
+            Issue.record("the readout ended \(instance.clipboardTransferReport)")
+            return
+        }
+        #expect(final.bytesTransferred == UInt64(content.count))
+        #expect(final.totalBytes == UInt64(content.count))
     }
 
     /// Has the guest land each of the `count` pulls the hub asked for, each as `content` gives for its order.
@@ -590,7 +629,8 @@ struct HubClipboardServiceTests {
         arguments: [false, true])
     func concealedCopyToMacGoesWhenTheGuestsClipboardMovesOn(pasted: Bool) async throws {
         let probe = AgentHubProbe()
-        let instance = try await connected(probe)
+        // Gated, so no readout or dwell changes the report on its own.
+        let instance = try await connected(probe, transferClock: GatedEngineClock())
         let pasteboard = try await concealedCopyToMac(probe, instance)
         if pasted { #expect(pasteboard.items.first?.data(forType: Self.textType) == Data("s3cret".utf8)) }
         let before = instance.clipboardTransferReport
