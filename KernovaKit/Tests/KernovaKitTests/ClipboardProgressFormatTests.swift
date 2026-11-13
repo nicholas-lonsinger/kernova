@@ -10,17 +10,13 @@ import Testing
 struct ClipboardProgressFormatTests {
     /// A snapshot with everything but the fields under test held constant.
     private static func snapshot(
-        direction: ClipboardProgressSnapshot.Direction = .outbound, peerName: String = "VM",
-        currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
-        bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000,
-        gesture: ClipboardTransferGesture = .peerPaste, pendingBehind: Int = 0
+        peerName: String = "VM", currentItemName: String? = nil, bytesTransferred: UInt64 = 0,
+        totalBytes: UInt64 = 1_000
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
-            direction: direction, peerName: peerName, currentItemName: currentItemName,
-            filesCompleted: filesCompleted, fileCount: fileCount,
-            bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
-            secondsRemaining: nil, gesture: gesture, elapsedSeconds: 1,
-            pendingBehind: pendingBehind)
+            direction: .outbound, peerName: peerName, currentItemName: currentItemName, filesCompleted: 0,
+            fileCount: 1, bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
+            secondsRemaining: nil, gesture: .peerPaste, elapsedSeconds: 1)
     }
 
     @Test("speed is a byte count per second, and absent without an estimate")

@@ -61,13 +61,11 @@ struct ClipboardTransferOperationTests {
         gesture: ClipboardTransferGesture = .preview,
         direction: ClipboardProgressSnapshot.Direction = .inbound,
         expectedBytes: UInt64? = 0,
-        expectedItems: Int = 0,
-        onCancelRequested: (@Sendable () -> Void)? = nil
+        expectedItems: Int = 0
     ) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
             gesture: gesture, direction: direction, peerName: "macOS TEST",
-            expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock,
-            onCancelRequested: onCancelRequested, reporter: recorder.reporter)
+            expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock, reporter: recorder.reporter)
     }
 
     // MARK: - Reveal gate

@@ -48,8 +48,8 @@ struct ClipboardCopyTests {
     /// Answers every file pull with `url`.
     private final class FilePuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-        let url: URL?
-        init(url: URL?) { self.url = url }
+        let url: URL
+        init(url: URL) { self.url = url }
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
             completion(nil)
         }
@@ -103,16 +103,12 @@ struct ClipboardCopyTests {
 
     // MARK: - A snapshot of this process's own write
 
-    /// Answers each INLINE pull with `bytes` and each file pull with `url`, counting the pulls.
+    /// Answers each INLINE pull with `bytes` and each file pull with nothing, counting the pulls.
     private final class CountingPuller: ClipboardItemPulling {
         func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let bytes: Data
-        let url: URL?
         private let pulled = Locked<[Int]>([])
-        init(bytes: Data, url: URL? = nil) {
-            self.bytes = bytes
-            self.url = url
-        }
+        init(bytes: Data) { self.bytes = bytes }
         /// The representation each pull asked for, in order.
         var pulls: [Int] { pulled.withLock { $0 } }
         func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
@@ -121,7 +117,7 @@ struct ClipboardCopyTests {
         }
         func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
             pulled.withLock { $0.append(representation) }
-            completion(url)
+            completion(nil)
         }
     }
 

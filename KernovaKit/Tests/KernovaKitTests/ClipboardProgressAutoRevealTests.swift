@@ -18,12 +18,11 @@ struct ClipboardProgressAutoRevealTests {
     /// an app on the peer is blocked on.
     private func readout(
         elapsed: TimeInterval = 5, secondsRemaining: Double? = 10, bytesTransferred: UInt64 = 100,
-        totalBytes: UInt64 = 1_000, gesture: ClipboardTransferGesture = .peerPaste,
-        of other: ClipboardTransferOperationID? = nil
+        gesture: ClipboardTransferGesture = .peerPaste, of other: ClipboardTransferOperationID? = nil
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
             direction: .outbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
-            fileCount: 1, bytesTransferred: bytesTransferred, totalBytes: totalBytes,
+            fileCount: 1, bytesTransferred: bytesTransferred, totalBytes: 1_000,
             bytesPerSecond: 100, secondsRemaining: secondsRemaining, gesture: gesture,
             elapsedSeconds: elapsed, operationID: other ?? operation)
     }
@@ -32,9 +31,9 @@ struct ClipboardProgressAutoRevealTests {
     /// how often the callout was asked for.
     private static func fold(
         _ readout: ClipboardProgressSnapshot?, into reveal: inout ClipboardProgressAutoReveal,
-        dropdownIsOpen: Bool = false, shows: Bool = true, asked: inout Int
+        shows: Bool = true, asked: inout Int
     ) -> ClipboardProgressRevealDecision {
-        reveal.readoutChanged(readout, dropdownIsOpen: dropdownIsOpen) {
+        reveal.readoutChanged(readout, dropdownIsOpen: false) {
             asked += 1
             return shows
         }
@@ -42,11 +41,10 @@ struct ClipboardProgressAutoRevealTests {
 
     /// `fold` for a test that does not count the asks.
     private static func fold(
-        _ readout: ClipboardProgressSnapshot?, into reveal: inout ClipboardProgressAutoReveal,
-        dropdownIsOpen: Bool = false, shows: Bool = true
+        _ readout: ClipboardProgressSnapshot?, into reveal: inout ClipboardProgressAutoReveal, shows: Bool = true
     ) -> ClipboardProgressRevealDecision {
         var asked = 0
-        return fold(readout, into: &reveal, dropdownIsOpen: dropdownIsOpen, shows: shows, asked: &asked)
+        return fold(readout, into: &reveal, shows: shows, asked: &asked)
     }
 
     @Test("a callout that went up is the operation's one reveal")

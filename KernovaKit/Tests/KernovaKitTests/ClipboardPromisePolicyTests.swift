@@ -13,8 +13,8 @@ struct ClipboardPromisePolicyTests {
         .make(TypeDescriptor(appleUTI: uti), .inline, size: size)
     }
 
-    private func file(_ name: String, uti: String = "public.data", size: Int = 8) -> Representation {
-        .make(TypeDescriptor(appleUTI: uti), .file, size: size, name: name)
+    private func file(_ name: String, size: Int = 8) -> Representation {
+        .make(TypeDescriptor(appleUTI: "public.data"), .file, size: size, name: name)
     }
 
     private func item(_ representations: Representation...) -> OfferedItem {
