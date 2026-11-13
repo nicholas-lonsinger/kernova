@@ -235,6 +235,30 @@ struct VMCommandCoreArrivalTests {
         #expect(events.failures.first?.message == Self.unreadableCopyMessage("Dev"))
     }
 
+    @Test("A copy the library can't read takes its arrival's selection and its place in the saved order")
+    func anUnreadableCopyTakesItsArrivalsSelectionAndPlace() async throws {
+        let harness = makeHarness()
+        let library = harness.library
+        let first = RegisteredVMInstanceFixture.register(
+            name: "First", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
+        let last = RegisteredVMInstanceFixture.register(
+            name: "Last", phase: .stopped, guestOS: .linux, library: library, preferences: preferences)
+        let source = try repairableSource("Dev")
+
+        let started = try await harness.core.importVM(from: source.url, waitForOutcome: false)
+        let arrival = try #require(library.arrivals.first)
+        let slot = try #require(library.entries.firstIndex { $0.id == started.id })
+        let target = try #require(library.entries.firstIndex { $0.id == first.id }) + 1
+        library.moveEntries(fromOffsets: IndexSet(integer: slot), toOffset: target)
+        #expect(preferences.vmOrder == [first.id, started.id, last.id])
+        #expect(library.selectedID == started.id)
+        #expect(await arrival.settle() == nil)
+
+        let row = try #require(library.entries.compactMap(\.unreadable).first)
+        #expect(library.selectedID == row.id)
+        #expect(preferences.vmOrder == [first.id, row.id, last.id])
+    }
+
     /// A core file of a bundle: one an import admits only when it reads, or
     /// when each of its problems has a repair.
     enum CoreFile: CaseIterable, Sendable {
