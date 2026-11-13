@@ -53,19 +53,15 @@ final class SocketPair: Sendable {
     }
 
     /// A pair whose host bundles `manifest` as `bundled` says.
-    init(
-        peerSendBuffer: Int32? = nil, bundled: Bundled = .inBand, handsOff: Bool = true, stallAfter: Int? = nil,
-        sourceShortBy: Int = 0, refuses: ErrorCode? = nil
-    ) throws {
+    init(peerSendBuffer: Int32? = nil, bundled: Bundled = .inBand) throws {
         let descriptors = try RawSocket.pair(sendBuffer: peerSendBuffer)
         hostStream = GatedStream(try POSIXByteStream(adopting: descriptors.far))
         peerStream = GatedStream(try POSIXByteStream(adopting: descriptors.stream))
         dialer = OneShotDialer(peerStream)
-        power = FakePowerAdapter(handsOff: handsOff)
+        power = FakePowerAdapter()
         let content = FakePayloadSource.payload(Self.payloadSize)
-        installer = FakeInstaller(expected: content, refuses: refuses)
-        source = FakePayloadSource(
-            content: Data(content.prefix(Self.payloadSize - sourceShortBy)), stallAfter: stallAfter)
+        installer = FakeInstaller(expected: content)
+        source = FakePayloadSource(content: content)
 
         let hostEvents = hostEvents
         let peerEvents = peerEvents
